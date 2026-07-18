@@ -35,6 +35,24 @@ SkyPilot submission behavior.
   accepts raw SkyPilot YAML under `npa/workflows/workbench/skypilot/` for
   operator/runtime and SkyPilot-only exceptions (parallel, burst, runbook).
 
+## Live submit prerequisites (real cluster)
+
+A real `npa workbench workflow submit` (not `--plan-only`) needs, on top of a
+healthy `sky check kubernetes`:
+
+- **Secrets via `--secret-env`** (never in the YAML): `NEBIUS_TOKEN_FACTORY_KEY`
+  for Token Factory stages, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` for S3,
+  `HF_TOKEN` / `NGC_API_KEY` for gated model pulls. `load_credentials` does NOT
+  export AWS creds — read them from `~/.npa/credentials.yaml` (`storage.*`) and
+  export before submit.
+- **`NPA_SRC_S3_URI` (or `--image`)** for CPU tool steps and `run.shell` states —
+  they have no heavy workbench image and install npa from that source tarball,
+  else render fails with "planned step has no workbench image and NPA_SRC_S3_URI
+  is unset".
+- **`--assume-decision promote_checkpoint`** for specs with a dynamic gate/loop.
+- **`--var key=value`** to override `config` (e.g. `--var bucket=<real-bucket>`;
+  the golden specs default to `bucket: example-bucket`).
+
 ## Gotchas
 
 - SkyPilot `envs` does not support self-referencing interpolation. The
@@ -45,6 +63,16 @@ SkyPilot submission behavior.
   specs, or mock submission before live launch.
 - Mixed serial and parallel task groups can be fragile; serialize when behavior
   must be deterministic. Parallel sweeps stay SkyPilot-only in v0.0.1.
+- **GPU accelerator name is cluster-specific.** Specs use canonical
+  `RTXPRO6000:1`, but a cluster may only advertise the raw label (e.g.
+  `RTXPRO-6000-BLACKWELL-SERVER-EDITION`). A mismatch fails with
+  `FAILED_PRECHECKS` / "cluster does not contain any instances satisfying the
+  request" — not a capacity problem. Run `sky gpus list` and resubmit with the
+  cluster's exact accelerator name (this is the "retry GPU types" path).
+- **Stale `NEBIUS_IAM_TOKEN` breaks sky/terraform.** The Nebius provider prefers
+  an ambient (often expired) `NEBIUS_IAM_TOKEN` over the fresh CLI token, giving
+  `PermissionDenied` / `Unauthenticated` even though the `nebius` CLI works.
+  `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` before submitting/deploying.
 
 ## Verify
 
