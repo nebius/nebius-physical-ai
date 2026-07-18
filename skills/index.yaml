@@ -420,6 +420,7 @@ skills:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
           - npa/workflows/workbench/npa-workflows/av-night-scene-hardening.yaml
           - npa/workflows/workbench/npa-workflows/cosmos-synth-fanout-curation.yaml
+          - npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
           - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
   - name: generate-npa-workflow
     category: workflows
