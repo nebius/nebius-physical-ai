@@ -169,6 +169,8 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "formatStageStatusLabel" in source
     assert "data.ok === false" in source  # submitWorkflowYaml must not treat blocked as success
     assert 'ok": bool(validation.get("ok"))' in source or '"ok": bool(validation.get("ok"))' in source
+    assert "lastAppliedDraftYaml" in source  # refresh must not stomp local YAML edits
+    assert "Uploaded `" in source or "not runnable yet" in source  # upload surfaces validation state
     assert "No run-specific Rerun recording yet" in source
     assert "_run_sim2real_pipeline_background" in source
     assert "agent-local-sim2real" in source

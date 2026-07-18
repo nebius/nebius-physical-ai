@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071714"
+AGENT_UI_VERSION = "2026071715"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -4549,23 +4549,6 @@ def chat(payload: dict):
         messages=llm_messages,
         visual_context=visual_context,
     )
-    if (not visual_turn) and re.search(
-        r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
-        last_content,
-        re.IGNORECASE,
-    ):
-        run_id = f"agent-chat-small-{{secrets.token_hex(6)}}"
-        submit = submit_sim2real({{"run_id": run_id}})
-        live = submit.get("live_submit") if isinstance(submit, dict) else None
-        if isinstance(live, dict) and live.get("ok"):
-            reply = (
-                f"Started small Sim2Real pipeline: **run_id** `{{run_id}}`. "
-                f"Live submit session: `{{live.get('session')}}`; log: `{{live.get('log')}}`."
-            )
-        else:
-            detail = str((live or {{}}).get("error") if isinstance(live, dict) else "recorded locally")
-            reply = f"Recorded small Sim2Real submit **run_id** `{{run_id}}`; live launch detail: `{{detail}}`."
-        return {{"ok": True, "model": model, "reply": reply, "reasoning": None, "grounded": True, "apis_used": ["workflows/sim2real/submit"], "submit": submit}}
     state = _load_state()
     session_id = _sanitize_chat_session_id(
         str(payload.get("session_id") or state.get("active_chat_session_id") or "default")
@@ -4584,6 +4567,50 @@ def chat(payload: dict):
     # Preserve merged session history across the LLM path (do not rebuild from a
     # short client payload and wipe prior turns after the model returns).
     merged_history = list(history)
+    # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
+    if (not visual_turn) and re.search(
+        r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
+        last_content,
+        re.IGNORECASE,
+    ):
+        run_id = f"agent-chat-small-{{secrets.token_hex(6)}}"
+        submit = submit_sim2real({{"run_id": run_id}})
+        live = submit.get("live_submit") if isinstance(submit, dict) else None
+        if isinstance(live, dict) and live.get("ok"):
+            reply = (
+                f"Started small Sim2Real pipeline: **run_id** `{{run_id}}`. "
+                f"Live submit session: `{{live.get('session')}}`; log: `{{live.get('log')}}`."
+            )
+        else:
+            detail = str((live or {{}}).get("error") if isinstance(live, dict) else "recorded locally")
+            reply = f"Recorded small Sim2Real submit **run_id** `{{run_id}}`; live launch detail: `{{detail}}`."
+        history = [*merged_history, {{"role": "assistant", "content": reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
+            }}
+        )
+        state = _load_state()
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        return {{
+            "ok": True,
+            "model": model,
+            "reply": reply,
+            "reasoning": None,
+            "grounded": True,
+            "apis_used": ["workflows/sim2real/submit"],
+            "submit": submit,
+            "session_id": session["id"],
+            "session": {{
+                "id": session["id"],
+                "title": session["title"],
+                "memory_uri": session.get("memory_uri", ""),
+                "message_count": len(session.get("chat_history", [])),
+            }},
+        }}
     # Metadata-only Describe-this: grounded reply (never invent pixels). Vision
     # turns with an attached frame fall through to Token Factory.
     if visual_turn and not has_image_content(llm_messages):
@@ -7729,6 +7756,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }})().finally(() => {{
           chatQueueDrain = null;
           updateChatQueueBadge();
+          // Re-kick if a job arrived after the while-loop exited but before drain cleared.
+          if (chatQueue.length) processChatQueue();
         }});
         return chatQueueDrain;
       }}
@@ -7977,7 +8006,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("stagesLoadRun", async () => {{
           const select = document.getElementById("stagesRunSelect");
           const input = document.getElementById("stagesRunInput");
-          const chosen = String((select && select.value) || (input && input.value) || "").trim();
+          // Prefer pasted input over a stale dropdown selection (matches Enter-on-input).
+          const typed = String((input && input.value) || "").trim();
+          const selected = String((select && select.value) || "").trim();
+          const chosen = typed || selected;
           await loadSelectedRun(chosen);
         }}, "Load run for stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
@@ -8305,6 +8337,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return data;
       }}
       async function selectChatSession(sessionId) {{
+        // Wait for in-flight chat jobs so replies do not paint into the wrong session.
+        if (chatQueueDrain) await chatQueueDrain;
         const safeId = String(sessionId || "default").trim() || "default";
         const data = await apiJson("/api/chat/sessions/" + encodeURIComponent(safeId) + "/select", {{
           method: "POST",
@@ -8319,6 +8353,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return session;
       }}
       async function createNewChatSession() {{
+        if (chatQueueDrain) await chatQueueDrain;
         const data = await apiJson("/api/chat/sessions", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
@@ -8331,9 +8366,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         showToast("New chat session ready", "success");
         return true;
       }}
+      let lastAppliedDraftYaml = "";
       function setWorkflowYaml(text, validation) {{
         const area = document.getElementById("workflowYaml");
         if (area) area.value = String(text || "");
+        lastAppliedDraftYaml = String(text || "").trim();
         updateWorkflowMeta(validation || {{}});
       }}
       function updateWorkflowMeta(validation) {{
@@ -8362,7 +8399,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ yaml }}),
         }});
         updateWorkflowMeta((data.validation) || {{}});
-        appendChat("assistant", "Uploaded workflow YAML to the **Workflow YAML** panel (`" + String((data.validation && data.validation.name) || "draft") + "`).");
+        if (data.validation && data.validation.ok === false) {{
+          throw new Error(String(data.validation.error || "validation failed"));
+        }}
+        if (data.ok === false) {{
+          throw new Error(String((data.validation && data.validation.error) || data.error || "upload failed"));
+        }}
+        const name = String((data.validation && data.validation.name) || "draft");
+        const note = data.runnable === false
+          ? "Uploaded `" + name + "` (saved draft; not runnable yet)."
+          : "Uploaded workflow YAML to the **Workflow YAML** panel (`" + name + "`).";
+        appendChat("assistant", note);
         return true;
       }}
       async function validateWorkflowYaml() {{
@@ -8485,17 +8532,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         if (input && !opts.keepInput) input.value = "";
         if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
+        // Capture session at enqueue so a mid-queue session switch cannot retarget the POST.
+        const jobSessionId = String(opts.session_id || activeChatSessionId || "default");
+        const jobMessages = opts.messages || null;
         return enqueueChatJob(async () => {{
           const model = selectedChatModel();
-          appendChat("user", opts.displayText || payloadText);
-          chatHistory.push({{ role: "user", content: payloadText }});
-          showThinkingBubble();
+          const stillActive = String(activeChatSessionId || "default") === jobSessionId;
+          if (stillActive) {{
+            appendChat("user", opts.displayText || payloadText);
+            chatHistory.push({{ role: "user", content: payloadText }});
+            showThinkingBubble();
+          }}
           try {{
-            const messages = opts.messages || chatHistory;
+            const messages = jobMessages || (stillActive
+              ? chatHistory
+              : [{{ role: "user", content: payloadText }}]);
             const body = {{
               messages,
               model,
-              session_id: activeChatSessionId,
+              session_id: jobSessionId,
             }};
             if (opts.visual_context) body.visual_context = opts.visual_context;
             const data = await apiJson("/api/chat", {{
@@ -8510,6 +8565,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                 const tierNote = data.tier ? " \u00b7 tier: " + String(data.tier) : "";
                 select.title = "last used: " + String(data.model) + tierNote;
               }}
+            }}
+            // Only mutate the visible transcript when this job's session is still selected.
+            if (String(activeChatSessionId || "default") !== jobSessionId) {{
+              if (opts.onDone) opts.onDone(data);
+              return;
             }}
             if (data && data.session_id) {{
               activeChatSessionId = String(data.session_id);
@@ -8533,15 +8593,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }} catch (err) {{
             clearThinkingBubble();
             const message = String(err && err.message ? err.message : err);
-            const tail = chatHistory[chatHistory.length - 1];
-            if (tail && tail.role === "user" && tail.content === payloadText) {{
-              chatHistory.pop();
+            if (String(activeChatSessionId || "default") === jobSessionId) {{
+              const tail = chatHistory[chatHistory.length - 1];
+              if (tail && tail.role === "user" && tail.content === payloadText) {{
+                chatHistory.pop();
+              }}
+              appendChat("error", "Send failed. " + message);
             }}
             if (input && opts.restoreInput) input.value = payloadText;
-            appendChat("error", "Send failed. " + message);
             throw err;
           }} finally {{
-            if (input) input.focus();
+            if (input && String(activeChatSessionId || "default") === jobSessionId) input.focus();
           }}
         }});
       }}
@@ -8584,13 +8646,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }} catch (_err) {{
             return best;
           }}
-          if (!url) return best;
+          if (!url) return best.length <= maxChars ? best : "";
           best = url;
           if (url.length <= maxChars) return url;
           edge = Math.max(256, Math.floor(edge * 0.72));
           q = Math.max(0.4, q - 0.08);
         }}
-        return best;
+        // Still oversized after shrink attempts — omit frame (metadata-only path).
+        return best.length <= maxChars ? best : "";
       }}
       function frameLooksBlank(canvas) {{
         try {{
@@ -9258,16 +9321,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             try {{ handle.remove_receiver(location.origin + RERUN_RECORDING_PATH); }} catch (_rmErr2) {{ /* ignore */ }}
           }}
           handle.add_receiver(recordingUrl, false);
-          lastRerunRecordingUrl = recordingUrl;
-          mountedRerunRunKey = mountKey;
-          iframe.dataset.rerunRunKey = mountKey;
           hideRerunPlaceholder();
           // Keep cover until a quality frame exists — avoids flash of empty/splash UI.
+          // Commit mount URLs only after a rendered frame so failures do not poison already-mounted.
           const quality = await waitForQualityRerunFrame(4500);
-          if (!(quality && quality.dataUrl) || quality.quality === "unavailable") {{
+          if (!(quality && quality.dataUrl) || quality.quality !== "rendered") {{
             hideRerunBundleCover();
             return false;
           }}
+          lastRerunRecordingUrl = recordingUrl;
+          mountedRerunRunKey = mountKey;
+          iframe.dataset.rerunRunKey = mountKey;
           hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "soft-swap");
           return true;
@@ -9288,9 +9352,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             return true;
           }}
           if (mountedRerunRunKey === mountKey && lastRerunRecordingUrl) {{
-            // Same run key: keep live wasm only when a quality frame is still present.
+            // Same run key: keep live wasm only when a rendered frame is still present.
             const quality = await waitForQualityRerunFrame(1500);
-            if (quality && quality.dataUrl && quality.quality !== "unavailable") {{
+            if (quality && quality.dataUrl && quality.quality === "rendered") {{
               hideRerunBundleCover();
               setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
               return true;
@@ -9325,17 +9389,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }} catch (_urlErr) {{
           lastRerunRecordingUrl = "";
         }}
-        // Uncover without blocking mount latency — splash polling stays in the background.
+        rerunIframeLoaded = true;
+        mountedRerunRunKey = mountKey;
+        // Same quality gate as soft-swap — do not claim SUCCESS on splash/blank.
+        const quality = await waitForQualityRerunFrame(6000);
+        if (quality && quality.dataUrl && quality.quality === "rendered") {{
+          hideRerunBundleCover();
+          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
+          return true;
+        }}
         scheduleRerunBundleUncover(iframe).catch((err) => {{
           console.warn("rerun splash uncover failed", err);
         }});
-        rerunIframeLoaded = true;
-        mountedRerunRunKey = mountKey;
-        setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
+        setRerunMountStatus("degraded", "no-quality-frame");
         waitForRerunRenderSettle(iframe, 4000).catch((err) => {{
           console.warn("rerun render settle probe failed", err);
         }});
-        return true;
+        return false;
       }}
       async function mountRerunIframeUntilSuccess(camera, maxAttempts, runId) {{
         const attempts = Math.max(1, Number(maxAttempts || 8));
@@ -9908,7 +9978,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           }}
           if (session && session.workflow_draft && session.workflow_draft.yaml) {{
-            setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
+            // Do not stomp local YAML edits: only apply server draft when empty or unmodified.
+            const draftYaml = String(session.workflow_draft.yaml || "");
+            const currentYaml = currentWorkflowYaml();
+            if (!currentYaml || currentYaml === lastAppliedDraftYaml) {{
+              setWorkflowYaml(draftYaml, session.workflow_draft.validation || {{}});
+            }}
           }}
           const assets = await loadJson("/api/sim-assets");
           const statusPath = activeRunId
@@ -10049,11 +10124,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const chosen = String(runId || "").trim();
         for (const id of ["runIdInput", "stagesRunInput"]) {{
           const input = document.getElementById(id);
-          if (input && chosen) input.value = chosen;
+          // Never overwrite a field the operator is actively editing.
+          if (input && chosen && document.activeElement !== input) input.value = chosen;
         }}
         for (const id of ["runIdSelect", "stagesRunSelect", "artifactRunSelect"]) {{
           const select = document.getElementById(id);
           if (!select || !chosen) continue;
+          if (document.activeElement === select) continue;
           if (Array.from(select.options).some((opt) => opt.value === chosen)) {{
             select.value = chosen;
           }}
@@ -10120,10 +10197,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             '<p class="hint">Load a run from the Rerun tab, list artifacts, or plan a workflow.</p>' +
             '<div class="btn-row"><button class="btn" type="button" id="stagesOpenRerun">Open Rerun tab</button></div>' +
             '</div>';
-          const focusBtn = document.getElementById("stagesFocusRunSelect");
-          if (focusBtn) focusBtn.addEventListener("click", () => {{
-            const sel = document.getElementById("stagesRunSelect");
-            if (sel) sel.focus();
+          const openRerunBtn = document.getElementById("stagesOpenRerun");
+          if (openRerunBtn) openRerunBtn.addEventListener("click", () => {{
+            activateMainTab("rerun").catch((err) => console.warn("open rerun from stages failed", err));
           }});
         }} else {{
           const succeeded = stages.filter((stage) => normalizeStageStatus(stage.status) === "succeeded").length;
@@ -10185,7 +10261,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {{
           await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), runId);
         }} else {{
-          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.");
+          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.", {{ force: true }});
         }}
         await refresh();
       }}
@@ -10264,7 +10340,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           );
         }} else {{
           await loadRunDetails(submittedRunId);
-          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
+          showRerunPlaceholder(
+            "No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.",
+            {{ force: true }}
+          );
           appendChat(
             "assistant",
             "Run `" + submittedRunId + "` is recorded with **stage** `" +
@@ -10292,7 +10371,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const simViz = await loadJson(statusPath);
         if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
           await loadRunDetails(activeRunId);
-          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
+          showRerunPlaceholder(
+            "No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.",
+            {{ force: true }}
+          );
           showToast("No Rerun recording for this run yet; showing run logs instead.", "info");
           return;
         }}

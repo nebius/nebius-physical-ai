@@ -37,7 +37,11 @@ def test_chat_queue_contract_in_ui() -> None:
     # Single-flight drain prevents concurrent /api/chat races.
     assert "chatQueueDrain" in ui
     assert "if (chatQueueDrain) return chatQueueDrain" in ui
+    assert "if (chatQueue.length) processChatQueue()" in ui
     assert "describeInFlight" in ui
+    # Session captured at enqueue; mid-queue switch must not retarget POST/paint.
+    assert "jobSessionId" in ui
+    assert "lastAppliedDraftYaml" in ui
 
 
 def test_viewer_chat_drawer_contract() -> None:
@@ -92,14 +96,22 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     assert "await waitForQualityRerunFrame" in swap
     assert "Updating recording" in swap
     assert "add_receiver" in swap
-    # Soft-swap must not claim SUCCESS without a quality frame.
-    assert 'quality.quality === "unavailable"' in swap
+    # Soft-swap must not claim SUCCESS without a rendered quality frame.
+    assert 'quality.quality !== "rendered"' in swap
     assert "hideRerunBundleCover()" in swap
     mount = ui.split("async function mountRerunIframe(camera, runId)")[1].split(
         "async function mountRerunIframeUntilSuccess"
     )[0]
     # Failed soft-swap falls through to remount instead of stale already-mounted SUCCESS.
     assert "rerunIframeLoaded = false" in mount
+    # Remount also requires a rendered frame before SUCCESS.
+    assert 'quality.quality === "rendered"' in mount
+    assert 'setRerunMountStatus("degraded", "no-quality-frame")' in mount
     best = ui.split("async function bestEffortMountRerun")[1].split("async function loadRerunViewer")[0]
     assert 'setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort")' not in best
     assert "best-effort-no-success" in best
+    assert "No .rrd recording for this run yet" in ui
+    assert "{{ force: true }}" in ui or "{ force: true }" in ui
+    assert 'id="stagesOpenRerun"' in ui
+    assert 'getElementById("stagesOpenRerun")' in ui
+    assert "Prefer pasted input over a stale dropdown" in ui or "typed || selected" in ui
