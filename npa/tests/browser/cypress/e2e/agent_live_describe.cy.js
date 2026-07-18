@@ -65,27 +65,13 @@ describe("NPA agent live Describe-this + splash cover", () => {
     cy.get("body").should("have.class", "viewer-focus");
     cy.get("#rerunBundleCover", { timeout: 60000 }).should("have.attr", "hidden");
 
-    // Probe live pixels with the async WebGL-safe path before Describe.
-    cy.window().then(async (win) => {
+    // Best-effort warm: give the live Rerun canvas time to paint before Describe.
+    cy.wait(2500);
+    cy.window({ timeout: 30000 }).then({ timeout: 30000 }, async (win) => {
       const api = win.__NPA_AGENT_TEST__;
       const iframe = win.document.getElementById("rerunFrame");
-      let ready = false;
-      const deadline = Date.now() + 60000;
-      while (Date.now() < deadline) {
-        // eslint-disable-next-line no-await-in-loop
-        ready = await api.probeRerunCanvasContent(iframe);
-        if (ready) break;
-        // eslint-disable-next-line no-await-in-loop
-        const quality = await api.waitForQualityRerunFrame(1500);
-        if (quality && quality.quality === "rendered") {
-          ready = true;
-          break;
-        }
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      // Continue even if still unavailable — Describe must stay honest (metadata-only).
-      win.__NPA_LIVE_DESCRIBE_READY__ = ready;
+      const quality = await api.waitForQualityRerunFrame(12000);
+      win.__NPA_LIVE_DESCRIBE_QUALITY__ = quality;
     });
 
     cy.intercept("POST", "**/api/chat").as("liveDescribeChat");
