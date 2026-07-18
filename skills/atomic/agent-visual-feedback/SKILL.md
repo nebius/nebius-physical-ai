@@ -18,7 +18,7 @@ viewer** and give actionable feedback — not a generic caption.
 ## Model
 
 1. Prefer a **quality-captured frame** (vision tier → `Qwen/Qwen2.5-VL-72B-Instruct`).
-2. Wait for a non-blank canvas (skip uniform black/white/**mid-gray**; dense RGB, skeletons on dark grids, and meshes are valid). Cleared WebGL buffers often look mid-gray — never attach those.
+2. Wait for a non-blank canvas (skip uniform black/white/**mid-gray**; dense RGB, skeletons on dark grids, and meshes are valid). Cleared WebGL buffers often look mid-gray — never attach those. Blank detection must keep enough resolution to see **sparse** orange/cyan skeleton strokes (do not 80px-downscale them away).
 3. Rerun capture must use the **MediaStream bridge** (`canvas.captureStream` → `<video>` → JPEG). Do **not** gate capture on sync `drawImage` blank checks — those false-negative on live WebGL/WebGPU.
 4. If capture fails, send **metadata/text** and use the reasoning tier — never pretend pixels were seen.
 5. Do **not** answer Describe-this from the grounded intent router.

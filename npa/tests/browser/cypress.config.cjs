@@ -96,6 +96,19 @@ module.exports = defineConfig({
     requestTimeout: 30000,
     responseTimeout: 30000,
     setupNodeEvents(on, config) {
+    on('before:browser:launch', (browser = {}, launchOptions) => {
+      if (browser.family === 'chromium') {
+        launchOptions.args.push(
+          '--ignore-gpu-blocklist',
+          '--use-gl=angle',
+          '--use-angle=swiftshader-webgl',
+          '--enable-webgl',
+          '--enable-unsafe-swiftshader',
+          '--disable-web-security'
+        );
+      }
+      return launchOptions;
+    });
       let server = null;
       if (!process.env.NPA_AGENT_BASE_URL) {
         server = startMockServer(Number(process.env.NPA_AGENT_CYPRESS_PORT || 47867));

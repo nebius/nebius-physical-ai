@@ -103,17 +103,25 @@ def frame_looks_blank_from_stats(
     mean: float,
     variance: float,
     value_range: float,
+    vivid: int = 0,
+    vivid_ratio: float = 0.0,
+    lit: int = 0,
 ) -> bool:
     """Mirror the UI blank-frame gate (uniform black/white/mid-gray → blank).
 
     Kept in Python so unit tests can lock the thresholds that prevent false
-    \"uniform gray\" Describe-this replies from cleared WebGL buffers.
+    \"uniform gray\" Describe-this replies from cleared WebGL buffers, and that
+    sparse skeleton/wireframe overlays on dark grids are still treated as content.
     """
-    if variance < 35:
+    if vivid >= 3 or vivid_ratio >= 0.0015:
+        return False
+    if lit >= 12 and value_range >= 40:
+        return False
+    if variance < 35 and value_range < 40:
         return True
     if value_range < 18:
         return True
-    if variance < 80 and (mean < 12 or mean > 243):
+    if variance < 80 and (mean < 12 or mean > 243) and vivid < 2:
         return True
     return False
 

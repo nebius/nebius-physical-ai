@@ -525,7 +525,31 @@ describe("NPA agent UI with mocked APIs", () => {
       cctx.stroke();
       expect(api.frameLooksBlank(content)).to.eq(false);
       const stats = api.sampleFrameStats(content);
-      expect(stats.variance).to.be.greaterThan(35);
+      expect(stats.vivid).to.be.greaterThan(0);
+
+      // Large dark viewport with thin G1-style strokes — must not be wiped by downscale.
+      const sparse = win.document.createElement("canvas");
+      sparse.width = 960;
+      sparse.height = 540;
+      const sctx = sparse.getContext("2d");
+      sctx.fillStyle = "#050508";
+      sctx.fillRect(0, 0, 960, 540);
+      sctx.strokeStyle = "#ff8a1f";
+      sctx.lineWidth = 2;
+      sctx.beginPath();
+      sctx.moveTo(480, 80);
+      sctx.lineTo(470, 220);
+      sctx.lineTo(455, 360);
+      sctx.lineTo(450, 480);
+      sctx.stroke();
+      sctx.strokeStyle = "#5eead4";
+      sctx.beginPath();
+      sctx.moveTo(490, 90);
+      sctx.lineTo(520, 200);
+      sctx.lineTo(560, 280);
+      sctx.stroke();
+      expect(api.frameLooksBlank(sparse), "sparse skeleton on dark grid").to.eq(false);
+      expect(api.sampleFrameStats(sparse).vivid).to.be.greaterThan(2);
     });
   });
 

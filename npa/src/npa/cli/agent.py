@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071823"
+AGENT_UI_VERSION = "2026071824"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -8695,14 +8695,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       function sampleFrameStats(canvas) {{
         try {{
-          const w = Math.min(80, Number(canvas.width || 0));
-          const h = Math.min(80, Number(canvas.height || 0));
-          if (!w || !h) return null;
+          // Keep probe resolution high enough that thin skeleton/wireframe strokes
+          // (G1 trajectory overlays) are not erased by an 80px downscale.
+          const srcW = Number(canvas.width || canvas.videoWidth || 0);
+          const srcH = Number(canvas.height || canvas.videoHeight || 0);
+          if (!srcW || !srcH) return null;
+          const w = Math.max(64, Math.min(320, srcW));
+          const h = Math.max(48, Math.min(240, srcH));
           const probe = document.createElement("canvas");
           probe.width = w;
           probe.height = h;
           const ctx = probe.getContext("2d", {{ willReadFrequently: true }});
           if (!ctx) return null;
+          ctx.imageSmoothingEnabled = false;
           ctx.drawImage(canvas, 0, 0, w, h);
           const data = ctx.getImageData(0, 0, w, h).data;
           let sum = 0;
@@ -8710,33 +8715,52 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           let n = 0;
           let maxCh = 0;
           let minCh = 255;
-          for (let i = 0; i < data.length; i += 16) {{
+          let vivid = 0;
+          let lit = 0;
+          // Stride ~4px at probe res — still dense enough for thin strokes.
+          const stride = Math.max(4, Math.floor((w * h) / 12000)) * 4;
+          for (let i = 0; i < data.length; i += stride) {{
             const r = data[i];
             const g = data[i + 1];
             const b = data[i + 2];
             const v = (r + g + b) / 3;
+            const chroma = Math.max(r, g, b) - Math.min(r, g, b);
             sum += v;
             sumSq += v * v;
             n += 1;
             if (v > maxCh) maxCh = v;
             if (v < minCh) minCh = v;
+            if (v > 28) lit += 1;
+            // Orange/cyan skeleton joints are high-chroma even when rare on a dark grid.
+            if (chroma > 28 && Math.max(r, g, b) > 60) vivid += 1;
           }}
           if (!n) return null;
           const mean = sum / n;
           const variance = Math.max(0, sumSq / n - mean * mean);
-          return {{ mean, variance, range: maxCh - minCh, n }};
+          return {{
+            mean,
+            variance,
+            range: maxCh - minCh,
+            n,
+            vivid,
+            lit,
+            vividRatio: vivid / n,
+            litRatio: lit / n,
+          }};
         }} catch (_err) {{
           return null;
         }}
       }}
       function frameLooksBlank(canvas) {{
         // Uniform black/white/gray (incl. WebGL cleared mid-gray) ≈ blank.
-        // Dense RGB, grids, skeletons, and meshes have high variance/range.
+        // Sparse skeletons/wireframes on dark grids are valid even when mean≈0.
         const stats = sampleFrameStats(canvas);
         if (!stats) return true;
-        if (stats.variance < 35) return true;
+        if (stats.vivid >= 3 || stats.vividRatio >= 0.0015) return false;
+        if (stats.lit >= 12 && stats.range >= 40) return false;
+        if (stats.variance < 35 && stats.range < 40) return true;
         if (stats.range < 18) return true;
-        if (stats.variance < 80 && (stats.mean < 12 || stats.mean > 243)) return true;
+        if (stats.variance < 80 && (stats.mean < 12 || stats.mean > 243) && stats.vivid < 2) return true;
         return false;
       }}
       function pickLargestIframeCanvas(doc) {{
@@ -8867,7 +8891,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           video.muted = true;
           video.autoplay = true;
           video.playsInline = true;
-          video.style.cssText = "position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;";
+          // Keep the element out of view without forcing a 2×2 layout box (some
+          // browsers report odd videoWidth/videoHeight while the track is starting).
+          video.style.cssText = "position:fixed;left:-10000px;top:0;width:16px;height:16px;opacity:0;pointer-events:none;border:0;";
           document.body.appendChild(video);
           video.srcObject = stream;
           playVideoSoon(video, 400).catch(() => {{ /* autoplay best-effort */ }});
@@ -9172,10 +9198,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }});
             if (ok) {{
               const probe = document.createElement("canvas");
-              probe.width = Math.min(80, probeImg.naturalWidth || 80);
-              probe.height = Math.min(80, probeImg.naturalHeight || 80);
+              probe.width = Math.min(320, probeImg.naturalWidth || 320);
+              probe.height = Math.min(240, probeImg.naturalHeight || 240);
               const pctx = probe.getContext("2d", {{ willReadFrequently: true }});
               if (pctx) {{
+                pctx.imageSmoothingEnabled = false;
                 pctx.drawImage(probeImg, 0, 0, probe.width, probe.height);
                 if (frameLooksBlank(probe)) {{
                   imageDataUrl = "";

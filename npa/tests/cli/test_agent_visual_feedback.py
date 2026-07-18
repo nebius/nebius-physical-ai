@@ -232,6 +232,10 @@ def test_frame_looks_blank_from_stats_rejects_uniform_gray() -> None:
     assert vf.frame_looks_blank_from_stats(mean=250.0, variance=1.0, value_range=3.0)
     # Skeleton-on-dark-grid style content has high variance/range.
     assert not vf.frame_looks_blank_from_stats(mean=40.0, variance=1200.0, value_range=200.0)
+    # Sparse orange/cyan strokes on near-black: mean/variance stay tiny, but vivid pixels count.
+    assert not vf.frame_looks_blank_from_stats(
+        mean=4.0, variance=8.0, value_range=210.0, vivid=6, vivid_ratio=0.004
+    )
 
 
 def test_g1_trajectory_domain_hint_warns_against_blank_claim() -> None:
