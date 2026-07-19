@@ -68,6 +68,8 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     assert set(report["clip_ids"]) == {"aug-run"}
     assert "manifest.json" not in report["clip_ids"]
     assert report["status"] == "curated"
+    # Single-variant limitation surfaced in the machine-readable report.
+    assert report["multiply"]["mode"] == "single-variant"
 
 
 def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -> None:
@@ -165,3 +167,4 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     assert report["artifact_count"] == 3
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1
+    assert report["multiply_mode"] == "single-variant"

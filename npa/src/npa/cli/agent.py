@@ -2928,7 +2928,10 @@ def _is_data_factory_recording(key: str) -> bool:
     # A Physical AI Data Factory run also writes reports/sim2real.rrd, but its
     # entities are input/ + augmented/ + captions/ (no held-out-sim camera), so
     # it needs a different viewer note than the Sim2Real pipeline recording.
-    return _is_sim2real_pipeline_recording(key) and DATA_FACTORY_APP_ID in str(key or "")
+    # Match the app id as a path segment (…/physical-ai-data-factory/…) rather
+    # than a bare substring so an unrelated prefix that merely contains the
+    # phrase is not misclassified.
+    return _is_sim2real_pipeline_recording(key) and (DATA_FACTORY_APP_ID + "/") in str(key or "")
 
 
 def _sim2real_pipeline_camera_label(requested: str = "") -> str:

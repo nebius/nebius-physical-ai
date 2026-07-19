@@ -160,6 +160,10 @@ states:
 
   attribute-verify:
     description: VLM-based attribute verification of the augmented clips (Token Factory).
+    # Runs the REAL vlm_eval tool with --backend api (config.vlm_backend). Its
+    # output file is named vlm_eval_stub.json -- a LEGACY filename of the vlm_eval
+    # tool (RESULT_FILENAME), NOT a stubbed stage; grade_gate imports that same
+    # constant so producer and consumer stay in sync.
     toolRef: workbench.vlm_eval.run
     resources: cpu
     inputs:

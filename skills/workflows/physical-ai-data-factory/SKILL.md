@@ -54,7 +54,14 @@ of the re-render is not yet conditioned on the sampled weather/time text, and a
 single `--execute` emits **one** variant. Full config-driven appearance
 conditioning and N-variant "multiply" (one inference per sampled combo) are
 tracked follow-ups — do not describe the current blueprint as generating N
-condition-specific variants.
+condition-specific variants. The single-variant limitation is also surfaced in
+the machine-readable artifacts (`multiply` in the curation report, `multiply_mode`
+in the finalize report), so the outputs are honest on their own, not only in docs.
+
+**Naming caveat:** the `attribute-verify` stage runs the REAL `vlm_eval` tool
+with `--backend api`; its output file is `vlm_eval_stub.json`, a LEGACY filename
+of the vlm_eval tool (`RESULT_FILENAME`), not a stubbed stage. `grade_gate`
+imports that constant instead of hardcoding the string, so it stays in sync.
 
 Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
 `meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`

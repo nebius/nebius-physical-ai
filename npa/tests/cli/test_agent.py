@@ -784,7 +784,8 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
     # The DF recording detector is defined and keyed on the app id.
     assert "def _is_data_factory_recording(key: str) -> bool:" in source
     assert 'DATA_FACTORY_APP_ID = "physical-ai-data-factory"' in source
-    assert "DATA_FACTORY_APP_ID in str(key or" in source
+    # Path-boundary match (segment), not a bare substring.
+    assert '(DATA_FACTORY_APP_ID + "/") in str(key or' in source
     # The DF-specific branch (note + preview_entity) is present and precedes S2R.
     assert "if _is_data_factory_recording(key):" in source
     assert 'sim_viz["preview_entity"] = "augmented"' in source

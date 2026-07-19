@@ -120,12 +120,21 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
 
 
 def grade_gate(scores_uri: str, decision_uri: str, threshold: float = 0.5) -> str:
-    """Read the real VLM eval score and write a promote/loop decision."""
+    """Read the real VLM eval score and write a promote/loop decision.
+
+    The blueprint's attribute-verify stage runs ``workbench.vlm_eval.run`` with
+    ``--backend api`` (a real hosted VLM). Its output file is RESULT_FILENAME,
+    which is the vlm_eval tool's (legacy-named) real result JSON -- the "stub" in
+    the filename is a historical artifact of the tool, not a stubbed stage. We
+    import the constant so this stays in sync with the tool instead of hardcoding
+    a magic string.
+    """
     from npa.orchestration.npa_workflow.decisions import write_decision
+    from npa.workbench.vlm_eval import RESULT_FILENAME
 
     score = 0.0
     try:
-        report = _download_json(scores_uri if scores_uri.endswith(".json") else scores_uri.rstrip("/") + "/vlm_eval_stub.json")
+        report = _download_json(scores_uri if scores_uri.endswith(".json") else scores_uri.rstrip("/") + "/" + RESULT_FILENAME)
         score = float(report.get("score", 0.0))
     except Exception as exc:  # noqa: BLE001 - best-effort; default to loop_back
         print(json.dumps({"stage": "grade_gate", "warn": f"could not read score: {exc}"[:200]}))
@@ -154,6 +163,14 @@ def curate(augment_uri: str, report_uri: str) -> dict[str, Any]:
         "clip_ids": clips,
         "video_count": len(videos),
         "frame_count": len(frames),
+        # Honest, machine-readable limitation: one Cosmos Transfer --execute per
+        # run emits a single appearance variant, so augmented_clips reflects
+        # single-variant output regardless of the sampled n_augmentations.
+        # N-variant "multiply" (one inference per sampled combo) is a follow-up.
+        "multiply": {
+            "mode": "single-variant",
+            "note": "one Cosmos Transfer 2.5 --execute per run; N-variant multiply is a tracked follow-up",
+        },
         "status": "curated",
     }
     report["written_uri"] = _upload_json(report, report_uri)
@@ -168,9 +185,12 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     marker = f"/{run_seg}/"
     stages: dict[str, int] = {}
     for k in keys:
-        # stage = first path segment after the run id
-        rel = k.split(marker, 1)[-1] if marker in f"/{k}" else k
-        stage = rel.split("/", 1)[0] if "/" in rel else rel
+        # Take the path *after* the run-id segment, then its first segment is the
+        # stage. We prepend "/" to k so the run-id also matches when it is the
+        # leading segment of the (bucket-relative) key; if the run id is absent
+        # we fall back to the whole key.
+        after_run = k.split(marker, 1)[-1] if marker in f"/{k}" else k
+        stage = after_run.split("/", 1)[0] if "/" in after_run else after_run
         stages[stage] = stages.get(stage, 0) + 1
     report = {
         "schema": "npa.sim2real.e2e_report.v1",
@@ -178,6 +198,9 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
         "artifact_count": len(keys),
         "stages": stages,
         "has_rrd": any(k.endswith(".rrd") for k in keys),
+        # Mirror the curate caveat so the final report is honest on its own:
+        # augmentation currently produces one variant per run (see curate report).
+        "multiply_mode": "single-variant",
     }
     report["written_uri"] = _upload_json(report, report_uri)
     print(json.dumps(report))
