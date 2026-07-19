@@ -139,9 +139,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         notes=(
             "Physical AI Data Factory blueprint. Dynamic gate (needs "
-            "--assume-decision). Plan-only: the GPU cosmos2.transfer augment and "
-            "the fiftyone/finalize stages are stubs, so live render/submit-prep is "
-            "validated without burning a GPU."
+            "--assume-decision). All stages are real (augment = cosmos2."
+            "transfer_execute on GPU; curate/finalize/grade = real run.shell). "
+            "Plan-only in CI because a real Cosmos Transfer 2.5 run is heavy "
+            "(gated-weight download + diffusion) and needs the npa-cosmos2-transfer "
+            "image rebuilt from this branch; live render/submit-prep is validated "
+            "without burning a GPU."
         ),
     ),
     SubmitLiveCase(
