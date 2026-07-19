@@ -8,8 +8,16 @@ the public API reaches v1 stability.
 from __future__ import annotations
 
 import os as _os
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _package_version
+
+try:
+    __version__ = _package_version("npa")
+except _PackageNotFoundError:  # pragma: no cover - source tree without install
+    __version__ = "0.0.0.dev0"
 
 __all__ = [
+    "__version__",
     "convert",
     "demo",
     "errors",
