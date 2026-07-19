@@ -159,15 +159,23 @@ Gate: `npa --version` prints `npa <version>`, and `npa --help` prints the
 command tree without requiring Nebius, Hugging Face, NGC, Kubernetes, or S3
 credentials.
 
+The base install is lightweight: it carries only what the offline paths need.
 Optional extras are available when you need them:
 
 ```bash
+pip install -e "npa[full]"      # everything below except the GPU extras
+pip install -e "npa[data]"      # pandas/scipy/matplotlib curation + reports
+pip install -e "npa[lancedb]"   # LanceDB workbench tool
+pip install -e "npa[viz]"       # Rerun viewer/recording integration
 pip install -e "npa[server]"    # FastAPI policy/eval server
 pip install -e "npa[adapter]"   # dataset conversion
 pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU)
 pip install -e "npa[groot]"     # GR00T SDK (GPU)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff); see Section 6
 ```
+
+Before running cloud workloads (Sections 5+), install `npa[full]` so every
+workbench tool has its dependencies.
 
 ## 4. Configure credentials
 

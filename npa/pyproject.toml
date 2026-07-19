@@ -7,29 +7,44 @@ name = "npa"
 version = "0.1.0"
 description = "Nebius Physical AI platform CLI/SDK"
 requires-python = ">=3.10"
+# Core keeps only what `import npa.cli.main` needs so the offline paths
+# (`npa --version`, vlm-eval stub, workflow validate/plan) install fast on a
+# clean index. Heavy or tool-specific packages live in extras; lower bounds are
+# deliberately wide so a stale mirror does not break the first install.
 dependencies = [
-    "typer~=0.24.1",
-    "httpx~=0.28.1",
-    "paramiko~=5.0.0",
-    "pyyaml~=6.0.3",
-    "rich~=15.0.0",
-    "boto3~=1.42.91",
-    "jinja2~=3.1.6",
-    "joblib>=1.3",
-    "matplotlib>=3.8",
+    "typer>=0.24",
+    "httpx>=0.27",
+    "paramiko>=4.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "boto3>=1.34",
+    "jinja2>=3.1",
     "numpy>=1.24",
-    "pandas>=2.0",
     "pyarrow>=14.0",
     "pillow>=10.0",
-    "scipy>=1.10",
-    "lancedb==0.30.2",
-    "rerun-sdk==0.31.4",
+    "pydantic>=2.0",
     "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
 # SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
 orchestration = []
+# Dataframe/plotting helpers used by curation, benchmarks, and reports.
+data = [
+    "pandas>=2.0",
+    "joblib>=1.3",
+    "matplotlib>=3.8",
+    "scipy>=1.10",
+]
+# LanceDB workbench tool (local server, BDD100K import, materialized views).
+lancedb = [
+    "lancedb==0.30.2",
+    "pandas>=2.0",
+]
+# Rerun viewer/recording integration (`npa rerun`, sim-viz adapters).
+viz = ["rerun-sdk==0.31.4"]
+# Everything the previous monolithic install provided, minus GPU extras.
+full = ["npa[data,lancedb,viz,server]"]
 server = ["fastapi~=0.136.1"]
 genesis = [
     "genesis-world",
@@ -54,10 +69,10 @@ sonic = [
     "onnxruntime>=1.18",
 ]
 # Development and test tooling. Install with: pip install -e "npa[dev]"
-# Includes the server extra so the standard (non-e2e) test suite collects
+# Includes the full extra so the standard (non-e2e) test suite collects
 # without pulling in GPU-heavy extras (genesis, groot, sonic).
 dev = [
-    "npa[server]",
+    "npa[full]",
     "pytest>=8.0",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
@@ -114,6 +129,16 @@ packages = ["src/npa"]
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
+
+[tool.ruff]
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Pyflakes + the default pycodestyle errors. The tree is clean under this set
+# and CI enforces it (.github/workflows/lint.yml); widen deliberately, not by
+# accident.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
