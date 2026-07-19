@@ -122,3 +122,32 @@ def _is_pytest_skip(node: ast.Call) -> bool:
 def _mentions_local_cuda(node: ast.AST, source: str) -> bool:
     segment = ast.get_source_segment(source, node) or ""
     return "cuda.is_available" in segment or "torch.cuda" in segment
+
+
+def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
+    """Shipped BYO examples must not bake in the first-party registry ID.
+
+    Resolver-owned defaults (npa.deploy.images, the image manifests, and ops
+    scripts) may reference the concrete `npa-workbench` registry; committed
+    example YAMLs and cookbooks must use the `<your-registry-id>` placeholder
+    so external users never pull against a registry they cannot access.
+    """
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY_ID
+
+    example_roots = [
+        REPO_ROOT / "npa" / "workflows",
+        REPO_ROOT / "docs" / "workbench" / "cookbooks",
+        REPO_ROOT / "docs" / "demos",
+    ]
+    offenders: list[str] = []
+    for root in example_roots:
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in {".yaml", ".yml", ".md", ".json"}:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if DEFAULT_CONTAINER_REGISTRY_ID in text:
+                offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert not offenders, (
+        "Concrete first-party registry ID found in shipped examples; "
+        "use the <your-registry-id> placeholder instead: " + ", ".join(offenders)
+    )

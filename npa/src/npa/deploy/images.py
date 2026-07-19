@@ -197,7 +197,7 @@ def container_image_for_tool(
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
-def _primary_registry() -> str:
+def primary_container_registry() -> str:
     """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
     explicit = os.environ.get("NPA_REGISTRY", "").strip()
     if explicit:
@@ -206,6 +206,9 @@ def _primary_registry() -> str:
     if registry_id:
         return f"cr.eu-north1.nebius.cloud/{registry_id}"
     return DEFAULT_CONTAINER_REGISTRY
+
+
+_primary_registry = primary_container_registry
 
 
 def backup_container_registry() -> str:

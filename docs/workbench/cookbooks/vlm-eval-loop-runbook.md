@@ -24,7 +24,7 @@ export RUN_ID="vlm-eval-loop-smoke"
 export NPA_S3_BUCKET="<your-bucket-name>"
 export ROLLOUTS="s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/rollouts/"
 export OUTPUT_DIR="s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/vlm-eval-loop/"
-export NPA_VLM_IMAGE="cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
+export NPA_VLM_IMAGE="cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
 # For production BYO, set NPA_VLM_IMAGE to a prebuilt VLM/vLLM serving image.
 
 npa/.venv/bin/python - <<'PY'
