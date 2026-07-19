@@ -141,7 +141,7 @@ states:
         schema: npa.data_factory.frames.v1
     outputs:
       - uri: "{{config.augment_uri}}manifest.json"
-        schema: npa.sim2real.augment.v1
+        schema: npa.cosmos2.transfer.v1
     next: grade
 
   grade:
@@ -166,7 +166,7 @@ states:
       - uri: "{{config.rollouts_uri}}"
         schema: npa.sim2real.augment.v1
     outputs:
-      - uri: "{{config.scores_uri}}report.json"
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
         schema: npa.workbench.vlm_eval.report.v1
 
   quality-gate:

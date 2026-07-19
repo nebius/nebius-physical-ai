@@ -71,11 +71,17 @@ npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)
 - **Reproducible deploy/submit:** unset a stale `NEBIUS_IAM_TOKEN` before
   `sky`/`terraform` (the Nebius provider prefers the ambient token over the
   fresh one). `provisioner._run` scrubs it for agent deploys.
-- **Augment output contract:** `cosmos2.transfer` writes a contract manifest by
-  default; the downstream `grade` / `annotate-augmented` stages need augmented
-  **frames** under `augment_uri`. Real photoreal augmentation needs Cosmos
-  Transfer 2.5 `--execute` output wired to S3 (roadmap); a CPU appearance
-  transform can stand in for viewable frames without a GPU.
+- **Augment output contract (per-clip layout):** `cosmos2.transfer` writes a
+  contract manifest by default; with `--execute` on S3 output,
+  `publish_transfer_to_s3` uploads the real Cosmos Transfer 2.5 result in the
+  **per-clip** layout the consumers require:
+  `cosmos_augmented/<clip>/{augmented_video.mp4, frame-*.png, metadata.json}`
+  plus a run-level `cosmos_augmented/manifest.json`. `curate` counts clip
+  subdirs (not top-level files) and `build_run_rrd` reads each clip's
+  `metadata.json` for its Rerun label. Producer and consumers share this shape;
+  `test_publish_transfer_layout_interoperates_with_curate_and_viz` guards it. A
+  single `--execute` emits one clip dir; N-variant "multiply" (one dir per
+  sampled augmentation) needs one inference per combo (follow-up).
 - **Viewing in the NPA agent:** every stage lands under one S3 run prefix
   (`input/ configs/ labeled_original/ cosmos_augmented/ grade/ labeled_augmented/
   curation/ reports/`). The `visualize` stage writes `reports/sim2real.rrd`,

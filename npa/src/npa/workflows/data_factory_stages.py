@@ -132,7 +132,11 @@ def curate(augment_uri: str, report_uri: str) -> dict[str, Any]:
     keys = _list_keys(augment_uri)
     videos = [k for k in keys if k.endswith(".mp4")]
     frames = [k for k in keys if k.endswith(".png")]
-    clips = sorted({k.split("/cosmos_augmented/", 1)[-1].split("/", 1)[0] for k in keys if "/cosmos_augmented/" in k and "_aug" in k})
+    # Clip ids are the per-clip subdirectories under cosmos_augmented/ (entries
+    # that have a further path segment); top-level files like manifest.json are
+    # excluded. Matches the per-clip layout published by publish_transfer_to_s3.
+    rels = [k.split("/cosmos_augmented/", 1)[-1] for k in keys if "/cosmos_augmented/" in k]
+    clips = sorted({r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]})
     report = {
         "schema": "npa.fiftyone.curation.v1",
         "augmented_clips": len(clips),
@@ -149,11 +153,12 @@ def curate(augment_uri: str, report_uri: str) -> dict[str, Any]:
 def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     """Aggregate the run's stage artifacts into a real final report."""
     keys = _list_keys(run_root_uri)
+    run_seg = run_root_uri.rstrip("/").split("/")[-1]
+    marker = f"/{run_seg}/"
     stages: dict[str, int] = {}
     for k in keys:
-        seg = k.split("/")
         # stage = first path segment after the run id
-        rel = k.split(run_root_uri.rstrip("/").split("/")[-1] + "/", 1)[-1] if run_root_uri.rstrip("/").split("/")[-1] in k else k
+        rel = k.split(marker, 1)[-1] if marker in f"/{k}" else k
         stage = rel.split("/", 1)[0] if "/" in rel else rel
         stages[stage] = stages.get(stage, 0) + 1
     report = {

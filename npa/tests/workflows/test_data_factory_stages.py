@@ -50,20 +50,89 @@ def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
+    # Per-clip layout as emitted by publish_transfer_to_s3 (subdirs + top-level
+    # manifest.json which must NOT be counted as a clip).
     keys = [
-        "p/cosmos_augmented/video_0_aug0/augmented_video.mp4",
-        "p/cosmos_augmented/video_0_aug0/frame_01.png",
-        "p/cosmos_augmented/video_0_aug1/augmented_video.mp4",
-        "p/cosmos_augmented/video_1_aug0/frame_01.png",
+        "p/cosmos_augmented/manifest.json",
+        "p/cosmos_augmented/aug-run/augmented_video.mp4",
+        "p/cosmos_augmented/aug-run/frame-00000.png",
+        "p/cosmos_augmented/aug-run/frame-00001.png",
+        "p/cosmos_augmented/aug-run/metadata.json",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     written = {}
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: written.update(payload=payload, uri=uri) or uri)
     report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
-    assert report["video_count"] == 2
+    assert report["video_count"] == 1
     assert report["frame_count"] == 2
-    assert set(report["clip_ids"]) == {"video_0_aug0", "video_0_aug1", "video_1_aug0"}
+    assert set(report["clip_ids"]) == {"aug-run"}
+    assert "manifest.json" not in report["clip_ids"]
     assert report["status"] == "curated"
+
+
+def _png(path: Path) -> Path:
+    import pytest
+
+    Image = pytest.importorskip("PIL.Image")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (16, 12), (20, 40, 60)).save(path)
+    return path
+
+
+def test_publish_transfer_layout_interoperates_with_curate_and_viz(tmp_path: Path, monkeypatch) -> None:
+    """The real producer's S3 layout must flow through curate + build_run_rrd."""
+    import pytest
+
+    pytest.importorskip("rerun")
+    from npa.workbench.cosmos import transfer as tx
+    from npa.workflows.data_factory_viz import build_run_rrd
+
+    video = tmp_path / "out.mp4"
+    video.write_bytes(b"x" * 200_000)
+
+    # Mock frame extraction (no cosmos venv here); write real PNGs into dest.
+    def fake_extract(vp, dest, max_frames=8):
+        return [_png(Path(dest) / f"frame-{i:05d}.png") for i in range(3)]
+
+    monkeypatch.setattr(tx, "extract_frames", fake_extract)
+
+    # Fake storage: mirror uploaded keys into a local tree so we can (a) collect
+    # bucket-relative keys for curate, and (b) run build_run_rrd against the tree.
+    mirror = tmp_path / "mirror"
+    recorded: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            key = uri.replace("s3://bkt/", "")
+            recorded.append(key)
+            out = mirror / key
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(Path(local).read_bytes())
+            return uri
+
+    manifest = tx.publish_transfer_to_s3(
+        {"video_path": str(video), "video_bytes": 200_000, "spec": "s"},
+        "s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        variables={"weather": "rainy", "time_of_day": "night"},
+        storage_client=FakeStorage(),
+    )
+    assert manifest["frame_count"] == 3
+
+    # (a) curate must parse the produced layout correctly.
+    monkeypatch.setattr(dfs, "_list_keys", lambda uri: recorded)
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    report = dfs.curate("s3://bkt/run1/cosmos_augmented/", "s3://bkt/run1/curation/report.json")
+    assert report["clip_ids"] == ["aug-run1"], report["clip_ids"]
+    assert report["video_count"] == 1
+    assert report["frame_count"] == 3
+    assert "manifest.json" not in report["clip_ids"]
+
+    # (b) build_run_rrd must consume the same per-clip layout (frames + metadata).
+    out_rrd = tmp_path / "reports" / "sim2real.rrd"
+    result = build_run_rrd(str(mirror / "run1"), str(out_rrd))
+    assert result["frames_logged"] >= 3
+    assert out_rrd.is_file()
 
 
 def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> None:

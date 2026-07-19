@@ -172,14 +172,24 @@ def publish_transfer_to_s3(
     output_uri: str,
     *,
     run_id: str = "",
+    variables: dict[str, Any] | None = None,
+    clip_name: str = "",
     max_frames: int = 8,
     storage_client: Any = None,
 ) -> dict[str, Any]:
-    """Upload a real Cosmos-Transfer2.5 result (video + frames + index) to S3.
+    """Upload a real Cosmos-Transfer2.5 result to S3 in the per-clip layout that
+    ``data_factory_stages.curate`` and ``data_factory_viz.build_run_rrd`` consume.
 
-    ``transfer`` is the dict returned by :func:`run_cosmos_transfer`. Frames are
-    extracted so downstream stages (pseudo-label, grade, visualize) have real
-    augmented images to consume. Returns the published-artifact summary.
+    Writes, under ``output_uri`` (the ``cosmos_augmented/`` prefix):
+
+        <clip>/augmented_video.mp4
+        <clip>/frame-00000.png ...
+        <clip>/metadata.json      (variables + mode, for the Rerun label)
+        manifest.json             (run-level augment manifest; augment output)
+
+    NOTE: a single ``--execute`` runs one transfer, so this emits one clip dir.
+    Multi-variant "multiply" (one clip dir per sampled augmentation) needs one
+    inference per combo and is tracked as follow-up.
     """
 
     if not output_uri.startswith("s3://"):
@@ -188,35 +198,49 @@ def publish_transfer_to_s3(
 
     client = storage_client or StorageClient.from_environment()
     base = output_uri if output_uri.endswith("/") else output_uri + "/"
-    video_uri = f"{base}augmented_video.mp4"
+    clip = clip_name or (f"aug-{run_id}" if run_id else "aug0")
+    clip_base = f"{base}{clip}/"
+    video_uri = f"{clip_base}augmented_video.mp4"
     client.upload_file(transfer["video_path"], video_uri)
-
-    frames = extract_frames(transfer["video_path"], Path("/tmp/npa-cosmos-frames"), max_frames=max_frames)
-    frame_index: list[dict[str, str]] = []
-    for i, frame_path in enumerate(frames):
-        key = f"frame-{i:05d}.png"
-        client.upload_file(str(frame_path), f"{base}frames/{key}")
-        frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{base}frames/{key}"})
 
     import json as _json
     import tempfile as _tempfile
 
-    meta = {
-        "schema": "npa.cosmos2.transfer.v1",
-        "mode": "cosmos_transfer2.5",
-        "status": "executed",
-        "run_id": run_id,
-        "augmented_video_uri": video_uri,
-        "frame_count": len(frame_index),
-        "frames": frame_index,
-        "control_spec": transfer.get("spec", ""),
-        "video_bytes": transfer.get("video_bytes", 0),
-    }
+    frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
+        frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
+        for i, frame_path in enumerate(frames):
+            key = f"frame-{i:05d}.png"
+            client.upload_file(str(frame_path), f"{clip_base}{key}")
+            frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{clip_base}{key}"})
+
+        clip_meta = {
+            "schema": "npa.cosmos2.transfer.v1",
+            "mode": "cosmos_transfer2.5",
+            "clip": clip,
+            "variables": variables or {},
+            "control_spec": transfer.get("spec", ""),
+        }
+        cm = Path(tmp) / "metadata.json"
+        cm.write_text(_json.dumps(clip_meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        client.upload_file(str(cm), f"{clip_base}metadata.json")
+
+        manifest = {
+            "schema": "npa.cosmos2.transfer.v1",
+            "mode": "cosmos_transfer2.5",
+            "status": "executed",
+            "run_id": run_id,
+            "clips": [clip],
+            "augmented_video_uri": video_uri,
+            "frame_count": len(frame_index),
+            "frames": frame_index,
+            "control_spec": transfer.get("spec", ""),
+            "video_bytes": transfer.get("video_bytes", 0),
+        }
         mp = Path(tmp) / "manifest.json"
-        mp.write_text(_json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        mp.write_text(_json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         client.upload_file(str(mp), f"{base}manifest.json")
-    return meta
+    return manifest
 
 
 __all__ = [
