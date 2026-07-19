@@ -120,7 +120,6 @@ def timed_get(
                 ttfb_s = time.perf_counter() - started
             nbytes += len(chunk)
     total_s = time.perf_counter() - started
-    path = url.split(str(httpx.URL(url).host), 1)[-1] if "://" in url else url
     try:
         path = httpx.URL(url).path
     except Exception:  # noqa: BLE001

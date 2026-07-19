@@ -635,11 +635,12 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
-    assert "_sim_viz_rrd_proxy_allowed" in source
+    assert "rrd_proxy_uri_allowed" in source
+    assert "MAX_RRD_PROXY_BYTES" in source
     assert "Refusing to proxy disallowed rrd_uri host" in source
-    assert 'link_local_prefix = ".".join(("169", "254"))' in source
-    assert "single-tenant basic-auth operator VM" in source
+    assert "_AGENT_RRD_PROXY_EMBED" in source
     assert "last-writer-wins" in source
+    assert "Single-tenant operator-VM model" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source

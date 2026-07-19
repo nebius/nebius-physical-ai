@@ -198,6 +198,7 @@ _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
+_AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
 
 
 def _embedded_agent_visual_feedback_source() -> str:
@@ -205,6 +206,17 @@ def _embedded_agent_visual_feedback_source() -> str:
     import re
 
     path = Path(__file__).with_name("agent_visual_feedback.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_rrd_proxy_source() -> str:
+    """Return agent_rrd_proxy.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_rrd_proxy.py")
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -1565,6 +1577,7 @@ def _bootstrap_agent_stack(
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
+    agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -3369,6 +3382,8 @@ def _chat_with_resilience(
 {_AGENT_ROUTING_EMBED}
 
 {_AGENT_VISUAL_FEEDBACK_EMBED}
+
+{_AGENT_RRD_PROXY_EMBED}
 
 {_AGENT_CHAT_EMBED}
 
@@ -5340,35 +5355,6 @@ def sim_viz_camera_preview(payload: dict | None = None):
         "hint": "Open the Rerun panel and expand world/camera_frustums/<name>.",
     }}
 
-def _sim_viz_rrd_proxy_allowed(uri: str) -> bool:
-    # Trust assumption: rrd_uri is written only by this agent's own load/submit
-    # flows on a single-tenant basic-auth operator VM — not arbitrary end-user
-    # input. Still refuse classic SSRF/metadata targets if a writer is ever widened.
-    try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(uri)
-    except Exception:
-        return False
-    if parsed.scheme not in {{"http", "https"}}:
-        return False
-    host = str(parsed.hostname or "").strip().lower()
-    if not host:
-        return False
-    # Build link-local metadata hosts without embedding a literal IPv4 in source
-    # (repo secret-guard scans reject dotted quads in tracked files).
-    link_local_prefix = ".".join(("169", "254")) + "."
-    metadata_ip = link_local_prefix + link_local_prefix.rstrip(".")
-    blocked_hosts = {{
-        metadata_ip,
-        "metadata",
-        "metadata.google.internal",
-        "metadata.internal",
-    }}
-    if host in blocked_hosts or host.startswith(link_local_prefix):
-        return False
-    return True
-
 def _sim_viz_rrd_file_response(run_id: str = ""):
     state = _load_state()
     sim_viz = _sim_viz_for_run(state, run_id=run_id)
@@ -5378,13 +5364,26 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     if uri.startswith("http://") or uri.startswith("https://"):
-        # Server-side fetch of session rrd_uri — see _sim_viz_rrd_proxy_allowed.
-        if not _sim_viz_rrd_proxy_allowed(uri):
+        # Server-side fetch of session rrd_uri — hardened allowlist + size cap
+        # (see embedded agent_rrd_proxy.rrd_proxy_uri_allowed / MAX_RRD_PROXY_BYTES).
+        if not rrd_proxy_uri_allowed(uri):
             raise HTTPException(status_code=400, detail="Refusing to proxy disallowed rrd_uri host")
         try:
-            proxied = httpx.get(uri, timeout=20.0)
-            proxied.raise_for_status()
-            return Response(content=proxied.content, media_type="application/octet-stream")
+            chunks: list[bytes] = []
+            total = 0
+            with httpx.stream("GET", uri, timeout=20.0) as proxied:
+                proxied.raise_for_status()
+                for chunk in proxied.iter_bytes(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_RRD_PROXY_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Proxied rrd_uri exceeds {{MAX_RRD_PROXY_BYTES}} byte cap",
+                        )
+                    chunks.append(chunk)
+            return Response(content=b"".join(chunks), media_type="application/octet-stream")
+        except HTTPException:
+            raise
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Unable to fetch remote sim2real.rrd: {{exc}}") from exc
     if RRD_PATH.is_file():
@@ -11319,6 +11318,7 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
+        .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
     )
     local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
