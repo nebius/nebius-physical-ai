@@ -40,4 +40,4 @@ jobs:
 
       - name: Mypy (advisory, non-blocking)
         continue-on-error: true
-        run: cd npa && mypy src/npa --ignore-missing-imports --no-error-summary || true
+        run: cd npa && mypy src/npa --ignore-missing-imports --no-error-summary
