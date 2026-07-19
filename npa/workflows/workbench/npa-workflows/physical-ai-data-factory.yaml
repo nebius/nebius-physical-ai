@@ -70,12 +70,12 @@ config:
   decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
   augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   labeled_augmented_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/"
-  # lance_uri = the dataset the FiftyOne curation stage reads. It is REQUIRED
-  # because the workbench.fiftyone.launch_app toolRef argv references
-  # {{config.lance_uri}} (omitting it fails validate-spec). The "lance" name is a
-  # LanceDB-era carryover from the AV/BDD100K curation pipelines; this video
-  # blueprint has no LanceDB table, so it simply points at the augmented set
-  # (same prefix as augment_uri) -- i.e. "the data to curate".
+  # lance_uri = the dataset the curate stage declares as its input (its `inputs:`
+  # block references {{config.lance_uri}}). The "lance" name is a LanceDB-era
+  # carryover from the AV/BDD100K curation pipelines; this video blueprint has no
+  # LanceDB table, so it simply points at the augmented set (same prefix as
+  # augment_uri) -- i.e. "the data to curate". The curate stage itself runs a
+  # real run.shell report over augment_uri (not the fiftyone.launch_app toolRef).
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
   # run_root_uri = the run prefix (holds input/ + cosmos_augmented/ + labeled_*/);
@@ -107,7 +107,7 @@ states:
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import generate_configs;
-        generate_configs('{{config.configs_uri}}', {{config.n_augmentations}}, '{{run.id}}')"
+        generate_configs('{{config.configs_uri}}', '{{config.n_augmentations}}', '{{run.id}}')"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
@@ -217,7 +217,7 @@ states:
     resources: cpu
     inputs:
       - uri: "{{config.lance_uri}}"
-        schema: npa.data_factory.frames.v1
+        schema: npa.cosmos2.transfer.v1
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import curate;

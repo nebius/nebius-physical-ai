@@ -70,6 +70,24 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     assert report["status"] == "curated"
 
 
+def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -> None:
+    """The sampled config manifest must be consumable by the augment stage."""
+    from npa.cli.workbench.cosmos2 import _first_augmentation
+
+    configs_uri = str(tmp_path / "configs") + "/"
+    manifest = dfs.generate_configs(configs_uri, "3", seed="run-xyz")
+    assert manifest["n_augmentations"] == 3
+
+    combo = _first_augmentation(configs_uri)
+    assert combo == manifest["augmentations"][0]
+    assert set(combo) == {"time_of_day", "weather", "road_condition"}
+
+
+def test_generate_configs_non_numeric_count_falls_back(tmp_path: Path) -> None:
+    manifest = dfs.generate_configs(str(tmp_path / "c") + "/", "not-a-number", seed="s")
+    assert manifest["n_augmentations"] == 2
+
+
 def _png(path: Path) -> Path:
     import pytest
 

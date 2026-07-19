@@ -769,6 +769,30 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     assert '.stage-item[data-stage-key]' in source
 
 
+def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
+    """A physical-ai-data-factory .rrd must be recognised as its own recording
+    type (in the embedded agent bootstrap) so the Rerun viewer shows
+    augmented-frame guidance, not the Sim2Real held-out-camera / Franka note —
+    both applications write reports/sim2real.rrd.
+
+    These live inside the bootstrap template string (not importable module
+    attributes), so this is a source-text regression guard.
+    """
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # The DF recording detector is defined and keyed on the app id.
+    assert "def _is_data_factory_recording(key: str) -> bool:" in source
+    assert 'DATA_FACTORY_APP_ID = "physical-ai-data-factory"' in source
+    assert "DATA_FACTORY_APP_ID in str(key or" in source
+    # The DF-specific branch (note + preview_entity) is present and precedes S2R.
+    assert "if _is_data_factory_recording(key):" in source
+    assert 'sim_viz["preview_entity"] = "augmented"' in source
+    assert "Physical AI Data Factory recording loaded." in source
+    # The Sim2Real camera label must NOT be applied to DF recordings.
+    assert "_is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)" in source
+
+
 def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     """The 'Known runs' visualize selector must list discovered runs and the
     Rerun panel must remain present.

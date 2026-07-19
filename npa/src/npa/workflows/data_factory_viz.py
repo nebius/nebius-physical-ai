@@ -15,6 +15,7 @@ is pip-installed.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,11 +36,12 @@ def _run_id_from_uri(uri: str) -> str:
 
 
 def _frame_index(stem: str) -> int:
-    tail = stem.split("_")[-1]
-    try:
-        return int(tail)
-    except ValueError:
-        return 0
+    # Parse the trailing frame number irrespective of the delimiter used by the
+    # producer: both "video_0_frame_01" and "frame-00000" must yield a distinct
+    # per-frame index so Rerun logs an animated sequence instead of collapsing
+    # every frame onto time-sequence 0.
+    m = re.search(r"(\d+)\D*$", stem)
+    return int(m.group(1)) if m else 0
 
 
 def _load_rgb(path: Path):

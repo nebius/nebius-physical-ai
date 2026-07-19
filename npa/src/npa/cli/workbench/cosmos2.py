@@ -21,6 +21,19 @@ app = typer.Typer(
 )
 
 
+def _first_augmentation(configs_uri: str) -> dict:
+    """Read the Config-Gen manifest and return the first sampled combo (or {})."""
+    try:
+        from npa.workflows.data_factory_stages import _download_json
+
+        uri = configs_uri if configs_uri.endswith(".json") else configs_uri.rstrip("/") + "/manifest.json"
+        manifest = _download_json(uri)
+        combos = manifest.get("augmentations") or []
+        return combos[0] if combos and isinstance(combos[0], dict) else {}
+    except Exception:  # noqa: BLE001 - variables are advisory metadata, never fatal
+        return {}
+
+
 @app.command("transfer")
 def transfer_cmd(
     input_uri: str = typer.Option(..., "--input-uri", help="Input frames, assets, or rollout URI."),
@@ -37,6 +50,12 @@ def transfer_cmd(
     ),
     spec: str = typer.Option(
         "", "--spec", help="controlnet_spec path (relative to the transfer repo) for --execute."
+    ),
+    configs_uri: str = typer.Option(
+        "",
+        "--configs-uri",
+        help="Config-Gen manifest URI; the first sampled augmentation combo is "
+        "recorded as the clip's appearance variables (drives the Rerun label).",
     ),
 ) -> None:
     """Build the Cosmos2 transfer stage manifest (or run the real model with --execute)."""
@@ -70,9 +89,13 @@ def transfer_cmd(
         if output_uri.startswith("s3://"):
             from npa.workbench.cosmos.transfer import publish_transfer_to_s3
 
-            published = publish_transfer_to_s3(transfer, output_uri, run_id=run_id)
+            variables = _first_augmentation(configs_uri) if configs_uri else {}
+            published = publish_transfer_to_s3(
+                transfer, output_uri, run_id=run_id, variables=variables
+            )
             payload["augmented_video_uri"] = published["augmented_video_uri"]
             payload["frame_count"] = published["frame_count"]
+            payload["augmentation_variables"] = variables
     if output_json is not None:
         payload = write_manifest(payload, output_json)
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))

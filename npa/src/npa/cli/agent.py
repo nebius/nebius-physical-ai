@@ -2921,6 +2921,16 @@ def _is_sim2real_pipeline_recording(key: str) -> bool:
     return str(key or "").endswith("/reports/sim2real.rrd")
 
 
+DATA_FACTORY_APP_ID = "physical-ai-data-factory"
+
+
+def _is_data_factory_recording(key: str) -> bool:
+    # A Physical AI Data Factory run also writes reports/sim2real.rrd, but its
+    # entities are input/ + augmented/ + captions/ (no held-out-sim camera), so
+    # it needs a different viewer note than the Sim2Real pipeline recording.
+    return _is_sim2real_pipeline_recording(key) and DATA_FACTORY_APP_ID in str(key or "")
+
+
 def _sim2real_pipeline_camera_label(requested: str = "") -> str:
     value = str(requested or "").strip()
     return value if value and value != "workspace" else "heldout-sim"
@@ -2941,7 +2951,7 @@ def _apply_loaded_artifact(
     if isinstance(current, dict):
         sim_viz.update(current)
     camera = str(sim_viz.get("camera") or "workspace")
-    if render == "rerun" and _is_sim2real_pipeline_recording(key):
+    if render == "rerun" and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key):
         camera = _sim2real_pipeline_camera_label(camera)
     sim_viz.update(
         {{
@@ -2964,7 +2974,16 @@ def _apply_loaded_artifact(
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
-        if _is_sim2real_pipeline_recording(key):
+        if _is_data_factory_recording(key):
+            sim_viz["preview_entity"] = "augmented"
+            sim_viz["visualization_note"] = (
+                "Physical AI Data Factory recording loaded. Entities: input/<clip> "
+                "(source frames), augmented/<clip> (Cosmos Transfer 2.5 output; the "
+                "static text label shows the sampled appearance variables), and "
+                "captions/ (Token Factory VLM pseudo-labels). Scrub the frame "
+                "timeline to compare original vs augmented."
+            )
+        elif _is_sim2real_pipeline_recording(key):
             sim_viz["preview_entity"] = "camera"
             sim_viz["visualization_note"] = (
                 "Pipeline Sim2Real recording loaded. The primary Rerun view is the "

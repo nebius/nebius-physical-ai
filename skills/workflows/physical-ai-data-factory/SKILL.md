@@ -44,6 +44,18 @@ the `real-components` skill). The `augment` stage runs the real Cosmos Transfer
 2.5 model on GPU via `--execute` and publishes the generated video + extracted
 frames to `augment_uri`, which the grade / re-label / visualize stages consume.
 
+**Config → augment scope (honest caveat).** `generate-configs` samples
+appearance combos (weather / time-of-day / road-condition); the `augment`
+toolRef passes `--configs-uri` so the first sampled combo is recorded as the
+clip's `metadata.json` `variables` (which drives the Rerun label and proves the
+config manifest is consumed, not decorative). Cosmos Transfer 2.5 itself still
+runs a **fixed control spec** (bundled `robot_depth_spec.json`), so the geometry
+of the re-render is not yet conditioned on the sampled weather/time text, and a
+single `--execute` emits **one** variant. Full config-driven appearance
+conditioning and N-variant "multiply" (one inference per sampled combo) are
+tracked follow-ups — do not describe the current blueprint as generating N
+condition-specific variants.
+
 Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
 `meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`
 (Cosmos-family critic). Cosmos Transfer 2.5 is the GPU augment engine, not a

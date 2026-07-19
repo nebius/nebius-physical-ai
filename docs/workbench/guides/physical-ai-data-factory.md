@@ -34,6 +34,14 @@ augmentation engine, run via the `cosmos2.transfer` tool (`--execute` on an
 check is a CPU checker folded into the grade gate; the model-based attribute
 verification is `vlm_eval`.
 
+> **Config → augment scope.** The `augment` stage receives the Config-Gen
+> manifest via `--configs-uri` and records the first sampled combo as the clip's
+> `metadata.json` `variables` (which drives the Rerun label). Cosmos Transfer 2.5
+> itself currently runs a **fixed control spec** (`robot_depth_spec.json`), so
+> the re-render is not yet conditioned on the sampled weather/time text, and one
+> `--execute` produces **one** variant. Config-driven appearance conditioning and
+> N-variant "multiply" (one inference per sampled combo) are tracked follow-ups.
+
 ## Runtime placement
 
 - **Token Factory (zero-GPU, hosted):** captioning, attribute verification.

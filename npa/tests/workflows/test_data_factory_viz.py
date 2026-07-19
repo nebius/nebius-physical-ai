@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from npa.workflows.data_factory_viz import DataFactoryVizError, build_run_rrd
+from npa.workflows.data_factory_viz import DataFactoryVizError, _frame_index, build_run_rrd
 
 
 def _write_png(path: Path, color: tuple[int, int, int]) -> None:
@@ -35,6 +35,35 @@ def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
     assert result["run_id"] == "df-run"
     assert out.is_file()
     assert out.stat().st_size > 0
+
+
+def test_frame_index_parses_both_naming_schemes() -> None:
+    # Hyphen-delimited producer names (frame-00000) and underscore input names
+    # (video_0_frame_01) must both yield distinct, ordered indices.
+    assert _frame_index("frame-00000") == 0
+    assert _frame_index("frame-00007") == 7
+    assert _frame_index("video_0_frame_01") == 1
+    assert _frame_index("video_0_frame_02") == 2
+    assert _frame_index("noindex") == 0
+
+
+def test_augmented_frames_get_distinct_time_points(tmp_path: Path, monkeypatch) -> None:
+    """Hyphen-named augmented frames must map to distinct Rerun time-sequences."""
+    pytest.importorskip("rerun")
+    import npa.workflows.data_factory_viz as viz
+
+    run = tmp_path / "df-run"
+    aug = run / "cosmos_augmented" / "aug-run"
+    for i in range(4):
+        _write_png(aug / f"frame-{i:05d}.png", (10 * i, 20, 30))
+    (aug / "metadata.json").write_text('{"variables": {"weather": "rainy"}}')
+
+    seen: list[int] = []
+    orig = viz._set_frame
+    monkeypatch.setattr(viz, "_set_frame", lambda rr, rec, idx: (seen.append(idx), orig(rr, rec, idx))[-1])
+
+    build_run_rrd(str(run), str(tmp_path / "reports" / "sim2real.rrd"))
+    assert sorted(seen) == [0, 1, 2, 3], seen
 
 
 def test_build_run_rrd_requires_rrd_output(tmp_path: Path) -> None:

@@ -95,10 +95,18 @@ def _download_json(uri: str) -> dict[str, Any]:
         return json.loads(Path(p).read_text())
 
 
-def generate_configs(configs_uri: str, n_augmentations: int = 2, seed: str = "") -> dict[str, Any]:
-    """Sample appearance-only augmentation combos and write a real config manifest."""
+def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str = "") -> dict[str, Any]:
+    """Sample appearance-only augmentation combos and write a real config manifest.
+
+    ``n_augmentations`` accepts a str (the blueprint interpolates a quoted config
+    value) or int; a non-numeric value falls back to 2 rather than crashing.
+    """
+    try:
+        n = int(n_augmentations)
+    except (TypeError, ValueError):
+        n = 2
     rng = random.Random(seed or None)
-    combos = [{k: rng.choice(v) for k, v in APPEARANCE_VARIABLES.items()} for _ in range(max(1, n_augmentations))]
+    combos = [{k: rng.choice(v) for k, v in APPEARANCE_VARIABLES.items()} for _ in range(max(1, n))]
     manifest = {
         "schema": "npa.data_factory.configs.v1",
         "n_augmentations": len(combos),
@@ -132,10 +140,13 @@ def curate(augment_uri: str, report_uri: str) -> dict[str, Any]:
     keys = _list_keys(augment_uri)
     videos = [k for k in keys if k.endswith(".mp4")]
     frames = [k for k in keys if k.endswith(".png")]
-    # Clip ids are the per-clip subdirectories under cosmos_augmented/ (entries
-    # that have a further path segment); top-level files like manifest.json are
-    # excluded. Matches the per-clip layout published by publish_transfer_to_s3.
-    rels = [k.split("/cosmos_augmented/", 1)[-1] for k in keys if "/cosmos_augmented/" in k]
+    # Clip ids are the per-clip subdirectories under the augment prefix itself
+    # (entries that have a further path segment); top-level files like
+    # manifest.json are excluded. Deriving relative to the passed augment_uri
+    # (rather than a hardcoded "/cosmos_augmented/") keeps this correct for any
+    # prefix, including a bucket root. Matches publish_transfer_to_s3's layout.
+    _, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
+    rels = [k[len(aug_prefix):] for k in keys if k.startswith(aug_prefix)]
     clips = sorted({r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]})
     report = {
         "schema": "npa.fiftyone.curation.v1",

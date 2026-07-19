@@ -138,6 +138,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.augment_uri}}",
             "--run-id",
             "{{run.id}}",
+            "--configs-uri",
+            "{{config.configs_uri}}",
             "--execute",
         ],
     ),
