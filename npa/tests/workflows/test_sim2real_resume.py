@@ -8,7 +8,6 @@ command's environment, and the runner state that carries it across iterations.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import npa.workflows.sim2real.engine as engine
 from npa.workflows.sim2real.models import Sim2RealLoopConfig

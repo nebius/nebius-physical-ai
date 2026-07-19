@@ -7,6 +7,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Cover the supported floor (3.10), a common current version, and the
+        # latest release so requires-python = ">=3.10" is actually tested.
+        python-version: ["3.10", "3.12", "3.14"]
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
@@ -17,16 +23,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python 3.14
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install npa
-        run: cd npa && pip install -e ".[server]" && pip install pytest pytest-cov pytest-mock
-
-      - name: Install adapter test dependencies
-        run: cd npa && pip install -e ".[adapter]"
+        run: cd npa && pip install -e ".[dev,adapter]"
 
       - name: Verify checked-out CLI flags
         run: |
@@ -66,7 +69,9 @@ jobs:
           PY
 
       - name: Run pytest with coverage
-        run: cd npa && python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing
+        # The floor sits below the current ~66% so version-dependent skips
+        # don't flake the gate; raise it as coverage grows, never lower it.
+        run: cd npa && python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
 
       - name: Run CLI install test
         run: cd npa && bash tests/integration/test_cli_install.sh

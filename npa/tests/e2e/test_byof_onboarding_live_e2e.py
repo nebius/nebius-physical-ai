@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -88,7 +87,6 @@ def _parse_last_json_blob(text: str) -> dict[str, object]:
 def _maybe_refresh_byof_registry_pull_secret(registry: str, e2e_project: str | None) -> None:
     if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
         return
-    profile = os.environ.get("NPA_NEBIUS_PROFILE", "agent-sa").strip()
     _activate_nebius_profile()
     server = registry.split("/", 1)[0]
     if not server.startswith("cr.") or ".nebius.cloud" not in server:

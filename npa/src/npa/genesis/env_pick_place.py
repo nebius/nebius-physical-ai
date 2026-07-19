@@ -34,7 +34,6 @@ from npa.genesis.scene_assets import (
     PRIMITIVE_CYLINDER,
     PRIMITIVE_SPHERE,
     ROLE_MANIPULAND,
-    CameraSpec,
     ObjectSpec,
     SceneSpec,
     SceneSpecError,

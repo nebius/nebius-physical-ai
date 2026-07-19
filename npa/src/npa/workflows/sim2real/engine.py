@@ -35,7 +35,6 @@ import hashlib
 import json
 import os
 import random
-import re
 import shlex
 import subprocess
 import sys
@@ -64,14 +63,12 @@ from npa.workbench.cosmos.reason import (
 from npa.workflows.sim2real.config import artifact_uris, byo_seams
 from npa.workflows.sim2real.constants import (
     CORRECTIVE_TARGETS,
-    DEFAULT_COSMOS_REASON_CACHE,
     DEFAULT_ISAAC_TASK,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_SIM_BACKEND,
     DEFAULT_THRESHOLD,
     DEFAULT_VLM_SEAM_EVIDENCE,
     ERROR_SEVERITY,
-    REFERENCE_VLM_ALIASES,
     SCHEMA_E2E_REPORT,
     SCHEMA_HELDOUT_REPORT,
     SCHEMA_RL_SIGNAL,
@@ -1359,13 +1356,6 @@ def run_cosmos2_transfer_component(
 
     if not config.s3_bucket:
         raise Sim2RealLoopError("s3_bucket is required for Cosmos Transfer sibling jobs")
-    attempt_id = _component_attempt_id(config, "cosmos2_transfer", "preamble")
-    manifest_uri = _component_output_uri(
-        config,
-        component="cosmos2_transfer",
-        attempt_id=attempt_id,
-        filename="transfer.json",
-    )
     frames_uri = _normalized_s3_prefix(f"{output_uri.rstrip('/')}/frames/")
     augment_prefix = output_uri.rstrip("/") + "/"
     result_uri = f"{augment_prefix}cosmos2-transfer-result.json"
@@ -1472,9 +1462,6 @@ def run_policy_rollout_component(
             iteration=iteration,
             train_envs_uri=train_envs_uri,
         )
-    attempt_id = _component_attempt_id(
-        config, "policy_actions", f"outer-{outer_iteration:02d}-iter-{iteration:02d}"
-    )
     output_uri = _normalized_s3_prefix(
         f"{_artifact_root_uri(config)}/actions/train/"
         f"outer-{outer_iteration:02d}/iter-{iteration:02d}/"
@@ -2660,7 +2647,6 @@ def _apply_reference_adapter_heldout_gate(
     base = _inner_loop_progress_score(inner_evidence)
     for index, (item, env) in enumerate(zip(per_env, envs, strict=False)):
         cal_score = _reference_adapter_env_score(base, env, index)
-        cal_success = cal_score >= threshold
         sim_success = bool(item.get("success"))
         sim_score = float(item.get("score", 0.0))
         details = dict(item.get("details") or {})

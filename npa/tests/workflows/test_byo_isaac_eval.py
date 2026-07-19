@@ -89,7 +89,8 @@ def test_dryrun_refuses_without_checkpoint(tmp_path, monkeypatch):
 
 
 def test_read_generated_envs(tmp_path):
-    d = tmp_path / "heldout"; d.mkdir()
+    d = tmp_path / "heldout"
+    d.mkdir()
     (d / "envs.jsonl").write_text(
         '{"env_id":"env-00000","seed":111,"scene":{"simready_asset":"a"}}\n'
         '{"env_id":"env-00001","seed":222}\n', encoding="utf-8")

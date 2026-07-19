@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
-UTC = timezone.utc
-
 import boto3
 import yaml
 from botocore.config import Config as BotoConfig
 
 from npa.clients.config import resolve_project_storage
 from npa.clients.credentials import load_credentials, storage_endpoint_url
+
+UTC = timezone.utc
 
 
 DEFAULT_WORKFLOW_MOUNT_PATH = "/mnt/npa-workflow-state"

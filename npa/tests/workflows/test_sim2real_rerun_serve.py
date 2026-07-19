@@ -10,7 +10,6 @@ from npa.workflows.rerun_serve import (
     DEFAULT_NGINX_IMAGE,
     DEFAULT_PORT,
     DEFAULT_RERUN_IMAGE,
-    DEFAULT_S3_PREFIX,
     RERUN_INTERNAL_WEB_PORT,
     RERUN_STATIC_CACHE_CONTROL,
     Sim2RealRerunServeError,
@@ -33,7 +32,6 @@ from npa.workflows.rerun_serve import (
     should_auto_rerun_serve,
     validate_run_id,
     validate_staged_run_id,
-    verify_rrd_exists_on_s3,
 )
 
 

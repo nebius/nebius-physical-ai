@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from npa.deploy.images import CONTAINER_IMAGE_NAMES, supported_tool_version
+from npa.deploy.images import CONTAINER_IMAGE_NAMES
 from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
 from npa.smoke.manifest import load_manifest
 

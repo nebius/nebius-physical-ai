@@ -12,7 +12,6 @@ from npa.workflows.sim2real.constants import DEFAULT_PREFIX
 from npa.workflows.sim2real.monitor import (
     load_operator_config,
     normalize_staged_run_id,
-    orchestrator_job_name,
     parse_submit_job,
     parse_submit_run_id,
 )
