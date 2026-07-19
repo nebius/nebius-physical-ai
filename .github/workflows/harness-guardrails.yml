@@ -26,7 +26,7 @@ jobs:
       - name: Create repository venv
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e "npa[server]" pytest pytest-mock PyYAML
+          npa/.venv/bin/python -m pip install -e "npa[dev]"
 
       - name: Run guardrail tests
         run: npa/.venv/bin/python -m pytest npa/tests/guardrails -q
