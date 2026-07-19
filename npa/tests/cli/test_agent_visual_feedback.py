@@ -234,8 +234,27 @@ def test_frame_looks_blank_from_stats_rejects_uniform_gray() -> None:
     assert not vf.frame_looks_blank_from_stats(mean=40.0, variance=1200.0, value_range=200.0)
     # Sparse orange/cyan strokes on near-black: mean/variance stay tiny, but vivid pixels count.
     assert not vf.frame_looks_blank_from_stats(
-        mean=4.0, variance=8.0, value_range=210.0, vivid=6, vivid_ratio=0.004
+        mean=4.0,
+        variance=8.0,
+        value_range=210.0,
+        vivid=vf.BLANK_VIVID_MIN + 3,
+        vivid_ratio=vf.BLANK_VIVID_RATIO_MIN * 2,
     )
+
+
+def test_blank_detection_constants_are_mirrored_in_ui_source() -> None:
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    for name in (
+        "BLANK_VIVID_MIN",
+        "BLANK_VIVID_RATIO_MIN",
+        "BLANK_LIT_MIN",
+        "BLANK_VARIANCE_STRICT",
+        "BLANK_RANGE_MIN",
+    ):
+        value = getattr(vf, name)
+        assert f"const {name} = {value}" in ui_html, f"UI missing {name}={value}"
+        assert f"{name} = {value}" in Path(vf.__file__).read_text(encoding="utf-8")
 
 
 def test_g1_trajectory_domain_hint_warns_against_blank_claim() -> None:

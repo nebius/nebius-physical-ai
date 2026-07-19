@@ -98,6 +98,22 @@ _KIND_GUIDANCE: dict[str, str] = {
 }
 
 
+# Empirical blank-detection thresholds mirrored by the agent UI's
+# frameLooksBlank / sampleFrameStats. Tuned for dense RGB vs cleared WebGL
+# mid-gray vs sparse G1 skeleton strokes on dark grids; unit tests pin them.
+BLANK_VIVID_MIN = 3
+BLANK_VIVID_RATIO_MIN = 0.0015
+BLANK_LIT_MIN = 12
+BLANK_LIT_RANGE_MIN = 40
+BLANK_VARIANCE_STRICT = 35
+BLANK_RANGE_STRICT = 40
+BLANK_RANGE_MIN = 18
+BLANK_VARIANCE_NEAR_FLAT = 80
+BLANK_MEAN_NEAR_BLACK = 12
+BLANK_MEAN_NEAR_WHITE = 243
+BLANK_VIVID_NEAR_FLAT_MAX = 2
+
+
 def frame_looks_blank_from_stats(
     *,
     mean: float,
@@ -113,15 +129,19 @@ def frame_looks_blank_from_stats(
     \"uniform gray\" Describe-this replies from cleared WebGL buffers, and that
     sparse skeleton/wireframe overlays on dark grids are still treated as content.
     """
-    if vivid >= 3 or vivid_ratio >= 0.0015:
+    if vivid >= BLANK_VIVID_MIN or vivid_ratio >= BLANK_VIVID_RATIO_MIN:
         return False
-    if lit >= 12 and value_range >= 40:
+    if lit >= BLANK_LIT_MIN and value_range >= BLANK_LIT_RANGE_MIN:
         return False
-    if variance < 35 and value_range < 40:
+    if variance < BLANK_VARIANCE_STRICT and value_range < BLANK_RANGE_STRICT:
         return True
-    if value_range < 18:
+    if value_range < BLANK_RANGE_MIN:
         return True
-    if variance < 80 and (mean < 12 or mean > 243) and vivid < 2:
+    if (
+        variance < BLANK_VARIANCE_NEAR_FLAT
+        and (mean < BLANK_MEAN_NEAR_BLACK or mean > BLANK_MEAN_NEAR_WHITE)
+        and vivid < BLANK_VIVID_NEAR_FLAT_MAX
+    ):
         return True
     return False
 

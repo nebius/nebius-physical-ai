@@ -15,6 +15,11 @@ import httpx
 
 # UI must keep the iframe eager/paintable while Chat is active, and cover it
 # until past Rerun's application-bundle splash.
+#
+# These are intentional string-match regression guards: the agent UI is an
+# embedded HTML/JS blob inside agent.py, so we cannot unit-test behavior
+# cheaply. Renaming a helper (e.g. waitUntilRerunPastBundleSplash) will break
+# CI — update the marker list in the same change when that happens.
 REQUIRED_UI_MARKERS = (
     'id="tabChat"',
     'id="tabRerun"',

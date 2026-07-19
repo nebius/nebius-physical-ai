@@ -1877,6 +1877,9 @@ def _default_state() -> dict:
     }}
 
 def _load_state() -> dict:
+    # Single-tenant operator-VM model: lock-free read-modify-write on STATE_PATH
+    # (+ best-effort S3 mirror). Concurrent writers are last-writer-wins — fine
+    # for one operator UI, not safe if this ever becomes a multi-client service.
     data = None
     if STATE_PATH.exists():
         try:
@@ -1912,6 +1915,7 @@ def _load_state() -> dict:
     return merged
 
 def _save_state(state: dict) -> None:
+    # See _load_state: no file lock — last writer wins under concurrent requests.
     state["updated_at"] = _now_iso()
     state["state_version"] = int(state.get("state_version") or 2)
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
@@ -5336,6 +5340,27 @@ def sim_viz_camera_preview(payload: dict | None = None):
         "hint": "Open the Rerun panel and expand world/camera_frustums/<name>.",
     }}
 
+def _sim_viz_rrd_proxy_allowed(uri: str) -> bool:
+    # Trust assumption: rrd_uri is written only by this agent's own load/submit
+    # flows on a single-tenant basic-auth operator VM — not arbitrary end-user
+    # input. Still refuse classic SSRF/metadata targets if a writer is ever widened.
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(uri)
+    except Exception:
+        return False
+    if parsed.scheme not in {{"http", "https"}}:
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in {{"169.254.169.254", "metadata", "metadata.google.internal", "metadata.internal"}}:
+        return False
+    if host.startswith("169.254."):
+        return False
+    return True
+
 def _sim_viz_rrd_file_response(run_id: str = ""):
     state = _load_state()
     sim_viz = _sim_viz_for_run(state, run_id=run_id)
@@ -5345,6 +5370,9 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     if uri.startswith("http://") or uri.startswith("https://"):
+        # Server-side fetch of session rrd_uri — see _sim_viz_rrd_proxy_allowed.
+        if not _sim_viz_rrd_proxy_allowed(uri):
+            raise HTTPException(status_code=400, detail="Refusing to proxy disallowed rrd_uri host")
         try:
             proxied = httpx.get(uri, timeout=20.0)
             proxied.raise_for_status()
@@ -8751,16 +8779,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return null;
         }}
       }}
+      // Keep in lockstep with agent_visual_feedback.BLANK_* constants / frame_looks_blank_from_stats.
+      const BLANK_VIVID_MIN = 3;
+      const BLANK_VIVID_RATIO_MIN = 0.0015;
+      const BLANK_LIT_MIN = 12;
+      const BLANK_LIT_RANGE_MIN = 40;
+      const BLANK_VARIANCE_STRICT = 35;
+      const BLANK_RANGE_STRICT = 40;
+      const BLANK_RANGE_MIN = 18;
+      const BLANK_VARIANCE_NEAR_FLAT = 80;
+      const BLANK_MEAN_NEAR_BLACK = 12;
+      const BLANK_MEAN_NEAR_WHITE = 243;
+      const BLANK_VIVID_NEAR_FLAT_MAX = 2;
       function frameLooksBlank(canvas) {{
         // Uniform black/white/gray (incl. WebGL cleared mid-gray) ≈ blank.
         // Sparse skeletons/wireframes on dark grids are valid even when mean≈0.
         const stats = sampleFrameStats(canvas);
         if (!stats) return true;
-        if (stats.vivid >= 3 || stats.vividRatio >= 0.0015) return false;
-        if (stats.lit >= 12 && stats.range >= 40) return false;
-        if (stats.variance < 35 && stats.range < 40) return true;
-        if (stats.range < 18) return true;
-        if (stats.variance < 80 && (stats.mean < 12 || stats.mean > 243) && stats.vivid < 2) return true;
+        if (stats.vivid >= BLANK_VIVID_MIN || stats.vividRatio >= BLANK_VIVID_RATIO_MIN) return false;
+        if (stats.lit >= BLANK_LIT_MIN && stats.range >= BLANK_LIT_RANGE_MIN) return false;
+        if (stats.variance < BLANK_VARIANCE_STRICT && stats.range < BLANK_RANGE_STRICT) return true;
+        if (stats.range < BLANK_RANGE_MIN) return true;
+        if (
+          stats.variance < BLANK_VARIANCE_NEAR_FLAT
+          && (stats.mean < BLANK_MEAN_NEAR_BLACK || stats.mean > BLANK_MEAN_NEAR_WHITE)
+          && stats.vivid < BLANK_VIVID_NEAR_FLAT_MAX
+        ) return true;
         return false;
       }}
       function pickLargestIframeCanvas(doc) {{

@@ -53,6 +53,11 @@ def test_bundle_check_required_markers_include_cover() -> None:
     assert 'id="rerunBundleCover"' in REQUIRED_UI_MARKERS
     assert "waitUntilRerunPastBundleSplash" in REQUIRED_UI_MARKERS
     assert "scheduleRerunBundleUncover" in REQUIRED_UI_MARKERS
+    # Documented intentional string-match guards (embedded UI is hard to unit-test).
+    from npa import agent_rerun_bundle_check as bundle_mod
+
+    mod_text = Path(bundle_mod.__file__).read_text(encoding="utf-8")
+    assert "intentional string-match regression guards" in mod_text
     assert any("Mount the viewer immediately" in marker for marker in FORBIDDEN_UI_MARKERS)
     assert any("await waitUntilRerunPastBundleSplash" in marker for marker in FORBIDDEN_UI_MARKERS)
 
