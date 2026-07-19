@@ -13,6 +13,9 @@ requires-python = ">=3.10"
 # deliberately wide so a stale mirror does not break the first install.
 dependencies = [
     "typer>=0.24",
+    # Imported directly (npa.cli.workflow_shim); typer >= 0.27 no longer
+    # depends on click, so it must be declared here.
+    "click>=8.0",
     "httpx>=0.27",
     "paramiko>=4.0",
     "pyyaml>=6.0",
