@@ -79,3 +79,55 @@ def test_convert_rejects_state_action_length_mismatch(tmp_path: Path) -> None:
 def test_discover_episodes_rejects_empty_input(tmp_path: Path) -> None:
     with pytest.raises(IsaacLabLeRobotError, match="No episode_"):
         discover_episodes(tmp_path)
+
+
+def test_convert_with_custom_feature_spec(tmp_path):
+    from npa.adapter.isaac_lab_lerobot import LeRobotFeatureSpec
+
+    spec = LeRobotFeatureSpec(
+        state_names=[f"joint_{i}" for i in range(9)],
+        action_names=[f"act_{i}" for i in range(7)],
+        robot_type="franka_panda",
+    )
+    assert spec.state_dim == 9
+    assert spec.action_dim == 7
+
+    input_dir = tmp_path / "raw"
+    episode = input_dir / "episode_000000"
+    episode.mkdir(parents=True)
+    frames = 4
+    np.save(episode / "state.npy", np.zeros((frames, 9), dtype=np.float32))
+    np.save(episode / "actions.npy", np.ones((frames, 7), dtype=np.float32))
+
+    output_dir = tmp_path / "lerobot"
+    convert(input_dir, output_dir, spec=spec)
+
+    info = json.loads((output_dir / "meta" / "info.json").read_text())
+    assert info["robot_type"] == "franka_panda"
+    assert info["features"]["observation.state"]["shape"] == [9]
+    assert info["features"]["action"]["shape"] == [7]
+    assert info["features"]["observation.state"]["names"] == [spec.state_names]
+
+    import pyarrow.parquet as pq
+
+    data = pq.read_table(output_dir / "data" / "chunk-000" / "file-000.parquet")
+    assert data.schema.field("observation.state").type.list_size == 9
+    assert data.schema.field("action").type.list_size == 7
+
+
+def test_convert_with_spec_rejects_mismatched_dims(tmp_path):
+    from npa.adapter.isaac_lab_lerobot import LeRobotFeatureSpec
+
+    spec = LeRobotFeatureSpec(
+        state_names=["a", "b", "c"],
+        action_names=["a", "b", "c"],
+        robot_type="tiny_bot",
+    )
+    input_dir = tmp_path / "raw"
+    episode = input_dir / "episode_000000"
+    episode.mkdir(parents=True)
+    np.save(episode / "state.npy", np.zeros((2, 5), dtype=np.float32))
+    np.save(episode / "actions.npy", np.zeros((2, 5), dtype=np.float32))
+
+    with pytest.raises(IsaacLabLeRobotError, match="tiny_bot"):
+        convert(input_dir, tmp_path / "lerobot", spec=spec)
