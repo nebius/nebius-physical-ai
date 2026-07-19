@@ -26,7 +26,6 @@ from npa.workflows.sim2real_loop import (
     run_full_loop,
     run_inner_loop,
 )
-from npa.workflows.sim2real_loop import build_config_from_env
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     default_regen_local_dir,
@@ -296,6 +295,72 @@ def run_command(
         typer.echo(text)
     else:
         typer.echo(text)
+
+
+@app.command("materialize")
+def materialize_command(
+    runbook: Optional[Path] = typer.Argument(
+        None,
+        help="SkyPilot runbook to render (default: the committed sim2real runbook).",
+    ),
+    run_id: str = typer.Option("", "--run-id", help="Run id; also sets NPA_SIM2REAL_RUN_ID."),
+    image: str = typer.Option(
+        "", "--image", help="Registry-qualified trainer image (required while the runbook ships a placeholder)."
+    ),
+    env: list[str] = typer.Option(
+        [], "--env", help="KEY=VALUE override for a runbook env (repeatable)."
+    ),
+    namespace: str = typer.Option("", "--namespace", help="Kubernetes namespace override."),
+    skip_setup: bool = typer.Option(
+        False, "--skip-setup", help="Omit the runbook setup block (image already carries npa)."
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Write the Job manifest YAML here instead of stdout."
+    ),
+) -> None:
+    """Render the sim2real runbook to a Kubernetes Job (no SkyPilot, no operator pack).
+
+    This is the in-repo GPU-reaching path while raw `sky jobs launch` is blocked
+    by the SkyPilot 0.12.2 pre-setup getcwd() bug: materialize, then
+    `kubectl apply -f <manifest>` and follow with `npa workbench sim2real status`.
+    """
+
+    from npa.workflows.sim2real.materialize import (
+        Sim2RealMaterializeError,
+        materialize_k8s_job,
+    )
+
+    overrides: dict[str, str] = {}
+    for item in env:
+        key, separator, value = item.partition("=")
+        if not separator or not key:
+            raise typer.BadParameter(f"--env expects KEY=VALUE, got {item!r}")
+        overrides[key] = value
+
+    try:
+        job = materialize_k8s_job(
+            runbook,
+            run_id=run_id,
+            image=image,
+            env_overrides=overrides,
+            namespace=namespace,
+            include_setup=not skip_setup,
+        )
+    except (Sim2RealMaterializeError, FileNotFoundError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    if output is not None:
+        output.write_text(job.to_yaml(), encoding="utf-8")
+        typer.echo(f"wrote {output}")
+        typer.echo(
+            f"apply with: kubectl apply -f {output} "
+            f"(job {job.job_name} in namespace {job.namespace}, image {job.image})"
+        )
+    else:
+        typer.echo(job.to_yaml())
+    for warning in job.warnings:
+        typer.echo(f"note: {warning}", err=True)
 
 
 @app.command("status")

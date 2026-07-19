@@ -13,6 +13,14 @@ Steps 12 and 13 are documented external seams. Stage 2 materializes stock or BYO
 scene and robot specs. Every step writes local artifacts and, when
 `--upload-artifacts` is set, uploads the run tree to S3.
 
+> **Naming: `sim2real` vs `sim-to-real`.** Two related surfaces exist and the
+> spelling is the disambiguator. **`sim2real`** (this directory,
+> `npa workbench sim2real …`, `runbook.yaml`) is the canonical staged
+> VLM-to-RL loop described above. **`sim-to-real`** (hyphenated:
+> `skypilot/sim-to-real-loop.yaml`, `skypilot/sim-to-real-pipeline.yaml`, the
+> H100 quickstart cookbook) is the older standalone training pipeline. If you
+> are unsure which you want, start here — this is the maintained loop.
+
 Canonical operator routing after CLI namespace cleanup: use
 `npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
 for cluster execution (auto-routes to the direct K8s staged Job when SkyPilot is
@@ -255,9 +263,18 @@ YAML
 
 # Reaching GPUs: raw `sky jobs launch` against this YAML is currently blocked by
 # the SkyPilot 0.12.2 pre-setup getcwd() bug. Until that is fixed upstream, reach
-# GPUs through the materialized-runbook / direct-Kubernetes route: render the
-# run-block command (literal endpoint, bucket, and images already in place) into
-# a Kubernetes Job that uses the agent-sa pull path and the hf-ngc-tokens secret.
+# GPUs through the in-repo materializer — it renders this runbook (envs, GPU
+# resources, service account, pull/env secrets, setup+run script) into a plain
+# Kubernetes Job that needs no SkyPilot controller and no operator pack:
+#
+#   npa workbench sim2real materialize \
+#     --run-id my-run \
+#     --image cr.<region>.nebius.cloud/<your-registry-id>/npa-lerobot-vlm-rl:0.1.1 \
+#     --env NPA_SIM2REAL_BUCKET=<bucket> \
+#     --env AWS_ENDPOINT_URL=<your-s3-compatible-endpoint> \
+#     -o /tmp/sim2real-job.yaml
+#   kubectl apply -f /tmp/sim2real-job.yaml
+#   npa workbench sim2real status --run-id my-run --watch
 sky jobs launch \
   --config /tmp/sim2real-skypilot-k8s.yaml \
   --infra k8s/<cluster-name> \

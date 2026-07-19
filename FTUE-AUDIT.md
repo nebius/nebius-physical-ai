@@ -62,20 +62,26 @@ a "non-default S3-compatible endpoint."
 
 ## Deferred gaps (follow-up)
 
-- **Three-tier → GPU launch gap.** All three tiers reach GPUs only via the
+- **Three-tier → GPU launch gap.** ~~All three tiers reach GPUs only via the
   materialized-runbook / direct-Kubernetes path today, because raw
   `sky jobs launch` is blocked by the SkyPilot 0.12.2 pre-setup `getcwd()` bug.
   Closing this needs an upstream SkyPilot fix or a thin in-repo materializer that
-  renders the runbook to a Kubernetes Job. Out of scope for this pass.
+  renders the runbook to a Kubernetes Job. Out of scope for this pass.~~
+  **Closed:** `npa workbench sim2real materialize` renders the committed
+  runbook to a plain Kubernetes Job
+  (`npa/src/npa/workflows/sim2real/materialize.py`), no operator pack needed.
 - **SDK seam discoverability.** `sim2real.run(**overrides)` forwards seams by
   keyword into `build_config_from_env`, so the seams are real and coherent but
   not discoverable from the function signature (and cannot use the inspect-based
   `CapabilityContract`). Promoting the seams to explicit keyword parameters would
   change the public SDK signature; deferred.
-- **`sim2real` name collision.** Two surfaces share the "sim2real" name: the
+- **`sim2real` name collision.** ~~Two surfaces share the "sim2real" name: the
   13-stage VLM-to-RL loop (`npa workbench workflow submit` on the sim2real runbook) and the separate
   sim-to-real H100 quickstart/pipeline. A first-time user cannot tell which is
-  canonical. Naming reconciliation is deferred.
+  canonical. Naming reconciliation is deferred.~~ **Closed:** the spelling is
+  now the documented disambiguator (`sim2real` = staged VLM-to-RL loop,
+  `sim-to-real` = older H100 pipeline) with a naming note in
+  `npa/workflows/workbench/sim2real/README.md`.
 - **Deeper GPU gate.** The cluster check counts schedulable `nvidia.com/gpu`; it
   does not yet match the requested GPU product node-selector label against
   available node products. A product-aware gate is a follow-up.
