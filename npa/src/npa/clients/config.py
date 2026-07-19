@@ -243,7 +243,17 @@ def _resolve_project_section(
                 )
             return proj
         default_name = yml.get("default_project", "default")
-        return projects.get(default_name, {})
+        if default_name in projects:
+            return projects[default_name]
+        if len(projects) == 1:
+            return next(iter(projects.values()))
+        # No usable default and several candidates: guessing here sends
+        # commands at a stale or arbitrary endpoint, so ask for the alias.
+        raise ConfigError(
+            "No project selected and no default_project configured. "
+            f"Pass -p/--project (available: {', '.join(projects.keys())}) "
+            "or set default_project in ~/.npa/config.yaml."
+        )
 
     # ── Legacy compat: flat workbenches → synthetic project ──────────
     workbenches = yml.get("workbenches")
@@ -282,12 +292,18 @@ def _resolve_workbench_in_project(
             )
         return wb
 
-    # Fall back to default_workbench, then first entry.
+    # Fall back to default_workbench, then a sole unambiguous entry.
     default_name = (yml or {}).get("default_workbench", "default")
     if default_name in workbenches:
         return workbenches[default_name]
-    if workbenches:
+    if len(workbenches) == 1:
         return next(iter(workbenches.values()))
+    if workbenches:
+        raise ConfigError(
+            "No workbench selected and no default_workbench configured. "
+            f"Pass -n/--name (available: {', '.join(workbenches.keys())}) "
+            "or set default_workbench in ~/.npa/config.yaml."
+        )
     return {}
 
 

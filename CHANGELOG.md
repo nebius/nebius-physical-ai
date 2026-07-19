@@ -1,6 +1,24 @@
 # Changelog
 
+Releases are git tags `vX.Y.Z` matching `npa/pyproject.toml`; artifacts are
+built and attached by `.github/workflows/release.yml`. See `docs/releasing.md`
+for the release process. Entries accumulate under "Unreleased" and move under
+a versioned heading when a release is cut.
+
 ## Unreleased
+
+### Repo hardening
+
+- Shipped SkyPilot examples and cookbooks now use the `<your-registry-id>`
+  placeholder instead of the first-party registry ID; a guardrail test keeps
+  concrete registry IDs out of shipped examples.
+- The base `pip install npa` is now lightweight (offline paths only); heavy
+  dependencies moved to `npa[data]`, `npa[lancedb]`, `npa[viz]`, with
+  `npa[full]` covering the previous monolithic install. Over-narrow version
+  pins were relaxed and the previously undeclared `pydantic` dependency is
+  declared.
+- Added `npa.__version__`, a tag-driven Release workflow that builds and
+  attaches sdist/wheel artifacts, and `docs/releasing.md`.
 
 ### Cosmos e2e
 

@@ -12,7 +12,7 @@ resources:
   # image that installs the npa CLI and this repository's Workbench package.
   image_id: "docker:${NPA_WORKBENCH_IMAGE}"
 envs:
-  NPA_WORKBENCH_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
+  NPA_WORKBENCH_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6"
   EVAL_INPUT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
   SONIC_CHECKPOINT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/checkpoint_smoke.json"
   MJLAB_OUTPUT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/mjlab/"

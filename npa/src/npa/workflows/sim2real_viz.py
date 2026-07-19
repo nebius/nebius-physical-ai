@@ -14,6 +14,7 @@ but it MUST produce a non-empty ``.rrd`` whenever the SDK is available.
 """
 
 from __future__ import annotations
+import logging
 
 import json
 import math
@@ -800,7 +801,7 @@ def _disconnect(rr: Any, recording: Any) -> None:
         try:
             disconnect(recording=recording)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
 
 def _bump(counts: dict[str, int], entity: str) -> None:

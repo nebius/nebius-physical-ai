@@ -67,6 +67,11 @@ pip install --upgrade pip && pip install -e npa
 npa --version
 ```
 
+> The base install is deliberately lightweight — it covers the offline paths
+> (Route A) with no GPU or database wheels. Before running cloud workloads
+> (Routes B and C), add the remaining workbench dependencies with
+> `pip install -e "npa[full]"`.
+
 > **Windows:** use **WSL2 Ubuntu**. Native PowerShell / `cmd` are not
 > supported. Platform-specific install blocks:
 > [docs/quickstart.md § Fast install](docs/quickstart.md#fast-install-by-platform).

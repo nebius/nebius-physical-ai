@@ -19,7 +19,7 @@ resources:
   cpus: 4
   memory: 16
   # Pinned first-party LanceDB image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.3"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -99,7 +99,7 @@ resources:
   cpus: 4
   memory: 16
   # Pinned first-party LanceDB image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.3"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -172,7 +172,7 @@ resources:
   cpus: 8
   memory: 32
   # Pinned first-party LanceDB image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.3"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -243,7 +243,7 @@ resources:
   cpus: 4
   memory: 16
   # Pinned first-party LanceDB image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.3"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -323,7 +323,7 @@ resources:
   cpus: 16
   memory: 64
   # Pinned first-party detection-training image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -447,7 +447,7 @@ resources:
   cpus: 16
   memory: 64
   # Pinned first-party detection-training image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -571,7 +571,7 @@ resources:
   cpus: 16
   memory: 64
   # Pinned first-party detection-training image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -695,7 +695,7 @@ resources:
   cpus: 8
   memory: 32
   # Pinned first-party detection-training image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -794,7 +794,7 @@ resources:
   cpus: 8
   memory: 32
   # Pinned first-party detection-training image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
@@ -893,7 +893,7 @@ resources:
   cpus: 8
   memory: 32
   # Pinned first-party detection-training image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name

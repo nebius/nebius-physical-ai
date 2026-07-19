@@ -1,9 +1,16 @@
-"""Convert Isaac Lab G1 rollouts into standard LeRobotDataset v3 layout."""
+"""Convert Isaac Lab numpy rollouts into standard LeRobotDataset v3 layout.
+
+The writer half is robot-agnostic and driven by a ``LeRobotFeatureSpec``
+(joint names, dimensions, robot type). The module ships a Unitree G1 default
+spec so existing G1 callers keep working unchanged; other robots pass their
+own spec to ``convert``.
+"""
 
 from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +131,37 @@ class IsaacLabLeRobotError(Exception):
     """Raised when an Isaac Lab rollout cannot be represented as LeRobot data."""
 
 
+@dataclass(frozen=True)
+class LeRobotFeatureSpec:
+    """Robot-specific feature layout for the LeRobot writer.
+
+    ``state_dim``/``action_dim`` default to the length of the corresponding
+    name lists; pass them explicitly only when the arrays are wider than the
+    named joints.
+    """
+
+    state_names: list[str]
+    action_names: list[str]
+    robot_type: str
+    state_dim: int = field(default=0)
+    action_dim: int = field(default=0)
+
+    def __post_init__(self) -> None:
+        if not self.state_names or not self.action_names:
+            raise IsaacLabLeRobotError("LeRobotFeatureSpec requires state and action names")
+        if self.state_dim <= 0:
+            object.__setattr__(self, "state_dim", len(self.state_names))
+        if self.action_dim <= 0:
+            object.__setattr__(self, "action_dim", len(self.action_names))
+
+
+G1_FEATURE_SPEC = LeRobotFeatureSpec(
+    state_names=list(G1_STATE_NAMES_43),
+    action_names=list(G1_STATE_NAMES_43),
+    robot_type="unitree_g1",
+)
+
+
 def discover_episodes(input_dir: Path) -> list[Path]:
     episodes = sorted(
         path
@@ -144,11 +182,13 @@ def convert(
     task: str = "",
     include_placeholder_video: bool = False,
     video_size: int = 64,
+    spec: LeRobotFeatureSpec | None = None,
 ) -> Path:
-    """Convert raw Isaac Lab G1 numpy rollouts to standard LeRobotDataset v3.
+    """Convert raw Isaac Lab numpy rollouts to standard LeRobotDataset v3.
 
     Raw input is a directory containing ``episode_*`` subdirectories, each with
-    ``state.npy`` and ``actions.npy`` arrays in the canonical 43D G1 layout.
+    ``state.npy`` and ``actions.npy`` arrays matching ``spec`` (default: the
+    canonical 43D Unitree G1 layout).
     """
     if fps <= 0:
         raise IsaacLabLeRobotError(f"fps must be positive, got {fps}")
@@ -156,10 +196,23 @@ def convert(
     output_dir = Path(output_dir)
     episodes = discover_episodes(input_dir)
     top_meta = _load_optional_json(input_dir / "meta.json")
-    task_text = task or str(top_meta.get("task") or top_meta.get("task_id") or "Isaac Lab G1 rollout")
-    robot = robot_type or str(top_meta.get("robot_type") or "unitree_g1")
-    state_names = _names_from_meta(top_meta, "state_names")
-    action_names = _names_from_meta(top_meta, "action_names")
+    resolved_spec = spec or G1_FEATURE_SPEC
+    default_task = (
+        "Isaac Lab G1 rollout"
+        if resolved_spec.robot_type == "unitree_g1"
+        else f"Isaac Lab {resolved_spec.robot_type} rollout"
+    )
+    task_text = task or str(top_meta.get("task") or top_meta.get("task_id") or default_task)
+    if spec is not None and robot_type == "unitree_g1":
+        robot = spec.robot_type
+    else:
+        robot = robot_type or str(top_meta.get("robot_type") or resolved_spec.robot_type)
+    state_names = _names_from_meta(
+        top_meta, "state_names", expected_dim=resolved_spec.state_dim, fallback=resolved_spec.state_names
+    )
+    action_names = _names_from_meta(
+        top_meta, "action_names", expected_dim=resolved_spec.action_dim, fallback=resolved_spec.action_names
+    )
 
     _reset_dir(output_dir)
     (output_dir / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
@@ -181,7 +234,7 @@ def convert(
 
     global_index = 0
     for episode_index, episode_dir in enumerate(episodes):
-        state, actions = _load_episode_arrays(episode_dir)
+        state, actions = _load_episode_arrays(episode_dir, spec=resolved_spec)
         ep_len = int(state.shape[0])
         dataset_from_index = global_index
 
@@ -240,7 +293,11 @@ def convert(
         episode_rows.append(episode_row)
 
     total_frames = len(all_rows)
-    _write_data_parquet(all_rows, output_dir / "data" / "chunk-000" / "file-000.parquet")
+    _write_data_parquet(
+        all_rows,
+        output_dir / "data" / "chunk-000" / "file-000.parquet",
+        spec=resolved_spec,
+    )
     _write_episodes_parquet(
         episode_rows,
         output_dir / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
@@ -258,6 +315,7 @@ def convert(
         action_names=action_names,
         include_video=include_placeholder_video,
         video_size=video_size,
+        spec=resolved_spec,
     )
     return output_dir
 
@@ -277,14 +335,22 @@ def _load_optional_json(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _names_from_meta(meta: dict[str, Any], key: str) -> list[str]:
+def _names_from_meta(
+    meta: dict[str, Any],
+    key: str,
+    *,
+    expected_dim: int = G1_STATE_DIM,
+    fallback: list[str] | None = None,
+) -> list[str]:
     raw = meta.get(key)
-    if isinstance(raw, list) and len(raw) == G1_STATE_DIM and all(isinstance(v, str) for v in raw):
+    if isinstance(raw, list) and len(raw) == expected_dim and all(isinstance(v, str) for v in raw):
         return [str(v) for v in raw]
-    return list(G1_STATE_NAMES_43)
+    return list(fallback if fallback is not None else G1_STATE_NAMES_43)
 
 
-def _load_episode_arrays(episode_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+def _load_episode_arrays(
+    episode_dir: Path, *, spec: LeRobotFeatureSpec | None = None
+) -> tuple[np.ndarray, np.ndarray]:
     state_path = episode_dir / "state.npy"
     action_path = episode_dir / "actions.npy"
     if not state_path.exists():
@@ -303,9 +369,11 @@ def _load_episode_arrays(episode_dir: Path) -> tuple[np.ndarray, np.ndarray]:
             f"{episode_dir.name}: state/action length mismatch "
             f"({state.shape[0]} != {actions.shape[0]})"
         )
-    if state.shape[1] != G1_STATE_DIM or actions.shape[1] != G1_STATE_DIM:
+    resolved = spec or G1_FEATURE_SPEC
+    if state.shape[1] != resolved.state_dim or actions.shape[1] != resolved.action_dim:
         raise IsaacLabLeRobotError(
-            f"{episode_dir.name}: expected 43D G1 state/action arrays, "
+            f"{episode_dir.name}: expected {resolved.state_dim}D state / "
+            f"{resolved.action_dim}D action arrays for {resolved.robot_type}, "
             f"got state={state.shape[1]} action={actions.shape[1]}"
         )
     if state.shape[0] == 0:
@@ -313,11 +381,14 @@ def _load_episode_arrays(episode_dir: Path) -> tuple[np.ndarray, np.ndarray]:
     return state, actions
 
 
-def _write_data_parquet(rows: list[dict[str, Any]], output_path: Path) -> None:
+def _write_data_parquet(
+    rows: list[dict[str, Any]], output_path: Path, *, spec: LeRobotFeatureSpec | None = None
+) -> None:
+    resolved = spec or G1_FEATURE_SPEC
     schema = pa.schema(
         [
-            ("observation.state", pa.list_(pa.float32(), G1_STATE_DIM)),
-            ("action", pa.list_(pa.float32(), G1_STATE_DIM)),
+            ("observation.state", pa.list_(pa.float32(), resolved.state_dim)),
+            ("action", pa.list_(pa.float32(), resolved.action_dim)),
             ("episode_index", pa.int64()),
             ("frame_index", pa.int64()),
             ("timestamp", pa.float32()),
@@ -329,11 +400,11 @@ def _write_data_parquet(rows: list[dict[str, Any]], output_path: Path) -> None:
         {
             "observation.state": pa.array(
                 [row["observation.state"] for row in rows],
-                type=pa.list_(pa.float32(), G1_STATE_DIM),
+                type=pa.list_(pa.float32(), resolved.state_dim),
             ),
             "action": pa.array(
                 [row["action"] for row in rows],
-                type=pa.list_(pa.float32(), G1_STATE_DIM),
+                type=pa.list_(pa.float32(), resolved.action_dim),
             ),
             "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
             "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
@@ -428,16 +499,18 @@ def _write_info(
     action_names: list[str],
     include_video: bool,
     video_size: int,
+    spec: LeRobotFeatureSpec | None = None,
 ) -> None:
+    resolved = spec or G1_FEATURE_SPEC
     features: dict[str, Any] = {
         "observation.state": {
             "dtype": "float32",
-            "shape": [G1_STATE_DIM],
+            "shape": [resolved.state_dim],
             "names": [state_names],
         },
         "action": {
             "dtype": "float32",
-            "shape": [G1_STATE_DIM],
+            "shape": [resolved.action_dim],
             "names": [action_names],
         },
         "timestamp": {"dtype": "float32", "shape": [1], "names": None},

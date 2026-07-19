@@ -1182,6 +1182,18 @@ try:
                 return policy(obs)
         return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
 
+    def _step_env(env, actions):
+        # Gymnasium envs return 5 values; the rsl_rl VecEnv wrapper installed
+        # when a trained policy loads returns 4: (obs, rewards, dones, extras).
+        out = env.step(actions)
+        if len(out) == 5:
+            s_obs, s_rew, terminated, truncated, s_info = out
+            s_done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
+        else:
+            s_obs, s_rew, dones, s_info = out
+            s_done = bool(torch.as_tensor(dones).any().item())
+        return s_obs, s_rew, s_done, s_info
+
     def _goal_dist():
         try:
             u = env.unwrapped
@@ -1201,13 +1213,12 @@ try:
         min_dist = None
         for step in range(max_steps_per_episode):
             actions = _act(obs)
-            obs, rewards, terminated, truncated, _ = env.step(actions)
+            obs, rewards, done, _ = _step_env(env, actions)
             episode_reward += float(torch.as_tensor(rewards).mean().item())
             steps_ran = step + 1
             d = _goal_dist()
             if d is not None:
                 min_dist = d if min_dist is None else min(min_dist, d)
-            done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
             if done:
                 break
 
@@ -1428,6 +1439,219 @@ try:
     }}
     (output_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     print("ISAAC_LAB_EXPORT_LEROBOT_COMPLETE")
+    print(json.dumps(meta, indent=2), flush=True)
+finally:
+    if env is not None:
+        env.close()
+    simulation_app.close()
+"""
+
+
+def _build_list_tasks_script() -> str:
+    return """\
+import json
+
+from isaaclab.app import AppLauncher
+
+app_launcher = AppLauncher(headless=True)
+simulation_app = app_launcher.app
+
+try:
+    import gymnasium as gym
+    import isaaclab_tasks  # noqa: F401  (import registers Isaac Lab tasks)
+
+    tasks = sorted(env_id for env_id in gym.registry.keys() if env_id.startswith("Isaac"))
+    print("ISAAC_LAB_LIST_TASKS_JSON " + json.dumps({"tasks": tasks, "count": len(tasks)}))
+finally:
+    simulation_app.close()
+"""
+
+
+def _build_train_trajectory_export_script(
+    task: str,
+    num_episodes: int,
+    steps_per_episode: int,
+    checkpoint: str,
+    output_dir: str,
+) -> str:
+    """Roll out the trained checkpoint and write the numpy episode contract.
+
+    Unlike ``_build_export_lerobot_script`` (random actions, G1 joint
+    canonicalization), this drives the freshly trained rsl_rl policy and
+    records raw env joint names so any robot converts via a
+    ``LeRobotFeatureSpec`` built from ``meta.json``. ``policy_loaded`` is
+    recorded so a random fallback is never silently presented as the trained
+    policy.
+    """
+    return f"""\
+import json
+import time
+from pathlib import Path
+
+from isaaclab.app import AppLauncher
+
+app_launcher = AppLauncher(headless=True)
+simulation_app = app_launcher.app
+
+import gymnasium as gym
+import numpy as np
+import torch
+
+import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.utils import parse_env_cfg
+
+task = {task!r}
+num_episodes = {num_episodes}
+steps_per_episode = {steps_per_episode}
+checkpoint_path = Path({checkpoint!r})
+output_dir = Path({output_dir!r})
+output_dir.mkdir(parents=True, exist_ok=True)
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+started = time.time()
+env = None
+
+
+def _to_numpy(value):
+    tensor = torch.as_tensor(value)
+    return tensor.detach().cpu().numpy()
+
+
+def _robot(env):
+    try:
+        return env.unwrapped.scene["robot"]
+    except Exception:
+        return None
+
+
+try:
+    print(
+        f"ISAAC_LAB_TRAJ_EXPORT_START task={{task}} episodes={{num_episodes}} "
+        f"steps_per_episode={{steps_per_episode}} device={{device}}",
+        flush=True,
+    )
+    env_cfg = parse_env_cfg(task, device=device, num_envs=1)
+    env = gym.make(task, cfg=env_cfg)
+
+    policy = None
+    policy_loaded = False
+    try:
+        try:
+            from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+        except Exception:
+            from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
+        from rsl_rl.runners import OnPolicyRunner
+        wrapped = RslRlVecEnvWrapper(env)
+        agent_cfg = None
+        for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
+            try:
+                mod = __import__(loader, fromlist=["load_cfg_from_registry"])
+                agent_cfg = mod.load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
+                break
+            except Exception:
+                pass
+        acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
+        runner = OnPolicyRunner(wrapped, acfg, log_dir=None, device=device)
+        runner.load(str(checkpoint_path))
+        policy = runner.get_inference_policy(device=device)
+        env = wrapped
+        policy_loaded = True
+        print("ISAAC_LAB_TRAJ_EXPORT_POLICY_LOADED", flush=True)
+    except Exception as exc:
+        print(f"ISAAC_LAB_TRAJ_EXPORT_POLICY_LOAD_FAILED {{exc!r}} -- random fallback", flush=True)
+
+    def _act(obs):
+        if policy_loaded and policy is not None and obs is not None:
+            with torch.inference_mode():
+                return policy(obs)
+        return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+
+    def _step_env(env, actions):
+        # Gymnasium envs return 5 values; the rsl_rl VecEnv wrapper installed
+        # when a trained policy loads returns 4: (obs, rewards, dones, extras).
+        out = env.step(actions)
+        if len(out) == 5:
+            s_obs, s_rew, terminated, truncated, s_info = out
+            s_done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
+        else:
+            s_obs, s_rew, dones, s_info = out
+            s_done = bool(torch.as_tensor(dones).any().item())
+        return s_obs, s_rew, s_done, s_info
+
+    robot = _robot(env)
+    joint_names = list(getattr(getattr(robot, "data", None), "joint_names", []) or [])
+
+    total_frames = 0
+    episode_lengths = []
+    action_dim = None
+    for episode_index in range(num_episodes):
+        reset_out = env.reset()
+        obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+        states = []
+        actions_out = []
+        for step in range(steps_per_episode):
+            robot = _robot(env)
+            if robot is not None and joint_names:
+                state_values = _to_numpy(robot.data.joint_pos)[0]
+            else:
+                obs_np = _to_numpy(obs)
+                state_values = obs_np[0] if obs_np.ndim > 1 else obs_np
+            actions = _act(obs)
+            actions_np = _to_numpy(actions)
+            action_values = actions_np[0] if actions_np.ndim > 1 else actions_np
+            action_dim = int(action_values.shape[-1])
+
+            states.append(np.asarray(state_values, dtype=np.float32))
+            actions_out.append(np.asarray(action_values, dtype=np.float32))
+
+            obs, _rewards, done, _info = _step_env(env, actions)
+            if done:
+                break
+
+        if not states:
+            raise RuntimeError(f"episode {{episode_index}} produced no frames")
+        episode_dir = output_dir / f"episode_{{episode_index:06d}}"
+        episode_dir.mkdir(parents=True, exist_ok=True)
+        np.save(episode_dir / "state.npy", np.stack(states))
+        np.save(episode_dir / "actions.npy", np.stack(actions_out))
+        (episode_dir / "episode_meta.json").write_text(json.dumps({{
+            "episode_index": episode_index,
+            "length": len(states),
+            "task": task,
+            "policy_loaded": policy_loaded,
+        }}, indent=2))
+        total_frames += len(states)
+        episode_lengths.append(len(states))
+        print(
+            f"ISAAC_LAB_TRAJ_EXPORT_EPISODE episode={{episode_index + 1}}/{{num_episodes}} "
+            f"frames={{len(states)}}",
+            flush=True,
+        )
+
+    state_dim = int(np.load(output_dir / "episode_000000" / "state.npy").shape[1])
+    state_names = joint_names if len(joint_names) == state_dim else [f"state_{{i}}" for i in range(state_dim)]
+    action_names = (
+        joint_names
+        if action_dim is not None and len(joint_names) == action_dim
+        else [f"action_{{i}}" for i in range(int(action_dim or 0))]
+    )
+    meta = {{
+        "format": "npa_isaac_lab_rollout_v2",
+        "task": task,
+        "checkpoint": str(checkpoint_path),
+        "policy_loaded": policy_loaded,
+        "fps": 50,
+        "state_names": state_names,
+        "action_names": action_names,
+        "source_joint_names": joint_names,
+        "num_episodes": num_episodes,
+        "steps_per_episode": steps_per_episode,
+        "episode_lengths": episode_lengths,
+        "total_frames": total_frames,
+        "created_unix": round(time.time(), 3),
+        "duration_seconds": round(time.time() - started, 3),
+    }}
+    (output_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    print("ISAAC_LAB_TRAJ_EXPORT_COMPLETE")
     print(json.dumps(meta, indent=2), flush=True)
 finally:
     if env is not None:
@@ -2332,6 +2556,61 @@ def status_cmd(
             console.print(f"[red]stderr:[/red]\n{err.strip()[-500:]}")
 
 
+@app.command("list-tasks")
+def list_tasks_cmd(
+    contains: str = typer.Option(
+        "", "--contains", help="Case-insensitive substring filter, e.g. 'franka'."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
+) -> None:
+    """List registered Isaac Lab tasks on the workbench VM.
+
+    Tasks come from the gymnasium registry after importing isaaclab_tasks,
+    which only exists inside the Isaac Lab runtime — so this runs on the VM
+    via SSH, like `status` and `train`.
+    """
+    cfg = _get_ssh_config()
+    ssh = SSHClient(cfg.ssh)
+    prefix = _container_prefix() if _is_container_runtime(cfg) else _activate_prefix()
+    python_bin = "/isaac-sim/python.sh" if _is_container_runtime(cfg) else "python"
+    cmd = _runtime_bash(
+        cfg,
+        prefix + f"{python_bin} - <<'PY'\n{_build_list_tasks_script()}PY\n",
+    )
+    try:
+        exit_code, stdout, stderr = ssh.run(cmd)
+    except SSHError as exc:
+        _fail(f"SSH error: {exc}")
+        return
+
+    payload: dict = {}
+    for line in stdout.splitlines():
+        if line.startswith("ISAAC_LAB_LIST_TASKS_JSON "):
+            try:
+                payload = json.loads(line.split(" ", 1)[1])
+            except json.JSONDecodeError:
+                payload = {}
+    if exit_code != 0 or not payload:
+        _fail(
+            "Failed to list Isaac Lab tasks on the VM"
+            + (f": {stderr.strip()[-300:]}" if stderr else "")
+        )
+        return
+
+    tasks = [str(item) for item in payload.get("tasks", [])]
+    if contains:
+        needle = contains.lower()
+        tasks = [item for item in tasks if needle in item.lower()]
+    if output_format == OutputFormat.json:
+        typer.echo(json.dumps({"tasks": tasks, "count": len(tasks)}, indent=2))
+    else:
+        for item in tasks:
+            typer.echo(item)
+        typer.echo(f"({len(tasks)} tasks)")
+
+
 @app.command("system-info")
 def system_info_cmd(
     output_format: OutputFormat = typer.Option(
@@ -2419,6 +2698,17 @@ def train_cmd(
     submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
     poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
     timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
+    export_trajectories: bool = typer.Option(
+        False,
+        "--export-trajectories/--no-export-trajectories",
+        help="After training, roll out the trained checkpoint and export numpy episodes (VM runtime only).",
+    ),
+    export_episodes: int = typer.Option(
+        3, "--export-episodes", help="Episodes to export when --export-trajectories is set."
+    ),
+    export_steps_per_episode: int = typer.Option(
+        50, "--export-steps-per-episode", help="Max steps per exported episode."
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
     ),
@@ -2443,8 +2733,12 @@ def train_cmd(
         _fail(f"--num-envs must be positive, got {num_envs}")
     if steps <= 0:
         _fail(f"--steps must be positive, got {steps}")
+    if export_trajectories and (export_episodes <= 0 or export_steps_per_episode <= 0):
+        _fail("--export-episodes and --export-steps-per-episode must be positive")
     checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
     if _is_serverless_runtime(runtime):
+        if export_trajectories:
+            _fail("--export-trajectories is only supported on the VM runtime, not serverless")
         _isaac_lab_serverless_train(
             task=task,
             num_envs=num_envs,
@@ -2528,6 +2822,40 @@ def train_cmd(
     if exit_code != 0:
         result["stderr"] = stderr.strip()[-500:] if stderr else ""
     else:
+        if export_trajectories:
+            trajectories_dir = f"{remote_output_dir}/trajectories"
+            traj_cmd = _runtime_bash(
+                cfg,
+                prefix
+                + f"{python_bin} - <<'PY'\n"
+                + _build_train_trajectory_export_script(
+                    task,
+                    export_episodes,
+                    export_steps_per_episode,
+                    f"{remote_output_dir}/npa_isaac_lab_checkpoint.pt",
+                    trajectories_dir,
+                )
+                + "PY\n",
+            )
+            if stream_logs:
+                console.print("[bold]Exporting trained-policy trajectories[/bold]")
+            try:
+                traj_exit, traj_stdout, traj_stderr = ssh.run(traj_cmd, stream=stream_logs)
+            except SSHError as exc:
+                traj_exit, traj_stdout, traj_stderr = 1, "", str(exc)
+            result["trajectories_dir"] = trajectories_dir
+            # Isaac Sim's kit app can exit 0 even when the Python rollout raised
+            # (the same reason the training path checks ISAAC_LAB_TRAIN_COMPLETE
+            # above), so a clean exit code alone is not proof the export ran.
+            # Require the completion marker the script prints right before it
+            # writes meta.json, otherwise an empty trajectories dir would be
+            # reported as success.
+            traj_ok = traj_exit == 0 and "ISAAC_LAB_TRAJ_EXPORT_COMPLETE" in (traj_stdout or "")
+            result["trajectory_export"] = "success" if traj_ok else "failed"
+            if not traj_ok:
+                # The checkpoint is still good; report the export failure
+                # without failing the training run.
+                result["trajectory_export_error"] = (traj_stderr or traj_stdout).strip()[-500:]
         if output_is_s3:
             try:
                 try:

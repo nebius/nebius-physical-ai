@@ -78,6 +78,45 @@ def scrub_ambient_credential_env(monkeypatch, request):
         monkeypatch.delenv(env_var, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def isolate_home_config(monkeypatch, tmp_path_factory, request):
+    """Isolate non-live tests from the operator's real ~/.npa, ~/.aws, ~/.ssh.
+
+    A dev machine or workbench VM carries a real ~/.npa/config.yaml and
+    credentials.yaml; the unit suite must behave identically there and on a
+    pristine CI runner, so every non-live test gets an empty HOME. Several
+    modules capture home-derived paths in module-level constants at import
+    time, so those are repointed as well — new home-derived constants belong
+    in this list.
+    """
+    if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+        return
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    import npa.cli.cluster.terraform_lifecycle
+    import npa.cli.skypilot
+    import npa.clients.config
+    import npa.clients.credentials
+    import npa.cluster.state
+    import npa.deploy.provisioner
+    import npa.orchestration.skypilot._bin
+
+    npa_dir = home / ".npa"
+    monkeypatch.setattr(npa.clients.config, "CONFIG_PATH", npa_dir / "config.yaml")
+    monkeypatch.setattr(npa.clients.credentials, "CREDENTIALS_PATH", npa_dir / "credentials.yaml")
+    monkeypatch.setattr(npa.orchestration.skypilot._bin, "CONFIG_PATH", npa_dir / "config.yaml")
+    monkeypatch.setattr(npa.deploy.provisioner, "_WORKBENCH_BASE", npa_dir / "workbenches")
+    monkeypatch.setattr(npa.cluster.state, "CLUSTERS_DIR", npa_dir / "clusters")
+    monkeypatch.setattr(npa.cli.skypilot, "DEFAULT_VENV_PATH", npa_dir / "skypilot-venv")
+    monkeypatch.setattr(
+        npa.cli.cluster.terraform_lifecycle,
+        "_DEFAULT_SKYPILOT_BIN",
+        npa_dir / "skypilot-venv" / "bin" / "sky",
+    )
+
+
 def _is_huggingface_url(url: object) -> bool:
     host = urlparse(str(url)).hostname or ""
     return host == "huggingface.co" or host.endswith(".huggingface.co")

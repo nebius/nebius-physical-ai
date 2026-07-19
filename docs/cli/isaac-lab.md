@@ -16,6 +16,7 @@ list  List configured Isaac Lab workbenches.
 cleanup-partial  Clean up orphaned Terraform resources from an interrupted Isaac Lab deploy.
 deploy  Deploy or destroy an Isaac Lab workbench.
 status  Check Isaac Lab VM status via SSH.
+list-tasks  List registered Isaac Lab tasks on the workbench VM.
 system-info  Collect and display system hardware information from the Isaac Lab VM.
 train  Run Isaac Lab training on the VM via SSH.
 eval  Run Isaac Lab evaluation on the VM via SSH.
@@ -38,8 +39,9 @@ export-lerobot  Generate Isaac Lab G1 rollouts and export them as a standard LeR
 | `cleanup-partial` | Clean up orphaned Terraform resources from an interrupted Isaac Lab deploy. |
 | `deploy` | Deploy or destroy an Isaac Lab workbench. |
 | `status` | Check Isaac Lab VM status via SSH. |
+| `list-tasks` | List registered Isaac Lab tasks on the workbench VM. |
 | `system-info` | Collect and display system hardware information from the Isaac Lab VM. |
-| `train` | Run Isaac Lab training on the VM via SSH. |
+| `train` | Run Isaac Lab training on the VM via SSH (`--export-trajectories` rolls out the trained checkpoint to numpy episodes). |
 | `eval` | Run Isaac Lab evaluation on the VM via SSH. |
 | `export-lerobot` | Generate Isaac Lab G1 rollouts and export them as a standard LeRobotDataset. |
 

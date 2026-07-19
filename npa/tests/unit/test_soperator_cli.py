@@ -418,7 +418,6 @@ def test_install_monitoring_crds_raises_when_crd_absent(monkeypatch) -> None:
 
 def _write_recipe_locals(tmp_path, essential_body: str):
     """Write a minimal locals_active_checks.tf with an ``essential`` scope."""
-    from pathlib import Path
 
     locals_tf = tmp_path / "modules" / "slurm" / "locals_active_checks.tf"
     locals_tf.parent.mkdir(parents=True, exist_ok=True)

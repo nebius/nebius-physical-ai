@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
 
 from npa.orchestration.npa_workflow.interpreter import PlanStep
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec

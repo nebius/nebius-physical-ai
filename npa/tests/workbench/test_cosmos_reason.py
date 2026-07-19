@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 
 from npa.workbench.cosmos.reason import (
-    DEFAULT_REASON1_CACHE,
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
     DEFAULT_REASON3_CACHE,

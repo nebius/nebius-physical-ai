@@ -332,7 +332,6 @@ INTENT_APIS: dict[str, list[str]] = {
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
 }
 
-_DEFAULT_REGISTRY = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
 _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
     "cosmos": ("npa-cosmos", "1.0.9"),
     "lancedb": ("npa-lancedb", "0.30.3"),
@@ -649,7 +648,9 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 8) -> str:
 
 
 def _image_for_tool(tool: str) -> str:
-    registry = os.environ.get("NPA_REGISTRY", "").strip() or _DEFAULT_REGISTRY
+    from npa.deploy.images import primary_container_registry
+
+    registry = primary_container_registry()
     image_name, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
     return f"{registry.rstrip('/')}/{image_name}:{tag}"
 

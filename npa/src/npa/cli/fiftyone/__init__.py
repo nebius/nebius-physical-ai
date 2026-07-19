@@ -1,6 +1,7 @@
 """npa workbench fiftyone - Voxel51 FiftyOne dataset curation app."""
 
 from __future__ import annotations
+import logging
 
 import json
 import os
@@ -3926,7 +3927,7 @@ def open_app_cmd(
     try:
         webbrowser.open(url)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
     try:
         proc = subprocess.Popen(cmd)
     except FileNotFoundError:

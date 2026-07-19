@@ -1,6 +1,7 @@
 """npa workbench lerobot — LeRobot training, evaluation, serving, and inference."""
 
 from __future__ import annotations
+import logging
 
 import json
 import os
@@ -1588,7 +1589,7 @@ def train(
             if "uploaded" in up_out:
                 result["storage_uri"] = f"s3://{bucket_name}/{s3_dest_prefix}/"
         except Exception:
-            pass  # non-fatal; checkpoint is still on the VM
+            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)  # non-fatal; checkpoint is still on the VM
 
     _output(result, output)
     if exit_code != 0:
@@ -1656,7 +1657,7 @@ def eval_cmd(
             ssh.run_or_raise(_runtime_exec_cmd(cfg, resolve_cmd))
             resolved_checkpoint = local_cache
         except Exception:
-            pass  # try using the URI directly
+            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)  # try using the URI directly
 
     output_is_s3 = _is_s3_uri(output_path)
     eval_output_dir = (

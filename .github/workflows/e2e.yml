@@ -1,12 +1,39 @@
-# GPU e2e tests — requires infrastructure credentials, run manually.
-name: GPU e2e
+# GPU e2e tests require real Nebius infrastructure credentials and run from an
+# operator machine (see docs/testing/e2e-serverless.md). This workflow cannot
+# reach GPUs from GitHub-hosted runners; what it CAN honestly verify is that
+# the e2e suite still collects and the e2e shell entrypoints still parse.
+name: GPU e2e preflight
 
 on:
   workflow_dispatch:
 
 jobs:
-  e2e:
+  preflight:
     runs-on: ubuntu-latest
     steps:
-      - name: Placeholder
-        run: ':'
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install npa
+        run: cd npa && pip install -e ".[dev,adapter]"
+
+      - name: Collect e2e test suite (no execution)
+        run: cd npa && python -m pytest tests/e2e/ --collect-only -q
+
+      - name: Syntax-check e2e shell entrypoints
+        run: |
+          cd npa
+          for script in tests/e2e/*.sh; do
+            bash -n "${script}"
+          done
+
+      - name: Explain how real GPU e2e runs work
+        run: |
+          echo "Real GPU e2e runs need Nebius credentials and are gated on"
+          echo "NPA_INTEGRATION_E2E=1 from an operator machine; see"
+          echo "docs/testing/e2e-serverless.md."

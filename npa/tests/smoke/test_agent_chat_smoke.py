@@ -4,7 +4,6 @@ import stat
 import subprocess
 from pathlib import Path
 
-import pytest
 
 from npa.cli import agent as agent_module
 from npa.cli.agent_chat import (

@@ -14,7 +14,6 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from .npa_workflow_live_helpers import (
     ALL_GOLDEN_SPECS,
     DYNAMIC_SPECS,
-    assert_cli_ok,
     assert_no_credential_leakage,
     assume_decision_for,
     live_bucket,

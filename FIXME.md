@@ -18,7 +18,7 @@ work lives).
 #### [H] Parameterize Isaac Lab -> LeRobot formatter
 
 - **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
-- **Status**: Still active.
+- **Status**: Fixed.
 - **Current issue**: `npa/src/npa/adapter/isaac_lab_lerobot.py` remains G1-bound
   through hardcoded state names, dimensions, schema shape, and robot type.
 - **Next step**: Introduce a `LeRobotFeatureSpec` dataclass and split
@@ -27,7 +27,7 @@ work lives).
 #### [H] Isaac Lab train does not export trajectories or list registered tasks
 
 - **Surfaced by**: 2026-05-09 physical AI demo investigation.
-- **Status**: Still active.
+- **Status**: Fixed.
 - **Current issue**: `npa workbench isaac-lab train` writes summaries and a
   random-policy checkpoint but not synced observation/action/state episodes;
   the CLI also lacks a public `list-tasks` command.
@@ -141,7 +141,7 @@ work lives).
 #### [M] `<tool> status` without `-p`/`-n` hits an unconfigured default endpoint
 
 - **Surfaced by**: 2026-05-09 validation.
-- **Status**: Still active.
+- **Status**: Fixed.
 - **Current issue**: Omitted project/name flags can silently hit a stale or
   computed endpoint, producing misleading failure output.
 - **Next step**: Error and prompt for an alias, or track and use the most recent
@@ -172,6 +172,15 @@ work lives).
   passed, and apply the same guard consistently across the workbench tools.
 
 ## Resolved (recent)
+
+- 2026-07-19 - Isaac Lab -> LeRobot formatter parameterized via
+  `LeRobotFeatureSpec` with a G1 default spec (decoupled state/action dims).
+- 2026-07-19 - `npa workbench isaac-lab list-tasks` (remote gym registry) and
+  opt-in `train --export-trajectories` (trained-policy rollout, numpy episode
+  contract, `npa_isaac_lab_rollout_v2` meta).
+- 2026-07-19 - Omitted `-p`/`-n` now errors with available aliases when no
+  unambiguous default exists (`npa.clients.config` shared resolvers) instead
+  of silently hitting a stale or arbitrary endpoint.
 
 - 2026-07-09 - GR00T BYOVM/project storage credential inheritance + reload-env
   parity with Cosmos (`apply_storage_env_vars`, `_shared_groot_env_or_fail(cfg, ...)`).

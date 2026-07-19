@@ -1459,7 +1459,6 @@ def test_default_llm_models_are_cost_ordered() -> None:
 def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(monkeypatch, tmp_path) -> None:
     """A bare `npa agent deploy` (no --llm-models) configures the full tier
     ladder on the VM, so routing works without the operator listing models."""
-    from npa.cli import agent as agent_module
     from npa.cli.agent import deploy_cmd
 
     captured: dict[str, object] = {}

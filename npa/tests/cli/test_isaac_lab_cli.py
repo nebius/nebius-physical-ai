@@ -1357,3 +1357,184 @@ def test_isaac_lab_export_onnx_rejects_missing_local_checkpoint(tmp_path: Path) 
     )
     assert result.exit_code == 1
     assert "local checkpoint not found" in result.output
+
+
+def test_isaac_lab_list_tasks_parses_remote_registry(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (
+        0,
+        'ISAAC_LAB_LIST_TASKS_JSON {"tasks": ["Isaac-Lift-Cube-Franka-v0", "Isaac-Reach-Franka-v0", "Isaac-Velocity-Flat-G1-v0"], "count": 3}\n',
+        "",
+    )
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "isaac-lab", "list-tasks"])
+
+    assert result.exit_code == 0
+    cmd = ssh.run.call_args.args[0]
+    assert "import isaaclab_tasks" in cmd
+    assert "gym.registry" in cmd
+    assert "Isaac-Lift-Cube-Franka-v0" in result.output
+    assert "(3 tasks)" in result.output
+
+
+def test_isaac_lab_list_tasks_contains_filter_and_json(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (
+        0,
+        'ISAAC_LAB_LIST_TASKS_JSON {"tasks": ["Isaac-Lift-Cube-Franka-v0", "Isaac-Velocity-Flat-G1-v0"], "count": 2}\n',
+        "",
+    )
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        ["workbench", "isaac-lab", "list-tasks", "--contains", "franka", "--output-format", "json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["tasks"] == ["Isaac-Lift-Cube-Franka-v0"]
+    assert payload["count"] == 1
+
+
+def test_isaac_lab_list_tasks_fails_cleanly_without_registry(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (3, "", "ModuleNotFoundError: isaaclab_tasks")
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "isaac-lab", "list-tasks"])
+
+    assert result.exit_code != 0
+    assert "Failed to list Isaac Lab tasks" in result.output
+
+
+def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -> None:
+    ssh = mocker.MagicMock()
+    # Training call, then the trajectory-export call. The export must emit its
+    # completion marker for the CLI to treat it as a real success (Isaac Sim's
+    # kit app can exit 0 even when the rollout raised).
+    ssh.run.side_effect = [
+        (0, "", ""),
+        (0, "ISAAC_LAB_TRAJ_EXPORT_COMPLETE\n", ""),
+    ]
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--steps",
+            "5",
+            "--output-dir",
+            "/tmp/isaac-out",
+            "--export-trajectories",
+            "--export-episodes",
+            "2",
+            "--export-steps-per-episode",
+            "10",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert ssh.run.call_count == 2
+    traj_cmd = ssh.run.call_args_list[1].args[0]
+    assert "ISAAC_LAB_TRAJ_EXPORT_START" in traj_cmd
+    assert "npa_isaac_lab_checkpoint.pt" in traj_cmd
+    assert "/tmp/isaac-out/trajectories" in traj_cmd
+    payload = json.loads(result.output)
+    assert payload["trajectory_export"] == "success"
+    assert payload["trajectories_dir"] == "/tmp/isaac-out/trajectories"
+
+
+def test_isaac_lab_train_export_trajectories_marks_masked_failure(mocker) -> None:
+    """A zero exit without the completion marker must not be reported as success.
+
+    Isaac Sim's kit app can exit 0 even when the Python rollout raised (e.g. the
+    env.step tuple mismatch that produced an empty trajectories dir), so the CLI
+    must key success off the ISAAC_LAB_TRAJ_EXPORT_COMPLETE marker, not the exit
+    code alone.
+    """
+    ssh = mocker.MagicMock()
+    ssh.run.side_effect = [
+        (0, "", ""),
+        (0, "ISAAC_LAB_TRAJ_EXPORT_START ...\nISAAC_LAB_TRAJ_EXPORT_POLICY_LOADED\n", ""),
+    ]
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--steps",
+            "5",
+            "--output-dir",
+            "/tmp/isaac-out",
+            "--export-trajectories",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["trajectory_export"] == "failed"
+    assert "trajectory_export_error" in payload
+
+
+def test_isaac_lab_train_without_export_flag_runs_single_command(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "", "")
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--steps",
+            "5",
+            "--output-dir",
+            "/tmp/isaac-out",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert ssh.run.call_count == 1
+
+
+def test_isaac_lab_train_export_trajectories_rejected_on_serverless(mocker) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--runtime",
+            "serverless",
+            "--export-trajectories",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "only supported on the VM runtime" in result.output

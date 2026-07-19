@@ -426,6 +426,6 @@ def _classify_failure(env, env_idx: int, step: int) -> str:
         if np.any(np.abs(joint_pos[:7]) > 2.8):
             return "collision"
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
     return "timeout"

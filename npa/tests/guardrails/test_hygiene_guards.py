@@ -122,3 +122,80 @@ def _is_pytest_skip(node: ast.Call) -> bool:
 def _mentions_local_cuda(node: ast.AST, source: str) -> bool:
     segment = ast.get_source_segment(source, node) or ""
     return "cuda.is_available" in segment or "torch.cuda" in segment
+
+
+def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
+    """Shipped BYO examples must not bake in the first-party registry ID.
+
+    Resolver-owned defaults (npa.deploy.images, the image manifests, and ops
+    scripts) may reference the concrete `npa-workbench` registry; committed
+    example YAMLs and cookbooks must use the `<your-registry-id>` placeholder
+    so external users never pull against a registry they cannot access.
+    """
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY_ID
+
+    example_roots = [
+        REPO_ROOT / "npa" / "workflows",
+        REPO_ROOT / "docs" / "workbench" / "cookbooks",
+        REPO_ROOT / "docs" / "demos",
+    ]
+    offenders: list[str] = []
+    for root in example_roots:
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in {".yaml", ".yml", ".md", ".json"}:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if DEFAULT_CONTAINER_REGISTRY_ID in text:
+                offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert not offenders, (
+        "Concrete first-party registry ID found in shipped examples; "
+        "use the <your-registry-id> placeholder instead: " + ", ".join(offenders)
+    )
+
+
+def test_monolith_modules_do_not_grow() -> None:
+    """Size ratchet for the largest modules.
+
+    These files are already big enough to resist review; new functionality
+    belongs in new modules, not appended here. If a change legitimately grows
+    one (e.g. mechanical refactor prep), lower other entries or split the file
+    and tighten the cap — never raise a cap to make room for features.
+    """
+    caps = {
+        "npa/src/npa/cli/agent.py": 10_100,
+        "npa/src/npa/workflows/sim2real_loop.py": 5_800,
+        "npa/src/npa/workflows/sim2real/engine.py": 5_600,
+        "npa/src/npa/cli/groot/__init__.py": 4_400,
+        "npa/src/npa/cli/fiftyone/__init__.py": 4_250,
+        "npa/src/npa/cli/cosmos/__init__.py": 4_050,
+        "npa/src/npa/cli/isaac_lab/__init__.py": 3_500,
+    }
+    over = []
+    for rel_path, cap in caps.items():
+        lines = sum(1 for _ in (REPO_ROOT / rel_path).open())
+        if lines > cap:
+            over.append(f"{rel_path}: {lines} lines > cap {cap}")
+    assert not over, "Monolith size ratchet exceeded — split, don't grow:\n" + "\n".join(over)
+
+
+def test_no_silent_except_exception_pass() -> None:
+    """`except Exception: pass` hides real failures; log at debug or narrow it."""
+    offenders = []
+    for path in sorted((REPO_ROOT / "npa" / "src").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text())
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ExceptHandler)
+                and isinstance(node.type, ast.Name)
+                and node.type.id == "Exception"
+                and len(node.body) == 1
+                and isinstance(node.body[0], ast.Pass)
+            ):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+    assert not offenders, (
+        "Silent `except Exception: pass` found; log the exception at debug "
+        "level or narrow the except type:\n" + "\n".join(offenders)
+    )

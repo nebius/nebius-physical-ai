@@ -67,9 +67,10 @@
 # edit `image_id` to point at their own registry.
 #
 # GPU-reaching path: raw `sky jobs launch` against this file is currently blocked
-# by the SkyPilot 0.12.2 pre-setup getcwd() bug. Reach GPUs through the
-# materialized-runbook / direct-Kubernetes route documented in README.md until
-# that is fixed upstream.
+# by the SkyPilot 0.12.2 pre-setup getcwd() bug. Reach GPUs with the in-repo
+# materializer until that is fixed upstream:
+#   npa workbench sim2real materialize --run-id <id> --image <trainer-image> \
+#     --env NPA_SIM2REAL_BUCKET=<bucket> -o job.yaml && kubectl apply -f job.yaml
 #
 # For Kubernetes clusters that require a service account, pass a SkyPilot config:
 #
