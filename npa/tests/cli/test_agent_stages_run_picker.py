@@ -26,6 +26,10 @@ def test_stages_panel_has_run_picker_and_load() -> None:
     stages = ui.split('id="stagesPanel"')[1].split('id="panelRerun"')[0]
     assert 'id="stagesRunSelect"' in stages
     assert 'id="stagesLoadRun"' in stages
+    assert "Search or paste run ID" in stages
+    assert "filterStagesRunSelect" in ui
+    assert "resolveStagesRunChoice" in ui
+    assert "mergedRunsCache" in ui
     assert "loadSelectedRun" in ui
     assert "updateRunSelector" in ui
     assert "fillRunSelectOptionsRich(document.getElementById(\"stagesRunSelect\")" in ui
@@ -43,3 +47,12 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     load_fn = ui.split("async function loadSelectedRun")[1].split("function normalizeStageStatus")[0]
     assert "loadRunData()" in load_fn
     assert "syncRunChooserFields" in load_fn
+
+
+def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:
+    """Historical capture runs must not inherit an unrelated workflow draft as pending."""
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    assert "def _run_owns_workflow_stage_overlay" in source
+    assert "overlay_unmatched = _run_owns_workflow_stage_overlay(state, run_id)" in source
+    assert "if count == 0 and not overlay_unmatched:" in source
+    assert "Historical artifact runs must not inherit" in source

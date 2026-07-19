@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071824"
+AGENT_UI_VERSION = "2026071925"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -151,6 +151,8 @@ AGENT_STAGES_RUN_PICKER_CONTRACT = (
     "stages-run-picker",
     "loadSelectedRun",
     "syncRunChooserFields",
+    "filterStagesRunSelect",
+    "Search or paste run ID",
 )
 
 AGENT_READABLE_COLOR_CONTRACT = (
@@ -2074,6 +2076,30 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
     return stages
 
 
+def _run_owns_workflow_stage_overlay(state: dict, run_id: str) -> bool:
+    # Unmatched draft stages stay pending only for the active submit / tracked
+    # sim2real run / draft run_id. Historical capture runs must not inherit an
+    # unrelated session draft as a wall of pending stages.
+    rid = str(run_id or "").strip()
+    if not rid:
+        return False
+    latest = state.get("latest_submit")
+    if isinstance(latest, dict) and str(latest.get("run_id") or "").strip() == rid:
+        return True
+    details_map = state.get("sim2real_runs")
+    if isinstance(details_map, dict):
+        existing = details_map.get(rid)
+        if isinstance(existing, dict) and str(existing.get("submitted_at") or "").strip():
+            return True
+    draft = _workflow_draft_from_state(state)
+    plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
+    if str(plan.get("run_id") or "").strip() == rid:
+        return True
+    if str(draft.get("name") or "").strip() and str(draft.get("run_id") or "").strip() == rid:
+        return True
+    return False
+
+
 def _artifact_stage_key(key: str, run_id: str, prefix: str) -> str:
     value = str(key or "").strip("/")
     for lead in (prefix.strip("/"), ""):
@@ -2131,6 +2157,7 @@ def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     keys = [str(item.key or "") for item in artifacts]
     stages = []
     workflow_stage_defs = _workflow_stage_defs_from_state(state)
+    overlay_unmatched = _run_owns_workflow_stage_overlay(state, run_id)
     used_keys: set[str] = set()
     if workflow_stage_defs:
         for stage_id, label, patterns in workflow_stage_defs:
@@ -2141,6 +2168,10 @@ def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
             ]
             used_keys.update(matched)
             count = len(matched)
+            # Historical artifact runs must not inherit an unrelated session draft
+            # as a wall of pending stages (e.g. Isaac capture vs VLM-RL draft).
+            if count == 0 and not overlay_unmatched:
+                continue
             stages.append(
                 {{
                     "id": stage_id,
@@ -7450,7 +7481,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Pick a run (latest first) to load its pipeline timeline, result, and logs.</p>
+          <p class="hint">Pick a run (latest first) to load its pipeline timeline, result, and logs. Search filters the list by run name.</p>
           <div class="stages-run-picker field-row" data-testid="stages-run-picker">
             <div class="field" style="flex:1;">
               <label for="stagesRunSelect">Run</label>
@@ -7459,8 +7490,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </select>
             </div>
             <div class="field" style="flex:1;">
-              <label for="stagesRunInput">Or paste run ID</label>
-              <input id="stagesRunInput" type="text" placeholder="agent-run-..." autocomplete="off" />
+              <label for="stagesRunInput">Search or paste run ID</label>
+              <input id="stagesRunInput" type="search" placeholder="franka-topdown…" autocomplete="off" aria-label="Search or paste run ID for stages" />
+              <p class="hint" id="stagesRunSearchHint" style="margin:4px 0 0;">Type to filter runs by name.</p>
             </div>
             <div class="btn-row" style="align-self:flex-end; margin-bottom:2px;">
               <button id="stagesLoadRun" class="btn btn-primary" type="button">Load run</button>
@@ -8071,19 +8103,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("stagesLoadRun", async () => {{
           const select = document.getElementById("stagesRunSelect");
           const input = document.getElementById("stagesRunInput");
-          // Prefer pasted input over a stale dropdown selection (matches Enter-on-input).
+          // Prefer pasted/search input over a stale dropdown selection (matches Enter-on-input).
           const typed = String((input && input.value) || "").trim();
           const selected = String((select && select.value) || "").trim();
-          const chosen = typed || selected;
+          const chosen = resolveStagesRunChoice(typed, selected);
           await loadSelectedRun(chosen);
           await loadArtifactsForSelectedRun().catch(() => false);
         }}, "Load run for stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
         if (stagesRunInput) {{
+          stagesRunInput.addEventListener("input", () => {{
+            filterStagesRunSelect(String(stagesRunInput.value || ""));
+          }});
           stagesRunInput.addEventListener("keydown", (event) => {{
             if (event.key !== "Enter") return;
             event.preventDefault();
-            const chosen = String(stagesRunInput.value || "").trim();
+            const typed = String(stagesRunInput.value || "").trim();
+            const select = document.getElementById("stagesRunSelect");
+            const selected = String((select && select.value) || "").trim();
+            const chosen = resolveStagesRunChoice(typed, selected);
             loadSelectedRun(chosen)
               .then(() => loadArtifactsForSelectedRun().catch(() => false))
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
@@ -10348,6 +10386,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
+      let mergedRunsCache = [];
       function selectedRunIdFromUi() {{
         const select = document.getElementById("runIdSelect");
         const stages = document.getElementById("stagesRunSelect");
@@ -10357,11 +10396,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const selected = String(
           (select && select.value) || (stages && stages.value) || activeRunId || ""
         ).trim();
-        // Prefer an explicit paste when present; otherwise the consolidated dropdown.
+        // Prefer an explicit paste/search when present; otherwise the consolidated dropdown.
         if (document.activeElement === runInput || document.activeElement === stagesInput) {{
-          return typed || selected;
+          return resolveStagesRunChoice(typed, selected);
         }}
         return selected || typed;
+      }}
+      function resolveStagesRunChoice(typed, selected) {{
+        const query = String(typed || "").trim();
+        const fallback = String(selected || "").trim();
+        if (!query) return fallback;
+        const exact = mergedRunsCache.find((run) => String((run && run.run_id) || "") === query);
+        if (exact) return query;
+        const lowered = query.toLowerCase();
+        const matches = mergedRunsCache.filter((run) =>
+          String((run && run.run_id) || "").toLowerCase().includes(lowered)
+        );
+        if (matches.length === 1) return String(matches[0].run_id || "").trim();
+        // Allow loading a pasted id that is not yet in the cached list.
+        return query;
       }}
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {{
         const map = new Map();
@@ -10412,11 +10465,44 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           select.appendChild(opt);
         }}
       }}
+      function filterStagesRunSelect(query) {{
+        const select = document.getElementById("stagesRunSelect");
+        const hint = document.getElementById("stagesRunSearchHint");
+        const needle = String(query || "").trim().toLowerCase();
+        const current = String((select && select.value) || activeRunId || "").trim();
+        const filtered = !needle
+          ? mergedRunsCache
+          : mergedRunsCache.filter((run) =>
+              String((run && run.run_id) || "").toLowerCase().includes(needle)
+            );
+        fillRunSelectOptionsRich(select, filtered, current);
+        if (hint) {{
+          if (!needle) {{
+            hint.textContent = "Type to filter runs by name.";
+          }} else if (!filtered.length) {{
+            hint.textContent = "No runs match [" + needle + "]. Paste a full run ID and Load.";
+          }} else {{
+            hint.textContent = String(filtered.length) + " run" + (filtered.length === 1 ? "" : "s") + " match [" + needle + "].";
+          }}
+        }}
+        // When exactly one run matches the search, preselect it for one-click Load.
+        if (filtered.length === 1 && select) {{
+          select.value = String(filtered[0].run_id || "");
+        }}
+        return filtered;
+      }}
       function applyMergedRunSelectors(current) {{
         const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
+        mergedRunsCache = merged;
         const chosen = String(current || activeRunId || "").trim();
         fillRunSelectOptionsRich(document.getElementById("runIdSelect"), merged, chosen);
-        fillRunSelectOptionsRich(document.getElementById("stagesRunSelect"), merged, chosen);
+        const stagesInput = document.getElementById("stagesRunInput");
+        const stagesQuery = String((stagesInput && stagesInput.value) || "").trim();
+        if (stagesQuery) {{
+          filterStagesRunSelect(stagesQuery);
+        }} else {{
+          fillRunSelectOptionsRich(document.getElementById("stagesRunSelect"), merged, chosen);
+        }}
         syncRunChooserFields(chosen);
         return merged;
       }}
@@ -12375,6 +12461,8 @@ def verify_live_cmd(
         'id="stagesLoadRun"',
         "loadSelectedRun",
         "stages-run-picker",
+        "filterStagesRunSelect",
+        "Search or paste run ID",
         "function sendChat(",
         "function wireUi(",
         "activateMainTab",

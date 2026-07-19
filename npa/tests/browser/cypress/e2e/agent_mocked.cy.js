@@ -487,6 +487,20 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("contain.text", "cosmos-reason-run");
   });
 
+  it("Stages search filters the run list by name", () => {
+    cy.get("#tabChat").click();
+    cy.get("#stagesRunInput").clear().type("cosmos-reason", { delay: 0 });
+    cy.get("#stagesRunSearchHint").should("contain.text", "match");
+    cy.get("#stagesRunSelect option").then(($opts) => {
+      const values = [...$opts].map((opt) => opt.value).filter(Boolean);
+      expect(values.length).to.be.greaterThan(0);
+      expect(values.every((value) => value.includes("cosmos-reason"))).to.eq(true);
+    });
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@loadRun");
+    cy.get("#runSummary").should("contain.text", "cosmos-reason-run");
+  });
+
   it("rejects uniform gray / blank canvases in frameLooksBlank", () => {
     cy.window().then((win) => {
       const api = win.__NPA_AGENT_TEST__;
