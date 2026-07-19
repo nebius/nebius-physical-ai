@@ -1182,6 +1182,18 @@ try:
                 return policy(obs)
         return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
 
+    def _step_env(env, actions):
+        # Gymnasium envs return 5 values; the rsl_rl VecEnv wrapper installed
+        # when a trained policy loads returns 4: (obs, rewards, dones, extras).
+        out = env.step(actions)
+        if len(out) == 5:
+            s_obs, s_rew, terminated, truncated, s_info = out
+            s_done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
+        else:
+            s_obs, s_rew, dones, s_info = out
+            s_done = bool(torch.as_tensor(dones).any().item())
+        return s_obs, s_rew, s_done, s_info
+
     def _goal_dist():
         try:
             u = env.unwrapped
@@ -1201,13 +1213,12 @@ try:
         min_dist = None
         for step in range(max_steps_per_episode):
             actions = _act(obs)
-            obs, rewards, terminated, truncated, _ = env.step(actions)
+            obs, rewards, done, _ = _step_env(env, actions)
             episode_reward += float(torch.as_tensor(rewards).mean().item())
             steps_ran = step + 1
             d = _goal_dist()
             if d is not None:
                 min_dist = d if min_dist is None else min(min_dist, d)
-            done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
             if done:
                 break
 
@@ -1554,6 +1565,18 @@ try:
                 return policy(obs)
         return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
 
+    def _step_env(env, actions):
+        # Gymnasium envs return 5 values; the rsl_rl VecEnv wrapper installed
+        # when a trained policy loads returns 4: (obs, rewards, dones, extras).
+        out = env.step(actions)
+        if len(out) == 5:
+            s_obs, s_rew, terminated, truncated, s_info = out
+            s_done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
+        else:
+            s_obs, s_rew, dones, s_info = out
+            s_done = bool(torch.as_tensor(dones).any().item())
+        return s_obs, s_rew, s_done, s_info
+
     robot = _robot(env)
     joint_names = list(getattr(getattr(robot, "data", None), "joint_names", []) or [])
 
@@ -1580,8 +1603,7 @@ try:
             states.append(np.asarray(state_values, dtype=np.float32))
             actions_out.append(np.asarray(action_values, dtype=np.float32))
 
-            obs, _rewards, terminated, truncated, _info = env.step(actions)
-            done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
+            obs, _rewards, done, _info = _step_env(env, actions)
             if done:
                 break
 
@@ -2822,8 +2844,15 @@ def train_cmd(
             except SSHError as exc:
                 traj_exit, traj_stdout, traj_stderr = 1, "", str(exc)
             result["trajectories_dir"] = trajectories_dir
-            result["trajectory_export"] = "success" if traj_exit == 0 else "failed"
-            if traj_exit != 0:
+            # Isaac Sim's kit app can exit 0 even when the Python rollout raised
+            # (the same reason the training path checks ISAAC_LAB_TRAIN_COMPLETE
+            # above), so a clean exit code alone is not proof the export ran.
+            # Require the completion marker the script prints right before it
+            # writes meta.json, otherwise an empty trajectories dir would be
+            # reported as success.
+            traj_ok = traj_exit == 0 and "ISAAC_LAB_TRAJ_EXPORT_COMPLETE" in (traj_stdout or "")
+            result["trajectory_export"] = "success" if traj_ok else "failed"
+            if not traj_ok:
                 # The checkpoint is still good; report the export failure
                 # without failing the training run.
                 result["trajectory_export_error"] = (traj_stderr or traj_stdout).strip()[-500:]
