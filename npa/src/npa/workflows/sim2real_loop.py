@@ -1,6 +1,7 @@
 """Concrete Sim2Real VLM-to-RL loop and end-to-end runbook runtime."""
 
 from __future__ import annotations
+import logging
 
 import argparse
 import hashlib
@@ -4645,7 +4646,7 @@ def _close_isaac_app() -> None:
         try:
             app.close()
         except Exception:  # noqa: BLE001
-            pass
+            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
 
 def _policy_adapter_from_inner_evidence(inner_evidence: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,7 @@
 """Deploy a hosted Rerun web viewer for workflow recordings on Kubernetes."""
 
 from __future__ import annotations
+import logging
 
 import base64
 import json
@@ -1144,7 +1145,7 @@ def resolve_rerun_serve_credentials() -> tuple[str, str]:
         access_key = access_key or (creds.s3_access_key_id or "").strip()
         secret_key = secret_key or (creds.s3_secret_access_key or "").strip()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
     if not access_key or not secret_key:
         raise RerunServeError(
             "S3 credentials are required for auto rerun serve. Configure ~/.npa/credentials.yaml "

@@ -8,6 +8,7 @@ Run with:
 """
 
 from __future__ import annotations
+import logging
 
 import atexit
 import base64
@@ -194,12 +195,12 @@ def _cleanup(state: SmokeState) -> None:
         try:
             state.session.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
     if state.dataset is not None:
         try:
             state.dataset.delete()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
     shutil.rmtree(state.root, ignore_errors=True)
 
 

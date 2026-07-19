@@ -6,6 +6,7 @@ the CLI and executed inside the FiftyOne virtualenv.
 """
 
 from __future__ import annotations
+import logging
 
 import json
 import os
@@ -601,7 +602,7 @@ def _resolve_video_path(
         if candidate.exists():
             return candidate
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
     feature_dir = root / "videos" / video_key
     media = _sorted_media(feature_dir, VIDEO_EXTENSIONS)

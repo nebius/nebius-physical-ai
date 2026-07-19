@@ -12,6 +12,7 @@ Based on: examples/manipulation/grasp_env.py, examples/locomotion/go2_env.py
 """
 
 from __future__ import annotations
+import logging
 
 from dataclasses import dataclass
 from typing import Any
@@ -503,7 +504,7 @@ class FrankaPickPlaceEnv:
             try:
                 kwargs["material"] = gs.materials.Rigid(friction=float(obj.friction))
             except Exception:  # noqa: BLE001 - material is best-effort physics
-                pass
+                logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
         entity = self._scene.add_entity(morph, **kwargs)
         obj.loaded = True
         return entity
