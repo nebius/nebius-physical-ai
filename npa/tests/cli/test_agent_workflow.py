@@ -139,7 +139,11 @@ def test_infra_backend_intent_and_reply() -> None:
 
 
 def test_bootstrap_embeds_workflow_endpoints() -> None:
+    from npa.cli.agent import rendered_agent_ui_html
+
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    ui = rendered_agent_ui_html()
+    bundled = source + "\n" + ui
     assert '@app.post("/workflows/validate")' in source
     assert '@app.post("/workflows/plan")' in source
     assert '@app.post("/workflows/submit")' in source
@@ -155,23 +159,23 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "deploy/cluster" in source
     assert "_soperator_deploy_from_payload" in source
     assert '@app.get("/workflows/draft")' in source
-    assert "workflowYaml" in source
-    assert "validateWorkflowYaml" in source
+    assert "workflowYaml" in bundled
+    assert "validateWorkflowYaml" in bundled
     assert "generate_workflow_draft" in source
     assert '@app.get("/sim-viz/runs")' in source
     assert '@app.post("/sim-viz/select-run")' in source
     assert "sim_viz_runs" in source
     assert '@app.get("/workflows/sim2real/runs/{{run_id:path}}")' in source
-    assert "stages-panel" in source
-    assert "<h3>Stages</h3>" in source
-    assert "Sim2Real Run Monitor" not in source
-    assert "Pick a run" in source and "pipeline timeline, result, and logs." in source
-    assert "formatStageStatusLabel" in source
-    assert "data.ok === false" in source  # submitWorkflowYaml must not treat blocked as success
+    assert "stages-panel" in bundled
+    assert "<h3>Stages</h3>" in bundled
+    assert "Sim2Real Run Monitor" not in bundled
+    assert "Pick a run" in bundled and "pipeline timeline, result, and logs." in bundled
+    assert "formatStageStatusLabel" in bundled
+    assert "data.ok === false" in bundled  # submitWorkflowYaml must not treat blocked as success
     assert 'ok": bool(validation.get("ok"))' in source or '"ok": bool(validation.get("ok"))' in source
-    assert "lastAppliedDraftYaml" in source  # refresh must not stomp local YAML edits
-    assert "Uploaded `" in source or "not runnable yet" in source  # upload surfaces validation state
-    assert "No run-specific Rerun recording yet" in source
+    assert "lastAppliedDraftYaml" in bundled  # refresh must not stomp local YAML edits
+    assert "Uploaded `" in bundled or "not runnable yet" in bundled  # upload surfaces validation state
+    assert "No run-specific Rerun recording yet" in bundled
     assert "_run_sim2real_pipeline_background" in source
     assert "agent-local-sim2real" in source
     embedded = agent_module._embedded_agent_workflow_source()
