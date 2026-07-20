@@ -9,11 +9,12 @@ from npa.cli.agent import AGENT_UI_VERSION
 AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
 
 
-def _embedded_ui_html(source: str) -> str:
-    marker = "cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null"
-    start = source.index(marker)
-    end = source.index("\nHTML\n", start)
-    return source[start:end]
+def _embedded_ui_html(source: str = "") -> str:
+    """Return rendered agent UI HTML (sourced from agent_ui.html)."""
+    from npa.cli.agent import rendered_agent_ui_html
+
+    return rendered_agent_ui_html()
+
 
 
 def test_ui_consolidates_active_run_and_artifacts() -> None:

@@ -15,12 +15,12 @@ AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "ag
 OLD_MOUNT_BEFORE_WARM = 'Mount the viewer immediately so "Loading application bundle" starts early'
 
 
-def _embedded_ui_html(source: str) -> str:
-    """Return the bootstrap-installed ui.html heredoc (not verify-live Python)."""
-    marker = "cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null"
-    start = source.index(marker)
-    end = source.index("\nHTML\n", start)
-    return source[start:end]
+def _embedded_ui_html(source: str = "") -> str:
+    """Return rendered agent UI HTML (sourced from agent_ui.html)."""
+    from npa.cli.agent import rendered_agent_ui_html
+
+    return rendered_agent_ui_html()
+
 
 
 def test_agent_rerun_no_bundle_splash_contract_in_source() -> None:

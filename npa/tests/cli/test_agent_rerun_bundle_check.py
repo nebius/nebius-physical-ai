@@ -18,9 +18,8 @@ from npa.cli import agent as agent_module
 def test_agent_ui_source_satisfies_eager_load_contract() -> None:
     import re
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    ui_start = source.index("cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null")
-    ui_html = source[ui_start : source.index("\nHTML\n", ui_start)]
+    from npa.cli.agent import rendered_agent_ui_html
+    ui_html = rendered_agent_ui_html()
     # Bootstrap embeds the UI template; markers must exist in the shipped UI HTML.
     errors = assert_rerun_ui_eager_load_contract(ui_html)
     assert errors == [], errors

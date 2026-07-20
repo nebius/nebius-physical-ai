@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from npa.cli.agent import rendered_agent_ui_html
+
 import json
 import re
 import shutil
@@ -21,6 +23,15 @@ from npa.cli.agent import (
 )
 
 runner = CliRunner()
+
+
+def _agent_ui_bundle() -> str:
+    """agent.py source plus rendered UI HTML (UI lives in agent_ui.html)."""
+    from npa.cli import agent as agent_module
+    from npa.cli.agent import rendered_agent_ui_html
+
+    return Path(agent_module.__file__).read_text(encoding="utf-8") + "\n" + rendered_agent_ui_html()
+
 
 
 def test_build_agent_urls_https_default() -> None:
@@ -380,7 +391,7 @@ def test_agent_help_smoke() -> None:
 def test_bootstrap_embeds_chat_endpoint() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert '@app.post("/chat")' in source
     assert '@app.get("/session")' in source
     assert '@app.get("/models")' in source
@@ -484,7 +495,7 @@ def test_bootstrap_public_login_form() -> None:
 def test_bootstrap_ui_button_wiring_patterns() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     for control_id in (
         "chatActionS3",
         "chatActionCosmos",
@@ -511,7 +522,7 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
 def test_bootstrap_embeds_cameras_panel() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     # Cameras panel removed from UI; APIs and stock camera metadata remain.
     assert "cameras-panel" not in source
     assert "cameraCards" not in source
@@ -537,8 +548,8 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     iframe = re.search(r'<iframe id="rerunFrame"[^>]*>', source)
     assert iframe is not None
     assert "loading=" not in iframe.group(0)
-    ui_start = source.index("cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null")
-    ui_html = source[ui_start : source.index("\nHTML\n", ui_start)]
+    from npa.cli.agent import rendered_agent_ui_html
+    ui_html = rendered_agent_ui_html()
     for marker in AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT:
         assert marker in ui_html, f"missing no-bundle-splash marker: {marker!r}"
     assert 'Mount the viewer immediately so "Loading application bundle" starts early' not in ui_html
@@ -565,7 +576,7 @@ def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
 def test_bootstrap_embeds_franka_rerun_ux() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert "--sidebar: #0d2a3d" in source
     assert "--brand: #e5ff4f" in source
     assert "--surface-blue: #dceeff" in source
@@ -579,7 +590,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
     assert "class=\"panel rerun-panel rerun-stage\"" in source or 'class="panel rerun-panel rerun-stage"' in source
-    assert ".layout-rerun {{" in source
+    assert ".layout-rerun {{" in source or ".layout-rerun {" in source
     assert "cameras-panel" not in source
     assert "rerun-frame-shell" in source
     assert "robotPreset" in source
@@ -657,7 +668,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
 def test_bootstrap_embeds_run_switching_controls() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert 'id="runIdInput"' in source
     assert 'id="runIdSelect"' in source
     assert 'id="loadRunData"' in source
@@ -690,7 +701,7 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
 def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert 'id="artifactPrefix"' in source
     assert 'id="artifactTypeFilter"' in source
     assert 'id="artifactSort"' in source
@@ -742,7 +753,7 @@ def test_bootstrap_ui_strips_url_credentials() -> None:
 def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert 'credentials: "include"' in source
     assert 'credentials: "same-origin"' not in source
     assert "setChatBusy(true)" in source
@@ -756,7 +767,7 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
 def test_bootstrap_system_prompt_no_localhost() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert "Never suggest localhost" in source
     assert "Load active Sim2Real in Rerun" in source
     assert "/api/sim-viz/load-franka-demo" in source
@@ -1235,7 +1246,7 @@ def test_bootstrap_embeds_recordings_endpoint() -> None:
 def test_bootstrap_chat_copy_yaml_support_present() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert "msg-copy-btn" in source
     assert "extractFencedCode" in source
     assert "copyTextToClipboard" in source
@@ -1519,7 +1530,7 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
 def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     # An explicit Auto option lets the UI post an empty model so the backend
     # applies cost-tier routing instead of pinning the branded reasoner.
     assert "Auto (cost-aware)" in source
