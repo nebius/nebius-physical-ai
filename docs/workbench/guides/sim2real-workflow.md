@@ -104,9 +104,14 @@ npa workbench health sim2real \
 Then submit:
 
 ```bash
+# Load the env overlay into your shell (submit reads these via the environment),
+# then override the run ID (and any other knob) with --var:
+set -a
+source npa/workflows/workbench/sim2real/quickstart.env
+set +a
+
 npa workbench workflow submit \
   npa/workflows/workbench/sim2real/runbook.yaml \
-  --env-file npa/workflows/workbench/sim2real/quickstart.env \
   --var NPA_SIM2REAL_RUN_ID=pusht-demo
 ```
 

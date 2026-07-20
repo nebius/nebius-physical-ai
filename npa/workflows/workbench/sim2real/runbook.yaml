@@ -31,7 +31,8 @@
 # Where to set values:
 #   1. Persistent defaults — `npa configure` writes ~/.npa/config.yaml + credentials.yaml
 #   2. Per-machine operator shell — ~/.npa/sim2real-operator.env (source before submit)
-#   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE` or --env-file
+#   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE`, or
+#      source an env overlay (e.g. quickstart.env) into the shell before submit
 #   4. Direct K8s submit — <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh reads
 #      S3_BUCKET + NPA_SIM2REAL_TRIGGER_DATASET_URI from the environment
 #
