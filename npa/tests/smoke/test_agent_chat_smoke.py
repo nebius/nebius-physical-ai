@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 from npa.cli import agent as agent_module
+from npa.cli.agent import rendered_agent_ui_html
 from npa.cli.agent_chat import (
     apis_for_intent,
     build_grounded_reply,
@@ -25,13 +26,15 @@ NPA_AGENT_SKILL = REPO_ROOT / "skills" / "tools" / "npa-agent" / "SKILL.md"
 
 def test_agent_bootstrap_chat_router_patterns() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui = rendered_agent_ui_html()
+    bundled = source + "\n" + ui
     assert '@app.post("/chat")' in source
     assert "_agent_chat_with_tools" in source
     assert "_maybe_toolground_chat_reply" in source
-    assert "ensureFrankaRerunLoaded" in source
+    assert "ensureFrankaRerunLoaded" in bundled
     assert '"grounded": True' in source
     assert '"apis_used": apis_used' in source
-    assert 'apiJson("/api/chat"' in source
+    assert 'apiJson("/api/chat"' in bundled
 
 
 def test_agent_chat_module_intent_patterns() -> None:
