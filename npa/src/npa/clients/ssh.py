@@ -20,6 +20,82 @@ class SSHError(Exception):
     pass
 
 
+NPA_DEBUG_ENV_VAR = "NPA_DEBUG"
+
+# How many trailing stderr lines to surface by default. Install scripts emit the
+# actual failure (missing token, 403, CUDA mismatch) near the end, so the tail is
+# almost always the useful part.
+_STDERR_TAIL_LINES = 20
+_COMMAND_SUMMARY_MAX = 200
+
+
+def _npa_debug_enabled() -> bool:
+    return os.environ.get(NPA_DEBUG_ENV_VAR, "").strip().lower() not in (
+        "",
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _summarize_command(command: str) -> str:
+    """Return a short, single-line description of a possibly huge remote command."""
+
+    for raw in command.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if len(line) > _COMMAND_SUMMARY_MAX:
+            return line[:_COMMAND_SUMMARY_MAX] + "…"
+        return line
+    stripped = command.strip()
+    if len(stripped) > _COMMAND_SUMMARY_MAX:
+        return stripped[:_COMMAND_SUMMARY_MAX] + "…"
+    return stripped
+
+
+def format_remote_failure(
+    command: str,
+    code: int,
+    stderr: str,
+    *,
+    label: str | None = None,
+) -> str:
+    """Build a compact SSH failure message.
+
+    By default this surfaces the step label (or a one-line command summary), the
+    exit code, and the tail of stderr — never the full multi-hundred-line install
+    script, which both buries the real error and can leak inlined secrets (e.g.
+    docker-login tokens). Set ``NPA_DEBUG=1`` to include the full command and the
+    complete stderr for deep debugging.
+    """
+
+    what = label or _summarize_command(command)
+    stderr = (stderr or "").strip()
+    lines = [f"Command failed (exit {code}): {what}"]
+
+    if _npa_debug_enabled():
+        lines.append(f"command:\n{command}")
+        lines.append(f"stderr:\n{stderr}" if stderr else "stderr: <empty>")
+        return "\n".join(lines)
+
+    stderr_lines = stderr.splitlines()
+    if stderr_lines:
+        tail = stderr_lines[-_STDERR_TAIL_LINES:]
+        truncated = len(stderr_lines) > len(tail)
+        header = (
+            f"stderr (last {len(tail)} of {len(stderr_lines)} lines):"
+            if truncated
+            else "stderr:"
+        )
+        lines.append(header + "\n" + "\n".join(tail))
+    else:
+        lines.append("stderr: <empty>")
+    lines.append(f"Set {NPA_DEBUG_ENV_VAR}=1 for the full command and output.")
+    return "\n".join(lines)
+
+
 class SSHClient:
     def __init__(self, config: SSHConfig) -> None:
         self._config = config
@@ -143,13 +219,19 @@ class SSHClient:
         finally:
             client.close()
 
-    def run_or_raise(self, command: str, **kwargs) -> tuple[int, str, str]:
-        """Run a command; raise SSHError on non-zero exit."""
+    def run_or_raise(
+        self, command: str, *, label: str | None = None, **kwargs
+    ) -> tuple[int, str, str]:
+        """Run a command; raise SSHError on non-zero exit.
+
+        On failure the error is compact by default (step ``label`` or a one-line
+        command summary, the exit code, and the stderr tail). Pass ``label`` to
+        describe the step for long install scripts. Set ``NPA_DEBUG=1`` to get the
+        full command and complete stderr.
+        """
         code, out, err = self.run(command, **kwargs)
         if code != 0:
-            raise SSHError(
-                f"Command failed (exit {code}): {command}\nstderr: {err.strip()}"
-            )
+            raise SSHError(format_remote_failure(command, code, err, label=label))
         return code, out, err
 
     def download_file(self, remote_path: str, local_path: str) -> str:

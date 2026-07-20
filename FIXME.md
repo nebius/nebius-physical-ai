@@ -90,18 +90,6 @@ work lives).
 - **Next step**: Add an explicit deploy auto-serve option or make the post-deploy
   `serve` requirement prominent in CLI help and standard runbooks.
 
-#### [M] Cosmos deploy install failure dumps the full install script and traceback
-
-- **Surfaced by**: 2026-06-10 single-H200 Cosmos deploy (gated model download 403).
-- **Status**: Still active.
-- **Current issue**: When the remote install step fails (e.g. a gated Hugging Face
-  model download), `cosmos deploy` surfaces the entire multi-hundred-line install
-  bash command plus the raw remote Python traceback as the error, burying the
-  actual cause and remediation.
-- **Next step**: Catch install/SSH failures and report a concise, actionable error
-  (failing step plus remote stderr tail), keeping the full command and traceback
-  behind a verbose/debug flag.
-
 #### [M] Add standalone LeRobot library validation test
 
 - **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
@@ -173,6 +161,14 @@ work lives).
 
 ## Resolved (recent)
 
+- 2026-07-19 - Remote install/SSH failures now surface a compact, actionable
+  error (step label + exit code + stderr tail) with the full command and output
+  behind `NPA_DEBUG=1`. Root-caused in `SSHClient.run_or_raise`
+  (`npa.clients.ssh.format_remote_failure`) and the FiftyOne clone; retires the
+  full-script dumps across Cosmos install/serve, FiftyOne, GR00T, Isaac Lab,
+  LeRobot, and Genesis. Hiding the command by default also stops leaking the
+  inlined docker-login `registry_token`. Original FIXME entry: `[M] Cosmos deploy
+  install failure dumps the full install script and traceback`.
 - 2026-07-19 - Isaac Lab -> LeRobot formatter parameterized via
   `LeRobotFeatureSpec` with a G1 default spec (decoupled state/action dims).
 - 2026-07-19 - `npa workbench isaac-lab list-tasks` (remote gym registry) and

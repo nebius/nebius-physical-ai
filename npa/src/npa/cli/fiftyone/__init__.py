@@ -65,7 +65,7 @@ from npa.clients.credentials import (
 )
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.network import NetworkIngressError
-from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.ssh import SSHClient, SSHError, format_remote_failure
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
@@ -282,6 +282,7 @@ def _run_fiftyone_command(
     command: str,
     *,
     stream: bool = False,
+    label: str | None = None,
 ) -> tuple[int, str, str]:
     """Run a FiftyOne remote command, accepting the app-ready marker as success.
 
@@ -293,7 +294,7 @@ def _run_fiftyone_command(
     code, out, err = ssh.run(command, stream=stream)
     if code == 0 or FIFTYONE_READY_MARKER in out:
         return code, out, err
-    raise SSHError(f"Command failed (exit {code}): {command}\nstderr: {err.strip()}")
+    raise SSHError(format_remote_failure(command, code, err, label=label))
 
 
 def _suppress_transient_curl_errors(stderr: str) -> str:
@@ -3384,7 +3385,12 @@ def deploy_cmd(
                 console.print(f"    [dry-run] Would create {FIFTYONE_VENV}, install FiftyOne, and start port {port}")
             else:
                 try:
-                    _run_fiftyone_command(ssh, _build_install_command(port, address=address), stream=True)
+                    _run_fiftyone_command(
+                        ssh,
+                        _build_install_command(port, address=address),
+                        stream=True,
+                        label="FiftyOne install",
+                    )
                 except SSHError as exc:
                     fail_app(f"FiftyOne installation failed: {exc}")
                     return
