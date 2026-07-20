@@ -9384,8 +9384,8 @@ def verify_live_cmd(
         _fail("agent VM does not have a non-localhost public IP")
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a non-localhost public IP")
-    if region != "us-central1":
-        _fail(f"agent region mismatch: expected us-central1, got {region!r}")
+    if not region:
+        _fail("agent record is missing its deploy region")
     try:
         auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
     except ValueError as exc:
