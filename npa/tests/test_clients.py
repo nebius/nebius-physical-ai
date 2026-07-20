@@ -11,7 +11,7 @@ from npa.clients.config import SSHConfig
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients import nebius
 from npa.clients.nebius import NebiusError
-from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.ssh import SSHClient, SSHError, format_remote_failure
 from npa.clients.storage import StorageClient, StorageError, _parse_bucket_uri
 
 
@@ -254,6 +254,59 @@ def test_ssh_run_or_raise_maps_nonzero(mocker) -> None:
 
     with pytest.raises(SSHError, match="Command failed"):
         client.run_or_raise("false")
+
+
+def _long_install_command() -> str:
+    return "bash -lc '" + "\n".join(f"echo step {i}" for i in range(200)) + "\nexit 1'"
+
+
+def test_format_remote_failure_compact_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_DEBUG", raising=False)
+    command = _long_install_command()
+    stderr = "\n".join(f"line {i}" for i in range(100)) + "\nERROR: 403 gated download"
+
+    msg = format_remote_failure(command, 7, stderr, label="Cosmos install")
+
+    # Compact: the huge command is NOT dumped, only the label + exit + stderr tail.
+    assert "Command failed (exit 7): Cosmos install" in msg
+    assert "echo step 100" not in msg
+    assert "ERROR: 403 gated download" in msg
+    assert "line 0" not in msg  # older stderr lines are trimmed
+    assert "NPA_DEBUG=1" in msg
+    assert len(msg.splitlines()) < 30
+
+
+def test_format_remote_failure_debug_includes_full_output(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_DEBUG", "1")
+    command = _long_install_command()
+    stderr = "\n".join(f"line {i}" for i in range(100))
+
+    msg = format_remote_failure(command, 7, stderr, label="Cosmos install")
+
+    assert "echo step 100" in msg  # full command present
+    assert "line 0" in msg  # full stderr present
+    assert "NPA_DEBUG=1" not in msg
+
+
+def test_format_remote_failure_summarizes_command_without_label(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_DEBUG", raising=False)
+    msg = format_remote_failure("false", 1, "", label=None)
+    assert "Command failed (exit 1): false" in msg
+    assert "stderr: <empty>" in msg
+
+
+def test_run_or_raise_passes_label(mocker, monkeypatch) -> None:
+    monkeypatch.delenv("NPA_DEBUG", raising=False)
+    client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
+    mocker.patch.object(client, "run", return_value=(3, "", "boom"))
+
+    with pytest.raises(SSHError) as exc_info:
+        client.run_or_raise("bash -lc 'huge script'", label="GR00T install")
+
+    message = str(exc_info.value)
+    assert "GR00T install" in message
+    assert "huge script" not in message
+    assert "boom" in message
 
 
 def test_ssh_download_file_uses_sftp(tmp_path: Path, mocker) -> None:
