@@ -28,7 +28,6 @@ runner = CliRunner()
 def _agent_ui_bundle() -> str:
     """agent.py source plus rendered UI HTML (UI lives in agent_ui.html)."""
     from npa.cli import agent as agent_module
-    from npa.cli.agent import rendered_agent_ui_html
 
     return Path(agent_module.__file__).read_text(encoding="utf-8") + "\n" + rendered_agent_ui_html()
 
@@ -389,7 +388,6 @@ def test_agent_help_smoke() -> None:
 
 
 def test_bootstrap_embeds_chat_endpoint() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     assert '@app.post("/chat")' in source
@@ -493,7 +491,6 @@ def test_bootstrap_public_login_form() -> None:
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     for control_id in (
@@ -520,7 +517,6 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     # Cameras panel removed from UI; APIs and stock camera metadata remain.
@@ -548,7 +544,6 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     iframe = re.search(r'<iframe id="rerunFrame"[^>]*>', source)
     assert iframe is not None
     assert "loading=" not in iframe.group(0)
-    from npa.cli.agent import rendered_agent_ui_html
     ui_html = rendered_agent_ui_html()
     for marker in AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT:
         assert marker in ui_html, f"missing no-bundle-splash marker: {marker!r}"
@@ -574,7 +569,6 @@ def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
 
 
 def test_bootstrap_embeds_franka_rerun_ux() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     assert "--sidebar: #0d2a3d" in source
@@ -666,7 +660,6 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
 
 
 def test_bootstrap_embeds_run_switching_controls() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     assert 'id="runIdInput"' in source
@@ -751,7 +744,6 @@ def test_bootstrap_ui_strips_url_credentials() -> None:
 
 
 def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     assert 'credentials: "include"' in source
@@ -765,7 +757,6 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
 
 
 def test_bootstrap_system_prompt_no_localhost() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     assert "Never suggest localhost" in source
@@ -1244,7 +1235,6 @@ def test_bootstrap_embeds_recordings_endpoint() -> None:
 
 
 def test_bootstrap_chat_copy_yaml_support_present() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     assert "msg-copy-btn" in source
@@ -1528,7 +1518,6 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
 
 
 def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
-    from npa.cli import agent as agent_module
 
     source = _agent_ui_bundle()
     # An explicit Auto option lets the UI post an empty model so the backend

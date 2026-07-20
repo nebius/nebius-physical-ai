@@ -78,7 +78,7 @@ def test_retargeting_run_writes_real_motion_lib_and_metadata(tmp_path) -> None:
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output or str(result.exception)
     payload = json.loads(result.output)
     assert payload["status"] == "retargeted"
     assert payload["artifact_kind"] == "robot_motion_lib"

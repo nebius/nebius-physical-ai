@@ -201,7 +201,19 @@ _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
+_AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
+
+
+def _embedded_agent_stages_source() -> str:
+    """Return agent_stages.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_stages.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
 
 
 def rendered_agent_ui_html() -> str:
@@ -1594,6 +1606,7 @@ def _bootstrap_agent_stack(
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
+    agent_stages_source = _embedded_agent_stages_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -2090,73 +2103,6 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
     return stages
 
 
-def _run_owns_workflow_stage_overlay(state: dict, run_id: str) -> bool:
-    # Unmatched draft stages stay pending only for the active submit / tracked
-    # sim2real run / draft run_id. Historical capture runs must not inherit an
-    # unrelated session draft as a wall of pending stages.
-    rid = str(run_id or "").strip()
-    if not rid:
-        return False
-    latest = state.get("latest_submit")
-    if isinstance(latest, dict) and str(latest.get("run_id") or "").strip() == rid:
-        return True
-    details_map = state.get("sim2real_runs")
-    if isinstance(details_map, dict):
-        existing = details_map.get(rid)
-        if isinstance(existing, dict) and str(existing.get("submitted_at") or "").strip():
-            return True
-    draft = _workflow_draft_from_state(state)
-    plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
-    if str(plan.get("run_id") or "").strip() == rid:
-        return True
-    if str(draft.get("name") or "").strip() and str(draft.get("run_id") or "").strip() == rid:
-        return True
-    return False
-
-
-def _artifact_stage_key(key: str, run_id: str, prefix: str) -> str:
-    value = str(key or "").strip("/")
-    for lead in (prefix.strip("/"), ""):
-        scoped = value
-        if lead and scoped.startswith(lead + "/"):
-            scoped = scoped[len(lead) + 1 :]
-        if run_id and scoped.startswith(run_id + "/"):
-            scoped = scoped[len(run_id) + 1 :]
-            break
-    parts = [part for part in scoped.split("/") if part]
-    if not parts:
-        return "artifacts"
-    first = parts[0]
-    if first == "reports":
-        return "reports"
-    if first == "eval" and len(parts) > 1:
-        return "eval/" + parts[1]
-    if first in {{"actions", "vlm_eval", "training_signal", "envs"}} and len(parts) > 1:
-        return first + "/" + parts[1]
-    return first
-
-
-def _artifact_stage_label(stage_key: str) -> str:
-    labels = {{
-        "stage_01_trigger": "Trigger",
-        "stage_02_assets": "Assets",
-        "stage_12_external_validation": "External validation",
-        "stage_13_retrigger": "Retrigger",
-        "eval/heldout": "Held-out eval",
-        "actions/train": "Policy rollouts",
-        "vlm_eval/train": "VLM eval",
-        "training_signal/train": "Training signal",
-        "envs/raw": "Raw envs",
-        "envs/train": "Train envs",
-        "outer_loop": "Decision / outer loop",
-        "reports": "Reports / visualization",
-    }}
-    if stage_key in labels:
-        return labels[stage_key]
-    cleaned = stage_key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
-    return cleaned[:1].upper() + cleaned[1:] if cleaned else "Artifacts"
-
-
 def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     if not run_id:
         return None
@@ -2169,55 +2115,15 @@ def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     if not artifacts:
         return None
     keys = [str(item.key or "") for item in artifacts]
-    stages = []
     workflow_stage_defs = _workflow_stage_defs_from_state(state)
-    overlay_unmatched = _run_owns_workflow_stage_overlay(state, run_id)
-    used_keys: set[str] = set()
-    if workflow_stage_defs:
-        for stage_id, label, patterns in workflow_stage_defs:
-            matched = [
-                key
-                for key in keys
-                if any(pattern and pattern in key for pattern in patterns)
-            ]
-            used_keys.update(matched)
-            count = len(matched)
-            # Historical artifact runs must not inherit an unrelated session draft
-            # as a wall of pending stages (e.g. Isaac capture vs VLM-RL draft).
-            if count == 0 and not overlay_unmatched:
-                continue
-            stages.append(
-                {{
-                    "id": stage_id,
-                    "label": label,
-                    "status": "succeeded" if count else "pending",
-                    "started_at": "",
-                    "finished_at": "",
-                    "summary": (
-                        f"{{count}} artifact{{'' if count == 1 else 's'}} matched workflow state '{{label}}'."
-                        if count
-                        else "No artifact matched this workflow state yet."
-                    ),
-                }}
-            )
-    grouped: dict[str, list[str]] = {{}}
-    for key in keys:
-        stage_key = _artifact_stage_key(key, run_id, effective_prefix)
-        grouped.setdefault(stage_key, []).append(key)
-    for stage_key, matched in sorted(grouped.items()):
-        if workflow_stage_defs and all(key in used_keys for key in matched):
-            continue
-        count = len(matched)
-        stages.append(
-            {{
-                "id": _slug(stage_key, fallback="artifacts"),
-                "label": _artifact_stage_label(stage_key),
-                "status": "succeeded",
-                "started_at": "",
-                "finished_at": "",
-                "summary": f"{{count}} artifact{{'' if count == 1 else 's'}} found under '{{stage_key}}'.",
-            }}
-        )
+    overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
+    stages = build_artifact_backed_stages(
+        keys,
+        run_id=run_id,
+        prefix=effective_prefix,
+        workflow_stage_defs=workflow_stage_defs,
+        overlay_unmatched=overlay_unmatched,
+    )
     report_ready = any(key.endswith("/reports/sim2real-report.json") or key.endswith("/reports/report.json") for key in keys)
     rrd_ready = any(key.endswith(".rrd") for key in keys)
     preferred = select_preferred_artifact(artifacts)
@@ -3429,6 +3335,8 @@ def _chat_with_resilience(
 {_AGENT_VISUAL_FEEDBACK_EMBED}
 
 {_AGENT_RRD_PROXY_EMBED}
+
+{_AGENT_STAGES_EMBED}
 
 {_AGENT_CHAT_EMBED}
 
@@ -6237,6 +6145,7 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
+        .replace(_AGENT_STAGES_EMBED, agent_stages_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
     local_setup_script = ""

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from npa.cli import agent_rrd_proxy as proxy
 from npa.cli.agent import _AGENT_RRD_PROXY_EMBED, _embedded_agent_rrd_proxy_source

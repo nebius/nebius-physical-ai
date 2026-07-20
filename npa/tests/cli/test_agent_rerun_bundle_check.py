@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from npa.agent_rerun_bundle_check import (
     FORBIDDEN_UI_MARKERS,
@@ -12,7 +11,6 @@ from npa.agent_rerun_bundle_check import (
     BundleBudgetResult,
     TimedFetch,
 )
-from npa.cli import agent as agent_module
 
 
 def test_agent_ui_source_satisfies_eager_load_contract() -> None:
