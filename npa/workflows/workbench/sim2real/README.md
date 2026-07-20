@@ -75,7 +75,7 @@ export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:0.1.1
 export AUGMENT_IMAGE=<registry>/npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z
 export POLICY_IMAGE=<registry>/npa-reference-policy:0.1.2
 export VLM_IMAGE=<registry>/npa-cosmos3-reason:3.0.1-genuine-sm120
-export EVAL_IMAGE=<registry>/npa-loop-eval:0.1.2-genuine-sm120
+export EVAL_IMAGE=<registry>/npa-loop-eval:0.1.1-genuine-sm120
 
 # 5. Demo scale. Increase these for larger production runs.
 export INNER_ITERATIONS=2
@@ -150,7 +150,7 @@ reports/sim2real.rrd
   - `npa-reference-policy:0.1.2`
   - `npa-cosmos3-reason:3.0.1-genuine-sm120`
   - `npa-lerobot-vlm-rl:0.1.1`
-  - `npa-loop-eval:0.1.2-genuine-sm120`
+  - `npa-loop-eval:0.1.1-genuine-sm120`
 - Gated model repository access accepted where required by the VLM image.
   Self-hosted dual VLM defaults: `nvidia/Cosmos-Reason2-8B` (Reason2) and
   `nvidia/Cosmos-Reason2-2B` (Reason3 sibling). Accept both on Hugging Face before launch.
