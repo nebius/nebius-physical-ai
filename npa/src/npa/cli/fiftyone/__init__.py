@@ -293,7 +293,14 @@ def _run_fiftyone_command(
     code, out, err = ssh.run(command, stream=stream)
     if code == 0 or FIFTYONE_READY_MARKER in out:
         return code, out, err
-    raise SSHError(f"Command failed (exit {code}): {command}\nstderr: {err.strip()}")
+    # Mirror SSHClient.run_or_raise: never echo the command back. FiftyOne
+    # install scripts can carry credentials inline, and this error is surfaced
+    # to terminals, scrollback, CI logs, and agent transcripts.
+    detail = err.strip()
+    message = f"Command failed (exit {code})"
+    if detail:
+        message += f"\nstderr: {detail}"
+    raise SSHError(message)
 
 
 def _suppress_transient_curl_errors(stderr: str) -> str:
