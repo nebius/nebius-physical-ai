@@ -399,7 +399,7 @@ def _resolve_destroy_tf_vars(
 ) -> dict[str, str]:
     state = resolve_terraform_state(project)
     saved_env = resolve_environment(project)
-    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "us-central1")
+    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "eu-north1")
     project_id = str((record or {}).get("project_id", "") or (saved_env.project_id if saved_env else ""))
     service_account_id = str((record or {}).get("service_account_id", "")).strip()
     if not service_account_id:
@@ -8768,7 +8768,7 @@ def deploy_cmd(
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    region: str = typer.Option("us-central1", "--region", help="Nebius region."),
+    region: str = typer.Option("eu-north1", "--region", help="Nebius region."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
     ssh_public_key_path: str = typer.Option("~/.ssh/id_ed25519.pub", "--ssh-public-key-path", help="SSH public key path for Terraform."),
     tf_var: list[str] = typer.Option([], "--tf-var", help="Additional Terraform var key=value."),
@@ -9041,7 +9041,7 @@ def fresh_setup_cmd(
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     project_id: str = typer.Option(..., "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option(..., "--tenant-id", help="Nebius tenant ID."),
-    region: str = typer.Option("us-central1", "--region", help="Nebius region."),
+    region: str = typer.Option("eu-north1", "--region", help="Nebius region."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
     ssh_public_key_path: str = typer.Option("~/.ssh/id_ed25519.pub", "--ssh-public-key-path", help="SSH public key path for Terraform."),
     tf_var: list[str] = typer.Option([], "--tf-var", help="Additional Terraform var key=value."),
