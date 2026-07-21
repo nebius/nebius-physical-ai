@@ -1363,7 +1363,7 @@
               <div class="field-row" style="margin-top:8px;">
                 <div class="field">
                   <label for="artifactPrefix">Artifact prefix</label>
-                  <input id="artifactPrefix" type="text" placeholder="optional/path/prefix" />
+                  <input id="artifactPrefix" type="text" placeholder="prefix, then Enter (e.g. physical-ai-data-factory)" />
                 </div>
                 <div class="field">
                   <label for="artifactTypeFilter">Type</label>
@@ -1385,6 +1385,14 @@
                     <option value="newest">Newest first</option>
                     <option value="largest">Largest first</option>
                     <option value="name">Name A-Z</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-row" style="margin-top:8px;">
+                <div class="field">
+                  <label for="artifactStageFilter">Stage (workflow progress)</label>
+                  <select id="artifactStageFilter">
+                    <option value="">All stages</option>
                   </select>
                 </div>
               </div>
@@ -1975,7 +1983,7 @@
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
-        for (const id of ["artifactTypeFilter", "artifactSort"]) {
+        for (const id of ["artifactStageFilter", "artifactTypeFilter", "artifactSort"]) {
           const node = document.getElementById(id);
           if (node) {
             node.addEventListener("change", async () => {
@@ -1984,6 +1992,27 @@
               await loadArtifactsForSelectedRun();
             });
           }
+        }
+        // Typing a prefix + Enter (or blur) re-runs run discovery, so the operator
+        // does not also have to click "Discover runs".
+        const artifactPrefixInput = document.getElementById("artifactPrefix");
+        if (artifactPrefixInput) {
+          const discoverFromPrefix = async () => {
+            const list = document.getElementById("artifactList");
+            if (list) list.textContent = "Discovering runs...";
+            try {
+              await refreshArtifactRuns();
+              if (list) list.textContent = "";
+            } catch (err) {
+              if (list) list.textContent = "Discover runs failed: " + String((err && err.message) || err);
+            }
+          };
+          artifactPrefixInput.addEventListener("keydown", async (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            await discoverFromPrefix();
+          });
+          artifactPrefixInput.addEventListener("change", discoverFromPrefix);
         }
         const robotPreset = document.getElementById("robotPreset");
         if (robotPreset) {
@@ -4189,13 +4218,40 @@
         const input = document.getElementById("artifactSort");
         return String((input && input.value) || "preferred").trim();
       }
-      function sortAndFilterArtifacts(artifacts, preferred) {
+      function artifactStageFilterValue() {
+        const input = document.getElementById("artifactStageFilter");
+        return String((input && input.value) || "").trim();
+      }
+      function deriveArtifactStage(key, runId) {
+        const marker = "/" + String(runId || "") + "/";
+        let scoped = String(key || "");
+        const idx = scoped.indexOf(marker);
+        if (idx >= 0) scoped = scoped.slice(idx + marker.length);
+        const parts = scoped.split("/").filter(Boolean);
+        return parts[0] || "artifacts";
+      }
+      function populateArtifactStageFilter(artifacts, runId) {
+        const select = document.getElementById("artifactStageFilter");
+        if (!select) return;
+        const current = String(select.value || "").trim();
+        const stages = Array.from(new Set(
+          (Array.isArray(artifacts) ? artifacts : []).map((item) => deriveArtifactStage(item.key, runId))
+        )).sort();
+        select.innerHTML = '<option value="">All stages</option>' +
+          stages.map((s) => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join("");
+        // Preserve the previous selection if it still exists for this run.
+        select.value = stages.includes(current) ? current : "";
+      }
+      function sortAndFilterArtifacts(artifacts, preferred, runId) {
         const filter = artifactTypeFilterValue();
+        const stageFilter = artifactStageFilterValue();
         const sortMode = artifactSortValue();
         const preferredKey = String((preferred && preferred.key) || "");
         const typeRank = { rerun: 0, video: 1, image: 2, json: 3, text: 4, download: 5 };
         const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {
-          return !filter || String(item.render || "download") === filter;
+          if (filter && String(item.render || "download") !== filter) return false;
+          if (stageFilter && deriveArtifactStage(item.key, runId) !== stageFilter) return false;
+          return true;
         });
         items.sort((a, b) => {
           const ar = String(a.render || "download");
@@ -4377,12 +4433,13 @@
           return true;
         }
         renderArtifactDerivedRunDetails(runId, artifacts);
+        populateArtifactStageFilter(artifacts, runId);
         const preferred = data && data.preferred ? data.preferred : null;
-        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred);
+        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred, runId);
         if (!displayArtifacts.length) {
           list.innerHTML =
-            "<p>No artifacts of selected type for <code>" + escapeHtml(runId) + "</code>.</p>" +
-            "<p>Clear the Type filter to show all " + String(artifacts.length) + " artifacts.</p>";
+            "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Stage/Type.</p>" +
+            "<p>Clear the Stage and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
           return true;
         }
         const counts = artifacts.reduce((acc, item) => {
@@ -4486,6 +4543,7 @@
         const stages = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([stageKey, count]) => {
           return {
             id: stageKey.replace(/[^a-zA-Z0-9._-]+/g, "-"),
+            stage_key: stageKey,
             label: artifactStageLabel(stageKey),
             status: "succeeded",
             summary: String(count) + " artifact" + (count === 1 ? "" : "s") + " found under `" + stageKey + "`.",
@@ -4822,14 +4880,43 @@
             const label = String(stage.label || stage.id || "");
             const stageSummary = String(stage.summary || "");
             const active = idx === activeIdx ? " is-active" : "";
+            const stageKey = String(stage.stage_key || "");
+            const clickable = stageKey
+              ? ' data-stage-key="' + escapeHtml(stageKey) + '" style="cursor:pointer;" title="View this stage artifacts"'
+              : "";
             return (
-              '<div class="stage-item' + active + '">' +
+              '<div class="stage-item' + active + '"' + clickable + '>' +
               '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
               '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
               '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
               '</div>'
             );
           }).join("");
+          // Selecting a stage in the timeline scopes the artifact browser to that
+          // workflow-progress step and lists its artifacts.
+          for (const node of stagesHost.querySelectorAll(".stage-item[data-stage-key]")) {
+            node.addEventListener("click", async () => {
+              const stageKey = String(node.getAttribute("data-stage-key") || "").trim();
+              const select = document.getElementById("artifactStageFilter");
+              if (select) {
+                if (![...select.options].some((o) => o.value === stageKey)) {
+                  const opt = document.createElement("option");
+                  opt.value = stageKey;
+                  opt.textContent = stageKey;
+                  select.appendChild(opt);
+                }
+                select.value = stageKey;
+              }
+              try {
+                await loadArtifactsForSelectedRun();
+              } catch (err) {
+                const list = document.getElementById("artifactList");
+                if (list) list.textContent = "Load stage artifacts failed: " + String((err && err.message) || err);
+              }
+              const list = document.getElementById("artifactList");
+              if (list && list.scrollIntoView) list.scrollIntoView({ behavior: "smooth", block: "start" });
+            });
+          }
         }
         const logs = Array.isArray(run.logs) ? run.logs : [];
         logHost.textContent = logs.length

@@ -730,11 +730,10 @@ def test_bootstrap_artifact_prefix_triggers_discovery() -> None:
     """Typing a prefix + Enter (or blur) must re-run run discovery.
 
     Regression guard: previously the Prefix input had no listener, so typing a
-    value did nothing until the operator also clicked "Discover runs".
+    value did nothing until the operator also clicked "Discover runs". The UI
+    lives in agent_ui.html, so assert against the rendered UI bundle.
     """
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert 'const artifactPrefixInput = document.getElementById("artifactPrefix")' in source
     assert 'artifactPrefixInput.addEventListener("keydown"' in source
     assert 'artifactPrefixInput.addEventListener("change", discoverFromPrefix)' in source
@@ -749,11 +748,10 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     """The stages/artifact browser must let you choose a workflow-progress step.
 
     A Stage selector filters the artifact list by pipeline stage, and clicking a
-    stage row in the Run Monitor timeline scopes the artifact browser to it.
+    stage row in the Run Monitor timeline scopes the artifact browser to it. The
+    UI lives in agent_ui.html, so assert against the rendered UI bundle.
     """
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     # Stage selector in the artifact browser.
     assert 'id="artifactStageFilter"' in source
     assert "function artifactStageFilterValue()" in source
@@ -795,25 +793,23 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
 
 
 def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
-    """The 'Known runs' visualize selector must list discovered runs and the
-    Rerun panel must remain present.
+    """Discovered runs must be choosable to visualize, and the Rerun viewer must
+    remain present.
 
-    Regression guard: discovered runs (e.g. under a custom artifact prefix) must
-    be choosable to visualize, and sim-viz status polling must not clobber them.
+    Regression guard: runs discovered under a custom artifact prefix (e.g.
+    physical-ai-data-factory) must be surfaced in the run selector by unioning
+    server-side known runs with discovered runs (latest-first), not clobbering.
     """
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Rerun panel + run selectors still present.
-    assert "Rerun (embedded)" in source
+    source = _agent_ui_bundle()
+    # Rerun viewer + run selector still present.
     assert 'id="rerunFrame"' in source
+    assert 'id="panelRerun"' in source
     assert 'id="runIdSelect"' in source
-    # Discovery populates the visualize selector.
-    assert 'const visualizeSelect = document.getElementById("runIdSelect")' in source
-    assert "visualizeSelect.appendChild(opt)" in source
-    # Status polling unions instead of clobbering the selector.
-    assert "Union sim-viz history with any runs already surfaced" in source
-    assert "select.innerHTML = '<option value=\"\">(select run)</option>';" not in source
+    # Prefix-scoped discovery feeds the discovered-runs set.
+    assert "discoveredArtifactRuns = Array.isArray(data.runs)" in source
+    # The run selector is a UNION of known + discovered runs (does not clobber).
+    assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
+    assert "fillRunSelectOptionsRich(document.getElementById(\"runIdSelect\")" in source
 
 
 def test_bootstrap_run_history_uses_run_id_index() -> None:
