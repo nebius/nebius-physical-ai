@@ -60,11 +60,16 @@ SUPPORTED_TOOL_VERSIONS = {
     "envgen": "0.1.2",
     "reference-policy": "0.1.2",
     "lerobot-vlm-rl": "0.1.1",
-    # 0.1.2-genuine-sm120 was rebuilt without working Blackwell (sm_120) Genesis
-    # kernels and crashes heldout_eval on RTX PRO 6000 with "CUDA error: no kernel
-    # image is available for execution on the device". 0.1.1 is the proven-good
-    # build (matches sim2real.constants.DEFAULT_EVAL_TAG). Re-bump only after a
-    # 0.1.3 rebuild restores sm_120 Genesis kernels.
+    # 0.1.1-genuine-sm120 is the canonical pin (matches
+    # sim2real.constants.DEFAULT_EVAL_TAG); 0.1.2-genuine-sm120 was a bad rebuild
+    # that also lost Blackwell (sm_120) Genesis kernels and is not in the registry.
+    # CAVEAT (live sm_120 test 2026-07-21): the *pushed* 0.1.1 artifact ships
+    # torch 2.6.0+cu124 (arch_list sm_50..sm_90 only), so torch CUDA raises "no
+    # kernel image is available for execution on the device" on RTX PRO 6000
+    # (sm_120). Genesis heldout_eval hard-requires torch CUDA, so neither pushed
+    # eval tag runs stage-10 genesis eval on RTX PRO 6000 today. A 0.1.3 rebuild
+    # from npa-base:cuda13-b300 (torch 2.9+cu130, sm_120) plus sm_120 Genesis
+    # kernels is required. See FIXME.md. Keep 0.1.1 as the least-bad pin.
     "loop-eval": "0.1.1-genuine-sm120",
     "rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",

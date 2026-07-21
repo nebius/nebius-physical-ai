@@ -113,9 +113,10 @@ retargeting = "0.1.1"
 envgen = "0.1.2"
 reference-policy = "0.1.2"
 lerobot-vlm-rl = "0.1.1"
-# 0.1.2-genuine-sm120 lost working Blackwell (sm_120) Genesis kernels and crashes
-# heldout_eval on RTX PRO 6000 ("CUDA error: no kernel image available"); 0.1.1 is
-# the proven-good build. Re-bump only after a 0.1.3 rebuild restores sm_120 kernels.
+# 0.1.1-genuine-sm120 is the canonical pin; 0.1.2 is worse (missing from the
+# registry). CAVEAT (live sm_120 test 2026-07-21): the pushed 0.1.1 artifact ships
+# torch 2.6.0+cu124 (sm_90-capped) and fails torch CUDA on RTX PRO 6000; genesis
+# heldout_eval needs a 0.1.3 rebuild (cuda13-b300 / torch 2.9+cu130). See FIXME.md.
 loop-eval = "0.1.1-genuine-sm120"
 rerun-viewer = "0.31.4"
 lancedb = "0.30.3"
