@@ -33,6 +33,12 @@ from npa.clients import nebius
 runner = CliRunner()
 GB = 1024**3
 
+# Mark as a live e2e module so the autouse HOME-isolation fixture in the root
+# conftest exempts these tests: they must see the operator's real ~/.nebius
+# profile to reach Nebius APIs (the npa dotfiles are still redirected to tmp by
+# the configure_paths fixture). Also gated at runtime by NPA_CONFIGURE_E2E=1.
+pytestmark = pytest.mark.e2e
+
 
 @dataclass(frozen=True)
 class LiveConfigureEnv:
