@@ -1,4 +1,9 @@
-FROM pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
+# Thin detector train/eval layer on the shared CUDA/torch base. NPA_CUDA_BASE
+# defaults to the locally-built base tag; override with
+# --build-arg NPA_CUDA_BASE=<registry>/npa-workbench-cuda-base:<tag> to build
+# against a published base.
+ARG NPA_CUDA_BASE=npa-workbench-cuda-base:cuda13.0-torch2.12.1
+FROM ${NPA_CUDA_BASE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -7,10 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libglib2.0-0 libgl1 \
-    && rm -rf /var/lib/apt/lists/*
-
+# libgl/libglib + the FastAPI + lancedb + pyarrow + pillow + boto3 + torch/CUDA
+# stack come from the shared base; only the detector-specific torch extensions
+# and COCO metrics are unique to this image.
 COPY docker/workbench/detection-training/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 

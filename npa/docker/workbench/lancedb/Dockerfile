@@ -1,4 +1,9 @@
-FROM pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
+# Thin CLIP-embedding + LanceDB service layer on the shared CUDA/torch base.
+# NPA_CUDA_BASE defaults to the locally-built base tag; override with
+# --build-arg NPA_CUDA_BASE=<registry>/npa-workbench-cuda-base:<tag> to build
+# against a published base.
+ARG NPA_CUDA_BASE=npa-workbench-cuda-base:cuda13.0-torch2.12.1
+FROM ${NPA_CUDA_BASE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -7,6 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Only the CLIP embedding dependency is unique to this image; the FastAPI +
+# lancedb + pyarrow + pillow + boto3 stack comes from the shared base.
 COPY docker/workbench/lancedb/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
