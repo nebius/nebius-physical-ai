@@ -113,7 +113,7 @@ flowchart TB
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
 | `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
 | `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
-| `loop-eval` | `0.1.2-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
+| `loop-eval` | `0.1.1-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
 | `rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
