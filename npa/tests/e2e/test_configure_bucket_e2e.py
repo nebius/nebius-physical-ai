@@ -33,6 +33,12 @@ from npa.clients import nebius
 runner = CliRunner()
 GB = 1024**3
 
+# Mark as a live e2e module so the autouse HOME-isolation fixture in the root
+# conftest exempts these tests: they must see the operator's real ~/.nebius
+# profile to reach Nebius APIs (the npa dotfiles are still redirected to tmp by
+# the configure_paths fixture). Also gated at runtime by NPA_CONFIGURE_E2E=1.
+pytestmark = pytest.mark.e2e
+
 
 @dataclass(frozen=True)
 class LiveConfigureEnv:
@@ -73,7 +79,10 @@ def configure_paths(monkeypatch, tmp_path):
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    # Represent a ready, authenticated profile (the live env is authenticated per
+    # live_configure_env): _ensure_nebius_profile() returns True so provisioning
+    # proceeds instead of aborting on the "no profile" gate.
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     return creds_path, config_path
 
 
