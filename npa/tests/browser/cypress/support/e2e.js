@@ -297,7 +297,7 @@ const FIELD_IDS = [
   "renderedDataSummary",
   "rerunFrame",
   "artifactPreviewHost",
-  "tabChat",
+  "tabMain",
   "tabRerun",
   "panelChat",
   "panelRerun",

@@ -87,7 +87,7 @@ describe("NPA agent UI against live infra", () => {
     }
     cy.get("#chatForm").should("exist");
     cy.get("#workflowYaml").should("exist");
-    cy.get("#tabChat").should("exist");
+    cy.get("#tabMain").should("exist");
     cy.get("#tabRerun").should("exist");
     // Describe-this (viewer capture) button and the artifact Stage filter must ship.
     cy.get("#describeVisual").should("exist");
@@ -160,7 +160,7 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#workflowStatus").click();
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#runSummary", { timeout: 30000 }).should("contain.text", "status");
 
     cy.get("#tabRerun").click();
@@ -347,7 +347,7 @@ describe("NPA agent UI against live infra", () => {
       cy.contains("rerun").should("be.visible");
       cy.contains("reports/sim2real-report.json").should("be.visible");
     });
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     cy.get("#stageList", { timeout: 30000 }).within(() => {
       cy.contains("Trigger").should("be.visible");
@@ -365,7 +365,7 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#renderModeRerun").should("have.class", "is-active");
     // Tab panels stay mounted with opacity:0 when inactive — assert activation class,
     // not Cypress visibility (opacity:0 is treated as hidden).
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     cy.get("#chatForm").should("exist");
 
@@ -387,7 +387,7 @@ describe("NPA agent UI against live infra", () => {
       expect(frameRect.width, "rerunFrame has usable width").to.be.greaterThan(240);
       expect(frameRect.height, "rerunFrame has usable height").to.be.greaterThan(40);
     });
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     for (const id of ["chatForm", "runDetails"]) {
       cy.get(`#${id}`).should("exist").and(($el) => {

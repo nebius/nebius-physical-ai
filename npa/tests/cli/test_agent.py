@@ -539,7 +539,7 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "stock_workspace" in source
     assert "stock_ee_mounted" in source
     assert "frustumSvg" in source
-    assert 'id="tabChat"' in source
+    assert 'id="tabMain"' in source
     assert 'id="tabRerun"' in source
     assert "layout-rerun" in source
     assert "activateMainTab" in source
@@ -1065,7 +1065,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
                 '<body>'
-                '<div id="tabChat"></div><div id="tabRerun"></div>'
+                '<div id="tabMain"></div><div id="tabRerun"></div>'
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'

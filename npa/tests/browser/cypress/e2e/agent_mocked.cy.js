@@ -36,11 +36,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdInput").clear({ force: true }).type("cosmos-reason-run", { force: true });
     cy.get("#loadRunData").click({ force: true });
     cy.wait("@loadRun");
-    // From Viewer, Chat tab opens the drawer; Full chat expands Stages/Workflow.
-    cy.get("#tabChat").click();
-    cy.get("#panelChat").should("have.class", "chat-drawer-open");
-    cy.get("#openFullChatTab").click();
+    // Clicking the Main tab from Viewer switches to the Main panel directly
+    // (it must NOT pop the chat drawer out).
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.get("#runSummary").should("contain.text", "cosmos-reason-run");
     cy.get("#stageList").should("contain.text", "Fetch checkpoint");
@@ -101,7 +101,7 @@ describe("NPA agent UI with mocked APIs", () => {
     }
     cy.get("#workflowYaml").should("contain.value", "apiVersion: npa.workflow/v0.0.1");
     cy.get("#workflowSubmitHint").should("contain.text", "plan-only");
-    cy.get("#tabChat").should("have.attr", "aria-selected", "true");
+    cy.get("#tabMain").should("have.attr", "aria-selected", "true");
     cy.get("#tabRerun").click();
     cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
     cy.get("#panelRerun").should("have.class", "is-active").and("have.attr", "aria-hidden", "false");
@@ -194,7 +194,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#loadFrankaRerun").click();
     cy.wait("@loadFranka");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded stock Franka");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
 
@@ -206,21 +206,21 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#submitWorkflow").click();
     cy.wait("@submitSim2Real");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Submitted Sim2Real run");
     cy.get("#runSummary").should("contain.text", "submitted-run");
 
     cy.get("#tabRerun").click();
     cy.get("#workflowStatus").click();
     cy.wait("@workflowStatus");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Latest workflow status");
 
     cy.get("#tabRerun").click();
     cy.get("#runIdInput").clear().type("mock-run");
     cy.get("#loadRunData").click();
     cy.wait("@loadRun");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded run context");
     cy.get("#runLog").should("contain.text", "mock run log");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
@@ -273,10 +273,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Loaded artifact");
     cy.get("#artifactPreviewHost").should("not.have.attr", "hidden");
 
-    cy.get("#tabChat").click();
-    cy.get("#panelChat").should("have.class", "chat-drawer-open");
-    cy.get("#openFullChatTab").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active").and("have.attr", "aria-hidden", "false");
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
     cy.get("#panelRerun").should("have.class", "is-inactive");
   });
 
@@ -319,7 +318,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
     cy.get("#loadRunData").click();
     cy.wait("@loadRun");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.get("#runSummary").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#stageList").should("contain.text", "Customer assets");
@@ -490,12 +489,13 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#statusBar", { timeout: 10000 }).should("not.contain.text", "Caching Rerun assets");
   });
 
-  it("opens bottom-right chat widget on Viewer without covering Rerun permanently", () => {
+  it("opens the chat collapsible only via the chat button, and Main tab never pops it out", () => {
     cy.get("#tabRerun").click();
     cy.get("body").should("have.class", "viewer-focus");
     cy.get("#chatDrawerToggle").should("be.visible");
     cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
 
+    // The chat collapsible opens ONLY when the chat button (FAB) is clicked.
     cy.get("#chatDrawerToggle").click();
     cy.get("#panelChat").should("have.class", "chat-drawer-open");
     cy.get("#chatDrawerToggle").should("have.class", "is-open");
@@ -503,13 +503,26 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
     cy.get("#rerunBundleCover").should("have.attr", "hidden");
 
-    // Chat main-tab from Viewer opens the drawer instead of leaving Rerun.
-    cy.get("#tabChat").click();
-    cy.get("#panelChat").should("have.class", "chat-drawer-open");
-    cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#openFullChatTab").click();
+    // Regression guard: clicking the Main tab from the Viewer switches to the
+    // Main panel and must NOT pop the chat drawer out.
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
+    cy.get("#panelRerun").should("have.class", "is-inactive");
     cy.get("body").should("not.have.class", "viewer-focus");
+
+    // Returning to the Viewer and back to Main again still never pops the drawer.
+    cy.get("#tabRerun").click();
+    cy.get("body").should("have.class", "viewer-focus");
+    cy.get("#tabMain").click();
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
+    cy.get("#panelChat").should("have.class", "is-active");
+  });
+
+  it("labels the main tab 'Main' (renamed from Chat)", () => {
+    cy.get("#tabMain").should("exist").and("have.text", "Main");
+    cy.get("#tabMain").should("have.attr", "data-tab", "main");
+    cy.get("#tabChat").should("not.exist");
   });
 
   it("keeps local Workflow YAML edits across refresh-driven run loads", () => {
@@ -519,12 +532,12 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdInput").clear({ force: true }).type("cosmos-reason-run", { force: true });
     cy.get("#loadRunData").click({ force: true });
     cy.wait("@loadRun");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#workflowYaml").should("contain.value", "local-edit");
   });
 
   it("Stages Load prefers pasted run id over a stale dropdown selection", () => {
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#stagesRunSelect").select("mock-run");
     cy.get("#stagesRunInput").clear().type("cosmos-reason-run", { delay: 0 });
     cy.get("#stagesLoadRun").click();
@@ -533,7 +546,7 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("Stages search filters the run list by name", () => {
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#stagesRunInput").clear().type("mock", { delay: 0 });
     cy.get("#stagesRunSearchHint").should("contain.text", "match");
     cy.get("#stagesRunSelect option").then(($opts) => {

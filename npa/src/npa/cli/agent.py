@@ -64,7 +64,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071925"
+AGENT_UI_VERSION = "2026072101"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -7398,7 +7398,7 @@ def verify_live_cmd(
         'name="viewport" content="width=device-width',
         'id="chatForm"',
         'id="mobileChatAuth"',
-        'id="tabChat"',
+        'id="tabMain"',
         'id="tabRerun"',
         'id="stagesPanel"',
         "<h3>Stages</h3>",

@@ -1237,7 +1237,7 @@
         <span class="badge badge-ok">Secure basic-auth session</span>
       </header>
       <nav class="main-tabs" role="tablist" aria-label="Workbench views">
-        <button id="tabChat" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="chat">Chat</button>
+        <button id="tabMain" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="main">Main</button>
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
       </nav>
       <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
@@ -1249,7 +1249,7 @@
         <span id="chatQueueBadge">0</span>
       </button>
       <main class="page">
-        <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabChat" aria-hidden="false">
+        <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabMain" aria-hidden="false">
         <section class="panel chat-panel">
           <div class="chat-panel-head">
             <div>
@@ -1620,7 +1620,7 @@
       let chatQueueDrain = null;
       let describeInFlight = false;
       let thinkingNode = null;
-      let activeMainTab = "chat";
+      let activeMainTab = "main";
       let chatDrawerOpen = false;
       function updateChatQueueBadge() {
         const badge = document.getElementById("chatQueueBadge");
@@ -1669,7 +1669,7 @@
       }
       function openFullChatTab() {
         setChatDrawerOpen(false);
-        activateMainTab("chat").catch((err) => console.warn("open full chat failed", err));
+        activateMainTab("main").catch((err) => console.warn("open full chat failed", err));
       }
       async function processChatQueue() {
         // Single-flight drain: concurrent enqueueChatJob callers await the same promise
@@ -1706,19 +1706,19 @@
       }
       async function activateMainTab(name, options) {
         const opts = options || {};
-        const tab = String(name || "chat").trim() === "rerun" ? "rerun" : "chat";
+        const tab = String(name || "main").trim() === "rerun" ? "rerun" : "main";
         const switching = activeMainTab !== tab;
         activeMainTab = tab;
         const chatPanel = document.getElementById("panelChat");
         const rerunPanel = document.getElementById("panelRerun");
-        const tabChat = document.getElementById("tabChat");
+        const tabMain = document.getElementById("tabMain");
         const tabRerun = document.getElementById("tabRerun");
         // Keep both panels mounted (opacity toggle only). display:none / visibility:hidden
-        // would unload or defer the Rerun wasm viewer bundle on every Chat↔Rerun switch.
+        // would unload or defer the Rerun wasm viewer bundle on every Main↔Rerun switch.
         if (chatPanel) {
-          chatPanel.classList.toggle("is-active", tab === "chat");
-          chatPanel.classList.toggle("is-inactive", tab !== "chat");
-          chatPanel.setAttribute("aria-hidden", tab === "chat" ? "false" : "true");
+          chatPanel.classList.toggle("is-active", tab === "main");
+          chatPanel.classList.toggle("is-inactive", tab !== "main");
+          chatPanel.setAttribute("aria-hidden", tab === "main" ? "false" : "true");
           chatPanel.hidden = false;
         }
         if (rerunPanel) {
@@ -1727,7 +1727,7 @@
           rerunPanel.setAttribute("aria-hidden", tab === "rerun" ? "false" : "true");
           rerunPanel.hidden = false;
         }
-        if (tabChat) tabChat.setAttribute("aria-selected", tab === "chat" ? "true" : "false");
+        if (tabMain) tabMain.setAttribute("aria-selected", tab === "main" ? "true" : "false");
         if (tabRerun) tabRerun.setAttribute("aria-selected", tab === "rerun" ? "true" : "false");
         document.body.classList.toggle("viewer-focus", tab === "rerun");
         if (tab !== "rerun") {
@@ -1799,14 +1799,10 @@
         }
         document.querySelectorAll(".main-tab[data-tab]").forEach((btn) => {
           btn.addEventListener("click", () => {
-            const next = String(btn.getAttribute("data-tab") || "chat");
-            // From Viewer (Rerun/Video/Image/Data), Chat tab opens the drawer instead
-            // of tearing focus away from the active render pane.
-            if (next === "chat" && activeMainTab === "rerun") {
-              if (chatDrawerOpen) openFullChatTab();
-              else openChatDrawer();
-              return;
-            }
+            const next = String(btn.getAttribute("data-tab") || "main");
+            // Clicking a main tab always switches tabs. The chat collapsible only
+            // opens via the chat button (chatDrawerToggle), never by clicking the
+            // Main tab — so returning to Main never pops the drawer out.
             activateMainTab(next).catch((err) => {
               console.warn("tab switch failed", err);
             });

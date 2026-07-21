@@ -120,7 +120,7 @@ UI_WIRING_MARKERS = (
     "function wireUi(",
     "function showToast(",
     "activateMainTab",
-    'id="tabChat"',
+    'id="tabMain"',
     'id="tabRerun"',
     'id="stagesPanel"',
     "<h3>Stages</h3>",

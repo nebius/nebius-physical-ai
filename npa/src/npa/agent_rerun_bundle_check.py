@@ -21,7 +21,7 @@ import httpx
 # cheaply. Renaming a helper (e.g. waitUntilRerunPastBundleSplash) will break
 # CI — update the marker list in the same change when that happens.
 REQUIRED_UI_MARKERS = (
-    'id="tabChat"',
+    'id="tabMain"',
     'id="tabRerun"',
     "activateMainTab",
     "tab-panel.is-inactive",
