@@ -110,7 +110,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(
         monkeypatch, project="project-12345", tenant="tenant-abcde"
     )
@@ -212,7 +212,7 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
     creds_path = tmp_path / "credentials.yaml"
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
 
@@ -261,7 +261,7 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
 
@@ -313,7 +313,7 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
 
     def must_not_call(*_args, **_kwargs):
@@ -359,7 +359,7 @@ def test_configure_interactive_skips_config_without_project(monkeypatch, tmp_pat
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch)
 
     # Skip every field. With no project/tenant, provisioning is skipped and the
@@ -425,7 +425,7 @@ def test_configure_interactive_does_not_migrate_legacy_token_factory_key(
     )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch)
 
     answers = "\n".join([""] * 12) + "\n"
@@ -471,7 +471,7 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
     )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch)
 
     # Skip everything except HF token.
@@ -525,8 +525,9 @@ def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) ->
     monkeypatch.setattr(cli_main, "_create_nebius_profile", fake_create)
     _stub_nebius_defaults(monkeypatch)
 
-    # confirm profile, then skip all interactive fields.
-    answers = "y\n" + "\n".join([""] * 11) + "\n"
+    # confirm profile, then skip all interactive fields (empty project => the
+    # manual object-storage prompts run, so 12 fields follow the confirm).
+    answers = "y\n" + "\n".join([""] * 12) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -548,8 +549,10 @@ def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(cli_main, "_create_nebius_profile", fail_create)
     _stub_nebius_defaults(monkeypatch)
 
+    # Empty project => provisioning is skipped and the manual object-storage
+    # prompts run, so 12 fields are prompted for.
     result = runner.invoke(
-        app, ["configure", "--interactive"], input="\n".join([""] * 11) + "\n"
+        app, ["configure", "--interactive"], input="\n".join([""] * 12) + "\n"
     )
 
     assert result.exit_code == 0, result.output
@@ -627,10 +630,14 @@ def test_configure_stale_profile_shows_activate_guidance(monkeypatch, tmp_path) 
     answers = "n\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
-    assert result.exit_code == 0, result.output
+    # Without an authenticated profile, default (provisioning) configure aborts
+    # up front instead of falling through unanswerable prompts.
+    assert result.exit_code == 1, result.output
     assert "profiles exist but" in result.output
     assert "nebius profile activate" in result.output
     assert "Skipped Nebius profile creation" in result.output
+    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    assert "--no-provision" in result.output
 
 
 def test_list_nebius_profiles_parses_profile_names(monkeypatch) -> None:
@@ -682,9 +689,10 @@ def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None
     answers = "n\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert "Skipped Nebius profile creation" in result.output
     assert "Re-run `npa configure`" in result.output
+    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
 
 
 def test_configure_profile_creation_fails_verification(monkeypatch, tmp_path) -> None:
@@ -703,9 +711,10 @@ def test_configure_profile_creation_fails_verification(monkeypatch, tmp_path) ->
     answers = "y\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert "Could not verify a Nebius profile" in result.output
     assert "Re-run `npa configure`" in result.output
+    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
 
 
 def test_configure_profile_create_subprocess_fails(monkeypatch, tmp_path) -> None:
@@ -723,8 +732,9 @@ def test_configure_profile_create_subprocess_fails(monkeypatch, tmp_path) -> Non
     answers = "y\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert "Could not verify a Nebius profile" in result.output
+    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
 
 
 def test_configure_full_interactive_bootstraps_profile_and_provisions(
@@ -809,9 +819,38 @@ def test_configure_missing_nebius_cli_shows_install_guidance(
     answers = "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
-    assert result.exit_code == 0, result.output
+    # No Nebius CLI => provisioning cannot proceed => abort up front (non-zero)
+    # with install guidance and the --no-provision escape hatch, rather than
+    # dropping into prompts a new user cannot answer and exiting 0 empty-handed.
+    assert result.exit_code == 1, result.output
     assert "Nebius CLI not found" in result.output
     assert "re-run `npa configure`" in result.output.lower()
+    assert "--no-provision" in result.output
+
+
+def test_configure_interactive_abort_exits_nonzero_and_writes_nothing(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch)
+
+    # Only one answer then EOF: typer aborts on the next prompt. This used to
+    # exit 0 having written nothing; it must now fail loudly.
+    result = runner.invoke(
+        app, ["configure", "--interactive", "--no-provision"], input="project-1\n"
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "cancelled before anything was written" in result.output
+    assert not creds_path.exists()
+    assert not config_path.exists()
 
 
 def test_nebius_profile_ready_uses_get_access_token(monkeypatch) -> None:

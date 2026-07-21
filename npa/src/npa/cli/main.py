@@ -84,6 +84,10 @@ existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
 user-level tokens, object storage, and BYOVM SSH defaults:
 
 tokens:
+  # Hugging Face access token (for model + dataset downloads, incl. gated repos).
+  # Get one at https://huggingface.co/settings/tokens -> "Create new token"
+  # (a "Read" token is enough). For gated models (e.g. Llama, some GR00T assets),
+  # also click "Agree and access repository" on each model page while signed in.
   HF_TOKEN: hf_REPLACE_ME
   # Optional: Nebius AI Cloud API key (for Nebius AI Cloud APIs).
   NEBIUS_AI_CLOUD_KEY: <paste-your-nebius-ai-cloud-api-key>
@@ -92,6 +96,9 @@ tokens:
   # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
   NEBIUS_TOKEN_FACTORY_KEY: <paste-your-token-factory-api-key>  # e.g. v1.XXXXXXXX...
 ngc:
+  # NVIDIA NGC API key (for GR00T / Cosmos NVIDIA container + model pulls).
+  # Get one at https://org.ngc.nvidia.com/setup/api-key -> "Generate API Key"
+  # (sign in / create a free NGC account first). The key starts with "nvapi_".
   api_key: nvapi_REPLACE_ME
   # org: optional-ngc-org
   # team: optional-ngc-team
@@ -201,12 +208,18 @@ def _create_nebius_profile(*, runner: Callable[..., object] = subprocess.run) ->
     return getattr(result, "returncode", 1) == 0
 
 
-def _ensure_nebius_profile() -> None:
-    """Detect or interactively create a local Nebius CLI profile."""
+def _ensure_nebius_profile() -> bool:
+    """Detect or interactively create a local Nebius CLI profile.
+
+    Returns ``True`` when a usable, authenticated Nebius CLI profile is available
+    (either already present or created during this call), ``False`` otherwise.
+    Callers use the result to decide whether object-storage auto-provisioning,
+    which needs an authenticated profile, can proceed.
+    """
 
     if _nebius_profile_ready():
         typer.echo("Nebius CLI profile detected (`nebius iam get-access-token` works).")
-        return
+        return True
     if not shutil.which("nebius"):
         typer.echo(
             "Nebius CLI not found. Install the binary from "
@@ -214,7 +227,7 @@ def _ensure_nebius_profile() -> None:
             "`npa configure`; no separate profile CLI steps), then re-run "
             "`npa configure`."
         )
-        return
+        return False
     existing_profiles = _list_nebius_profiles()
     if existing_profiles:
         typer.echo(
@@ -231,14 +244,15 @@ def _ensure_nebius_profile() -> None:
             "Skipped Nebius profile creation. Re-run `npa configure` when ready "
             "to create or refresh a profile."
         )
-        return
+        return False
     if _create_nebius_profile() and _nebius_profile_ready():
         typer.echo("Nebius CLI profile is ready.")
-    else:
-        typer.echo(
-            "Could not verify a Nebius profile. Re-run `npa configure` in a "
-            "terminal to retry profile creation."
-        )
+        return True
+    typer.echo(
+        "Could not verify a Nebius profile. Re-run `npa configure` in a "
+        "terminal to retry profile creation."
+    )
+    return False
 
 
 def _endpoint_for_region(region: str) -> str:
@@ -382,8 +396,24 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
     typer.echo("Interactive npa setup. Press Enter to skip any optional field.\n")
-    _ensure_nebius_profile()
+    profile_ready = _ensure_nebius_profile()
     typer.echo("")
+
+    # Object-storage auto-provisioning needs an authenticated Nebius CLI profile.
+    # Without one, the flow used to fall through ~10 prompts (including a manual
+    # S3 access-key entry a brand-new user cannot answer) and then abort writing
+    # nothing. Stop up front with an actionable choice instead.
+    if provision and not profile_ready:
+        typer.echo(
+            "Object-storage auto-provisioning needs an authenticated Nebius CLI "
+            "profile, which is not available yet. Choose one of:\n"
+            "  - Install and authenticate the Nebius CLI "
+            "(https://docs.nebius.com/cli/install), then re-run `npa configure`.\n"
+            "  - Re-run `npa configure --no-provision` to enter existing S3 "
+            "credentials manually.\n"
+            "Nothing was written under ~/.npa."
+        )
+        raise typer.Exit(code=1)
 
     def ask(label: str, *, default: str = "", secret: bool = False) -> str:
         return str(
@@ -443,6 +473,12 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             ),
         }
 
+    typer.echo(
+        "\nHugging Face token: create one at "
+        "https://huggingface.co/settings/tokens (a read token is enough). "
+        "For gated models, also click 'Agree and access repository' on each "
+        "model page while signed in."
+    )
     hf_token = ask(
         "Hugging Face token (HF_TOKEN)",
         default=existing_credentials.hf_token,
@@ -457,6 +493,11 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
         default=existing_credentials.token_factory_api_key,
         secret=True,
+    )
+    typer.echo(
+        "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
+        "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
+        "account first). The key starts with 'nvapi_'."
     )
     ngc_api_key = ask(
         "NVIDIA NGC API key (NGC_API_KEY)",
@@ -539,8 +580,16 @@ def _configure_impl(
     try:
         _run_interactive_configure(provision=provision)
     except (EOFError, typer.Abort):
-        typer.echo("\n")
-        typer.echo(_SETUP_GUIDANCE)
+        # Cancelling mid-flow (Ctrl-C / Ctrl-D / no more input) previously exited
+        # 0 having written nothing under ~/.npa, so the next cloud command failed
+        # mysteriously. Fail loudly instead so the missing setup is obvious.
+        typer.echo("")
+        typer.echo(
+            "Setup was cancelled before anything was written under ~/.npa. "
+            "Re-run `npa configure` in a terminal to finish, or run "
+            "`npa configure --show` for the file layout to create it by hand."
+        )
+        raise typer.Exit(code=1)
 
 
 @app.command(
