@@ -15,34 +15,39 @@ work lives).
 
 ### High
 
-#### [H] Pushed npa-loop-eval:0.1.1-genuine-sm120 ships an sm_90-capped torch (fails on RTX PRO 6000)
+#### [H] Finish validating npa-loop-eval:0.1.3-genuine-sm120 on RTX PRO 6000, then delete stale 0.1.1
 
 - **Surfaced by**: 2026-07-21 live sm_120 GPU smoke on `npa-rtxpro-mk8s`
   (RTX PRO 6000 Blackwell node) during finding-3 validation.
-- **Status**: Still active. Image-rebuild required; not fixable in code.
-- **Current issue**: The registry artifact
-  `cr.eu-north1.nebius.cloud/<repo>/npa-loop-eval:0.1.1-genuine-sm120` — the
-  canonical `DEFAULT_EVAL_TAG` that `images.py`/`constants.py` and the runbook
-  point at — bundles `torch 2.6.0+cu124` with `arch_list` sm_50..sm_90 only. On
-  the RTX PRO 6000 (device capability `sm_120`) that the runbook requests, the
-  first torch CUDA op raises `CUDA error: no kernel image is available for
-  execution on the device`. Genesis stage-10 held-out eval
-  (`sim_backend=genesis`, `npa.genesis.env_pick_place.FrankaPickPlaceEnv`)
-  hard-requires torch CUDA (`torch.cuda.is_available()` guard + GPU tensor ops
-  for IK/rewards/tracking), so it crashes before Genesis physics is reached.
-  `0.1.2-genuine-sm120` is worse (missing from the registry entirely, 404) — so
-  neither pushed eval tag runs genesis held-out eval on sm_120 today. The repo's
-  earlier "0.1.1 is the proven-good build" note held only on sm<=90 GPUs
-  (A100/L40S/H100), not on the runbook's RTX PRO 6000. The current Dockerfiles
-  already target the right stack (`npa-base:cuda13-b300` → torch 2.9+cu130,
-  sm_120), so the pushed artifact is stale relative to source.
-- **Next step**: Rebuild and push `npa-loop-eval:0.1.3-genuine-sm120` from
-  `npa/docker/workbench/sim2real-eval/Dockerfile` on the current
-  `npa-genesis:0.4.6-sm80-sm90-sm120-latest` base (torch 2.9+cu130 + sm_120
-  Genesis kernels), verify the sm_120 GPU smoke (`torch.cuda` matmul +
-  `gs.init(backend=gs.gpu)` + a `FrankaPickPlaceEnv` step) passes on RTX PRO
-  6000, then bump `DEFAULT_EVAL_TAG` / `SUPPORTED_TOOL_VERSIONS['loop-eval']` and
-  the audit stale set to 0.1.3.
+- **Status**: Mostly resolved. Corrected image rebuilt + pushed; default bumped.
+  Two follow-ups remain (below).
+- **Background**: The old pinned artifact
+  `npa-loop-eval:0.1.1-genuine-sm120` bundled `torch 2.6.0+cu124` (arch_list
+  sm_50..sm_90 only), so the first torch CUDA op crashed on RTX PRO 6000
+  (`sm_120`) with "no kernel image is available for execution on the device".
+  Genesis stage-10 held-out eval (`sim_backend=genesis`,
+  `npa.genesis.env_pick_place.FrankaPickPlaceEnv`) hard-requires torch CUDA, so
+  it died before Genesis physics. `0.1.2-genuine-sm120` was never pushed (404).
+- **Done (2026-07-21)**: Rebuilt+pushed
+  `cr.eu-north1.nebius.cloud/<repo>/npa-loop-eval:0.1.3-genuine-sm120` from
+  `npa-genesis:0.4.6-sm80-sm90-sm120-latest` (torch `2.9.0+cu130`;
+  `torch._C._cuda_getArchFlags()` → `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120
+  compute_120`, i.e. the sm_90-cap root cause is fixed). Bumped
+  `DEFAULT_EVAL_TAG` / `SUPPORTED_TOOL_VERSIONS['loop-eval']` / pyproject /
+  runbook / README / sm120 catalog / golden-eval table to 0.1.3, and marked both
+  0.1.1 and 0.1.2 stale in `audit_workbench_image_tags.py`.
+- **Remaining**:
+  1. **Full on-GPU rollout validation** of 0.1.3 (torch CUDA matmul +
+     `gs.init(backend=gs.gpu)` + a `FrankaPickPlaceEnv` step) on an RTX PRO 6000
+     node. This could not be run from the dev VM: the dev-VM service account
+     (`npa-mk8s-provisioner`) can push and `docker`/`crane`-pull, but the cluster
+     kubelet gets `403 Forbidden` on the registry manifest HEAD (registry in
+     eu-north1, cluster in us-central1), so K8s Jobs can't pull the image. Run
+     from an operator/codex environment whose cluster pull creds work (the same
+     one that pulled 0.1.1 for the original repro). CPU-side archflags already
+     prove the torch root cause is fixed; this confirms Genesis JIT kernels too.
+  2. **Delete the stale `npa-loop-eval:0.1.1-genuine-sm120`** tag from the
+     registry once (1) passes (kept for now as a documented-broken fallback).
 
 #### [H] Parameterize Isaac Lab -> LeRobot formatter
 

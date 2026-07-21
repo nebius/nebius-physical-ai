@@ -60,17 +60,16 @@ SUPPORTED_TOOL_VERSIONS = {
     "envgen": "0.1.2",
     "reference-policy": "0.1.2",
     "lerobot-vlm-rl": "0.1.1",
-    # 0.1.1-genuine-sm120 is the canonical pin (matches
-    # sim2real.constants.DEFAULT_EVAL_TAG); 0.1.2-genuine-sm120 was a bad rebuild
-    # that also lost Blackwell (sm_120) Genesis kernels and is not in the registry.
-    # CAVEAT (live sm_120 test 2026-07-21): the *pushed* 0.1.1 artifact ships
-    # torch 2.6.0+cu124 (arch_list sm_50..sm_90 only), so torch CUDA raises "no
-    # kernel image is available for execution on the device" on RTX PRO 6000
-    # (sm_120). Genesis heldout_eval hard-requires torch CUDA, so neither pushed
-    # eval tag runs stage-10 genesis eval on RTX PRO 6000 today. A 0.1.3 rebuild
-    # from npa-base:cuda13-b300 (torch 2.9+cu130, sm_120) plus sm_120 Genesis
-    # kernels is required. See FIXME.md. Keep 0.1.1 as the least-bad pin.
-    "loop-eval": "0.1.1-genuine-sm120",
+    # 0.1.3-genuine-sm120 is the canonical pin (matches
+    # sim2real.constants.DEFAULT_EVAL_TAG). Rebuilt+pushed 2026-07-21 from
+    # npa-genesis:0.4.6-sm80-sm90-sm120-latest (torch 2.9.0+cu130;
+    # torch._C._cuda_getArchFlags() reports sm_75..sm_120 + compute_120). It
+    # supersedes 0.1.1-genuine-sm120, whose bundled torch was 2.6.0+cu124
+    # (sm_50..sm_90 only) and crashed heldout_eval on RTX PRO 6000 (sm_120) with
+    # "no kernel image is available for execution on the device", and
+    # 0.1.2-genuine-sm120 (never pushed to the registry). Full on-GPU Genesis
+    # rollout validation of 0.1.3 is tracked in FIXME.md.
+    "loop-eval": "0.1.3-genuine-sm120",
     "rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
