@@ -2244,13 +2244,23 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
     return stages
 
 
-def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
+def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> dict | None:
     if not run_id:
         return None
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, "")
+        # Honor the artifact prefix the run was discovered under (e.g.
+        # "physical-ai-data-factory"); otherwise a run stored outside the default
+        # discovery prefix finds zero artifacts and the caller falls back to the
+        # generic sim2real "not_run" stage template (stages wrongly show Not run).
+        effective_prefix = _artifact_discovery_prefix(settings, prefix)
         artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        if not artifacts and prefix:
+            # Retry once against the default prefix in case the caller passed a
+            # prefix that does not apply to this run.
+            default_prefix = _artifact_discovery_prefix(settings, "")
+            if default_prefix != effective_prefix:
+                artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=default_prefix, s3=s3)
     except Exception:
         return None
     if not artifacts:
@@ -2321,7 +2331,7 @@ def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     }}
 
 
-def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
+def _sim2real_run_details(state: dict, run_id: str = "", prefix: str = "") -> dict:
     latest = state.get("latest_submit", {{}})
     if not isinstance(latest, dict):
         latest = {{}}
@@ -2337,7 +2347,7 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
     details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
     details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
-    artifact_details = _artifact_backed_run_details(state, resolved_run_id)
+    artifact_details = _artifact_backed_run_details(state, resolved_run_id, prefix=prefix)
     if artifact_details:
         details = _merge_sim2real_run_details(details, artifact_details)
     stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
@@ -5635,11 +5645,11 @@ def get_sim_assets_selection():
     return selection
 
 @app.get("/workflows/sim2real/status")
-def sim2real_status(run_id: str = ""):
+def sim2real_status(run_id: str = "", prefix: str = ""):
     state = _load_state()
     latest = state.get("latest_submit", {{}})
     sim_viz = state.get("sim_viz", {{}})
-    details = _sim2real_run_details(state, run_id=run_id)
+    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
     return {{
         "ok": True,
         "latest_submit": latest if isinstance(latest, dict) else {{}},
@@ -5650,9 +5660,9 @@ def sim2real_status(run_id: str = ""):
     }}
 
 @app.get("/workflows/sim2real/runs/{{run_id:path}}")
-def sim2real_run_detail(run_id: str):
+def sim2real_run_detail(run_id: str, prefix: str = ""):
     state = _load_state()
-    details = _sim2real_run_details(state, run_id=run_id)
+    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
     if not str(details.get("run_id") or "").strip():
         raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
     return {{"ok": True, "run": details}}

@@ -848,6 +848,26 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert "JSON.stringify(assets.selection" not in source
 
 
+def test_run_details_threads_artifact_prefix_for_stage_determination() -> None:
+    """Stage determination must honor the artifact prefix so a run stored outside
+    the default discovery prefix (e.g. physical-ai-data-factory) resolves its real
+    artifact-backed stages instead of the generic sim2real 'not_run' template.
+    """
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Backend threads prefix through resolver -> artifact-backed details.
+    assert "def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = \"\")" in source
+    assert "def _sim2real_run_details(state: dict, run_id: str = \"\", prefix: str = \"\")" in source
+    assert "_artifact_backed_run_details(state, resolved_run_id, prefix=prefix)" in source
+    assert "def sim2real_run_detail(run_id: str, prefix: str = \"\")" in source
+    assert "def sim2real_status(run_id: str = \"\", prefix: str = \"\")" in source
+    # Frontend passes the active artifact prefix when loading run details / run.
+    ui = _agent_ui_bundle()
+    assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target) + q' in ui
+    assert "body: JSON.stringify({ run_id: runId, prefix: artifactPrefixValue() })" in ui
+
+
 def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
     """The chat log ships a jump-to-latest arrow wired to scroll to the end."""
     source = _agent_ui_bundle()

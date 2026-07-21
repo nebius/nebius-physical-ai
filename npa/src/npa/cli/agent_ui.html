@@ -4992,9 +4992,14 @@
       }
       async function loadRunDetails(runId) {
         const target = String(runId || activeRunId || "").trim();
+        // Pass the artifact prefix so stage determination scopes to the run's
+        // actual location (e.g. physical-ai-data-factory), instead of falling
+        // back to the generic sim2real "Not run" stage template.
+        const pfx = artifactPrefixValue();
+        const q = pfx ? ("?prefix=" + encodeURIComponent(pfx)) : "";
         const path = target
-          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
-          : "/api/workflows/sim2real/status";
+          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target) + q
+          : "/api/workflows/sim2real/status" + q;
         try {
           const data = await loadJson(path);
           renderRunDetails(data);
@@ -5013,7 +5018,7 @@
         const data = await apiJson("/api/sim-viz/load-run", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ run_id: runId }),
+          body: JSON.stringify({ run_id: runId, prefix: artifactPrefixValue() }),
         });
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
