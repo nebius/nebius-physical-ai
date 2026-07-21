@@ -24,10 +24,40 @@ from npa.orchestration.skypilot.workflow_state import redact_text
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot]
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
-DEFAULT_KUBE_CONTEXT = "npa-rtxpro-mk8s"
 SECRET_HF_MARKER = "hf_npae2eworkflowsecret1234567890"
 SECRET_AWS_MARKER = "AKIAABCDEFGHIJKLMNOP"
+
+
+def _default_kube_context() -> str:
+    """Resolve the kube context from params/config, never a hard-coded region.
+
+    Order: ``NPA_E2E_KUBECONTEXT`` -> ``NPA_E2E_KUBECONTEXT_FALLBACK`` ->
+    ``kubectl config current-context``. Skips when none is available so a run
+    is never silently pinned to a specific region's cluster.
+    """
+
+    explicit = os.environ.get("NPA_E2E_KUBECONTEXT", "").strip()
+    if explicit:
+        return explicit
+    fallback = os.environ.get("NPA_E2E_KUBECONTEXT_FALLBACK", "").strip()
+    if fallback:
+        return fallback
+    try:
+        result = subprocess.run(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        current = (result.stdout or "").strip()
+        if current:
+            return current
+    except (OSError, subprocess.SubprocessError):
+        pass
+    pytest.skip(
+        "No kube context configured; set NPA_E2E_KUBECONTEXT for the durable-S3 test"
+    )
 
 
 def test_workbench_workflow_durable_s3_monitor_live(
@@ -39,7 +69,7 @@ def test_workbench_workflow_durable_s3_monitor_live(
     _require_live_mode()
     sky_bin = _sky_bin()
     cli_bin = _npa_bin()
-    kube_context = os.environ.get("NPA_E2E_KUBECONTEXT", DEFAULT_KUBE_CONTEXT)
+    kube_context = _default_kube_context()
     kubeconfig = _kubeconfig_for_context(kube_context)
     _assert_kube_context_ready(kube_context, kubeconfig)
 
@@ -269,10 +299,11 @@ def _s3_endpoint(project: str | None) -> str:
         or credentials.s3_endpoint
         or os.environ.get("AWS_ENDPOINT_URL", "")
         or os.environ.get("NEBIUS_S3_ENDPOINT", "")
-        or DEFAULT_ENDPOINT
     )
     if not endpoint:
-        pytest.skip("S3 endpoint is not configured")
+        pytest.skip(
+            "S3 endpoint is not configured; set project storage or AWS_ENDPOINT_URL"
+        )
     return endpoint
 
 
