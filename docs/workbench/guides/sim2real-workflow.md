@@ -104,16 +104,23 @@ npa workbench health sim2real \
 Then submit:
 
 ```bash
-# Load the env overlay into your shell (submit reads these via the environment),
-# then override the run ID (and any other knob) with --var:
+# Load the env overlay into your shell (the staged submit reads these via the
+# environment), then name the run with --run-id:
 set -a
 source npa/workflows/workbench/sim2real/quickstart.env
 set +a
 
 npa workbench workflow submit \
   npa/workflows/workbench/sim2real/runbook.yaml \
-  --var NPA_SIM2REAL_RUN_ID=pusht-demo
+  --run-id pusht-demo
 ```
+
+Use `--run-id` for the run name (it feeds `RUN_ID` to the staged submit). For
+the staged Sim2Real runbook, `--var` only overrides
+`NPA_SIM2REAL_TRIGGER_DATASET_URI` / `NPA_SIM2REAL_TRIGGER_DATASET_ID`,
+`INNER_ITERATIONS`, `OUTER_ITERATIONS`, and `NPA_ENV_COUNT`; set every other knob
+(images, thresholds, assets, endpoint) via the sourced env overlay above. A
+`--var NPA_SIM2REAL_RUN_ID=...` is ignored — use `--run-id`.
 
 Track progress:
 
