@@ -28,6 +28,19 @@ SECRET_HF_MARKER = "hf_npae2eworkflowsecret1234567890"
 SECRET_AWS_MARKER = "AKIAABCDEFGHIJKLMNOP"
 
 
+def _is_storage_endpoint_unreachable(output: str) -> bool:
+    """True when a submit failed because the bucket's S3 endpoint is unreachable.
+
+    This happens when the workflow bucket lives in a different region/tenant than
+    the SkyPilot controller, so the controller cannot resolve/reach the bucket at
+    launch time. It is an environment co-location mismatch, not a code failure, so
+    the caller skips rather than fails.
+    """
+
+    text = (output or "").lower()
+    return "endpointconnectionerror" in text or "could not connect to the endpoint url" in text
+
+
 def _default_kube_context() -> str:
     """Resolve the kube context from params/config, never a hard-coded region.
 
@@ -124,6 +137,15 @@ def test_workbench_workflow_durable_s3_monitor_live(
     try:
         submit = _run(submit_cmd, env=env, cwd=ROOT, timeout=2400)
         _write_command_evidence(evidence_dir, "submit", submit, submit_cmd, credentials_env)
+        if submit.returncode != 0:
+            combined = f"{submit.stdout}\n{submit.stderr}"
+            if _is_storage_endpoint_unreachable(combined):
+                pytest.skip(
+                    "Workflow bucket is not reachable from the SkyPilot controller's "
+                    "region/tenant (co-locate the workflow bucket with the "
+                    f"controller infra {kube_context}): "
+                    + redact_text(combined, credentials_env.values())[-300:]
+                )
         assert submit.returncode == 0, redact_text(submit.stdout + submit.stderr, credentials_env.values())
         submit_payload = json.loads(submit.stdout)
         job_id = str(submit_payload.get("job_id") or "")
