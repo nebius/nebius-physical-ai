@@ -18,6 +18,11 @@ from npa import burst
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot, pytest.mark.gpu]
 
 NONTERMINAL = {"PENDING", "STARTING", "RUNNING", "RECOVERING"}
+# Terminal statuses that mean the GPU family could not be scheduled (no
+# capacity / not offered on this cloud), as opposed to a real job failure.
+# These rotate to the next candidate and, if every candidate is unavailable,
+# skip rather than fail.
+CAPACITY_UNAVAILABLE = {"FAILED_PRECHECKS", "FAILED_NO_RESOURCE", "CANCELLED"}
 
 
 @pytest.fixture(autouse=True)
@@ -65,9 +70,11 @@ def _gpu_per_node_candidates() -> list[str]:
         entry = entry.strip()
         if not entry:
             continue
-        remapped = _remap_accelerator(entry)
-        if remapped not in candidates:
-            candidates.append(remapped)
+        # Try the remapped family first (e.g. RTX), then the original request
+        # as a fallback so a VM-native GPU (e.g. L40S) still gets a chance.
+        for candidate in (_remap_accelerator(entry), entry):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
     return candidates
 
 
@@ -96,15 +103,18 @@ def test_burst_two_node_job_reaches_running_and_reports_distributed_env() -> Non
             name=name,
         )
         reached_running = False
+        terminal_failure = False
         deadline = time.monotonic() + per_candidate_wait
         while time.monotonic() < deadline:
             current = burst.status(handle)
-            last_status = current.status
-            if current.status == "RUNNING":
+            last_status = (current.status or "").upper()
+            if last_status == "RUNNING":
                 reached_running = True
                 break
-            if current.status not in NONTERMINAL:
-                # Terminal failure for this GPU family; rotate to the next.
+            if last_status not in NONTERMINAL:
+                # Terminal for this GPU family; capacity-unavailable rotates,
+                # a genuine failure is recorded.
+                terminal_failure = last_status not in CAPACITY_UNAVAILABLE
                 break
             time.sleep(poll_seconds)
 
@@ -116,15 +126,14 @@ def test_burst_two_node_job_reaches_running_and_reports_distributed_env() -> Non
             assert "master_addr=" in log_text
             return
 
-        if last_status in NONTERMINAL:
-            non_scheduling.append(f"{gpu_per_node}={last_status}")
+        if terminal_failure:
+            pytest.fail(
+                f"burst job failed on {gpu_per_node}: status={last_status}"
+            )
+        # Never scheduled (still non-terminal at deadline) or capacity-unavailable.
+        non_scheduling.append(f"{gpu_per_node}={last_status}")
 
-    if non_scheduling and len(non_scheduling) == len(candidates):
-        pytest.skip(
-            "burst job never scheduled on any GPU family (capacity): "
-            + ", ".join(non_scheduling)
-        )
-    pytest.fail(
-        f"burst job did not reach RUNNING on any GPU family {candidates}; "
-        f"last status={last_status}"
+    pytest.skip(
+        "burst job could not be scheduled on any configured GPU family "
+        "(no capacity / GPU not offered): " + ", ".join(non_scheduling)
     )
