@@ -5,6 +5,10 @@
 ARG NPA_CUDA_BASE=npa-workbench-cuda-base:cuda13.0-torch2.12.1
 FROM ${NPA_CUDA_BASE}
 
+# The base drops to a non-root user; build steps need root, and the image drops
+# back to the ubuntu user before runtime (below).
+USER root
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \

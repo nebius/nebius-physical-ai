@@ -28,6 +28,12 @@ RUN pip install --no-cache-dir \
     "boto3==1.42.9" \
     "numpy"
 
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
+
 LABEL npa.image="workbench-cuda-base" \
       npa.base="pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime" \
       npa.purpose="Shared CUDA+torch+service base for GPU workbench images"
+
+# Default to non-root; child images switch back to root for their build steps
+# and drop to a non-root user again for runtime.
+USER ubuntu
