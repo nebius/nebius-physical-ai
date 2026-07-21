@@ -8,8 +8,9 @@
 # `sonic eval` on Kubernetes GPU nodes (host-mounted driver) without the
 # upstream-blocked cuda13-b300 Blackwell base.
 #
-# npa itself is synced at runtime from NPA_SRC_S3_URI (matching the workflow
-# convention), so this image is npa-version independent.
+# npa[sonic] (npa base + torch + onnx toolchain) is baked so the image is
+# self-contained; the workflow still overlays fresher npa source at runtime via
+# NPA_SRC_S3_URI. Build context is the repo root.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -21,15 +22,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # CPU torch keeps the image lean and avoids CUDA/driver coupling; SONIC ONNX
-# export loads the checkpoint on CPU and traces the MLP policy. The onnx stack
-# mirrors the `npa[sonic]` extra in npa/pyproject.toml.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.12.1" \
-    && pip install \
-        "onnx>=1.16" \
-        "onnxscript>=0.5" \
-        "onnxruntime>=1.18" \
-        "boto3>=1.34" \
-        "numpy>=1.26"
+# export loads the checkpoint on CPU and traces the MLP policy. Pre-installing
+# the CPU wheel means the subsequent npa[sonic] install treats torch as
+# satisfied instead of pulling the multi-GB CUDA build.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.12.1"
+
+COPY npa/pyproject.toml /opt/npa/pyproject.toml
+COPY npa/src /opt/npa/src
+# Installs npa's base deps (pyarrow, boto3, ...) plus the [sonic] onnx toolchain.
+RUN pip install "/opt/npa[sonic]"
 
 RUN useradd -m -u 1000 ubuntu
 USER ubuntu
