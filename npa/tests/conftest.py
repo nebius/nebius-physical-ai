@@ -108,6 +108,9 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     monkeypatch.setattr(npa.clients.credentials, "CREDENTIALS_PATH", npa_dir / "credentials.yaml")
     monkeypatch.setattr(npa.orchestration.skypilot._bin, "CONFIG_PATH", npa_dir / "config.yaml")
     monkeypatch.setattr(npa.deploy.provisioner, "_WORKBENCH_BASE", npa_dir / "workbenches")
+    monkeypatch.setattr(
+        npa.deploy.provisioner, "_TF_PLUGIN_CACHE_DIR", npa_dir / "terraform-plugin-cache"
+    )
     monkeypatch.setattr(npa.cluster.state, "CLUSTERS_DIR", npa_dir / "clusters")
     monkeypatch.setattr(npa.cli.skypilot, "DEFAULT_VENV_PATH", npa_dir / "skypilot-venv")
     monkeypatch.setattr(

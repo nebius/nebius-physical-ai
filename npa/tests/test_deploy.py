@@ -246,6 +246,87 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
     assert run.call_args.args[0][0] == "destroy"
 
 
+def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker) -> None:
+    monkeypatch.delenv("TF_PLUGIN_CACHE_DIR", raising=False)
+    monkeypatch.setattr(provisioner, "_TF_PLUGIN_CACHE_DIR", tmp_path / "tf-cache")
+    mocker.patch("shutil.which", return_value="/usr/bin/terraform")
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="ok", stderr=""
+        ),
+    )
+
+    provisioner._run(["init"], cwd=tmp_path, capture=True)
+
+    env = run.call_args.kwargs["env"]
+    assert env["TF_PLUGIN_CACHE_DIR"] == str(tmp_path / "tf-cache")
+    assert (tmp_path / "tf-cache").is_dir()
+
+
+def test_run_respects_preexisting_plugin_cache_env(tmp_path: Path, monkeypatch, mocker) -> None:
+    monkeypatch.setenv("TF_PLUGIN_CACHE_DIR", "/custom/cache")
+    mocker.patch("shutil.which", return_value="/usr/bin/terraform")
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="ok", stderr=""
+        ),
+    )
+
+    provisioner._run(["init"], cwd=tmp_path, capture=True)
+
+    assert run.call_args.kwargs["env"]["TF_PLUGIN_CACHE_DIR"] == "/custom/cache"
+
+
+def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None:
+    calls = {"n": 0}
+
+    def fake_run(args, *, cwd, capture=False, stream=False):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ProvisionerError(
+                "terraform init failed (exit 1):\ncould not connect to registry.terraform.io: "
+                "net/http: request canceled while waiting for connection (Client.Timeout exceeded "
+                "while awaiting headers)"
+            )
+        return subprocess.CompletedProcess(args=["terraform"], returncode=0, stdout="", stderr="")
+
+    mocker.patch("npa.deploy.provisioner._run", side_effect=fake_run)
+    slept: list[float] = []
+
+    provisioner.init(tmp_path, retries=3, backoff_seconds=0.01, sleep=slept.append)
+
+    assert calls["n"] == 2  # failed once, succeeded on retry
+    assert slept == [0.01]
+
+
+def test_init_does_not_retry_config_error(tmp_path: Path, mocker) -> None:
+    def fake_run(args, *, cwd, capture=False, stream=False):
+        raise ProvisionerError("terraform init failed (exit 1):\nInvalid provider configuration")
+
+    mocker.patch("npa.deploy.provisioner._run", side_effect=fake_run)
+    slept: list[float] = []
+
+    with pytest.raises(ProvisionerError, match="Invalid provider configuration"):
+        provisioner.init(tmp_path, retries=3, backoff_seconds=0.01, sleep=slept.append)
+
+    assert slept == []  # non-transient => no retry
+
+
+def test_init_gives_up_after_retries(tmp_path: Path, mocker) -> None:
+    def fake_run(args, *, cwd, capture=False, stream=False):
+        raise ProvisionerError("could not connect to registry.terraform.io: i/o timeout")
+
+    mocker.patch("npa.deploy.provisioner._run", side_effect=fake_run)
+    slept: list[float] = []
+
+    with pytest.raises(ProvisionerError, match="registry.terraform.io"):
+        provisioner.init(tmp_path, retries=3, backoff_seconds=0.01, sleep=slept.append)
+
+    assert len(slept) == 2  # retried after attempts 1 and 2, then raised on 3
+
+
 def test_apply_and_destroy_raise_on_nonzero(tmp_path: Path, mocker) -> None:
     mocker.patch(
         "npa.deploy.provisioner._run",
