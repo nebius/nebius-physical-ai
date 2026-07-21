@@ -64,7 +64,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072102"
+AGENT_UI_VERSION = "2026072103"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -5256,8 +5256,15 @@ def sim_viz_load_run(payload: dict | None = None):
 
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, str(body.get("prefix") or ""))
+        requested_prefix = str(body.get("prefix") or "")
+        effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
         artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        if not artifacts and requested_prefix:
+            # Mirror _artifact_backed_run_details: fall back to the default prefix
+            # so a mismatched user prefix does not hide a mountable .rrd.
+            default_prefix = _artifact_discovery_prefix(settings, "")
+            if default_prefix != effective_prefix:
+                artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=default_prefix, s3=s3)
         preferred = select_preferred_artifact(artifacts)
         if preferred and preferred.render == "rerun":
             local_name = _artifact_filename(preferred.key)

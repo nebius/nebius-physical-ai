@@ -49,6 +49,43 @@ def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
     assert dfs.grade_gate(str(scores), str(tmp_path / "decision.json"), threshold=0.5) == "loop_back"
 
 
+def test_download_json_missing_exact_file_does_not_substitute(tmp_path: Path, monkeypatch) -> None:
+    """When the requested .json is missing and download falls back to the prefix
+    dir, _download_json must raise, not silently return a different JSON."""
+    import pytest
+
+    prefix_dir = tmp_path / "grade"
+    prefix_dir.mkdir()
+    (prefix_dir / "decision.json").write_text(json.dumps({"decision": "loop_back"}))
+
+    class _FakeStorage:
+        def download_path(self, uri, dest):  # noqa: ARG002
+            return str(prefix_dir)
+
+    monkeypatch.setattr(dfs, "_storage", lambda: _FakeStorage())
+    with pytest.raises(FileNotFoundError):
+        dfs._download_json("s3://bucket/grade/vlm_eval_stub.json")
+
+
+def test_grade_gate_missing_eval_loops_not_reads_decision(tmp_path: Path, monkeypatch) -> None:
+    """A missing eval result must loop_back, never mis-read decision.json as score."""
+    prefix_dir = tmp_path / "grade"
+    prefix_dir.mkdir()
+    # A promote decision.json is present but the eval result is absent.
+    (prefix_dir / "decision.json").write_text(json.dumps({"decision": "promote_checkpoint"}))
+
+    class _FakeStorage:
+        def download_path(self, uri, dest):  # noqa: ARG002
+            return str(prefix_dir)
+
+    monkeypatch.setattr(dfs, "_storage", lambda: _FakeStorage())
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: None,
+    )
+    assert dfs.grade_gate("s3://bucket/grade/", "s3://bucket/grade/decision.json", 0.5) == "loop_back"
+
+
 def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     # Per-clip layout as emitted by publish_transfer_to_s3 (subdirs + top-level
     # manifest.json which must NOT be counted as a clip).

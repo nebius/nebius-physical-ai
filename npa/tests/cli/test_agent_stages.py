@@ -116,6 +116,25 @@ def test_build_stages_marks_matched_draft_state_succeeded() -> None:
     assert by_id["rollouts"]["status"] == "pending"
 
 
+def test_build_stages_emit_stage_key_for_clickable_timeline() -> None:
+    # Artifact-grouped stages (paidf-style, no draft) must carry stage_key so the
+    # agent timeline rows are clickable and scope the artifact browser.
+    keys = [
+        "checkpoints/physical-ai-data-factory/run-1/cosmos_augmented/aug-run-1/frame-00000.png",
+        "checkpoints/physical-ai-data-factory/run-1/curation/report.json",
+    ]
+    stages = build_artifact_backed_stages(
+        keys,
+        run_id="run-1",
+        prefix="checkpoints/physical-ai-data-factory",
+        workflow_stage_defs=[],
+        overlay_unmatched=False,
+    )
+    by_key = {s["stage_key"]: s for s in stages}
+    assert "cosmos_augmented" in by_key and "curation" in by_key
+    assert all(s.get("stage_key") for s in stages)
+
+
 def test_artifact_stage_key_and_label() -> None:
     key = "checkpoints/sim2real-b/run-1/isaac-capture/frame_001.png"
     assert artifact_stage_key(key, "run-1", "checkpoints/sim2real-b") == "isaac-capture"

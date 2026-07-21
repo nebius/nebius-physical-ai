@@ -116,10 +116,14 @@ def build_artifact_backed_stages(
             count = len(matched)
             if count == 0 and not overlay_unmatched:
                 continue
+            # stage_key: the artifact stage of a matched key so the UI timeline row
+            # is clickable and scopes the artifact browser to it (empty when unmatched).
+            stage_key = artifact_stage_key(matched[0], run_id, prefix) if matched else ""
             stages.append(
                 {
                     "id": stage_id,
                     "label": label,
+                    "stage_key": stage_key,
                     "status": "succeeded" if count else "pending",
                     "started_at": "",
                     "finished_at": "",
@@ -142,6 +146,7 @@ def build_artifact_backed_stages(
             {
                 "id": _slug(stage_key, fallback="artifacts"),
                 "label": artifact_stage_label(stage_key),
+                "stage_key": stage_key,
                 "status": "succeeded",
                 "started_at": "",
                 "finished_at": "",

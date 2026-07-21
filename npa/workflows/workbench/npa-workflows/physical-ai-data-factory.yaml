@@ -126,13 +126,15 @@ states:
     outputs:
       - uri: "{{config.captions_uri}}captions.json"
         schema: npa.token_factory.captions.v1
-    next: augment
+    next: grade
 
   augment:
     description: >
       Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 re-renders each source clip
       under the sampled appearance conditions (GPU tier). Appearance-only: lighting,
-      weather, surface -- never scene geometry.
+      weather, surface -- never scene geometry. This is a member of the `grade`
+      refinement loop: on a loop_back decision the loop re-runs augment (re-render),
+      re-verify, and re-gate, so a failed batch is actually re-augmented.
     needs: [annotate-original]
     toolRef: workbench.cosmos2.transfer_execute
     resources: gpu
@@ -142,18 +144,20 @@ states:
     outputs:
       - uri: "{{config.augment_uri}}manifest.json"
         schema: npa.cosmos2.transfer.v1
-    next: grade
 
   grade:
     description: >
-      Evaluate & Validate. VLM attribute verification (does the augmented clip show
-      the target weather / time-of-day?) plus a promote/loop quality gate. Loops back
-      to re-augment on failure, up to refinement_iterations.
-    needs: [augment]
+      Augment & Evaluate refinement loop. Each iteration: augment (Cosmos Transfer
+      2.5, GPU) -> attribute-verify (VLM) -> quality-gate. Loops back to RE-AUGMENT on
+      failure, up to refinement_iterations, and breaks as soon as the gate promotes.
+      augment lives INSIDE the loop so loop_back genuinely re-renders (the gate's
+      loop_back decision drives another augment pass via loop.until).
+    needs: [annotate-original]
     loop:
       max: "{{config.refinement_iterations}}"
       until: promote_checkpoint
     sequence:
+      - augment
       - attribute-verify
       - quality-gate
     next: annotate-augmented
@@ -175,8 +179,12 @@ states:
 
   quality-gate:
     description: >
-      Real quality gate — read the VLM attribute-verification score and promote
-      the batch or loop back for another augment pass.
+      Real quality gate — read the VLM attribute-verification score and write a
+      promote_checkpoint / loop_back decision. The enclosing `grade` loop reads this
+      decision (loop.until: promote_checkpoint): promote breaks the loop and proceeds
+      to annotate-augmented; loop_back re-runs the loop body (augment -> verify ->
+      gate). No explicit transitions here -- the loop drives control flow, and
+      transitions on a loop-sequence member are not evaluated at runtime.
     writesDecision: true
     needs: [attribute-verify]
     resources: cpu
@@ -187,11 +195,6 @@ states:
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1
-    transitions:
-      - when: promote_checkpoint
-        goto: annotate-augmented
-      - when: loop_back
-        goto: augment
 
   annotate-augmented:
     description: >

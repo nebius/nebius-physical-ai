@@ -765,6 +765,11 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     assert "stage_key: stageKey," in source
     assert 'data-stage-key="' in source
     assert '.stage-item[data-stage-key]' in source
+    # The filter's stage derivation must match the timeline/backend compound keys
+    # (e.g. eval/heldout) so clicking a stage filters instead of yielding nothing.
+    assert 'if (first === "eval" && parts[1]) return "eval/" + parts[1];' in source
+    # Workflow status must scope to the artifact prefix like loadRunDetails.
+    assert 'const status = await loadJson("/api/workflows/sim2real/status" + q);' in source
 
 
 def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:

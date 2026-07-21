@@ -2644,6 +2644,7 @@
       }
       function setChatInput(text) {
         const input = document.getElementById("chatInput");
+        if (!input) return;
         input.value = text;
         input.focus();
         if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
@@ -4285,7 +4286,16 @@
           scoped = scoped.slice(rid.length + 1);
         }
         const parts = scoped.split("/").filter(Boolean);
-        return parts[0] || "artifacts";
+        const first = parts[0] || "artifacts";
+        // Must match the timeline/backend stage-key (artifactStageKey /
+        // agent_stages.artifact_stage_key) so a clicked compound stage (e.g.
+        // eval/heldout) filters correctly instead of yielding zero artifacts.
+        if (first === "reports") return "reports";
+        if (first === "eval" && parts[1]) return "eval/" + parts[1];
+        if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) {
+          return first + "/" + parts[1];
+        }
+        return first;
       }
       function populateArtifactStageFilter(artifacts, runId) {
         const select = document.getElementById("artifactStageFilter");
@@ -5118,7 +5128,11 @@
         }
       }
       async function showWorkflowStatus() {
-        const status = await loadJson("/api/workflows/sim2real/status");
+        // Scope to the active artifact prefix so a run under a non-default prefix
+        // shows its real artifact-backed stages, not the generic Not-run template.
+        const pfx = artifactPrefixValue();
+        const q = pfx ? ("?prefix=" + encodeURIComponent(pfx)) : "";
+        const status = await loadJson("/api/workflows/sim2real/status" + q);
         renderRunDetails(status);
         appendChat(
           "assistant",

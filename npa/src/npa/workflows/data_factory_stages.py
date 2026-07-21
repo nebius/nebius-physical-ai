@@ -86,12 +86,23 @@ def _upload_json(payload: dict[str, Any], uri: str) -> str:
 def _download_json(uri: str) -> dict[str, Any]:
     if not uri.startswith("s3://"):
         return json.loads(Path(uri).read_text())
+    want = uri.rstrip("/").split("/")[-1]
     with tempfile.TemporaryDirectory(prefix="npa-df-stage-") as tmp:
         local = _storage().download_path(uri, tmp)
         p = Path(local)
         if p.is_dir():
-            cand = sorted(p.rglob("*.json"))
-            p = cand[0] if cand else p
+            # download_path fell back to the prefix (the exact object is missing).
+            # Prefer the exact requested filename; NEVER silently substitute a
+            # different JSON (e.g. decision.json instead of vlm_eval_stub.json),
+            # which would mask a missing eval result as a bogus score of 0.
+            if want.endswith(".json"):
+                exact = [c for c in p.rglob(want)]
+                if not exact:
+                    raise FileNotFoundError(f"{want} not found under {uri}")
+                p = exact[0]
+            else:
+                cand = sorted(p.rglob("*.json"))
+                p = cand[0] if cand else p
         return json.loads(Path(p).read_text())
 
 
