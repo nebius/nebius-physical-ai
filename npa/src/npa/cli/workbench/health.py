@@ -161,7 +161,13 @@ def preflight_command(
     else:
         probes = CredentialProbes(
             hf_validator=validate_hf_access,
-            s3_client_factory=lambda: StorageClient.from_environment(),
+            # Probe with the resolved credentials (endpoint/keys often live in
+            # ~/.npa rather than the process env), not env-only defaults.
+            s3_client_factory=lambda: StorageClient.from_environment(
+                endpoint_url=credentials.s3_endpoint,
+                aws_access_key_id=credentials.s3_access_key_id,
+                aws_secret_access_key=credentials.s3_secret_access_key,
+            ),
             token_factory_verifier=_token_factory_verifier,
         )
 

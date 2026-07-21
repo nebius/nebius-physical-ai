@@ -77,10 +77,16 @@ def test_ngc_warns_when_missing() -> None:
 def test_ngc_warns_on_bad_prefix() -> None:
     result = check_ngc(_Creds(ngc_api_key="not-a-key"), CredentialProbes())
     assert result.status == WARN
-    assert "nvapi_" in result.remedy
+    assert "nvapi-" in result.remedy
 
 
-def test_ngc_pass_with_valid_key() -> None:
+def test_ngc_pass_with_hyphen_key() -> None:
+    # Real personal NGC keys are prefixed 'nvapi-'.
+    assert check_ngc(_Creds(ngc_api_key="nvapi-abc123"), CredentialProbes()).status == PASS
+
+
+def test_ngc_pass_with_underscore_key() -> None:
+    # Older docs sometimes show 'nvapi_'; accept it too.
     assert check_ngc(_Creds(ngc_api_key="nvapi_abc"), CredentialProbes()).status == PASS
 
 

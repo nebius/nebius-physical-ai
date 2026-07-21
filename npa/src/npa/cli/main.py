@@ -98,8 +98,8 @@ tokens:
 ngc:
   # NVIDIA NGC API key (for GR00T / Cosmos NVIDIA container + model pulls).
   # Get one at https://org.ngc.nvidia.com/setup/api-key -> "Generate API Key"
-  # (sign in / create a free NGC account first). The key starts with "nvapi_".
-  api_key: nvapi_REPLACE_ME
+  # (sign in / create a free NGC account first). The key starts with "nvapi-".
+  api_key: nvapi-REPLACE_ME
   # org: optional-ngc-org
   # team: optional-ngc-team
 storage:
@@ -497,7 +497,7 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     typer.echo(
         "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
         "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
-        "account first). The key starts with 'nvapi_'."
+        "account first). The key starts with 'nvapi-'."
     )
     ngc_api_key = ask(
         "NVIDIA NGC API key (NGC_API_KEY)",

@@ -117,12 +117,14 @@ def check_ngc(credentials: Any, probes: CredentialProbes) -> CheckResult:
                 "at https://org.ngc.nvidia.com/setup/api-key and run `npa configure`."
             ),
         )
-    if not key.startswith("nvapi_"):
+    # Personal NGC API keys are prefixed 'nvapi-' (older docs sometimes show
+    # 'nvapi_'); accept either separator.
+    if not key.lower().startswith(("nvapi-", "nvapi_")):
         return CheckResult(
             name="ngc",
             status=WARN,
             summary="NGC_API_KEY is set but does not look like an NGC key.",
-            remedy="NGC keys start with 'nvapi_'. Re-check the value in ~/.npa/credentials.yaml.",
+            remedy="NGC keys start with 'nvapi-'. Re-check the value in ~/.npa/credentials.yaml.",
         )
     return CheckResult(name="ngc", status=PASS, summary="NGC_API_KEY is set.")
 
