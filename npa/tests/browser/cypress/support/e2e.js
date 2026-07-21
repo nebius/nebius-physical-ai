@@ -259,6 +259,7 @@ const STATIC_BUTTON_IDS = [
   "artifactLoadRunArtifacts",
   "openRerun",
   "loadRerunViewer",
+  "describeVisual",
 ];
 
 const FIELD_IDS = [
@@ -287,6 +288,7 @@ const FIELD_IDS = [
   "artifactPrefix",
   "artifactTypeFilter",
   "artifactSort",
+  "artifactStageFilter",
   "runsArtifactsPanel",
   "artifactList",
   "simRunId",

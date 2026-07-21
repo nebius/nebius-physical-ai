@@ -89,6 +89,9 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#workflowYaml").should("exist");
     cy.get("#tabChat").should("exist");
     cy.get("#tabRerun").should("exist");
+    // Describe-this (viewer capture) button and the artifact Stage filter must ship.
+    cy.get("#describeVisual").should("exist");
+    cy.get("#artifactStageFilter").should("exist");
     cy.get("#stagesPanel").should("exist");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.contains("Sim2Real Run Monitor").should("not.exist");

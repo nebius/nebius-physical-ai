@@ -4223,10 +4223,17 @@
         return String((input && input.value) || "").trim();
       }
       function deriveArtifactStage(key, runId) {
-        const marker = "/" + String(runId || "") + "/";
         let scoped = String(key || "");
+        const rid = String(runId || "");
+        const marker = "/" + rid + "/";
         const idx = scoped.indexOf(marker);
-        if (idx >= 0) scoped = scoped.slice(idx + marker.length);
+        if (idx >= 0) {
+          // Real keys with a discovery prefix: <prefix>/<runId>/<stage>/...
+          scoped = scoped.slice(idx + marker.length);
+        } else if (rid && scoped.startsWith(rid + "/")) {
+          // Empty-prefix keys: <runId>/<stage>/...
+          scoped = scoped.slice(rid.length + 1);
+        }
         const parts = scoped.split("/").filter(Boolean);
         return parts[0] || "artifacts";
       }
@@ -4508,7 +4515,12 @@
           const runMarker = "/" + runId + "/";
           let scoped = String(key || "");
           const idx = scoped.indexOf(runMarker);
-          if (idx >= 0) scoped = scoped.slice(idx + runMarker.length);
+          if (idx >= 0) {
+            scoped = scoped.slice(idx + runMarker.length);
+          } else if (runId && scoped.startsWith(runId + "/")) {
+            // Empty-prefix keys carry the run id as the leading segment.
+            scoped = scoped.slice(String(runId).length + 1);
+          }
           const parts = scoped.split("/").filter(Boolean);
           const first = parts[0] || "artifacts";
           if (first === "reports") return "reports";

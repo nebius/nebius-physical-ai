@@ -362,6 +362,51 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("@windowOpen").should("have.been.called");
   });
 
+  it("triggers run discovery when a prefix is typed and Enter is pressed", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    // Regression guard: the Prefix input must re-run discovery on Enter, without
+    // also clicking "Discover runs".
+    cy.get("#artifactPrefix").clear().type("physical-ai-data-factory{enter}");
+    cy.wait("@artifactRuns");
+    cy.get("#artifactDiscoverStatus").should("contain.text", "latest first");
+  });
+
+  it("filters artifacts by workflow stage and tags timeline rows by stage", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactPrefix").clear().type("sim2real-b/custom-assets");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
+
+    // The Stage (workflow-progress) selector is populated from the loaded
+    // artifacts' first path segment after the run id.
+    cy.get("#artifactStageFilter option").then(($opts) => {
+      const values = [...$opts].map((opt) => opt.value);
+      expect(values).to.include.members(["reports", "rollouts", "logs", "raw"]);
+    });
+
+    // Selecting a stage scopes the artifact list to that workflow-progress step.
+    cy.get("#artifactStageFilter").select("rollouts");
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
+    cy.get("#artifactList").should("not.contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+
+    // Clearing the stage filter restores the full listing.
+    cy.get("#artifactStageFilter").select("");
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+
+    // The artifact-derived timeline tags rows with a stage key so they are
+    // clickable to scope the browser. (The click handler is covered by the
+    // agent unit test; the periodic sim-viz poll re-renders #stageList in the
+    // mock, so a live click assertion here would be race-prone.)
+    cy.get("#stageList").should("exist");
+  });
+
   it("grounds complex chat queries and complex workflow YAML drafts", () => {
     cy.get("#chatInput").type(
       "For the non-stock customer run, what can I view, which artifact should I load first, and how do I keep Rerun interactive?",
