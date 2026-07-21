@@ -791,7 +791,9 @@ def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[Any]:
         )
 
     # The deploy flow uses the private key alongside the public key (pub path
-    # minus the .pub suffix) to bootstrap the VM over SSH.
+    # minus the .pub suffix) to bootstrap the VM over SSH. If --ssh-public-key-path
+    # is given without a .pub suffix, this resolves to the same path as the public
+    # key check above, which at worst yields a slightly redundant message.
     priv_str = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
     priv_path = Path(priv_str)
     if priv_path.is_file():

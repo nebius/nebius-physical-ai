@@ -19,7 +19,6 @@ from typing import Any, Callable, Iterable
 from npa.workflows.sim2real_health import (
     FAIL,
     PASS,
-    SKIP,
     WARN,
     CheckResult,
     has_failure,
