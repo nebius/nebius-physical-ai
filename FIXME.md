@@ -15,40 +15,6 @@ work lives).
 
 ### High
 
-#### [H] Finish validating npa-loop-eval:0.1.3-genuine-sm120 on RTX PRO 6000, then delete stale 0.1.1
-
-- **Surfaced by**: 2026-07-21 live sm_120 GPU smoke on `npa-rtxpro-mk8s`
-  (RTX PRO 6000 Blackwell node) during finding-3 validation.
-- **Status**: Mostly resolved. Corrected image rebuilt + pushed; default bumped.
-  Two follow-ups remain (below).
-- **Background**: The old pinned artifact
-  `npa-loop-eval:0.1.1-genuine-sm120` bundled `torch 2.6.0+cu124` (arch_list
-  sm_50..sm_90 only), so the first torch CUDA op crashed on RTX PRO 6000
-  (`sm_120`) with "no kernel image is available for execution on the device".
-  Genesis stage-10 held-out eval (`sim_backend=genesis`,
-  `npa.genesis.env_pick_place.FrankaPickPlaceEnv`) hard-requires torch CUDA, so
-  it died before Genesis physics. `0.1.2-genuine-sm120` was never pushed (404).
-- **Done (2026-07-21)**: Rebuilt+pushed
-  `cr.eu-north1.nebius.cloud/<repo>/npa-loop-eval:0.1.3-genuine-sm120` from
-  `npa-genesis:0.4.6-sm80-sm90-sm120-latest` (torch `2.9.0+cu130`;
-  `torch._C._cuda_getArchFlags()` → `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120
-  compute_120`, i.e. the sm_90-cap root cause is fixed). Bumped
-  `DEFAULT_EVAL_TAG` / `SUPPORTED_TOOL_VERSIONS['loop-eval']` / pyproject /
-  runbook / README / sm120 catalog / golden-eval table to 0.1.3, and marked both
-  0.1.1 and 0.1.2 stale in `audit_workbench_image_tags.py`.
-- **Remaining**:
-  1. **Full on-GPU rollout validation** of 0.1.3 (torch CUDA matmul +
-     `gs.init(backend=gs.gpu)` + a `FrankaPickPlaceEnv` step) on an RTX PRO 6000
-     node. This could not be run from the dev VM: the dev-VM service account
-     (`npa-mk8s-provisioner`) can push and `docker`/`crane`-pull, but the cluster
-     kubelet gets `403 Forbidden` on the registry manifest HEAD (registry in
-     eu-north1, cluster in us-central1), so K8s Jobs can't pull the image. Run
-     from an operator/codex environment whose cluster pull creds work (the same
-     one that pulled 0.1.1 for the original repro). CPU-side archflags already
-     prove the torch root cause is fixed; this confirms Genesis JIT kernels too.
-  2. **Delete the stale `npa-loop-eval:0.1.1-genuine-sm120`** tag from the
-     registry once (1) passes (kept for now as a documented-broken fallback).
-
 #### [H] Parameterize Isaac Lab -> LeRobot formatter
 
 - **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
@@ -195,6 +161,17 @@ work lives).
 
 ## Resolved (recent)
 
+- 2026-07-21 - Sim2Real eval image rebuilt for Blackwell. The pinned
+  `npa-loop-eval:0.1.1-genuine-sm120` shipped `torch 2.6.0+cu124` (sm_50..sm_90),
+  so torch CUDA crashed on RTX PRO 6000 (`sm_120`) before Genesis physics.
+  Rebuilt + pushed `npa-loop-eval:0.1.3-genuine-sm120` from
+  `npa-genesis:0.4.6-sm80-sm90-sm120-latest` (torch `2.9.0+cu130`), bumped every
+  pin/doc + build default and marked 0.1.1/0.1.2 stale in the tag audit.
+  **Validated end-to-end on an RTX PRO 6000 node in `npa-rtxpro-mk8s`**: torch
+  sm_120 matmul + `gs.init(backend=gs.gpu)` + a `FrankaPickPlaceEnv` step all pass
+  with no "no kernel image" error (digest
+  `sha256:9ae0ca513a7cf03af3562c91a6e811cd2b68abe168e36899d37f7cb4cb4ebaaa`). The
+  superseded broken `0.1.1-genuine-sm120` tag was deleted from the registry.
 - 2026-07-19 - Remote install/SSH failures now surface a compact, actionable
   error (step label + exit code + stderr tail) with the full command and output
   behind `NPA_DEBUG=1`. Root-caused in `SSHClient.run_or_raise`

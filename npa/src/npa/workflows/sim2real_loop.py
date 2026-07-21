@@ -67,7 +67,8 @@ DEFAULT_TRAINER_TAG = "0.1.1"
 # npa-genesis:0.4.6-sm80-sm90-sm120 (torch 2.9.0+cu130; _cuda_getArchFlags shows
 # sm_120/compute_120). It replaces 0.1.1-genuine-sm120, whose bundled torch was
 # sm_90-capped and crashed on RTX PRO 6000, and 0.1.2-genuine-sm120 (never in the
-# registry). See images.py and FIXME.md.
+# registry). Validated end-to-end on RTX PRO 6000 (sm_120) 2026-07-21. See
+# images.py and FIXME.md.
 DEFAULT_EVAL_TAG = "0.1.3-genuine-sm120"
 DEFAULT_ISAAC_TAG = "2.3.2.post1"
 # Pluggable held-out sim backend. Genesis remains fully supported; Isaac Lab

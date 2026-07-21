@@ -67,8 +67,10 @@ SUPPORTED_TOOL_VERSIONS = {
     # supersedes 0.1.1-genuine-sm120, whose bundled torch was 2.6.0+cu124
     # (sm_50..sm_90 only) and crashed heldout_eval on RTX PRO 6000 (sm_120) with
     # "no kernel image is available for execution on the device", and
-    # 0.1.2-genuine-sm120 (never pushed to the registry). Full on-GPU Genesis
-    # rollout validation of 0.1.3 is tracked in FIXME.md.
+    # 0.1.2-genuine-sm120 (never pushed to the registry). Validated end-to-end on
+    # an RTX PRO 6000 node (sm_120) 2026-07-21: torch matmul + gs.init(gpu) + a
+    # FrankaPickPlaceEnv step, no "no kernel image" error. 0.1.1 has been deleted
+    # from the registry.
     "loop-eval": "0.1.3-genuine-sm120",
     "rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
