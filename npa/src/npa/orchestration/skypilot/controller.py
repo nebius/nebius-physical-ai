@@ -62,11 +62,16 @@ def apply_controller_override(
     yaml_dict: dict[str, Any],
     *,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
+    controller_region: str | None = None,
 ) -> dict[str, Any]:
     """Inject NPA's managed-jobs controller resources into a SkyPilot config.
 
     The function is idempotent and preserves an explicitly larger controller
-    resource block.
+    resource block. When ``controller_region`` is provided (for the Kubernetes
+    backend this is the kube context, e.g. derived from a job's
+    ``--infra k8s/<context>``), the controller is co-located there so it shares
+    the region — and therefore object-storage reachability — of its jobs. The
+    region is never hard-coded; callers pass it from the submission target.
     """
 
     updated = deepcopy(yaml_dict)
@@ -77,6 +82,7 @@ def apply_controller_override(
 
     if isinstance(existing, dict) and _is_at_least_default(existing, default):
         existing["autostop"] = DEFAULT_JOBS_CONTROLLER_AUTOSTOP
+        _apply_controller_region(existing, controller_backend, controller_region)
         return updated
 
     merged = deepcopy(default)
@@ -92,8 +98,28 @@ def apply_controller_override(
         if not _is_at_least_default(merged, default):
             merged = default
 
+    _apply_controller_region(merged, controller_backend, controller_region)
     controller["resources"] = merged
     return updated
+
+
+def _apply_controller_region(
+    resources: dict[str, Any],
+    controller_backend: ControllerBackend,
+    controller_region: str | None,
+) -> None:
+    """Pin the controller to ``controller_region`` when the caller supplies one.
+
+    For Kubernetes the SkyPilot ``region`` is the kube context; co-locating the
+    controller with the target context keeps the controller and its jobs in the
+    same region so bucket mounts resolve against the right object-storage
+    endpoint. An explicit region already in the block is preserved.
+    """
+
+    region = (controller_region or "").strip()
+    if not region:
+        return
+    resources.setdefault("region", region)
 
 
 def _controller_resources_for_backend(controller_backend: ControllerBackend) -> dict[str, Any]:
