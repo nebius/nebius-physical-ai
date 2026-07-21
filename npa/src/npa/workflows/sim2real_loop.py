@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import container_image_for_tool, registry_from_env
 from npa.workbench.cosmos.reason import (
     CosmosReasonError,
     apply_cosmos_reason_kubernetes_env,
@@ -298,7 +298,7 @@ def new_run_id(prefix: str = "sim2real-b") -> str:
 def default_vlm_image(*, registry: str | None = None) -> str:
     """Return the reference Cosmos3-reason-compatible VLM image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("cosmos3-reason", registry=registry)
     return f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
 
@@ -306,7 +306,7 @@ def default_vlm_image(*, registry: str | None = None) -> str:
 def default_envgen_image(*, registry: str | None = None) -> str:
     """Return the reference env-generation image used by Stages 3-6."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("envgen", registry=registry)
     return f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
 
@@ -314,7 +314,7 @@ def default_envgen_image(*, registry: str | None = None) -> str:
 def default_augment_image(*, registry: str | None = None) -> str:
     """Return the reference Cosmos2 transfer image used by Stage 3."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("cosmos2-transfer", registry=registry)
     return f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
 
@@ -322,7 +322,7 @@ def default_augment_image(*, registry: str | None = None) -> str:
 def default_policy_image(*, registry: str | None = None) -> str:
     """Return the reference action-generation policy image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("reference-policy", registry=registry)
     return f"npa-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
 
@@ -330,7 +330,7 @@ def default_policy_image(*, registry: str | None = None) -> str:
 def default_trainer_image(*, registry: str | None = None) -> str:
     """Return the reference VLM-signal LeRobot trainer image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("lerobot-vlm-rl", registry=registry)
     return f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
 
@@ -338,7 +338,7 @@ def default_trainer_image(*, registry: str | None = None) -> str:
 def default_eval_image(*, registry: str | None = None) -> str:
     """Return the reference held-out eval harness image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("loop-eval", registry=registry)
     return f"npa-loop-eval:{DEFAULT_EVAL_TAG}"
 
@@ -346,7 +346,7 @@ def default_eval_image(*, registry: str | None = None) -> str:
 def default_isaac_image(*, registry: str | None = None) -> str:
     """Return the Isaac Lab held-out rollout image (Isaac Sim headless)."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("isaac-lab", registry=registry)
     return f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
 
@@ -369,7 +369,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         or os.environ.get("S3_BUCKET")
         or ""
     )
-    registry = os.environ.get("NPA_REGISTRY", "")
+    registry = registry_from_env()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
     elif "NPA_SIM2REAL_PREFIX" in os.environ:

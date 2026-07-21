@@ -197,15 +197,29 @@ def container_image_for_tool(
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
-def primary_container_registry() -> str:
-    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+def registry_from_id(registry_id: str) -> str:
+    """Build a full registry locator from a bare Nebius registry id.
+
+    A bare id (``NPA_REGISTRY_ID``) is expanded against the primary region so it
+    resolves the same way on every registry path (see ``resolve_container_registry``).
+    """
+    return f"cr.eu-north1.nebius.cloud/{registry_id.strip()}"
+
+
+def registry_from_env() -> str:
+    """Return the registry from NPA_REGISTRY, then NPA_REGISTRY_ID, else ""."""
     explicit = os.environ.get("NPA_REGISTRY", "").strip()
     if explicit:
         return explicit
     registry_id = os.environ.get("NPA_REGISTRY_ID", "").strip()
     if registry_id:
-        return f"cr.eu-north1.nebius.cloud/{registry_id}"
-    return DEFAULT_CONTAINER_REGISTRY
+        return registry_from_id(registry_id)
+    return ""
+
+
+def primary_container_registry() -> str:
+    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+    return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
 _primary_registry = primary_container_registry

@@ -8,8 +8,8 @@ Usage: npa workbench groot [OPTIONS] COMMAND [ARGS]...
 NVIDIA Isaac GR00T humanoid foundation-model workbench.
 
 Options
---project  -p  TEXT  Project alias from ~/.npa/config.yaml.
---name  -n  TEXT  Workbench instance name within the project.
+--project  -p  <str>  Project alias from ~/.npa/config.yaml.
+--name  -n  <str>  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
 ensure-ingress  Ensure public ingress for the saved GR00T BYOVM alias.
@@ -32,8 +32,8 @@ system-info  Collect system information and GR00T runtime status from the VM.
 
 | Option | Description |
 | --- | --- |
-| `--project` | -p  TEXT  Project alias from ~/.npa/config.yaml. |
-| `--name` | -n  TEXT  Workbench instance name within the project. |
+| `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. |
+| `--name` | -n  <str>  Workbench instance name within the project. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

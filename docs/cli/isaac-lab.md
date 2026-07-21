@@ -8,8 +8,8 @@ Usage: npa workbench isaac-lab [OPTIONS] COMMAND [ARGS]...
 Isaac Lab simulation workbench deployment, training, and evaluation.
 
 Options
---project  -p  TEXT  Project alias from ~/.npa/config.yaml.
---name  -n  TEXT  Workbench instance name within the project.
+--project  -p  <str>  Project alias from ~/.npa/config.yaml.
+--name  -n  <str>  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
 list  List configured Isaac Lab workbenches.
@@ -21,14 +21,15 @@ system-info  Collect and display system hardware information from the Isaac Lab 
 train  Run Isaac Lab training on the VM via SSH.
 eval  Run Isaac Lab evaluation on the VM via SSH.
 export-lerobot  Generate Isaac Lab G1 rollouts and export them as a standard LeRobotDataset.
+export-onnx  Export a trained rsl_rl actor checkpoint to ONNX with an obs/action contract.
 ```
 
 ## Options
 
 | Option | Description |
 | --- | --- |
-| `--project` | -p  TEXT  Project alias from ~/.npa/config.yaml. |
-| `--name` | -n  TEXT  Workbench instance name within the project. |
+| `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. |
+| `--name` | -n  <str>  Workbench instance name within the project. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
@@ -41,9 +42,10 @@ export-lerobot  Generate Isaac Lab G1 rollouts and export them as a standard LeR
 | `status` | Check Isaac Lab VM status via SSH. |
 | `list-tasks` | List registered Isaac Lab tasks on the workbench VM. |
 | `system-info` | Collect and display system hardware information from the Isaac Lab VM. |
-| `train` | Run Isaac Lab training on the VM via SSH (`--export-trajectories` rolls out the trained checkpoint to numpy episodes). |
+| `train` | Run Isaac Lab training on the VM via SSH. |
 | `eval` | Run Isaac Lab evaluation on the VM via SSH. |
 | `export-lerobot` | Generate Isaac Lab G1 rollouts and export them as a standard LeRobotDataset. |
+| `export-onnx` | Export a trained rsl_rl actor checkpoint to ONNX with an obs/action contract. |
 
 ## Examples
 

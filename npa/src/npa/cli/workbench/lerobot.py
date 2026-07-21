@@ -239,6 +239,7 @@ def _get_config(**overrides):
         return resolve_config(
             project=_project_alias or None,
             name=_workbench_name or None,
+            expected_workbench_type="lerobot",
             **{k: v for k, v in overrides.items() if v is not None},
         )
     except ConfigError as exc:
