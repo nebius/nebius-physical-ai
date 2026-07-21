@@ -563,13 +563,17 @@
       .chat-log-wrap { position: relative; }
       .chat-scroll-bottom {
         position: absolute; right: 16px; bottom: 18px;
-        width: 34px; height: 34px; border-radius: 999px; padding: 0;
+        width: 38px; height: 38px; border-radius: 999px; padding: 0;
         display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
-        background: var(--brand, #2563eb); color: #fff; border: 1px solid rgba(255,255,255,0.55);
-        box-shadow: 0 4px 12px rgba(13,42,61,0.35); opacity: 0.95;
-        transition: opacity .15s ease, transform .15s ease; z-index: 6;
+        /* Dark navy chip with a white glyph: high contrast on the light chat log
+           (the brand color is bright lime, which hides a white icon). */
+        background: var(--sidebar, #0d2a3d); color: #ffffff;
+        border: 2px solid #ffffff;
+        box-shadow: 0 6px 16px rgba(13,42,61,0.45); opacity: 0.97;
+        transition: background .15s ease, transform .15s ease; z-index: 20;
       }
-      .chat-scroll-bottom:hover { opacity: 1; transform: translateY(-1px); }
+      .chat-scroll-bottom:hover { background: var(--sidebar-2, #17405d); opacity: 1; transform: translateY(-1px); }
+      .chat-scroll-bottom svg { display: block; }
       .chat-scroll-bottom[hidden] { display: none; }
       .msg-row {
         display: flex;
