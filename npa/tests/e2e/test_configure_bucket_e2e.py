@@ -73,7 +73,10 @@ def configure_paths(monkeypatch, tmp_path):
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    # Represent a ready, authenticated profile (the live env is authenticated per
+    # live_configure_env): _ensure_nebius_profile() returns True so provisioning
+    # proceeds instead of aborting on the "no profile" gate.
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     return creds_path, config_path
 
 
