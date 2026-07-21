@@ -308,6 +308,12 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
 
+    # Satisfy the fail-fast deploy prerequisites (terraform + SSH key pair) that
+    # now run before any cloud side effects.
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+
     deploy_cmd(
         project="fresh",
         name="agent",
@@ -1637,6 +1643,11 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(monkeypatch, t
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent._store_agent_record", lambda project, name, rec: captured.update(rec))
 
+    # Satisfy the fail-fast deploy prerequisites (terraform + SSH key pair).
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+
     deploy_cmd(
         project="agent-live",
         name="agent",
@@ -1663,6 +1674,139 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(monkeypatch, t
         "Qwen/Qwen2.5-VL-72B-Instruct",
     ):
         assert expected in configured, f"{expected} missing from {configured}"
+
+
+def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--ssh-public-key-path",
+            str(tmp_path / "id_ed25519.pub"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "[PASS] terraform" in result.output
+    assert "[PASS] ssh_public_key" in result.output
+    assert "[PASS] token_factory" in result.output
+
+
+def test_agent_preflight_fails_on_missing_terraform_and_keys(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+
+    monkeypatch.delenv("NPA_TERRAFORM_BIN", raising=False)
+    monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(agent_module, "_resolve_deploy_llm_credentials", lambda: ("", "m"))
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--ssh-public-key-path",
+            str(tmp_path / "missing.pub"),
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "[FAIL] terraform" in result.output
+    assert "[FAIL] ssh_public_key" in result.output
+    assert "[WARN] token_factory" in result.output
+
+
+def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--json",
+            "--ssh-public-key-path",
+            str(tmp_path / "id_ed25519.pub"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert {c["name"] for c in payload["checks"]} == {
+        "terraform",
+        "ssh_public_key",
+        "ssh_private_key",
+        "token_factory",
+    }
+
+
+def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
+
+    def _boom() -> str:
+        raise RuntimeError("no profile")
+
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", _boom)
+
+    result = runner.invoke(
+        app,
+        ["preflight", "--ssh-public-key-path", str(tmp_path / "id_ed25519.pub")],
+    )
+    assert result.exit_code == 1, result.output
+    assert "[FAIL] nebius_profile" in result.output
+
+
+def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
+    """Deploy aborts on a missing SSH key BEFORE any cloud IAM side effects."""
+    from npa.cli.agent import deploy_cmd
+
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *a, **k: SimpleNamespace(
+            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+        ),
+    )
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("cloud bootstrap must not run when prerequisites fail")
+
+    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", _must_not_run)
+
+    with pytest.raises(Exit) as exc:
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-1",
+            tenant_id="tenant-1",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "missing.pub"),
+            tf_var=[],
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+    assert exc.value.exit_code == 1
 
 
 def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:

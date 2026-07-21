@@ -55,7 +55,7 @@ with the same install.
 | -------------------------------------------------- | ------------ | ---------------------------------------- | -------------------------------------------------------- |
 | **A. [60-second try-it](#a-60-second-try-it)**     | ~60 s        | Python 3.10+                             | A scored VLM benchmark report — no cloud, no GPU, no key |
 | **B. [First workload on Nebius](#b-first-workload-on-nebius)** | ~15 min | Nebius account · `nebius` CLI            | A configured project running managed Workbench tools     |
-| **C. [Self-hosted `npa agent`](#c-self-hosted-npa-agent)** | ~20 min | Nebius account · Terraform · SSH key    | A browser-based chat workbench VM with embedded Rerun    |
+| **C. [Self-hosted `npa agent`](#c-self-hosted-npa-agent)** | ~20 min | Authenticated `nebius` profile · Terraform · SSH key pair · Token Factory key · writable S3 creds | A browser-based chat workbench VM with embedded Rerun    |
 
 All three share the same one-time install:
 
@@ -186,6 +186,10 @@ embedded [Rerun](https://www.rerun.io) viewer for `.rrd` recordings, and
 draft/validate/plan/submit endpoints for `npa.workflow/v0.0.1` specs.
 
 ```bash
+# Check prerequisites first (terraform, SSH key pair, Nebius auth, Token Factory
+# key) — no cloud side effects, so late failures surface before any VM is built:
+npa agent preflight
+
 npa agent fresh-setup \
   --project my-agent --name agent \
   --project-id project-... --tenant-id tenant-... --region eu-north1

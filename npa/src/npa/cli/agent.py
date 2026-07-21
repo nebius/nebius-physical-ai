@@ -740,6 +740,141 @@ def _resolve_operator_credentials() -> tuple[str, str]:
     return creds.ai_cloud_api_key, creds.token_factory_api_key
 
 
+def _terraform_binary() -> str:
+    """Return the terraform binary path/name, honoring NPA_TERRAFORM_BIN."""
+    return (os.environ.get("NPA_TERRAFORM_BIN") or shutil.which("terraform") or "").strip()
+
+
+def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[Any]:
+    """Cheap, side-effect-free Route C prerequisites (terraform + SSH keys).
+
+    These are checked before any cloud IAM side effects or Terraform apply so a
+    missing binary or key surfaces up front instead of mid-run (after which a
+    transient SSH failure would auto-roll-back a freshly provisioned VM).
+    """
+    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
+
+    results: list[Any] = []
+
+    terraform = _terraform_binary()
+    if terraform:
+        results.append(
+            CheckResult(name="terraform", status=PASS, summary=f"terraform found ({terraform}).")
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="terraform",
+                status=FAIL,
+                summary="terraform binary not found on PATH.",
+                remedy="Install it: https://developer.hashicorp.com/terraform/install",
+            )
+        )
+
+    pub_path = Path(ssh_public_key_path).expanduser()
+    if pub_path.is_file():
+        results.append(
+            CheckResult(name="ssh_public_key", status=PASS, summary=f"SSH public key present ({pub_path}).")
+        )
+    else:
+        priv_hint = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
+        results.append(
+            CheckResult(
+                name="ssh_public_key",
+                status=FAIL,
+                summary=f"SSH public key not found: {pub_path}",
+                remedy=(
+                    f"Generate a keypair (`ssh-keygen -t ed25519 -f {priv_hint}`) "
+                    "or pass --ssh-public-key-path to an existing key."
+                ),
+            )
+        )
+
+    # The deploy flow uses the private key alongside the public key (pub path
+    # minus the .pub suffix) to bootstrap the VM over SSH.
+    priv_str = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
+    priv_path = Path(priv_str)
+    if priv_path.is_file():
+        results.append(
+            CheckResult(name="ssh_private_key", status=PASS, summary=f"SSH private key present ({priv_path}).")
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="ssh_private_key",
+                status=FAIL,
+                summary=f"SSH private key not found: {priv_path}",
+                remedy="The private key next to the public key is required to bootstrap the VM over SSH.",
+            )
+        )
+
+    return results
+
+
+def _agent_token_factory_result() -> Any:
+    """Token Factory key check (WARN): the headline chat feature needs it."""
+    from npa.workflows.sim2real_health import CheckResult, PASS, WARN
+
+    tf_key, _ = _resolve_deploy_llm_credentials()
+    if tf_key:
+        return CheckResult(
+            name="token_factory", status=PASS, summary="Token Factory API key is configured."
+        )
+    return CheckResult(
+        name="token_factory",
+        status=WARN,
+        summary="Token Factory API key not found; agent chat will return 503 until it is set.",
+        remedy=(
+            "Get a key (starts with 'v1.') at https://tokenfactory.nebius.com/ and run "
+            "`npa configure --token-factory-key <key>`, then re-run `npa agent bootstrap`."
+        ),
+    )
+
+
+def _agent_nebius_auth_result() -> Any:
+    """Live Nebius auth check (FAIL): deploy needs an authenticated profile to provision."""
+    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
+
+    try:
+        from npa.clients.nebius import get_iam_token
+
+        token = get_iam_token()
+    except Exception as exc:  # noqa: BLE001 - any auth/CLI error means "not ready"
+        return CheckResult(
+            name="nebius_profile",
+            status=FAIL,
+            summary="No authenticated Nebius CLI profile.",
+            remedy="Install/authenticate the Nebius CLI and run `npa configure`.",
+            details=(str(exc),),
+        )
+    if token:
+        return CheckResult(
+            name="nebius_profile", status=PASS, summary="Nebius CLI profile is authenticated."
+        )
+    return CheckResult(
+        name="nebius_profile",
+        status=FAIL,
+        summary="Nebius IAM token unavailable.",
+        remedy="Run `npa configure` / `nebius profile create` to authenticate.",
+    )
+
+
+def _render_agent_checks(results: list[Any], *, output_json: bool) -> bool:
+    """Render agent preflight CheckResults; return True when any FAIL is present."""
+    has_fail = any(getattr(r, "status", "") == "FAIL" for r in results)
+    if output_json:
+        payload = {"checks": [r.as_dict() for r in results], "ok": not has_fail}
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return has_fail
+    for result in results:
+        typer.echo(f"[{result.status}] {result.name}: {result.summary}")
+        for detail in getattr(result, "details", ()):  # type: ignore[arg-type]
+            typer.echo(f"        - {detail}")
+        if result.remedy and result.status in {"WARN", "FAIL", "SKIP"}:
+            typer.echo(f"        fix: {result.remedy}")
+    return has_fail
+
+
 def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str]:
     """Return an ordered, unique model list from repeated or comma-separated values."""
     if isinstance(models, str):
@@ -6242,6 +6377,33 @@ def _health(
     return response.status_code == 200, response.status_code
 
 
+@app.command("preflight")
+def preflight_cmd(
+    ssh_public_key_path: str = typer.Option(
+        "~/.ssh/id_ed25519.pub",
+        "--ssh-public-key-path",
+        help="SSH public key path Terraform will read (its private key bootstraps the VM).",
+    ),
+    skip_nebius: bool = typer.Option(
+        False, "--skip-nebius", help="Skip the live Nebius authentication check."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+) -> None:
+    """Check Route C prerequisites before `npa agent deploy` / `fresh-setup`.
+
+    Validates terraform, the SSH key pair, Nebius authentication, and the Token
+    Factory key with no cloud side effects, so late failures (which auto-roll-back
+    a freshly provisioned VM) surface up front. Exits non-zero on any FAIL.
+    """
+    results = list(_agent_hard_prereq_results(ssh_public_key_path))
+    if not skip_nebius:
+        results.append(_agent_nebius_auth_result())
+    results.append(_agent_token_factory_result())
+    has_fail = _render_agent_checks(results, output_json=output_json)
+    if has_fail:
+        raise typer.Exit(code=1)
+
+
 @app.command("deploy")
 def deploy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias to store config under."),
@@ -6286,6 +6448,20 @@ def deploy_cmd(
     env_region = region or (saved_env.region if saved_env else "")
     if not env_project_id or not env_tenant_id or not env_region:
         _fail("--project-id, --tenant-id, and --region are required")
+
+    # Fail fast on cheap, side-effect-free prerequisites BEFORE any cloud IAM
+    # side effects or Terraform apply: a missing terraform binary or SSH key
+    # otherwise surfaces mid-run (as a raw Terraform file() error or a late
+    # provisioner failure) after infrastructure has already been touched. Surface
+    # the Token Factory warning here too, rather than only after the VM exists.
+    prereq_results = _agent_hard_prereq_results(ssh_public_key_path)
+    tf_key_result = _agent_token_factory_result()
+    for result in prereq_results:
+        if result.status == "FAIL":
+            _fail(f"{result.summary} {result.remedy}".strip())
+    if tf_key_result.status == "WARN":
+        typer.echo(f"  Warning: {tf_key_result.summary}", err=True)
+        typer.echo(f"           {tf_key_result.remedy}", err=True)
 
     from npa.clients.nebius import NebiusError, bootstrap_agent_environment, get_iam_token
 
@@ -6399,12 +6575,8 @@ def deploy_cmd(
     extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
     configured_llm_models = _normalize_llm_models([configured_llm_model, *extra_llm_models])
     nebius_ai_key, _ = _resolve_operator_credentials()
-    if not tf_api_key:
-        typer.echo(
-            "Warning: Token Factory API key not found in credentials; "
-            "agent chat will return 503 until `npa agent bootstrap` with a configured key.",
-            err=True,
-        )
+    # A missing Token Factory key is already surfaced up front (before Terraform)
+    # by the deploy prerequisite check above.
     rollback_record = {
         "instance_id": instance_id,
         "project_id": env_project_id,
