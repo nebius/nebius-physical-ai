@@ -560,6 +560,17 @@
         border-radius: 10px; padding: 10px; margin-bottom: 10px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       }
+      .chat-log-wrap { position: relative; }
+      .chat-scroll-bottom {
+        position: absolute; right: 16px; bottom: 18px;
+        width: 34px; height: 34px; border-radius: 999px; padding: 0;
+        display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+        background: var(--brand, #2563eb); color: #fff; border: 1px solid rgba(255,255,255,0.55);
+        box-shadow: 0 4px 12px rgba(13,42,61,0.35); opacity: 0.95;
+        transition: opacity .15s ease, transform .15s ease; z-index: 6;
+      }
+      .chat-scroll-bottom:hover { opacity: 1; transform: translateY(-1px); }
+      .chat-scroll-bottom[hidden] { display: none; }
       .msg-row {
         display: flex;
         margin: 8px 0;
@@ -754,6 +765,12 @@
         border-bottom: 1px solid var(--border);
       }
       body.viewer-focus #panelChat .chat-toolbar .hint { display: none; }
+      body.viewer-focus #panelChat .chat-log-wrap {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
       body.viewer-focus #panelChat .chat-log {
         flex: 1 1 auto;
         min-height: 160px;
@@ -1285,7 +1302,12 @@
               <button id="mobileChatAuthBtn" class="btn btn-primary" type="button">Unlock chat</button>
             </div>
           </div>
-          <div id="chatLog" class="chat-log"></div>
+          <div class="chat-log-wrap">
+            <div id="chatLog" class="chat-log"></div>
+            <button id="chatScrollBottom" class="chat-scroll-bottom" type="button" title="Jump to latest message" aria-label="Scroll to end of chat" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 16.5a1 1 0 0 1-.71-.29l-6-6A1 1 0 0 1 6.7 8.8L12 14.09l5.3-5.3a1 1 0 0 1 1.4 1.42l-6 6a1 1 0 0 1-.7.29z"/></svg>
+            </button>
+          </div>
           <form id="chatForm" class="chat-composer chat-input" autocomplete="off">
             <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?" rows="2" enterkeyhint="send"></textarea>
             <button id="chatSend" class="btn btn-primary" type="submit">Send</button>
@@ -1797,6 +1819,15 @@
             sendChat().catch((err) => showToast(String(err), "error"));
           });
         }
+        const chatLogEl = document.getElementById("chatLog");
+        if (chatLogEl) {
+          chatLogEl.addEventListener("scroll", updateChatScrollButton, { passive: true });
+        }
+        const chatScrollBottomBtn = document.getElementById("chatScrollBottom");
+        if (chatScrollBottomBtn) {
+          chatScrollBottomBtn.addEventListener("click", () => scrollChatToBottom(true));
+        }
+        updateChatScrollButton();
         document.querySelectorAll(".main-tab[data-tab]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const next = String(btn.getAttribute("data-tab") || "main");
@@ -2169,6 +2200,24 @@
         document.body.removeChild(ta);
         return Boolean(ok);
       }
+      function updateChatScrollButton() {
+        const log = document.getElementById("chatLog");
+        const btn = document.getElementById("chatScrollBottom");
+        if (!log || !btn) return;
+        // Show the jump-to-latest arrow only when scrolled up from the bottom.
+        const distanceFromBottom = log.scrollHeight - log.scrollTop - log.clientHeight;
+        btn.hidden = distanceFromBottom <= 40;
+      }
+      function scrollChatToBottom(smooth) {
+        const log = document.getElementById("chatLog");
+        if (!log) return;
+        if (log.scrollTo) {
+          log.scrollTo({ top: log.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+        } else {
+          log.scrollTop = log.scrollHeight;
+        }
+        updateChatScrollButton();
+      }
       function appendChat(role, text, opts) {
         const options = opts || {};
         const rawText = String(text || "");
@@ -2209,6 +2258,7 @@
         row.appendChild(card);
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
+        updateChatScrollButton();
         return row;
       }
       function showThinkingBubble() {

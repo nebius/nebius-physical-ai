@@ -848,6 +848,18 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert "JSON.stringify(assets.selection" not in source
 
 
+def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
+    """The chat log ships a jump-to-latest arrow wired to scroll to the end."""
+    source = _agent_ui_bundle()
+    assert 'id="chatScrollBottom"' in source
+    assert 'class="chat-log-wrap"' in source
+    assert "function scrollChatToBottom(" in source
+    assert "function updateChatScrollButton(" in source
+    # Wired: scroll listener toggles the arrow; click jumps to the end.
+    assert 'chatLogEl.addEventListener("scroll", updateChatScrollButton' in source
+    assert "scrollChatToBottom(true)" in source
+
+
 def test_bootstrap_system_prompt_no_localhost() -> None:
 
     source = _agent_ui_bundle()

@@ -525,6 +525,30 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabChat").should("not.exist");
   });
 
+  it("shows a scroll-to-bottom arrow when scrolled up and jumps to the latest message", () => {
+    // Fill the chat via real sends so the log overflows and can be scrolled.
+    for (let i = 0; i < 6; i += 1) {
+      cy.get("#chatInput").type(`Draft a 2-step Sim2Real workflow YAML please (${i})`, { delay: 0 });
+      cy.get("#chatSend").click();
+      cy.wait("@chat");
+    }
+    // Each new message auto-scrolls to the bottom, so the arrow is hidden.
+    cy.get("#chatScrollBottom").should("have.attr", "hidden");
+
+    // Scrolling up reveals the jump-to-latest arrow.
+    cy.get("#chatLog").scrollTo("top");
+    cy.get("#chatScrollBottom").should("not.have.attr", "hidden");
+    cy.get("#chatScrollBottom").should("be.visible");
+
+    // Clicking the arrow returns to the end of the chat and hides the arrow.
+    cy.get("#chatScrollBottom").click();
+    cy.get("#chatLog").should(($log) => {
+      const el = $log[0];
+      expect(el.scrollHeight - el.scrollTop - el.clientHeight).to.be.lessThan(41);
+    });
+    cy.get("#chatScrollBottom").should("have.attr", "hidden");
+  });
+
   it("keeps local Workflow YAML edits across refresh-driven run loads", () => {
     const edited = "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata:\n  name: local-edit\n";
     cy.get("#workflowYaml").clear().type(edited, { delay: 0 });
