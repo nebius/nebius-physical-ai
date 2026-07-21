@@ -82,6 +82,8 @@ _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
     "create_workflow": "two-step",
     "create_vlm_rl_workflow": "vlm-rl-loop",
     "create_gate_workflow": "token-factory-gate",
+    "create_loop_gate_workflow": "loop-gate",
+    "create_rl_policy_workflow": "rl-policy-success",
 }
 
 _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -1409,6 +1411,8 @@ def format_workflow_chat_reply(
         f"- **states**: `{state_label or 'n/a'}`",
         "",
         "Edit in the **Workflow YAML** panel, then **Validate**, **Plan**, or **Submit**.",
+        "- **Submit** on the agent = scheduler **plan-only** (does not execute tool steps on K8s).",
+        "- Real execute: `npa workbench workflow run-spec <spec.yaml> --execute` on the operator machine.",
         "",
         "```yaml",
         yaml_text.rstrip(),

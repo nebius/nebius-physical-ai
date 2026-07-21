@@ -80,6 +80,10 @@ explicit model override, and returns `tier` + `usage` + `input_budget_ok`.
    needs them.
 3. **Escalate deliberately** — reserve `nvidia/Cosmos3-Super-Reasoner` for
    analytical/physical-AI/vision turns; it is overkill for routine chat.
+4. **Visual feedback** — UI **Describe this** captures the active viewer frame
+   and posts multimodal `/api/chat` with `visual_context`. Helpers live in
+   `agent_visual_feedback.py` (embedded). Never ground these turns; use vision
+   when an image is attached. See `skills/atomic/agent-visual-feedback/SKILL.md`.
 
 ## Token Factory notes
 

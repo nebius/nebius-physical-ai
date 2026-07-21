@@ -294,7 +294,10 @@ def _run_fiftyone_command(
     code, out, err = ssh.run(command, stream=stream)
     if code == 0 or FIFTYONE_READY_MARKER in out:
         return code, out, err
-    raise SSHError(format_remote_failure(command, code, err, label=label))
+    # Mirror SSHClient.run_or_raise: never echo the command back (FiftyOne
+    # install scripts can carry credentials inline). Surface the step label,
+    # exit code, and stderr tail only.
+    raise SSHError(format_remote_failure(code, err, label=label))
 
 
 def _suppress_transient_curl_errors(stderr: str) -> str:

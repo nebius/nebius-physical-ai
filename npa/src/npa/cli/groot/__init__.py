@@ -882,14 +882,6 @@ def _groot_serverless_infer(
     _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
 
 
-def _service_env_lines(fields: dict[str, str] | None) -> str:
-    if not fields:
-        return ""
-    return "\n".join(
-        f"{key}={shlex.quote(value)}" for key, value in fields.items() if value
-    )
-
-
 def _gpu_env_from_config(cfg: Any) -> dict[str, str]:
     visible = str(getattr(cfg, "cuda_visible_devices", "") or "")
     if not visible:
@@ -1188,14 +1180,9 @@ PY
 """
 
 
-def _build_install_command(
-    port: int = DEFAULT_SERVER_PORT,
-    *,
-    env_fields: dict[str, str] | None = None,
-) -> str:
+def _build_install_command(port: int = DEFAULT_SERVER_PORT) -> str:
     server_py = _build_server_py(DEFAULT_MODEL, DEFAULT_EMBODIMENT_TAG)
     runtime_pin_patch = _build_runtime_pin_patch_command()
-    extra_env = _service_env_lines(env_fields)
     script = f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1247,18 +1234,13 @@ python3.11 -m venv {ISAAC_LAB_VENV}
 cat > {GROOT_HOME}/server.py <<'PY'
 {server_py}
 PY
-sudo mkdir -p /etc/npa-groot-server
-sudo tee /etc/npa-groot-server/env >/dev/null <<'ENV'
-GROOT_MODEL_PATH={DEFAULT_MODEL}
-GROOT_EMBODIMENT_TAG={DEFAULT_EMBODIMENT_TAG}
-GROOT_MODEL_DIR={GROOT_MODEL_DIR}
-GROOT_OUTPUT_DIR={GROOT_OUTPUT_DIR}
-GROOT_SERVER_PORT={port}
-HF_HOME={GROOT_DATA_MOUNT}/hf_cache
-HUGGINGFACE_HUB_CACHE={GROOT_DATA_MOUNT}/hf_cache
-OMNI_KIT_ACCEPT_EULA=YES
-{extra_env}
-ENV
+# The service EnvironmentFile ({GROOT_ENV_FILE}) — including S3/HF/NGC/Token
+# Factory credentials — is written separately over SFTP before this script runs
+# so secrets never appear in this command string, its scrollback, or logs.
+if [ ! -f {GROOT_ENV_FILE} ]; then
+  echo "ERROR: expected service env file {GROOT_ENV_FILE} to exist" >&2
+  exit 1
+fi
 sudo tee /etc/systemd/system/{GROOT_SERVICE}.service >/dev/null <<'UNIT'
 [Unit]
 Description=NPA GR00T policy server
@@ -1302,57 +1284,6 @@ if version != "{ISAAC_LAB_VERSION}":
 print("ISAAC_LAB_ENV_SMOKE_OK")
 print("isaaclab_version=" + version)
 PY
-"""
-    return _remote_bash(script)
-
-
-def _build_serve_command(
-    model_path: str,
-    embodiment_tag: str,
-    port: int,
-    *,
-    env_fields: dict[str, str] | None = None,
-) -> str:
-    server_py = _build_server_py(model_path, embodiment_tag)
-    payload = json.dumps(
-        {
-            "model_path": model_path,
-            "embodiment_tag": embodiment_tag,
-            "device": "cuda",
-        }
-    )
-    extra_env = _service_env_lines(env_fields)
-    script = f"""\
-set -euo pipefail
-cat > {GROOT_HOME}/server.py <<'PY'
-{server_py}
-PY
-sudo mkdir -p /etc/npa-groot-server
-sudo tee /etc/npa-groot-server/env >/dev/null <<'ENV'
-GROOT_MODEL_PATH={model_path}
-GROOT_EMBODIMENT_TAG={embodiment_tag}
-GROOT_MODEL_DIR={GROOT_MODEL_DIR}
-GROOT_OUTPUT_DIR={GROOT_OUTPUT_DIR}
-GROOT_SERVER_PORT={port}
-HF_HOME={GROOT_DATA_MOUNT}/hf_cache
-HUGGINGFACE_HUB_CACHE={GROOT_DATA_MOUNT}/hf_cache
-{extra_env}
-ENV
-sudo systemctl daemon-reload
-sudo systemctl enable {GROOT_SERVICE}
-sudo systemctl restart {GROOT_SERVICE}
-for i in $(seq 1 120); do
-  if curl -fsS -X POST "http://127.0.0.1:{port}/serve" \
-    -H "Content-Type: application/json" \
-    -d {shlex.quote(payload)}; then
-    echo
-    echo GROOT_SERVE_READY
-    exit 0
-  fi
-  sleep 2
-done
-sudo systemctl --no-pager status {GROOT_SERVICE} || true
-exit 1
 """
     return _remote_bash(script)
 
@@ -3027,22 +2958,40 @@ def deploy_cmd(
             console.print(
                 f"  [{step}/{total_steps}] Installing GR00T {GROOT_RELEASE} runtime..."
             )
+            full_service_env = _groot_service_env(
+                credentials=credentials,
+                merged_vars=merged_vars,
+                storage_ep=storage_ep,
+                bucket=bucket,
+                env_region=env_region,
+                server_port=server_port,
+                service_env=service_env,
+                include_shared_creds=False,
+            )
             if dry_run:
                 console.print(
                     "    [dry-run] Would install Python 3.10, uv, NGC CLI, Isaac-GR00T, and Isaac Lab"
                 )
+                console.print("    [dry-run] Service env:")
+                console.print(render_redacted_env_file(full_service_env).rstrip())
             else:
                 try:
+                    write_remote_docker_env_file(
+                        ssh,
+                        GROOT_ENV_FILE,
+                        full_service_env,
+                        owner=ssh_user,
+                    )
                     ssh.run_or_raise(
-                        _build_install_command(server_port, env_fields=service_env),
+                        _build_install_command(server_port),
                         stream=True,
                         label="GR00T install",
                     )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(
                             ssh,
-                            "/etc/npa-groot-server/env",
-                            _groot_audit_env(service_env),
+                            GROOT_ENV_FILE,
+                            _groot_audit_env(full_service_env),
                         )
                         if failed_keys:
                             key = failed_keys[0]
@@ -3053,8 +3002,8 @@ def deploy_cmd(
                             return
                         _print_ngc_env_audit(
                             credentials=credentials,
-                            service_env=service_env,
-                            remote_path="/etc/npa-groot-server/env",
+                            service_env=full_service_env,
+                            remote_path=GROOT_ENV_FILE,
                         )
                 except SSHError as exc:
                     fail_app(f"GR00T installation failed: {exc}")

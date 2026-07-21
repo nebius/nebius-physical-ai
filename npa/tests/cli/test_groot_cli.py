@@ -16,6 +16,7 @@ from npa.cli.groot import (
     GROOT_CONTAINER_ENV_FILE,
     GROOT_CONTAINER_NAME,
     GROOT_DATA_MOUNT,
+    GROOT_ENV_FILE,
     GROOT_RUNTIME_VERSION,
     GROOT_RELEASE,
     GROOT_VENV,
@@ -592,6 +593,7 @@ def test_groot_byovm_deploy_injects_s3_credentials_into_env(mocker) -> None:
     audit = mocker.patch("npa.cli.groot.audit_remote_env", return_value=[])
     mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.groot.write_manifest")
+    write_env = mocker.patch("npa.cli.groot.write_remote_docker_env_file")
 
     result = runner.invoke(
         app,
@@ -626,19 +628,23 @@ def test_groot_byovm_deploy_injects_s3_credentials_into_env(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    install_cmd = next(
-        call.args[0]
-        for call in ssh.run_or_raise.call_args_list
-        if "/etc/npa-groot-server/env" in call.args[0]
-    )
-    assert "HF_TOKEN=PLACEHOLDER_HF_TOKEN" in install_cmd
-    assert "AWS_ACCESS_KEY_ID=key" in install_cmd
-    assert "AWS_SECRET_ACCESS_KEY=secret" in install_cmd
-    assert "AWS_ENDPOINT_URL=https://storage.example" in install_cmd
-    assert "NEBIUS_S3_ENDPOINT=https://storage.example" in install_cmd
-    assert "NEBIUS_S3_BUCKET=lerobot-bucket" in install_cmd
-    assert "NGC_API_KEY=" not in install_cmd
+    # Credentials are written to the service env file over SFTP, never inlined
+    # into a remote command string.
+    write_env.assert_called_once()
+    assert write_env.call_args.args[1] == GROOT_ENV_FILE
+    env = write_env.call_args.args[2]
+    assert env["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
+    assert env["AWS_ACCESS_KEY_ID"] == "key"
+    assert env["AWS_SECRET_ACCESS_KEY"] == "secret"
+    assert env["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert env["NEBIUS_S3_ENDPOINT"] == "https://storage.example"
+    assert env["NEBIUS_S3_BUCKET"] == "lerobot-bucket"
+    assert "NGC_API_KEY" not in env
+    for call in ssh.run_or_raise.call_args_list:
+        assert "AWS_SECRET_ACCESS_KEY=secret" not in call.args[0]
+        assert "PLACEHOLDER_HF_TOKEN" not in call.args[0]
     audit.assert_called_once()
+    assert audit.call_args.args[1] == GROOT_ENV_FILE
     audited_keys = audit.call_args.args[2]
     for key in (
         "HF_TOKEN",
@@ -671,6 +677,7 @@ def test_groot_deploy_auto_serve_loads_model(mocker) -> None:
     mocker.patch("npa.cli.groot.update_workbench_app_status")
     mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.groot.write_manifest")
+    mocker.patch("npa.cli.groot.write_remote_docker_env_file")
 
     result = runner.invoke(
         app,
@@ -718,6 +725,7 @@ def test_groot_deploy_auto_serve_skips_without_real_embodiment(mocker) -> None:
     mocker.patch("npa.cli.groot.update_workbench_app_status")
     mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.groot.write_manifest")
+    mocker.patch("npa.cli.groot.write_remote_docker_env_file")
 
     result = runner.invoke(
         app,
@@ -772,6 +780,7 @@ def test_groot_byovm_deploy_injects_ngc_credentials_into_env(mocker) -> None:
     audit = mocker.patch("npa.cli.groot.audit_remote_env", return_value=[])
     mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.groot.write_manifest")
+    write_env = mocker.patch("npa.cli.groot.write_remote_docker_env_file")
 
     result = runner.invoke(
         app,
@@ -798,14 +807,14 @@ def test_groot_byovm_deploy_injects_ngc_credentials_into_env(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    install_cmd = next(
-        call.args[0]
-        for call in ssh.run_or_raise.call_args_list
-        if "/etc/npa-groot-server/env" in call.args[0]
-    )
-    assert "NGC_API_KEY=nvapi-file" in install_cmd
-    assert "NGC_ORG=org-file" in install_cmd
-    assert "NGC_TEAM=team-file" in install_cmd
+    write_env.assert_called_once()
+    assert write_env.call_args.args[1] == GROOT_ENV_FILE
+    env = write_env.call_args.args[2]
+    assert env["NGC_API_KEY"] == "nvapi-file"
+    assert env["NGC_ORG"] == "org-file"
+    assert env["NGC_TEAM"] == "team-file"
+    for call in ssh.run_or_raise.call_args_list:
+        assert "nvapi-file" not in call.args[0]
     audited_keys = audit.call_args.args[2]
     assert audited_keys["NGC_API_KEY"] == "nvapi-file"
     assert audited_keys["NGC_ORG"] == "org-file"
@@ -836,11 +845,13 @@ def test_groot_install_command_installs_gr00t_and_isaac_lab() -> None:
     assert "GR00T_ENV_SMOKE_OK" in cmd
     assert "isaaclab[isaacsim,all]==2.3.2.post1" in cmd
     assert "ISAAC_LAB_ENV_SMOKE_OK" in cmd
-    assert "OMNI_KIT_ACCEPT_EULA=YES" in cmd
-    assert f"HF_HOME={GROOT_DATA_MOUNT}/hf_cache" in cmd
     assert f'sudo chown -R "$USER:$USER" /opt/groot/ {GROOT_DATA_MOUNT}/' in cmd
     assert "npa-groot-server" in cmd
     assert "gr00t.policy.gr00t_policy import Gr00tPolicy" in cmd
+    # The install script must not write the service env file inline; the env
+    # file (with credentials) is delivered separately over SFTP.
+    assert "sudo tee /etc/npa-groot-server/env" not in cmd
+    assert f"if [ ! -f {GROOT_ENV_FILE} ]" in cmd
 
 
 def test_groot_container_dockerfile_pins_runtime_versions() -> None:
@@ -858,17 +869,22 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert "--platform linux/amd64" in build_script
 
 
-def test_groot_install_command_accepts_byovm_gpu_env() -> None:
-    cmd = _build_install_command(
-        8080,
-        env_fields={
-            "CUDA_VISIBLE_DEVICES": "0,1",
-            "NPA_GPU_COUNT": "2",
-        },
-    )
+def test_groot_install_command_never_inlines_service_env() -> None:
+    """Regression: the install script is embedded in SSHError on failure and
+    printed verbatim, so it must never carry credential/GPU env values inline.
+    Those now travel exclusively through the SFTP-written EnvironmentFile."""
+    cmd = _build_install_command(8080)
 
-    assert "CUDA_VISIBLE_DEVICES=0,1" in cmd
-    assert "NPA_GPU_COUNT=2" in cmd
+    for secret in (
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "HF_TOKEN",
+        "NGC_API_KEY",
+        "NEBIUS_TOKEN_FACTORY_KEY",
+        "CUDA_VISIBLE_DEVICES",
+    ):
+        assert f"{secret}=" not in cmd
+    assert "sudo tee /etc/npa-groot-server/env" not in cmd
 
 
 def test_groot_download_command_uses_huggingface_for_current_public_model() -> None:
@@ -1052,6 +1068,7 @@ def test_groot_byovm_deploy_calls_apply_storage_env_vars(mocker) -> None:
     mocker.patch("npa.cli.groot.audit_remote_env", return_value=[])
     mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.groot.write_manifest")
+    mocker.patch("npa.cli.groot.write_remote_docker_env_file")
     apply_storage = mocker.patch("npa.cli.groot.apply_storage_env_vars")
     mocker.patch(
         "npa.cli.groot.apply_project_storage_vars",

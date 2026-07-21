@@ -33,6 +33,39 @@ const COMPLEX_WORKFLOW_YAML = [
   "      description: Publish run-specific report and Rerun recording.",
 ].join("\n");
 
+const GENERIC_WORKFLOW_YAML = [
+  "apiVersion: npa.workflow/v0.0.1",
+  "kind: Workflow",
+  "metadata:",
+  "  name: cypress-cosmos-reason",
+  "spec:",
+  "  states:",
+  "    - id: fetch_checkpoint",
+  "      toolRef: workbench.cosmos.fetch",
+  "      description: Fetch Cosmos checkpoint assets.",
+  "    - id: reason",
+  "      toolRef: workbench.token_factory.reason",
+  "      description: Run Token Factory reasoning over staged inputs.",
+  "    - id: publish",
+  "      toolRef: workbench.artifacts.upload",
+  "      description: Publish reasoning artifacts.",
+].join("\n");
+
+const GENERIC_WORKFLOW_RUN_DETAILS = {
+  run: {
+    run_id: "cosmos-reason-run",
+    status: "running",
+    result: "pending",
+    updated_at: "2026-07-11T00:40:00Z",
+    stages: [
+      { id: "fetch_checkpoint", label: "Fetch checkpoint", status: "succeeded", summary: "Cosmos checkpoint staged." },
+      { id: "reason", label: "Reason", status: "running", summary: "Token Factory reasoning in progress." },
+      { id: "publish", label: "Publish", status: "pending", summary: "Waiting for reasoning outputs." },
+    ],
+    logs: [{ timestamp: "2026-07-11T00:40:00Z", level: "info", message: "generic workflow stages active" }],
+  },
+};
+
 const SIM_VIZ = {
   run_id: "mock-run",
   active_run_id: "mock-run",
@@ -42,7 +75,12 @@ const SIM_VIZ = {
   rrd_updated_at: "2026-07-07T03:33:00Z",
   rerun_ready: true,
   rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=workspace",
-  available_run_ids: ["mock-run", "submitted-run"],
+  // Intentionally not alphabetical — UI must keep latest-first order.
+  available_run_ids: ["submitted-run", "mock-run"],
+  available_runs: [
+    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted" },
+    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo" },
+  ],
 };
 
 const NON_STOCK_RUN_ID = "non-stock-customer-run";
@@ -57,6 +95,11 @@ const NON_STOCK_SIM_VIZ = {
   rerun_ready: true,
   rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=customer-overhead",
   available_run_ids: [NON_STOCK_RUN_ID, "mock-run", "submitted-run"],
+  available_runs: [
+    { run_id: NON_STOCK_RUN_ID, last_modified: "2026-07-11T18:00:00Z", stage: "stage_14_rerun_viz" },
+    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted" },
+    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo" },
+  ],
   artifact_render: "rerun",
   artifact_key: `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
   artifact_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
@@ -232,6 +275,7 @@ const FIELD_IDS = [
   "runSummary",
   "stageList",
   "runLog",
+  "stagesPanel",
   "sceneMode",
   "robotPreset",
   "cameraMode",
@@ -243,16 +287,18 @@ const FIELD_IDS = [
   "artifactPrefix",
   "artifactTypeFilter",
   "artifactSort",
-  "artifactRunSelect",
+  "runsArtifactsPanel",
   "artifactList",
-  "activeCameraLabel",
-  "cameraCards",
   "simRunId",
   "simStage",
   "simCamera",
   "renderedDataSummary",
   "rerunFrame",
   "artifactPreviewHost",
+  "tabChat",
+  "tabRerun",
+  "panelChat",
+  "panelRerun",
   "statusBar",
   "toastHost",
 ];
@@ -343,8 +389,42 @@ function installAgentApiMocks() {
   })).as("selectChatSession");
   cy.intercept("POST", "/api/chat", (req) => {
     const messages = Array.isArray(req.body.messages) ? req.body.messages : [];
-    const last = String(messages.length ? messages[messages.length - 1].content || "" : "");
-    const lowered = last.toLowerCase();
+    const lastMsg = messages.length ? messages[messages.length - 1] : null;
+    const lastContent = lastMsg ? lastMsg.content : "";
+    const lastText = Array.isArray(lastContent)
+      ? lastContent
+          .filter((part) => part && part.type === "text")
+          .map((part) => String(part.text || ""))
+          .join("\n")
+      : String(lastContent || "");
+    const lowered = lastText.toLowerCase();
+    const visualContext = req.body && req.body.visual_context;
+    if (visualContext || lowered.includes("[npa-visual-feedback]") || lowered.includes("describe this")) {
+      const hasImage = Array.isArray(lastContent)
+        && lastContent.some((part) => part && String(part.type || "").startsWith("image"));
+      req.reply(json({
+        ok: true,
+        model: req.body.model || "Qwen/Qwen2.5-VL-72B-Instruct",
+        session_id: req.body.session_id || "default",
+        grounded: false,
+        tier: hasImage ? "vision" : "reasoning",
+        apis_used: [],
+        reply: hasImage
+          ? [
+              "**What I see**: Dark 3D grid with orange and cyan skeleton wireframes (G1 trajectory style).",
+              "**Likely meaning**: Locomotion / trajectory overlay in the Rerun viewer.",
+              "**Operator feedback**: Structured sim content is visible — not a blank frame.",
+              "**Next actions**: Scrub timeline; compare held-out cameras; keep this recording.",
+            ].join("\n")
+          : [
+              "**What I see**: No viewer frame was attached — metadata only.",
+              "**Likely meaning**: Capture could not read a non-blank canvas.",
+              "**Operator feedback**: Wait for the viewer to settle past splash, then Describe this again.",
+              "**Next actions**: Reload Rerun data; retry Describe this; try Video/Image artifacts.",
+            ].join("\n"),
+      }));
+      return;
+    }
     if (lowered.includes("outer loop") || lowered.includes("vlm") || lowered.includes("quality gate")) {
       req.reply(json({
         ok: true,
@@ -418,7 +498,7 @@ function installAgentApiMocks() {
       req.reply(json(activeSimViz.run_id === NON_STOCK_RUN_ID ? activeSimViz : NON_STOCK_SIM_VIZ));
       return;
     }
-    req.reply(json(runId ? { ...SIM_VIZ, run_id: runId } : activeSimViz));
+    req.reply(json(runId ? { ...SIM_VIZ, run_id: runId, active_run_id: runId } : activeSimViz));
   }).as("simVizStatus");
   cy.intercept("GET", "/api/sim-viz/rrd-blob*", {
     statusCode: 200,
@@ -433,7 +513,9 @@ function installAgentApiMocks() {
   cy.intercept("POST", "/api/sim-viz/load-franka-demo", json({ ok: true, sim_viz: SIM_VIZ })).as("loadFranka");
   cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
     const runId = String(req.body.run_id || "mock-run");
-    activeSimViz = runId === NON_STOCK_RUN_ID ? NON_STOCK_SIM_VIZ : { ...SIM_VIZ, run_id: runId };
+    activeSimViz = runId === NON_STOCK_RUN_ID
+      ? NON_STOCK_SIM_VIZ
+      : { ...SIM_VIZ, run_id: runId, active_run_id: runId };
     req.reply(json({ ok: true, sim_viz: activeSimViz }));
   }).as("loadRun");
   cy.intercept("POST", "/api/sim-viz/camera-preview", (req) => {
@@ -477,6 +559,22 @@ function installAgentApiMocks() {
       });
       return;
     }
+    if (decoded.match(/\.(mp4|webm|mov)$/i)) {
+      req.reply({
+        statusCode: 200,
+        headers: { "content-type": "video/mp4" },
+        body: "mock-video-bytes",
+      });
+      return;
+    }
+    if (decoded.match(/\.(png|jpe?g|gif|webp)$/i)) {
+      req.reply({
+        statusCode: 200,
+        headers: { "content-type": "image/png" },
+        body: "mock-image-bytes",
+      });
+      return;
+    }
     req.reply({
       statusCode: 200,
       headers: { "content-type": "application/octet-stream" },
@@ -484,9 +582,20 @@ function installAgentApiMocks() {
     });
   }).as("artifactFile");
   cy.intercept("GET", "/api/artifacts/runs*", json({
+    // Latest-first order from the API (non-stock newer than mock-run).
     runs: [
-      { run_id: NON_STOCK_RUN_ID, has_viewable: true, artifact_count: NON_STOCK_ARTIFACTS.length },
-      { run_id: "mock-run", has_viewable: true, artifact_count: 1 },
+      {
+        run_id: NON_STOCK_RUN_ID,
+        has_viewable: true,
+        artifact_count: NON_STOCK_ARTIFACTS.length,
+        last_modified: "2026-07-11T18:00:00Z",
+      },
+      {
+        run_id: "mock-run",
+        has_viewable: true,
+        artifact_count: 1,
+        last_modified: "2026-07-07T03:33:00Z",
+      },
     ],
     total_runs: 2,
     truncated: false,
@@ -551,7 +660,15 @@ function installAgentApiMocks() {
   })).as("workflowStatus");
   cy.intercept("GET", "/api/workflows/sim2real/runs/*", (req) => {
     const runId = decodeURIComponent(req.url.split("/").pop().split("?")[0] || "mock-run");
-    req.reply(json(runId === NON_STOCK_RUN_ID ? NON_STOCK_RUN_DETAILS : { run: { ...RUN_DETAILS.run, run_id: runId } }));
+    if (runId === NON_STOCK_RUN_ID) {
+      req.reply(json(NON_STOCK_RUN_DETAILS));
+      return;
+    }
+    if (runId === "cosmos-reason-run") {
+      req.reply(json(GENERIC_WORKFLOW_RUN_DETAILS));
+      return;
+    }
+    req.reply(json({ run: { ...RUN_DETAILS.run, run_id: runId } }));
   }).as("runDetails");
 }
 
@@ -582,6 +699,8 @@ export {
   CAMERAS,
   COMPLEX_WORKFLOW_YAML,
   FIELD_IDS,
+  GENERIC_WORKFLOW_RUN_DETAILS,
+  GENERIC_WORKFLOW_YAML,
   NON_STOCK_ARTIFACTS,
   NON_STOCK_RUN_ID,
   SIM_VIZ,

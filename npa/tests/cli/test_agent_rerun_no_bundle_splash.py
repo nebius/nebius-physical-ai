@@ -1,0 +1,102 @@
+"""Hard contract: users must never see Rerun's Loading application bundle splash."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from npa.agent_rerun_bundle_check import (
+    FORBIDDEN_UI_MARKERS,
+    REQUIRED_UI_MARKERS,
+    assert_rerun_ui_eager_load_contract,
+)
+from npa.cli.agent import AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT, AGENT_UI_VERSION
+
+AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
+OLD_MOUNT_BEFORE_WARM = 'Mount the viewer immediately so "Loading application bundle" starts early'
+
+
+def _embedded_ui_html(source: str = "") -> str:
+    """Return rendered agent UI HTML (sourced from agent_ui.html)."""
+    from npa.cli.agent import rendered_agent_ui_html
+
+    return rendered_agent_ui_html()
+
+
+
+def test_agent_rerun_no_bundle_splash_contract_in_source() -> None:
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    assert f'AGENT_UI_VERSION = "{AGENT_UI_VERSION}"' in source
+    for marker in AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT:
+        assert marker in ui_html, f"missing no-bundle-splash marker in UI: {marker!r}"
+    assert 'id="rerunBundleCover"' in ui_html
+    assert "waitUntilRerunPastBundleSplash" in ui_html
+    assert "showRerunBundleCover" in ui_html
+    assert "hideRerunBundleCover" in ui_html
+    # Old mount-before-warm strategy that exposed the splash (UI only; verify-live may mention it).
+    assert OLD_MOUNT_BEFORE_WARM not in ui_html
+    assert assert_rerun_ui_eager_load_contract(ui_html) == []
+    # Mount path must warm before navigating the iframe.
+    mount_src = ui_html.split("async function mountRerunIframe")[1].split(
+        "async function mountRerunIframeUntilSuccess"
+    )[0]
+    assert "await warmRerunBundle()" in mount_src
+    assert "scheduleRerunBundleUncover" in mount_src
+    assert "showRerunBundleCover" in mount_src
+    assert "safeHideRerunBundleCover" in ui_html
+    assert "non-blank canvas" in ui_html
+    # Mount must not block on long splash polls (user-visible latency).
+    assert "await waitUntilRerunPastBundleSplash" not in mount_src
+
+
+def test_bundle_check_required_markers_include_cover() -> None:
+    assert 'id="rerunBundleCover"' in REQUIRED_UI_MARKERS
+    assert "waitUntilRerunPastBundleSplash" in REQUIRED_UI_MARKERS
+    assert "scheduleRerunBundleUncover" in REQUIRED_UI_MARKERS
+    # Documented intentional string-match guards (embedded UI is hard to unit-test).
+    from npa import agent_rerun_bundle_check as bundle_mod
+
+    mod_text = Path(bundle_mod.__file__).read_text(encoding="utf-8")
+    assert "intentional string-match regression guards" in mod_text
+    assert any("Mount the viewer immediately" in marker for marker in FORBIDDEN_UI_MARKERS)
+    assert any("await waitUntilRerunPastBundleSplash" in marker for marker in FORBIDDEN_UI_MARKERS)
+
+
+def test_boot_page_warms_before_mount() -> None:
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    boot = ui_html.split("async function bootPage")[1].split("function startPeriodicRefresh")[0]
+    assert "await Promise.all([refreshPromise, artifactsPromise, warmPromise])" in boot
+    assert "await ensureFrankaRerunLoaded()" in boot
+    # Must not race mount with warm anymore.
+    assert "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])" not in boot
+
+
+def test_no_loading_application_bundle_without_mount_latency() -> None:
+    """Contract: hide Rerun splash text without awaiting long splash polls in mount."""
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    assert "Loading application bundle" in ui_html  # detector / comments reference it
+    assert "scheduleRerunBundleUncover" in ui_html
+    assert "Uncover without blocking mount latency" in ui_html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 45000)" not in ui_html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 120000)" not in ui_html
+    # Early warm starts as soon as the UI script defines warmRerunBundle.
+    warm_idx = ui_html.index("async function warmRerunBundle")
+    early_warm = ui_html[warm_idx : warm_idx + 2500]
+    assert "warmRerunBundle().catch(" in early_warm
+
+
+def test_run_load_soft_swaps_recording_without_wasm_remount() -> None:
+    """Load-run must reuse WebHandle.add_receiver when the viewer is already alive."""
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    assert "async function swapRerunRecordingInPlace" in ui_html
+    assert "handle.add_receiver(recordingUrl, false)" in ui_html
+    assert "remove_receiver" in ui_html
+    mount_src = ui_html.split("async function mountRerunIframe")[1].split(
+        "async function mountRerunIframeUntilSuccess"
+    )[0]
+    assert "await swapRerunRecordingInPlace" in mount_src
+    load_art = ui_html.split("async function loadArtifact(payload)")[1].split("async function refresh()")[0]
+    assert "swapRerunRecordingInPlace" in load_art

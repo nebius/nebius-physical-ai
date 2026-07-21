@@ -256,46 +256,39 @@ def test_ssh_run_or_raise_maps_nonzero(mocker) -> None:
         client.run_or_raise("false")
 
 
-def _long_install_command() -> str:
-    return "bash -lc '" + "\n".join(f"echo step {i}" for i in range(200)) + "\nexit 1'"
-
-
 def test_format_remote_failure_compact_by_default(monkeypatch) -> None:
     monkeypatch.delenv("NPA_DEBUG", raising=False)
-    command = _long_install_command()
     stderr = "\n".join(f"line {i}" for i in range(100)) + "\nERROR: 403 gated download"
 
-    msg = format_remote_failure(command, 7, stderr, label="Cosmos install")
+    msg = format_remote_failure(7, stderr, label="Cosmos install")
 
-    # Compact: the huge command is NOT dumped, only the label + exit + stderr tail.
+    # Compact: label + exit + stderr tail only; older stderr lines are trimmed.
     assert "Command failed (exit 7): Cosmos install" in msg
-    assert "echo step 100" not in msg
     assert "ERROR: 403 gated download" in msg
-    assert "line 0" not in msg  # older stderr lines are trimmed
+    assert "line 0" not in msg
     assert "NPA_DEBUG=1" in msg
     assert len(msg.splitlines()) < 30
 
 
-def test_format_remote_failure_debug_includes_full_output(monkeypatch) -> None:
+def test_format_remote_failure_debug_lifts_stderr_truncation(monkeypatch) -> None:
     monkeypatch.setenv("NPA_DEBUG", "1")
-    command = _long_install_command()
     stderr = "\n".join(f"line {i}" for i in range(100))
 
-    msg = format_remote_failure(command, 7, stderr, label="Cosmos install")
+    msg = format_remote_failure(7, stderr, label="Cosmos install")
 
-    assert "echo step 100" in msg  # full command present
-    assert "line 0" in msg  # full stderr present
+    # NPA_DEBUG lifts only the stderr truncation; the hint disappears.
+    assert "line 0" in msg
     assert "NPA_DEBUG=1" not in msg
 
 
-def test_format_remote_failure_summarizes_command_without_label(monkeypatch) -> None:
+def test_format_remote_failure_without_label(monkeypatch) -> None:
     monkeypatch.delenv("NPA_DEBUG", raising=False)
-    msg = format_remote_failure("false", 1, "", label=None)
-    assert "Command failed (exit 1): false" in msg
+    msg = format_remote_failure(1, "", label=None)
+    assert msg.splitlines()[0] == "Command failed (exit 1)"
     assert "stderr: <empty>" in msg
 
 
-def test_run_or_raise_passes_label(mocker, monkeypatch) -> None:
+def test_run_or_raise_passes_label_never_command(mocker, monkeypatch) -> None:
     monkeypatch.delenv("NPA_DEBUG", raising=False)
     client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
     mocker.patch.object(client, "run", return_value=(3, "", "boom"))
@@ -306,6 +299,21 @@ def test_run_or_raise_passes_label(mocker, monkeypatch) -> None:
     message = str(exc_info.value)
     assert "GR00T install" in message
     assert "huge script" not in message
+    assert "boom" in message
+
+
+def test_ssh_run_or_raise_omits_command_to_avoid_leaking_secrets(mocker) -> None:
+    client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
+    secret_command = "bash -lc 'export AWS_SECRET_ACCESS_KEY=topsecret && do_install'"
+    mocker.patch.object(client, "run", return_value=(1, "", "boom"))
+
+    with pytest.raises(SSHError) as excinfo:
+        client.run_or_raise(secret_command)
+
+    message = str(excinfo.value)
+    assert "topsecret" not in message
+    assert "AWS_SECRET_ACCESS_KEY" not in message
+    assert "Command failed (exit 1)" in message
     assert "boom" in message
 
 

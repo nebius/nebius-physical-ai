@@ -61,10 +61,105 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070901"
+AGENT_UI_VERSION = "2026071925"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
+
+# Contract markers that must stay in the embedded agent UI/backend. verify-live,
+# smoke, and unit tests share this list so media-preview regressions cannot
+# silently disappear after a bootstrap drift or template edit.
+AGENT_MEDIA_PREVIEW_CONTRACT = (
+    "authenticatedPreviewObjectUrl",
+    "Loading video preview…",
+    'data-preview-url="',
+    "Keep the Rerun iframe mounted under the media pane",
+    'id="renderModeVideo"',
+    'id="artifactPreviewHost"',
+    'id="viewerPaneMedia"',
+    "URL.createObjectURL(blob)",
+    '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
+    "artifact_media_type(",
+)
+
+# Rerun wasm splash must never be user-visible. Cover the iframe until past
+# "Loading application bundle", and fully warm assets before first reveal.
+AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
+    'id="rerunBundleCover"',
+    "waitUntilRerunPastBundleSplash",
+    "showRerunBundleCover",
+    "hideRerunBundleCover",
+    "safeHideRerunBundleCover",
+    "Warm Rerun assets before revealing the iframe",
+    "Preparing viewer…",
+    # Cover may stay up, but mount/boot must not await long splash polls (latency).
+    "Uncover without blocking mount latency",
+    # Canvas-painted splash is not DOM text — require non-blank pixels before uncover.
+    "non-blank canvas",
+    # Run switches must soft-swap recordings without remounting wasm.
+    "swapRerunRecordingInPlace",
+    "add_receiver",
+)
+
+# Describe-this visual feedback: capture current viewer frame → vision tier chat.
+AGENT_VISUAL_FEEDBACK_CONTRACT = (
+    'id="describeVisual"',
+    "captureVisualContext",
+    "describeVisual",
+    "[npa-visual-feedback]",
+    "visual_context",
+    "normalize_messages_for_llm",
+    "infer_visual_domain_hints",
+    "frameLooksBlank",
+    "sampleFrameStats",
+    "captureCanvasDataUrl",
+    "ensureRerunCaptureBridge",
+    "grabFromRerunCaptureBridge",
+    "pickBestIframeCanvas",
+    "probeRerunCanvasContent",
+    "waitForQualityRerunFrame",
+    "skipUserAppend",
+    "Describe this — capturing",
+    "client_max_body_size 32m",
+    "maxChars = 700000",
+)
+
+AGENT_CHAT_QUEUE_CONTRACT = (
+    "chatQueue",
+    "enqueueChatJob",
+    "processChatQueue",
+    "queueChatText",
+)
+
+AGENT_VIEWER_CHAT_DRAWER_CONTRACT = (
+    "viewer-focus",
+    "chat-drawer-open",
+    'id="chatDrawerToggle"',
+    "openChatDrawer",
+    "openFullChatTab",
+    "setChatDrawerOpen",
+    'id="openFullChatTab"',
+    'id="chatDrawerClose"',
+    "chat-fab",
+    "transform-origin: bottom right",
+)
+
+AGENT_STAGES_RUN_PICKER_CONTRACT = (
+    'id="stagesRunSelect"',
+    'id="stagesRunInput"',
+    'id="stagesLoadRun"',
+    "stages-run-picker",
+    "loadSelectedRun",
+    "syncRunChooserFields",
+    "filterStagesRunSelect",
+    "Search or paste run ID",
+)
+
+AGENT_READABLE_COLOR_CONTRACT = (
+    "--ink-strong",
+    "thinking-ellipsis",
+    "Color contrast rules",
+)
 
 
 def _embedded_agent_workflow_source() -> str:
@@ -104,6 +199,56 @@ _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
+_AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
+_AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
+_AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
+_AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
+
+
+def _embedded_agent_stages_source() -> str:
+    """Return agent_stages.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_stages.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def rendered_agent_ui_html() -> str:
+    """Return the agent UI HTML with bootstrap placeholders substituted.
+
+    The UI lives in ``agent_ui.html`` (outside the bootstrap f-string) so JS can
+    use normal braces and ``agent.py`` stays under the monolith size ratchet.
+    """
+    path = Path(__file__).with_name("agent_ui.html")
+    raw = path.read_text(encoding="utf-8")
+    return raw.replace("{AGENT_UI_VERSION}", AGENT_UI_VERSION).replace(
+        "{DEFAULT_AGENT_USER}", DEFAULT_AGENT_USER
+    )
+
+
+def _embedded_agent_visual_feedback_source() -> str:
+    """Return agent_visual_feedback.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_visual_feedback.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_rrd_proxy_source() -> str:
+    """Return agent_rrd_proxy.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_rrd_proxy.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
 
 
 def _embedded_agent_artifacts_source() -> str:
@@ -399,7 +544,7 @@ def _resolve_destroy_tf_vars(
 ) -> dict[str, str]:
     state = resolve_terraform_state(project)
     saved_env = resolve_environment(project)
-    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "us-central1")
+    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "eu-north1")
     project_id = str((record or {}).get("project_id", "") or (saved_env.project_id if saved_env else ""))
     service_account_id = str((record or {}).get("service_account_id", "")).strip()
     if not service_account_id:
@@ -1332,6 +1477,8 @@ def _nginx_agent_site_body(
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
     return f"""  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
+  # Describe-this / multimodal chat posts JPEG data-URLs; default 1m rejects them (413 → browser Failed to fetch).
+  client_max_body_size 32m;
   location = /healthz {{
     auth_basic off;
     default_type application/json;
@@ -1351,10 +1498,25 @@ def _nginx_agent_site_body(
   }}
   location /api/ {{
     proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+    client_max_body_size 32m;
   }}
   location /assets/api/ {{
     rewrite ^/assets/api/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+    client_max_body_size 32m;
   }}
   location /rerun/recordings/ {{
     auth_basic off;
@@ -1442,6 +1604,9 @@ def _bootstrap_agent_stack(
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
+    agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
+    agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
+    agent_stages_source = _embedded_agent_stages_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -1569,10 +1734,10 @@ def _rerun_recording_url(*, cache_bust: bool = False) -> str:
 def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
     cam = (camera or "workspace").strip() or "workspace"
     if live_url:
-        return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+        return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
     recording = _rerun_recording_url()
     # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
-    return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+    return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
 
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
@@ -1754,6 +1919,9 @@ def _default_state() -> dict:
     }}
 
 def _load_state() -> dict:
+    # Single-tenant operator-VM model: lock-free read-modify-write on STATE_PATH
+    # (+ best-effort S3 mirror). Concurrent writers are last-writer-wins — fine
+    # for one operator UI, not safe if this ever becomes a multi-client service.
     data = None
     if STATE_PATH.exists():
         try:
@@ -1789,6 +1957,7 @@ def _load_state() -> dict:
     return merged
 
 def _save_state(state: dict) -> None:
+    # See _load_state: no file lock — last writer wins under concurrent requests.
     state["updated_at"] = _now_iso()
     state["state_version"] = int(state.get("state_version") or 2)
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
@@ -1804,9 +1973,42 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
         runs = {{}}
+    existing = runs.get(run_id) if isinstance(runs.get(run_id), dict) else {{}}
     snapshot = dict(DEFAULT_SIM_VIZ)
+    if isinstance(existing, dict):
+        snapshot.update(existing)
     snapshot.update(payload)
     snapshot["run_id"] = run_id
+    incoming_rrd = bool(str(payload.get("rrd_uri") or "").strip())
+    incoming_render = str(payload.get("artifact_render") or "").strip().lower()
+    # A Rerun/demo update must not resurrect a prior video/image/json media preview.
+    if incoming_rrd and incoming_render in {{"", "rerun"}}:
+        if str(existing.get("artifact_render") or "").strip().lower() not in {{"", "rerun"}}:
+            snapshot["artifact_render"] = "rerun"
+            for key in (
+                "artifact_key",
+                "artifact_uri",
+                "artifact_preview_url",
+                "artifact_download_url",
+                "visualization_note",
+            ):
+                if key not in payload or not str(payload.get(key) or "").strip():
+                    snapshot[key] = ""
+    else:
+        # Never let a sparse update erase richer artifact fields from load-run.
+        for key in (
+            "artifact_render",
+            "artifact_key",
+            "artifact_uri",
+            "artifact_preview_url",
+            "artifact_download_url",
+            "rrd_uri",
+            "rerun_iframe_url",
+            "visualization_note",
+            "preview_entity",
+        ):
+            if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
+                snapshot[key] = existing[key]
     runs[run_id] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
@@ -1901,49 +2103,6 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
     return stages
 
 
-def _artifact_stage_key(key: str, run_id: str, prefix: str) -> str:
-    value = str(key or "").strip("/")
-    for lead in (prefix.strip("/"), ""):
-        scoped = value
-        if lead and scoped.startswith(lead + "/"):
-            scoped = scoped[len(lead) + 1 :]
-        if run_id and scoped.startswith(run_id + "/"):
-            scoped = scoped[len(run_id) + 1 :]
-            break
-    parts = [part for part in scoped.split("/") if part]
-    if not parts:
-        return "artifacts"
-    first = parts[0]
-    if first == "reports":
-        return "reports"
-    if first == "eval" and len(parts) > 1:
-        return "eval/" + parts[1]
-    if first in {{"actions", "vlm_eval", "training_signal", "envs"}} and len(parts) > 1:
-        return first + "/" + parts[1]
-    return first
-
-
-def _artifact_stage_label(stage_key: str) -> str:
-    labels = {{
-        "stage_01_trigger": "Trigger",
-        "stage_02_assets": "Assets",
-        "stage_12_external_validation": "External validation",
-        "stage_13_retrigger": "Retrigger",
-        "eval/heldout": "Held-out eval",
-        "actions/train": "Policy rollouts",
-        "vlm_eval/train": "VLM eval",
-        "training_signal/train": "Training signal",
-        "envs/raw": "Raw envs",
-        "envs/train": "Train envs",
-        "outer_loop": "Decision / outer loop",
-        "reports": "Reports / visualization",
-    }}
-    if stage_key in labels:
-        return labels[stage_key]
-    cleaned = stage_key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
-    return cleaned[:1].upper() + cleaned[1:] if cleaned else "Artifacts"
-
-
 def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     if not run_id:
         return None
@@ -1956,50 +2115,15 @@ def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     if not artifacts:
         return None
     keys = [str(item.key or "") for item in artifacts]
-    stages = []
     workflow_stage_defs = _workflow_stage_defs_from_state(state)
-    used_keys: set[str] = set()
-    if workflow_stage_defs:
-        for stage_id, label, patterns in workflow_stage_defs:
-            matched = [
-                key
-                for key in keys
-                if any(pattern and pattern in key for pattern in patterns)
-            ]
-            used_keys.update(matched)
-            count = len(matched)
-            stages.append(
-                {{
-                    "id": stage_id,
-                    "label": label,
-                    "status": "succeeded" if count else "pending",
-                    "started_at": "",
-                    "finished_at": "",
-                    "summary": (
-                        f"{{count}} artifact{{'' if count == 1 else 's'}} matched workflow state '{{label}}'."
-                        if count
-                        else "No artifact matched this workflow state yet."
-                    ),
-                }}
-            )
-    grouped: dict[str, list[str]] = {{}}
-    for key in keys:
-        stage_key = _artifact_stage_key(key, run_id, effective_prefix)
-        grouped.setdefault(stage_key, []).append(key)
-    for stage_key, matched in sorted(grouped.items()):
-        if workflow_stage_defs and all(key in used_keys for key in matched):
-            continue
-        count = len(matched)
-        stages.append(
-            {{
-                "id": _slug(stage_key, fallback="artifacts"),
-                "label": _artifact_stage_label(stage_key),
-                "status": "succeeded",
-                "started_at": "",
-                "finished_at": "",
-                "summary": f"{{count}} artifact{{'' if count == 1 else 's'}} found under '{{stage_key}}'.",
-            }}
-        )
+    overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
+    stages = build_artifact_backed_stages(
+        keys,
+        run_id=run_id,
+        prefix=effective_prefix,
+        workflow_stage_defs=workflow_stage_defs,
+        overlay_unmatched=overlay_unmatched,
+    )
     report_ready = any(key.endswith("/reports/sim2real-report.json") or key.endswith("/reports/report.json") for key in keys)
     rrd_ready = any(key.endswith(".rrd") for key in keys)
     preferred = select_preferred_artifact(artifacts)
@@ -2488,17 +2612,8 @@ def _chat_session_title(messages: list[dict] | None, fallback: str = "New chat")
 
 
 def _normalize_chat_history(raw: object) -> list[dict]:
-    history: list[dict] = []
-    if not isinstance(raw, list):
-        return history
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip()
-        content = str(item.get("content") or "").strip()
-        if role in {{"user", "assistant"}} and content:
-            history.append({{"role": role, "content": content}})
-    return history[-80:]
+    # Persist text stubs only — never store screenshot data-URLs in session history.
+    return normalize_messages_for_storage(raw)
 
 
 def _normalize_chat_session(session_id: str, payload: object | None = None) -> dict:
@@ -2727,6 +2842,11 @@ def _apply_loaded_artifact(
         sim_viz["rrd_uri"] = ""
         sim_viz["rerun_iframe_url"] = "/rerun/"
         sim_viz["rerun_ready"] = False
+        sim_viz["preview_entity"] = ""
+        sim_viz["visualization_note"] = (
+            f"Loaded {{render}} artifact preview. Use the Video/Image/Data viewer tabs."
+        )
+    sim_viz["active_run_id"] = run_id
     state["sim_viz"] = sim_viz
     _record_sim_viz_run(state, sim_viz)
     _save_state(state)
@@ -2830,7 +2950,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     updated_at = datetime.fromtimestamp(RRD_PATH.stat().st_mtime, tz=timezone.utc).isoformat()
     live_url = str(os.environ.get("NPA_AGENT_RERUN_LIVE_URL", "")).strip()
     iframe_url = (
-        f"/rerun/?url={{quote(live_url, safe='')}}&camera={{cam}}"
+        f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
         if live_url
         else _rerun_iframe_url(cam)
     )
@@ -2881,10 +3001,9 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     restarted = _restart_rerun_serve()
     viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
-    prior = state.get("sim_viz", {{}})
-    run_id = str(prior.get("run_id") or "").strip() or "franka-demo"
+    # Always use the stock demo run id and clear any prior media-artifact preview.
     viz = {{
-        "run_id": run_id,
+        "run_id": "franka-demo",
         "stage": "demo",
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
@@ -2895,6 +3014,12 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
         "rerun_iframe_url": _rerun_iframe_url(cam),
+        "artifact_render": "rerun",
+        "artifact_key": "",
+        "artifact_uri": "",
+        "artifact_preview_url": "/rerun/recordings/sim2real.rrd",
+        "artifact_download_url": "/rerun/recordings/sim2real.rrd",
+        "visualization_note": "",
     }}
     state["sim_viz"] = viz
     _record_sim_viz_run(state, viz)
@@ -3069,12 +3194,12 @@ def _agent_system_prompt() -> str:
         "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
         "",
-        "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
-        "(or POST /api/sim-viz/load-franka-demo). Open the embedded viewer at /rerun/.",
+        "To view Franka immediately, tell users to open the **Rerun** tab and click **Load Franka in Rerun**",
+        "(or POST /api/sim-viz/load-franka-demo). The UI has two tabs: **Chat** and **Rerun**.",
         "Artifact-first browsing flow: call `/api/artifacts/runs`, inspect `/api/artifacts/run/{{id}}`,",
         "then `POST /api/sim-viz/load-artifact` with explicit `s3_uri` or `run_id` + `key`.",
-        "The **Cameras** panel is the center column below chat: stock workspace and wrist cameras",
-        "with 2D frustum schematics, selection, and **Preview in Rerun**.",
+        "The **Rerun** tab embeds the viewer full-bleed beside a run-loading rail (mp4/video preview,",
+        "artifact browser, and Load run data). There is no separate Cameras panel in the UI.",
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
         "When asked about Sim2Real, workflow, or Rerun status, summarize run_id, stage, camera,",
         "rerun_ready, and latest_submit from session state — never reply with only a raw GET path.",
@@ -3207,6 +3332,12 @@ def _chat_with_resilience(
 
 {_AGENT_ROUTING_EMBED}
 
+{_AGENT_VISUAL_FEEDBACK_EMBED}
+
+{_AGENT_RRD_PROXY_EMBED}
+
+{_AGENT_STAGES_EMBED}
+
 {_AGENT_CHAT_EMBED}
 
 {_AGENT_WORKFLOW_EMBED}
@@ -3240,22 +3371,6 @@ def _save_workflow_draft(
     state["workflow_draft"] = draft
     _save_state(state)
     return draft
-
-def _record_sim_viz_run(state: dict, record: dict) -> None:
-    if not isinstance(record, dict):
-        return
-    run_id = str(record.get("run_id") or "").strip()
-    if not run_id:
-        return
-    entries = state.get("sim_viz_runs")
-    if not isinstance(entries, dict):
-        entries = {{}}
-    snapshot = dict(DEFAULT_SIM_VIZ)
-    snapshot.update(record)
-    snapshot["run_id"] = run_id
-    entries[run_id] = snapshot
-    state["sim_viz_runs"] = entries
-    state["active_run_id"] = run_id
 
 def _sim_viz_runs(state: dict) -> list[dict]:
     runs = state.get("sim_viz_runs")
@@ -4053,6 +4168,12 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
         names.append("find-artifacts")
     if ("workflow" in lowered or "yaml" in lowered) and "author-npa-workflow" not in names:
         names.append("author-npa-workflow")
+    if (
+        "npa-visual-feedback" in lowered
+        or "describe this" in lowered
+        or "visual feedback" in lowered
+    ) and "agent-visual-feedback" not in names:
+        names.insert(0, "agent-visual-feedback")
     snippets: list[str] = []
     for name in names[:4]:
         excerpt = _skill_excerpt(name)
@@ -4063,12 +4184,7 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
     return names, "Relevant NPA skill excerpts:\\n\\n" + "\\n\\n".join(snippets)
 
 def _last_user_message(raw_messages: list) -> str:
-    for item in reversed(raw_messages):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("role", "")).strip() == "user":
-            return str(item.get("content", "")).strip()
-    return ""
+    return text_from_messages(raw_messages)
 
 def _dedupe(values: list[str]) -> list[str]:
     unique: list[str] = []
@@ -4099,8 +4215,10 @@ def _maybe_toolground_chat_reply(
         reply = (
             "**Started Sim2Real pipeline**\\n"
             f"- **run_id**: `{{run_id}}`\\n"
-            "- **mode**: `agent-local-sim2real`\\n"
-            "- The Run Monitor will update stages, result, and logs; Rerun will switch to the run recording when it is written."
+            f"- **submit_mode**: `{{submit.get('submit_mode') or submit.get('mode') or 'agent-local-sim2real'}}`\\n"
+            "- Default agent submit is **local/demo** unless live K8s Sim2Real hooks succeed.\\n"
+            "- The Stages panel will update stage timeline, result, and logs; Rerun will switch to the run recording when it is written.\\n"
+            "- Full staged K8s Sim2Real still runs via operator skills / `npa workbench` on the operator machine."
         )
         return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
     if intent == "find_artifacts":
@@ -4162,7 +4280,7 @@ def _maybe_toolground_chat_reply(
                 f"- **artifact_count**: `{{latest.get('artifact_count', '')}}`\\n"
                 f"- **preferred_artifact**: `{{preferred.get('key', '')}}`\\n"
                 f"- **render**: `{{preferred.get('render', '')}}`\\n"
-                "- In the UI, paste this run id or select it from **Discovered runs**, then **List artifacts**."
+                "- In the UI, paste this run id or select it from **Runs & artifacts** (latest first), then **List artifacts**."
             )
             return reply, _dedupe(apis_used), suggested_apis, None, details_payload, intent
         except Exception as exc:
@@ -4204,7 +4322,61 @@ def _maybe_toolground_chat_reply(
     elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
-    elif intent in {{"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}}:
+    elif intent == "list_recordings":
+        try:
+            runs_payload = sim_viz_runs()
+            apis_used.append("sim-viz/runs")
+            if isinstance(runs_payload, dict):
+                state["sim_viz_runs"] = runs_payload.get("runs") or runs_payload.get("items") or []
+            recordings_payload = sim_viz_recordings()
+            apis_used.append("sim-viz/recordings")
+            if isinstance(recordings_payload, dict):
+                state["sim_viz_recordings"] = (
+                    recordings_payload.get("recordings")
+                    or recordings_payload.get("items")
+                    or recordings_payload.get("files")
+                    or []
+                )
+            live_status = sim_viz_status()
+            apis_used.append("sim-viz/status")
+            if isinstance(live_status, dict):
+                state["sim_viz"] = dict(live_status)
+            _save_state(state)
+        except Exception:
+            pass
+    elif intent == "sim_assets":
+        try:
+            selection = get_sim_assets_selection()
+            apis_used.append("sim-assets/selection")
+            if isinstance(selection, dict):
+                state["selection"] = dict(selection)
+                _save_state(state)
+            catalog = sim_assets()
+            apis_used.append("sim-assets")
+            if isinstance(catalog, dict):
+                state["sim_assets_catalog"] = catalog
+                _save_state(state)
+        except Exception:
+            pass
+    elif intent == "cameras":
+        try:
+            cameras_payload = sim_assets_cameras()
+            apis_used.append("sim-assets/cameras")
+            if isinstance(cameras_payload, dict):
+                cams = cameras_payload.get("cameras") or cameras_payload.get("items") or []
+                if isinstance(cams, list) and cams:
+                    default_cameras = cams
+                state["cameras"] = cameras_payload
+                _save_state(state)
+        except Exception:
+            pass
+    elif intent in {{
+        "create_workflow",
+        "create_vlm_rl_workflow",
+        "create_gate_workflow",
+        "create_loop_gate_workflow",
+        "create_rl_policy_workflow",
+    }}:
         draft = generate_workflow_draft(
             user_text=user_text,
             intent=intent,
@@ -4231,7 +4403,24 @@ def _maybe_toolground_chat_reply(
             return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "validation": validation, "plan": plan}}, intent
         reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
-    if intent in {{"onboard_solution", "tools_catalog", "component_capabilities", "cosmos_capabilities", "lancedb_capabilities", "live_infra_loop", "soperator", "mk8s_provision"}}:
+    if intent in {{
+        "onboard_solution",
+        "tools_catalog",
+        "component_capabilities",
+        "cosmos_capabilities",
+        "lancedb_capabilities",
+        "sonic_capabilities",
+        "lerobot_capabilities",
+        "groot_capabilities",
+        "genesis_capabilities",
+        "mjlab_capabilities",
+        "isaac_lab_capabilities",
+        "live_infra_loop",
+        "workflow_execute_guidance",
+        "soperator",
+        "mk8s_provision",
+        "cosmos3",
+    }}:
         apis_used.append("tools")
     if intent in {{"soperator", "mk8s_provision"}}:
         apis_used.extend(suggested_apis)
@@ -4331,8 +4520,42 @@ def chat(payload: dict):
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
     model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
-    last_content = _last_user_message(raw_messages)
-    if re.search(r"\b(?:run|start|submit|launch)\b.{0,80}\b(?:small|simple|tiny|minimal)\b.{0,80}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b", last_content, re.IGNORECASE):
+    visual_context = payload.get("visual_context") if isinstance(payload.get("visual_context"), dict) else {{}}
+    visual_kind = normalize_visual_kind(
+        str(visual_context.get("kind") or visual_context.get("visual_kind") or "")
+    )
+    # Preserve multimodal parts for Token Factory; storage uses text stubs only.
+    llm_messages = normalize_messages_for_llm(raw_messages)
+    last_content = text_from_messages(llm_messages) or _last_user_message(raw_messages)
+    visual_turn = is_visual_feedback_turn(
+        user_text=last_content,
+        messages=llm_messages,
+        visual_context=visual_context,
+    )
+    state = _load_state()
+    session_id = _sanitize_chat_session_id(
+        str(payload.get("session_id") or state.get("active_chat_session_id") or "default")
+    )
+    session = _get_chat_session(state, session_id)
+    history = normalize_messages_for_storage(llm_messages, visual_kind=visual_kind)
+    if len(history) <= 1 and isinstance(session.get("chat_history"), list):
+        prior = normalize_messages_for_storage(session.get("chat_history", []))
+        if history:
+            history = [*prior, history[-1]]
+            if llm_messages:
+                llm_messages = normalize_messages_for_llm([*prior, llm_messages[-1]])
+        else:
+            history = prior
+            llm_messages = normalize_messages_for_llm(prior)
+    # Preserve merged session history across the LLM path (do not rebuild from a
+    # short client payload and wipe prior turns after the model returns).
+    merged_history = list(history)
+    # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
+    if (not visual_turn) and re.search(
+        r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
+        last_content,
+        re.IGNORECASE,
+    ):
         run_id = f"agent-chat-small-{{secrets.token_hex(6)}}"
         submit = submit_sim2real({{"run_id": run_id}})
         live = submit.get("live_submit") if isinstance(submit, dict) else None
@@ -4344,38 +4567,77 @@ def chat(payload: dict):
         else:
             detail = str((live or {{}}).get("error") if isinstance(live, dict) else "recorded locally")
             reply = f"Recorded small Sim2Real submit **run_id** `{{run_id}}`; live launch detail: `{{detail}}`."
-        return {{"ok": True, "model": model, "reply": reply, "reasoning": None, "grounded": True, "apis_used": ["workflows/sim2real/submit"], "submit": submit}}
-    state = _load_state()
-    session_id = _sanitize_chat_session_id(
-        str(payload.get("session_id") or state.get("active_chat_session_id") or "default")
-    )
-    session = _get_chat_session(state, session_id)
-    history = _normalize_chat_history(raw_messages)
-    if len(history) <= 1 and isinstance(session.get("chat_history"), list):
-        prior = _normalize_chat_history(session.get("chat_history", []))
-        if history:
-            history = [*prior, history[-1]]
-        else:
-            history = prior
-    raw_messages = history
-    tool_result = _agent_chat_with_tools(raw_messages=raw_messages, model=model)
-    if tool_result is not None:
-        reply = str(tool_result.get("reply") or "").strip()
-        history: list[dict] = []
-        for item in raw_messages:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get("role", "user")).strip() or "user"
-            content = str(item.get("content", "")).strip()
-            if role in {{"user", "assistant"}} and content:
-                history.append({{"role": role, "content": content}})
-        if reply:
-            history.append({{"role": "assistant", "content": reply}})
+        history = [*merged_history, {{"role": "assistant", "content": reply}}][-80:]
         session.update(
             {{
                 "id": session_id,
                 "title": str(session.get("title") or _chat_session_title(history)),
-                "chat_history": history[-80:],
+                "chat_history": history,
+            }}
+        )
+        state = _load_state()
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        return {{
+            "ok": True,
+            "model": model,
+            "reply": reply,
+            "reasoning": None,
+            "grounded": True,
+            "apis_used": ["workflows/sim2real/submit"],
+            "submit": submit,
+            "session_id": session["id"],
+            "session": {{
+                "id": session["id"],
+                "title": session["title"],
+                "memory_uri": session.get("memory_uri", ""),
+                "message_count": len(session.get("chat_history", [])),
+            }},
+        }}
+    # Metadata-only Describe-this: grounded reply (never invent pixels). Vision
+    # turns with an attached frame fall through to Token Factory.
+    if visual_turn and not has_image_content(llm_messages):
+        meta_reply = build_metadata_only_visual_reply(visual_context)
+        history = [*merged_history, {{"role": "assistant", "content": meta_reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
+            }}
+        )
+        state = _load_state()
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        return {{
+            "ok": True,
+            "model": model,
+            "reply": meta_reply,
+            "reasoning": None,
+            "grounded": True,
+            "tier": "grounded-metadata",
+            "visual_kind": visual_kind,
+            "apis_used": ["sim-viz/status"],
+            "skills_used": ["agent-visual-feedback"],
+            "session_id": session["id"],
+            "session": {{
+                "id": session["id"],
+                "title": session["title"],
+                "memory_uri": session.get("memory_uri", ""),
+                "message_count": len(session.get("chat_history", [])),
+            }},
+        }}
+    # Never short-circuit framed Describe-this / vision turns through intent tools.
+    tool_result = None if visual_turn else _agent_chat_with_tools(raw_messages=history, model=model)
+    if tool_result is not None:
+        reply = str(tool_result.get("reply") or "").strip()
+        if reply:
+            history = [*history, {{"role": "assistant", "content": reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
             }}
         )
         # Tool handlers may mutate session state (for example starting a Sim2Real
@@ -4393,29 +4655,62 @@ def chat(payload: dict):
         _save_state(state)
         return tool_result
     live_ctx = format_live_context_block(_load_state())
-    last_user = _last_user_message(raw_messages)
-    intent = match_chat_intent(last_user)
-    # Cost-tier routing: pick the cheapest adequate model for this turn and only
-    # honor an explicit user-selected model as an override (not the branded
-    # default), so no-model requests default to the cheap workhorse.
-    tier = classify_tier(last_user, intent=intent, messages=raw_messages)
+    last_user = text_from_messages(llm_messages)
+    intent = match_chat_intent(last_user) if not visual_turn else None
+    # Cost-tier routing: vision when an image is attached; otherwise escalate
+    # Describe-this metadata-only turns to reasoning (not cheap caption fluff).
+    tier = classify_tier(last_user, intent=intent, messages=llm_messages)
+    if visual_turn and tier != TIER_VISION:
+        tier = TIER_REASONING
     explicit_model = str(payload.get("model") or "").strip()
     budget_ok, _ = enforce_input_budget(last_user)
     skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
+    if visual_turn and "agent-visual-feedback" not in skill_names:
+        skill_names = ["agent-visual-feedback", *skill_names][:4]
+        skill_excerpt = _skill_excerpt("agent-visual-feedback")
+        if skill_excerpt:
+            visual_skill_block = f"[skill:agent-visual-feedback]\\n{{skill_excerpt}}"
+            if skill_ctx:
+                skill_ctx = skill_ctx + "\\n\\n" + visual_skill_block
+            else:
+                skill_ctx = "Relevant NPA skill excerpts:\\n\\n" + visual_skill_block
     system_content = _agent_system_prompt() + "\\n\\n" + live_ctx
+    visual_block = format_visual_context_block(visual_context)
+    if visual_block:
+        system_content += "\\n\\n" + visual_block
+    if visual_turn and not has_image_content(llm_messages):
+        system_content += (
+            "\\n\\nIMPORTANT: No viewer frame image is attached to this turn. "
+            "Do not invent pixel content, RGB noise, or scenes. Answer from "
+            "metadata/domain hints only and tell the operator how to capture a real frame."
+        )
     if skill_ctx:
         system_content += "\\n\\n" + skill_ctx
     messages: list[dict] = [
         {{"role": "system", "content": system_content}}
     ]
-    for item in raw_messages:
+    for item in llm_messages:
         if not isinstance(item, dict):
             continue
         role = str(item.get("role", "user")).strip() or "user"
-        content = str(item.get("content", "")).strip()
-        if role == "user" and content:
+        content = item.get("content")
+        if role == "user" and isinstance(content, str) and content:
             # Guardrail: cap oversized pastes so one turn cannot blow the budget.
             _within, content = enforce_input_budget(content)
+        elif role == "user" and isinstance(content, list):
+            # Trim text parts inside multimodal (vision) turns; keep image parts.
+            trimmed_parts: list[dict] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if str(part.get("type") or "") == "text":
+                    text_part = str(part.get("text") or "")
+                    if text_part:
+                        _within, text_part = enforce_input_budget(text_part)
+                        trimmed_parts.append({{"type": "text", "text": text_part}})
+                else:
+                    trimmed_parts.append(part)
+            content = trimmed_parts or content
         if content:
             messages.append({{"role": role, "content": content}})
     if len(messages) < 2:
@@ -4436,14 +4731,8 @@ def chat(payload: dict):
         reply = reasoning
         reasoning = None
     state = _load_state()
-    history: list[dict] = []
-    for item in raw_messages:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role", "user")).strip() or "user"
-        content = str(item.get("content", "")).strip()
-        if role in {{"user", "assistant"}} and content:
-            history.append({{"role": role, "content": content}})
+    session = _get_chat_session(state, session_id)
+    history = list(merged_history)
     if reply:
         history.append({{"role": "assistant", "content": reply}})
     session.update(
@@ -4463,6 +4752,7 @@ def chat(payload: dict):
         "tier": tier,
         "usage": turn_usage,
         "input_budget_ok": budget_ok,
+        "visual_kind": visual_kind if visual_turn else "",
         "session_id": session["id"],
         "session": {{
             "id": session["id"],
@@ -4592,6 +4882,25 @@ def sim_viz_status(run_id: str = ""):
     state = _load_state()
     payload = _sim_viz_for_run(state, run_id=run_id)
     requested_run = str(run_id or "").strip()
+    # Prefer the live sim_viz snapshot when it matches — history can lag behind
+    # load-run under concurrent UI polls.
+    current = state.get("sim_viz")
+    if isinstance(current, dict):
+        current_run = str(current.get("run_id") or "").strip()
+        if current_run and (not requested_run or current_run == requested_run):
+            merged = dict(payload)
+            merged.update(current)
+            # Live Rerun/demo snapshots must not keep a stale non-rerun media render
+            # from history (that forces status to clear rrd_uri / rerun_ready).
+            current_render = str(current.get("artifact_render") or "").strip().lower()
+            if str(current.get("rrd_uri") or "").strip() and current_render in {{"", "rerun"}}:
+                merged["artifact_render"] = current_render or "rerun"
+                if not str(current.get("artifact_key") or "").strip():
+                    merged["artifact_key"] = ""
+                    merged["artifact_uri"] = ""
+                    if "visualization_note" not in current:
+                        merged["visualization_note"] = ""
+            payload = merged
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
@@ -4602,7 +4911,8 @@ def sim_viz_status(run_id: str = ""):
         payload["run_id"] = str(latest_submit.get("run_id") or "").strip()
     if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
         payload["stage"] = "submitted"
-    _record_sim_viz_run(state, payload)
+    # Read-only: do not _record/_save here. Concurrent GET status polls were
+    # racing load-run and wiping artifact_render from sim_viz_runs.
     payload_run = str(payload.get("run_id") or "").strip()
     run_has_specific_rrd = bool(str(payload.get("rrd_uri") or "").strip())
     live_url = str(payload.get("live_grpc_url") or "").strip()
@@ -4612,7 +4922,9 @@ def sim_viz_status(run_id: str = ""):
         and (live_url or run_has_specific_rrd or may_use_default_recording)
     ):
         if live_url:
-            payload["rerun_iframe_url"] = f"/rerun/?url={{quote(live_url, safe='')}}&camera={{camera}}"
+            payload["rerun_iframe_url"] = (
+                f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{camera}}"
+            )
         else:
             payload["rerun_iframe_url"] = _rerun_iframe_url(camera)
     else:
@@ -4628,13 +4940,27 @@ def sim_viz_status(run_id: str = ""):
         payload["rerun_iframe_url"] = ""
     else:
         payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
-    runs = state.get("sim_viz_runs")
-    if isinstance(runs, dict):
-        payload["available_run_ids"] = sorted(str(key) for key in runs.keys() if str(key).strip())
-    else:
-        payload["available_run_ids"] = []
+    # Latest-first (rrd_updated_at), not alphabetical — keep UI choosers newest-on-top.
+    payload["available_run_ids"] = [
+        str(item.get("run_id") or "").strip()
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
+    payload["available_runs"] = [
+        {{
+            "run_id": str(item.get("run_id") or "").strip(),
+            "last_modified": str(
+                item.get("rrd_updated_at")
+                or item.get("updated_at")
+                or item.get("submitted_at")
+                or ""
+            ).strip(),
+            "stage": str(item.get("stage") or "").strip(),
+        }}
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
     payload["active_run_id"] = str(state.get("active_run_id") or payload.get("run_id") or "").strip()
-    _save_state(state)
     return payload
 
 @app.get("/sim-viz/runs")
@@ -4681,6 +5007,45 @@ def sim_viz_select_run(payload: dict | None = None):
     _save_state(state)
     return {{"ok": True, "sim_viz": sim_viz_status(), "selected": selected}}
 
+def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
+    # Echo the just-applied snapshot. Do not re-enter sim_viz_status here:
+    # concurrent UI polls can rewrite state mid-load and return the wrong run.
+    payload = dict(DEFAULT_SIM_VIZ)
+    payload.update(sim_viz if isinstance(sim_viz, dict) else {{}})
+    payload["run_id"] = str(run_id or payload.get("run_id") or "").strip()
+    payload["active_run_id"] = str(state.get("active_run_id") or payload["run_id"] or "").strip()
+    payload["available_run_ids"] = [
+        str(item.get("run_id") or "").strip()
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
+    payload["available_runs"] = [
+        {{
+            "run_id": str(item.get("run_id") or "").strip(),
+            "last_modified": str(
+                item.get("rrd_updated_at")
+                or item.get("updated_at")
+                or item.get("submitted_at")
+                or ""
+            ).strip(),
+            "stage": str(item.get("stage") or "").strip(),
+        }}
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
+    render = str(payload.get("artifact_render") or "").strip().lower()
+    if render and render != "rerun":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        if not payload.get("rerun_iframe_url"):
+            payload["rerun_iframe_url"] = ""
+    else:
+        payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
+        if not payload.get("rerun_iframe_url"):
+            payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"))
+    return payload
+
+
 @app.post("/sim-viz/load-run")
 def sim_viz_load_run(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -4711,8 +5076,10 @@ def sim_viz_load_run(payload: dict | None = None):
         )
         if requested_camera:
             sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
-        _save_state(state)
-        return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id)}}
+            state["sim_viz"] = sim_viz
+            _record_sim_viz_run(state, sim_viz)
+            _save_state(state)
+        return {{"ok": True, "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id)}}
 
     try:
         s3, settings = _agent_s3_client()
@@ -4734,8 +5101,14 @@ def sim_viz_load_run(payload: dict | None = None):
             )
             if requested_camera:
                 sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
-            _save_state(state)
-            return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id), "preferred": preferred.to_dict()}}
+                state["sim_viz"] = sim_viz
+                _record_sim_viz_run(state, sim_viz)
+                _save_state(state)
+            return {{
+                "ok": True,
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
+                "preferred": preferred.to_dict(),
+            }}
     except Exception:
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
@@ -4768,7 +5141,7 @@ def sim_viz_load_run(payload: dict | None = None):
     _save_state(state)
     return {{
         "ok": True,
-        "sim_viz": sim_viz_status(run_id=run_id),
+        "sim_viz": _sim_viz_load_response(state, selected, run_id=run_id),
     }}
 
 @app.get("/sim-viz/recordings")
@@ -4842,7 +5215,7 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
-@app.get("/artifacts/file/{{filename}}")
+@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])
 def artifact_file(filename: str):
     safe_name = Path(str(filename)).name
     if safe_name != filename:
@@ -4850,7 +5223,8 @@ def artifact_file(filename: str):
     target = RECORDINGS_DIR / safe_name
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
-    return FileResponse(str(target), media_type="application/octet-stream")
+    # artifact_media_type comes from the embedded workflows/artifacts.py module.
+    return FileResponse(str(target), media_type=artifact_media_type(safe_name))
 
 
 @app.post("/sim-viz/load-artifact")
@@ -4943,10 +5317,26 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     if uri.startswith("http://") or uri.startswith("https://"):
+        # Server-side fetch of session rrd_uri — hardened allowlist + size cap
+        # (see embedded agent_rrd_proxy.rrd_proxy_uri_allowed / MAX_RRD_PROXY_BYTES).
+        if not rrd_proxy_uri_allowed(uri):
+            raise HTTPException(status_code=400, detail="Refusing to proxy disallowed rrd_uri host")
         try:
-            proxied = httpx.get(uri, timeout=20.0)
-            proxied.raise_for_status()
-            return Response(content=proxied.content, media_type="application/octet-stream")
+            chunks: list[bytes] = []
+            total = 0
+            with httpx.stream("GET", uri, timeout=20.0) as proxied:
+                proxied.raise_for_status()
+                for chunk in proxied.iter_bytes(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_RRD_PROXY_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Proxied rrd_uri exceeds {{MAX_RRD_PROXY_BYTES}} byte cap",
+                        )
+                    chunks.append(chunk)
+            return Response(content=b"".join(chunks), media_type="application/octet-stream")
+        except HTTPException:
+            raise
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Unable to fetch remote sim2real.rrd: {{exc}}") from exc
     if RRD_PATH.is_file():
@@ -5203,7 +5593,14 @@ def save_workflow_draft(payload: dict):
     runnable = bool(validation.get("ok") and plan.get("ok"))
     state = _load_state()
     draft = _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
-    return {{"ok": runnable, "draft": draft, "validation": validation, "plan": plan, "runnable": runnable}}
+    # ok tracks YAML validation; runnable requires validation+plan.
+    return {{
+        "ok": bool(validation.get("ok")),
+        "draft": draft,
+        "validation": validation,
+        "plan": plan,
+        "runnable": runnable,
+    }}
 
 @app.post("/workflows/validate")
 @app.post("/workflows/npa/validate")
@@ -5221,7 +5618,13 @@ def validate_workflow(payload: dict):
     runnable = bool(validation.get("ok") and plan.get("ok"))
     state = _load_state()
     _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
-    return {{"ok": runnable, "validation": validation, "plan": plan, "runnable": runnable}}
+    # ok tracks YAML validation; runnable requires validation+plan.
+    return {{
+        "ok": bool(validation.get("ok")),
+        "validation": validation,
+        "plan": plan,
+        "runnable": runnable,
+    }}
 
 @app.post("/workflows/plan")
 @app.post("/workflows/npa/plan")
@@ -5588,6 +5991,15 @@ _shutil.copy2(target, _rec)
 PY
 sudo mkdir -p /opt/npa-agent/recordings
 sudo cp -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd || true
+# Tiny ftyp sample so live media-type checks work even when S3 has no .mp4 runs.
+sudo python3 - <<'PY'
+from pathlib import Path
+target = Path("/opt/npa-agent/recordings/sample-preview.mp4")
+ftyp_data = b"isom" + bytes([0, 0, 0, 0]) + b"isomiso2mp41"
+ftyp = (8 + len(ftyp_data)).to_bytes(4, "big") + b"ftyp" + ftyp_data
+mdat = (8).to_bytes(4, "big") + b"mdat"
+target.write_bytes(ftyp + mdat)
+PY
 cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
 <!doctype html>
 <html lang="en">
@@ -5671,2943 +6083,7 @@ cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
 </html>
 LOGINHELP
 cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-    <meta name="npa-ui-version" content="{AGENT_UI_VERSION}">
-    <title>NPA Agent</title>
-    <link rel="preload" href="/rerun/re_viewer.js" as="script" crossorigin>
-    <link rel="preload" href="/rerun/re_viewer_bg.wasm" as="fetch" type="application/wasm" crossorigin>
-    <link rel="prefetch" href="/rerun/recordings/sim2real.rrd" as="fetch">
-    <style>
-      :root {{
-        --bg: #edf7ff;
-        --surface: #ffffff;
-        --surface-soft: #f3f9ff;
-        --surface-blue: #dceeff;
-        --text: #102b3f;
-        --muted: #60798c;
-        --border: #c9ddec;
-        --brand: #e5ff4f;
-        --brand-strong: #d7f82f;
-        --brand-ink: #102b3f;
-        --sidebar: #0d2a3d;
-        --sidebar-2: #17405d;
-        --ok-bg: #e8ffbd;
-        --ok-text: #21440f;
-        --shadow: 0 10px 24px rgba(13, 42, 61, 0.14);
-      }}
-      * {{ box-sizing: border-box; }}
-      html {{
-        overflow-x: hidden;
-        width: 100%;
-        max-width: 100%;
-        -webkit-text-size-adjust: 100%;
-      }}
-      body {{
-        margin: 0;
-        padding-bottom: 36px;
-        font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        background:
-          radial-gradient(circle at 14% 0%, rgba(229, 255, 79, 0.20), transparent 28%),
-          linear-gradient(180deg, #f8fcff 0%, var(--bg) 42%, #f6fbff 100%);
-        color: var(--text);
-        overflow-x: hidden;
-        width: 100%;
-        max-width: 100%;
-      }}
-      img, video, iframe, pre, textarea, select, input, .panel, .page, .chrome {{
-        max-width: 100%;
-      }}
-      .chrome {{
-        max-width: 1640px;
-        margin: 0 auto;
-        min-height: 100vh;
-      }}
-      .topbar {{
-        background: var(--sidebar);
-        color: #ffffff;
-        padding: 18px 22px;
-        border-bottom: 4px solid var(--brand);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }}
-      .brand {{
-        font-weight: 700;
-        letter-spacing: 0.22em;
-        font-size: 13px;
-        text-transform: uppercase;
-      }}
-      .brand-sub {{
-        color: #b9d1e3;
-        font-size: 12px;
-      }}
-      .page {{
-        padding: 16px;
-        display: grid;
-        gap: 14px;
-      }}
-      .layout {{ display: grid; gap: 14px; }}
-      .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}
-      .panel {{
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 14px;
-        background: var(--surface);
-        box-shadow: var(--shadow);
-      }}
-      .panel h3 {{ margin: 0 0 10px 0; font-size: 17px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); }}
-      .panel p {{ margin: 0; color: var(--muted); }}
-      .subsection {{
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface-soft);
-        padding: 10px;
-        margin-top: 10px;
-      }}
-      .subsection h4 {{ margin: 0 0 8px 0; font-size: 13px; color: var(--text); letter-spacing: 0.08em; text-transform: uppercase; }}
-      .field-row {{ display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }}
-      .field label {{ display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }}
-      .field select, .field input {{
-        width: 100%;
-        border: 1px solid var(--border);
-        border-radius: 9px;
-        padding: 8px;
-        font-family: inherit;
-        background: #fff;
-        color: var(--text);
-      }}
-      .pill-list {{ display: flex; gap: 6px; flex-wrap: wrap; }}
-      .pill {{
-        display: inline-flex;
-        align-items: center;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        color: var(--text);
-        background: var(--surface-blue);
-        padding: 4px 9px;
-        font-size: 12px;
-      }}
-      .cameras-panel {{ display: block; }}
-      .camera-card {{
-        border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px;
-        background: #fff;
-      }}
-      .camera-card.selected {{ border: 2px solid var(--brand); box-shadow: 0 0 0 2px rgba(229, 255, 79, 0.45); }}
-      .camera-card h4 {{ margin: 0 0 6px 0; }}
-      .camera-meta {{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }}
-      .camera-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }}
-      .camera-frustum {{ display: flex; justify-content: center; }}
-      .rollout-hint {{ font-size: 13px; color: var(--muted); margin: 0 0 10px 0; }}
-      .chat-panel {{ margin-bottom: 12px; }}
-      .chat-panel-head {{
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 10px;
-        margin-bottom: 4px;
-      }}
-      .chat-panel-head h3 {{ margin: 0; }}
-      .mobile-only-toggle {{ display: none; }}
-      .chat-composer {{
-        background: var(--surface);
-      }}
-      .mobile-chat-auth {{
-        display: none;
-        margin: 0 0 10px;
-        padding: 12px;
-        border: 1px solid #fcd34d;
-        border-radius: 10px;
-        background: #fffbeb;
-      }}
-      .mobile-chat-auth-row {{
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }}
-      .mobile-chat-auth-row input {{
-        width: 100%;
-        padding: 10px 12px;
-        border: 1px solid #d4d8e2;
-        border-radius: 10px;
-        font: inherit;
-        font-size: 16px;
-      }}
-      body.mobile-agent.mobile-needs-auth .mobile-chat-auth {{
-        display: block;
-      }}
-      body.mobile-agent.mobile-needs-auth #chatForm,
-      body.mobile-agent.mobile-needs-auth .actions-inline {{
-        opacity: 0.55;
-        pointer-events: none;
-      }}
-      body.mobile-agent .mobile-chat-auth {{
-        order: -1;
-      }}
-      .chat-toolbar {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-        margin: 8px 0 10px;
-        flex-wrap: wrap;
-      }}
-      .chat-model {{
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: #4f5668;
-      }}
-      .chat-session {{
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: #4f5668;
-      }}
-      .chat-session select {{
-        max-width: 220px;
-      }}
-      .chat-model select {{
-        border: 1px solid #d4d8e2;
-        border-radius: 999px;
-        padding: 6px 10px;
-        background: #fff;
-        color: #1f2430;
-        font: inherit;
-      }}
-      .chat-session select {{
-        border: 1px solid #d4d8e2;
-        border-radius: 999px;
-        padding: 6px 10px;
-        background: #fff;
-        color: #1f2430;
-        font: inherit;
-      }}
-      .chat-log {{
-        height: 320px; overflow-y: auto; background: #f9fafc; border: 1px solid var(--border);
-        border-radius: 10px; padding: 10px; margin-bottom: 10px;
-        font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      }}
-      .msg-row {{
-        display: flex;
-        margin: 8px 0;
-      }}
-      .msg-row.user {{ justify-content: flex-end; }}
-      .msg-row.assistant, .msg-row.error, .msg-row.thinking {{ justify-content: flex-start; }}
-      .msg-card {{
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 6px;
-        max-width: 78%;
-      }}
-      .msg-row.user .msg-card {{ align-items: flex-end; }}
-      .bubble {{
-        max-width: 100%;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: #fff;
-        color: var(--text);
-        padding: 10px 12px;
-        font-size: 14px;
-        line-height: 1.45;
-      }}
-      .bubble pre {{
-        margin: 8px 0;
-        background: #f4f6fc;
-        border: 1px solid #dde2f0;
-        border-radius: 8px;
-        padding: 10px;
-        overflow-x: auto;
-      }}
-      .bubble pre code {{
-        white-space: pre;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-        font-size: 12px;
-        line-height: 1.4;
-        border: none;
-        background: transparent;
-        padding: 0;
-      }}
-      .bubble p {{ margin: 0 0 6px 0; color: inherit; }}
-      .bubble p:last-child {{ margin-bottom: 0; }}
-      .bubble ul {{ margin: 4px 0 6px 18px; padding: 0; }}
-      .bubble li {{ margin: 2px 0; }}
-      .bubble code {{
-        background: #f0f1f6;
-        border: 1px solid #e4e6f0;
-        border-radius: 6px;
-        padding: 1px 5px;
-        font-size: 12px;
-      }}
-      .msg-row.user .bubble {{
-        background: var(--brand);
-        border-color: var(--brand);
-        color: var(--brand-ink);
-        font-weight: 700;
-      }}
-      .msg-row.error .bubble {{
-        border-color: #e9b8b8;
-        background: #fff8f8;
-      }}
-      .msg-actions {{
-        display: inline-flex;
-        gap: 6px;
-      }}
-      .msg-copy-btn {{
-        border: 1px solid #d5d9e6;
-        border-radius: 999px;
-        background: #fff;
-        color: #3c4458;
-        font-size: 11px;
-        padding: 4px 10px;
-        cursor: pointer;
-      }}
-      .msg-copy-btn:hover {{ background: #f5f7ff; }}
-      .msg-row.thinking .bubble {{
-        min-width: 90px;
-        background: #f2f3f8;
-      }}
-      .thinking-dots {{
-        display: inline-flex;
-        gap: 4px;
-        align-items: center;
-      }}
-      .thinking-dots span {{
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--brand);
-        display: inline-block;
-        animation: pulse 1s infinite ease-in-out;
-      }}
-      .thinking-dots span:nth-child(2) {{ animation-delay: 0.18s; }}
-      .thinking-dots span:nth-child(3) {{ animation-delay: 0.36s; }}
-      .sparkle {{
-        display: inline-block;
-        color: var(--brand);
-        margin-right: 6px;
-        font-size: 13px;
-      }}
-      @keyframes pulse {{
-        0%, 80%, 100% {{ opacity: 0.35; transform: translateY(0); }}
-        40% {{ opacity: 1; transform: translateY(-1px); }}
-      }}
-      .chat-input {{ display: flex; gap: 10px; align-items: flex-end; }}
-      .chat-input textarea {{
-        flex: 1; min-height: 58px; resize: vertical; font-family: inherit; padding: 10px 12px;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        font-size: 16px;
-        outline: none;
-      }}
-      .chat-input textarea:focus {{ border-color: var(--brand); box-shadow: 0 0 0 3px rgba(229, 255, 79, 0.28); }}
-      iframe {{ width: 100%; height: min(78vh, 820px); min-height: 620px; border: 1px solid var(--border); border-radius: 10px; }}
-      .rerun-placeholder {{
-        width: 100%;
-        min-height: 220px;
-        border: 1px dashed var(--border);
-        border-radius: 10px;
-        padding: 24px 20px;
-        text-align: center;
-        color: var(--muted);
-        background: var(--surface-soft);
-      }}
-      .rerun-placeholder strong {{ color: var(--text); }}
-      .status-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }}
-      .btn-row {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }}
-      .btn {{
-        border: 1px solid var(--border);
-        background: #fff;
-        border-radius: 999px;
-        color: var(--text);
-        padding: 8px 12px;
-        font-size: 13px;
-        cursor: pointer;
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: transparent;
-      }}
-      .btn:hover {{ background: var(--surface-blue); border-color: #8fb8d4; }}
-      .btn-primary {{
-        background: var(--brand);
-        border-color: var(--brand);
-        color: var(--brand-ink);
-        font-weight: 800;
-      }}
-      .btn-primary:hover {{ background: var(--brand-strong); }}
-      .btn[disabled], .btn:disabled {{
-        opacity: 0.65;
-        cursor: not-allowed;
-      }}
-      .cta {{ color: var(--text); background: #f4ffbc; border: 1px solid var(--brand); border-radius: 8px; padding: 8px 10px; }}
-      .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: var(--sidebar-2); color: #f5fbff; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }}
-      .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
-      .run-details {{
-        margin-top: 10px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface-soft);
-        padding: 10px;
-      }}
-      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: var(--text); }}
-      .run-summary {{
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-bottom: 8px;
-      }}
-      .stage-list {{
-        display: grid;
-        gap: 6px;
-        margin: 8px 0;
-      }}
-      .stage-item {{
-        display: grid;
-        grid-template-columns: 92px 1fr;
-        gap: 8px;
-        align-items: start;
-        border: 1px solid var(--border);
-        background: #fff;
-        border-radius: 8px;
-        padding: 7px 8px;
-        font-size: 12px;
-      }}
-      .stage-status {{
-        border-radius: 999px;
-        padding: 3px 7px;
-        text-align: center;
-        font-weight: 700;
-        text-transform: uppercase;
-        font-size: 10px;
-        background: var(--surface-blue);
-        color: var(--text);
-      }}
-      .stage-status.succeeded {{ background: var(--ok-bg); color: var(--ok-text); }}
-      .stage-status.failed {{ background: #fee2e2; color: #991b1b; }}
-      .stage-status.running {{ background: #fef3c7; color: #92400e; }}
-      .stage-status.pending {{ background: #eef6fc; color: var(--muted); }}
-      .stage-status.not_run {{ background: #f8fafc; color: var(--muted); border: 1px solid var(--border); }}
-      .stage-label {{ font-weight: 700; color: var(--text); }}
-      .stage-summary {{ color: var(--muted); margin-top: 2px; }}
-      .run-log {{
-        margin: 8px 0 0 0;
-        max-height: 180px;
-        overflow: auto;
-        white-space: pre-wrap;
-        background: #0f172a;
-        color: #dbeafe;
-        border-radius: 8px;
-        padding: 10px;
-        font-size: 12px;
-      }}
-      .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
-      .quick-pill {{
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        background: #fff;
-        color: var(--text);
-        font-size: 12px;
-        padding: 7px 12px;
-      }}
-      .quick-pill:hover {{ background: var(--brand); }}
-      .hint {{ font-size: 13px; color: var(--muted); }}
-      .status-bar {{
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 900;
-        padding: 8px 14px;
-        font-size: 12px;
-        color: #ffffff;
-        background: rgba(13, 42, 61, 0.94);
-        border-top: 1px solid var(--border);
-        box-shadow: 0 -4px 16px rgba(30, 31, 34, 0.06);
-      }}
-      .toast-host {{
-        position: fixed;
-        top: 14px;
-        right: 14px;
-        z-index: 1000;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        max-width: min(420px, calc(100vw - 28px));
-        pointer-events: none;
-      }}
-      .toast {{
-        pointer-events: auto;
-        padding: 10px 12px;
-        border-radius: 10px;
-        font-size: 13px;
-        border: 1px solid var(--border);
-        background: #fff;
-        color: var(--text);
-        box-shadow: var(--shadow);
-        animation: toast-in 0.18s ease-out;
-      }}
-      .toast-info {{ border-color: var(--border); background: var(--surface-blue); color: var(--text); }}
-      .toast-success {{ border-color: #86efac; background: var(--ok-bg); color: var(--ok-text); }}
-      .toast-error {{ border-color: #fca5a5; background: #fef2f2; color: #991b1b; }}
-      @keyframes toast-in {{
-        from {{ opacity: 0; transform: translateY(-6px); }}
-        to {{ opacity: 1; transform: translateY(0); }}
-      }}
-      @media (max-width: 1280px) {{
-        .layout-3 {{ grid-template-columns: 1fr; }}
-      }}
-      @media (max-width: 900px) {{
-        .topbar {{
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 8px;
-        }}
-        .page {{ padding: 12px; gap: 12px; }}
-        .panel {{ padding: 12px; }}
-        .field-row {{ grid-template-columns: 1fr; }}
-        .msg-card {{ max-width: 92%; }}
-        iframe {{ height: 360px; min-height: 360px; }}
-      }}
-      @media (max-width: 640px) {{
-        body {{ padding-bottom: calc(52px + env(safe-area-inset-bottom)); }}
-        .chrome {{ min-height: auto; }}
-        .brand {{ font-size: 12px; }}
-        .brand-sub {{ font-size: 11px; line-height: 1.35; }}
-        .chat-input {{
-          flex-direction: column;
-          align-items: stretch;
-        }}
-        .chat-input .btn {{ width: 100%; }}
-        .btn, .quick-pill {{
-          min-height: 44px;
-          font-size: 14px;
-        }}
-        .status-bar {{
-          padding-bottom: calc(8px + env(safe-area-inset-bottom));
-        }}
-      }}
-      body.mobile-agent {{
-        padding-bottom: calc(56px + env(safe-area-inset-bottom));
-        overflow-x: hidden;
-      }}
-      body.mobile-agent .chrome {{
-        max-width: 100%;
-        width: 100%;
-        overflow-x: hidden;
-      }}
-      body.mobile-agent .page {{
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        padding: 10px 10px calc(68px + env(safe-area-inset-bottom));
-        width: 100%;
-        max-width: 100%;
-        overflow-x: hidden;
-      }}
-      body.mobile-agent .panel {{
-        width: 100%;
-        max-width: 100%;
-        overflow-x: hidden;
-      }}
-      body.mobile-agent .chat-panel {{
-        display: flex;
-        flex-direction: column;
-        flex: 1 1 auto;
-        min-height: calc(100dvh - 112px);
-        margin-bottom: 0;
-      }}
-      body.mobile-agent .chat-panel .hint:first-of-type {{
-        display: none;
-      }}
-      body.mobile-agent .chat-toolbar {{
-        flex-direction: column;
-        align-items: stretch;
-      }}
-      body.mobile-agent .chat-model {{
-        width: 100%;
-        justify-content: space-between;
-      }}
-      body.mobile-agent .chat-session {{
-        width: 100%;
-      }}
-      body.mobile-agent .chat-model select,
-      body.mobile-agent .chat-session select {{
-        flex: 1 1 auto;
-        max-width: 100%;
-      }}
-      body.mobile-agent .chat-log {{
-        flex: 1 1 auto;
-        min-height: 38dvh;
-        max-height: 52dvh;
-        height: auto;
-      }}
-      body.mobile-agent .chat-composer {{
-        position: sticky;
-        bottom: calc(52px + env(safe-area-inset-bottom));
-        z-index: 850;
-        margin-top: auto;
-        padding-top: 10px;
-        border-top: 1px solid var(--border);
-      }}
-      body.mobile-agent .actions-inline {{
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-      }}
-      body.mobile-agent .actions-inline .quick-pill {{
-        width: 100%;
-        justify-content: center;
-      }}
-      body.mobile-agent .workflow-panel,
-      body.mobile-agent .layout-3 {{
-        display: none;
-      }}
-      body.mobile-agent.mobile-show-panels .workflow-panel,
-      body.mobile-agent.mobile-show-panels .layout-3 {{
-        display: grid;
-      }}
-      body.mobile-agent .mobile-only-toggle {{
-        display: inline-flex;
-        flex-shrink: 0;
-        min-height: 36px;
-      }}
-      body.mobile-agent .topbar .badge {{
-        display: none;
-      }}
-      body.mobile-agent .brand-sub {{
-        display: none;
-      }}
-      body.mobile-agent .brand {{
-        font-size: 11px;
-        line-height: 1.35;
-        word-break: break-word;
-      }}
-      body.mobile-agent .chat-toolbar .hint {{
-        display: none;
-      }}
-      .workflow-panel textarea {{
-        width: 100%;
-        min-height: 220px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 12px;
-        line-height: 1.45;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
-        resize: vertical;
-        background: #fafbff;
-      }}
-      .workflow-meta {{
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin: 8px 0 10px;
-        font-size: 12px;
-      }}
-      .workflow-meta .pill {{
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        border-radius: 999px;
-        background: #f1f5f9;
-        border: 1px solid #e2e8f0;
-      }}
-      .yaml-block {{
-        margin: 8px 0;
-        padding: 10px 12px;
-        border-radius: 8px;
-        background: #0f172a;
-        color: #e2e8f0;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 12px;
-        line-height: 1.45;
-        overflow-x: auto;
-        white-space: pre-wrap;
-      }}
-      #workflowYaml {{
-        width: 100%;
-        min-height: 220px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 12px;
-        border: 1px solid #d4d8e2;
-        border-radius: 10px;
-        padding: 10px 12px;
-        resize: vertical;
-        background: #fafbff;
-      }}
-    </style>
-  </head>
-  <body>
-    <div class="chrome">
-      <header class="topbar">
-        <div>
-          <div class="brand">NEBIUS | NPA WORKBENCH AGENT</div>
-          <div class="brand-sub">Sim2Real operations, assets, cameras, and Rerun visualization</div>
-        </div>
-        <span class="badge badge-ok">Secure basic-auth session</span>
-      </header>
-      <main class="page">
-        <section class="panel chat-panel">
-          <div class="chat-panel-head">
-            <div>
-              <h3>Workbench Chat</h3>
-              <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
-            </div>
-            <button id="mobilePanelsToggle" class="btn mobile-only-toggle" type="button" aria-expanded="false">Panels</button>
-          </div>
-          <div class="chat-toolbar">
-            <span class="hint">Grounded responses use live `/api/*` context from this VM.</span>
-            <label for="chatSessionSelect" class="chat-session">
-              Session
-              <select id="chatSessionSelect">
-                <option value="default" selected>Default chat</option>
-              </select>
-            </label>
-            <button id="newChatSession" class="btn" type="button">New chat</button>
-            <label for="chatModel" class="chat-model">
-              Token Factory model
-              <select id="chatModel">
-                <option value="" selected>Auto (cost-aware)</option>
-              </select>
-            </label>
-          </div>
-          <div id="mobileChatAuth" class="mobile-chat-auth" aria-live="polite">
-            <p class="hint">Mobile chat needs your agent password once on this device (iOS Safari does not send saved login on chat requests).</p>
-            <div class="mobile-chat-auth-row">
-              <input id="mobileChatPassword" type="password" placeholder="Agent password" autocomplete="current-password">
-              <button id="mobileChatAuthBtn" class="btn btn-primary" type="button">Unlock chat</button>
-            </div>
-          </div>
-          <div id="chatLog" class="chat-log"></div>
-          <form id="chatForm" class="chat-composer chat-input" autocomplete="off">
-            <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?" rows="2" enterkeyhint="send"></textarea>
-            <button id="chatSend" class="btn btn-primary" type="submit">Send</button>
-          </form>
-          <div class="actions-inline">
-            <button id="chatActionS3" class="btn quick-pill" type="button">Configure S3</button>
-            <button id="chatActionCosmos" class="btn quick-pill" type="button">Setup Cosmos3</button>
-            <button id="chatActionWatch" class="btn quick-pill" type="button">Watch sim</button>
-            <button id="chatActionWorkflow" class="btn quick-pill" type="button">2-step Sim2Real YAML</button>
-          </div>
-        </section>
-        <section class="panel workflow-panel">
-          <h3>Workflow YAML</h3>
-          <p class="hint">npa.workflow/v0.0.1-beta specs — generate via chat, upload, validate, plan, or submit.</p>
-          <div class="workflow-meta">
-            <span class="pill">name: <strong id="workflowName">—</strong></span>
-            <span class="pill">validation: <strong id="workflowValidation">pending</strong></span>
-            <span class="pill">states: <strong id="workflowStates">—</strong></span>
-          </div>
-          <textarea id="workflowYaml" spellcheck="false" placeholder="Ask chat to create a 2-step Sim2Real workflow, or paste YAML here…"></textarea>
-          <div class="btn-row" style="margin-top:8px;">
-            <button id="workflowUpload" class="btn" type="button">Upload YAML</button>
-            <button id="workflowValidate" class="btn" type="button">Validate</button>
-            <button id="workflowPlan" class="btn" type="button">Plan</button>
-            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Submit YAML</button>
-          </div>
-          <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
-        </section>
-        <section class="panel run-monitor-panel">
-          <h3>Sim2Real Run Monitor</h3>
-          <p class="hint">Stage timeline, result, and logs for the active run. This panel is independent from Rerun visualization.</p>
-          <div id="runDetails" class="run-details">
-            <h4>Run status, result, and logs</h4>
-            <div id="runSummary" class="run-summary"></div>
-            <div id="stageList" class="stage-list"></div>
-            <pre id="runLog" class="run-log">No run selected.</pre>
-          </div>
-        </section>
-        <div class="layout layout-3">
-          <section class="panel">
-            <h3>Sim Assets</h3>
-            <div class="subsection">
-              <h4>Selection</h4>
-              <div class="field-row">
-                <div class="field">
-                  <label for="sceneMode">Scene mode</label>
-                  <select id="sceneMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="byo_mesh">byo_mesh</option>
-                    <option value="scene_spec">scene_spec</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="robotPreset">Robot preset</label>
-                  <select id="robotPreset">
-                    <option value="franka" selected>stock_franka</option>
-                    <option value="ur5e">preset:ur5e</option>
-                  </select>
-                </div>
-              </div>
-              <div class="field-row" style="margin-top:8px;">
-                <div class="field">
-                  <label for="cameraMode">Camera mode</label>
-                  <select id="cameraMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="custom">custom</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="simBackend">Sim backend</label>
-                  <select id="simBackend">
-                    <option value="isaac" selected>isaac</option>
-                    <option value="genesis">genesis</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            <div class="subsection">
-              <h4>Props</h4>
-              <div class="pill-list">
-                <label class="pill"><input id="propCube" type="checkbox" checked> cube</label>
-              </div>
-            </div>
-            <div class="subsection">
-              <h4>Resolved assets</h4>
-              <div id="assetsSummary" class="hint"></div>
-            </div>
-            <div class="btn-row">
-              <button id="applySelection" class="btn" type="button">Apply stock selection</button>
-              <button id="loadFrankaRerun" class="btn" type="button">Load active Sim2Real in Rerun</button>
-              <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
-              <button id="workflowStatus" class="btn" type="button">Workflow status</button>
-            </div>
-            <div class="field-row" style="margin-top:8px;">
-              <div class="field">
-                <label for="runIdInput">Run ID</label>
-                <input id="runIdInput" type="text" placeholder="agent-run-..." />
-              </div>
-              <div class="field">
-                <label for="runIdSelect">Known runs</label>
-                <select id="runIdSelect">
-                  <option value="">(select run)</option>
-                </select>
-              </div>
-            </div>
-            <div class="btn-row" style="margin-top:8px;">
-              <button id="loadRunData" class="btn" type="button">Load run data</button>
-            </div>
-            <div class="subsection" style="margin-top:10px;">
-              <h4>Artifact browser</h4>
-              <div class="field-row">
-                <div class="field">
-                  <label for="artifactPrefix">Prefix</label>
-                  <input id="artifactPrefix" type="text" placeholder="optional/path/prefix" />
-                </div>
-                <div class="field">
-                  <label for="artifactRunSelect">Discovered runs</label>
-                  <select id="artifactRunSelect">
-                    <option value="">(select discovered run)</option>
-                  </select>
-                </div>
-              </div>
-              <div class="field-row" style="margin-top:8px;">
-                <div class="field">
-                  <label for="artifactTypeFilter">Type</label>
-                  <select id="artifactTypeFilter">
-                    <option value="">All types</option>
-                    <option value="rerun">Rerun .rrd</option>
-                    <option value="video">Video .mp4/.webm/.mov</option>
-                    <option value="json">JSON</option>
-                    <option value="text">Text/logs</option>
-                    <option value="image">Images</option>
-                    <option value="download">Other/download</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="artifactSort">Sort</label>
-                  <select id="artifactSort">
-                    <option value="preferred">Recommended first</option>
-                    <option value="type">Type, then newest</option>
-                    <option value="newest">Newest first</option>
-                    <option value="largest">Largest first</option>
-                    <option value="name">Name A-Z</option>
-                  </select>
-                </div>
-              </div>
-              <div class="btn-row" style="margin-top:8px;">
-                <button id="artifactRefreshRuns" class="btn" type="button">Discover runs</button>
-                <button id="artifactLoadRunArtifacts" class="btn" type="button">List artifacts</button>
-              </div>
-              <div id="artifactList" class="hint" style="margin-top:8px;"></div>
-            </div>
-          </section>
-          <section class="panel cameras-panel">
-            <h3>Cameras</h3>
-            <p id="cameraRolloutHint" class="rollout-hint">Active for next rollout: <strong id="activeCameraLabel">workspace</strong></p>
-            <p class="rollout-hint">Stock workspace and wrist cameras from the Sim2Real default scene spec.</p>
-            <div id="cameraCards"></div>
-            <select id="cameraSelect" hidden aria-hidden="true"></select>
-            <div id="rerunEntityHint" class="rollout-hint"></div>
-          </section>
-          <section class="panel rerun-panel">
-            <h3>Rerun (embedded)</h3>
-            <div id="simviz">
-              <div class="status-row">
-                <span>Run: <strong id="simRunId">—</strong></span>
-                <span>Stage: <span id="simStage" class="badge">idle</span></span>
-                <span>Camera: <strong id="simCamera">workspace</strong></span>
-              </div>
-              <div id="renderedDataSummary" class="hint">Rendering: no run artifact loaded yet.</div>
-              <div class="btn-row">
-                <button id="openRerun" class="btn" type="button">Open in Rerun</button>
-              </div>
-              <p id="simvizCta" class="cta">Embedded real Sim2Real recording. Use Load active Sim2Real if the viewer needs a refresh.</p>
-            </div>
-            <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
-              <p>Rerun recording is embedded below.</p>
-              <p class="hint">Loading the active Sim2Real recording.</p>
-              <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button> <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
-            </div>
-            <iframe id="rerunFrame" title="rerun" src="about:blank" style="height: min(78vh, 820px); min-height: 620px;"></iframe>
-            <div id="artifactPreviewHost" class="hint" hidden style="margin-top:10px;"></div>
-          </section>
-        </div>
-      </main>
-    </div>
-    <noscript><p style="padding:16px;background:#fff3cd;">JavaScript is required for the NPA Agent workbench. Enable JS and reload.</p></noscript>
-    <div id="statusBar" class="status-bar" aria-live="polite">Ready</div>
-    <div id="toastHost" class="toast-host" aria-live="polite"></div>
-    <script>
-      (function initNpaAgentUi() {{
-      try {{
-      "use strict";
-      if (location.username || location.password) {{
-        const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
-        history.replaceState(null, "", clean);
-      }}
-      function detectMobileLayout() {{
-        const narrow = window.matchMedia("(max-width: 900px)").matches;
-        const coarse = window.matchMedia("(pointer: coarse)").matches;
-        const mobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
-        return narrow || (coarse && mobileUa);
-      }}
-      function applyMobileLayout() {{
-        if (!detectMobileLayout()) return;
-        document.body.classList.add("mobile-agent");
-      }}
-      let mobileAuthTokenCache = "";
-      function mobileAuthHeader() {{
-        if (mobileAuthTokenCache) {{
-          return mobileAuthTokenCache;
-        }}
-        try {{
-          return String(sessionStorage.getItem("npa_agent_basic_auth") || "").trim();
-        }} catch (_err) {{
-          return "";
-        }}
-      }}
-      function hasMobileChatAuth() {{
-        return Boolean(mobileAuthHeader());
-      }}
-      function persistMobileBasicAuth(user, pass) {{
-        const token = "Basic " + btoa(unescape(encodeURIComponent(String(user || "") + ":" + String(pass || ""))));
-        mobileAuthTokenCache = token;
-        try {{
-          sessionStorage.setItem("npa_agent_basic_auth", token);
-        }} catch (_err) {{ /* sessionStorage may be blocked in private browsing */ }}
-        return token;
-      }}
-      function clearMobileBasicAuth() {{
-        mobileAuthTokenCache = "";
-        try {{
-          sessionStorage.removeItem("npa_agent_basic_auth");
-        }} catch (_err) {{ /* ignore */ }}
-      }}
-      function setMobileAuthNeeded(needed) {{
-        if (!document.body.classList.contains("mobile-agent")) return;
-        document.body.classList.toggle("mobile-needs-auth", Boolean(needed));
-        if (!needed) {{
-          document.body.classList.add("mobile-auth-ready");
-        }}
-      }}
-      async function verifyMobileChatAuth() {{
-        const auth = mobileAuthHeader();
-        if (!auth) {{
-          return false;
-        }}
-        try {{
-          const resp = await fetch("/api/health", {{
-            credentials: "omit",
-            cache: "no-store",
-            headers: {{ Authorization: auth }},
-          }});
-          if (resp.status === 401) {{
-            clearMobileBasicAuth();
-            return false;
-          }}
-          return resp.ok;
-        }} catch (_err) {{
-          return false;
-        }}
-      }}
-      async function probeMobileChatAuth() {{
-        if (!document.body.classList.contains("mobile-agent")) return true;
-        if (!hasMobileChatAuth()) {{
-          setMobileAuthNeeded(true);
-          return false;
-        }}
-        const ok = await verifyMobileChatAuth();
-        setMobileAuthNeeded(!ok);
-        return ok;
-      }}
-      async function unlockMobileChatAuth(password) {{
-        const pass = String(password || "").trim();
-        if (!pass) {{
-          throw new Error("Enter your agent password.");
-        }}
-        persistMobileBasicAuth("{DEFAULT_AGENT_USER}", pass);
-        const ok = await verifyMobileChatAuth();
-        if (!ok) {{
-          clearMobileBasicAuth();
-          throw new Error("Invalid password — try again or reopen /login-help.html.");
-        }}
-        setMobileAuthNeeded(false);
-        showToast("Chat unlocked", "success");
-        return true;
-      }}
-      function withMobileAuth(headers) {{
-        const merged = {{ ...(headers || {{}}) }};
-        const auth = mobileAuthHeader();
-        if (auth && !merged.Authorization) {{
-          merged.Authorization = auth;
-        }}
-        return merged;
-      }}
-      applyMobileLayout();
-      window.addEventListener("resize", applyMobileLayout);
-      const chatHistory = [];
-      let activeChatSessionId = "default";
-      let chatSendInFlight = false;
-      let thinkingNode = null;
-      function setStatus(text) {{
-        const bar = document.getElementById("statusBar");
-        if (bar) bar.textContent = String(text || "");
-      }}
-      function showToast(message, kind) {{
-        const host = document.getElementById("toastHost");
-        if (!host) return;
-        const toast = document.createElement("div");
-        const tone = kind === "error" ? "toast-error" : kind === "success" ? "toast-success" : "toast-info";
-        toast.className = "toast " + tone;
-        toast.textContent = String(message || "");
-        host.appendChild(toast);
-        window.setTimeout(() => {{
-          if (toast.parentNode) toast.parentNode.removeChild(toast);
-        }}, 4200);
-      }}
-      function bindClick(id, fn, label) {{
-        const el = document.getElementById(id);
-        if (!el) {{
-          console.error("Missing UI control:", id);
-          showToast("Missing control: " + id, "error");
-          return;
-        }}
-        el.addEventListener("click", async (event) => {{
-          event.preventDefault();
-          const actionLabel = String(label || id);
-          setStatus(actionLabel + "...");
-          showToast(actionLabel, "info");
-        try {{
-          const result = await fn(event);
-          if (result === false) {{
-            setStatus("Ready");
-            return;
-          }}
-          setStatus(actionLabel + " done");
-          showToast(actionLabel + " done", "success");
-        }} catch (err) {{
-            const msg = String(err && err.message ? err.message : err);
-            setStatus(actionLabel + " failed");
-            showToast(msg, "error");
-            console.error(actionLabel, err);
-          }}
-        }});
-      }}
-      function wireUi() {{
-        const chatForm = document.getElementById("chatForm");
-        if (chatForm) {{
-          chatForm.addEventListener("submit", (event) => {{
-            event.preventDefault();
-            sendChat().catch((err) => showToast(String(err), "error"));
-          }});
-        }}
-        const mobileToggle = document.getElementById("mobilePanelsToggle");
-        if (mobileToggle) {{
-          mobileToggle.addEventListener("click", () => {{
-            const open = document.body.classList.toggle("mobile-show-panels");
-            mobileToggle.setAttribute("aria-expanded", open ? "true" : "false");
-            mobileToggle.textContent = open ? "Hide panels" : "Panels";
-          }});
-        }}
-        const mobileAuthBtn = document.getElementById("mobileChatAuthBtn");
-        const mobileAuthPass = document.getElementById("mobileChatPassword");
-        if (mobileAuthBtn && mobileAuthPass) {{
-          mobileAuthBtn.addEventListener("click", async () => {{
-            try {{
-              mobileAuthBtn.disabled = true;
-              await unlockMobileChatAuth(mobileAuthPass.value);
-              mobileAuthPass.value = "";
-            }} catch (err) {{
-              showToast(String(err && err.message ? err.message : err), "error");
-            }} finally {{
-              mobileAuthBtn.disabled = false;
-            }}
-          }});
-          mobileAuthPass.addEventListener("keydown", async (event) => {{
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            mobileAuthBtn.click();
-          }});
-        }}
-        bindClick("chatActionS3", () => {{
-          setChatInput("Help me configure S3 credentials and bucket for NPA workflows.");
-        }}, "Insert S3 prompt");
-        bindClick("chatActionCosmos", () => {{
-          setChatInput("How do I set up Cosmos3 in the NPA workbench?");
-        }}, "Insert Cosmos3 prompt");
-        bindClick("chatActionWatch", () => {{
-          setChatInput("Watch the sim in Rerun and keep retrying recording iframe mount until SUCCESS using /api/sim-viz/status.");
-        }}, "Insert watch-sim prompt");
-        bindClick("chatActionWorkflow", () => {{
-          setChatInput("Create a 2-step sim2real workflow YAML with real toolRefs from the catalog.");
-        }}, "Insert workflow YAML prompt");
-        bindClick("newChatSession", createNewChatSession, "New chat session");
-        bindClick("workflowUpload", uploadWorkflowYaml, "Upload workflow YAML");
-        bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
-        bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
-        bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
-        bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
-        bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
-        bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
-        bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
-        bindClick("openRerun", openRerunTab, "Open Rerun");
-        bindClick("applySelection", applySelection, "Apply stock selection");
-        bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
-        bindClick("workflowStatus", showWorkflowStatus, "Workflow status");
-        bindClick("loadRunData", loadRunData, "Load run data");
-        const chatInput = document.getElementById("chatInput");
-        if (chatInput) {{
-          chatInput.addEventListener("keydown", (e) => {{
-            if (e.key === "Enter" && !e.shiftKey) {{
-              e.preventDefault();
-              sendChat().catch((err) => showToast(String(err), "error"));
-            }}
-          }});
-        }}
-        const chatSessionSelect = document.getElementById("chatSessionSelect");
-        if (chatSessionSelect) {{
-          chatSessionSelect.addEventListener("change", async () => {{
-            const sessionId = String(chatSessionSelect.value || "default");
-            try {{
-              await selectChatSession(sessionId);
-            }} catch (err) {{
-              showToast(String(err && err.message ? err.message : err), "error");
-            }}
-          }});
-        }}
-        const cameraSelect = document.getElementById("cameraSelect");
-        if (cameraSelect) {{
-          cameraSelect.addEventListener("change", async (e) => {{
-            try {{
-              await selectCamera(String(e.target.value || ""));
-              showToast("Camera selected", "success");
-            }} catch (err) {{
-              showToast(String(err), "error");
-            }}
-          }});
-        }}
-        const runIdSelect = document.getElementById("runIdSelect");
-        if (runIdSelect) {{
-          runIdSelect.addEventListener("change", () => {{
-            const chosen = String(runIdSelect.value || "").trim();
-            const input = document.getElementById("runIdInput");
-            if (input && chosen) input.value = chosen;
-          }});
-        }}
-        const artifactRunSelect = document.getElementById("artifactRunSelect");
-        if (artifactRunSelect) {{
-          artifactRunSelect.addEventListener("change", async () => {{
-            const selectedRun = String(artifactRunSelect.value || "").trim();
-            if (!selectedRun) return;
-            await loadArtifactsForSelectedRun();
-          }});
-        }}
-        for (const id of ["artifactTypeFilter", "artifactSort"]) {{
-          const node = document.getElementById(id);
-          if (node) {{
-            node.addEventListener("change", async () => {{
-              const selectedRun = String((document.getElementById("artifactRunSelect") || {{}}).value || (document.getElementById("runIdInput") || {{}}).value || activeRunId || "").trim();
-              if (!selectedRun) return;
-              await loadArtifactsForSelectedRun();
-            }});
-          }}
-        }}
-        const robotPreset = document.getElementById("robotPreset");
-        if (robotPreset) {{
-          robotPreset.addEventListener("change", async (e) => {{
-            try {{
-              const data = await apiJson("/api/sim-assets/selection", {{
-                method: "POST",
-                headers: {{ "content-type": "application/json" }},
-                body: JSON.stringify(selectionPayloadFromUi()),
-              }});
-              if (String(e.target.value || "franka") === "franka" && data.sim_viz) {{
-                reloadRerunIframe(data.sim_viz.camera || "workspace");
-              }}
-              await refresh();
-              showToast("Robot preset updated", "success");
-            }} catch (err) {{
-              showToast(String(err), "error");
-            }}
-          }});
-        }}
-      }}
-      function escapeHtml(text) {{
-        return String(text || "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
-      }}
-      function renderInlineMarkdownLite(text) {{
-        let value = escapeHtml(text);
-        value = value.replace(/`([^`]+)`/g, "<code>$1</code>");
-        value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-        return value;
-      }}
-      function normalizeAssistantReply(text) {{
-        const raw = String(text || "").trim();
-        if (!raw) return raw;
-        if (!/^[\[\{{]/.test(raw)) return raw;
-        try {{
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === "object") {{
-            const lines = [];
-            for (const [key, value] of Object.entries(parsed)) {{
-              const rendered = (value !== null && typeof value === "object")
-                ? "`" + JSON.stringify(value) + "`"
-                : "`" + String(value) + "`";
-              lines.push("- **" + key + "**: " + rendered);
-            }}
-            return lines.join("\\n");
-          }}
-        }} catch (_err) {{
-          // Keep original non-JSON text.
-        }}
-        return raw;
-      }}
-      function markdownLiteHtml(text) {{
-        const lines = String(text || "").split(/\\r?\\n/);
-        let html = "";
-        let inList = false;
-        let listKind = "";
-        let inCode = false;
-        let codeLang = "";
-        let codeLines = [];
-        const closeList = () => {{
-          if (!inList) return;
-          html += listKind === "ol" ? "</ol>" : "</ul>";
-          inList = false;
-          listKind = "";
-        }};
-        const closeCode = () => {{
-          if (!inCode) return;
-          const langAttr = codeLang ? ' data-lang="' + escapeHtml(codeLang) + '"' : "";
-          html += "<pre><code" + langAttr + ">" + escapeHtml(codeLines.join("\\n")) + "</code></pre>";
-          inCode = false;
-          codeLang = "";
-          codeLines = [];
-        }};
-        for (const raw of lines) {{
-          const line = String(raw || "");
-          const fenceMatch = line.match(/^```([a-zA-Z0-9_-]+)?\s*$/);
-          if (fenceMatch) {{
-            if (inCode) {{
-              closeCode();
-            }} else {{
-              closeList();
-              inCode = true;
-              codeLang = String(fenceMatch[1] || "").toLowerCase();
-              codeLines = [];
-            }}
-            continue;
-          }}
-          if (inCode) {{
-            codeLines.push(line);
-            continue;
-          }}
-          if (/^\s*[-*]\s+/.test(line)) {{
-            if (!inList || listKind !== "ul") {{
-              closeList();
-              html += "<ul>";
-              inList = true;
-              listKind = "ul";
-            }}
-            html += "<li>" + renderInlineMarkdownLite(line.replace(/^\s*[-*]\s+/, "")) + "</li>";
-            continue;
-          }}
-          if (/^\s*\d+\.\s+/.test(line)) {{
-            if (!inList || listKind !== "ol") {{
-              closeList();
-              html += "<ol>";
-              inList = true;
-              listKind = "ol";
-            }}
-            html += "<li>" + renderInlineMarkdownLite(line.replace(/^\s*\d+\.\s+/, "")) + "</li>";
-            continue;
-          }}
-          closeList();
-          if (!line.trim()) {{
-            continue;
-          }}
-          html += "<p>" + renderInlineMarkdownLite(line) + "</p>";
-        }}
-        closeList();
-        closeCode();
-        return html || "<p></p>";
-      }}
-      function extractFencedCode(text, preferredLang) {{
-        const raw = String(text || "");
-        const blocks = [];
-        const re = /```([a-zA-Z0-9_-]+)?\s*\\n([\\s\\S]*?)```/g;
-        let match;
-        while ((match = re.exec(raw)) !== null) {{
-          blocks.push({{
-            lang: String(match[1] || "").toLowerCase(),
-            body: String(match[2] || "").replace(/\s+$/, ""),
-          }});
-        }}
-        if (!blocks.length) return "";
-        if (preferredLang) {{
-          const target = blocks.find((item) => item.lang === String(preferredLang).toLowerCase());
-          if (target) return target.body;
-        }}
-        return blocks[0].body;
-      }}
-      async function copyTextToClipboard(text) {{
-        const value = String(text || "");
-        if (!value) return false;
-        if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {{
-          await navigator.clipboard.writeText(value);
-          return true;
-        }}
-        const ta = document.createElement("textarea");
-        ta.value = value;
-        ta.setAttribute("readonly", "readonly");
-        ta.style.position = "absolute";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        const ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-        return Boolean(ok);
-      }}
-      function appendChat(role, text, opts) {{
-        const options = opts || {{}};
-        const rawText = String(text || "");
-        const log = document.getElementById("chatLog");
-        const row = document.createElement("div");
-        row.className = "msg-row " + role;
-        const card = document.createElement("div");
-        card.className = "msg-card";
-        const bubble = document.createElement("div");
-        bubble.className = "bubble";
-        if (options.thinking) {{
-          bubble.innerHTML =
-            '<span class="sparkle">✦</span><span class="thinking-dots"><span></span><span></span><span></span></span>';
-        }} else {{
-          bubble.innerHTML = markdownLiteHtml(rawText);
-        }}
-        card.appendChild(bubble);
-        if (!options.thinking && role === "assistant") {{
-          const actions = document.createElement("div");
-          actions.className = "msg-actions";
-          const copyBtn = document.createElement("button");
-          copyBtn.type = "button";
-          copyBtn.className = "msg-copy-btn";
-          const yamlBlock = extractFencedCode(rawText, "yaml");
-          const payload = yamlBlock || rawText;
-          copyBtn.textContent = yamlBlock ? "Copy YAML" : "Copy";
-          copyBtn.addEventListener("click", async () => {{
-            try {{
-              const ok = await copyTextToClipboard(payload);
-              if (!ok) throw new Error("copy failed");
-              showToast(yamlBlock ? "YAML copied" : "Message copied", "success");
-            }} catch (err) {{
-              showToast(String(err && err.message ? err.message : err), "error");
-            }}
-          }});
-          actions.appendChild(copyBtn);
-          card.appendChild(actions);
-        }}
-        row.appendChild(card);
-        log.appendChild(row);
-        log.scrollTop = log.scrollHeight;
-        return row;
-      }}
-      function showThinkingBubble() {{
-        if (thinkingNode) return;
-        thinkingNode = appendChat("thinking", "", {{ thinking: true }});
-      }}
-      function clearThinkingBubble() {{
-        if (thinkingNode && thinkingNode.parentNode) {{
-          thinkingNode.parentNode.removeChild(thinkingNode);
-        }}
-        thinkingNode = null;
-      }}
-      function setChatBusy(isBusy) {{
-        const btn = document.getElementById("chatSend");
-        const input = document.getElementById("chatInput");
-        const model = document.getElementById("chatModel");
-        const busy = Boolean(isBusy);
-        if (btn) btn.disabled = busy;
-        if (input) input.disabled = busy;
-        if (model) model.disabled = busy;
-      }}
-      function setChatModels(models, selectedModel) {{
-        const select = document.getElementById("chatModel");
-        if (!select) return;
-        // Preserve any explicit prior user choice across refreshes.
-        const prior = String((select && select.value) || "").trim();
-        const values = Array.isArray(models)
-          ? [...new Set(models.map((item) => String(item || "").trim()).filter(Boolean))]
-          : [];
-        select.innerHTML = "";
-        // Default option: empty value => backend applies cost-tier routing
-        // (cheapest adequate model per turn) instead of pinning the reasoner.
-        const autoOpt = document.createElement("option");
-        autoOpt.value = "";
-        autoOpt.textContent = "Auto (cost-aware)";
-        select.appendChild(autoOpt);
-        for (const model of values) {{
-          const opt = document.createElement("option");
-          opt.value = model;
-          opt.textContent = model;
-          select.appendChild(opt);
-        }}
-        // Keep an explicit prior selection; otherwise default to Auto (""). The
-        // server-provided default model is intentionally not auto-selected.
-        select.value = prior && values.includes(prior) ? prior : "";
-      }}
-      function selectedChatModel() {{
-        // Empty string ("Auto") lets the backend route by cost tier.
-        const select = document.getElementById("chatModel");
-        return String((select && select.value) || "").trim();
-      }}
-      function clearChatLog() {{
-        const log = document.getElementById("chatLog");
-        if (log) log.innerHTML = "";
-        chatHistory.splice(0, chatHistory.length);
-      }}
-      function renderChatHistory(history) {{
-        clearChatLog();
-        const hist = Array.isArray(history) ? history : [];
-        for (const msg of hist) {{
-          const role = String(msg.role || "");
-          const content = String(msg.content || "").trim();
-          if (!content || (role !== "user" && role !== "assistant")) continue;
-          appendChat(role, content);
-          chatHistory.push({{ role, content }});
-        }}
-      }}
-      function updateChatSessionSelector(sessions, activeId) {{
-        const select = document.getElementById("chatSessionSelect");
-        if (!select) return;
-        const rows = Array.isArray(sessions) ? sessions : [];
-        const active = String(activeId || activeChatSessionId || "default");
-        select.innerHTML = "";
-        if (!rows.length) {{
-          const opt = document.createElement("option");
-          opt.value = active;
-          opt.textContent = "Default chat";
-          opt.selected = true;
-          select.appendChild(opt);
-          return;
-        }}
-        for (const row of rows) {{
-          const id = String(row.id || "").trim();
-          if (!id) continue;
-          const opt = document.createElement("option");
-          opt.value = id;
-          const count = Number(row.message_count || 0);
-          opt.textContent = String(row.title || id) + (count ? " (" + String(count) + ")" : "");
-          if (id === active) opt.selected = true;
-          select.appendChild(opt);
-        }}
-      }}
-      async function refreshChatSessions(activeId) {{
-        const data = await apiJson("/api/chat/sessions");
-        activeChatSessionId = String(data.active_session_id || activeId || activeChatSessionId || "default");
-        updateChatSessionSelector(data.sessions, activeChatSessionId);
-        return data;
-      }}
-      async function selectChatSession(sessionId) {{
-        const safeId = String(sessionId || "default").trim() || "default";
-        const data = await apiJson("/api/chat/sessions/" + encodeURIComponent(safeId) + "/select", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{}}),
-        }});
-        const session = data.session || {{}};
-        activeChatSessionId = String(data.active_session_id || session.id || safeId);
-        updateChatSessionSelector(data.sessions, activeChatSessionId);
-        renderChatHistory(session.chat_history || []);
-        showToast("Loaded chat session", "success");
-        return session;
-      }}
-      async function createNewChatSession() {{
-        const data = await apiJson("/api/chat/sessions", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ title: "New chat" }}),
-        }});
-        const session = data.session || {{}};
-        activeChatSessionId = String(data.active_session_id || session.id || "default");
-        updateChatSessionSelector(data.sessions, activeChatSessionId);
-        renderChatHistory([]);
-        showToast("New chat session ready", "success");
-        return true;
-      }}
-      function setWorkflowYaml(text, validation) {{
-        const area = document.getElementById("workflowYaml");
-        if (area) area.value = String(text || "");
-        updateWorkflowMeta(validation || {{}});
-      }}
-      function updateWorkflowMeta(validation) {{
-        const nameEl = document.getElementById("workflowName");
-        const valEl = document.getElementById("workflowValidation");
-        const statesEl = document.getElementById("workflowStates");
-        const name = String((validation && validation.name) || "—");
-        const status = String((validation && validation.status) || (validation && validation.ok ? "valid" : "pending"));
-        const states = Array.isArray(validation && validation.states)
-          ? validation.states.join(", ")
-          : String((validation && validation.states) || "—");
-        if (nameEl) nameEl.textContent = name;
-        if (valEl) valEl.textContent = status;
-        if (statesEl) statesEl.textContent = states || "—";
-      }}
-      function currentWorkflowYaml() {{
-        const area = document.getElementById("workflowYaml");
-        return String((area && area.value) || "").trim();
-      }}
-      async function uploadWorkflowYaml() {{
-        const yaml = currentWorkflowYaml();
-        if (!yaml) throw new Error("Paste or generate workflow YAML first");
-        const data = await apiJson("/api/workflows/draft", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ yaml }}),
-        }});
-        updateWorkflowMeta((data.validation) || {{}});
-        appendChat("assistant", "Uploaded workflow YAML to the **Workflow YAML** panel (`" + String((data.validation && data.validation.name) || "draft") + "`).");
-        return true;
-      }}
-      async function validateWorkflowYaml() {{
-        const yaml = currentWorkflowYaml();
-        if (!yaml) throw new Error("Paste or generate workflow YAML first");
-        const data = await apiJson("/api/workflows/validate", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ yaml }}),
-        }});
-        updateWorkflowMeta((data.validation) || {{}});
-        if (!data.ok) throw new Error(String((data.validation && data.validation.error) || "validation failed"));
-        return true;
-      }}
-      async function planWorkflowYaml() {{
-        const yaml = currentWorkflowYaml();
-        if (!yaml) throw new Error("Paste or generate workflow YAML first");
-        const data = await apiJson("/api/workflows/plan", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ yaml, run_id: "agent-plan" }}),
-        }});
-        const out = document.getElementById("workflowPlanOutput");
-        const steps = Array.isArray(data.plan && data.plan.steps) ? data.plan.steps : [];
-        const lines = steps.map((step, idx) =>
-          String(idx + 1).padStart(2, "0") + ". " + String(step.state || "?") +
-          " toolRef=" + String(step.tool_ref || step.toolRef || "")
-        );
-        if (out) out.textContent = lines.length ? lines.join("\\n") : JSON.stringify(data.plan || {{}}, null, 2);
-        updateWorkflowMeta((data.plan && data.plan.workflow) ? {{ name: data.plan.workflow, status: "planned", states: steps.map((s) => s.state) }} : {{}});
-        return true;
-      }}
-      async function submitWorkflowYaml() {{
-        const yaml = currentWorkflowYaml();
-        if (!yaml) throw new Error("Paste or generate workflow YAML first");
-        const data = await apiJson("/api/workflows/submit", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ yaml }}),
-        }});
-        updateWorkflowMeta((data.validation) || {{}});
-        appendChat(
-          "assistant",
-          "Submitted npa.workflow YAML — **run_id**: `" + String(data.run_id || "") +
-            "`, **mode**: `" + String(data.submit_mode || "") + "`."
-        );
-        return true;
-      }}
-      async function sendChat() {{
-        const input = document.getElementById("chatInput");
-        if (!input) {{
-          throw new Error("Chat input missing");
-        }}
-        if (chatSendInFlight) {{
-          return false;
-        }}
-        if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
-          setMobileAuthNeeded(true);
-          showToast("Unlock chat with your agent password first.", "error");
-          return false;
-        }}
-        const text = String(input.value || "").trim();
-        const model = selectedChatModel();
-        if (!text) {{
-          showToast("Enter a message first", "info");
-          return false;
-        }}
-        chatSendInFlight = true;
-        appendChat("user", text);
-        chatHistory.push({{ role: "user", content: text }});
-        setChatBusy(true);
-        showThinkingBubble();
-        try {{
-          const data = await apiJson("/api/chat", {{
-            method: "POST",
-            headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{ messages: chatHistory, model, session_id: activeChatSessionId }}),
-          }});
-          clearThinkingBubble();
-          input.value = "";
-          if (data && data.model) {{
-            // Surface the model/tier actually used without hijacking the user's
-            // selection — "Auto" must stay Auto so routing keeps applying.
-            const select = document.getElementById("chatModel");
-            if (select) {{
-              const tierNote = data.tier ? " \u00b7 tier: " + String(data.tier) : "";
-              select.title = "last used: " + String(data.model) + tierNote;
-            }}
-          }}
-          if (data && data.session_id) {{
-            activeChatSessionId = String(data.session_id);
-          }}
-          const reply = normalizeAssistantReply(data.reply || "");
-          if (reply) {{
-            appendChat("assistant", reply);
-            chatHistory.push({{ role: "assistant", content: reply }});
-            refreshChatSessions(activeChatSessionId).catch(() => {{ /* best-effort session list refresh */ }});
-          }} else {{
-            appendChat("error", "empty reply from model");
-          }}
-          if (data.workflow_yaml) {{
-            setWorkflowYaml(data.workflow_yaml, data.workflow_validation || {{}});
-          }}
-          const draft = data.workflow_draft;
-          if (!data.workflow_yaml && draft && draft.yaml) {{
-            setWorkflowYaml(draft.yaml, draft.validation || draft);
-          }}
-        }} catch (err) {{
-          clearThinkingBubble();
-          const message = String(err && err.message ? err.message : err);
-          input.value = text;
-          const tail = chatHistory[chatHistory.length - 1];
-          if (tail && tail.role === "user" && tail.content === text) {{
-            chatHistory.pop();
-          }}
-          appendChat("error", "Send failed; your draft was restored. " + message);
-          throw err;
-        }} finally {{
-          chatSendInFlight = false;
-          setChatBusy(false);
-          input.focus();
-        }}
-      }}
-      function setChatInput(text) {{
-        const input = document.getElementById("chatInput");
-        input.value = text;
-        input.focus();
-      }}
-      let lastRrdUpdatedAt = "";
-      let rerunIframeLoaded = false;
-      let rerunBootInProgress = false;
-      let mountedRerunRunKey = "";
-      let activeRunId = "";
-      let activeArtifactRender = "";
-      let lastRerunBlobStatus = "pending";
-      let lastRerunMountStatus = "pending";
-      const RERUN_RECORDING_PATH = "/rerun/recordings/sim2real.rrd";
-      const RERUN_BUNDLE_ASSETS = ["/rerun/re_viewer.js", "/rerun/re_viewer_bg.wasm"];
-      let rerunBundleWarmPromise = null;
-      const RERUN_BLOB_SUCCESS = "SUCCESS";
-      const RERUN_MOUNT_SUCCESS = "SUCCESS";
-      function setRerunBlobStatus(status, detail) {{
-        const text = String(status || "").trim() || "pending";
-        lastRerunBlobStatus = text;
-        const extra = detail ? " (" + String(detail) + ")" : "";
-        setStatus("Rerun recording: " + text + extra);
-      }}
-      function setRerunMountStatus(status, detail) {{
-        const text = String(status || "").trim() || "pending";
-        lastRerunMountStatus = text;
-        const extra = detail ? " (" + String(detail) + ")" : "";
-        setStatus("Rerun mount: " + text + extra);
-      }}
-      async function warmRerunBundle() {{
-        if (rerunBundleWarmPromise) {{
-          return rerunBundleWarmPromise;
-        }}
-        rerunBundleWarmPromise = Promise.all(
-          RERUN_BUNDLE_ASSETS.map((path) =>
-            fetchWithTimeout(
-              path,
-              {{ credentials: "include", cache: "force-cache" }},
-              120000
-            ).then((resp) => {{
-              if (!resp.ok) {{
-                throw new Error("Rerun bundle asset failed: " + path);
-              }}
-              return resp.blob();
-            }})
-          )
-        ).catch((err) => {{
-          rerunBundleWarmPromise = null;
-          throw err;
-        }});
-        return rerunBundleWarmPromise;
-      }}
-      async function resolveRerunRecordingUrl() {{
-        const cacheBust = "?t=" + String(Date.now());
-        const recordingUrl = location.origin + RERUN_RECORDING_PATH + cacheBust;
-        const resp = await fetchWithTimeout(RERUN_RECORDING_PATH, {{ credentials: "include", method: "HEAD" }}, 8000);
-        if (!resp.ok) {{
-          throw new Error("Rerun recording not published yet");
-        }}
-        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=public");
-        return recordingUrl;
-      }}
-      async function rerunIframeSrc(camera, runId) {{
-        const cam = String(camera || "workspace");
-        let rrdUrl = "";
-        try {{
-          rrdUrl = await resolveRerunRecordingUrl();
-          // Still verify the authenticated blob path; the viewer itself loads
-          // the unauthenticated recording copy because Rerun's WASM fetch path
-          // does not reliably consume parent-created blob URLs across browsers.
-          try {{
-            await resolveRerunRrdUrl(3, runId);
-          }} catch (_blobErr) {{
-            // Keep the public recording URL when the recording is already present.
-          }}
-        }} catch (_recordingErr) {{
-          rrdUrl = await resolveRerunRrdUrl(18, runId);
-        }}
-        // Prefer the public recording copy; authenticated blob fetch remains the fallback.
-        // Rerun parses path-only `/rerun/...` as host `rerun` → http://rerun/... (broken).
-        if (rrdUrl.startsWith("/")) {{
-          rrdUrl = location.origin + rrdUrl;
-        }} else if (rrdUrl && !/^https?:\/\//i.test(rrdUrl)) {{
-          rrdUrl = location.origin + "/" + String(rrdUrl).replace(/^\/+/, "");
-        }}
-        const fullHref = (
-          "/rerun/?url=" +
-          encodeURIComponent(rrdUrl) +
-          "&hide_welcome_screen=1&camera=" +
-          encodeURIComponent(cam)
-        );
-        const openLink = document.getElementById("openFullRerun");
-        if (openLink) openLink.href = fullHref;
-        return fullHref;
-      }}
-      function showRerunPlaceholder(message, options) {{
-        const opts = options || {{}};
-        const placeholder = document.getElementById("rerunPlaceholder");
-        const iframe = document.getElementById("rerunFrame");
-        if (!opts.force && rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute("src")) {{
-          return;
-        }}
-        if (placeholder) {{
-          placeholder.hidden = false;
-          if (message) {{
-            const hint = placeholder.querySelector(".hint");
-            if (hint) hint.textContent = String(message);
-          }}
-        }}
-        if (iframe) {{
-          iframe.hidden = true;
-          iframe.removeAttribute("src");
-        }}
-        rerunIframeLoaded = false;
-        mountedRerunRunKey = "";
-      }}
-      function hideRerunPlaceholder() {{
-        const placeholder = document.getElementById("rerunPlaceholder");
-        const iframe = document.getElementById("rerunFrame");
-        if (placeholder) placeholder.hidden = true;
-        if (iframe) iframe.hidden = false;
-      }}
-      function hideArtifactPreview() {{
-        const host = document.getElementById("artifactPreviewHost");
-        if (!host) return;
-        host.hidden = true;
-        host.innerHTML = "";
-      }}
-      async function showArtifactPreview(simViz, render) {{
-        const host = document.getElementById("artifactPreviewHost");
-        if (!host) return;
-        const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
-        const downloadUrl = String((simViz && simViz.artifact_download_url) || previewUrl || "");
-        const safeRender = String(render || "");
-        if (!previewUrl) {{
-          host.hidden = false;
-          host.innerHTML = "<p>No preview URL available. Use download.</p>";
-          return;
-        }}
-        if (safeRender === "image") {{
-          host.hidden = false;
-          host.innerHTML = `<img alt="artifact image" src="${{previewUrl}}" style="max-width:100%;border-radius:8px;border:1px solid #dbe2ef;" />`;
-          return;
-        }}
-        if (safeRender === "video") {{
-          host.hidden = false;
-          host.innerHTML = `<video controls style="max-width:100%;border-radius:8px;border:1px solid #dbe2ef;" src="${{previewUrl}}"></video>`;
-          return;
-        }}
-        if (safeRender === "json" || safeRender === "text") {{
-          try {{
-            const resp = await fetchWithTimeout(previewUrl, {{ credentials: "include" }}, 12000);
-            if (!resp.ok) throw new Error("preview fetch failed");
-            const text = await resp.text();
-            host.hidden = false;
-            host.innerHTML = `<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;max-height:280px;overflow:auto;">${{escapeHtml(text.slice(0, 20000))}}</pre>`;
-            return;
-          }} catch (_err) {{
-            // fall through to download link
-          }}
-        }}
-        host.hidden = false;
-        host.innerHTML = `<p>Artifact render: <strong>${{escapeHtml(safeRender || "download")}}</strong>. <a href="${{downloadUrl}}" target="_blank" rel="noopener">Download artifact</a></p>`;
-      }}
-      async function waitForRerunReady(maxAttempts) {{
-        const attempts = Number(maxAttempts || 12);
-        for (let i = 0; i < attempts; i += 1) {{
-          const simViz = await loadJson("/api/sim-viz/status");
-          if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
-            return simViz;
-          }}
-          await new Promise((resolve) => window.setTimeout(resolve, 500));
-        }}
-        throw new Error("Rerun recording is not ready yet (.rrd missing)");
-      }}
-      async function waitForIframeLoad(iframe, timeoutMs) {{
-        const timeout = Math.max(500, Number(timeoutMs || 8000));
-        return await new Promise((resolve, reject) => {{
-          let done = false;
-          const timer = window.setTimeout(() => {{
-            if (done) return;
-            done = true;
-            reject(new Error("Rerun iframe load timed out"));
-          }}, timeout);
-          function finish(ok, err) {{
-            if (done) return;
-            done = true;
-            window.clearTimeout(timer);
-            iframe.removeEventListener("load", onLoad);
-            iframe.removeEventListener("error", onError);
-            if (ok) {{
-              resolve(true);
-            }} else {{
-              reject(err || new Error("Rerun iframe failed to load"));
-            }}
-          }}
-          function onLoad() {{
-            finish(true);
-          }}
-          function onError() {{
-            finish(false, new Error("Rerun iframe error event"));
-          }}
-          iframe.addEventListener("load", onLoad, {{ once: true }});
-          iframe.addEventListener("error", onError, {{ once: true }});
-        }});
-      }}
-      async function waitForRerunRenderSettle(iframe, timeoutMs) {{
-        const timeout = Math.max(3000, Number(timeoutMs || 15000));
-        const start = Date.now();
-        while (Date.now() - start < timeout) {{
-          try {{
-            const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
-            if (doc && doc.querySelectorAll("canvas").length > 0) {{
-              break;
-            }}
-          }} catch (_err) {{
-            break;
-          }}
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-        }}
-        // Rerun fires the iframe load event before WebGL has drawn the recording.
-        // Give the viewer one render window so success does not race a blank canvas.
-        await new Promise((resolve) => window.setTimeout(resolve, 15000));
-      }}
-      async function mountRerunIframe(camera, runId) {{
-        const iframe = document.getElementById("rerunFrame");
-        if (!iframe) return true;
-        const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
-        if (rerunIframeLoaded && mountedRerunRunKey === mountKey && !iframe.hidden && iframe.getAttribute("src")) {{
-          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
-          return true;
-        }}
-        const src = await rerunIframeSrc(camera, runId);
-        setRerunMountStatus("retrying", "navigating");
-        iframe.src = src;
-        iframe.dataset.rerunRunKey = mountKey;
-        hideRerunPlaceholder();
-        await waitForIframeLoad(iframe, 12000);
-        rerunIframeLoaded = true;
-        mountedRerunRunKey = mountKey;
-        setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
-        waitForRerunRenderSettle(iframe, 15000).catch((err) => {{
-          console.warn("rerun render settle probe failed", err);
-        }});
-        return true;
-      }}
-      async function mountRerunIframeUntilSuccess(camera, maxAttempts, runId) {{
-        const attempts = Math.max(1, Number(maxAttempts || 8));
-        let lastErr = null;
-        for (let i = 0; i < attempts; i += 1) {{
-          try {{
-            setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
-            setRerunMountStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
-            await mountRerunIframe(camera, runId);
-            if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
-              throw new Error("Rerun iframe mount missing SUCCESS blob/mount state");
-            }}
-            return true;
-          }} catch (err) {{
-            lastErr = err;
-            setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
-            setRerunMountStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
-            if (i + 1 >= attempts) {{
-              break;
-            }}
-            await new Promise((resolve) => window.setTimeout(resolve, 1000));
-          }}
-        }}
-        throw lastErr || new Error("Rerun iframe mount did not reach SUCCESS");
-      }}
-      async function waitForRerunSuccess(camera, options) {{
-        const opts = options || {{}};
-        const deadlineMs = Math.max(5000, Number(opts.deadlineMs || 120000));
-        const sleepMs = Math.max(500, Number(opts.sleepMs || 1200));
-        const mountAttemptsPerLoop = Math.max(1, Number(opts.mountAttemptsPerLoop || 4));
-        const successStreakTarget = Math.max(1, Number(opts.successStreakTarget || 1));
-        const targetRunId = String(opts.runId || "").trim();
-        const baselineUpdatedAt = String(opts.baselineRrdUpdatedAt || "").trim();
-        const start = Date.now();
-        let lastErr = null;
-        let successStreak = 0;
-        while (Date.now() - start < deadlineMs) {{
-          try {{
-            const statusPath = targetRunId
-              ? "/api/sim-viz/status?run_id=" + encodeURIComponent(targetRunId)
-              : "/api/sim-viz/status";
-            const status = await loadJson(statusPath);
-            const selectedCamera = String((status && status.camera) || camera || "workspace");
-            const activeRunId = String((status && status.run_id) || "").trim();
-            const activeStage = String((status && status.stage) || "idle").trim().toLowerCase();
-            const activeUpdatedAt = String((status && status.rrd_updated_at) || "").trim();
-            const runMatches = !targetRunId || (activeRunId && activeRunId === targetRunId);
-            const stageAdvanced = !["", "idle", "submitted", "queued"].includes(activeStage);
-            const rrdFresh = Boolean(activeUpdatedAt && (!baselineUpdatedAt || activeUpdatedAt !== baselineUpdatedAt));
-            if (status && status.rrd_uri && runMatches && (stageAdvanced || rrdFresh)) {{
-              await mountRerunIframeUntilSuccess(selectedCamera, mountAttemptsPerLoop, targetRunId);
-              if (lastRerunBlobStatus === RERUN_BLOB_SUCCESS && lastRerunMountStatus === RERUN_MOUNT_SUCCESS) {{
-                successStreak += 1;
-                if (successStreak >= successStreakTarget) {{
-                  return status;
-                }}
-              }} else {{
-                successStreak = 0;
-              }}
-            }} else {{
-              successStreak = 0;
-            }}
-          }} catch (err) {{
-            lastErr = err;
-            successStreak = 0;
-          }}
-          await new Promise((resolve) => window.setTimeout(resolve, sleepMs));
-        }}
-        if (lastErr) {{
-          throw lastErr;
-        }}
-        throw new Error("Timed out waiting for rerun recording/iframe SUCCESS");
-      }}
-      function reloadRerunIframe(camera) {{
-        if (!rerunIframeLoaded) return Promise.resolve();
-        return mountRerunIframeUntilSuccess(camera, 6).catch((err) => {{
-          console.warn("rerun iframe reload failed", err);
-          return false;
-        }});
-      }}
-      async function bestEffortMountRerun(camera, runId) {{
-        try {{
-          const cam = String(camera || "workspace");
-          const rid = String(runId || activeRunId || "").trim();
-          await mountRerunIframe(cam, rid);
-          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort");
-          return true;
-        }} catch (err) {{
-          console.warn("best-effort rerun mount failed", err);
-          setRerunMountStatus("degraded", String(err && err.message ? err.message : err).slice(0, 120));
-          return false;
-        }}
-      }}
-      async function loadRerunViewer(camera) {{
-        const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
-        let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
-        const render = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
-        if (render && render !== "rerun") {{
-          activeArtifactRender = render;
-          showRerunPlaceholder("This artifact is a " + render + " preview, not a Rerun .rrd recording. Use the preview/download below or choose Type = Rerun .rrd.", {{ force: true }});
-          await showArtifactPreview(simViz, render);
-          showToast("Only .rrd artifacts open in Rerun; showing " + render + " preview.", "info");
-          return false;
-        }}
-        if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
-          showToast("No run recording yet; loading stock Franka visual fallback in Rerun.", "info");
-          await apiJson("/api/sim-viz/load-franka-demo", {{
-            method: "POST",
-            headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{ camera: cam }}),
-          }});
-          activeRunId = "franka-demo";
-          simViz = await waitForRerunReady();
-        }} else {{
-          simViz = await waitForRerunReady();
-        }}
-        const runId = String((simViz && simViz.run_id) || activeRunId || "").trim();
-        if (runId) activeRunId = runId;
-        await waitForRerunSuccess(String(simViz.camera || cam), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4, runId }});
-        return true;
-      }}
-      async function pollSimVizUntilRrd(maxAttempts, delayMs, targetRunId) {{
-        const attempts = Math.max(1, Number(maxAttempts || 36));
-        const sleepMs = Math.max(250, Number(delayMs || 1500));
-        const runId = String(targetRunId || "").trim();
-        let last = null;
-        for (let i = 0; i < attempts; i += 1) {{
-          const statusPath = runId
-            ? "/api/sim-viz/status?run_id=" + encodeURIComponent(runId)
-            : "/api/sim-viz/status";
-          const simViz = await loadJson(statusPath);
-          last = simViz;
-          const activeRunId = String((simViz && simViz.run_id) || "").trim();
-          const runMatches = !runId || (activeRunId && activeRunId === runId);
-          if (simViz && simViz.rrd_uri && runMatches) {{
-            return simViz;
-          }}
-          await new Promise((resolve) => window.setTimeout(resolve, sleepMs));
-        }}
-        return last || {{}};
-      }}
-      async function loadFrankaDemo() {{
-        const camera = String(document.getElementById("cameraSelect").value || "workspace");
-        const result = await apiJson("/api/sim-viz/load-franka-demo", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ camera }}),
-        }});
-        const simVizForMount = (result && result.sim_viz) || await waitForRerunReady();
-        await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
-        activeArtifactRender = "rerun";
-        hideArtifactPreview();
-        const simViz = await loadJson("/api/sim-viz/status");
-        if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
-          const stage = String(simViz.stage || "demo");
-          appendChat(
-            "assistant",
-            "Loaded **stock Franka** demo — **stage**: `" + stage + "`, **camera**: `" + camera + "`, **rerun_ready**: `" +
-              String(Boolean(simViz.rerun_ready)) + "`."
-          );
-        }} else if (result && result.ok === false) {{
-          appendChat("error", "Franka demo load did not complete — check Rerun service status.");
-        }}
-        await refresh();
-        return true;
-      }}
-      async function fetchWithTimeout(path, init, timeoutMs) {{
-        const ms = Number(timeoutMs || 12000);
-        const ctrl = new AbortController();
-        const timer = window.setTimeout(() => ctrl.abort(), ms);
-        const req = init || {{}};
-        const headers = withMobileAuth({{
-          ...(req.headers || {{}}),
-        }});
-        const useExplicitAuth = document.body.classList.contains("mobile-agent") && Boolean(headers.Authorization);
-        try {{
-          return await fetch(path, {{
-            ...req,
-            credentials: useExplicitAuth ? "omit" : (req.credentials || "include"),
-            headers,
-            signal: ctrl.signal,
-          }});
-        }} finally {{
-          window.clearTimeout(timer);
-        }}
-      }}
-      async function apiJson(path, init) {{
-        const req = init || {{}};
-        const isMobile = document.body.classList.contains("mobile-agent");
-        const headers = withMobileAuth({{
-          ...(req.headers || {{}}),
-        }});
-        const useExplicitAuth = isMobile && Boolean(headers.Authorization);
-        const opts = {{
-          ...req,
-          credentials: useExplicitAuth ? "omit" : "include",
-          headers,
-        }};
-        const pathText = String(path || "");
-        const timeoutMs = (
-          pathText === "/api/chat" ||
-          pathText === "/api/workflows/submit" ||
-          pathText === "/api/infra/provision"
-        ) ? 900000 : 12000;
-        let resp;
-        try {{
-          resp = await fetchWithTimeout(path, opts, timeoutMs);
-        }} catch (err) {{
-          if (err && err.name === "AbortError") {{
-            throw new Error("Request timed out: " + String(path));
-          }}
-          throw err;
-        }}
-        let data = null;
-        try {{
-          data = await resp.json();
-        }} catch (_err) {{
-          data = null;
-        }}
-        if (!resp.ok) {{
-          if (resp.status === 401) {{
-            if (document.body.classList.contains("mobile-agent")) {{
-              setMobileAuthNeeded(true);
-              throw new Error("Unlock chat with your agent password.");
-            }}
-            window.location.href = "/login-help.html";
-            throw new Error("Authentication required. Open / and sign in with HTTP Basic Auth.");
-          }}
-          const detail =
-            (data && (data.detail || data.error || data.message)) ||
-            resp.statusText ||
-            "request failed";
-          throw new Error(String(detail));
-        }}
-        return data;
-      }}
-      async function loadJson(path) {{
-        return await apiJson(path);
-      }}
-      function artifactPrefixValue() {{
-        const input = document.getElementById("artifactPrefix");
-        return String((input && input.value) || "").trim();
-      }}
-      function artifactTypeFilterValue() {{
-        const input = document.getElementById("artifactTypeFilter");
-        return String((input && input.value) || "").trim();
-      }}
-      function artifactSortValue() {{
-        const input = document.getElementById("artifactSort");
-        return String((input && input.value) || "preferred").trim();
-      }}
-      function sortAndFilterArtifacts(artifacts, preferred) {{
-        const filter = artifactTypeFilterValue();
-        const sortMode = artifactSortValue();
-        const preferredKey = String((preferred && preferred.key) || "");
-        const typeRank = {{ rerun: 0, video: 1, image: 2, json: 3, text: 4, download: 5 }};
-        const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {{
-          return !filter || String(item.render || "download") === filter;
-        }});
-        items.sort((a, b) => {{
-          const ar = String(a.render || "download");
-          const br = String(b.render || "download");
-          if (sortMode === "preferred") {{
-            const ap = String(a.key || "") === preferredKey ? -1 : 0;
-            const bp = String(b.key || "") === preferredKey ? -1 : 0;
-            if (ap !== bp) return ap - bp;
-            const tr = (typeRank[ar] ?? 99) - (typeRank[br] ?? 99);
-            if (tr !== 0) return tr;
-          }}
-          if (sortMode === "type") {{
-            const tr = (typeRank[ar] ?? 99) - (typeRank[br] ?? 99);
-            if (tr !== 0) return tr;
-          }}
-          if (sortMode === "largest") {{
-            return Number(b.size || 0) - Number(a.size || 0);
-          }}
-          if (sortMode === "name") {{
-            return String(a.key || "").localeCompare(String(b.key || ""));
-          }}
-          return String(b.last_modified || "").localeCompare(String(a.last_modified || ""));
-        }});
-        return items;
-      }}
-      async function refreshArtifactRuns() {{
-        const prefix = artifactPrefixValue();
-        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix) + "&limit=100") : "?limit=100";
-        const data = await apiJson("/api/artifacts/runs" + query);
-        const select = document.getElementById("artifactRunSelect");
-        if (select) {{
-          select.innerHTML = '<option value="">(select discovered run)</option>';
-          const runs = Array.isArray(data.runs) ? data.runs : [];
-          for (const run of runs) {{
-            const runId = String(run.run_id || "").trim();
-            if (!runId) continue;
-            const opt = document.createElement("option");
-            opt.value = runId;
-            opt.textContent = runId + (run.has_viewable ? " [viewable]" : " [download]");
-            select.appendChild(opt);
-          }}
-        }}
-        const list = document.getElementById("artifactList");
-        if (list) {{
-          const trunc = data.truncated ? " (truncated)" : "";
-          list.textContent = "Runs discovered: " + String(data.total_runs || 0) + trunc;
-        }}
-        return true;
-      }}
-      async function loadArtifactsForSelectedRun() {{
-        const select = document.getElementById("artifactRunSelect");
-        const runInput = document.getElementById("runIdInput");
-        const runId = String((select && select.value) || (runInput && runInput.value) || activeRunId || "").trim();
-        if (!runId) throw new Error("Select a discovered run or enter a run_id first");
-        const prefix = artifactPrefixValue();
-        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix)) : "";
-        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + query);
-        const list = document.getElementById("artifactList");
-        if (!list) return false;
-        const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
-        if (!artifacts.length) {{
-          list.innerHTML =
-            "<p>No S3 artifacts found for <code>" + escapeHtml(runId) + "</code>.</p>" +
-            "<p>This run may predate S3 upload support, may belong to a destroyed VM, or may have used a different artifact prefix.</p>" +
-            "<p>Discovery scope: <code>" + escapeHtml(String(data.prefix || "sim2real-b")) + "</code></p>";
-          return true;
-        }}
-        renderArtifactDerivedRunDetails(runId, artifacts);
-        const preferred = data && data.preferred ? data.preferred : null;
-        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred);
-        if (!displayArtifacts.length) {{
-          list.innerHTML =
-            "<p>No artifacts of selected type for <code>" + escapeHtml(runId) + "</code>.</p>" +
-            "<p>Clear the Type filter to show all " + String(artifacts.length) + " artifacts.</p>";
-          return true;
-        }}
-        const counts = artifacts.reduce((acc, item) => {{
-          const key = String(item.render || "download");
-          acc[key] = (acc[key] || 0) + 1;
-          return acc;
-        }}, {{}});
-        const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
-        list.innerHTML =
-          '<div style="font-size:12px;color:#475569;margin:4px 0 8px;">Showing ' +
-          String(displayArtifacts.length) + " of " + String(artifacts.length) +
-          " artifacts · " + escapeHtml(countText) + "</div>" +
-          displayArtifacts.map((item, idx) => {{
-          const key = String(item.key || "");
-          const render = String(item.render || "download");
-          const s3uri = String(item.s3_uri || "");
-          return (
-            '<div style="padding:8px 0;border-top:1px solid #e2e8f0;">' +
-            '<div><code>' + escapeHtml(key) + '</code></div>' +
-            '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + ' updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
-            '<div style="margin-top:6px;"><button class="btn" type="button" data-action="load-artifact" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '" data-render="' + escapeHtml(render) + '">Load</button></div>' +
-            '</div>'
-          );
-        }}).join("");
-        list.querySelectorAll("button[data-action='load-artifact']").forEach((btn) => {{
-          btn.addEventListener("click", async (event) => {{
-            event.preventDefault();
-            const payload = {{
-              run_id: String(btn.getAttribute("data-run-id") || "").trim(),
-              key: String(btn.getAttribute("data-key") || "").trim(),
-              s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
-            }};
-            await loadArtifact(payload);
-          }});
-        }});
-        if (preferred && String(preferred.render || "") === "rerun") {{
-          appendChat("assistant", "Auto-loading preferred Rerun recording for `" + runId + "`.");
-          await loadArtifact({{
-            run_id: runId,
-            key: String(preferred.key || "").trim(),
-            s3_uri: String(preferred.s3_uri || "").trim(),
-          }});
-          renderArtifactDerivedRunDetails(runId, artifacts);
-        }}
-        return true;
-      }}
-      function renderArtifactDerivedRunDetails(runId, artifacts) {{
-        const list = Array.isArray(artifacts) ? artifacts : [];
-        const keys = list.map((item) => String(item.key || ""));
-        const hasAny = (patterns) => countMatching(patterns) > 0;
-        function countMatching(patterns) {{
-          return keys.filter((key) => patterns.some((pattern) => pattern && key.includes(pattern))).length;
-        }}
-        function artifactStageKey(key) {{
-          const runMarker = "/" + runId + "/";
-          let scoped = String(key || "");
-          const idx = scoped.indexOf(runMarker);
-          if (idx >= 0) scoped = scoped.slice(idx + runMarker.length);
-          const parts = scoped.split("/").filter(Boolean);
-          const first = parts[0] || "artifacts";
-          if (first === "reports") return "reports";
-          if (first === "eval" && parts[1]) return "eval/" + parts[1];
-          if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) return first + "/" + parts[1];
-          return first;
-        }}
-        function artifactStageLabel(stageKey) {{
-          const labels = {{
-            "stage_01_trigger": "Trigger",
-            "stage_02_assets": "Assets",
-            "stage_12_external_validation": "External validation",
-            "stage_13_retrigger": "Retrigger",
-            "eval/heldout": "Held-out eval",
-            "actions/train": "Policy rollouts",
-            "vlm_eval/train": "VLM eval",
-            "training_signal/train": "Training signal",
-            "envs/raw": "Raw envs",
-            "envs/train": "Train envs",
-            "outer_loop": "Decision / outer loop",
-            "reports": "Reports / visualization",
-          }};
-          if (labels[stageKey]) return labels[stageKey];
-          const cleaned = String(stageKey || "artifacts").replaceAll("_", " ").replaceAll("/", " / ").replaceAll("-", " ");
-          return cleaned.slice(0, 1).toUpperCase() + cleaned.slice(1);
-        }}
-        const grouped = new Map();
-        for (const key of keys) {{
-          const stageKey = artifactStageKey(key);
-          grouped.set(stageKey, (grouped.get(stageKey) || 0) + 1);
-        }}
-        const stages = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([stageKey, count]) => {{
-          return {{
-            id: stageKey.replace(/[^a-zA-Z0-9._-]+/g, "-"),
-            label: artifactStageLabel(stageKey),
-            status: "succeeded",
-            summary: String(count) + " artifact" + (count === 1 ? "" : "s") + " found under `" + stageKey + "`.",
-          }};
-        }});
-        const reportReady = hasAny(["reports/sim2real-report.json"]);
-        const rrdReady = hasAny(["reports/sim2real.rrd"]);
-        const now = new Date().toISOString();
-        renderRunDetails({{
-          run: {{
-            run_id: runId,
-            status: reportReady ? "completed" : "artifact-backed",
-            result: rrdReady ? "rerun_ready" : "artifacts_listed",
-            updated_at: now,
-            stages,
-            logs: [
-              {{
-                timestamp: now,
-                level: "info",
-                message: "Derived stage timeline from " + String(list.length) + " S3 artifacts.",
-              }},
-              {{
-                timestamp: now,
-                level: rrdReady ? "info" : "warn",
-                message: rrdReady ? "Run-specific Rerun recording is available." : "Rerun recording not found in listed artifacts.",
-              }},
-            ],
-          }},
-        }});
-      }}
-      function updateRenderedDataSummary(simViz) {{
-        const node = document.getElementById("renderedDataSummary");
-        if (!node) return;
-        const runId = String((simViz && simViz.run_id) || activeRunId || "none");
-        const key = String((simViz && simViz.artifact_key) || "");
-        const uri = String((simViz && simViz.artifact_uri) || "");
-        const render = String((simViz && simViz.artifact_render) || "");
-        if (key || uri) {{
-          const note = String((simViz && simViz.visualization_note) || "");
-          node.innerHTML =
-            "Rendering: <strong>" + escapeHtml(render || "artifact") + "</strong>" +
-            " from run <code>" + escapeHtml(runId) + "</code><br>" +
-            "<code>" + escapeHtml(key || uri) + "</code>" +
-            (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
-        }} else {{
-          node.textContent = "Rendering: no run artifact loaded yet.";
-        }}
-      }}
-      async function loadArtifact(payload) {{
-        const body = {{
-          run_id: String((payload && payload.run_id) || "").trim(),
-          key: String((payload && payload.key) || "").trim(),
-          s3_uri: String((payload && payload.s3_uri) || "").trim(),
-        }};
-        const data = await apiJson("/api/sim-viz/load-artifact", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify(body),
-        }});
-        const simViz = data.sim_viz || {{}};
-        const render = String(data.render || simViz.artifact_render || "");
-        activeArtifactRender = render;
-        const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
-        if (loadedRunId) activeRunId = loadedRunId;
-        updateRenderedDataSummary(simViz);
-        if (render === "rerun") {{
-          hideArtifactPreview();
-          rerunIframeLoaded = false;
-          lastRrdUpdatedAt = "";
-          await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
-        }} else {{
-          showRerunPlaceholder("Artifact loaded. Use download/preview below.", {{ force: true }});
-          await showArtifactPreview(simViz, render);
-        }}
-        appendChat(
-          "assistant",
-          "Loaded artifact `" + String(simViz.artifact_key || body.key || "") + "` with render `" + render + "`."
-        );
-        await refresh();
-        return true;
-      }}
-      async function refresh() {{
-        try {{
-          const session = await loadJson("/api/session");
-          if (session && session.llm) {{
-            const currentModel = String(
-              (session.llm.model || session.llm.default_model || session.llm.default || "")
-            );
-            setChatModels(session.llm.models, currentModel);
-          }}
-          if (session && session.chat_sessions) {{
-            activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
-            updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
-          }}
-          if (session && session.workflow_draft && session.workflow_draft.yaml) {{
-            setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
-          }}
-          const assets = await loadJson("/api/sim-assets");
-          const cameras = await loadJson("/api/sim-assets/cameras");
-          const statusPath = activeRunId
-            ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
-            : "/api/sim-viz/status";
-          const simViz = await loadJson(statusPath);
-          activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
-          updateRunSelector(simViz);
-          await loadRunDetails(activeRunId);
-          renderAssetsSummary(assets);
-          document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
-          document.getElementById("simStage").textContent = String(simViz.stage || "idle");
-          document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
-          updateRenderedDataSummary(simViz);
-          activeArtifactRender = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
-          const cta = document.getElementById("simvizCta");
-          const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
-          if (cta) {{
-            cta.hidden = ready && rerunIframeLoaded;
-            if (!ready) {{
-              cta.textContent = "No run-specific Rerun recording yet. Use the Run status/logs panel below for stage progress and result.";
-            }}
-          }}
-          if (activeArtifactRender && activeArtifactRender !== "rerun") {{
-            showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }});
-            await showArtifactPreview(simViz, activeArtifactRender);
-          }} else {{
-            hideArtifactPreview();
-          }}
-          if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {{
-            showRerunPlaceholder("Waiting for .rrd data. Click Load Franka in Rerun or submit Sim2Real.");
-          }} else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {{
-            showRerunPlaceholder("Rerun is ready. Click Reload Rerun data or Load Franka in Rerun.");
-          }}
-          const robotPreset = document.getElementById("robotPreset");
-          if (assets.selection && assets.selection.robot_preset) {{
-            robotPreset.value = String(assets.selection.robot_preset);
-          }}
-          document.getElementById("simBackend").value = String((assets.selection && assets.selection.sim_backend) || "isaac");
-          const props = Array.isArray(assets.selection && assets.selection.props) ? assets.selection.props.map(String) : [];
-          document.getElementById("propCube").checked = props.includes("cube");
-          const select = document.getElementById("cameraSelect");
-          const selected = new Set((cameras.selected || []).map(String));
-          const list = Array.isArray(cameras.cameras) ? cameras.cameras : [];
-          const activeName = String(
-            (selected.size ? [...selected][0] : null) || simViz.camera || "workspace"
-          );
-          document.getElementById("activeCameraLabel").textContent = activeName;
-          select.innerHTML = "";
-          for (const cam of list) {{
-            const opt = document.createElement("option");
-            opt.value = String(cam.name || "");
-            opt.textContent = String(cam.name || "");
-            if (selected.has(opt.value) || opt.value === activeName) opt.selected = true;
-            select.appendChild(opt);
-          }}
-          renderCameraCards(list, activeName, simViz);
-          const updatedAt = String(simViz.rrd_updated_at || "");
-          if (updatedAt) {{
-            lastRrdUpdatedAt = updatedAt;
-          }}
-        }} catch (err) {{
-          document.getElementById("simvizCta").hidden = false;
-          document.getElementById("simvizCta").textContent = "Failed to fetch sim viz status";
-        }}
-      }}
-      function frustumSvg(camera, selected) {{
-        const pos = Array.isArray(camera.pos) ? camera.pos : [0, 0, 0];
-        const lookAt = Array.isArray(camera.look_at) ? camera.look_at : [0, 1, 0];
-        const fov = Number(camera.fov || 60);
-        const dx = lookAt[0] - pos[0];
-        const dy = lookAt[1] - pos[1];
-        const angle = Math.atan2(dy, dx);
-        const spread = (fov * Math.PI / 180) / 2;
-        const r = 50;
-        const cx = 80;
-        const cy = 80;
-        const p1x = cx + r * Math.cos(angle - spread);
-        const p1y = cy + r * Math.sin(angle - spread);
-        const p2x = cx + r * Math.cos(angle + spread);
-        const p2y = cy + r * Math.sin(angle + spread);
-        const stroke = selected ? "#5e43f3" : "#94a3b8";
-        const fill = selected ? "rgba(94,67,243,0.18)" : "rgba(148,163,184,0.15)";
-        return `<svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="camera frustum">
-          <circle cx="${{cx}}" cy="${{cy}}" r="4" fill="${{stroke}}"/>
-          <polygon points="${{cx}},${{cy}} ${{p1x}},${{p1y}} ${{p2x}},${{p2y}}" fill="${{fill}}" stroke="${{stroke}}"/>
-          <text x="8" y="152" font-size="11" fill="#334155">${{String(camera.name || "")}}</text>
-        </svg>`;
-      }}
-      function renderCameraCards(list, activeName, simViz) {{
-        const holder = document.getElementById("cameraCards");
-        holder.innerHTML = "";
-        for (const cam of list) {{
-          const name = String(cam.name || "");
-          const selected = name === activeName;
-          const card = document.createElement("div");
-          card.className = "camera-card" + (selected ? " selected" : "");
-          const pos = Array.isArray(cam.pos) ? cam.pos.map((v) => Number(v).toFixed(2)).join(", ") : "-";
-          const look = Array.isArray(cam.look_at) ? cam.look_at.map((v) => Number(v).toFixed(2)).join(", ") : "-";
-          const res = Array.isArray(cam.resolution) ? cam.resolution.join("x") : "640x480";
-          card.innerHTML = `
-            <h4>` + name + (selected ? ' <span class="badge">selected</span>' : '') + `</h4>
-            <div class="camera-meta">placement: ${{String(cam.placement || "custom")}} - fov ${{Number(cam.fov || 60)}}deg - ${{res}}</div>
-            <div class="camera-meta">pos [${{pos}}] - look_at [${{look}}]</div>
-            <div class="camera-frustum">${{frustumSvg(cam, selected)}}</div>
-            <div class="camera-actions">
-              <button class="btn" type="button" data-action="select" data-camera="${{name}}">Select</button>
-              <button class="btn" type="button" data-action="preview" data-camera="${{name}}">Preview in Rerun</button>
-            </div>`;
-          holder.appendChild(card);
-        }}
-        const entity = String(simViz.preview_entity || ("world/camera_frustums/" + activeName + "/frustum"));
-        const rollout = "rollouts/latest/" + activeName + "/camera";
-        document.getElementById("rerunEntityHint").textContent =
-          (simViz.rerun_ready || simViz.rrd_uri)
-            ? "Rerun entities: " + entity + " (frustum) - " + rollout + " (rollout frames when available)"
-            : "Preview in Rerun to log camera frustums; rollout frames appear after Sim2Real runs.";
-        holder.querySelectorAll("button[data-action]").forEach((btn) => {{
-          btn.addEventListener("click", async (event) => {{
-            event.preventDefault();
-            const camera = String(btn.getAttribute("data-camera") || "");
-            const action = String(btn.getAttribute("data-action") || "");
-            const label = action === "select" ? "Select " + camera : "Preview " + camera;
-            setStatus(label + "...");
-            showToast(label, "info");
-            try {{
-              if (action === "select") {{
-                await selectCamera(camera);
-              }} else {{
-                await previewCamera(camera);
-              }}
-              setStatus(label + " done");
-              showToast(label + " done", "success");
-            }} catch (err) {{
-              setStatus(label + " failed");
-              showToast(String(err), "error");
-            }}
-          }});
-        }});
-      }}
-      function renderAssetsSummary(assets) {{
-        const selection = (assets && assets.selection) || {{}};
-        const resolved = (assets && assets.resolved_uris) || {{}};
-        const scene = String(selection.scene_spec_uri || "stock://scene/default");
-        const robot = String(selection.robot_spec_uri || "stock://robot/franka");
-        const cameras = String(selection.cameras_uri || "stock://cameras/default");
-        const backend = String(selection.sim_backend || "isaac");
-        const props = Array.isArray(selection.props) ? selection.props : [];
-        const propsText = props.length ? props.join(", ") : "none";
-        document.getElementById("assetsSummary").innerHTML =
-          "<div><span class='pill'>scene: " + escapeHtml(scene) + "</span></div>" +
-          "<div style='margin-top:6px;'><span class='pill'>robot: " + escapeHtml(robot) + "</span></div>" +
-          "<div style='margin-top:6px;'><span class='pill'>cameras: " + escapeHtml(cameras) + "</span></div>" +
-          "<div style='margin-top:6px;'><span class='pill'>backend: " + escapeHtml(backend) + "</span></div>" +
-          "<div style='margin-top:6px;'>props: " + escapeHtml(propsText) + "</div>" +
-          "<div style='margin-top:6px;'>resolved scene URI: <code>" + escapeHtml(String(resolved.scene_spec_uri || scene)) + "</code></div>";
-      }}
-      function selectionPayloadFromUi() {{
-        const robotPreset = String(document.getElementById("robotPreset").value || "franka");
-        const sceneMode = String(document.getElementById("sceneMode").value || "stock");
-        const cameraMode = String(document.getElementById("cameraMode").value || "stock");
-        const backend = String(document.getElementById("simBackend").value || "isaac");
-        return {{
-          scene_spec_uri: sceneMode === "stock" ? "stock://scene/default" : "",
-          robot_spec_uri: robotPreset === "franka" ? "stock://robot/franka" : "",
-          cameras_uri: cameraMode === "stock" ? "stock://cameras/default" : "",
-          robot_preset: robotPreset,
-          sim_backend: backend,
-          props: document.getElementById("propCube").checked ? ["cube"] : []
-        }};
-      }}
-      function updateRunSelector(simViz) {{
-        const select = document.getElementById("runIdSelect");
-        if (!select) return;
-        const current = String((simViz && simViz.run_id) || "").trim();
-        const runs = Array.isArray(simViz && simViz.available_run_ids) ? simViz.available_run_ids.map(String) : [];
-        select.innerHTML = '<option value="">(select run)</option>';
-        for (const runId of runs) {{
-          const opt = document.createElement("option");
-          opt.value = runId;
-          opt.textContent = runId;
-          if (runId === current) opt.selected = true;
-          select.appendChild(opt);
-        }}
-        const input = document.getElementById("runIdInput");
-        if (input && current) input.value = current;
-      }}
-      function normalizeStageStatus(value) {{
-        const raw = String(value || "pending").trim().toLowerCase();
-        if (["succeeded", "success", "done", "complete", "completed"].includes(raw)) return "succeeded";
-        if (["failed", "error", "blocked"].includes(raw)) return "failed";
-        if (["running", "active", "submitted", "queued"].includes(raw)) return raw === "submitted" ? "running" : raw;
-        if (["not_run", "not-run", "skipped", "not launched", "not_launched"].includes(raw)) return "not_run";
-        return "pending";
-      }}
-      function renderRunDetails(details) {{
-        const run = (details && details.run) || details || {{}};
-        const summary = document.getElementById("runSummary");
-        const stagesHost = document.getElementById("stageList");
-        const logHost = document.getElementById("runLog");
-        if (!summary || !stagesHost || !logHost) return;
-        const runId = String(run.run_id || "");
-        const result = String(run.result || "pending");
-        const status = String(run.status || "idle");
-        const updatedAt = String(run.updated_at || run.submitted_at || "");
-        summary.innerHTML =
-          '<span class="pill">run: <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
-          '<span class="pill">status: <strong>' + escapeHtml(status) + '</strong></span>' +
-          '<span class="pill">result: <strong>' + escapeHtml(result) + '</strong></span>' +
-          '<span class="pill">updated: <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
-        const stages = Array.isArray(run.stages) ? run.stages : [];
-        stagesHost.innerHTML = stages.map((stage) => {{
-          const statusClass = normalizeStageStatus(stage.status);
-          const label = String(stage.label || stage.id || "");
-          const stageSummary = String(stage.summary || "");
-          return (
-            '<div class="stage-item">' +
-            '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusClass) + '</span>' +
-            '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
-            '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
-            '</div>'
-          );
-        }}).join("") || '<div class="hint">No stage data available yet.</div>';
-        const logs = Array.isArray(run.logs) ? run.logs : [];
-        logHost.textContent = logs.length
-          ? logs.map((entry) => {{
-              const ts = String(entry.timestamp || "");
-              const level = String(entry.level || "info").toUpperCase();
-              const message = String(entry.message || "");
-              return "[" + ts + "] " + level + " " + message;
-            }}).join("\\n")
-          : "No log entries yet.";
-      }}
-      async function loadRunDetails(runId) {{
-        const target = String(runId || activeRunId || "").trim();
-        const path = target
-          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
-          : "/api/workflows/sim2real/status";
-        try {{
-          const data = await loadJson(path);
-          renderRunDetails(data);
-          return data.run || data;
-        }} catch (err) {{
-          renderRunDetails({{ run: {{ run_id: target, status: "unknown", result: "unavailable", logs: [{{ timestamp: new Date().toISOString(), level: "error", message: String(err && err.message ? err.message : err) }}], stages: [] }} }});
-          return null;
-        }}
-      }}
-      async function loadRunData() {{
-        const input = document.getElementById("runIdInput");
-        const runId = String((input && input.value) || "").trim();
-        if (!runId) {{
-          throw new Error("Enter or select a run_id first");
-        }}
-        const data = await apiJson("/api/sim-viz/load-run", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ run_id: runId }}),
-        }});
-        activeRunId = runId;
-        appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
-        await loadRunDetails(runId);
-        if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {{
-          await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), runId);
-        }} else {{
-          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.");
-        }}
-        await refresh();
-      }}
-      async function selectCamera(camera) {{
-        const selected = String(camera || "");
-        await apiJson("/api/sim-assets/cameras/selection", {{
-          method: "PUT",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
-        }});
-        await apiJson("/api/sim-assets/selection", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify(selectionPayloadFromUi()),
-        }});
-        await refresh();
-      }}
-      async function previewCamera(camera) {{
-        const data = await apiJson("/api/sim-viz/camera-preview", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{ camera }}),
-        }});
-        const simVizForMount = (data && data.sim_viz) || await waitForRerunReady();
-        await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
-        const entity = String(data.entity_path || ("world/camera_frustums/" + camera + "/frustum"));
-        appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
-        await refresh();
-      }}
-      async function applySelection() {{
-        const data = await apiJson("/api/sim-assets/selection", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify(selectionPayloadFromUi()),
-        }});
-        if (data.sim_viz && (data.sim_viz.rerun_ready || data.sim_viz.rrd_uri)) {{
-          activeArtifactRender = "rerun";
-          hideArtifactPreview();
-          const runId = String(data.sim_viz.run_id || activeRunId || "").trim();
-          if (runId) activeRunId = runId;
-          await waitForRerunSuccess(String(data.sim_viz.camera || "workspace"), {{
-            deadlineMs: 90000,
-            mountAttemptsPerLoop: 4,
-            runId,
-          }});
-        }}
-        await refresh();
-      }}
-      async function submitWorkflow() {{
-        const data = await apiJson("/api/workflows/sim2real/submit", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          body: JSON.stringify({{}}),
-        }});
-        appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
-        appendChat("assistant", "Watching sim progress: loading the submitted run's Rerun recording.");
-        const submittedRunId = String(data.run_id || "").trim();
-        if (submittedRunId) activeRunId = submittedRunId;
-        renderRunDetails(data);
-        let simViz = (data && data.sim_viz) || {{}};
-        if (!simViz.rrd_uri) {{
-          simViz = await pollSimVizUntilRrd(60, 1500, submittedRunId);
-        }}
-        if (simViz && simViz.rrd_uri) {{
-          await bestEffortMountRerun(String(simViz.camera || "workspace"), submittedRunId);
-          if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
-            throw new Error("Rerun recording/iframe did not reach SUCCESS after workflow submit");
-          }}
-          appendChat(
-            "assistant",
-            "Rerun update: **run_id** `" +
-              String(simViz.run_id || data.run_id || "unknown") +
-              "`, **stage** `" +
-              String(simViz.stage || "running") +
-              "`, **iframe** `/rerun/`, **recording_mount** `" + RERUN_BLOB_SUCCESS + "`"
-          );
-        }} else {{
-          await loadRunDetails(submittedRunId);
-          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
-          appendChat(
-            "assistant",
-            "Run `" + submittedRunId + "` is recorded with **stage** `" +
-              String((simViz && simViz.stage) || "submitted") +
-              "`. No `.rrd` recording is available yet, so the Run status/logs panel is the source of truth."
-          );
-        }}
-      }}
-      async function showWorkflowStatus() {{
-        const status = await loadJson("/api/workflows/sim2real/status");
-        renderRunDetails(status);
-        appendChat(
-          "assistant",
-          "Latest workflow status:\\n- run_id: `" +
-            String((status.latest_submit || {{}}).run_id || "none") +
-            "`\\n- stage: `" +
-            String((status.sim_viz || {{}}).stage || "idle") +
-            "`"
-        );
-      }}
-      async function openRerunTab() {{
-        const statusPath = activeRunId
-          ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
-          : "/api/sim-viz/status";
-        const simViz = await loadJson(statusPath);
-        if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
-          await loadRunDetails(activeRunId);
-          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
-          showToast("No Rerun recording for this run yet; showing run logs instead.", "info");
-          return;
-        }}
-        const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
-        const src = await rerunIframeSrc(camera, String((simViz && simViz.run_id) || activeRunId || "").trim());
-        window.open(src, "_blank", "noopener");
-      }}
-      async function restoreSession() {{
-        try {{
-          const session = await loadJson("/api/session");
-          activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
-          if (session && session.sim_viz) {{
-            activeRunId = String((session.sim_viz.active_run_id || session.sim_viz.run_id || activeRunId || "")).trim();
-            activeArtifactRender = String(session.sim_viz.artifact_render || activeArtifactRender || "");
-            updateRenderedDataSummary(session.sim_viz);
-          }}
-          updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
-          if (session && session.llm) {{
-            const currentModel = String(
-              (session.llm.model || session.llm.default_model || session.llm.default || "")
-            );
-            setChatModels(session.llm.models, currentModel);
-          }}
-          renderChatHistory(session.chat_history || []);
-          const draft = session.workflow_draft;
-          if (draft && draft.yaml) {{
-            setWorkflowYaml(draft.yaml, draft.validation || draft);
-          }}
-        }} catch (_err) {{
-          // Session restore is best-effort on first load.
-        }}
-      }}
-      async function ensureFrankaRerunLoaded() {{
-        const simViz = await loadJson("/api/sim-viz/status");
-        const artifactRender = String((simViz && simViz.artifact_render) || "");
-        if (artifactRender && artifactRender !== "rerun") {{
-          activeArtifactRender = artifactRender;
-          await showArtifactPreview(simViz, artifactRender);
-          return;
-        }}
-        const camera = String(simViz.camera || "workspace");
-        if (!simViz.rerun_ready && !simViz.rrd_uri) {{
-          setStatus("Loading Franka demo...");
-          showToast("Loading stock Franka in Rerun", "info");
-          await loadFrankaDemo();
-          return;
-        }}
-        if (!rerunIframeLoaded) {{
-          setStatus("Opening Rerun viewer...");
-          await loadRerunViewer(camera);
-        }}
-      }}
-      async function bootPage() {{
-        rerunBootInProgress = true;
-        showRerunPlaceholder("Loading stock Franka preview...");
-        setStatus("Preloading Rerun…");
-        try {{
-          await warmRerunBundle();
-        }} catch (warmErr) {{
-          console.warn("rerun bundle warm failed", warmErr);
-        }}
-        try {{
-          await restoreSession();
-        }} catch (_err) {{
-          // Session restore is best-effort on first paint.
-        }}
-        try {{
-          await refresh();
-          try {{
-            await refreshArtifactRuns();
-          }} catch (_artifactErr) {{
-            // artifact discovery is optional when S3 credentials are missing.
-          }}
-          if (document.body.classList.contains("mobile-agent")) {{
-            setStatus("Ready");
-            showToast("Mobile chat ready", "success");
-          }} else {{
-            await ensureFrankaRerunLoaded();
-            setStatus("Ready");
-            showToast("Franka demo ready in Rerun", "success");
-          }}
-        }} catch (err) {{
-          console.warn("franka auto-load failed", err);
-          if (document.body.classList.contains("mobile-agent")) {{
-            setStatus("Ready");
-          }} else {{
-            showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
-            showToast(String(err && err.message ? err.message : err), "error");
-            setStatus("Ready");
-          }}
-        }} finally {{
-          rerunBootInProgress = false;
-        }}
-      }}
-      let refreshTimer = null;
-      function startPeriodicRefresh() {{
-        if (refreshTimer !== null) return;
-        refreshTimer = window.setInterval(() => {{
-          const iframe = document.getElementById("rerunFrame");
-          if (rerunIframeLoaded && iframe && !iframe.hidden) {{
-            return;
-          }}
-          refresh().catch(() => {{ /* periodic refresh is best-effort */ }});
-        }}, 10000);
-      }}
-      function startApp() {{
-        try {{
-          wireUi();
-          setStatus("UI wired");
-        }} catch (err) {{
-          showToast("UI wiring failed: " + String(err), "error");
-          console.error(err);
-        }}
-        probeMobileChatAuth()
-          .catch(() => false)
-          .finally(() => {{
-            bootPage().catch((err) => {{
-              showToast("Boot failed: " + String(err), "error");
-              console.error(err);
-            }});
-          }});
-        const armPeriodic = () => startPeriodicRefresh();
-        document.addEventListener("click", armPeriodic, {{ once: true }});
-        document.addEventListener("keydown", armPeriodic, {{ once: true }});
-      }}
-      if (document.readyState === "loading") {{
-        document.addEventListener("DOMContentLoaded", startApp);
-      }} else {{
-        startApp();
-      }}
-      }} catch (bootErr) {{
-        console.error("NPA Agent UI failed to boot", bootErr);
-        const bar = document.getElementById("statusBar");
-        if (bar) bar.textContent = "UI boot error — reload or check console";
-      }}
-      }})();
-    </script>
-  </body>
-</html>
+{_AGENT_UI_HTML_EMBED}
 HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
@@ -8667,6 +6143,10 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
+        .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
+        .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
+        .replace(_AGENT_STAGES_EMBED, agent_stages_source)
+        .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
     local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
@@ -8768,7 +6248,7 @@ def deploy_cmd(
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    region: str = typer.Option("us-central1", "--region", help="Nebius region."),
+    region: str = typer.Option("eu-north1", "--region", help="Nebius region."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
     ssh_public_key_path: str = typer.Option("~/.ssh/id_ed25519.pub", "--ssh-public-key-path", help="SSH public key path for Terraform."),
     tf_var: list[str] = typer.Option([], "--tf-var", help="Additional Terraform var key=value."),
@@ -9041,7 +6521,7 @@ def fresh_setup_cmd(
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     project_id: str = typer.Option(..., "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option(..., "--tenant-id", help="Nebius tenant ID."),
-    region: str = typer.Option("us-central1", "--region", help="Nebius region."),
+    region: str = typer.Option("eu-north1", "--region", help="Nebius region."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
     ssh_public_key_path: str = typer.Option("~/.ssh/id_ed25519.pub", "--ssh-public-key-path", help="SSH public key path for Terraform."),
     tf_var: list[str] = typer.Option([], "--tf-var", help="Additional Terraform var key=value."),
@@ -9384,8 +6864,8 @@ def verify_live_cmd(
         _fail("agent VM does not have a non-localhost public IP")
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a non-localhost public IP")
-    if region != "us-central1":
-        _fail(f"agent region mismatch: expected us-central1, got {region!r}")
+    if not region:
+        _fail("agent record is missing its deploy region")
     try:
         auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
     except ValueError as exc:
@@ -9657,6 +7137,23 @@ def verify_live_cmd(
     if not rerun_static_ok:
         _fail("rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)")
 
+    from npa.agent_rerun_bundle_check import (
+        check_rerun_bundle_load_budget,
+        format_bundle_budget_report,
+    )
+
+    bundle_result = check_rerun_bundle_load_budget(
+        agent_base,
+        auth=(auth_user, auth_password),
+        verify=tls_verify,
+    )
+    typer.echo(format_bundle_budget_report(bundle_result))
+    if not bundle_result.ok:
+        _fail(
+            "rerun bundle load budget failed: "
+            + "; ".join(bundle_result.errors[:4])
+        )
+
     try:
         health_resp = httpx.get(
             f"{agent_base}/api/health",
@@ -9698,16 +7195,90 @@ def verify_live_cmd(
         'name="viewport" content="width=device-width',
         'id="chatForm"',
         'id="mobileChatAuth"',
+        'id="tabChat"',
+        'id="tabRerun"',
+        'id="stagesPanel"',
+        "<h3>Stages</h3>",
+        'id="stagesRunSelect"',
+        'id="stagesLoadRun"',
+        "loadSelectedRun",
+        "stages-run-picker",
+        "filterStagesRunSelect",
+        "Search or paste run ID",
         "function sendChat(",
         "function wireUi(",
+        "activateMainTab",
         "initNpaAgentUi",
         "mobile-agent",
         "history.replaceState",
         "location.username",
         f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
+        # Media preview contract — keep in sync with AGENT_MEDIA_PREVIEW_CONTRACT
+        # (HTML-visible subset; backend route markers are source-tested separately).
+        "authenticatedPreviewObjectUrl",
+        "Loading video preview…",
+        'id="renderModeVideo"',
+        'id="artifactPreviewHost"',
+        'id="viewerPaneMedia"',
+        "URL.createObjectURL(blob)",
+        # No user-visible Rerun "Loading application bundle" splash.
+        'id="rerunBundleCover"',
+        "waitUntilRerunPastBundleSplash",
+        "Preparing viewer…",
+        "Warm Rerun assets before revealing the iframe",
+        "Uncover without blocking mount latency",
+        "scheduleRerunBundleUncover",
+        "safeHideRerunBundleCover",
+        "non-blank canvas",
+        "swapRerunRecordingInPlace",
+        "add_receiver",
+        # Describe-this visual feedback (vision tier).
+        'id="describeVisual"',
+        "captureVisualContext",
+        "describeVisual",
+        "[npa-visual-feedback]",
+        "visual_context",
+        "enqueueChatJob",
+        "processChatQueue",
+        "queueChatText",
+        "viewer-focus",
+        'id="chatDrawerToggle"',
+        "thinking-ellipsis",
+        "waitForQualityRerunFrame",
+        "captureCanvasDataUrl",
+        "ensureRerunCaptureBridge",
+        "pickBestIframeCanvas",
+        "sampleFrameStats",
+        "skipUserAppend",
+        "Describe this — capturing",
+        "do not prefetch .rrd bytes",
+        'id="openFullChatTab"',
+        "openFullChatTab",
+        'id="chatDrawerClose"',
+        "chat-fab",
+        "transform-origin: bottom right",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
+    if 'loading="lazy"' in ui_html:
+        _fail("UI html must not use lazy-loading on the Rerun iframe")
+    if ".tab-panel[hidden]" in ui_html:
+        _fail("UI html must not hide tab panels with display:none via hidden attribute")
+    if 'Mount the viewer immediately so "Loading application bundle" starts early' in ui_html:
+        _fail("UI must not mount Rerun before bundle warm (exposes Loading application bundle)")
+    if "await waitUntilRerunPastBundleSplash(iframe, 45000)" in ui_html:
+        _fail("UI must not block mount on long splash wait (latency)")
+    if "await waitUntilRerunPastBundleSplash(iframe, 120000)" in ui_html:
+        _fail("UI must not block mount on long splash wait (latency)")
+    load_art_src = ui_html.split("async function loadArtifact(payload)")[1].split("async function refresh()")[0]
+    if "swapRerunRecordingInPlace" not in load_art_src:
+        _fail("loadArtifact must soft-swap Rerun recordings instead of always remounting wasm")
+    # Guard against regressions that put bare authenticated URLs on <video src>
+    # (browsers omit Authorization headers for media elements under basic auth).
+    if '`<video controls src="${previewUrl}">`' in ui_html or '<video controls src="${previewUrl}">' in ui_html:
+        _fail("UI html must not assign artifact previewUrl directly to <video src>")
+    if '`<img alt="artifact image" src="${previewUrl}"' in ui_html:
+        _fail("UI html must not assign artifact previewUrl directly to <img src>")
 
     try:
         session_resp = httpx.get(

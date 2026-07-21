@@ -222,7 +222,7 @@ def test_component_capabilities_reply_is_targeted() -> None:
         state,
         ["workbench.cosmos2.transfer", "workbench.token_factory.reason"],
     )
-    assert "Cosmos component capabilities" in cosmos_reply
+    assert "Cosmos capabilities" in cosmos_reply
     assert "Fine-tuning / post-training" in cosmos_reply
 
     lancedb_reply = build_grounded_reply(
@@ -230,7 +230,7 @@ def test_component_capabilities_reply_is_targeted() -> None:
         state,
         ["workbench.lancedb.import_bdd100k", "workbench.lancedb.backfill_clip"],
     )
-    assert "LanceDB component capabilities" in lancedb_reply
+    assert "LanceDB capabilities" in lancedb_reply
     assert "Data ingest" in lancedb_reply
 
 

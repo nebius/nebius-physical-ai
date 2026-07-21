@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from npa.cli.agent import rendered_agent_ui_html
+
 import json
 import re
 import shutil
@@ -11,9 +13,24 @@ import pytest
 from typer import Exit
 from typer.testing import CliRunner
 
-from npa.cli.agent import AGENT_UI_VERSION, _normalize_llm_models, app, build_agent_urls
+from npa.cli.agent import (
+    AGENT_MEDIA_PREVIEW_CONTRACT,
+    AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT,
+    AGENT_UI_VERSION,
+    _normalize_llm_models,
+    app,
+    build_agent_urls,
+)
 
 runner = CliRunner()
+
+
+def _agent_ui_bundle() -> str:
+    """agent.py source plus rendered UI HTML (UI lives in agent_ui.html)."""
+    from npa.cli import agent as agent_module
+
+    return Path(agent_module.__file__).read_text(encoding="utf-8") + "\n" + rendered_agent_ui_html()
+
 
 
 def test_build_agent_urls_https_default() -> None:
@@ -371,9 +388,8 @@ def test_agent_help_smoke() -> None:
 
 
 def test_bootstrap_embeds_chat_endpoint() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert '@app.post("/chat")' in source
     assert '@app.get("/session")' in source
     assert '@app.get("/models")' in source
@@ -384,17 +400,19 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "llm.env" in source
     assert "renderInlineMarkdownLite" in source
     assert "showThinkingBubble" in source
-    assert "thinking-dots" in source
+    assert "thinking-ellipsis" in source
+    assert 'aria-label="thinking">...</span>' in source
     assert "font-family: Inter, system-ui" in source
     assert "font-family: monospace" not in source
     assert "quick-pill" in source
     assert "--brand: #e5ff4f;" in source
     assert "--sidebar: #0d2a3d;" in source
+    assert "--thinking-fg:" in source
     assert ".msg-row.user .bubble" in source
     assert "color: var(--brand-ink);" in source
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
-    assert "sparkle" in source
+    assert "enqueueChatJob" in source
     assert "npa workbench byof run" in source or "run_byof_repo.py" in source
     assert "For BYOF solution onboarding" in source
     assert "Always use real registry-qualified images" in source
@@ -441,7 +459,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "activeChatSessionId" in source
     assert "/api/chat/sessions" in source
     assert "npa-agent/tenants/" in source
-    assert "Send failed; your draft was restored." in source
+    assert "Send failed." in source
+    assert "queueChatText" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source
@@ -472,9 +491,8 @@ def test_bootstrap_public_login_form() -> None:
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     for control_id in (
         "chatActionS3",
         "chatActionCosmos",
@@ -493,26 +511,44 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
     assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
     assert "await apiJson(\"/api/sim-assets/selection\"" in source
     assert "setChatBusy(false)" in source
-    assert "finally {" in source.split("async function sendChat")[1].split("async function")[0]
+    assert "finally {" in source.split("async function processChatQueue")[1].split("function enqueueChatJob")[0]
+    assert "queueChatText" in source
+    assert "processChatQueue" in source
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    assert "cameras-panel" in source
-    assert "Preview in Rerun" in source
-    assert "cameraCards" in source
+    source = _agent_ui_bundle()
+    # Cameras panel removed from UI; APIs and stock camera metadata remain.
+    assert "cameras-panel" not in source
+    assert "cameraCards" not in source
+    assert "Preview in Rerun" not in source
     assert '@app.get("/sim-assets/cameras")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert "world/cameras/" in source
     assert "world/camera_frustums/" in source
     assert 'f"{{frustum_entity}}/frustum"' in source
     assert 'f"{{entity}}/frustum"' not in source
-    assert "The **Cameras** panel is the center column below chat" in source
+    assert "There is no separate Cameras panel in the UI" in source
     assert "stock_workspace" in source
     assert "stock_ee_mounted" in source
     assert "frustumSvg" in source
+    assert 'id="tabChat"' in source
+    assert 'id="tabRerun"' in source
+    assert "layout-rerun" in source
+    assert "activateMainTab" in source
+    assert "tab-panel.is-inactive" in source
+    assert "defer the Rerun wasm viewer bundle" in source or "unload or defer the Rerun wasm" in source
+    import re
+
+    iframe = re.search(r'<iframe id="rerunFrame"[^>]*>', source)
+    assert iframe is not None
+    assert "loading=" not in iframe.group(0)
+    ui_html = rendered_agent_ui_html()
+    for marker in AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT:
+        assert marker in ui_html, f"missing no-bundle-splash marker: {marker!r}"
+    assert 'Mount the viewer immediately so "Loading application bundle" starts early' not in ui_html
+    assert "rerunIframeLoaded = false" not in source.split("async function activateMainTab")[1].split("async function")[0]
 
 
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
@@ -533,9 +569,8 @@ def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
 
 
 def test_bootstrap_embeds_franka_rerun_ux() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert "--sidebar: #0d2a3d" in source
     assert "--brand: #e5ff4f" in source
     assert "--surface-blue: #dceeff" in source
@@ -548,13 +583,15 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "robot/franka/links" in source
     assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
-    assert "class=\"panel rerun-panel\"" in source
-    assert ".layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}" in source
-    assert ".cameras-panel {{ display: block; }}" in source
-    assert "height: min(78vh, 820px)" in source
+    assert "class=\"panel rerun-panel rerun-stage\"" in source or 'class="panel rerun-panel rerun-stage"' in source
+    assert ".layout-rerun {{" in source or ".layout-rerun {" in source
+    assert "cameras-panel" not in source
+    assert "rerun-frame-shell" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
     assert 'id="rerunFrame" title="rerun" src="about:blank"' in source
+    assert "theme=dark" in source
+    assert "allowfullscreen" in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
@@ -571,7 +608,10 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
     assert "waitForRerunRenderSettle" in source
-    assert "Rerun fires the iframe load event before WebGL has drawn the recording" in source
+    assert "scheduleRerunBundleUncover" in source
+    assert "Uncover without blocking mount latency" in source
+    assert "swapRerunRecordingInPlace" in source
+    assert "handle.add_receiver(recordingUrl, false)" in source
     assert "mountRerunIframe" in source
     assert "mountRerunIframeUntilSuccess" in source
     assert "simViz && (simViz.rerun_ready || simViz.rrd_uri)" in source
@@ -589,7 +629,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "already-mounted" in source
     assert "iframe.dataset.rerunRunKey" in source
     assert "rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute(\"src\")" in source
-    assert 'showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }})' in source
+    for marker in AGENT_MEDIA_PREVIEW_CONTRACT:
+        assert marker in source, f"missing media-preview contract marker: {marker!r}"
     assert "baselineRrdUpdatedAt" in source
     assert "successStreakTarget" in source
     assert "successStreak" in source
@@ -599,10 +640,18 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
+    assert "rrd_proxy_uri_allowed" in source
+    assert "MAX_RRD_PROXY_BYTES" in source
+    assert "Refusing to proxy disallowed rrd_uri host" in source
+    assert "_AGENT_RRD_PROXY_EMBED" in source
+    assert "last-writer-wins" in source
+    assert "Single-tenant operator-VM model" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
-    assert "URL.createObjectURL" not in source
+    # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
+    assert "does not reliably consume parent-created blob URLs" in source
+    assert "media_type=artifact_media_type(safe_name)" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -611,9 +660,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
 
 
 def test_bootstrap_embeds_run_switching_controls() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert 'id="runIdInput"' in source
     assert 'id="runIdSelect"' in source
     assert 'id="loadRunData"' in source
@@ -629,6 +677,15 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "def _artifact_backed_run_details" in source
     assert "def _workflow_stage_defs_from_state" in source
     assert "Derived stage timeline from" in source
+    assert "Never let a sparse update erase richer artifact fields from load-run" in source
+    assert "Read-only: do not _record/_save here" in source
+    assert 'Always use the stock demo run id and clear any prior media-artifact preview' in source
+    status_src = source.split('@app.get("/sim-viz/status")')[1].split('@app.get("/sim-viz/runs")')[0]
+    assert "_save_state(state)" not in status_src
+    assert "_record_sim_viz_run(state, payload)" not in status_src
+    franka_src = source.split("def _wire_franka_demo")[1].split("def _wire_sim2real_run_preview")[0]
+    assert '"run_id": "franka-demo"' in franka_src
+    assert '"artifact_render": "rerun"' in franka_src
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
     assert "_wire_sim2real_run_preview" in submit_source
     assert '"sim_viz": sim_viz' in submit_source
@@ -637,18 +694,23 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
 def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert 'id="artifactPrefix"' in source
     assert 'id="artifactTypeFilter"' in source
     assert 'id="artifactSort"' in source
-    assert 'id="artifactRunSelect"' in source
+    assert 'id="runsArtifactsPanel"' in source
+    assert 'id="runIdSelect"' in source
+    assert "mergeRunsLatestFirst" in source
+    assert "available_runs" in source
     assert 'id="artifactList"' in source
     assert 'id="renderedDataSummary"' in source
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
-    assert 'Select a discovered run or enter a run_id first' in source
+    assert 'Select a run or enter a run_id first' in source
     assert 'No S3 artifacts found for <code>' in source
+    assert "Runs &amp; artifacts" in source or "Runs & artifacts" in source
+    assert "latest first" in source
     assert "updateRenderedDataSummary" in source
     assert "_wait_rerun_web_viewer_healthy" in source
     assert "await mountRerunIframeUntilSuccess(String(simViz.camera || \"workspace\"), 8, loadedRunId)" in source
@@ -663,9 +725,10 @@ def test_bootstrap_run_history_uses_run_id_index() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert '"sim_viz_runs": []' not in source
-    assert 'if not isinstance(entries, dict):' in source
-    assert 'entries[run_id] = snapshot' in source
+    assert 'if not isinstance(runs, dict):' in source
+    assert 'runs[run_id] = snapshot' in source
     assert 'state["active_run_id"] = run_id' in source
+    assert "Never let a sparse update erase richer artifact fields from load-run" in source
 
 
 def test_bootstrap_ui_strips_url_credentials() -> None:
@@ -681,9 +744,8 @@ def test_bootstrap_ui_strips_url_credentials() -> None:
 
 
 def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert 'credentials: "include"' in source
     assert 'credentials: "same-origin"' not in source
     assert "setChatBusy(true)" in source
@@ -695,9 +757,8 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
 
 
 def test_bootstrap_system_prompt_no_localhost() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert "Never suggest localhost" in source
     assert "Load active Sim2Real in Rerun" in source
     assert "/api/sim-viz/load-franka-demo" in source
@@ -761,6 +822,48 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["sim_viz_url"].endswith("/rerun/")
     assert payload["sim_assets_url"].endswith("203.0.113.50/assets/")
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
+
+
+def test_verify_live_accepts_non_us_central1_region(monkeypatch) -> None:
+    """Route C deploys with --region eu-north1; verify-live must not hard-fail
+    non-us-central1 regions (regression for the README Route C failure)."""
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_record",
+        lambda project, name: {
+            "public_ip": "8.8.8.8",
+            "region": "eu-north1",
+            "auth_secret_path": "/tmp/agent-auth",
+        },
+    )
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+
+    def _boom(_path: str) -> tuple[str, str]:
+        raise ValueError("stop-after-region-gate")
+
+    monkeypatch.setattr("npa.cli.agent._load_auth_secret", _boom)
+
+    result = runner.invoke(app, ["verify-live"])
+
+    assert result.exit_code == 1
+    assert "region mismatch" not in result.output
+    assert "stop-after-region-gate" in result.output
+
+
+def test_verify_live_requires_a_recorded_region(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_record",
+        lambda project, name: {
+            "public_ip": "8.8.8.8",
+            "region": "",
+            "auth_secret_path": "/tmp/agent-auth",
+        },
+    )
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+
+    result = runner.invoke(app, ["verify-live"])
+
+    assert result.exit_code == 1
+    assert "missing its deploy region" in result.output
 
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
@@ -869,8 +972,44 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             html = (
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
-                '<body><div id="mobileChatAuth"></div><script>function wireUi(){} id="chatForm"; function sendChat(){} initNpaAgentUi; mobile-agent; '
-                'history.replaceState(null, "", ""); location.username; location.password</script></body></html>'
+                '<body>'
+                '<div id="tabChat"></div><div id="tabRerun"></div>'
+                '<div id="stagesPanel"><h3>Stages</h3>'
+                '<div class="stages-run-picker">'
+                '<select id="stagesRunSelect"></select>'
+                '<label>Search or paste run ID</label>'
+                '<input id="stagesRunInput" />'
+                '<button id="stagesLoadRun"></button></div></div>'
+                '<script>function loadSelectedRun(){} function syncRunChooserFields(){} '
+                'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
+                '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
+                '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
+                '<button id="describeVisual"></button>'
+                '<button id="chatDrawerToggle" class="chat-fab"></button>'
+                '<button id="chatDrawerClose"></button>'
+                '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
+                '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
+                'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
+                'function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} '
+                'function safeHideRerunBundleCover(){} function captureVisualContext(){} '
+                'function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} '
+                'function queueChatText(){} function waitForQualityRerunFrame(){} '
+                'function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} '
+                'function pickBestIframeCanvas(){} function sampleFrameStats(){} '
+                'function openFullChatTab(){} '
+                'do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; '
+                'async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } '
+                '<button id="openFullChatTab"></button>'
+                'async function refresh(){} '
+                'handle.add_receiver(recordingUrl, false); '
+                'initNpaAgentUi; mobile-agent; history.replaceState(null, "", ""); '
+                'location.username; location.password; '
+                'Warm Rerun assets before revealing the iframe; Preparing viewer…; '
+                'Uncover without blocking mount latency; non-blank canvas; '
+                'viewer-focus; thinking-ellipsis; [npa-visual-feedback]; visual_context; '
+                'transform-origin: bottom right; '
+                'Loading video preview…; URL.createObjectURL(blob)'
+                '</script></body></html>'
             )
             return _Resp(html, status_code=200)
         return _Resp({"ok": True, "tool_ref": "tool.0", "argv_template": ["echo", "ok"]})
@@ -946,6 +1085,17 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
 
     monkeypatch.setattr("npa.cli.agent.httpx.get", _fake_http_get)
     monkeypatch.setattr("npa.cli.agent.httpx.post", _fake_http_post)
+    from npa.agent_rerun_bundle_check import BundleBudgetResult
+
+    monkeypatch.setattr(
+        "npa.agent_rerun_bundle_check.check_rerun_bundle_load_budget",
+        lambda *_args, **_kwargs: BundleBudgetResult(
+            ok=True,
+            errors=(),
+            fetches=(),
+            ui_version=AGENT_UI_VERSION,
+        ),
+    )
     calls: list[list[str]] = []
 
     def _fake_run(args, **_kwargs):
@@ -1127,9 +1277,8 @@ def test_bootstrap_embeds_recordings_endpoint() -> None:
 
 
 def test_bootstrap_chat_copy_yaml_support_present() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     assert "msg-copy-btn" in source
     assert "extractFencedCode" in source
     assert "copyTextToClipboard" in source
@@ -1411,9 +1560,8 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
 
 
 def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_ui_bundle()
     # An explicit Auto option lets the UI post an empty model so the backend
     # applies cost-tier routing instead of pinning the branded reasoner.
     assert "Auto (cost-aware)" in source

@@ -26,7 +26,6 @@ NPA_DEBUG_ENV_VAR = "NPA_DEBUG"
 # actual failure (missing token, 403, CUDA mismatch) near the end, so the tail is
 # almost always the useful part.
 _STDERR_TAIL_LINES = 20
-_COMMAND_SUMMARY_MAX = 200
 
 
 def _npa_debug_enabled() -> bool:
@@ -39,24 +38,7 @@ def _npa_debug_enabled() -> bool:
     )
 
 
-def _summarize_command(command: str) -> str:
-    """Return a short, single-line description of a possibly huge remote command."""
-
-    for raw in command.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if len(line) > _COMMAND_SUMMARY_MAX:
-            return line[:_COMMAND_SUMMARY_MAX] + "…"
-        return line
-    stripped = command.strip()
-    if len(stripped) > _COMMAND_SUMMARY_MAX:
-        return stripped[:_COMMAND_SUMMARY_MAX] + "…"
-    return stripped
-
-
 def format_remote_failure(
-    command: str,
     code: int,
     stderr: str,
     *,
@@ -64,35 +46,35 @@ def format_remote_failure(
 ) -> str:
     """Build a compact SSH failure message.
 
-    By default this surfaces the step label (or a one-line command summary), the
-    exit code, and the tail of stderr — never the full multi-hundred-line install
-    script, which both buries the real error and can leak inlined secrets (e.g.
-    docker-login tokens). Set ``NPA_DEBUG=1`` to include the full command and the
-    complete stderr for deep debugging.
+    The remote command is *never* included: install scripts frequently carry
+    credentials inline (S3 keys, HF/NGC/Token Factory tokens, docker-login
+    registry passwords), and this exception text is surfaced to terminals,
+    scrollback, CI logs, and agent transcripts. The message carries only the
+    optional step ``label``, the exit code, and the stderr tail — the part that
+    actually names the failure (missing token, 403, CUDA mismatch).
+
+    ``NPA_DEBUG=1`` lifts *only* the stderr truncation (full remote stderr); it
+    never reveals the command.
     """
 
-    what = label or _summarize_command(command)
     stderr = (stderr or "").strip()
-    lines = [f"Command failed (exit {code}): {what}"]
+    suffix = f": {label}" if label else ""
+    lines = [f"Command failed (exit {code}){suffix}"]
 
-    if _npa_debug_enabled():
-        lines.append(f"command:\n{command}")
-        lines.append(f"stderr:\n{stderr}" if stderr else "stderr: <empty>")
+    if not stderr:
+        lines.append("stderr: <empty>")
         return "\n".join(lines)
 
     stderr_lines = stderr.splitlines()
-    if stderr_lines:
-        tail = stderr_lines[-_STDERR_TAIL_LINES:]
-        truncated = len(stderr_lines) > len(tail)
-        header = (
-            f"stderr (last {len(tail)} of {len(stderr_lines)} lines):"
-            if truncated
-            else "stderr:"
-        )
-        lines.append(header + "\n" + "\n".join(tail))
-    else:
-        lines.append("stderr: <empty>")
-    lines.append(f"Set {NPA_DEBUG_ENV_VAR}=1 for the full command and output.")
+    if _npa_debug_enabled() or len(stderr_lines) <= _STDERR_TAIL_LINES:
+        lines.append("stderr:\n" + stderr)
+        return "\n".join(lines)
+
+    tail = stderr_lines[-_STDERR_TAIL_LINES:]
+    lines.append(
+        f"stderr (last {len(tail)} of {len(stderr_lines)} lines):\n" + "\n".join(tail)
+    )
+    lines.append(f"Set {NPA_DEBUG_ENV_VAR}=1 for the full remote stderr.")
     return "\n".join(lines)
 
 
@@ -224,14 +206,17 @@ class SSHClient:
     ) -> tuple[int, str, str]:
         """Run a command; raise SSHError on non-zero exit.
 
-        On failure the error is compact by default (step ``label`` or a one-line
-        command summary, the exit code, and the stderr tail). Pass ``label`` to
-        describe the step for long install scripts. Set ``NPA_DEBUG=1`` to get the
-        full command and complete stderr.
+        The full command is deliberately omitted from the error — remote install
+        scripts frequently carry credentials (S3 keys, HF/NGC/Token Factory
+        tokens, registry passwords) inline, and this exception text is surfaced
+        to terminals, scrollback, CI logs, and agent transcripts. Only the
+        optional step ``label``, the exit code, and the remote stderr are
+        reported. Pass ``label`` to name the step for long install scripts; set
+        ``NPA_DEBUG=1`` to get the full remote stderr (never the command).
         """
         code, out, err = self.run(command, **kwargs)
         if code != 0:
-            raise SSHError(format_remote_failure(command, code, err, label=label))
+            raise SSHError(format_remote_failure(code, err, label=label))
         return code, out, err
 
     def download_file(self, remote_path: str, local_path: str) -> str:

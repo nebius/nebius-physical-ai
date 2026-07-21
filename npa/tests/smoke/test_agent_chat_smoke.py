@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 from npa.cli import agent as agent_module
+from npa.cli.agent import rendered_agent_ui_html
 from npa.cli.agent_chat import (
     apis_for_intent,
     build_grounded_reply,
@@ -19,18 +20,21 @@ AGENT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
 AGENT_CHAT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_chat.py"
 VERIFY_FRANKA_SCRIPT = REPO_ROOT / "npa" / "scripts" / "verify_agent_franka.sh"
 VERIFY_CHAT_VIZ_SCRIPT = REPO_ROOT / "npa" / "scripts" / "verify_agent_chat_viz.sh"
+VERIFY_RERUN_BUNDLE_SCRIPT = REPO_ROOT / "npa" / "scripts" / "verify_agent_rerun_bundle.sh"
 NPA_AGENT_SKILL = REPO_ROOT / "skills" / "tools" / "npa-agent" / "SKILL.md"
 
 
 def test_agent_bootstrap_chat_router_patterns() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui = rendered_agent_ui_html()
+    bundled = source + "\n" + ui
     assert '@app.post("/chat")' in source
     assert "_agent_chat_with_tools" in source
     assert "_maybe_toolground_chat_reply" in source
-    assert "ensureFrankaRerunLoaded" in source
+    assert "ensureFrankaRerunLoaded" in bundled
     assert '"grounded": True' in source
     assert '"apis_used": apis_used' in source
-    assert 'apiJson("/api/chat"' in source
+    assert 'apiJson("/api/chat"' in bundled
 
 
 def test_agent_chat_module_intent_patterns() -> None:
@@ -65,6 +69,15 @@ def test_verify_agent_chat_viz_script_exists_and_executable() -> None:
     assert VERIFY_CHAT_VIZ_SCRIPT.is_file()
     mode = VERIFY_CHAT_VIZ_SCRIPT.stat().st_mode
     assert mode & stat.S_IXUSR, "verify_agent_chat_viz.sh must be executable"
+
+
+def test_verify_agent_rerun_bundle_script_exists_and_executable() -> None:
+    assert VERIFY_RERUN_BUNDLE_SCRIPT.is_file()
+    mode = VERIFY_RERUN_BUNDLE_SCRIPT.stat().st_mode
+    assert mode & stat.S_IXUSR, "verify_agent_rerun_bundle.sh must be executable"
+    text = VERIFY_RERUN_BUNDLE_SCRIPT.read_text(encoding="utf-8")
+    assert "agent_rerun_bundle_check" in text
+    assert VERIFY_CHAT_VIZ_SCRIPT.read_text(encoding="utf-8").count("verify_agent_rerun_bundle.sh") >= 1
 
 
 def test_npa_agent_skill_documents_chat_maturity() -> None:

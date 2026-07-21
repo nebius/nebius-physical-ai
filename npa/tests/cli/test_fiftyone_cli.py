@@ -18,8 +18,10 @@ from npa.cli.fiftyone import (
     FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
     FIFTYONE_HEALTH_BACKOFF_SEC,
     FIFTYONE_VERSION,
+    _run_fiftyone_command,
 )
 from npa.cli.main import app
+from npa.clients.ssh import SSHError
 from npa.clients import config as config_module
 from npa.clients import credentials as credentials_module
 from npa.clients.config import (
@@ -1852,3 +1854,18 @@ def test_fiftyone_system_info_prints_ssh_output(mocker) -> None:
     assert "lscpu" in cmd
     assert "free -h" in cmd
     assert "lsblk" in cmd
+
+
+def test_run_fiftyone_command_error_omits_command(mocker) -> None:
+    ssh = mocker.MagicMock()
+    secret_command = "bash -lc 'export HF_TOKEN=topsecret && install_fiftyone'"
+    ssh.run.return_value = (5, "no marker here", "boom detail")
+
+    with pytest.raises(SSHError) as excinfo:
+        _run_fiftyone_command(ssh, secret_command)
+
+    message = str(excinfo.value)
+    assert "topsecret" not in message
+    assert secret_command not in message
+    assert "Command failed (exit 5)" in message
+    assert "boom detail" in message
