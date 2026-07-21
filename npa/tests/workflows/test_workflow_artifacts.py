@@ -8,6 +8,7 @@ import pytest
 from npa.workflows.artifacts import (
     Artifact,
     ArtifactDiscoveryError,
+    artifact_media_type,
     download_s3_uri,
     list_artifacts,
     list_runs,
@@ -148,6 +149,14 @@ def test_render_hint_detects_text_csv_and_unknown_fallback() -> None:
     assert render_hint_for_object(key="x/table.csv") == "text"
     assert render_hint_for_object(key="x/video.bin", content_type="video/mp4") == "video"
     assert render_hint_for_object(key="x/opaque.new") == "download"
+
+
+def test_artifact_media_type_prefers_explicit_browser_types() -> None:
+    assert artifact_media_type("demo.mp4") == "video/mp4"
+    assert artifact_media_type("demo.webm") == "video/webm"
+    assert artifact_media_type("shot.png") == "image/png"
+    assert artifact_media_type("notes.md").startswith("text/plain")
+    assert artifact_media_type("blob.bin") == "application/octet-stream"
 
 
 def test_list_runs_requires_positive_limit() -> None:

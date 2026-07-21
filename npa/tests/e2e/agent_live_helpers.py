@@ -6,12 +6,20 @@ from dataclasses import dataclass
 import httpx
 
 from npa.cli.agent import (
+    AGENT_MEDIA_PREVIEW_CONTRACT,
     AGENT_UI_VERSION,
     DEFAULT_AGENT_NAME,
     DEFAULT_PROJECT_ALIAS,
     _agent_record,
     _load_auth_secret,
     _record_tls_verify,
+)
+
+# HTML-visible subset of AGENT_MEDIA_PREVIEW_CONTRACT (excludes backend-only markers).
+MEDIA_PREVIEW_UI_MARKERS = tuple(
+    marker
+    for marker in AGENT_MEDIA_PREVIEW_CONTRACT
+    if not marker.startswith("@app.") and "artifact_media_type(" not in marker
 )
 
 
@@ -111,9 +119,23 @@ UI_WIRING_MARKERS = (
     "function bindClick(",
     "function wireUi(",
     "function showToast(",
+    "activateMainTab",
+    'id="tabChat"',
+    'id="tabRerun"',
+    'id="stagesPanel"',
+    "<h3>Stages</h3>",
     "initNpaAgentUi",
     "DOMContentLoaded",
+    'id="rerunBundleCover"',
+    "waitUntilRerunPastBundleSplash",
+    "Warm Rerun assets before revealing the iframe",
+    "Preparing viewer…",
+    "Uncover without blocking mount latency",
+    "scheduleRerunBundleUncover",
+    "swapRerunRecordingInPlace",
+    "add_receiver",
     f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
+    *MEDIA_PREVIEW_UI_MARKERS,
 )
 
 RERUN_STATIC_CANDIDATES = (

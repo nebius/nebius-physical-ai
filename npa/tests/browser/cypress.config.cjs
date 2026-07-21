@@ -5,6 +5,7 @@ const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "../..");
 const agentSourcePath = path.join(repoRoot, "src/npa/cli/agent.py");
+const agentUiPath = path.join(repoRoot, "src/npa/cli/agent_ui.html");
 const generatedDir = path.join(__dirname, ".generated");
 const generatedUiPath = path.join(generatedDir, "agent-ui.html");
 
@@ -16,23 +17,33 @@ function extractPythonConstant(source, name, fallback) {
 
 function generateAgentUiHtml() {
   const source = fs.readFileSync(agentSourcePath, "utf8");
-  const match = source.match(
-    /cat <<'HTML' \| sudo tee \/opt\/npa-agent\/ui\.html >\/dev\/null\n([\s\S]*?)\nHTML/
-  );
-  if (!match) {
-    throw new Error(`Unable to extract NPA agent UI heredoc from ${agentSourcePath}`);
-  }
   const replacements = {
     AGENT_UI_VERSION: extractPythonConstant(source, "AGENT_UI_VERSION", "dev"),
     DEFAULT_AGENT_USER: extractPythonConstant(source, "DEFAULT_AGENT_USER", "npa"),
     DEFAULT_LLM_MODEL: extractPythonConstant(source, "DEFAULT_LLM_MODEL", "nvidia/Cosmos3-Super-Reasoner"),
   };
-  let html = match[1];
+  let html;
+  if (fs.existsSync(agentUiPath)) {
+    // Preferred: UI lives in agent_ui.html (normal braces, no f-string doubling).
+    html = fs.readFileSync(agentUiPath, "utf8");
+  } else {
+    const match = source.match(
+      /cat <<'HTML' \| sudo tee \/opt\/npa-agent\/ui\.html >\/dev\/null\n([\s\S]*?)\nHTML/
+    );
+    if (!match) {
+      throw new Error(`Unable to extract NPA agent UI from ${agentSourcePath} or ${agentUiPath}`);
+    }
+    html = match[1];
+    // Legacy inline heredoc lived inside a Python f-string.
+    html = html.replaceAll("{{", "{").replaceAll("}}", "}");
+    html = html.replace(/\\\\/g, "\\");
+  }
+  if (html.includes("__NPA_AGENT_UI_HTML__")) {
+    throw new Error("UI heredoc is a placeholder; agent_ui.html is required");
+  }
   for (const [name, value] of Object.entries(replacements)) {
     html = html.replaceAll(`{${name}}`, value);
   }
-  // The heredoc lives inside a Python f-string, so literal JS/CSS braces are doubled in source.
-  html = html.replaceAll("{{", "{").replaceAll("}}", "}");
   fs.mkdirSync(generatedDir, { recursive: true });
   fs.writeFileSync(generatedUiPath, html, "utf8");
   return html;
@@ -51,8 +62,13 @@ function startMockServer(port) {
       return;
     }
     if (url.pathname === "/rerun/" || url.pathname === "/rerun") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end("<!doctype html><title>Mock Rerun</title><canvas data-testid=\"mock-rerun-canvas\"></canvas>");
+      const fixturePath = path.join(__dirname, "cypress/fixtures/mock_rerun.html");
+      const mockHtml = fs.readFileSync(fixturePath, "utf8");
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(mockHtml);
       return;
     }
     if (url.pathname === "/rerun/re_viewer.js") {
@@ -89,6 +105,19 @@ module.exports = defineConfig({
     requestTimeout: 30000,
     responseTimeout: 30000,
     setupNodeEvents(on, config) {
+    on('before:browser:launch', (browser = {}, launchOptions) => {
+      if (browser.family === 'chromium') {
+        launchOptions.args.push(
+          '--ignore-gpu-blocklist',
+          '--use-gl=angle',
+          '--use-angle=swiftshader-webgl',
+          '--enable-webgl',
+          '--enable-unsafe-swiftshader',
+          '--disable-web-security'
+        );
+      }
+      return launchOptions;
+    });
       let server = null;
       if (!process.env.NPA_AGENT_BASE_URL) {
         server = startMockServer(Number(process.env.NPA_AGENT_CYPRESS_PORT || 47867));

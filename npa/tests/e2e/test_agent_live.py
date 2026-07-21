@@ -43,6 +43,63 @@ def test_agent_ui_html_smoke(ctx: AgentLiveContext) -> None:
     assert 'id="chatSessionSelect"' in html
     assert 'chatForm.addEventListener("submit"' in html
     assert "/api/chat/sessions" in html
+    # Bare previewUrl on media tags regresses basic-auth playback.
+    assert "authenticatedPreviewObjectUrl" in html
+    assert "URL.createObjectURL(blob)" in html
+    assert 'src="${previewUrl}"' not in html
+
+
+def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
+    """Live gate: MP4 load must serve video/mp4 through /api/artifacts/file/."""
+    runs = ctx.get("/api/artifacts/runs")
+    runs.raise_for_status()
+    payload = runs.json()
+    run_list = payload.get("runs") or []
+    assert isinstance(run_list, list), "expected runs list from artifacts discovery"
+
+    mp4_run_id = ""
+    mp4_key = ""
+    for entry in run_list[:20]:
+        run_id = str((entry or {}).get("run_id") or "").strip()
+        if not run_id:
+            continue
+        listed = ctx.get(f"/api/artifacts/run/{run_id}")
+        listed.raise_for_status()
+        arts = (listed.json() or {}).get("artifacts") or []
+        for art in arts:
+            key = str((art or {}).get("key") or "")
+            render = str((art or {}).get("render") or "")
+            if render == "video" or key.lower().endswith(".mp4"):
+                mp4_run_id = run_id
+                mp4_key = key
+                break
+        if mp4_key:
+            break
+
+    if mp4_key:
+        loaded = ctx.post(
+            "/api/sim-viz/load-artifact",
+            json={"run_id": mp4_run_id, "key": mp4_key},
+            timeout=60.0,
+        )
+        loaded.raise_for_status()
+        body = loaded.json()
+        assert body.get("ok") is True
+        assert body.get("render") == "video"
+        sim_viz = body.get("sim_viz") or {}
+        preview = str(sim_viz.get("artifact_preview_url") or "")
+        assert preview.startswith("/api/artifacts/file/")
+        assert str(sim_viz.get("artifact_render") or "") == "video"
+        file_resp = ctx.get(preview, timeout=30.0)
+    else:
+        # No S3 .mp4 in recent runs — use bootstrap fixture seeded for this gate.
+        file_resp = ctx.get("/api/artifacts/file/sample-preview.mp4", timeout=30.0)
+
+    file_resp.raise_for_status()
+    content_type = str(file_resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    assert content_type == "video/mp4", f"expected video/mp4, got {content_type!r}"
+    assert len(file_resp.content) >= 16
+    assert file_resp.content[4:8] == b"ftyp" or file_resp.content[:4] == b"\x00\x00\x00"
 
 
 def test_agent_health_and_session(ctx: AgentLiveContext) -> None:
@@ -290,6 +347,43 @@ def test_agent_rerun_static_assets(ctx: AgentLiveContext) -> None:
         if resp.status_code == 200 and resp.content:
             ok_paths.append(path)
     assert ok_paths, f"no rerun static asset responded 200 among {RERUN_STATIC_CANDIDATES}"
+
+
+def test_agent_rerun_bundle_load_budget(ctx: AgentLiveContext) -> None:
+    """Live gate: Rerun wasm/js must start promptly (no deferred tab stall)."""
+    from npa.agent_rerun_bundle_check import (
+        check_rerun_bundle_load_budget,
+        format_bundle_budget_report,
+    )
+
+    result = check_rerun_bundle_load_budget(
+        ctx.agent_url,
+        auth=ctx.auth(),
+        verify=ctx.tls_verify,
+    )
+    report = format_bundle_budget_report(result)
+    assert result.ok, report
+    assert result.fetches, report
+    wasm_fetches = [f for f in result.fetches if f.path.endswith(".wasm")]
+    assert wasm_fetches, report
+    assert wasm_fetches[0].nbytes >= 1_000_000, report
+
+
+def test_agent_no_loading_application_bundle_without_latency(ctx: AgentLiveContext) -> None:
+    """Live gate: UI hides Rerun splash without blocking mount on long splash waits."""
+    from npa.agent_rerun_bundle_check import assert_rerun_ui_eager_load_contract
+
+    resp = ctx.get(ctx.agent_url)
+    assert resp.status_code == 200
+    html = resp.text
+    errors = assert_rerun_ui_eager_load_contract(html)
+    assert errors == [], errors
+    assert "scheduleRerunBundleUncover" in html
+    assert "Uncover without blocking mount latency" in html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 45000)" not in html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 120000)" not in html
+    assert 'Mount the viewer immediately so "Loading application bundle" starts early' not in html
+
 
 
 def test_agent_load_franka_demo_and_rrd(ctx: AgentLiveContext) -> None:

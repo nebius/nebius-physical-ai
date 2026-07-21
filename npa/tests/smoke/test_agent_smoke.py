@@ -6,11 +6,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from npa.cli.agent import AGENT_UI_VERSION
+from npa.cli.agent import AGENT_MEDIA_PREVIEW_CONTRACT, AGENT_UI_VERSION, rendered_agent_ui_html
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TMUX_SCRIPT = REPO_ROOT / "npa" / "scripts" / "start_agent_live_tmux.sh"
 AGENT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
+AGENT_UI_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_ui.html"
 
 UI_BUTTON_IDS = (
     "chatActionS3",
@@ -30,6 +31,10 @@ UI_WIRING_MARKERS = (
     "function showToast(",
     "initNpaAgentUi",
     "DOMContentLoaded",
+    'id="tabChat"',
+    'id="tabRerun"',
+    'id="stagesPanel"',
+    "<h3>Stages</h3>",
 )
 
 RERUN_STATIC_CANDIDATES = (
@@ -42,20 +47,28 @@ RERUN_STATIC_CANDIDATES = (
 
 def test_agent_bootstrap_source_smoke() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_source = AGENT_UI_MODULE.read_text(encoding="utf-8")
+    ui = rendered_agent_ui_html()
+    bundled = source + "\n" + ui_source + "\n" + ui
     assert '@app.get("/sim-viz/rrd")' in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert '@app.get("/workflows/sim2real/status")' in source
     assert AGENT_UI_VERSION in source
-    assert 'name="npa-ui-version" content="{AGENT_UI_VERSION}"' in source
+    assert 'name="npa-ui-version" content="{AGENT_UI_VERSION}"' in ui_source
     for control_id in UI_BUTTON_IDS:
-        assert f'bindClick("{control_id}"' in source
-    assert 'id="chatSend"' in source
-    assert 'id="chatForm"' in source
-    assert 'id="chatSessionSelect"' in source
-    assert 'chatForm.addEventListener("submit"' in source
-    assert "/api/chat/sessions" in source
+        assert f'bindClick("{control_id}"' in bundled
+    for marker in UI_WIRING_MARKERS:
+        assert marker in bundled, f"missing UI wiring marker: {marker!r}"
+    for marker in AGENT_MEDIA_PREVIEW_CONTRACT:
+        assert marker in bundled, f"missing media-preview contract marker: {marker!r}"
+    assert 'id="chatSend"' in bundled
+    assert 'id="chatForm"' in bundled
+    assert 'id="chatSessionSelect"' in bundled
+    assert 'chatForm.addEventListener("submit"' in bundled
+    assert "/api/chat/sessions" in bundled
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
+    assert "media_type=artifact_media_type(safe_name)" in source
 
 
 def test_agent_live_tmux_script_help() -> None:

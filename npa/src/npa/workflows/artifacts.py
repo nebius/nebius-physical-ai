@@ -180,6 +180,40 @@ def is_inline_render(render: str) -> bool:
     return render in {"rerun", "video", "image", "json", "text"}
 
 
+def artifact_media_type(filename: str) -> str:
+    """Return a browser-playable Content-Type for an artifact filename.
+
+    Used by the agent ``/api/artifacts/file/...`` endpoint so ``<video>`` /
+    ``<img>`` previews (and authenticated blob fetches) receive a real media
+    type instead of ``application/octet-stream``.
+    """
+    name = str(filename or "").strip()
+    suffix = Path(name).suffix.lower()
+    explicit = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".json": "application/json",
+        ".txt": "text/plain; charset=utf-8",
+        ".log": "text/plain; charset=utf-8",
+        ".md": "text/plain; charset=utf-8",
+        ".csv": "text/plain; charset=utf-8",
+        ".yaml": "text/plain; charset=utf-8",
+        ".yml": "text/plain; charset=utf-8",
+    }
+    if suffix in explicit:
+        return explicit[suffix]
+    guessed, _ = mimetypes.guess_type(name)
+    if guessed:
+        return str(guessed)
+    return "application/octet-stream"
+
+
 def list_runs(
     bucket: str,
     *,
