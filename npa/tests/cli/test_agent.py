@@ -824,6 +824,48 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
 
 
+def test_verify_live_accepts_non_us_central1_region(monkeypatch) -> None:
+    """Route C deploys with --region eu-north1; verify-live must not hard-fail
+    non-us-central1 regions (regression for the README Route C failure)."""
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_record",
+        lambda project, name: {
+            "public_ip": "8.8.8.8",
+            "region": "eu-north1",
+            "auth_secret_path": "/tmp/agent-auth",
+        },
+    )
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+
+    def _boom(_path: str) -> tuple[str, str]:
+        raise ValueError("stop-after-region-gate")
+
+    monkeypatch.setattr("npa.cli.agent._load_auth_secret", _boom)
+
+    result = runner.invoke(app, ["verify-live"])
+
+    assert result.exit_code == 1
+    assert "region mismatch" not in result.output
+    assert "stop-after-region-gate" in result.output
+
+
+def test_verify_live_requires_a_recorded_region(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_record",
+        lambda project, name: {
+            "public_ip": "8.8.8.8",
+            "region": "",
+            "auth_secret_path": "/tmp/agent-auth",
+        },
+    )
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+
+    result = runner.invoke(app, ["verify-live"])
+
+    assert result.exit_code == 1
+    assert "missing its deploy region" in result.output
+
+
 def test_verify_live_runs_pytests(monkeypatch) -> None:
     class _Resp:
         def __init__(self, payload: dict[str, object] | str | bytes, *, status_code: int = 200) -> None:

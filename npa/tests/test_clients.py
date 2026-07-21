@@ -256,6 +256,21 @@ def test_ssh_run_or_raise_maps_nonzero(mocker) -> None:
         client.run_or_raise("false")
 
 
+def test_ssh_run_or_raise_omits_command_to_avoid_leaking_secrets(mocker) -> None:
+    client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
+    secret_command = "bash -lc 'export AWS_SECRET_ACCESS_KEY=topsecret && do_install'"
+    mocker.patch.object(client, "run", return_value=(1, "", "boom"))
+
+    with pytest.raises(SSHError) as excinfo:
+        client.run_or_raise(secret_command)
+
+    message = str(excinfo.value)
+    assert "topsecret" not in message
+    assert "AWS_SECRET_ACCESS_KEY" not in message
+    assert "Command failed (exit 1)" in message
+    assert "boom" in message
+
+
 def test_ssh_download_file_uses_sftp(tmp_path: Path, mocker) -> None:
     sftp = mocker.MagicMock()
     paramiko_client = mocker.MagicMock()

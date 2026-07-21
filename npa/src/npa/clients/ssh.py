@@ -144,12 +144,21 @@ class SSHClient:
             client.close()
 
     def run_or_raise(self, command: str, **kwargs) -> tuple[int, str, str]:
-        """Run a command; raise SSHError on non-zero exit."""
+        """Run a command; raise SSHError on non-zero exit.
+
+        The full command is deliberately omitted from the error. Remote install
+        scripts frequently carry credentials (S3 keys, HF/NGC/Token Factory
+        tokens, registry passwords) inline, and this exception text is surfaced
+        to terminals, scrollback, CI logs, and agent transcripts. Only the exit
+        code and remote stderr are reported.
+        """
         code, out, err = self.run(command, **kwargs)
         if code != 0:
-            raise SSHError(
-                f"Command failed (exit {code}): {command}\nstderr: {err.strip()}"
-            )
+            detail = err.strip()
+            message = f"Command failed (exit {code})"
+            if detail:
+                message += f"\nstderr: {detail}"
+            raise SSHError(message)
         return code, out, err
 
     def download_file(self, remote_path: str, local_path: str) -> str:

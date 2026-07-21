@@ -94,6 +94,7 @@ def _patch_successful_deploy(mocker, case: DeployIngressCase, *, instance_id: st
     elif case.tool == "groot":
         mocker.patch(f"{module}.resolve_credentials", return_value=CredentialsConfig(tokens={}))
         mocker.patch(f"{module}.health_check_auto", return_value=(True, ""))
+        mocker.patch(f"{module}.write_remote_docker_env_file")
     else:
         mocker.patch(f"{module}.resolve_credentials", return_value=SimpleNamespace(tokens={}))
         mocker.patch(f"{module}._run_fiftyone_command", return_value=(0, "", ""))
