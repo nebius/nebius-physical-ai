@@ -32,6 +32,7 @@ from npa.workflows.sim2real_health import (
     PASS,
     SKIP,
     WARN,
+    format_check_report,
     has_failure,
     run_preflight,
 )
@@ -85,29 +86,7 @@ def _kube_runner_factory(context: str, kubeconfig: str):
 def _emit_results(results, *, output_json: bool) -> None:
     """Render a list of CheckResult objects as text or JSON."""
 
-    if output_json:
-        payload = {
-            "checks": [result.as_dict() for result in results],
-            "ok": not has_failure(results),
-        }
-        typer.echo(json_module.dumps(payload, indent=2, sort_keys=True))
-        return
-    for result in results:
-        typer.echo(
-            f"[{_STATUS_ICON.get(result.status, result.status)}] "
-            f"{result.name}: {result.summary}"
-        )
-        for detail in result.details:
-            typer.echo(f"        - {detail}")
-        if result.remedy and result.status in {FAIL, WARN, SKIP}:
-            typer.echo(f"        fix: {result.remedy}")
-    counts = {status: 0 for status in (PASS, WARN, FAIL, SKIP)}
-    for result in results:
-        counts[result.status] = counts.get(result.status, 0) + 1
-    typer.echo(
-        f"summary: {counts[PASS]} pass, {counts[WARN]} warn, "
-        f"{counts[FAIL]} fail, {counts[SKIP]} skip"
-    )
+    typer.echo(format_check_report(results, output_json=output_json))
 
 
 def _token_factory_verifier() -> list[str]:

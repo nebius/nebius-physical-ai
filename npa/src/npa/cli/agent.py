@@ -14,7 +14,10 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from npa.workflows.sim2real_health import CheckResult
 
 import httpx
 import typer
@@ -745,7 +748,7 @@ def _terraform_binary() -> str:
     return (os.environ.get("NPA_TERRAFORM_BIN") or shutil.which("terraform") or "").strip()
 
 
-def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[Any]:
+def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
     """Cheap, side-effect-free Route C prerequisites (terraform + SSH keys).
 
     These are checked before any cloud IAM side effects or Terraform apply so a
@@ -813,11 +816,16 @@ def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[Any]:
     return results
 
 
-def _agent_token_factory_result() -> Any:
-    """Token Factory key check (WARN): the headline chat feature needs it."""
+def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
+    """Token Factory key check (WARN): the headline chat feature needs it.
+
+    Pass a pre-resolved ``tf_key`` to avoid re-reading credentials when the
+    caller already has them.
+    """
     from npa.workflows.sim2real_health import CheckResult, PASS, WARN
 
-    tf_key, _ = _resolve_deploy_llm_credentials()
+    if tf_key is None:
+        tf_key, _ = _resolve_deploy_llm_credentials()
     if tf_key:
         return CheckResult(
             name="token_factory", status=PASS, summary="Token Factory API key is configured."
@@ -833,7 +841,7 @@ def _agent_token_factory_result() -> Any:
     )
 
 
-def _agent_nebius_auth_result() -> Any:
+def _agent_nebius_auth_result() -> CheckResult:
     """Live Nebius auth check (FAIL): deploy needs an authenticated profile to provision."""
     from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
 
@@ -861,20 +869,16 @@ def _agent_nebius_auth_result() -> Any:
     )
 
 
-def _render_agent_checks(results: list[Any], *, output_json: bool) -> bool:
-    """Render agent preflight CheckResults; return True when any FAIL is present."""
-    has_fail = any(getattr(r, "status", "") == "FAIL" for r in results)
-    if output_json:
-        payload = {"checks": [r.as_dict() for r in results], "ok": not has_fail}
-        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return has_fail
-    for result in results:
-        typer.echo(f"[{result.status}] {result.name}: {result.summary}")
-        for detail in getattr(result, "details", ()):  # type: ignore[arg-type]
-            typer.echo(f"        - {detail}")
-        if result.remedy and result.status in {"WARN", "FAIL", "SKIP"}:
-            typer.echo(f"        fix: {result.remedy}")
-    return has_fail
+def _render_agent_checks(results: list[CheckResult], *, output_json: bool) -> bool:
+    """Render agent preflight CheckResults; return True when any FAIL is present.
+
+    Uses the shared report renderer so agent and workbench-health preflight
+    output stay aligned.
+    """
+    from npa.workflows.sim2real_health import format_check_report, has_failure
+
+    typer.echo(format_check_report(results, output_json=output_json))
+    return has_failure(results)
 
 
 def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str]:
@@ -6456,8 +6460,11 @@ def deploy_cmd(
     # otherwise surfaces mid-run (as a raw Terraform file() error or a late
     # provisioner failure) after infrastructure has already been touched. Surface
     # the Token Factory warning here too, rather than only after the VM exists.
+    # Resolve the deploy LLM creds once and thread them through to the VM
+    # bootstrap below.
+    tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     prereq_results = _agent_hard_prereq_results(ssh_public_key_path)
-    tf_key_result = _agent_token_factory_result()
+    tf_key_result = _agent_token_factory_result(tf_api_key)
     for result in prereq_results:
         if result.status == "FAIL":
             _fail(f"{result.summary} {result.remedy}".strip())
@@ -6569,7 +6576,7 @@ def deploy_cmd(
         user=DEFAULT_AGENT_USER,
         password=auth_password,
     )
-    tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
+    # tf_api_key / default_llm_model were resolved once up front (before Terraform).
     configured_llm_model = str(llm_model or "").strip() or default_llm_model
     # With no explicit --llm-models, seed the cost-ordered default ladder so
     # per-turn routing can reach every tier (cheap/standard/reasoning/vision)

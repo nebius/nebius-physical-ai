@@ -1809,6 +1809,100 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
     assert exc.value.exit_code == 1
 
 
+def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
+    """Deploy aborts on a missing terraform binary BEFORE any cloud side effects."""
+    from npa.cli import agent as agent_module
+    from npa.cli.agent import deploy_cmd
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.delenv("NPA_TERRAFORM_BIN", raising=False)
+    monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *a, **k: SimpleNamespace(
+            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+        ),
+    )
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("cloud bootstrap must not run when terraform is missing")
+
+    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", _must_not_run)
+
+    with pytest.raises(Exit) as exc:
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-1",
+            tenant_id="tenant-1",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+            tf_var=[],
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+    assert exc.value.exit_code == 1
+
+
+def test_deploy_warns_on_missing_token_factory_key(monkeypatch, tmp_path, capsys) -> None:
+    """Deploy surfaces the Token Factory 503 warning up front (before Terraform)."""
+    from npa.cli.agent import deploy_cmd
+    from npa.clients.nebius import NebiusError
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *a, **k: SimpleNamespace(
+            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+        ),
+    )
+    # No Token Factory key configured.
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("", "m"))
+    # Stop the flow right after the warning, before any real provisioning.
+    monkeypatch.setattr(
+        "npa.clients.nebius.bootstrap_agent_environment",
+        lambda *a, **k: (_ for _ in ()).throw(NebiusError("stop after warning")),
+    )
+
+    with pytest.raises(Exit):
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-1",
+            tenant_id="tenant-1",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+            tf_var=[],
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+    err = capsys.readouterr().err
+    assert "503" in err
+
+
+def test_agent_nebius_auth_result_pass(monkeypatch) -> None:
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    result = agent_module._agent_nebius_auth_result()
+    assert result.status == "PASS"
+    assert result.name == "nebius_profile"
+
+
 def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
     from npa.cli.agent import _resolve_agent_service_account_id
 

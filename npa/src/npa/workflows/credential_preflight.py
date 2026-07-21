@@ -77,10 +77,14 @@ def check_hf(credentials: Any, probes: CredentialProbes) -> CheckResult:
         )
     result = probes.hf_validator(token, HF_PROBE_REPO)
     if getattr(result, "ok", False):
+        # The probe hits a public repo, which confirms presence + connectivity
+        # (and that the token is not outright rejected), but Hugging Face serves
+        # public metadata even for an expired token, so this is not full
+        # validation. Say "reachable", not "accepted".
         return CheckResult(
             name="hf",
             status=PASS,
-            summary="HF_TOKEN is set and accepted by Hugging Face.",
+            summary="HF_TOKEN is set and Hugging Face is reachable.",
         )
     status_code = getattr(result, "status_code", None)
     error = getattr(result, "error", "") or "unknown error"
