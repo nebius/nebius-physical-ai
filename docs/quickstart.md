@@ -231,8 +231,9 @@ create one first; see the README **Nebius AI Cloud account** section,
 Run interactive setup in a terminal. `npa configure` creates or reuses your
 Nebius CLI profile first, then prompts for your project id and tenant id (in
 that order, no defaults shown), your region and container registry (defaults are
-discovered from the project), and guides you to reuse an existing bucket or
-create a default `npa-bucket` (standard storage, size limit in GB). It then
+discovered from the project), guides you to reuse an existing bucket or create a
+default `npa-bucket` (standard storage, size limit in GB), and asks for a local
+**project alias** (default = region; used later as `-p <alias>`). It then
 writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`:
 
 ```bash
@@ -256,10 +257,10 @@ Keep these non-secret values handy for later workbench deploys:
   <https://docs.nebius.com/iam/get-tenants>.
 - `<NEBIUS_REGION>`: the region where the project exists, for example
   `eu-north1`.
-- `<PROJECT_ALIAS>`: the local profile key `npa configure` writes for this
-  project. It is set automatically to your region (for example `eu-north1`) and
-  becomes `default_project` in `~/.npa/config.yaml`. Pass it as
-  `-p <PROJECT_ALIAS>` to workbench commands (or omit `-p` to use the default).
+- `<PROJECT_ALIAS>`: the local profile key `npa configure` prompts for (default
+  = region, for example `eu-north1`). It becomes `default_project` in
+  `~/.npa/config.yaml`. Pass it as `-p <PROJECT_ALIAS>` to workbench commands
+  (or omit `-p` to use the default).
 
 ### 4b. Required credential key names
 

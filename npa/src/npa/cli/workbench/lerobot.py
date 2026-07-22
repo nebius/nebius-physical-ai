@@ -42,7 +42,12 @@ from npa.clients.credentials import apply_shared_credential_env, shared_credenti
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.serverless import EndpointNotFoundError, JobInfo, ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool, resolve_lerobot_image_tag, supported_tool_version
-from npa.serverless_common import SubnetResolutionError, resolve_subnet
+from npa.serverless_common import (
+    MissingS3CredentialsError,
+    SubnetResolutionError,
+    require_s3_credentials,
+    resolve_subnet,
+)
 from npa.workbench.lerobot.version_compat import (
     LeRobotVersionError,
     eval_checkpoint_arg,
@@ -1023,6 +1028,17 @@ def _train_serverless(
         resolved_access_key = s3_access_key or training_config.checkpoint_s3.aws_access_key_id
         resolved_secret_key = s3_secret_key or training_config.checkpoint_s3.aws_secret_access_key
         resolved_endpoint = s3_endpoint or training_config.checkpoint_s3.endpoint_url
+    try:
+        require_s3_credentials(
+            {
+                "aws_access_key_id": resolved_access_key,
+                "aws_secret_access_key": resolved_secret_key,
+                "endpoint_url": resolved_endpoint,
+            },
+            context="LeRobot serverless jobs",
+        )
+    except MissingS3CredentialsError as exc:
+        _fail(str(exc))
     env = _lerobot_serverless_job_env(
         credentials.hf_token,
         resolved_access_key,
@@ -1205,6 +1221,17 @@ def _profile_train_serverless(
     storage = resolve_project_storage(proj_alias)
     credentials = resolve_credentials()
     s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
+    try:
+        require_s3_credentials(
+            {
+                "aws_access_key_id": s3_access_key,
+                "aws_secret_access_key": s3_secret_key,
+                "endpoint_url": s3_endpoint,
+            },
+            context="LeRobot serverless jobs",
+        )
+    except MissingS3CredentialsError as exc:
+        _fail(str(exc))
     env = _lerobot_serverless_job_env(
         credentials.hf_token,
         s3_access_key,

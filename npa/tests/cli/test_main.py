@@ -151,7 +151,8 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     # Enter project/tenant + default region/registry; pick a custom
-    # bucket name and a custom size; then HF + AI Cloud + Token Factory + NGC.
+    # bucket name and a custom size; then HF + AI Cloud + Token Factory + NGC;
+    # accept the default project alias (region).
     answers = "\n".join(
         [
             "project-12345",     # project id
@@ -165,12 +166,15 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
             "aicloud_secret",    # AI Cloud API key
             "nebius_secret_key", # Nebius Token Factory API key
             "nvapi_secret",      # NGC API key
+            "",                  # project alias (default = region)
         ]
     ) + "\n"
 
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
+    assert "project alias: eu-north1" in result.output
+    assert "-p eu-north1" in result.output
     assert len(bootstrap_calls) == 1
     call = bootstrap_calls[0]
     assert (call["project_id"], call["tenant_id"], call["region"]) == (
@@ -194,6 +198,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
 
     cfg = yaml.safe_load(config_path.read_text())
     project = cfg["projects"]["eu-north1"]
+    assert cfg["default_project"] == "eu-north1"
     assert project["project_id"] == "project-12345"
     assert project["tenant_id"] == "tenant-abcde"
     assert project["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
@@ -238,8 +243,9 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # proj, tenant, region, registry, bucket name (Enter = default), hf, ai cloud, token factory, ngc
-    answers = "\n".join(["project-1", "tenant-1", "", "", "", "", "", "", ""]) + "\n"
+    # proj, tenant, region, registry, bucket name (Enter = default), hf, ai cloud,
+    # token factory, ngc, project alias (Enter = region default)
+    answers = "\n".join(["project-1", "tenant-1", "", "", "", "", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -287,6 +293,7 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
             "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
+            "",                  # project alias (default = region)
         ]
     ) + "\n"
 
@@ -335,6 +342,7 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
             "",                  # AI Cloud API key
             "",                  # Token Factory API key
             "",                  # NGC API key
+            "lab",               # project alias (custom)
         ]
     ) + "\n"
 
@@ -343,10 +351,15 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
     )
 
     assert result.exit_code == 0, result.output
+    assert "project alias: lab" in result.output
+    assert "-p lab" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"
     # Endpoint default tracks the entered region.
     assert creds["storage"]["endpoint_url"] == "https://storage.me-central1.nebius.cloud"
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["default_project"] == "lab"
+    assert cfg["projects"]["lab"]["region"] == "me-central1"
 
 
 def test_configure_interactive_skips_config_without_project(monkeypatch, tmp_path) -> None:
@@ -603,6 +616,7 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
             "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
+            "",                  # project alias (default = region)
         ]
     ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
@@ -791,6 +805,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
             "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
+            "",                  # project alias (default = region)
         ]
     ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
@@ -799,6 +814,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     assert created == [True]
     assert "Nebius CLI profile is ready." in result.output
     assert "No bucket name provided" in result.output
+    assert "project alias: eu-north1" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
