@@ -126,7 +126,7 @@ config:
   capability_name: "<primary-capability-id>"
   smoke_artifact_name: "<solution>_<capability>.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
-  # use byof-solution-smoke-rtxpro-gpu.yaml when CUDA/EGL/Vulkan is required
+  # use npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml when CUDA/EGL/Vulkan is required
 ```
 
 Run via:
