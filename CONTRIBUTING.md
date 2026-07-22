@@ -335,8 +335,15 @@ Backing services are encapsulated. A pipeline stage should receive an S3 URI,
 call a tool endpoint, and write the next S3 URI. The BDD100K pipeline in
 `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml` is the worked example.
 ## Workflow YAML Conventions
-Add a SkyPilot YAML only when a tool needs a repeatable pipeline or reference
-workflow. Do not add Argo workflows.
+The supported, customer-facing workflow catalog is the declarative
+`npa.workflow` spec set under `npa/workflows/workbench/npa-workflows/`; author
+new customer-facing workflows there. Raw SkyPilot task templates are internal
+runtime resources under `npa/src/npa/workflows/skypilot/` (they must not be
+re-added to the shown `npa/workflows/workbench/` catalog — a guardrail enforces
+this). Add or edit a raw SkyPilot template only when a runner needs a
+SkyPilot-only capability the `npa.workflow` engine cannot express (parallel
+sweeps, burst, the trigger watch-loop, the legacy H100 sim-to-real pipeline).
+Do not add Argo workflows.
 
 References:
 

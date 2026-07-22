@@ -4,7 +4,7 @@ Technical recipes for reproducing benchmark, demo, and customer evaluation
 workflows with Nebius Physical AI Workbench.
 
 > Looking for the SkyPilot YAML behind a cookbook? The
-> [workflow catalog](../../../npa/src/npa/workflows/skypilot/README.md) maps
+> [workflow catalog](../../../npa/workflows/workbench/npa-workflows/README.md) maps
 > every workflow YAML to its command and guide.
 
 ## Available Cookbooks
