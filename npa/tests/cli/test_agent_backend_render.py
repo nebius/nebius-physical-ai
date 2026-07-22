@@ -88,6 +88,10 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     # Phase D: semantic router embedded + wired into the /chat fallthrough.
     assert "def classify_intent_semantic" in body
     assert "def _semantic_route" in body
+    # Phase F: quantitative signals + run memory embedded + routes wired.
+    assert "def extract_quantitative_signals" in body
+    assert "class RunMemory" in body
+    assert '@app.get("/agent/memory/compare")' in body
     # Grounded-first is preserved: /chat still exists and is separate.
     assert '@app.post("/chat")' in body
 

@@ -231,10 +231,22 @@ def _embedded_agent_semantic_router_source() -> str:
     return raw
 
 
+def _embedded_agent_memory_source() -> str:
+    """Return agent_memory.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_memory.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
 _AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
 _AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
+_AGENT_MEMORY_EMBED = "__NPA_AGENT_MEMORY_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1781,6 +1793,7 @@ def _bootstrap_agent_stack(
     agent_actions_source = _embedded_agent_actions_source()
     agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
     agent_semantic_router_source = _embedded_agent_semantic_router_source()
+    agent_memory_source = _embedded_agent_memory_source()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -3526,6 +3539,8 @@ def _chat_with_resilience(
 
 {_AGENT_SEMANTIC_ROUTER_EMBED}
 
+{_AGENT_MEMORY_EMBED}
+
 {_AGENT_WORKFLOW_EMBED}
 
 {_AGENT_ARTIFACTS_EMBED}
@@ -5234,18 +5249,15 @@ def agent_sim2real_drive(payload: dict):
         return _act_response_to_dict(sim2real_status(run_id=str(run_id or "")))
 
     def _diagnose(gate_result, run_status):
-        notes = []
-        sr = gate_result.get("success_rate") if isinstance(gate_result, dict) else None
-        if sr is None:
-            notes.append("no gate success_rate available on this run yet")
+        # Quantitative viewer eval (Phase F Gap 4) feeds the diagnosis.
+        signals = extract_quantitative_signals(gate_result if isinstance(gate_result, dict) else {{}})
+        if not signals.get("has_signal"):
             mode = "insufficient_signal"
-        elif float(sr) <= 0.0:
-            notes.append("degenerate rollout: success_rate at floor")
+        elif signals.get("policy_collapse") or signals.get("degenerate"):
             mode = "policy_collapse"
         else:
-            notes.append("below-threshold success_rate")
             mode = "low_success"
-        return {{"failure_mode": mode, "notes": "; ".join(notes)}}
+        return {{"failure_mode": mode, "signals": signals, "notes": "; ".join(signals.get("notes", []))}}
 
     result = drive_sim2real_loop(
         goal,
@@ -5267,7 +5279,59 @@ def agent_sim2real_drive(payload: dict):
     result["grounded"] = False
     result["mode"] = "sim2real-drive"
     result["apis_used"] = ["workflows/sim2real/submit", "workflows/sim2real/status"]
+    # Persist the drive outcome to cross-run memory (Phase F Gap 5) so later
+    # sessions can compare/explain regressions from stored metadata.
+    if not result.get("needs_confirmation") and result.get("final_run_id"):
+        try:
+            last_gate = {{}}
+            iters = result.get("iterations") or []
+            if iters and isinstance(iters[-1], dict):
+                last_gate = iters[-1].get("gate") or {{}}
+            _agent_run_memory().record_run(
+                result["final_run_id"],
+                {{
+                    "decision": result.get("decision"),
+                    "stopped_reason": result.get("stopped_reason"),
+                    "iterations": len(iters),
+                    "success_rate": last_gate.get("success_rate"),
+                    "threshold": last_gate.get("threshold"),
+                    "recorded_at": _now_iso(),
+                }},
+            )
+        except Exception:
+            pass
     return result
+
+def _agent_run_memory():
+    return RunMemory(
+        JsonFileStore("/opt/npa-agent/memory"),
+        comparator=compare_rollouts,
+    )
+
+@app.post("/agent/memory/record")
+def agent_memory_record(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    run_id = str(body.get("run_id") or "").strip()
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {{}}
+    record = _agent_run_memory().record_run(run_id, metadata)
+    return {{"ok": True, "record": record}}
+
+@app.get("/agent/memory/runs")
+def agent_memory_runs(limit: int = 20):
+    return {{"ok": True, "runs": _agent_run_memory().list_runs(limit=limit)}}
+
+@app.get("/agent/memory/run/{{run_id:path}}")
+def agent_memory_run(run_id: str):
+    record = _agent_run_memory().get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="run not found in memory")
+    return {{"ok": True, "record": record}}
+
+@app.get("/agent/memory/compare")
+def agent_memory_compare(run_a: str, run_b: str):
+    return _agent_run_memory().compare_runs(run_a, run_b)
 
 @app.get("/health")
 def health():
@@ -6649,6 +6713,7 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
         .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
         .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
+        .replace(_AGENT_MEMORY_EMBED, agent_memory_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
