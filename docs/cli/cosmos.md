@@ -8,8 +8,8 @@ Usage: npa workbench cosmos [OPTIONS] COMMAND [ARGS]...
 NVIDIA Cosmos world model serving and inference endpoints.
 
 Options
---project  -p  TEXT  Project alias from ~/.npa/config.yaml.
---name  -n  TEXT  Workbench instance name within the project.
+--project  -p  <str>  Project alias from ~/.npa/config.yaml.
+--name  -n  <str>  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
 check  Check Cosmos3 source and HF checkpoint access without downloading weights.
@@ -22,7 +22,7 @@ cleanup-partial  Clean up orphaned Terraform resources from an interrupted Cosmo
 deploy  Deploy or destroy a Cosmos model serving backend.
 teardown  Delete a Cosmos serverless endpoint and remove its local alias.
 reload-env  Propagate local shared credentials into the running Cosmos service env without redeploying.
-serve  Start or pre-warm the saved Cosmos model server.
+serve  Load (pre-warm) the saved Cosmos model so the server is ready to serve.
 finetune  Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on custom datasets.
 train  Submit a Cosmos training job.
 optimize  Roadmap placeholder for TensorRT compilation and quantization of Cosmos models.
@@ -35,8 +35,8 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 
 | Option | Description |
 | --- | --- |
-| `--project` | -p  TEXT  Project alias from ~/.npa/config.yaml. |
-| `--name` | -n  TEXT  Workbench instance name within the project. |
+| `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. |
+| `--name` | -n  <str>  Workbench instance name within the project. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
@@ -53,7 +53,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 | `deploy` | Deploy or destroy a Cosmos model serving backend. |
 | `teardown` | Delete a Cosmos serverless endpoint and remove its local alias. |
 | `reload-env` | Propagate local shared credentials into the running Cosmos service env without redeploying. |
-| `serve` | Start or pre-warm the saved Cosmos model server. |
+| `serve` | Load (pre-warm) the saved Cosmos model so the server is ready to serve. |
 | `finetune` | Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on custom datasets. |
 | `train` | Submit a Cosmos training job. |
 | `optimize` | Roadmap placeholder for TensorRT compilation and quantization of Cosmos models. |
@@ -65,7 +65,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 
 ```bash
 npa workbench cosmos --help
-npa workbench cosmos ensure-ingress --help
+npa workbench cosmos check --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos`.

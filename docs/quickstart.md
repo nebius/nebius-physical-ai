@@ -403,28 +403,39 @@ report = vlm_eval.benchmark(
 print(report.best_config.metrics.accuracy)  # 1.0
 ```
 
-**Standalone SkyPilot YAML (raw `sky`, BYO S3 endpoint + image).** Save this as
-`vlm-eval-benchmark.sky.yaml` and run it with plain `sky launch` — no `npa` CLI
-or SDK in the loop. Every value is a placeholder you override with `--env`:
+**Standalone SkyPilot YAML (raw `sky`, BYO S3 endpoint + image).** Save this at
+the repo root as `vlm-eval-benchmark.sky.yaml` and run it with plain `sky
+launch` — no `npa` CLI or SDK orchestrating it. `workdir: .` uploads your
+cloned checkout so the job installs `npa` from the synced source (there is no
+public PyPI/registry dependency). Run as-is to score the in-repo fixture with
+the offline `stub` backend, or override the `--env` values to use your own
+image and object storage:
 
 ```yaml
 name: vlm-eval-benchmark
+# Upload the cloned repo so the job can `pip install -e ./npa` without needing
+# npa on PyPI or a prebuilt image. Launch this file from the repo root.
+workdir: .
 resources:
   cloud: kubernetes
   cpus: 4
-  # Bring your own image. The default below is a generic CPU Python image;
-  # point NPA_IMAGE at your registry, e.g. cr.<region>.nebius.cloud/<your-registry-id>/<image>:<tag>
-  image_id: "docker:${NPA_IMAGE}"
+  # Generic CPU Python image; npa installs from the synced workdir in `setup`.
+  # SkyPilot does not expand env vars in `image_id`, so bring your own image by
+  # overriding it at launch:
+  #   sky launch ... --image-id docker:cr.<region>.nebius.cloud/<registry-id>/<image>:<tag>
+  image_id: docker:python:3.11-slim
 envs:
-  NPA_IMAGE: "python:3.11-slim"
-  # Bring your own object storage. Leave these unset to read the in-repo fixture.
-  BENCHMARK_URI: "s3://<your-bucket>/vlm-eval/benchmark.json"
-  OUTPUT_URI: "s3://<your-bucket>/vlm-eval/benchmark-report.json"
-  AWS_ENDPOINT_URL: "https://storage.<your-region>.nebius.cloud"
+  # Defaults read the in-repo fixture (uploaded via workdir) and write a local
+  # report — no object storage required. Point these at s3:// URIs plus an
+  # endpoint to bring your own storage.
+  BENCHMARK_URI: "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json"
+  OUTPUT_URI: "vlm-eval-benchmark-report.json"
+  AWS_ENDPOINT_URL: ""
   VLM_BACKEND: "stub"
 setup: |
-  set -e
-  pip install -e /opt/nebius-physical-ai/npa || pip install npa
+  set -euo pipefail
+  pip install --upgrade pip
+  pip install -e ./npa
 run: |
   set -euo pipefail
   npa workbench vlm-eval benchmark \
@@ -435,10 +446,14 @@ run: |
 ```
 
 ```bash
-# Override any value at launch; nothing is hardcoded to a specific account.
-sky launch -c vlm-eval vlm-eval-benchmark.sky.yaml \
-  --env NPA_IMAGE=cr.<your-region>.nebius.cloud/<your-registry-id>/<image>:<tag> \
+# Run from the repo root. As written it scores the in-repo fixture with the
+# offline stub backend and tears the cluster down when done (--down). Override
+# any value at launch; nothing is hardcoded to a specific account. Use
+# --image-id for a BYO image and matching s3:// URIs for BYO storage.
+sky launch -y --down -c vlm-eval vlm-eval-benchmark.sky.yaml \
+  --image-id docker:cr.<your-region>.nebius.cloud/<your-registry-id>/<image>:<tag> \
   --env BENCHMARK_URI=s3://<your-bucket>/vlm-eval/benchmark.json \
+  --env OUTPUT_URI=s3://<your-bucket>/vlm-eval/benchmark-report.json \
   --env AWS_ENDPOINT_URL=https://storage.<your-region>.nebius.cloud
 ```
 

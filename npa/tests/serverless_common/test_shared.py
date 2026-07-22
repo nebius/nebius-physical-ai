@@ -3,12 +3,76 @@ from __future__ import annotations
 import pytest
 
 from npa.serverless_common import (
+    MissingS3CredentialsError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
+    require_s3_credentials,
     resolve_gpu_platform,
     split_serverless_env,
     validate_output_path,
 )
+
+
+def test_require_s3_credentials_accepts_complete() -> None:
+    # Should not raise when all three fields are present.
+    require_s3_credentials(
+        {
+            "aws_access_key_id": "AK",
+            "aws_secret_access_key": "SK",
+            "endpoint_url": "https://storage.example.nebius.cloud",
+        },
+        context="unit test",
+    )
+
+
+@pytest.mark.parametrize(
+    "creds, missing_label",
+    [
+        (
+            {"aws_secret_access_key": "SK", "endpoint_url": "https://x"},
+            "access key id",
+        ),
+        (
+            {"aws_access_key_id": "AK", "endpoint_url": "https://x"},
+            "secret access key",
+        ),
+        (
+            {"aws_access_key_id": "AK", "aws_secret_access_key": "SK"},
+            "endpoint url",
+        ),
+    ],
+)
+def test_require_s3_credentials_reports_each_missing_field(creds, missing_label) -> None:
+    with pytest.raises(MissingS3CredentialsError) as excinfo:
+        require_s3_credentials(creds, context="SONIC serverless jobs")
+    message = str(excinfo.value)
+    assert missing_label in message
+    assert "SONIC serverless jobs" in message
+
+
+def test_require_s3_credentials_treats_blank_as_missing() -> None:
+    with pytest.raises(MissingS3CredentialsError) as excinfo:
+        require_s3_credentials(
+            {"aws_access_key_id": "  ", "aws_secret_access_key": "", "endpoint_url": None},
+        )
+    # All three fields are blank/None, so all three are named.
+    message = str(excinfo.value)
+    assert "access key id" in message
+    assert "secret access key" in message
+    assert "endpoint url" in message
+
+
+def test_require_s3_credentials_never_leaks_values() -> None:
+    with pytest.raises(MissingS3CredentialsError) as excinfo:
+        require_s3_credentials(
+            {"aws_access_key_id": "SECRET-AK", "aws_secret_access_key": "", "endpoint_url": ""},
+        )
+    # Present values must never appear in the error text.
+    assert "SECRET-AK" not in str(excinfo.value)
+
+
+def test_missing_s3_credentials_error_is_value_error() -> None:
+    assert issubclass(MissingS3CredentialsError, ValueError)
 
 
 def test_build_serverless_job_env_basic() -> None:

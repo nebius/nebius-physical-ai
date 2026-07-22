@@ -54,33 +54,6 @@ work lives).
 
 ### Medium
 
-#### [M] FiftyOne BYOVM auto health fallback waits too long
-
-- **Surfaced by**: 2026-05-09 BYOVM validation.
-- **Status**: Still active.
-- **Current issue**: Auto mode can exhaust a long public HTTP retry window before
-  trying SSH-local readiness even when the app is already healthy on localhost.
-- **Next step**: For BYOVM auto mode, try SSH after a short public failure budget
-  or run public and SSH checks in parallel.
-
-#### [M] Gated model validation does not report access status during normal deploy
-
-- **Surfaced by**: 2026-05-09 Cosmos and GR00T deploy validation.
-- **Status**: Still active.
-- **Current issue**: Normal deploy does not print explicit non-secret Hugging
-  Face access results, so success is only inferred when deploy continues.
-- **Next step**: Print `HF access ok: <repo>` or a clean failure for each checked
-  gated repository during normal deploy.
-
-#### [M] GR00T readiness reports not ready after successful HF model serve
-
-- **Surfaced by**: 2026-05-09 8x H200 rerun.
-- **Status**: Still active.
-- **Current issue**: Readiness stays false when `ngc_credentials_configured` is
-  false, even after a Hugging Face/base model is loaded successfully.
-- **Next step**: Treat loaded HF/base models as ready without NGC, or downgrade
-  missing NGC credentials to an optional warning.
-
 #### [M] Cosmos requires manual serve after deploy/restart with no auto-load
 
 - **Surfaced by**: 2026-05-09 demo runbook dry-run.
@@ -117,15 +90,6 @@ work lives).
 - **Next step**: Decide public versus internal methods, add re-exports,
   document the API, and cover imports/behavior in tests.
 
-#### [M] CC_REVIEW_M4: document or add `groot infer --allow-host-creds`
-
-- **Surfaced by**: CC review follow-up.
-- **Status**: Still active.
-- **Current issue**: `groot infer` lacks `--allow-host-creds` while other
-  cross-project commands expose it; the difference is not documented.
-- **Next step**: Either document the constrained single-credential behavior or
-  add the flag with intentionally limited semantics.
-
 #### [M] `<tool> status` without `-p`/`-n` hits an unconfigured default endpoint
 
 - **Surfaced by**: 2026-05-09 validation.
@@ -136,15 +100,6 @@ work lives).
   alias explicitly.
 
 ### Low
-
-#### [L] Pytest path assumptions in deploy template tests
-
-- **Surfaced by**: Local test execution from repository root.
-- **Status**: Still active.
-- **Current issue**: `npa/.venv/bin/pytest npa/tests/test_deploy.py` from repo
-  root can fail with `FileNotFoundError` for deploy template paths.
-- **Next step**: Resolve Terraform template fixture paths relative to the package
-  root or test file instead of the process current working directory.
 
 #### [L] VM `deploy --destroy` runs Terraform destroy with no confirmation
 
@@ -161,6 +116,21 @@ work lives).
 
 ## Resolved (recent)
 
+- 2026-07-21 - FiftyOne BYOVM auto health fallback now spends a short public
+  budget (`FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES = 3`, ~21s) before falling back
+  to SSH-local readiness (`npa/src/npa/cli/fiftyone/__init__.py`).
+- 2026-07-21 - Gated-model access reporting: normal Cosmos and GR00T deploys
+  print `HF access ok: <repo>` (or a clean failure) per checked gated repo
+  (`cosmos/__init__.py`, `groot/__init__.py`).
+- 2026-07-21 - GR00T readiness now reports `ready` from the loaded/served model;
+  missing NGC/HF credentials are downgraded to non-blocking notes instead of
+  forcing `ready: false` (`groot/__init__.py`).
+- 2026-07-21 - `groot infer` single-credential constraint is documented in CLI
+  help (`--source-project`/`--target-project`) and a clear runtime error, in
+  lieu of an `--allow-host-creds` flag (`groot/__init__.py`).
+- 2026-07-21 - Deploy template tests resolve fixture paths from the package root
+  (`PACKAGE_ROOT = Path(__file__).resolve().parents[1]`), not the process CWD
+  (`npa/tests/test_deploy.py`).
 - 2026-07-21 - Sim2Real eval image rebuilt for Blackwell. The pinned
   `npa-loop-eval:0.1.1-genuine-sm120` shipped `torch 2.6.0+cu124` (sm_50..sm_90),
   so torch CUDA crashed on RTX PRO 6000 (`sm_120`) before Genesis physics.

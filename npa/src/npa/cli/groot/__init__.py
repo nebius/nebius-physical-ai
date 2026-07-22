@@ -106,9 +106,11 @@ from npa.deploy.safety import (
     format_replacement_required_error,
 )
 from npa.serverless_common import (
+    MissingS3CredentialsError,
     SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
+    require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
     split_serverless_env,
@@ -388,6 +390,7 @@ def _get_config(**overrides: str):
         return resolve_config(
             project=_project_alias or None,
             name=_workbench_name or None,
+            expected_workbench_type="groot",
             **{k: v for k, v in overrides.items() if v is not None},
         )
     except ConfigError as exc:
@@ -399,6 +402,7 @@ def _get_ssh_config(**overrides: str):
         return resolve_ssh_config(
             project=_project_alias or None,
             name=_workbench_name or None,
+            expected_workbench_type="groot",
             **{k: v for k, v in overrides.items() if v is not None},
         )
     except ConfigError as exc:
@@ -720,14 +724,20 @@ def _serverless_job_env(
 ) -> tuple[dict[str, str], dict[str, str]]:
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
+    s3_credentials = {
+        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_secret_access_key": storage.aws_secret_access_key
+        or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
+        "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
+    }
+    try:
+        require_s3_credentials(s3_credentials, context="GR00T serverless jobs")
+    except MissingS3CredentialsError as exc:
+        _fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
         hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
-        s3_credentials={
-            "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
-            "aws_secret_access_key": storage.aws_secret_access_key or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
-            "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
-        },
+        s3_credentials=s3_credentials,
         extra_env=extra_env,
     )
     return split_serverless_env(env)
@@ -4151,23 +4161,39 @@ def status_cmd(
     loaded = bool(data.get("loaded"))
     hf_present = bool(getattr(cfg, "hf_token", ""))
     ngc_ok = bool(data.get("ngc_credentials_configured"))
+    # A model that is actually loaded and serving is ready. NGC and HF
+    # credentials only matter for *downloading* checkpoints (NGC-hosted or
+    # gated HF repos); a model already served over HF needs neither going
+    # forward, so they must not force ready:False.
     readiness = {
         "hf_token_present": hf_present,
         "ngc_credentials_configured": ngc_ok,
         "model_loaded": loaded,
-        "ready": hf_present and ngc_ok and loaded,
+        "ready": loaded,
         "blockers": [],
+        "notes": [],
     }
-    if not hf_present:
-        readiness["blockers"].append(
-            "HF_TOKEN not configured - gated model downloads will fail"
-        )
-    if not ngc_ok:
-        readiness["blockers"].append("NGC credentials not configured")
     if not loaded:
         readiness["blockers"].append(
             f"Model {data.get('model') or DEFAULT_MODEL} not loaded"
         )
+        if not hf_present:
+            readiness["blockers"].append(
+                "HF_TOKEN not configured - gated model downloads will fail"
+            )
+        if not ngc_ok:
+            readiness["blockers"].append(
+                "NGC credentials not configured - required only for NGC-hosted checkpoints"
+            )
+    else:
+        if not hf_present:
+            readiness["notes"].append(
+                "HF_TOKEN not configured - only affects future gated HF downloads"
+            )
+        if not ngc_ok:
+            readiness["notes"].append(
+                "NGC credentials not configured - only needed for NGC-hosted checkpoints"
+            )
     app_status = "healthy" if loaded else "degraded"
 
     result = {

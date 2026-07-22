@@ -23,7 +23,12 @@ from npa.clients.config import (
 )
 from npa.clients.credentials import load_credentials, shared_credential_env
 from npa.deploy.images import container_image_for_tool
-from npa.serverless_common import build_serverless_job_env, split_serverless_env
+from npa.serverless_common import (
+    MissingS3CredentialsError,
+    build_serverless_job_env,
+    require_s3_credentials,
+    split_serverless_env,
+)
 
 console = Console(stderr=True)
 
@@ -200,14 +205,20 @@ def serverless_job_env(
 ) -> tuple[dict[str, str], dict[str, str]]:
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
+    s3_credentials = {
+        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_secret_access_key": storage.aws_secret_access_key
+        or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
+        "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
+    }
+    try:
+        require_s3_credentials(s3_credentials, context="SONIC serverless jobs")
+    except MissingS3CredentialsError as exc:
+        fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
         hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
-        s3_credentials={
-            "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
-            "aws_secret_access_key": storage.aws_secret_access_key or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
-            "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
-        },
+        s3_credentials=s3_credentials,
         extra_env=extra_env,
     )
     return split_serverless_env(env)
