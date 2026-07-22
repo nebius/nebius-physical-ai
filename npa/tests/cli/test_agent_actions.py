@@ -100,7 +100,12 @@ def test_confirmation_gate_blocks_gpu_action_without_token():
     assert submitted["count"] == 0
     assert result["needs_confirmation"] is True
     assert result["stopped_reason"] == A.STOP_NEEDS_CONFIRMATION
-    assert result["proposed_action"] == {"tool": "sim2real_submit", "args": {"run_id": "x"}}
+    assert result["proposed_action"]["tool"] == "sim2real_submit"
+    assert result["proposed_action"]["args"] == {"run_id": "x"}
+    # The proposal carries the action digest the confirmation token binds to.
+    assert result["proposed_action"]["digest"] == A.action_digest(
+        {"tool": "sim2real_submit", "args": {"run_id": "x"}}
+    )
 
 
 def test_confirmation_gate_executes_with_matching_token():
@@ -134,6 +139,48 @@ def test_confirmation_gate_rejects_mismatched_token():
     assert not A.confirmation_ok("", "b")
     assert not A.confirmation_ok("a", "")
     assert A.confirmation_ok("same", "same")
+
+
+def test_confirm_token_bound_to_action_digest():
+    submitted = {"count": 0}
+
+    def _submit(args):
+        submitted["count"] += 1
+        return {"run_id": args.get("run_id")}
+
+    # Token is valid, but the digest was issued for a *different* action, so the
+    # gated tool must not execute — it re-proposes instead.
+    planner = _scripted_planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    tools = {"sim2real_submit": _submit}
+    result = A.run_action_loop(
+        "launch run x",
+        tools=tools,
+        model_call=planner,
+        confirm_token="tok",
+        session_token="tok",
+        confirm_digest="mismatch-digest",
+    )
+    assert submitted["count"] == 0
+    assert result["needs_confirmation"] is True
+
+    # Matching digest executes.
+    good_digest = A.action_digest({"tool": "sim2real_submit", "args": {"run_id": "x"}})
+    planner2 = _scripted_planner(
+        [
+            {"tool": "sim2real_submit", "args": {"run_id": "x"}},
+            {"final": "done"},
+        ]
+    )
+    result2 = A.run_action_loop(
+        "launch run x",
+        tools={"sim2real_submit": _submit},
+        model_call=planner2,
+        confirm_token="tok",
+        session_token="tok",
+        confirm_digest=good_digest,
+    )
+    assert submitted["count"] == 1
+    assert result2["stopped_reason"] == A.STOP_DONE
 
 
 def test_max_steps_guard_stops_loop():

@@ -4934,6 +4934,37 @@ def chat(payload: dict):
         "skills_used": skill_names,
     }}
 
+def _consume_agent_confirm_token():
+    # Single-use consume: return the pending (token, digest) and clear the gate
+    # in state before any side effect so a replayed request cannot re-authorize.
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        return "", ""
+    token = str(act_state.get("confirm_token") or "")
+    digest = str(act_state.get("confirm_digest") or "")
+    if token:
+        act_state["confirm_token"] = ""
+        act_state["confirm_digest"] = ""
+        act_state["pending_action"] = None
+        state["agent_act"] = act_state
+        _save_state(state)
+    return token, digest
+
+def _issue_agent_confirm_token(action, digest):
+    # Issue a fresh token bound to a specific proposed action digest.
+    token = secrets.token_hex(8)
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        act_state = {{}}
+    act_state["confirm_token"] = token
+    act_state["confirm_digest"] = str(digest or "")
+    act_state["pending_action"] = action if isinstance(action, dict) else {{}}
+    state["agent_act"] = act_state
+    _save_state(state)
+    return token
+
 def _act_response_to_dict(result) -> dict:
     # Route handlers may return either a plain dict or a JSONResponse; the action
     # loop needs a JSON-serializable observation either way.
@@ -4971,18 +5002,31 @@ def _agent_act_tools():
         return _act_response_to_dict(artifacts_for_run(run_id))
 
     def _tool_validate(args):
+        # Read-only: use the pure validator/planner so the loop never mutates the
+        # persisted workflow draft as a side effect of "validating".
         spec = str(args.get("spec_yaml") or args.get("yaml") or "")
         if not spec.strip():
             return {{"error": "spec_yaml is required"}}
-        return _act_response_to_dict(validate_workflow({{"yaml": spec}}))
+        validation = validate_workflow_yaml_text(spec, tool_refs=frozenset(TOOL_REFS))
+        plan = (
+            plan_workflow_yaml_text(spec, run_id="agent-act-validate", tool_refs=frozenset(TOOL_REFS))
+            if validation.get("ok")
+            else {{"ok": False}}
+        )
+        return {{
+            "ok": bool(validation.get("ok")),
+            "validation": validation,
+            "runnable": bool(validation.get("ok") and plan.get("ok")),
+        }}
 
     def _tool_plan(args):
         spec = str(args.get("spec_yaml") or args.get("yaml") or "")
         if not spec.strip():
             return {{"error": "spec_yaml is required"}}
-        return _act_response_to_dict(
-            plan_workflow({{"yaml": spec, "run_id": str(args.get("run_id") or "agent-act")}})
+        plan = plan_workflow_yaml_text(
+            spec, run_id=str(args.get("run_id") or "agent-act"), tool_refs=frozenset(TOOL_REFS)
         )
+        return {{"ok": bool(plan.get("ok")), "plan": plan}}
 
     def _tool_submit(args):
         return _act_response_to_dict(submit_sim2real({{"run_id": str(args.get("run_id") or "")}}))
@@ -5007,11 +5051,11 @@ def agent_act(payload: dict):
         goal = _last_user_message(raw_messages)
     if not goal:
         raise HTTPException(status_code=400, detail="goal or messages is required")
-    state = _load_state()
-    act_state = state.get("agent_act")
-    if not isinstance(act_state, dict):
-        act_state = {{}}
-    session_token = str(act_state.get("confirm_token") or "")
+    # Cap the goal so one oversized paste cannot blow the planner budget.
+    _budget_ok, goal = enforce_input_budget(goal)
+    # Consume the single-use confirmation token: read it, then clear the pending
+    # gate in state before running the loop so a replay cannot re-authorize.
+    session_token, confirm_digest = _consume_agent_confirm_token()
     confirm_token = str(body.get("confirm_token") or "").strip()
     try:
         max_steps = int(body.get("max_steps"))
@@ -5026,34 +5070,26 @@ def agent_act(payload: dict):
         return data
 
     tier = classify_tier(goal)
-    live_ctx = format_live_context_block(state)
+    live_ctx = format_live_context_block(_load_state())
     result = run_action_loop(
         goal,
         tools=_agent_act_tools(),
         model_call=_model_call,
         confirm_token=confirm_token,
         session_token=session_token,
+        confirm_digest=confirm_digest,
         tier=tier,
         max_steps=max_steps,
         live_context=live_ctx,
     )
     if result.get("needs_confirmation"):
-        new_token = secrets.token_hex(8)
-        act_state["confirm_token"] = new_token
-        act_state["pending_action"] = result.get("proposed_action")
-        state = _load_state()
-        state["agent_act"] = act_state
-        _save_state(state)
-        result["confirm_token"] = new_token
-    elif act_state.get("confirm_token"):
-        state = _load_state()
-        act_state = state.get("agent_act") if isinstance(state.get("agent_act"), dict) else {{}}
-        act_state["confirm_token"] = ""
-        act_state["pending_action"] = None
-        state["agent_act"] = act_state
-        _save_state(state)
+        proposed = result.get("proposed_action") if isinstance(result.get("proposed_action"), dict) else {{}}
+        digest = str(proposed.get("digest") or action_digest({{k: v for k, v in proposed.items() if k != "digest"}}))
+        result["confirm_token"] = _issue_agent_confirm_token(proposed, digest)
     result["grounded"] = False
     result["mode"] = "agent-act"
+    result["allowlist"] = allowlist_specs()
+    result["input_budget_ok"] = _budget_ok
     return result
 
 def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
@@ -5061,23 +5097,28 @@ def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
     run_id = str(run_id or "").strip()
     if not run_id:
         return {{}}
-    report_path = Path("/opt/npa-agent/reports") / run_id / "sim2real-report.json"
+    # Real runner writes /opt/npa-agent/runs/<run_id>/reports/sim2real-report.json
+    # with an outer_loop.latest_decision / latest_heldout_report schema.
+    report_path = Path("/opt/npa-agent/runs") / run_id / "reports" / "sim2real-report.json"
     try:
         report = json.loads(report_path.read_text())
     except Exception:
         report = {{}}
     if not isinstance(report, dict):
         return {{}}
-    heldout = report.get("heldout") if isinstance(report.get("heldout"), dict) else {{}}
-    decision = report.get("outer_loop_decision") if isinstance(report.get("outer_loop_decision"), dict) else {{}}
+    outer_loop = report.get("outer_loop") if isinstance(report.get("outer_loop"), dict) else {{}}
+    decision = outer_loop.get("latest_decision") if isinstance(outer_loop.get("latest_decision"), dict) else {{}}
+    heldout = (
+        outer_loop.get("latest_heldout_report")
+        if isinstance(outer_loop.get("latest_heldout_report"), dict)
+        else {{}}
+    )
     success_rate = (
-        heldout.get("success_rate")
-        if heldout.get("success_rate") is not None
-        else decision.get("success_rate")
+        decision.get("success_rate")
+        if decision.get("success_rate") is not None
+        else heldout.get("success_rate")
     )
     threshold = decision.get("threshold")
-    if threshold is None:
-        threshold = report.get("threshold")
     metrics = {{}}
     if success_rate is not None:
         metrics["success_rate"] = success_rate
@@ -5093,10 +5134,7 @@ def agent_sim2real_drive(payload: dict):
     config = body.get("config") if isinstance(body.get("config"), dict) else {{}}
     goal = str(body.get("goal") or "drive the sim2real outer loop").strip()
     state = _load_state()
-    act_state = state.get("agent_act")
-    if not isinstance(act_state, dict):
-        act_state = {{}}
-    session_token = str(act_state.get("confirm_token") or "")
+    session_token, confirm_digest = _consume_agent_confirm_token()
     confirm_token = str(body.get("confirm_token") or "").strip()
     default_run = ""
     sim_viz = state.get("sim_viz", {{}})
@@ -5142,25 +5180,14 @@ def agent_sim2real_drive(payload: dict):
         diagnose=_diagnose,
         confirm_token=confirm_token,
         session_token=session_token,
+        confirm_digest=confirm_digest,
         max_iterations=max_iterations,
         confirmation_ok=confirmation_ok,
     )
     if result.get("needs_confirmation"):
-        new_token = secrets.token_hex(8)
-        state = _load_state()
-        act_state = state.get("agent_act") if isinstance(state.get("agent_act"), dict) else {{}}
-        act_state["confirm_token"] = new_token
-        act_state["pending_action"] = result.get("proposed_action")
-        state["agent_act"] = act_state
-        _save_state(state)
-        result["confirm_token"] = new_token
-    elif act_state.get("confirm_token"):
-        state = _load_state()
-        act_state = state.get("agent_act") if isinstance(state.get("agent_act"), dict) else {{}}
-        act_state["confirm_token"] = ""
-        act_state["pending_action"] = None
-        state["agent_act"] = act_state
-        _save_state(state)
+        proposed = result.get("proposed_action") if isinstance(result.get("proposed_action"), dict) else {{}}
+        digest = str(proposed.get("digest") or "")
+        result["confirm_token"] = _issue_agent_confirm_token(proposed, digest)
     result["grounded"] = False
     result["mode"] = "sim2real-drive"
     result["apis_used"] = ["workflows/sim2real/submit", "workflows/sim2real/status"]

@@ -24,6 +24,7 @@ anything unavailable on the deployed VM.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any, Callable, Mapping, Sequence
@@ -157,6 +158,21 @@ def confirmation_ok(confirm_token: str, session_token: str) -> bool:
     return bool(token) and bool(expected) and token == expected
 
 
+def action_digest(action: Any) -> str:
+    """Stable short digest binding a confirmation token to a specific action.
+
+    A confirmation token is only valid for the exact tool+args it was issued
+    for; if the planner later proposes a *different* gated action, the digest
+    will not match and the operator must confirm again. This prevents a token
+    issued for one action from authorizing a different (or repeated) one.
+    """
+    try:
+        payload = json.dumps(action or {}, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        payload = str(action)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     """Best-effort extraction of a single JSON object from model output.
 
@@ -276,6 +292,7 @@ def run_action_loop(
     model_call: Callable[..., Any],
     confirm_token: str = "",
     session_token: str = "",
+    confirm_digest: str = "",
     tier: str = "cheap",
     max_steps: int = DEFAULT_MAX_STEPS,
     allowlist: Mapping[str, ToolSpec] | None = None,
@@ -396,27 +413,35 @@ def run_action_loop(
             observations.append({"tool": tool, "rejected": observation["error"]})
             continue
 
-        if requires_confirmation(tool, resolved_allow) and not confirmation_ok(
-            confirm_token, session_token
-        ):
-            proposed_action = {"tool": tool, "args": args}
-            steps.append(
-                {
-                    "step": step_index + 1,
-                    "phase": "confirm",
-                    "tool": tool,
-                    "args": args,
-                    "status": "needs_confirmation",
-                    "thought": thought,
-                }
-            )
-            needs_confirmation = True
-            stopped_reason = STOP_NEEDS_CONFIRMATION
-            reply = (
-                f"Action **{tool}** is GPU-spending / state-changing and needs "
-                "explicit confirmation. Re-send with a valid confirmation token to execute."
-            )
-            break
+        if requires_confirmation(tool, resolved_allow):
+            proposed = {"tool": tool, "args": args}
+            digest = action_digest(proposed)
+            token_ok = confirmation_ok(confirm_token, session_token)
+            # The token is bound to a specific action digest; a token issued for
+            # one action can never authorize a different (or repeated) one.
+            digest_ok = (not confirm_digest) or confirm_digest == digest
+            if not (token_ok and digest_ok):
+                proposed_action = dict(proposed)
+                proposed_action["digest"] = digest
+                steps.append(
+                    {
+                        "step": step_index + 1,
+                        "phase": "confirm",
+                        "tool": tool,
+                        "args": args,
+                        "status": "needs_confirmation",
+                        "thought": thought,
+                        "digest": digest,
+                    }
+                )
+                needs_confirmation = True
+                stopped_reason = STOP_NEEDS_CONFIRMATION
+                reply = (
+                    f"Action **{tool}** is GPU-spending / state-changing and needs "
+                    "explicit confirmation. Re-send with the confirmation token issued "
+                    "for this exact action to execute."
+                )
+                break
 
         executor = tools.get(tool)
         if executor is None:

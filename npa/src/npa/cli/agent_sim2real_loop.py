@@ -24,6 +24,8 @@ agent VM backend by ``agent.py`` (same mechanism as the other agent modules).
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Callable
 
 # Normalized outer-loop decisions (mirror engine threshold_decision output).
@@ -35,9 +37,20 @@ STOP_PROMOTED = "promoted"
 STOP_EXHAUSTED = "iterations_exhausted"
 STOP_NEEDS_CONFIRMATION = "needs_confirmation"
 STOP_UNCONFIRMED_STATUS = "status_unconfirmed"
+STOP_INSUFFICIENT_SIGNAL = "insufficient_gate_signal"
+STOP_NO_ADJUSTMENT = "no_config_adjustment"
 STOP_ERROR = "error"
 
 DEFAULT_MAX_ITERATIONS = 3
+
+
+def drive_action_digest(action: Any) -> str:
+    """Stable short digest binding a confirmation token to a specific drive config."""
+    try:
+        payload = json.dumps(action or {}, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        payload = str(action)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def evaluate_gate(gate_result: Any) -> dict[str, Any]:
@@ -61,6 +74,7 @@ def evaluate_gate(gate_result: Any) -> dict[str, Any]:
         threshold = None
 
     explicit = str(data.get("decision") or "").strip()
+    has_signal = bool(explicit) or (success_rate is not None and threshold is not None)
     if explicit.startswith("promote"):
         promoted = True
     elif explicit.startswith("loop_back"):
@@ -74,6 +88,7 @@ def evaluate_gate(gate_result: Any) -> dict[str, Any]:
         "success_rate": success_rate,
         "threshold": threshold,
         "promoted": promoted,
+        "has_signal": has_signal,
     }
 
 
@@ -115,7 +130,9 @@ def drive_sim2real_loop(
     adjust: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None,
     confirm_token: str = "",
     session_token: str = "",
+    confirm_digest: str = "",
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    require_gate_signal: bool = True,
     confirmation_ok: Callable[[str, str], bool] | None = None,
 ) -> dict[str, Any]:
     """Drive the Sim2Real outer loop with confirmation gates and real status.
@@ -143,9 +160,14 @@ def drive_sim2real_loop(
         max_iters = DEFAULT_MAX_ITERATIONS
 
     # GPU-spending gate: driving the loop launches real runs. Require an explicit
-    # confirmation token before any launch.
-    if not gate_ok(confirm_token, session_token):
-        proposed = {"action": "drive_sim2real", "config": cfg}
+    # confirmation token bound to this exact drive config before any launch.
+    proposed = {"action": "drive_sim2real", "config": cfg}
+    digest = drive_action_digest(proposed)
+    token_ok = gate_ok(confirm_token, session_token)
+    digest_ok = (not confirm_digest) or confirm_digest == digest
+    if not (token_ok and digest_ok):
+        proposed_with_digest = dict(proposed)
+        proposed_with_digest["digest"] = digest
         return {
             "ok": True,
             "goal": str(goal or ""),
@@ -154,10 +176,11 @@ def drive_sim2real_loop(
             "final_run_id": "",
             "stopped_reason": STOP_NEEDS_CONFIRMATION,
             "needs_confirmation": True,
-            "proposed_action": proposed,
+            "proposed_action": proposed_with_digest,
             "reply": (
                 "Driving the Sim2Real loop launches GPU runs and needs explicit "
-                "confirmation. Re-send with a valid confirmation token to start."
+                "confirmation. Re-send with the confirmation token issued for this "
+                "exact drive config to start."
             ),
         }
 
@@ -223,6 +246,14 @@ def drive_sim2real_loop(
             stopped_reason = STOP_PROMOTED
             break
 
+        # No real gate metrics yet: do NOT loop back and relaunch another GPU run
+        # on a fabricated/absent signal. Stop and report insufficient signal.
+        if require_gate_signal and not evaluation.get("has_signal"):
+            record["reason"] = "no gate success_rate available — stopping (no fabricated loop-back)"
+            iterations.append(record)
+            stopped_reason = STOP_INSUFFICIENT_SIGNAL
+            break
+
         record["reason"] = (
             f"success_rate={sr} < threshold={th}: loop back and adjust"
         )
@@ -235,17 +266,39 @@ def drive_sim2real_loop(
             except Exception as exc:  # noqa: BLE001
                 diagnosis = {"error": f"diagnose failed: {exc}"}
         record["diagnosis"] = diagnosis
-        if adjust is not None and iteration < max_iters:
-            try:
-                new_cfg = adjust(cfg, diagnosis)
-                if isinstance(new_cfg, dict):
-                    cfg = new_cfg
-                    record["adjusted_config"] = dict(new_cfg)
-            except Exception as exc:  # noqa: BLE001
-                record["adjust_error"] = str(exc)
+        if iteration >= max_iters:
+            iterations.append(record)
+            continue
+        # Never relaunch identical GPU work: only continue when an adjustment
+        # actually changed the config, otherwise a re-run cannot improve the gate.
+        if adjust is None:
+            record["reason"] = record["reason"] + " (no adjuster wired — stopping)"
+            iterations.append(record)
+            stopped_reason = STOP_NO_ADJUSTMENT
+            break
+        try:
+            new_cfg = adjust(cfg, diagnosis)
+        except Exception as exc:  # noqa: BLE001
+            record["adjust_error"] = str(exc)
+            iterations.append(record)
+            stopped_reason = STOP_ERROR
+            break
+        if not isinstance(new_cfg, dict) or new_cfg == cfg:
+            record["reason"] = record["reason"] + " (adjustment produced no change — stopping)"
+            iterations.append(record)
+            stopped_reason = STOP_NO_ADJUSTMENT
+            break
+        cfg = new_cfg
+        record["adjusted_config"] = dict(new_cfg)
         iterations.append(record)
 
-    ok = stopped_reason in {STOP_PROMOTED, STOP_EXHAUSTED, STOP_NEEDS_CONFIRMATION}
+    ok = stopped_reason in {
+        STOP_PROMOTED,
+        STOP_EXHAUSTED,
+        STOP_NEEDS_CONFIRMATION,
+        STOP_INSUFFICIENT_SIGNAL,
+        STOP_NO_ADJUSTMENT,
+    }
     reply = _summarize(goal, iterations, decision_value, stopped_reason, final_run_id)
     return {
         "ok": ok,
@@ -282,6 +335,8 @@ def _summarize(
         lines.append("- Checkpoint promoted — gate threshold met on a confirmed run.")
     elif stopped_reason == STOP_UNCONFIRMED_STATUS:
         lines.append("- Stopped: live status did not confirm the launched run (no fabricated progress).")
+    elif stopped_reason == STOP_INSUFFICIENT_SIGNAL:
+        lines.append("- Stopped: no gate success_rate on the confirmed run yet (no fabricated loop-back / relaunch).")
     elif stopped_reason == STOP_EXHAUSTED:
         lines.append("- Exhausted outer iterations without meeting the gate threshold.")
     return "\n".join(lines)

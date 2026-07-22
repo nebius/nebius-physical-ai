@@ -146,13 +146,20 @@ def test_drive_stops_when_status_does_not_confirm_run():
 
 
 def test_drive_exhausts_iterations_without_promotion():
+    # Each iteration adjusts the config (so it does not stop on no-adjustment) but
+    # the gate never clears -> exhausts the iteration budget.
+    def _adjust(cfg, diagnosis):
+        new = dict(cfg)
+        new["attempt"] = cfg.get("attempt", 0) + 1
+        return new
+
     result = L.drive_sim2real_loop(
         "drive",
-        config={"run_id": "run-e", "threshold": 0.99},
+        config={"run_id": "run-e", "threshold": 0.99, "attempt": 0},
         launch=lambda cfg: {"ok": True, "run_id": "run-e"},
         status=lambda rid: _status_for(rid),
         gate=lambda rid, it: {"success_rate": 0.1, "threshold": 0.99},
-        adjust=lambda cfg, d: cfg,
+        adjust=_adjust,
         confirm_token="t",
         session_token="t",
         max_iterations=2,
@@ -160,6 +167,81 @@ def test_drive_exhausts_iterations_without_promotion():
     assert result["stopped_reason"] == L.STOP_EXHAUSTED
     assert len(result["iterations"]) == 2
     assert all(it["decision"] == L.DECISION_LOOP_BACK for it in result["iterations"])
+
+
+def test_drive_stops_on_insufficient_gate_signal_without_relaunch():
+    launches = {"count": 0}
+
+    def _launch(cfg):
+        launches["count"] += 1
+        return {"ok": True, "run_id": "run-n"}
+
+    result = L.drive_sim2real_loop(
+        "drive",
+        config={"run_id": "run-n", "threshold": 0.8},
+        launch=_launch,
+        status=lambda rid: _status_for(rid),
+        gate=lambda rid, it: {},  # no success_rate/threshold => no signal
+        confirm_token="t",
+        session_token="t",
+        max_iterations=3,
+    )
+    # Exactly one launch: we do not relaunch GPU work on an absent gate signal.
+    assert launches["count"] == 1
+    assert result["stopped_reason"] == L.STOP_INSUFFICIENT_SIGNAL
+
+
+def test_drive_stops_when_no_adjuster_wired():
+    launches = {"count": 0}
+
+    def _launch(cfg):
+        launches["count"] += 1
+        return {"ok": True, "run_id": "run-na"}
+
+    result = L.drive_sim2real_loop(
+        "drive",
+        config={"run_id": "run-na", "threshold": 0.99},
+        launch=_launch,
+        status=lambda rid: _status_for(rid),
+        gate=lambda rid, it: {"success_rate": 0.2, "threshold": 0.99},
+        confirm_token="t",
+        session_token="t",
+        max_iterations=3,
+    )
+    # Below threshold but no adjuster => stop instead of relaunching identical work.
+    assert launches["count"] == 1
+    assert result["stopped_reason"] == L.STOP_NO_ADJUSTMENT
+
+
+def test_drive_confirm_token_is_bound_to_config_digest():
+    proposed_cfg = {"run_id": "run-d", "threshold": 0.8}
+    digest = L.drive_action_digest({"action": "drive_sim2real", "config": proposed_cfg})
+    # Correct digest + token proceeds to launch.
+    launched = {"count": 0}
+    result_ok = L.drive_sim2real_loop(
+        "drive",
+        config=proposed_cfg,
+        launch=lambda cfg: (launched.__setitem__("count", launched["count"] + 1), {"ok": True, "run_id": "run-d"})[1],
+        status=lambda rid: _status_for(rid),
+        gate=lambda rid, it: {"success_rate": 1.0, "threshold": 0.8},
+        confirm_token="t",
+        session_token="t",
+        confirm_digest=digest,
+    )
+    assert launched["count"] == 1
+    assert result_ok["stopped_reason"] == L.STOP_PROMOTED
+    # A stale/mismatched digest re-proposes instead of launching.
+    result_mismatch = L.drive_sim2real_loop(
+        "drive",
+        config=proposed_cfg,
+        launch=lambda cfg: {"ok": True, "run_id": "run-d"},
+        status=lambda rid: _status_for(rid),
+        gate=lambda rid, it: {"success_rate": 1.0, "threshold": 0.8},
+        confirm_token="t",
+        session_token="t",
+        confirm_digest="deadbeef",
+    )
+    assert result_mismatch["needs_confirmation"] is True
 
 
 def test_drive_surfaces_launch_error():
