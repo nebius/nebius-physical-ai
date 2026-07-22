@@ -166,6 +166,23 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos", "train", "--help"]
         contains: "serverless"
+  - name: dataset
+    category: tools
+    when_to_use: "Ingest, validate, curate, or query production sensor data as a versioned dataset-of-record (filter by event, location, quality), or wire the dataset-ingest-curate workflow."
+    path: skills/tools/dataset/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "dataset", "ingest", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "dataset", "curate", "--help"]
+        contains: "event"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/dataset-ingest-curate.yaml
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/dataset-ingest-curate.yaml
   - name: fiftyone
     category: tools
     when_to_use: "FiftyOne deployment, dataset curation, visualization, launch, and load-dataset behavior."

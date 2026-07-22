@@ -5,6 +5,7 @@ from __future__ import annotations
 __all__ = [
     "cosmos",
     "data",
+    "dataset",
     "detection_training",
     "fiftyone",
     "genesis",
