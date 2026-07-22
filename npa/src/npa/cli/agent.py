@@ -2933,6 +2933,11 @@ def _is_sim2real_pipeline_recording(key: str) -> bool:
 
 DATA_FACTORY_APP_ID = "physical-ai-data-factory"
 
+# Extra workflow sub-prefixes merged into the default (no-prefix) run discovery so
+# their runs show without the operator typing the prefix. Runs are stored under
+# <base>/<workflow>/<run_id>/..., so each workflow needs its own scan.
+AGENT_DEFAULT_WORKFLOW_PREFIXES = (DATA_FACTORY_APP_ID,)
+
 
 def _is_data_factory_recording(key: str) -> bool:
     # A Physical AI Data Factory run also writes reports/sim2real.rrd, but its
@@ -5349,14 +5354,50 @@ def sim_viz_recordings():
 def artifacts_runs(prefix: str = "", limit: int = 50):
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        page = list_runs(
-            settings["bucket"],
-            prefix=effective_prefix,
-            limit=limit,
-            s3=s3,
-        )
-        return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
+        if prefix:
+            effective_prefix = _artifact_discovery_prefix(settings, prefix)
+            page = list_runs(settings["bucket"], prefix=effective_prefix, limit=limit, s3=s3)
+            return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
+        # No user prefix: merge the default discovery prefix with known workflow
+        # sub-prefixes (e.g. physical-ai-data-factory) so those runs show without
+        # the operator having to type the magic prefix. Runs live under
+        # <base>/<workflow>/<run_id>/..., so each workflow needs its own scan.
+        default_prefix = _artifact_discovery_prefix(settings, "")
+        scan_prefixes = [default_prefix]
+        for extra in AGENT_DEFAULT_WORKFLOW_PREFIXES:
+            ep = _artifact_discovery_prefix(settings, extra)
+            if ep not in scan_prefixes:
+                scan_prefixes.append(ep)
+        merged: list = []
+        seen: set = set()
+        total = 0
+        truncated = False
+        for ep in scan_prefixes:
+            try:
+                page = list_runs(settings["bucket"], prefix=ep, limit=limit, s3=s3)
+            except Exception:
+                continue
+            total += page.total_runs
+            truncated = truncated or page.truncated
+            for run in page.runs:
+                if run.run_id in seen:
+                    continue
+                seen.add(run.run_id)
+                merged.append(run)
+        merged.sort(key=lambda r: (r.last_modified, r.run_id), reverse=True)
+        if len(merged) > limit:
+            merged = merged[:limit]
+            truncated = True
+        return {{
+            "ok": True,
+            "bucket": settings["bucket"],
+            "prefix": default_prefix,
+            "base_prefix": settings.get("prefix", ""),
+            "runs": [r.to_dict() for r in merged],
+            "truncated": truncated,
+            "total_runs": total,
+            "limit": limit,
+        }}
     except HTTPException:
         raise
     except Exception as exc:
