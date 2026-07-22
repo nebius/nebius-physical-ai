@@ -1,32 +1,48 @@
-# NPA SkyPilot Workflow Templates
+# NPA Workbench workflow catalog
 
-This directory contains Workbench reference workflows for robotics,
-simulation, perception, eval, and synthetic-data workloads. SkyPilot is the
-workflow orchestrator for these templates.
+This directory holds the **supported, customer-facing** Workbench workflow
+catalog for robotics, simulation, perception, eval, and synthetic-data
+workloads. The supported specs are declarative `npa.workflow` YAMLs; SkyPilot
+remains the underlying execution engine, but the raw SkyPilot task templates are
+no longer part of the shown catalog (see [Layout](#layout)).
 
 ## ➡️ Start here: the workflow catalog
 
-**[`skypilot/README.md`](skypilot/README.md)** is the catalog of every runnable
-workflow. It has a "Find your workflow" table that maps *what you want to do* →
-the YAML → the command to run it → its guide. Start there to pick a pipeline.
+**[`npa-workflows/README.md`](npa-workflows/README.md)** is the catalog of every
+supported workflow spec (`apiVersion: npa.workflow/v0.0.1`). Author and submit
+these with:
 
-As a companion convention, each YAML should open with a short header comment
-carrying the same pointers (`What`, `Guide`, `Runner`, `Index`) so you can jump
-from any file to its guide and back to the catalog.
+```bash
+npa workbench workflow validate-spec <spec.yaml>
+npa workbench workflow plan-spec <spec.yaml> --run-id demo
+npa workbench workflow submit <spec.yaml> --run-id demo
+```
+
+Authoring skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
+`skills/workflows/generate-npa-workflow/SKILL.md` (design new pipelines).
 
 ## Layout
 
-- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines, plus the
-  [workflow catalog](skypilot/README.md) that maps each YAML to its guide in
-  `docs/` and its submission wrapper in `npa/scripts/`.
-- `sim2real/`: the self-contained Sim2Real runbook (guide + YAML colocated).
+- `npa-workflows/`: the supported declarative `npa.workflow` specs plus the
+  [workflow catalog](npa-workflows/README.md). This is the only workflow YAML
+  set we show and support.
+- `sim2real/`: the self-contained Sim2Real runbook (guide + YAML colocated); the
+  14-stage engine detects the runbook and routes to direct K8s.
 - `schemas/`: conventions for parameters, artifacts, naming, and runtime
   constraints.
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with
-  older examples; new workflow work should use `skypilot/`.
+  older examples.
 
-The raw SkyPilot YAML catalog, per-workflow S3 I/O, GPU targets, and HF/NGC
-rights notes are documented in [`skypilot/README.md`](skypilot/README.md).
+### SkyPilot task templates (internal)
+
+The raw SkyPilot task YAMLs that the `npa.workflow` engine and the
+`npa/scripts/run_*.py` wrappers render and launch live under
+`npa/src/npa/workflows/skypilot/` as internal, package-owned runtime resources.
+They are not the shown catalog and should not be authored by customers; the
+supported entry point is always an `npa.workflow` spec above. Their per-file
+reference notes (S3 I/O, GPU targets, HF/NGC rights, raw `sky launch` caveats)
+are documented in
+[`npa/src/npa/workflows/skypilot/README.md`](../../src/npa/workflows/skypilot/README.md).
 
 ## Sim-To-Real
 
@@ -36,14 +52,9 @@ The H100 quickstart submits:
 npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
 ```
 
-It renders and runs:
-
-```text
-npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml
-```
-
-The deeper reference path is documented in
-`docs/workbench/cookbooks/sim-to-real-pipeline.md`.
+It renders and runs the internal template
+`npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml`. The deeper reference
+path is documented in `docs/workbench/cookbooks/sim-to-real-pipeline.md`.
 
 ## Submission Pattern
 

@@ -566,8 +566,9 @@ def _pipeline_runner_script() -> Path:
 
 
 def _default_pipeline_yaml() -> Path:
-    root = Path(__file__).resolve().parents[3]
-    path = root / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-pipeline.yaml"
+    # Internal SkyPilot template, resolved package-relative (works from a repo
+    # checkout and an installed wheel alike).
+    path = Path(__file__).resolve().parent / "skypilot" / "sim-to-real-pipeline.yaml"
     if not path.exists():
         raise SimToRealTriggerError(f"sim-to-real pipeline YAML not found: {path}")
     return path
