@@ -319,6 +319,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "import-bdd100k",
             "--source",
             "{{config.source_uri}}",
+            "--synthetic",
+            "{{config.synthetic_rows}}",
             "--table",
             "{{config.lance_table}}",
             "--lance-uri",

@@ -171,6 +171,23 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    # Optional bdd100k smoke knobs: synthesize rows so the pipeline runs without
+    # a real BDD100K dataset, and shrink training epochs to keep the live run
+    # bounded. Both are pure config toggles (synthetic_rows=0 -> real source).
+    bdd_synth = os.environ.get("NPA_E2E_BDD100K_SYNTHETIC_ROWS", "").strip()
+    if bdd_synth:
+        text = re.sub(
+            r'(synthetic_rows:\s*")[^"]*(")',
+            lambda m: f"{m.group(1)}{bdd_synth}{m.group(2)}",
+            text,
+        )
+    bdd_epochs = os.environ.get("NPA_E2E_BDD100K_EPOCHS", "").strip()
+    if bdd_epochs:
+        text = re.sub(
+            r'(train_epochs:\s*")[^"]*(")',
+            lambda m: f"{m.group(1)}{bdd_epochs}{m.group(2)}",
+            text,
+        )
     # Optional live remap, e.g. NPA_E2E_ACCELERATOR_REMAP=H100:1=RTXPRO6000:1,H200:1=L40S:1
     remap = os.environ.get("NPA_E2E_ACCELERATOR_REMAP", "").strip()
     if remap:
