@@ -49,6 +49,21 @@ def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
     assert dfs.grade_gate(str(scores), str(tmp_path / "decision.json"), threshold=0.5) == "loop_back"
 
 
+def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> None:
+    """The blueprint interpolates a quoted config.grade_threshold; grade_gate must
+    cast a str threshold (and fall back to 0.5 on a non-numeric value)."""
+    scores = tmp_path / "vlm_eval_stub.json"
+    scores.write_text(json.dumps({"score": 0.6}))
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: None,
+    )
+    # "0.5" (str) -> 0.6 >= 0.5 -> promote.
+    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="0.5") == "promote_checkpoint"
+    # non-numeric -> fallback 0.5 -> 0.6 >= 0.5 -> promote.
+    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="bogus") == "promote_checkpoint"
+
+
 def test_download_json_missing_exact_file_does_not_substitute(tmp_path: Path, monkeypatch) -> None:
     """When the requested .json is missing and download falls back to the prefix
     dir, _download_json must raise, not silently return a different JSON."""

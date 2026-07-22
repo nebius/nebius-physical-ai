@@ -17,7 +17,6 @@ pip-installed in the rendered task, so the blueprint invokes them inline via
 from __future__ import annotations
 
 import json
-import os
 import random
 import tempfile
 from pathlib import Path
@@ -38,16 +37,11 @@ def _storage():
 
 
 def _s3_client():
-    import boto3
-    from botocore.config import Config as BotoConfig
-
-    return boto3.client(
-        "s3",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT"),
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID") or None,
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY") or None,
-        config=BotoConfig(signature_version="s3v4", retries={"max_attempts": 3, "mode": "adaptive"}),
-    )
+    # Reuse StorageClient so LIST uses the SAME validated endpoint as upload /
+    # download. Building a raw boto3 client here with an unset endpoint would
+    # silently fall back to real AWS S3 and make curate/finalize report 0 clips
+    # instead of failing fast (StorageClient raises when the endpoint is unset).
+    return _storage().s3
 
 
 def _split(uri: str) -> tuple[str, str]:
@@ -130,7 +124,7 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
     return manifest
 
 
-def grade_gate(scores_uri: str, decision_uri: str, threshold: float = 0.5) -> str:
+def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5) -> str:
     """Read the real VLM eval score and write a promote/loop decision.
 
     The blueprint's attribute-verify stage runs ``workbench.vlm_eval.run`` with
@@ -139,10 +133,17 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float = 0.5) -> st
     the filename is a historical artifact of the tool, not a stubbed stage. We
     import the constant so this stays in sync with the tool instead of hardcoding
     a magic string.
+
+    ``threshold`` accepts a str (the blueprint interpolates a quoted config value)
+    or float; a non-numeric value falls back to 0.5.
     """
     from npa.orchestration.npa_workflow.decisions import write_decision
     from npa.workbench.vlm_eval import RESULT_FILENAME
 
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        threshold = 0.5
     score = 0.0
     try:
         report = _download_json(scores_uri if scores_uri.endswith(".json") else scores_uri.rstrip("/") + "/" + RESULT_FILENAME)

@@ -50,6 +50,7 @@ config:
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
   n_augmentations: "2"            # augmented variants sampled per source video
   refinement_iterations: "2"      # max evaluate/validate passes before promote
+  grade_threshold: "0.5"          # min VLM attribute score to promote (else loop_back)
   default_decision: promote_checkpoint
 
   # --- Models (verified available on Nebius Token Factory) ---
@@ -191,7 +192,7 @@ states:
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import grade_gate;
-        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', 0.5)"
+        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', '{{config.grade_threshold}}')"
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1
