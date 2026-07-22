@@ -2270,6 +2270,12 @@ def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> 
     if not artifacts:
         return None
     keys = [str(item.key or "") for item in artifacts]
+    # Prefix (root/category) the run was actually found under, derived from the
+    # real keys so stage extraction strips <root>/<category>/<run_id>/ correctly
+    # regardless of which category held the run (works for both the prefix and
+    # generic-find paths).
+    marker = "/" + str(run_id) + "/"
+    effective_prefix = keys[0].split(marker, 1)[0] if marker in keys[0] else settings.get("prefix", "")
     workflow_stage_defs = _workflow_stage_defs_from_state(state)
     overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
     stages = build_artifact_backed_stages(
