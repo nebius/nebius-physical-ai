@@ -557,14 +557,20 @@ COLLAPSE_SUCCESS_FLOOR = 1e-6
 def _coerce_float(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
+    result: float | None = None
     if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
+        result = float(value)
+    elif isinstance(value, str):
         try:
-            return float(value.strip())
+            result = float(value.strip())
         except (ValueError, AttributeError):
             return None
-    return None
+    if result is None:
+        return None
+    # Reject NaN / infinity so signals stay JSON-valid and comparisons sane.
+    if result != result or result in (float("inf"), float("-inf")):
+        return None
+    return result
 
 
 def _per_env_scores(report: Mapping[str, Any]) -> list[float]:
@@ -610,12 +616,20 @@ def extract_quantitative_signals(report: Mapping[str, Any] | None) -> dict[str, 
     notes: list[str] = []
     policy_collapse = False
     degenerate = False
-    if has_signal and success_rate is not None and success_rate <= COLLAPSE_SUCCESS_FLOOR:
+    # Collapse means a floor score with no spread — if some envs pass (per-env
+    # spread > floor / passed_envs > 0) it is a low score, not a collapse.
+    no_spread = num_envs == 0 or (spread <= COLLAPSE_SUCCESS_FLOOR and passed_envs == 0)
+    if (
+        has_signal
+        and success_rate is not None
+        and success_rate <= COLLAPSE_SUCCESS_FLOOR
+        and no_spread
+    ):
         policy_collapse = True
-        notes.append("success_rate at floor — likely policy collapse / degenerate rollout")
+        notes.append("success_rate at floor with no spread — likely policy collapse")
     if num_envs >= 2 and spread <= COLLAPSE_SUCCESS_FLOOR and passed_envs == 0:
         degenerate = True
-        if "policy collapse" not in " ".join(notes):
+        if "collapse" not in " ".join(notes):
             notes.append("all envs identical at zero — degenerate rollout")
     meets_threshold = (
         success_rate is not None and threshold is not None and success_rate >= threshold
@@ -677,10 +691,13 @@ def compare_rollouts(
     if sig_b.get("policy_collapse") and not sig_a.get("policy_collapse"):
         regressed = True
         notes.append(f"{label_b} shows policy collapse not present in {label_a}")
+    insufficient = sr_a is None or sr_b is None
     if regressed:
         verdict = "regression"
     elif improved:
         verdict = "improvement"
+    elif insufficient:
+        verdict = "insufficient_signal"
     else:
         verdict = "no_change"
     return {

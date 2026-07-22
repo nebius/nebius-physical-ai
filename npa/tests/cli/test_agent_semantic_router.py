@@ -110,6 +110,27 @@ def test_cache_short_circuits_second_call():
     assert calls["n"] == 1  # model consulted once, cache served the rest
 
 
+def test_low_confidence_model_intent_is_rejected():
+    def _model(messages, *, tier="cheap"):
+        return _completion({"intent": "sonic_capabilities", "confidence": 0.1})
+
+    result = S.classify_intent_semantic(
+        "an ambiguous phrase", known_intents=KNOWN, model_call=_model, min_confidence=0.4
+    )
+    assert result["mode"] == S.MODE_NONE
+    assert result["intent"] is None
+
+
+def test_non_finite_confidence_is_rejected():
+    def _model(messages, *, tier="cheap"):
+        return _completion({"intent": "sonic_capabilities", "confidence": float("nan")})
+
+    result = S.classify_intent_semantic(
+        "another phrase", known_intents=KNOWN, model_call=_model
+    )
+    assert result["mode"] == S.MODE_NONE
+
+
 def test_use_model_false_stays_zero_tokens():
     result = S.classify_intent_semantic(
         "an open question with no keywords",

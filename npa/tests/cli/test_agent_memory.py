@@ -98,6 +98,29 @@ def test_explain_regression_is_grounded_text():
     assert "delta_success_rate" in text
 
 
+def test_run_id_path_traversal_is_contained(tmp_path):
+    base = tmp_path / "memory"
+    store = M.JsonFileStore(str(base))
+    mem = M.RunMemory(store)
+    # A crafted run_id must not escape the memory store directory.
+    mem.record_run("../../evil", {"success_rate": 0.5})
+    escaped = tmp_path / "evil.json"
+    assert not escaped.exists()
+    # And the sanitized record is retrievable + confined under base.
+    files = list(base.rglob("*.json"))
+    assert files, "record should be written under the store base dir"
+    for f in files:
+        assert str(base) in str(f.resolve())
+
+
+def test_record_run_stamps_provenance_source():
+    mem = M.RunMemory(M.InMemoryStore())
+    api_rec = mem.record_run("r-api", {"success_rate": 0.5})
+    drive_rec = mem.record_run("r-drive", {"success_rate": 0.9}, source="drive")
+    assert api_rec["source"] == "api"
+    assert drive_rec["source"] == "drive"
+
+
 def test_json_file_store_roundtrip(tmp_path):
     store = M.JsonFileStore(str(tmp_path / "memory"))
     mem = M.RunMemory(store)

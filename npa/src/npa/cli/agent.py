@@ -3550,7 +3550,7 @@ def _chat_with_resilience(
 import sys as _npa_sys
 if "/opt/npa-agent" not in _npa_sys.path:
     _npa_sys.path.insert(0, "/opt/npa-agent")
-from agent_backend.memory import RunMemory, JsonFileStore, InMemoryStore
+from agent_backend.memory import RunMemory, JsonFileStore
 
 {_AGENT_WORKFLOW_EMBED}
 
@@ -4895,12 +4895,28 @@ def chat(payload: dict):
     # Semantic fallthrough (Phase D): only when the deterministic regex router
     # missed. Keyword/cache hits cost 0 tokens; a genuine miss spends one cheap
     # structured call. A mapped intent produces a side-effect-free grounded reply.
+    semantic_tokens = 0
     if intent is None and not visual_turn:
         semantic = _semantic_route(last_user)
-        mapped = str(semantic.get("intent") or "") if semantic.get("mode") == "intent" else ""
+        semantic_tokens = int(semantic.get("tokens") or 0)
+        sem_mode = str(semantic.get("mode") or "none")
+        mapped = str(semantic.get("intent") or "") if sem_mode == "intent" else ""
+        sem_reply = ""
         if mapped:
-            grounded_zero = int(semantic.get("tokens") or 0) == 0
             sem_reply = build_grounded_reply(mapped, _load_state(), TOOL_REFS)
+        elif sem_mode == "action":
+            # The turn needs a multi-step tool loop; point at the confirmation-gated
+            # action endpoint instead of auto-spending GPU from a chat turn.
+            sem_reply = (
+                "**This looks like a multi-step task.** I can run it as a bounded, "
+                "confirmation-gated tool loop.\\n"
+                "- Use `POST /api/agent/act` with a JSON body carrying your goal.\\n"
+                "- Read-only tools run automatically; GPU/state-changing tools return a "
+                "confirmation token you re-send to execute.\\n"
+                "- The full step trace (`steps`, `tools_used`) comes back in the response."
+            )
+        if sem_reply:
+            grounded_zero = semantic_tokens == 0
             history = [*merged_history, {{"role": "assistant", "content": sem_reply}}][-80:]
             session.update(
                 {{
@@ -4918,10 +4934,12 @@ def chat(payload: dict):
                 "reply": sem_reply,
                 "reasoning": None,
                 "grounded": grounded_zero,
-                "tier": "semantic-" + str(semantic.get("source") or "model"),
-                "usage": {{"total_tokens": int(semantic.get("tokens") or 0)}},
+                "tier": "semantic-" + str(semantic.get("source") or sem_mode),
+                "usage": {{"total_tokens": semantic_tokens}},
                 "semantic_intent": mapped,
-                "apis_used": apis_for_intent(mapped),
+                "semantic_mode": sem_mode,
+                "apis_used": [],
+                "apis_suggested": apis_for_intent(mapped) if mapped else [],
                 "session_id": session["id"],
                 "session": {{
                     "id": session["id"],
@@ -4995,6 +5013,12 @@ def chat(payload: dict):
         interactive=True,
     )
     turn_usage = usage_summary(data)
+    # Include any tokens spent on the semantic classifier so cost telemetry is
+    # not under-reported when the fallthrough consulted the model then fell back.
+    if semantic_tokens:
+        turn_usage = dict(turn_usage)
+        turn_usage["total_tokens"] = int(turn_usage.get("total_tokens", 0)) + semantic_tokens
+        turn_usage["semantic_tokens"] = semantic_tokens
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
@@ -5308,6 +5332,7 @@ def agent_sim2real_drive(payload: dict):
                     "threshold": last_gate.get("threshold"),
                     "recorded_at": _now_iso(),
                 }},
+                source="drive",
             )
         except Exception:
             pass

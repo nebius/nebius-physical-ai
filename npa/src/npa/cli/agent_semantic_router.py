@@ -152,7 +152,10 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _message_content(data: Any) -> str:
+def _sem_message_content(data: Any) -> str:
+    # Uniquely named so the shared embedded backend namespace never clobbers (or
+    # is clobbered by) agent_actions._message_content, which supports list-form
+    # content the classifier does not need.
     if not isinstance(data, dict):
         return ""
     try:
@@ -163,7 +166,7 @@ def _message_content(data: Any) -> str:
     return content if isinstance(content, str) else ""
 
 
-def _tokens_from(data: Any) -> int:
+def _sem_tokens_from(data: Any) -> int:
     if not isinstance(data, dict):
         return 0
     usage = data.get("usage")
@@ -203,6 +206,7 @@ def classify_intent_semantic(
     cache: dict[str, dict[str, Any]] | None = None,
     use_model: bool = True,
     tier: str = "cheap",
+    min_confidence: float = 0.4,
 ) -> dict[str, Any]:
     """Classify a regex-missed turn into a known intent / action / none.
 
@@ -239,8 +243,8 @@ def classify_intent_semantic(
         data = model_call(_model_messages(lowered, known), tier=tier)
     except Exception:  # noqa: BLE001 - degrade to none on any planner failure
         return _none_result()
-    tokens = _tokens_from(data)
-    parsed = _extract_json(_message_content(data))
+    tokens = _sem_tokens_from(data)
+    parsed = _extract_json(_sem_message_content(data))
     if not isinstance(parsed, dict):
         result = _none_result(SOURCE_MODEL)
         result["tokens"] = tokens
@@ -251,6 +255,14 @@ def classify_intent_semantic(
         confidence = float(parsed.get("confidence"))
     except (TypeError, ValueError):
         confidence = 0.5
+    # A non-finite or below-threshold confidence must not misroute a turn.
+    if not (confidence == confidence) or confidence in (float("inf"), float("-inf")):
+        confidence = 0.0
+    if raw_intent in known and confidence < float(min_confidence):
+        result = _none_result(SOURCE_MODEL)
+        result["tokens"] = tokens
+        result["confidence"] = confidence
+        return result
     if raw_intent in known:
         mode = MODE_INTENT
         intent: str | None = raw_intent

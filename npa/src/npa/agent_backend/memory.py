@@ -19,11 +19,23 @@ backend imports it via ``from agent_backend.memory import ...``. The
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable
 
 MEMORY_KEY_PREFIX = "runs/"
 INDEX_KEY = "index.json"
+
+# Run ids come from requests; constrain them to a safe token so a crafted id
+# (e.g. "../../session_state") can never escape the memory store directory.
+_SAFE_RUN_ID_RE = re.compile(r"[^A-Za-z0-9._:-]")
+
+
+def _safe_run_id(run_id: str) -> str:
+    token = _SAFE_RUN_ID_RE.sub("_", str(run_id or "").strip())
+    # Collapse any dot runs so "." / ".." cannot form a traversal segment.
+    token = re.sub(r"\.{2,}", "_", token).strip("._")
+    return token
 
 
 class InMemoryStore:
@@ -117,7 +129,7 @@ class RunMemory:
 
     # ── persistence ─────────────────────────────────────────────────────────
     def _run_key(self, run_id: str) -> str:
-        return f"{MEMORY_KEY_PREFIX}{str(run_id).strip()}.json"
+        return f"{MEMORY_KEY_PREFIX}{_safe_run_id(run_id)}.json"
 
     def _read_index(self) -> list[str]:
         raw = self._store.read(INDEX_KEY)
@@ -137,13 +149,21 @@ class RunMemory:
                 seen.append(run_id)
         self._store.write(INDEX_KEY, json.dumps(seen))
 
-    def record_run(self, run_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        """Persist a run's metadata/metrics; returns the stored record."""
-        run_id = str(run_id or "").strip()
+    def record_run(
+        self, run_id: str, metadata: dict[str, Any], *, source: str = "api"
+    ) -> dict[str, Any]:
+        """Persist a run's metadata/metrics; returns the stored record.
+
+        ``source`` records provenance ("drive" for agent-driven runs, "api" for
+        operator-supplied metadata) so downstream comparisons can distinguish
+        authoritative run data from hand-entered records.
+        """
+        run_id = _safe_run_id(run_id)
         if not run_id:
             raise ValueError("run_id is required")
         record = dict(metadata) if isinstance(metadata, dict) else {"value": metadata}
         record["run_id"] = run_id
+        record.setdefault("source", source)
         self._store.write(self._run_key(run_id), json.dumps(record, sort_keys=True))
         index = self._read_index()
         self._write_index([run_id, *index])

@@ -17,10 +17,23 @@ from npa.cli import agent_actions
 from npa.cli import agent_chat
 from npa.cli import agent_semantic_router
 from npa.cli import agent_sim2real_loop
+from npa.cli import agent_workflow
 
 from .scenarios import SCENARIOS, Scenario
 
 KNOWN_INTENTS = frozenset(agent_chat.INTENT_APIS.keys())
+
+# Representative workbench toolRefs so workflow drafts validate offline.
+_EVAL_TOOL_REFS = frozenset(
+    {
+        "workbench.rl.policy_train",
+        "workbench.rl.evaluate_policy",
+        "workbench.cosmos2.transfer",
+        "workbench.token_factory.vlm_judge",
+        "workbench.lerobot.eval",
+        "workbench.sonic.train",
+    }
+)
 
 
 @dataclass
@@ -69,10 +82,18 @@ def _run_grounded(sc: Scenario) -> EvalResult:
 
 
 def _run_workflow(sc: Scenario) -> EvalResult:
-    # Draft path is grounded: the intent selects a workflow template.
+    # End-state: the intent is recognized AND a runnable spec is drafted+validated.
     intent = agent_chat.match_chat_intent(sc.goal)
-    success = intent == sc.expected.get("intent")
-    return EvalResult(sc.id, sc.kind, success, steps=1, tokens=0, detail=f"intent={intent}")
+    if intent != sc.expected.get("intent"):
+        return EvalResult(sc.id, sc.kind, False, steps=1, tokens=0, detail=f"intent={intent}")
+    draft = agent_workflow.generate_workflow_draft(
+        intent=intent, user_text=sc.goal, tool_refs=_EVAL_TOOL_REFS
+    )
+    validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
+    success = bool(draft.get("runnable")) and bool(validation.get("ok")) and bool(draft.get("yaml"))
+    return EvalResult(
+        sc.id, sc.kind, success, steps=2, tokens=0, detail=f"template={draft.get('template')}"
+    )
 
 
 def _run_action_loop(sc: Scenario) -> EvalResult:
@@ -133,15 +154,24 @@ def _run_sim2real_loop(sc: Scenario) -> EvalResult:
 
 
 def _run_semantic(sc: Scenario) -> EvalResult:
-    # Regex misses -> semantic keyword layer maps the paraphrase (0 tokens).
-    if agent_chat.match_chat_intent(sc.goal) is not None:
-        # Regex already handles it: still a success, and cheaper than semantic.
-        return EvalResult(sc.id, sc.kind, True, steps=1, tokens=0, detail="regex-hit")
+    expected = sc.expected.get("intent")
+    # End-state: the turn resolves to the EXPECTED intent, whether the regex
+    # already grounds it or the semantic fallthrough maps the paraphrase.
+    regex_intent = agent_chat.match_chat_intent(sc.goal)
+    if regex_intent is not None:
+        return EvalResult(
+            sc.id, sc.kind, regex_intent == expected, steps=1, tokens=0, detail="regex-hit"
+        )
     result = agent_semantic_router.classify_intent_semantic(
-        sc.goal, known_intents=KNOWN_INTENTS, model_call=lambda *a, **k: _completion({"intent": "none"})
+        sc.goal,
+        known_intents=KNOWN_INTENTS,
+        model_call=lambda *a, **k: _completion({"intent": "none"}),
     )
-    success = result.get("intent") == sc.expected.get("intent")
-    return EvalResult(sc.id, sc.kind, success, steps=1, tokens=int(result.get("tokens") or 0), detail=result.get("source", ""))
+    success = result.get("intent") == expected
+    return EvalResult(
+        sc.id, sc.kind, success, steps=1, tokens=int(result.get("tokens") or 0),
+        detail=result.get("source", ""),
+    )
 
 
 _RUNNERS = {
