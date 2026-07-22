@@ -11,6 +11,7 @@ from .agent_live_helpers import (
     UI_BUTTON_IDS,
     UI_WIRING_MARKERS,
     AgentLiveContext,
+    assert_ui_version_marker,
     load_agent_live_context,
 )
 
@@ -35,6 +36,7 @@ def test_agent_ui_html_smoke(ctx: AgentLiveContext) -> None:
     html = resp.text
     for marker in UI_WIRING_MARKERS:
         assert marker in html, f"missing UI marker: {marker}"
+    assert_ui_version_marker(html)
     for control_id in UI_BUTTON_IDS:
         assert f'id="{control_id}"' in html
         assert f'bindClick("{control_id}"' in html
