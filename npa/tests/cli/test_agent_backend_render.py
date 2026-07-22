@@ -88,12 +88,68 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     # Phase D: semantic router embedded + wired into the /chat fallthrough.
     assert "def classify_intent_semantic" in body
     assert "def _semantic_route" in body
-    # Phase F: quantitative signals + run memory embedded + routes wired.
+    # Phase F: quantitative signals embedded + memory routes wired.
     assert "def extract_quantitative_signals" in body
-    assert "class RunMemory" in body
     assert '@app.get("/agent/memory/compare")' in body
+    # Phase G: run memory is SHIPPED (imported), not embedded, in backend.py.
+    assert "from agent_backend.memory import RunMemory" in body
+    assert "class RunMemory" not in body  # no longer inlined into backend.py
+    assert "__NPA_AGENT_MEMORY" not in body
     # Grounded-first is preserved: /chat still exists and is separate.
     assert '@app.post("/chat")' in body
+
+
+def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
+    from npa.cli import agent as agent_module
+
+    captured: dict[str, str] = {}
+
+    class _DummySsh:
+        def upload_file(self, local_path: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                try:
+                    captured["setup_script"] = Path(local_path).read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    pass
+
+        def run_or_raise(self, _command: str) -> None:
+            return None
+
+        def run(self, _command: str) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "SSHClient", lambda config: _DummySsh())
+    monkeypatch.setattr(agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={}))
+    agent_module._bootstrap_agent_stack(
+        host="203.0.113.50",
+        ssh_user="ubuntu",
+        ssh_key_path="/tmp/key",
+        project_alias="smoke",
+        project_id="project-id",
+        tenant_id="tenant-id",
+        region="us-central1",
+        auth_user="npa",
+        auth_password="password",
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="nvidia/Cosmos3-Super-Reasoner",
+        llm_models=["nvidia/Cosmos3-Super-Reasoner"],
+        tf_api_key="",
+        nebius_ai_key="",
+        public_https=True,
+    )
+    setup_script = captured["setup_script"]
+    match = re.search(
+        r"cat <<'PY' \| sudo tee /opt/npa-agent/agent_backend/memory\.py >/dev/null\n(?P<body>.*?)\nPY\n",
+        setup_script,
+        flags=re.DOTALL,
+    )
+    assert match, "bootstrap must ship agent_backend/memory.py as an importable file"
+    body = match.group("body")
+    assert "__NPA_AGENT_MEMORY_SHIP__" not in body, "ship placeholder not substituted"
+    compile(body, "agent_backend/memory.py", "exec")
+    assert "class RunMemory" in body
 
 
 if __name__ == "__main__":  # pragma: no cover

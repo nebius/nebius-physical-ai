@@ -214,12 +214,31 @@ route, removable without touching existing paths.
 
 Introduce an importable package `npa/src/npa/agent_backend/` that is *shipped* to
 the VM (its files uploaded next to `backend.py`, imported via `sys.path`) instead
-of string-substituted. Migrate the new B–F modules there first, keeping the embed
-mechanism working for everything not yet migrated. Behavior stays byte-for-byte;
-the rendered-backend compile check and the full agent suite stay green at every
-commit; migration proceeds in small reversible commits. Until a module is proven
-on the shipped path, embed remains the active mechanism (feature-flagged), so
-rollback is switching the flag back to embed.
+of string-substituted. Migrate the new B–F modules there incrementally, keeping
+the embed mechanism working for everything not yet migrated. Behavior stays
+byte-for-byte; the rendered-backend compile check and the full agent suite stay
+green at every commit; migration proceeds in small reversible commits.
+
+**Implemented (pilot):** `agent_memory` is the first module migrated. Its logic
+lives in `npa/src/npa/agent_backend/memory.py`; `npa/src/npa/cli/agent_memory.py`
+is a thin re-export shim so existing import paths/tests are unchanged. The
+bootstrap ships the package files via a `cat <<'PY' … agent_backend/memory.py`
+heredoc (placeholder `_AGENT_MEMORY_SHIP` substituted with the full source), and
+`backend.py` does `sys.path.insert(0, "/opt/npa-agent")` + `from
+agent_backend.memory import RunMemory, JsonFileStore, InMemoryStore` instead of
+inlining the class. A dedicated test compiles the shipped module and asserts
+`backend.py` no longer inlines it.
+
+**Mechanism for the remaining modules (actions, sim2real_loop, semantic_router):**
+each follows the same pilot pattern — `git mv` into `agent_backend/`, add a
+`cli/agent_*.py` shim, swap the embed placeholder for a ship heredoc +
+`from agent_backend.<mod> import …`, and add a shipped-module compile check.
+This is preferable to `import *` because the module keeps its own globals (no
+backend-namespace symbol collisions such as the shared `STOP_ERROR`).
+
+**Rollback:** re-embedding a shipped module is mechanical — restore its
+`_embedded_*` reader + `_AGENT_*_EMBED` placeholder and drop the ship heredoc.
+Because the shim keeps the `npa.cli.*` import path stable, no caller changes.
 
 ## Consistency with the three-layer cost model
 
