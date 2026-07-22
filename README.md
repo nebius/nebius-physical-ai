@@ -81,7 +81,8 @@ npa --version
 ### A. 60-second try-it
 
 Score a shipped sample rollout set with the offline stub backend — no
-credentials of any kind:
+credentials of any kind. Run these from the repository root; the `--dataset`
+and spec paths are relative to it:
 
 ```bash
 npa workbench vlm-eval benchmark \
@@ -158,7 +159,8 @@ Composable `toolRef` steps: [`npa.workflow` tool catalog](docs/workbench/npa-wor
    ```
 
 3. Interactive setup — creates or reuses your Nebius CLI profile and prompts
-   for tenant, project, region, bucket, and optional API keys:
+   for project, tenant, region, container registry, bucket, and optional API
+   keys (in that order):
 
    ```bash
    npa configure --interactive

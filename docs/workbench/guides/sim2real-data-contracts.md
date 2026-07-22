@@ -1,6 +1,6 @@
 # Sim-to-Real — Data types & artifact contracts
 
-**Canonical reference** for formats, schemas, and S3 layout in the 13-stage sim-to-real
+**Canonical reference** for formats, schemas, and S3 layout in the 14-stage sim-to-real
 loop. Other guides link here instead of duplicating tables.
 
 ---
@@ -20,7 +20,7 @@ loop. Other guides link here instead of duplicating tables.
 
 ---
 
-## Not everything is LeRobot {#not-everything-is-lerobot}
+## Not everything is LeRobot
 
 The loop uses **four format families**. Only Stage 1 input is LeRobot-native.
 
@@ -37,7 +37,7 @@ policy rollouts.
 
 ---
 
-## Customer input vs workflow output {#customer-input-vs-workflow-output}
+## Customer input vs workflow output
 
 | URI / artifact | Provider | Format | Stage |
 | --- | --- | --- | --- |
@@ -139,7 +139,7 @@ schemas above on stdout files:
 
 ---
 
-## S3 layout {#artifact-paths}
+## S3 layout
 
 ```text
 # INPUT (customer)

@@ -403,7 +403,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
 
 
 def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
-    """Return canonical S3 artifact URIs for the full 13-stage workflow."""
+    """Return canonical S3 artifact URIs for the full 14-stage workflow."""
 
     if not config.s3_bucket:
         return {}

@@ -101,6 +101,22 @@ def test_bdd100k_pipeline_plan_expands_eleven_stages() -> None:
     ]
 
 
+def test_build_plan_omits_assume_decision_for_loop_free_spec() -> None:
+    # Loop-free specs (no state transitions) must not carry a spurious
+    # loop_back_to_inner_loop assumption; the plan-spec CLI hides the line.
+    spec = load_spec(SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="loop-free")
+    assert plan.assume_decision == ""
+
+
+def test_build_plan_defaults_loop_back_for_specs_with_transitions() -> None:
+    # Specs with dynamic transitions still default to loop_back so their loops
+    # expand when no explicit assumption is passed.
+    spec = load_spec(SPECS / "tokenfactory-cosmos-gate.yaml")
+    plan = build_plan(spec, run_id="loop-default")
+    assert plan.assume_decision == "loop_back_to_inner_loop"
+
+
 def test_tokenfactory_cosmos_gate_plan_expands_refinement_loop() -> None:
     spec = load_spec(SPECS / "tokenfactory-cosmos-gate.yaml")
     plan = build_plan(spec, run_id="gate-plan", assume_decision="loop_back")
