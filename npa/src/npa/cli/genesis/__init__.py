@@ -126,6 +126,9 @@ def _genesis_local_import(module: str, *names: str) -> tuple[Any, ...]:
     ``pip install -e npa`` (no GPU extra) raises a bare
     ``ModuleNotFoundError: No module named 'torch'``. Turn that into an
     actionable hint that also points at the remote and serverless paths.
+
+    A missing ``npa`` / ``npa.genesis`` submodule is an internal bug rather than
+    a missing GPU extra, so it is re-raised unchanged and stays debuggable.
     """
 
     import importlib
@@ -134,6 +137,12 @@ def _genesis_local_import(module: str, *names: str) -> tuple[Any, ...]:
         mod = importlib.import_module(f"npa.genesis.{module}")
     except ModuleNotFoundError as exc:
         missing = exc.name or "torch"
+        # A missing npa.genesis submodule (or npa itself) is an internal bug, not
+        # a missing GPU extra — re-raise it so it surfaces honestly instead of
+        # being masked by the install hint. Only a missing third-party dependency
+        # (torch and the rest of the Genesis stack) gets the actionable hint.
+        if missing == "npa" or missing.startswith("npa."):
+            raise
         # Escape the extras bracket so rich markup does not treat "[genesis]" as
         # a style tag and drop it from the rendered message.
         _fail(
