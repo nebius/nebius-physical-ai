@@ -193,7 +193,7 @@ registry-qualified Cosmos Transfer image.
 
 ## S3 layout
 
-See [sim2real-data-contracts.md § S3 layout](./sim2real-data-contracts.md#artifact-paths).
+See [sim2real-data-contracts.md § S3 layout](./sim2real-data-contracts.md#s3-layout).
 
 ---
 
