@@ -63,18 +63,6 @@ work lives).
 - **Next step**: Add an explicit deploy auto-serve option or make the post-deploy
   `serve` requirement prominent in CLI help and standard runbooks.
 
-#### [M] Cosmos deploy install failure dumps the full install script and traceback
-
-- **Surfaced by**: 2026-06-10 single-H200 Cosmos deploy (gated model download 403).
-- **Status**: Still active.
-- **Current issue**: When the remote install step fails (e.g. a gated Hugging Face
-  model download), `cosmos deploy` surfaces the entire multi-hundred-line install
-  bash command plus the raw remote Python traceback as the error, burying the
-  actual cause and remediation.
-- **Next step**: Catch install/SSH failures and report a concise, actionable error
-  (failing step plus remote stderr tail), keeping the full command and traceback
-  behind a verbose/debug flag.
-
 #### [M] Add standalone LeRobot library validation test
 
 - **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
@@ -143,6 +131,25 @@ work lives).
 - 2026-07-21 - Deploy template tests resolve fixture paths from the package root
   (`PACKAGE_ROOT = Path(__file__).resolve().parents[1]`), not the process CWD
   (`npa/tests/test_deploy.py`).
+- 2026-07-21 - Sim2Real eval image rebuilt for Blackwell. The pinned
+  `npa-loop-eval:0.1.1-genuine-sm120` shipped `torch 2.6.0+cu124` (sm_50..sm_90),
+  so torch CUDA crashed on RTX PRO 6000 (`sm_120`) before Genesis physics.
+  Rebuilt + pushed `npa-loop-eval:0.1.3-genuine-sm120` from
+  `npa-genesis:0.4.6-sm80-sm90-sm120-latest` (torch `2.9.0+cu130`), bumped every
+  pin/doc + build default and marked 0.1.1/0.1.2 stale in the tag audit.
+  **Validated end-to-end on an RTX PRO 6000 node in `npa-rtxpro-mk8s`**: torch
+  sm_120 matmul + `gs.init(backend=gs.gpu)` + a `FrankaPickPlaceEnv` step all pass
+  with no "no kernel image" error (digest
+  `sha256:9ae0ca513a7cf03af3562c91a6e811cd2b68abe168e36899d37f7cb4cb4ebaaa`). The
+  superseded broken `0.1.1-genuine-sm120` tag was deleted from the registry.
+- 2026-07-19 - Remote install/SSH failures now surface a compact, actionable
+  error (step label + exit code + stderr tail) with the full command and output
+  behind `NPA_DEBUG=1`. Root-caused in `SSHClient.run_or_raise`
+  (`npa.clients.ssh.format_remote_failure`) and the FiftyOne clone; retires the
+  full-script dumps across Cosmos install/serve, FiftyOne, GR00T, Isaac Lab,
+  LeRobot, and Genesis. Hiding the command by default also stops leaking the
+  inlined docker-login `registry_token`. Original FIXME entry: `[M] Cosmos deploy
+  install failure dumps the full install script and traceback`.
 - 2026-07-19 - Isaac Lab -> LeRobot formatter parameterized via
   `LeRobotFeatureSpec` with a G1 default spec (decoupled state/action dims).
 - 2026-07-19 - `npa workbench isaac-lab list-tasks` (remote gym registry) and

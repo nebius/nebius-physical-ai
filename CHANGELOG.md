@@ -7,6 +7,23 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### First-time-user cold-start fixes
+
+- `npa configure --interactive` no longer exits 0 having written nothing. When it
+  cannot proceed (no authenticated Nebius CLI profile for provisioning) or is
+  cancelled mid-flow (EOF/Ctrl-C), it now exits **non-zero** with actionable
+  guidance. **Behavior change:** wrappers/CI that treated a cancelled or aborted
+  `npa configure` as success will now see a failure. Setup guidance and the
+  interactive prompts also link where to obtain the Hugging Face and NGC keys.
+- Added `npa workbench health preflight`: a PASS/WARN/FAIL/SKIP check over
+  Hugging Face, NVIDIA NGC, Nebius object storage (S3), and Token Factory
+  credentials (`--checks`, `--offline`, `--warn-only`, `--json`). Replaces the
+  deprecated hidden `npa workbench health sim2real` in the README preflight
+  guidance.
+- Added `npa agent preflight` and moved the terraform-binary and SSH-key-pair
+  checks (plus the Token Factory 503 warning) ahead of any cloud IAM side effects
+  in `npa agent deploy`, so Route C prerequisites fail fast instead of mid-run.
+
 ### Repo hardening
 
 - Shipped SkyPilot examples and cookbooks now use the `<your-registry-id>`

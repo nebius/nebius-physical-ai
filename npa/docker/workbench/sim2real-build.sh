@@ -10,7 +10,7 @@ BASE_IMAGE="${BASE_IMAGE:-npa-base:cuda13-b300-sm80-sm90-sm120-latest}"
 GENESIS_IMAGE="${GENESIS_IMAGE:-npa-genesis:0.4.6-sm80-sm90-sm120-latest}"
 VLM_TAG="${VLM_TAG:-3.0.1-genuine-sm120}"
 ENVGEN_TAG="${ENVGEN_TAG:-0.1.2}"
-EVAL_TAG="${EVAL_TAG:-0.1.2-genuine-sm120}"
+EVAL_TAG="${EVAL_TAG:-0.1.3-genuine-sm120}"
 VLM_RL_TAG="${VLM_RL_TAG:-0.1.1}"
 
 usage() {

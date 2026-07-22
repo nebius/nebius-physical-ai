@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,27 @@ class ProvisionerError(Exception):
 
 _BUNDLED_TF_DIR = Path(__file__).parent / "terraform"
 _WORKBENCH_BASE = Path.home() / ".npa" / "workbenches"
+# Shared Terraform plugin cache so every fresh per-deploy work dir reuses
+# already-downloaded providers instead of re-fetching them from
+# registry.terraform.io. This makes `terraform init` faster and resilient to
+# transient registry outages (a warm cache needs no network at all). Overridable
+# via the standard TF_PLUGIN_CACHE_DIR env var.
+_TF_PLUGIN_CACHE_DIR = Path.home() / ".npa" / "terraform-plugin-cache"
+# Substrings that identify a transient `terraform init` failure worth retrying
+# (registry/network hiccups) rather than a real configuration error.
+_TRANSIENT_INIT_MARKERS = (
+    "could not connect to registry",
+    "failed to request discovery document",
+    "timeout exceeded while awaiting headers",
+    "failed to retrieve",
+    "no such host",
+    "connection reset",
+    "connection refused",
+    "temporary failure in name resolution",
+    "i/o timeout",
+    "tls handshake timeout",
+    "eof",
+)
 DEFAULT_VM_BOOT_DISK_SIZE_GB = 100
 DEFAULT_CONTAINER_BOOT_DISK_SIZE_GB = 250
 
@@ -55,6 +78,19 @@ def _require_terraform() -> str:
     return tf
 
 
+def _tf_env() -> dict[str, str]:
+    """Return the subprocess env for terraform with a warm plugin cache."""
+    env = dict(os.environ)
+    if not env.get("TF_PLUGIN_CACHE_DIR"):
+        cache = _TF_PLUGIN_CACHE_DIR
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return env
+        env["TF_PLUGIN_CACHE_DIR"] = str(cache)
+    return env
+
+
 def _run(
     args: list[str],
     *,
@@ -64,7 +100,7 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     tf = _require_terraform()
     cmd = [tf] + args
-    kwargs: dict[str, Any] = {"cwd": str(cwd), "text": True}
+    kwargs: dict[str, Any] = {"cwd": str(cwd), "text": True, "env": _tf_env()}
 
     if capture:
         kwargs["capture_output"] = True
@@ -210,15 +246,29 @@ def cleanup_working_dir(project: str, name: str) -> None:
 # ── Terraform commands ───────────────────────────────────────────────────
 
 
+def _looks_transient_init_failure(message: str) -> bool:
+    lowered = (message or "").lower()
+    return any(marker in lowered for marker in _TRANSIENT_INIT_MARKERS)
+
+
 def init(
     tf_dir: str | Path | None = None,
     backend_config: dict[str, str] | None = None,
+    *,
+    retries: int = 3,
+    backoff_seconds: float = 4.0,
+    sleep: Any = time.sleep,
 ) -> None:
     """Run terraform init.
 
     If *backend_config* is provided, each key/value pair is passed as a
     ``-backend-config`` flag.  Typically only ``access_key`` and
     ``secret_key`` are passed here — the rest is embedded in ``backend.tf``.
+
+    Provider installation from registry.terraform.io can fail transiently
+    (timeouts, DNS blips); those are retried with exponential backoff so a fresh
+    VM is not rolled back over a momentary registry hiccup. Non-transient
+    failures (e.g. a real config error) raise immediately.
     """
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
     args = ["init", "-input=false"]
@@ -226,7 +276,21 @@ def init(
         args.append("-reconfigure")
         for key, value in backend_config.items():
             args.extend(["-backend-config", f"{key}={value}"])
-    _run(args, cwd=tf_dir, capture=True)
+    delay = backoff_seconds
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            _run(args, cwd=tf_dir, capture=True)
+            return
+        except ProvisionerError as exc:
+            if attempt >= retries or not _looks_transient_init_failure(str(exc)):
+                raise
+            sys.stderr.write(
+                f"  terraform init attempt {attempt}/{retries} hit a transient "
+                f"registry/network error; retrying in {delay:.0f}s...\n"
+            )
+            sys.stderr.flush()
+            sleep(delay)
+            delay *= 2
 
 
 def plan(

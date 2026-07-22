@@ -2995,6 +2995,7 @@ def deploy_cmd(
                     ssh.run_or_raise(
                         _build_install_command(server_port),
                         stream=True,
+                        label="GR00T install",
                     )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(

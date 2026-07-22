@@ -20,6 +20,64 @@ class SSHError(Exception):
     pass
 
 
+NPA_DEBUG_ENV_VAR = "NPA_DEBUG"
+
+# How many trailing stderr lines to surface by default. Install scripts emit the
+# actual failure (missing token, 403, CUDA mismatch) near the end, so the tail is
+# almost always the useful part.
+_STDERR_TAIL_LINES = 20
+
+
+def _npa_debug_enabled() -> bool:
+    return os.environ.get(NPA_DEBUG_ENV_VAR, "").strip().lower() not in (
+        "",
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def format_remote_failure(
+    code: int,
+    stderr: str,
+    *,
+    label: str | None = None,
+) -> str:
+    """Build a compact SSH failure message.
+
+    The remote command is *never* included: install scripts frequently carry
+    credentials inline (S3 keys, HF/NGC/Token Factory tokens, docker-login
+    registry passwords), and this exception text is surfaced to terminals,
+    scrollback, CI logs, and agent transcripts. The message carries only the
+    optional step ``label``, the exit code, and the stderr tail — the part that
+    actually names the failure (missing token, 403, CUDA mismatch).
+
+    ``NPA_DEBUG=1`` lifts *only* the stderr truncation (full remote stderr); it
+    never reveals the command.
+    """
+
+    stderr = (stderr or "").strip()
+    suffix = f": {label}" if label else ""
+    lines = [f"Command failed (exit {code}){suffix}"]
+
+    if not stderr:
+        lines.append("stderr: <empty>")
+        return "\n".join(lines)
+
+    stderr_lines = stderr.splitlines()
+    if _npa_debug_enabled() or len(stderr_lines) <= _STDERR_TAIL_LINES:
+        lines.append("stderr:\n" + stderr)
+        return "\n".join(lines)
+
+    tail = stderr_lines[-_STDERR_TAIL_LINES:]
+    lines.append(
+        f"stderr (last {len(tail)} of {len(stderr_lines)} lines):\n" + "\n".join(tail)
+    )
+    lines.append(f"Set {NPA_DEBUG_ENV_VAR}=1 for the full remote stderr.")
+    return "\n".join(lines)
+
+
 class SSHClient:
     def __init__(self, config: SSHConfig) -> None:
         self._config = config
@@ -143,22 +201,22 @@ class SSHClient:
         finally:
             client.close()
 
-    def run_or_raise(self, command: str, **kwargs) -> tuple[int, str, str]:
+    def run_or_raise(
+        self, command: str, *, label: str | None = None, **kwargs
+    ) -> tuple[int, str, str]:
         """Run a command; raise SSHError on non-zero exit.
 
-        The full command is deliberately omitted from the error. Remote install
+        The full command is deliberately omitted from the error — remote install
         scripts frequently carry credentials (S3 keys, HF/NGC/Token Factory
         tokens, registry passwords) inline, and this exception text is surfaced
-        to terminals, scrollback, CI logs, and agent transcripts. Only the exit
-        code and remote stderr are reported.
+        to terminals, scrollback, CI logs, and agent transcripts. Only the
+        optional step ``label``, the exit code, and the remote stderr are
+        reported. Pass ``label`` to name the step for long install scripts; set
+        ``NPA_DEBUG=1`` to get the full remote stderr (never the command).
         """
         code, out, err = self.run(command, **kwargs)
         if code != 0:
-            detail = err.strip()
-            message = f"Command failed (exit {code})"
-            if detail:
-                message += f"\nstderr: {detail}"
-            raise SSHError(message)
+            raise SSHError(format_remote_failure(code, err, label=label))
         return code, out, err
 
     def download_file(self, remote_path: str, local_path: str) -> str:
