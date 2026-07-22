@@ -135,10 +135,6 @@ packages = ["src/npa"]
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"
-# Internal SkyPilot task templates + BYOF resource profiles that the workflow
-# runners render/launch at runtime (read package-relative via Path(__file__)).
-"src/npa/workflows/skypilot" = "npa/workflows/skypilot"
-"src/npa/workflows/byof/profiles" = "npa/workflows/byof/profiles"
 
 [tool.ruff]
 target-version = "py310"

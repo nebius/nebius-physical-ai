@@ -10,9 +10,14 @@ helpers (and live GPU tests) can make that distinction consistently.
 
 from __future__ import annotations
 
-# Lowercased substrings that indicate a GPU / instance capacity shortfall rather
-# than a bad request or a bug. Kept broad on purpose: SkyPilot, the Nebius VM
-# backend, and managed Kubernetes all phrase "no capacity right now" differently.
+# Lowercased substrings that specifically indicate a GPU / instance capacity
+# shortfall rather than a bad request or a bug. Deliberately high-confidence:
+# these must not match generic transient/rate-limit/healthy-scheduler output,
+# otherwise a real failure on the last GPU tier would be misreported as
+# "no capacity" and the fail-fast contract would be defeated. The Kubernetes
+# GPU shortfall is matched via the exact scheduler reason string
+# ("insufficient nvidia.com/gpu") rather than the bare "nodes are available",
+# which also appears in healthy events like "3/3 nodes are available".
 CAPACITY_ERROR_PATTERNS: tuple[str, ...] = (
     # SkyPilot resource resolution / provisioning
     "resourcesunavailableerror",
@@ -23,8 +28,6 @@ CAPACITY_ERROR_PATTERNS: tuple[str, ...] = (
     "no resources satisfy",
     "quota exceeded",
     "quota limit",
-    "try again later",
-    "retry later",
     # Nebius / generic cloud capacity
     "insufficient capacity",
     "insufficientinstancecapacity",
@@ -34,11 +37,8 @@ CAPACITY_ERROR_PATTERNS: tuple[str, ...] = (
     "out of stock",
     "no gpu available",
     "no available gpu",
-    "resource not available",
-    "scheduling failed",
-    # Kubernetes scheduling shortfalls
+    # Kubernetes GPU scheduling shortfall (exact scheduler reason)
     "insufficient nvidia.com/gpu",
-    "nodes are available",  # "0/3 nodes are available: 3 Insufficient nvidia.com/gpu"
 )
 
 
@@ -46,6 +46,8 @@ def is_capacity_error(text: str | None) -> bool:
     """Return True when ``text`` looks like a retryable GPU capacity shortfall.
 
     ``text`` is typically the combined stdout+stderr of a failed ``sky launch``.
+    Matching is intentionally conservative: only unambiguous capacity signatures
+    trigger a retry on the next GPU tier; everything else fails fast.
     """
 
     if not text:

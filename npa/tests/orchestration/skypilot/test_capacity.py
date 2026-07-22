@@ -31,6 +31,13 @@ def test_capacity_errors_are_retryable(text: str) -> None:
         "AssertionError: expected artifact in s3://bucket/prefix",
         "Training step 0/500 complete",  # progress, not capacity
         "Permission denied (publickey)",
+        # Healthy scheduler / generic transient phrasings must NOT be treated as
+        # capacity, or a real failure on the last tier would be masked as NER.
+        "3/3 nodes are available; pod scheduled",
+        "Error: scheduling failed due to taint mismatch",
+        "Job did not converge; try again later",
+        "Endpoint flaky; please retry later",
+        "requested resource not available at this path",
     ],
 )
 def test_non_capacity_errors_are_not_retryable(text: str | None) -> None:
