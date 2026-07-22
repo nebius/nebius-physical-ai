@@ -39,7 +39,7 @@ npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
 It renders and runs:
 
 ```text
-npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml
 ```
 
 The deeper reference path is documented in

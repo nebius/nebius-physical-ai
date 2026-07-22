@@ -18,8 +18,9 @@ ROOT = Path(__file__).resolve().parents[3]
 YAML_PATH = (
     ROOT
     / "npa"
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "cosmos3-text-to-image-inference.yaml"
 )
@@ -43,8 +44,9 @@ def test_cosmos3_text_to_image_raw_sky_public_defaults(tmp_path: Path) -> None:
     yaml_path = (
         workdir
         / "npa"
+        / "src"
+        / "npa"
         / "workflows"
-        / "workbench"
         / "skypilot"
         / "cosmos3-text-to-image-inference.yaml"
     )

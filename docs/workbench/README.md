@@ -12,7 +12,7 @@ workflows, and operational runbooks.
 | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) | OSS → BYOF → workflow → first-class tool promotion ladder |
 | [npa-workflow-tool-catalog.md](npa-workflow-tool-catalog.md) | `toolRef` catalog for declarative `npa.workflow` specs |
 | [kubernetes.md](kubernetes.md) | User setup and operational checklist for running Workbench services and SkyPilot workflows on Kubernetes |
-| [../../npa/workflows/workbench/skypilot/README.md](../../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
+| [../../npa/src/npa/workflows/skypilot/README.md](../../npa/src/npa/workflows/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
 | [oss-solution-catalog.md](oss-solution-catalog.md) | OSS Physical AI registry candidates with pinned refs, cloud-fit notes, and E2E gates |
 | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) | How to call any Workbench tool through the CLI, SDK, and SkyPilot YAML against the same service |
 | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) | One-command H100 sim-to-real proof run with checkpoint, metric, S3 artifacts, and teardown |
@@ -32,7 +32,7 @@ workflows, and operational runbooks.
 
 | Reader | Start with |
 | --- | --- |
-| Salesperson or evaluator | [Workflow catalog](../../npa/workflows/workbench/skypilot/README.md) to see what the platform runs |
+| Salesperson or evaluator | [Workflow catalog](../../npa/src/npa/workflows/skypilot/README.md) to see what the platform runs |
 | Customer running their first Workbench workload | [getting-started.md](getting-started.md) |
 | Customer or operator using managed Kubernetes | [kubernetes.md](kubernetes.md) |
 | Anyone choosing between CLI, SDK, and YAML | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) |

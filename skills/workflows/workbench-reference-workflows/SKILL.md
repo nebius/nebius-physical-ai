@@ -13,7 +13,7 @@ artifact contracts, and customer-adaptable pipeline implementations.
 ## Procedure
 
 1. Start from the checked-in SkyPilot YAML under
-   `npa/workflows/workbench/skypilot/`.
+   `npa/src/npa/workflows/skypilot/`.
 2. Keep the runner thin. Python runners should materialize config, call the
    workflow submission helper, and report artifacts; they should not duplicate
    YAML orchestration logic.

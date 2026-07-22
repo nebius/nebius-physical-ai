@@ -12,7 +12,7 @@ The W10 validation exercised both override surfaces:
 - command override through the SkyPilot YAML `run:` block, passed to the same
   runner with `--yaml`.
 
-The reference workflow remains `npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`;
+The reference workflow remains `npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml`;
 the reference runner remains `npa/scripts/run_isaac_lab_rl.py`.
 
 ## What This Cookbook Covers
@@ -154,7 +154,7 @@ export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 
 NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN}" \
 npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py \
-  --yaml npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml \
+  --yaml npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml \
   --image "${BYOF_IMAGE}" \
   --task Isaac-Cartpole-v0 \
   --iterations 1 \
@@ -184,7 +184,7 @@ SkyPilot YAML `run:` block, selected through `--yaml`.
 Create a customer YAML variant outside the platform workflow:
 
 ```bash
-cp npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml /tmp/isaac-lab-byof-command.yaml
+cp npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml /tmp/isaac-lab-byof-command.yaml
 ```
 
 In that temporary YAML, replace only the training script assignment in `run:`:

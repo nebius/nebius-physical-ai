@@ -11,7 +11,7 @@ Nebius Physical AI.
 | [hackathon-isaac-token-factory.md](hackathon-isaac-token-factory.md) | **Hackathon combo** — Isaac Lab Franka sim frames + Token Factory reasoner (workflow + SDK example) |
 | [workbench/](workbench/) | Workbench solution docs, including getting started, cookbooks, and troubleshooting |
 | [workbench/kubernetes.md](workbench/kubernetes.md) | User setup and operational guide for running Workbench on managed Kubernetes |
-| [../npa/workflows/workbench/skypilot/README.md](../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
+| [../npa/src/npa/workflows/skypilot/README.md](../npa/src/npa/workflows/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
 | [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
 | [quickstart.md](quickstart.md) | Full `npa` CLI quickstart (macOS, Linux, WSL2 install blocks) |
@@ -25,7 +25,7 @@ Nebius Physical AI.
 
 | Reader | Start with |
 | --- | --- |
-| Salesperson or evaluator | [Workflow catalog](../npa/workflows/workbench/skypilot/README.md) to see what the platform runs |
+| Salesperson or evaluator | [Workflow catalog](../npa/src/npa/workflows/skypilot/README.md) to see what the platform runs |
 | Customer running a first Workbench workload | [workbench/getting-started.md](workbench/getting-started.md) |
 | Operator connecting Workbench to Kubernetes | [workbench/kubernetes.md](workbench/kubernetes.md) |
 | Developer adding a solution | [architecture/solutions-model.md](architecture/solutions-model.md) |

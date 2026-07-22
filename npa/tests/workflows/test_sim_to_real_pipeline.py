@@ -43,7 +43,7 @@ from npa.workflows.lerobot_dataset import seeded_episode_split, summarize_lerobo
 
 
 ROOT = Path(__file__).resolve().parents[3]
-YAML_PATH = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
+YAML_PATH = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-pipeline.yaml"
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_sim_to_real_pipeline.py"
 QUICKSTART_PATH = ROOT / "npa" / "scripts" / "run_sim_to_real_quickstart.py"
 

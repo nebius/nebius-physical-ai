@@ -28,7 +28,7 @@ npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
 ```
 
 That command is a thin wrapper over this cookbook's CLI/YAML path. It renders
-`npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml`, submits it through
+`npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml`, submits it through
 SkyPilot on `H100:1`, runs `npa.workflows.sim_to_real real-loop`, prints the
 task-success score plus checkpoint/report/Rerun S3 URIs, and tears down the
 run-scoped cluster with `sky down` plus a status poll.
@@ -102,7 +102,7 @@ RUN_ID=sim-to-real-example
   --env "VLM_EVAL_BACKEND=stub" \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+  npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml
 ```
 
 Tear down explicitly after the run:

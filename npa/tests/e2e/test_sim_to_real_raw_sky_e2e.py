@@ -17,7 +17,7 @@ from botocore.exceptions import ProfileNotFound
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
-RAW_SKY_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
+RAW_SKY_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-pipeline.yaml"
 DEFAULT_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 GPU_CHAIN = ("H100:1", "H200:1", "A100:1")
 
@@ -45,7 +45,7 @@ def test_raw_sky_sim_to_real_pipeline_writes_run_scoped_s3_artifacts(tmp_path: P
     evidence_dir = Path(os.environ.get("NPA_E2E_SIM_TO_REAL_EVIDENCE_DIR", str(tmp_path / "evidence")))
     evidence_dir.mkdir(parents=True, exist_ok=True)
     workdir = _copy_clean_workdir(tmp_path / "workdir")
-    yaml_path = workdir / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
+    yaml_path = workdir / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-pipeline.yaml"
     assert yaml_path.exists()
 
     attempts: list[dict[str, Any]] = []

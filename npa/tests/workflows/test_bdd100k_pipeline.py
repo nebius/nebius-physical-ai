@@ -12,7 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 YAML_PATH = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "bdd100k-pipeline.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "bdd100k-pipeline.yaml"
 )
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_bdd100k_pipeline.py"
 
@@ -29,7 +29,7 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-distant",
     "bdd100k-fiftyone-app",
 ]
-EXPECTED_YAML_SHA256 = "2defa822d68d398f6b25569c6e6faad741786da6fb2f7f2690a8f2bd5fe79e56"
+EXPECTED_YAML_SHA256 = "edbedfd91a380543345da0d43c43c7fa55894c2474bd2434171d4876ba2243cf"
 EXPECTED_LANCEDB_IMAGE = "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
 EXPECTED_DETECTION_IMAGE = (
     "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/"

@@ -10,7 +10,7 @@ Factory inference* (zero-GPU on the client side):
 2. **rollout-judge (kubernetes).** A LeRobot eval rollout renders videos on a
    Nebius **Managed Kubernetes GPU**; ``vlm-eval --backend api`` then scores the
    rollout with a hosted VLM, with no local VLM serving stage. Workflow:
-   ``npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml``.
+   ``npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml``.
 3. **sim-sweep (serverless fan-out).** A hosted text model designs an experiment
    sweep, a deterministic grid launches one LeRobot **serverless GPU Job** per
    variant, and a hosted text model ranks the completed runs from their real
@@ -18,7 +18,7 @@ Factory inference* (zero-GPU on the client side):
 4. **scene-to-rollout-judge (kubernetes).** A hosted reasoner extracts a plan
    from scene images, a Nebius **Managed Kubernetes GPU** rolls out a policy, and
    a hosted VLM judges the rollout against that plan. Workflow:
-   ``npa/workflows/workbench/skypilot/tokenfactory-scene-to-rollout-judge.yaml``.
+   ``npa/src/npa/workflows/skypilot/tokenfactory-scene-to-rollout-judge.yaml``.
 
 This module holds only pure logic (digesting artifacts, building prompts,
 deriving run IDs / job names / URIs / variant grids) so it is unit-testable

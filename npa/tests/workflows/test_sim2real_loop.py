@@ -41,16 +41,16 @@ from npa.workflows.sim2real.runner import Sim2RealWorkflow
 ROOT = Path(__file__).resolve().parents[3]
 RUNBOOK = ROOT / "npa" / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
 SIM2REAL_ACTIONS = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim2real-actions.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim2real-actions.yaml"
 )
 SIM2REAL_ENVGEN_SPLIT = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim2real-envgen-split.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim2real-envgen-split.yaml"
 )
 COSMOS2_TRANSFER = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos2-transfer.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "cosmos2-transfer.yaml"
 )
 COSMOS3_REASON = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos3-reason.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "cosmos3-reason.yaml"
 )
 
 

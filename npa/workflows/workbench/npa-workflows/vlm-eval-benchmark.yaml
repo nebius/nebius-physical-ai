@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: vlm-eval-benchmark
   description: Sweep a labeled rollout set through vlm-eval and rank configs.
-  skypilotTwin: npa/workflows/workbench/skypilot/vlm-eval-benchmark.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/vlm-eval-benchmark.yaml
 
 config:
   bucket: example-bucket

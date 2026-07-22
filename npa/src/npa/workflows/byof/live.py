@@ -12,7 +12,7 @@ from npa.cluster.state import kubeconfig_file, load_cluster_state
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[5]
-SKYPILOT_DIR = REPO_ROOT / "workflows" / "workbench" / "skypilot"
+SKYPILOT_DIR = REPO_ROOT / "src" / "npa" / "workflows" / "skypilot"
 # BYOF-owned resource profiles that the declarative npa-workflows specs and the
 # BYOF runner depend on. Kept beside this runner (not in the SkyPilot catalog
 # tree) so the npa-workflows tree is self-sufficient and the SkyPilot reference

@@ -30,7 +30,7 @@ from npa.workflows.token_factory_combos import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-SKYPILOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 ROLLOUT_JUDGE_YAML = SKYPILOT / "tokenfactory-rollout-judge.yaml"
 SCENE_JUDGE_YAML = SKYPILOT / "tokenfactory-scene-to-rollout-judge.yaml"
 TRAIN_TRIAGE_YAML = SKYPILOT / "tokenfactory-train-triage.yaml"

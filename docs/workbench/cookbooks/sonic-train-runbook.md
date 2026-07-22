@@ -46,7 +46,7 @@ When validating an unpromoted build, pass the pushed image explicitly:
 ## Standalone SkyPilot YAML
 
 The raw SkyPilot training smoke is
-`npa/workflows/workbench/skypilot/sonic-train-standalone.yaml`. It has literal
+`npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml`. It has literal
 editable defaults because SkyPilot 0.12.2 does not interpolate `${VAR}` inside
 `envs` or `resources.image_id`.
 
@@ -62,7 +62,7 @@ launch it directly:
 | `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination | your artifact destination |
 
 ```bash
-cp npa/workflows/workbench/skypilot/sonic-train-standalone.yaml /tmp/sonic-train.yaml
+cp npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml /tmp/sonic-train.yaml
 # Edit /tmp/sonic-train.yaml with concrete image and S3 values.
 sky jobs launch \
   --name sonic-train-smoke \
@@ -77,7 +77,7 @@ S3 values before SkyPilot submission:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/sonic-train-standalone.yaml \
+  npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml \
   --run-id sonic-train-smoke \
   --registry "${NPA_REGISTRY}" \
   --gpu-target l40s \
@@ -121,7 +121,7 @@ from pathlib import Path
 from npa.sdk.workbench import sonic
 
 sonic.submit_workflow(
-    Path("npa/workflows/workbench/skypilot/sonic-train-standalone.yaml"),
+    Path("npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml"),
     run_id="sonic-train-smoke",
     registry="cr.eu-north1.nebius.cloud/<registry-id>",
     gpu_target="l40s",

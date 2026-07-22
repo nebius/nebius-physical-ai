@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _workflow_and_script_paths() -> list[Path]:
-    workflow_dir = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+    workflow_dir = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
     script_dir = REPO_ROOT / "npa" / "scripts"
     return sorted(workflow_dir.glob("*.yaml")) + sorted(script_dir.glob("*.py"))
 

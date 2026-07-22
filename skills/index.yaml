@@ -103,7 +103,7 @@ skills:
         contains: "json"
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/cosmos3-ea-fetch.yaml
+          - npa/src/npa/workflows/skypilot/cosmos3-ea-fetch.yaml
   - name: gpu-selection
     category: atomic
     when_to_use: "Choose or review GPU targets for training, rendering, inference, and workflow YAML resources."
@@ -122,8 +122,8 @@ skills:
     smoke:
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml
-          - npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+          - npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml
+          - npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml
   - name: review-checklist
     category: atomic
     when_to_use: "Code reviews and risk classification."
@@ -142,7 +142,7 @@ skills:
         contains: "workflow"
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml
+          - npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml
   - name: super-prompt-patterns
     category: atomic
     when_to_use: "Draft, execute, or review Codex super-prompts for this repository."
@@ -230,7 +230,7 @@ skills:
         contains: "checkpoint"
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/mjlab-eval.yaml
+          - npa/src/npa/workflows/skypilot/mjlab-eval.yaml
   - name: nebius-infra
     category: tools
     when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, and credential assumptions."
@@ -265,7 +265,7 @@ skills:
         contains: "output"
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/retargeting.yaml
+          - npa/src/npa/workflows/skypilot/retargeting.yaml
   - name: skypilot-workflows
     category: tools
     when_to_use: "SkyPilot workflow authoring, runner scripts, limitations, and cleanup."
@@ -300,7 +300,7 @@ skills:
     smoke:
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/cosmos3-text-to-image-inference.yaml
+          - npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml
   - name: cosmos3-post-training
     category: workflows
     when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
@@ -316,8 +316,8 @@ skills:
     smoke:
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/sim-to-real-loop.yaml
-          - npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+          - npa/src/npa/workflows/skypilot/sim-to-real-loop.yaml
+          - npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
@@ -361,8 +361,8 @@ skills:
         contains: "policy"
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml
-          - npa/workflows/workbench/skypilot/sonic-train-standalone.yaml
+          - npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml
+          - npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml
   - name: byof-onboard
     category: workflows
     when_to_use: "Onboard an OSS repo via BYOF — Ubuntu or Isaac Lab base, registry push, container-verify or sim workloads; NPA agent onboard_solution."
@@ -380,7 +380,7 @@ skills:
           - npa/workflows/workbench/npa-workflows/byof.yaml
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml
+          - npa/src/npa/workflows/skypilot/byof-container-smoke-rtxpro.yaml
   - name: oss-solution-registry-onboard
     category: workflows
     when_to_use: "Evaluate and onboard an open-source Physical AI solution into the NPA registry/catalog by reading upstream docs, testing real capabilities, and running smoke plus live Nebius validation."
@@ -450,20 +450,20 @@ skills:
     smoke:
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml
-          - npa/workflows/workbench/skypilot/cosmos3-ea-fetch.yaml
-          - npa/workflows/workbench/skypilot/cosmos3-text-to-image-inference.yaml
-          - npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml
-          - npa/workflows/workbench/skypilot/isaac-lab-rl-sweep.yaml
-          - npa/workflows/workbench/skypilot/mjlab-eval.yaml
-          - npa/workflows/workbench/skypilot/retargeting.yaml
-          - npa/workflows/workbench/skypilot/sim-to-real-loop.yaml
-          - npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
-          - npa/workflows/workbench/skypilot/sim-to-real-trigger.yaml
-          - npa/workflows/workbench/skypilot/sonic-eval.yaml
-          - npa/workflows/workbench/skypilot/sonic-export-eval.yaml
-          - npa/workflows/workbench/skypilot/sonic-export.yaml
-          - npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml
-          - npa/workflows/workbench/skypilot/sonic-train-standalone.yaml
-          - npa/workflows/workbench/skypilot/vlm-eval.yaml
-          - npa/workflows/workbench/skypilot/vlm-eval-benchmark.yaml
+          - npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml
+          - npa/src/npa/workflows/skypilot/cosmos3-ea-fetch.yaml
+          - npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml
+          - npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml
+          - npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml
+          - npa/src/npa/workflows/skypilot/mjlab-eval.yaml
+          - npa/src/npa/workflows/skypilot/retargeting.yaml
+          - npa/src/npa/workflows/skypilot/sim-to-real-loop.yaml
+          - npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml
+          - npa/src/npa/workflows/skypilot/sim-to-real-trigger.yaml
+          - npa/src/npa/workflows/skypilot/sonic-eval.yaml
+          - npa/src/npa/workflows/skypilot/sonic-export-eval.yaml
+          - npa/src/npa/workflows/skypilot/sonic-export.yaml
+          - npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml
+          - npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml
+          - npa/src/npa/workflows/skypilot/vlm-eval.yaml
+          - npa/src/npa/workflows/skypilot/vlm-eval-benchmark.yaml

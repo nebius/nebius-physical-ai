@@ -19,7 +19,7 @@ CONFIGURED_SOLUTIONS = [
         "description": "Generic sim-to-real pipeline tools within the Workbench solution",
         "cli_command": (
             "npa workbench workflow submit "
-            "npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"
+            "npa/src/npa/workflows/skypilot/sim-to-real-loop.yaml"
         ),
     },
     {
@@ -37,7 +37,7 @@ CONFIGURED_SOLUTIONS = [
         "description": "SONIC locomotion fine-tuning SkyPilot workflow",
         "cli_command": (
             "npa workbench workflow submit "
-            "npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"
+            "npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml"
         ),
     },
 ]

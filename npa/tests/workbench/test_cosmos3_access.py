@@ -20,7 +20,7 @@ from npa.workbench.cosmos.cosmos3 import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SKYPILOT_ROOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+SKYPILOT_ROOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 INFERENCE_YAML = SKYPILOT_ROOT / "cosmos3-text-to-image-inference.yaml"
 SKILL_ROOT = ROOT / "skills"
 SKILL_INDEX = SKILL_ROOT / "index.yaml"

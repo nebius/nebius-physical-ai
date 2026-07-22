@@ -183,7 +183,7 @@ def test_workbench_vlm_eval_workflow_path() -> None:
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["workflow"] == "npa/workflows/workbench/skypilot/vlm-eval.yaml"
+    assert payload["workflow"] == "npa/src/npa/workflows/skypilot/vlm-eval.yaml"
 
 
 def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:

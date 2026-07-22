@@ -35,8 +35,9 @@ from npa.orchestration.skypilot._bin import (
 
 DEFAULT_YAML = (
     Path(__file__).resolve().parents[1]
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "isaac-lab-rl-train.yaml"
 )

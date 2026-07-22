@@ -141,14 +141,14 @@ ordering, shapes, units when supplied, normalization stats when not baked,
 opset, axis mode, and control dt when available.
 
 The matching SkyPilot template is
-`npa/workflows/workbench/skypilot/sonic-export.yaml` (`name: sonic-export`) and
+`npa/src/npa/workflows/skypilot/sonic-export.yaml` (`name: sonic-export`) and
 uses the same settings through `SONIC_OPSET`, `SONIC_AXES`,
 `SONIC_NORMALIZE`, `SONIC_METADATA`, `SONIC_OBS_SPEC`, `SONIC_ACTION_SPEC`, and
 `SONIC_CONFIG`.
 
 ## Export Then Eval
 
-`npa/workflows/workbench/skypilot/sonic-export-eval.yaml` chains export and
+`npa/src/npa/workflows/skypilot/sonic-export-eval.yaml` chains export and
 eval in one SkyPilot task. It accepts `POLICY_CKPT`, `OUTPUT_DIR`,
 `EVAL_BACKEND`, `EPISODES`, `CONTAINER_IMAGE`, and `GPU` through `envs`.
 

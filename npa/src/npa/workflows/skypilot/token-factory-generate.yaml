@@ -1,7 +1,7 @@
 # What:   Batch text generation with Nebius Token Factory (zero-GPU).
 # Guide:  docs/workbench/token-factory.md
 # Runner: npa workbench token-factory generate
-# Index:  npa/workflows/workbench/skypilot/README.md
+# Index:  npa/src/npa/workflows/skypilot/README.md
 #
 # Reads a JSONL/text prompt file and writes one completion per prompt. Useful
 # for synthetic task instructions, scene-prompt generation for Cosmos, or sim

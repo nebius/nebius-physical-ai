@@ -14,7 +14,7 @@ NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
 
 NPA_SPECS="${REPO}/npa/workflows/workbench/npa-workflows"
-SKY_SPECS="${REPO}/npa/workflows/workbench/skypilot"
+SKY_SPECS="${REPO}/npa/src/npa/workflows/skypilot"
 
 LOG="/tmp/npa-all-yaml-infra-$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
@@ -144,7 +144,7 @@ YAML
 from pathlib import Path
 import yaml
 
-root = Path("npa/workflows/workbench/skypilot")
+root = Path("npa/src/npa/workflows/skypilot")
 failed = []
 for path in sorted(root.glob("*.yaml")):
     try:

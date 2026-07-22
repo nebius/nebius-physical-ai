@@ -11,7 +11,7 @@ Rerun artifact.
 
 This guide uses the maintained sim-to-real stack:
 
-- SkyPilot YAML: `npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml`
+- SkyPilot YAML: `npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml`
 - CLI wrapper: `npa/scripts/run_sim_to_real_pipeline.py`
 - Quickstart wrapper: `npa/scripts/run_sim_to_real_quickstart.py`
 - Runtime module: `npa.workflows.sim_to_real real-loop`

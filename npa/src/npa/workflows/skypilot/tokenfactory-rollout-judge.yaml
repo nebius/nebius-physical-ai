@@ -1,7 +1,7 @@
 # What:   Roll out a policy on a Nebius k8s GPU, then judge it with Token Factory.
 # Guide:  docs/workbench/cookbooks/tokenfactory-compute-combos.md
 # Runner: npa workbench workflow submit (two-stage serial pipeline)
-# Index:  npa/workflows/workbench/skypilot/README.md
+# Index:  npa/src/npa/workflows/skypilot/README.md
 #
 # A "combo" workflow: real Nebius cloud compute + hosted Token Factory inference.
 #   Stage 1 (Nebius Managed Kubernetes GPU): lerobot-eval rolls out a policy and

@@ -29,8 +29,8 @@ agent skill runnable.
 
 Retained real Cosmos3 workflows:
 
-- `npa/workflows/workbench/skypilot/cosmos3-ea-fetch.yaml`
-- `npa/workflows/workbench/skypilot/cosmos3-text-to-image-inference.yaml`
+- `npa/src/npa/workflows/skypilot/cosmos3-ea-fetch.yaml`
+- `npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml`
 
 Current NPA Cosmos commands such as `npa workbench cosmos train` cover the
 existing Cosmos workbench/serverless training surface, not a proven Cosmos3 SFT

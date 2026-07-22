@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
 BLUEPRINT = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-export-eval.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-export-eval.yaml"
 )
 DEFAULT_IMAGE = "docker:python:3.11-slim"
 DEFAULT_GPU = "L40S:1"
