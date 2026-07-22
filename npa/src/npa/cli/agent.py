@@ -220,9 +220,21 @@ def _embedded_agent_sim2real_loop_source() -> str:
     return raw
 
 
+def _embedded_agent_semantic_router_source() -> str:
+    """Return agent_semantic_router.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_semantic_router.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
 _AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
+_AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1768,6 +1780,7 @@ def _bootstrap_agent_stack(
     agent_chat_source = _embedded_agent_chat_source()
     agent_actions_source = _embedded_agent_actions_source()
     agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
+    agent_semantic_router_source = _embedded_agent_semantic_router_source()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -3511,6 +3524,8 @@ def _chat_with_resilience(
 
 {_AGENT_SIM2REAL_LOOP_EMBED}
 
+{_AGENT_SEMANTIC_ROUTER_EMBED}
+
 {_AGENT_WORKFLOW_EMBED}
 
 {_AGENT_ARTIFACTS_EMBED}
@@ -4685,6 +4700,29 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
             payload["workflow_draft"] = draft
     return payload
 
+# In-process cache for the semantic intent fallthrough so repeated paraphrases
+# short-circuit to 0 tokens after the first classification.
+_SEMANTIC_INTENT_CACHE = {{}}
+
+def _semantic_route(user_text: str) -> dict:
+    known = frozenset(INTENT_APIS.keys())
+
+    def _model_call(messages, tier="cheap"):
+        data, _provider, _model = _chat_with_resilience(
+            messages=messages, tier=tier, interactive=True
+        )
+        return data
+
+    try:
+        return classify_intent_semantic(
+            user_text,
+            known_intents=known,
+            model_call=_model_call,
+            cache=_SEMANTIC_INTENT_CACHE,
+        )
+    except Exception:
+        return {{"intent": None, "mode": "none", "confidence": 0.0, "tokens": 0, "source": "none"}}
+
 @app.post("/chat")
 def chat(payload: dict):
     raw_messages = payload.get("messages", [])
@@ -4828,6 +4866,44 @@ def chat(payload: dict):
     live_ctx = format_live_context_block(_load_state())
     last_user = text_from_messages(llm_messages)
     intent = match_chat_intent(last_user) if not visual_turn else None
+    # Semantic fallthrough (Phase D): only when the deterministic regex router
+    # missed. Keyword/cache hits cost 0 tokens; a genuine miss spends one cheap
+    # structured call. A mapped intent produces a side-effect-free grounded reply.
+    if intent is None and not visual_turn:
+        semantic = _semantic_route(last_user)
+        mapped = str(semantic.get("intent") or "") if semantic.get("mode") == "intent" else ""
+        if mapped:
+            grounded_zero = int(semantic.get("tokens") or 0) == 0
+            sem_reply = build_grounded_reply(mapped, _load_state(), TOOL_REFS)
+            history = [*merged_history, {{"role": "assistant", "content": sem_reply}}][-80:]
+            session.update(
+                {{
+                    "id": session_id,
+                    "title": str(session.get("title") or _chat_session_title(history)),
+                    "chat_history": history,
+                }}
+            )
+            state = _load_state()
+            session = _save_chat_session(state, session, active=True)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "model": model,
+                "reply": sem_reply,
+                "reasoning": None,
+                "grounded": grounded_zero,
+                "tier": "semantic-" + str(semantic.get("source") or "model"),
+                "usage": {{"total_tokens": int(semantic.get("tokens") or 0)}},
+                "semantic_intent": mapped,
+                "apis_used": apis_for_intent(mapped),
+                "session_id": session["id"],
+                "session": {{
+                    "id": session["id"],
+                    "title": session["title"],
+                    "memory_uri": session.get("memory_uri", ""),
+                    "message_count": len(session.get("chat_history", [])),
+                }},
+            }}
     # Cost-tier routing: vision when an image is attached; otherwise escalate
     # Describe-this metadata-only turns to reasoning (not cheap caption fluff).
     tier = classify_tier(last_user, intent=intent, messages=llm_messages)
@@ -6572,6 +6648,7 @@ sudo systemctl restart npa-agent-backend
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
         .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
         .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
+        .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)

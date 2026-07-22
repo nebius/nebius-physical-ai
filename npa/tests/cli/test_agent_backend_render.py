@@ -85,6 +85,9 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     # Phase C: sim2real drive orchestration embedded + route wired.
     assert "def drive_sim2real_loop" in body
     assert '@app.post("/agent/sim2real/drive")' in body
+    # Phase D: semantic router embedded + wired into the /chat fallthrough.
+    assert "def classify_intent_semantic" in body
+    assert "def _semantic_route" in body
     # Grounded-first is preserved: /chat still exists and is separate.
     assert '@app.post("/chat")' in body
 
