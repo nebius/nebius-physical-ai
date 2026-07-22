@@ -1,7 +1,7 @@
 ARG BASE_IMAGE=npa-genesis:0.4.6-sm80-sm90-sm120-latest
 FROM ${BASE_IMAGE}
 
-ARG SIM2REAL_EVAL_VERSION=0.1.1-genuine-sm120
+ARG SIM2REAL_EVAL_VERSION=0.1.3-genuine-sm120
 
 LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}"

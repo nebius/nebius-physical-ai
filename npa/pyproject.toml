@@ -113,10 +113,12 @@ retargeting = "0.1.1"
 envgen = "0.1.2"
 reference-policy = "0.1.2"
 lerobot-vlm-rl = "0.1.1"
-# 0.1.2-genuine-sm120 lost working Blackwell (sm_120) Genesis kernels and crashes
-# heldout_eval on RTX PRO 6000 ("CUDA error: no kernel image available"); 0.1.1 is
-# the proven-good build. Re-bump only after a 0.1.3 rebuild restores sm_120 kernels.
-loop-eval = "0.1.1-genuine-sm120"
+# 0.1.3-genuine-sm120: rebuilt+pushed 2026-07-21 from npa-genesis 0.4.6-sm120
+# (torch 2.9.0+cu130; _cuda_getArchFlags reports sm_120/compute_120). Supersedes
+# 0.1.1-genuine-sm120 (sm_90-capped torch, crashed on RTX PRO 6000) and
+# 0.1.2-genuine-sm120 (never pushed). Validated end-to-end on RTX PRO 6000
+# (sm_120) 2026-07-21; 0.1.1 deleted from the registry. See FIXME.md.
+loop-eval = "0.1.3-genuine-sm120"
 rerun-viewer = "0.31.4"
 lancedb = "0.30.3"
 detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"

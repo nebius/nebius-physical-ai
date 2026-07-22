@@ -47,7 +47,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     )
     assert (
         container_image_for_tool("loop-eval")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-loop-eval:0.1.1-genuine-sm120"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-loop-eval:0.1.3-genuine-sm120"
     )
 
 

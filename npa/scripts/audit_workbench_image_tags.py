@@ -42,7 +42,7 @@ STALE_TOOL_TAGS: dict[str, set[str]] = {
     "cosmos2-transfer": {"2.5.0"},
     "envgen": {"0.1.1"},
     "reference-policy": {"0.1.1"},
-    "loop-eval": {"0.1.1-genuine-sm120"},
+    "loop-eval": {"0.1.1-genuine-sm120", "0.1.2-genuine-sm120"},
     "lerobot-vlm-rl": {"0.1.0"},
     "lerobot-policy": {"0.1.0"},
     "lancedb": {"0.30.2"},

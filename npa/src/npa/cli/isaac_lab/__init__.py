@@ -2424,7 +2424,9 @@ def deploy_cmd(
                 )
             else:
                 try:
-                    ssh.run_or_raise(_build_install_command(), stream=True)
+                    ssh.run_or_raise(
+                        _build_install_command(), stream=True, label="Isaac Lab install"
+                    )
                 except SSHError as exc:
                     fail_app(f"Isaac Lab installation failed: {exc}")
                     return

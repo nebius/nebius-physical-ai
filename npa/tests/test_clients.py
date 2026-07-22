@@ -11,7 +11,7 @@ from npa.clients.config import SSHConfig
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients import nebius
 from npa.clients.nebius import NebiusError
-from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.ssh import SSHClient, SSHError, format_remote_failure
 from npa.clients.storage import StorageClient, StorageError, _parse_bucket_uri
 
 
@@ -254,6 +254,52 @@ def test_ssh_run_or_raise_maps_nonzero(mocker) -> None:
 
     with pytest.raises(SSHError, match="Command failed"):
         client.run_or_raise("false")
+
+
+def test_format_remote_failure_compact_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_DEBUG", raising=False)
+    stderr = "\n".join(f"line {i}" for i in range(100)) + "\nERROR: 403 gated download"
+
+    msg = format_remote_failure(7, stderr, label="Cosmos install")
+
+    # Compact: label + exit + stderr tail only; older stderr lines are trimmed.
+    assert "Command failed (exit 7): Cosmos install" in msg
+    assert "ERROR: 403 gated download" in msg
+    assert "line 0" not in msg
+    assert "NPA_DEBUG=1" in msg
+    assert len(msg.splitlines()) < 30
+
+
+def test_format_remote_failure_debug_lifts_stderr_truncation(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_DEBUG", "1")
+    stderr = "\n".join(f"line {i}" for i in range(100))
+
+    msg = format_remote_failure(7, stderr, label="Cosmos install")
+
+    # NPA_DEBUG lifts only the stderr truncation; the hint disappears.
+    assert "line 0" in msg
+    assert "NPA_DEBUG=1" not in msg
+
+
+def test_format_remote_failure_without_label(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_DEBUG", raising=False)
+    msg = format_remote_failure(1, "", label=None)
+    assert msg.splitlines()[0] == "Command failed (exit 1)"
+    assert "stderr: <empty>" in msg
+
+
+def test_run_or_raise_passes_label_never_command(mocker, monkeypatch) -> None:
+    monkeypatch.delenv("NPA_DEBUG", raising=False)
+    client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
+    mocker.patch.object(client, "run", return_value=(3, "", "boom"))
+
+    with pytest.raises(SSHError) as exc_info:
+        client.run_or_raise("bash -lc 'huge script'", label="GR00T install")
+
+    message = str(exc_info.value)
+    assert "GR00T install" in message
+    assert "huge script" not in message
+    assert "boom" in message
 
 
 def test_ssh_run_or_raise_omits_command_to_avoid_leaking_secrets(mocker) -> None:

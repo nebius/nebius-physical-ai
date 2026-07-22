@@ -2757,6 +2757,7 @@ def deploy_cmd(
                             model, server_port, no_guardrails=no_guardrails
                         ),
                         stream=True,
+                        label="Cosmos install",
                     )
                 except SSHError as exc:
                     fail_app(f"Cosmos installation failed: {exc}")
@@ -3071,9 +3072,10 @@ def serve_cmd(
         ssh = SSHClient(cfg.ssh)
         try:
             _, out, err = ssh.run_or_raise(
-                _build_serve_command(model, port, no_guardrails=no_guardrails)
+                _build_serve_command(model, port, no_guardrails=no_guardrails),
+                label="Cosmos serve",
             )
-            ssh.run_or_raise(_build_load_command(port, model))
+            ssh.run_or_raise(_build_load_command(port, model), label="Cosmos model load")
         except SSHError as exc:
             _fail(f"SSH error: {exc}")
             return
