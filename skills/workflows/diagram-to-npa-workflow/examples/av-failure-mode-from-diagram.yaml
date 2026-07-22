@@ -38,6 +38,8 @@ config:
   distant_view: bdd100k_distant_person_train
 
   source_uri: "s3://{{config.bucket}}/raw-bdd100k/subset-demo/"
+  # 0 = ingest the real source; set >0 to synthesize rows for a dataset-free smoke.
+  synthetic_rows: "0"
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lancedb/"
   rider_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/bdd100k_rider_train"
   rider_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_rider_train"
