@@ -82,6 +82,9 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     assert "def run_action_loop" in body
     assert "TOOL_ALLOWLIST" in body
     assert '@app.post("/agent/act")' in body
+    # Phase C: sim2real drive orchestration embedded + route wired.
+    assert "def drive_sim2real_loop" in body
+    assert '@app.post("/agent/sim2real/drive")' in body
     # Grounded-first is preserved: /chat still exists and is separate.
     assert '@app.post("/chat")' in body
 

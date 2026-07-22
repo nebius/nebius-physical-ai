@@ -50,6 +50,16 @@ _NON_STOCK_ARTIFACT_DISCOVERY_RE = re.compile(
 
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
+        "drive_sim2real",
+        re.compile(
+            r"\b(?:drive|orchestrate|automate|auto[- ]?run)\b.{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
+            r"|\bautonomous(?:ly)?\b.{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
+            r"|\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b.{0,60}\b(?:outer\s+loop)\b.{0,40}\b(?:drive|automate|autonomous|self[- ]?driv\w*)\b"
+            r"|\b(?:close|drive)\b.{0,40}\b(?:the\s+)?(?:outer\s+)?loop\b.{0,60}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "start_sim2real",
         re.compile(
             r"\b(?:start|run|launch|execute|kick\s*off|submit)\b"
@@ -395,6 +405,12 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
+    "drive_sim2real": [
+        "agent/sim2real/drive",
+        "workflows/sim2real/submit",
+        "workflows/sim2real/status",
+        "workflows/sim2real/runs/{run_id}",
+    ],
     "start_sim2real": ["workflows/sim2real/submit"],
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
     "find_artifacts": ["artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
@@ -1165,6 +1181,30 @@ def format_find_artifacts() -> str:
     )
 
 
+def format_drive_sim2real_guidance(state: dict[str, Any]) -> str:
+    """Grounded guidance for the autonomous Sim2Real drive (confirmation-gated)."""
+    sim_viz = _sim_viz(state)
+    run_id = str(sim_viz.get("run_id") or "").strip() or "none"
+    stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
+    return "\n".join(
+        [
+            "**Autonomous Sim2Real drive** (agent-orchestrated outer loop):",
+            f"- **active_run_id**: `{run_id}`  **stage**: `{stage}`",
+            "- The agent composes: launch sim → run eval → read gate metrics → "
+            "diagnose failure mode → adjust config → re-run.",
+            "- Each iteration surfaces a **promote_checkpoint** / **loop_back** decision "
+            "with the reason (`success_rate` vs `threshold`).",
+            "- **GPU-spending** — every launch passes through a confirmation gate. "
+            "The drive is *proposed* first; re-send with the returned confirmation token to execute.",
+            "- A stage is marked complete only when `workflows/sim2real/status` / "
+            "`runs/{run_id}` confirms it — no fabricated run data.",
+            "- Drive it: `POST /api/agent/sim2real/drive` with "
+            "`{ \"config\": {\"run_id\": ..., \"threshold\": 0.8, \"max_iterations\": 3}, \"confirm_token\": ... }`.",
+            "- Read-only observation stays on `GET /api/workflows/sim2real/status`.",
+        ]
+    )
+
+
 def build_grounded_reply(
     intent: str,
     state: dict[str, Any],
@@ -1174,6 +1214,8 @@ def build_grounded_reply(
     loaded_franka_now: bool = False,
     default_cameras: list[dict[str, Any]] | None = None,
 ) -> str:
+    if intent == "drive_sim2real":
+        return format_drive_sim2real_guidance(state)
     if intent == "watch_sim":
         sim_viz = _sim_viz(state)
         iframe_url = str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"

@@ -209,8 +209,20 @@ def _embedded_agent_actions_source() -> str:
     return raw
 
 
+def _embedded_agent_sim2real_loop_source() -> str:
+    """Return agent_sim2real_loop.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_sim2real_loop.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
+_AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1755,6 +1767,7 @@ def _bootstrap_agent_stack(
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
     agent_actions_source = _embedded_agent_actions_source()
+    agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -3496,6 +3509,8 @@ def _chat_with_resilience(
 
 {_AGENT_ACTIONS_EMBED}
 
+{_AGENT_SIM2REAL_LOOP_EMBED}
+
 {_AGENT_WORKFLOW_EMBED}
 
 {_AGENT_ARTIFACTS_EMBED}
@@ -5041,6 +5056,116 @@ def agent_act(payload: dict):
     result["mode"] = "agent-act"
     return result
 
+def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
+    # Read gate metrics only from real run artifacts; never fabricate a score.
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return {{}}
+    report_path = Path("/opt/npa-agent/reports") / run_id / "sim2real-report.json"
+    try:
+        report = json.loads(report_path.read_text())
+    except Exception:
+        report = {{}}
+    if not isinstance(report, dict):
+        return {{}}
+    heldout = report.get("heldout") if isinstance(report.get("heldout"), dict) else {{}}
+    decision = report.get("outer_loop_decision") if isinstance(report.get("outer_loop_decision"), dict) else {{}}
+    success_rate = (
+        heldout.get("success_rate")
+        if heldout.get("success_rate") is not None
+        else decision.get("success_rate")
+    )
+    threshold = decision.get("threshold")
+    if threshold is None:
+        threshold = report.get("threshold")
+    metrics = {{}}
+    if success_rate is not None:
+        metrics["success_rate"] = success_rate
+    if threshold is not None:
+        metrics["threshold"] = threshold
+    if decision.get("decision"):
+        metrics["decision"] = decision.get("decision")
+    return metrics
+
+@app.post("/agent/sim2real/drive")
+def agent_sim2real_drive(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    config = body.get("config") if isinstance(body.get("config"), dict) else {{}}
+    goal = str(body.get("goal") or "drive the sim2real outer loop").strip()
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        act_state = {{}}
+    session_token = str(act_state.get("confirm_token") or "")
+    confirm_token = str(body.get("confirm_token") or "").strip()
+    default_run = ""
+    sim_viz = state.get("sim_viz", {{}})
+    if isinstance(sim_viz, dict):
+        default_run = str(sim_viz.get("run_id") or "").strip()
+    cfg = dict(config)
+    if not str(cfg.get("run_id") or "").strip():
+        cfg["run_id"] = default_run or f"agent-drive-{{secrets.token_hex(4)}}"
+    try:
+        max_iterations = int(body.get("max_iterations") or cfg.get("max_iterations") or 3)
+    except (TypeError, ValueError):
+        max_iterations = 3
+    max_iterations = max(1, min(max_iterations, 5))
+
+    def _launch(loop_cfg):
+        return _act_response_to_dict(
+            submit_sim2real({{"run_id": str(loop_cfg.get("run_id") or "")}})
+        )
+
+    def _status(run_id):
+        return _act_response_to_dict(sim2real_status(run_id=str(run_id or "")))
+
+    def _diagnose(gate_result, run_status):
+        notes = []
+        sr = gate_result.get("success_rate") if isinstance(gate_result, dict) else None
+        if sr is None:
+            notes.append("no gate success_rate available on this run yet")
+            mode = "insufficient_signal"
+        elif float(sr) <= 0.0:
+            notes.append("degenerate rollout: success_rate at floor")
+            mode = "policy_collapse"
+        else:
+            notes.append("below-threshold success_rate")
+            mode = "low_success"
+        return {{"failure_mode": mode, "notes": "; ".join(notes)}}
+
+    result = drive_sim2real_loop(
+        goal,
+        config=cfg,
+        launch=_launch,
+        status=_status,
+        gate=_sim2real_gate_metrics,
+        diagnose=_diagnose,
+        confirm_token=confirm_token,
+        session_token=session_token,
+        max_iterations=max_iterations,
+        confirmation_ok=confirmation_ok,
+    )
+    if result.get("needs_confirmation"):
+        new_token = secrets.token_hex(8)
+        state = _load_state()
+        act_state = state.get("agent_act") if isinstance(state.get("agent_act"), dict) else {{}}
+        act_state["confirm_token"] = new_token
+        act_state["pending_action"] = result.get("proposed_action")
+        state["agent_act"] = act_state
+        _save_state(state)
+        result["confirm_token"] = new_token
+    elif act_state.get("confirm_token"):
+        state = _load_state()
+        act_state = state.get("agent_act") if isinstance(state.get("agent_act"), dict) else {{}}
+        act_state["confirm_token"] = ""
+        act_state["pending_action"] = None
+        state["agent_act"] = act_state
+        _save_state(state)
+    result["grounded"] = False
+    result["mode"] = "sim2real-drive"
+    result["apis_used"] = ["workflows/sim2real/submit", "workflows/sim2real/status"]
+    return result
+
 @app.get("/health")
 def health():
     return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
@@ -6419,6 +6544,7 @@ sudo systemctl restart npa-agent-backend
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
         .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
+        .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
