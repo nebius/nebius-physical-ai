@@ -259,6 +259,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "lancedb",
         "lerobot",
         "mjlab",
+        "scenario-gen",
         "sim2real",
         "token-factory",
         "workflow",
