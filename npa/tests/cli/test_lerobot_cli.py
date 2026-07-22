@@ -540,6 +540,39 @@ def test_lerobot_train_serverless_ner_error_json_mode(mocker) -> None:
     assert payload["platform"] == "gpu-h200-sxm"
 
 
+def test_lerobot_train_serverless_fails_fast_without_s3_credentials(mocker) -> None:
+    client, _update = _mock_serverless_train(mocker)
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="",
+            aws_access_key_id="",
+            aws_secret_access_key="",
+        ),
+    )
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_credentials",
+        return_value=SimpleNamespace(
+            hf_token="PLACEHOLDER_HF_TOKEN",
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            s3_endpoint="",
+            s3_bucket="",
+        ),
+    )
+
+    result = runner.invoke(app, _serverless_train_args("--submit-only"))
+
+    assert result.exit_code != 0
+    # Rich may soft-wrap the message; match on the durable fragments.
+    compact = " ".join(result.output.split())
+    assert "Missing S3" in compact
+    assert "LeRobot serverless jobs" in compact
+    assert "npa configure" in compact
+    client.create_job.assert_not_called()
+
+
 def test_lerobot_train_serverless_existing_submit_is_idempotent(mocker) -> None:
     existing = JobInfo(id="job-1", name="train-1", project_id="project-1", status="succeeded")
     client, _update = _mock_serverless_train(mocker, existing=existing)
@@ -575,6 +608,42 @@ def test_lerobot_train_serverless_b300_diffusion_warning(mocker) -> None:
     assert "B300 is ~2.5x slower than H200 on Diffusion Policy" in result.output
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-b300-sxm"
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-24vcpu-346gb"
+
+
+def test_profile_train_serverless_fails_fast_without_s3_credentials(
+    tmp_path: Path, mocker
+) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('profile')\n")
+    client, _update = _mock_serverless_profile(mocker)
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="",
+            aws_access_key_id="",
+            aws_secret_access_key="",
+        ),
+    )
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_credentials",
+        return_value=SimpleNamespace(
+            hf_token="PLACEHOLDER_HF_TOKEN",
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            s3_endpoint="",
+            s3_bucket="",
+        ),
+    )
+
+    result = runner.invoke(app, _serverless_profile_args(script, "--submit-only"))
+
+    assert result.exit_code != 0
+    compact = " ".join(result.output.split())
+    assert "Missing S3" in compact
+    assert "LeRobot serverless jobs" in compact
+    assert "npa configure" in compact
+    client.create_job.assert_not_called()
 
 
 def test_profile_train_serverless_requires_output_path(tmp_path: Path, mocker) -> None:
