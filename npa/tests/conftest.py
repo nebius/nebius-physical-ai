@@ -62,6 +62,12 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "NPA_SSH_USER",
     "NPA_BYOVM_SSH_KEY",
     "NPA_SSH_KEY",
+    # SkyPilot private-registry docker creds. When an operator/dev VM exports the
+    # real values (e.g. for live submits), the non-live redaction/render unit
+    # tests must still behave as on a pristine runner.
+    "SKYPILOT_DOCKER_SERVER",
+    "SKYPILOT_DOCKER_USERNAME",
+    "SKYPILOT_DOCKER_PASSWORD",
 )
 
 
