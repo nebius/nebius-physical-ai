@@ -134,9 +134,11 @@ def _genesis_local_import(module: str, *names: str) -> tuple[Any, ...]:
         mod = importlib.import_module(f"npa.genesis.{module}")
     except ModuleNotFoundError as exc:
         missing = exc.name or "torch"
+        # Escape the extras bracket so rich markup does not treat "[genesis]" as
+        # a style tag and drop it from the rendered message.
         _fail(
             f"Genesis local commands need the GPU extra (missing '{missing}'). "
-            'Install it with: pip install -e "npa[genesis]" (adds torch + Genesis). '
+            'Install it with: pip install -e "npa\\[genesis]" (adds torch + Genesis). '
             "To run on a remote workbench VM instead, pass -p <project> -n <workbench>; "
             "for a no-GPU serverless smoke, add --runtime serverless --project-id <id>."
         )
