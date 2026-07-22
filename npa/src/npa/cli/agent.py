@@ -2249,18 +2249,22 @@ def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> 
         return None
     try:
         s3, settings = _agent_s3_client()
-        # Honor the artifact prefix the run was discovered under (e.g.
-        # "physical-ai-data-factory"); otherwise a run stored outside the default
-        # discovery prefix finds zero artifacts and the caller falls back to the
-        # generic sim2real "not_run" stage template (stages wrongly show Not run).
-        effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        if not artifacts and prefix:
-            # Retry once against the default prefix in case the caller passed a
-            # prefix that does not apply to this run.
-            default_prefix = _artifact_discovery_prefix(settings, "")
-            if default_prefix != effective_prefix:
-                artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=default_prefix, s3=s3)
+        artifacts = []
+        # Fast path: honor the artifact prefix the run was discovered under.
+        if prefix:
+            effective_prefix = _artifact_discovery_prefix(settings, prefix)
+            artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        # Generic fallback: locate the run across ALL category folders under the
+        # single run root (no hardcoded workflow path), so a run stored under any
+        # workflow shows its real artifact-backed stages, not the sim2real
+        # "not_run" template.
+        if not artifacts:
+            artifacts = find_run_artifacts(
+                settings["bucket"],
+                base_prefix=settings.get("prefix", ""),
+                run_id=validate_run_id(run_id),
+                s3=s3,
+            )
     except Exception:
         return None
     if not artifacts:
@@ -2932,11 +2936,6 @@ def _is_sim2real_pipeline_recording(key: str) -> bool:
 
 
 DATA_FACTORY_APP_ID = "physical-ai-data-factory"
-
-# Extra workflow sub-prefixes merged into the default (no-prefix) run discovery so
-# their runs show without the operator typing the prefix. Runs are stored under
-# <base>/<workflow>/<run_id>/..., so each workflow needs its own scan.
-AGENT_DEFAULT_WORKFLOW_PREFIXES = (DATA_FACTORY_APP_ID,)
 
 
 def _is_data_factory_recording(key: str) -> bool:
@@ -5262,14 +5261,19 @@ def sim_viz_load_run(payload: dict | None = None):
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
-        effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
-        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        if not artifacts and requested_prefix:
-            # Mirror _artifact_backed_run_details: fall back to the default prefix
-            # so a mismatched user prefix does not hide a mountable .rrd.
-            default_prefix = _artifact_discovery_prefix(settings, "")
-            if default_prefix != effective_prefix:
-                artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=default_prefix, s3=s3)
+        artifacts = []
+        if requested_prefix:
+            effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
+            artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        # Generic fallback: find the run across all category folders under the run
+        # root so a mismatched/absent prefix does not hide a mountable .rrd.
+        if not artifacts:
+            artifacts = find_run_artifacts(
+                settings["bucket"],
+                base_prefix=settings.get("prefix", ""),
+                run_id=validate_run_id(run_id),
+                s3=s3,
+            )
         preferred = select_preferred_artifact(artifacts)
         if preferred and preferred.render == "rerun":
             local_name = _artifact_filename(preferred.key)
@@ -5358,46 +5362,13 @@ def artifacts_runs(prefix: str = "", limit: int = 50):
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
             page = list_runs(settings["bucket"], prefix=effective_prefix, limit=limit, s3=s3)
             return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
-        # No user prefix: merge the default discovery prefix with known workflow
-        # sub-prefixes (e.g. physical-ai-data-factory) so those runs show without
-        # the operator having to type the magic prefix. Runs live under
-        # <base>/<workflow>/<run_id>/..., so each workflow needs its own scan.
-        default_prefix = _artifact_discovery_prefix(settings, "")
-        scan_prefixes = [default_prefix]
-        for extra in AGENT_DEFAULT_WORKFLOW_PREFIXES:
-            ep = _artifact_discovery_prefix(settings, extra)
-            if ep not in scan_prefixes:
-                scan_prefixes.append(ep)
-        merged: list = []
-        seen: set = set()
-        total = 0
-        truncated = False
-        for ep in scan_prefixes:
-            try:
-                page = list_runs(settings["bucket"], prefix=ep, limit=limit, s3=s3)
-            except Exception:
-                continue
-            total += page.total_runs
-            truncated = truncated or page.truncated
-            for run in page.runs:
-                if run.run_id in seen:
-                    continue
-                seen.add(run.run_id)
-                merged.append(run)
-        merged.sort(key=lambda r: (r.last_modified, r.run_id), reverse=True)
-        if len(merged) > limit:
-            merged = merged[:limit]
-            truncated = True
-        return {{
-            "ok": True,
-            "bucket": settings["bucket"],
-            "prefix": default_prefix,
-            "base_prefix": settings.get("prefix", ""),
-            "runs": [r.to_dict() for r in merged],
-            "truncated": truncated,
-            "total_runs": total,
-            "limit": limit,
-        }}
+        # No user prefix: scan the single run root generically. Runs live under
+        # <root>/<category>/<run_id>/... (root from config, e.g. "checkpoints");
+        # list_all_runs enumerates the category folders from S3 and merges them,
+        # so every workflow's runs show without hardcoding any workflow path.
+        base = settings.get("prefix", "")
+        page = list_all_runs(settings["bucket"], base_prefix=base, limit=limit, s3=s3)
+        return {{"ok": True, "bucket": settings["bucket"], "prefix": base, "base_prefix": base, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -5413,12 +5384,18 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
     try:
         s3, settings = _agent_s3_client()
         effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = list_artifacts(
-            settings["bucket"],
-            normalized_run,
-            prefix=effective_prefix,
-            s3=s3,
-        )
+        artifacts = []
+        if prefix:
+            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
+        # Generic fallback: locate the run across all category folders under the
+        # run root (no hardcoded workflow path).
+        if not artifacts:
+            artifacts = find_run_artifacts(
+                settings["bucket"],
+                base_prefix=settings.get("prefix", ""),
+                run_id=normalized_run,
+                s3=s3,
+            )
         preferred = select_preferred_artifact(artifacts)
         return {{
             "ok": True,

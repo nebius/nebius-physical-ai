@@ -10,7 +10,10 @@ from npa.workflows.artifacts import (
     ArtifactDiscoveryError,
     artifact_media_type,
     download_s3_uri,
+    find_run_artifacts,
+    list_all_runs,
     list_artifacts,
+    list_run_categories,
     list_runs,
     render_hint_for_object,
     select_preferred_artifact,
@@ -162,3 +165,77 @@ def test_artifact_media_type_prefers_explicit_browser_types() -> None:
 def test_list_runs_requires_positive_limit() -> None:
     with pytest.raises(ArtifactDiscoveryError):
         list_runs("bucket", limit=0, s3=_FakeS3([]))
+
+
+class _PrefixAwareS3:
+    """Fake S3 that honors Prefix + Delimiter over an in-memory key store."""
+
+    def __init__(self, keys: list[tuple[str, str]]):
+        # keys: list of (key, iso_ts)
+        self._keys = keys
+
+    def get_paginator(self, name: str):
+        assert name == "list_objects_v2"
+        store = self._keys
+
+        class _P:
+            def paginate(self, Bucket=None, Prefix="", Delimiter=None):  # noqa: N803
+                if Delimiter:
+                    seen: set[str] = set()
+                    cps: list[dict] = []
+                    for key, _ts in store:
+                        if not key.startswith(Prefix):
+                            continue
+                        rest = key[len(Prefix):]
+                        if "/" not in rest:
+                            continue
+                        seg = rest.split("/", 1)[0]
+                        cp = Prefix + seg + "/"
+                        if seg and cp not in seen:
+                            seen.add(cp)
+                            cps.append({"Prefix": cp})
+                    yield {"CommonPrefixes": cps}
+                else:
+                    contents = [
+                        _obj(key, ts=ts) for key, ts in store if key.startswith(Prefix)
+                    ]
+                    yield {"Contents": contents}
+
+        return _P()
+
+
+_LAYOUT = [
+    ("checkpoints/sim2real-b/run-a/reports/sim2real.rrd", "2026-07-01T00:00:00+00:00"),
+    ("checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png", "2026-07-22T00:00:00+00:00"),
+    ("checkpoints/lerobot/default/model.pt", "2026-06-01T00:00:00+00:00"),
+]
+
+
+def test_list_run_categories_enumerates_dynamically() -> None:
+    s3 = _PrefixAwareS3(_LAYOUT)
+    cats = list_run_categories("bucket", base_prefix="checkpoints", s3=s3)
+    assert set(cats) == {
+        "checkpoints/sim2real-b",
+        "checkpoints/physical-ai-data-factory",
+        "checkpoints/lerobot",
+    }
+
+
+def test_list_all_runs_merges_across_categories_latest_first() -> None:
+    s3 = _PrefixAwareS3(_LAYOUT)
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=s3)
+    ids = [r.run_id for r in page.runs]
+    # All runs across every category, no hardcoded workflow path; newest first.
+    assert ids == ["paidf-1", "run-a", "default"]
+    assert page.total_runs == 3
+
+
+def test_find_run_artifacts_locates_run_in_any_category() -> None:
+    s3 = _PrefixAwareS3(_LAYOUT)
+    arts = find_run_artifacts("bucket", base_prefix="checkpoints", run_id="paidf-1", s3=s3)
+    assert [a.key for a in arts] == [
+        "checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png"
+    ]
+    # A run under a different category is also found without a hardcoded prefix.
+    assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="run-a", s3=s3)
+    assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="missing", s3=s3) == []
