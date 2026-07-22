@@ -294,6 +294,65 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             ),
         ],
     ),
+    "workbench.scenario_gen.generate": ToolEntry(
+        name="workbench.scenario_gen.generate",
+        description=(
+            "Train an adversarial RL agent that maximizes failures of a "
+            "policy-under-test and emit a ranked adversarial scenario set."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "scenario-gen",
+            "generate",
+            "--policy-uri",
+            "{{config.policy_uri}}",
+            "--input-path",
+            "{{config.base_config_uri}}",
+            "--output-path",
+            "{{config.adversarial_set_uri}}",
+            "--task",
+            "{{config.task_name}}",
+            "--num-scenarios",
+            "{{config.num_scenarios}}",
+            "--adversary-steps",
+            "{{config.adversary_steps}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.scenario_gen.rank": ToolEntry(
+        name="workbench.scenario_gen.rank",
+        description="Score/rank adversarial scenarios by failure severity + diversity.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "scenario-gen",
+            "rank",
+            "--input-path",
+            "{{config.adversarial_set_uri}}manifest.json",
+            "--output-path",
+            "{{config.ranked_set_uri}}",
+            "--top-k",
+            "{{config.rank_top_k}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.scenario_gen.write_hardening_decision": ToolEntry(
+        name="workbench.scenario_gen.write_hardening_decision",
+        description="Write promote/loop decision from the configured failure-rate threshold.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "from npa.orchestration.npa_workflow.decisions import write_decision;"
+                "threshold=float('{{config.failure_rate_threshold}}');"
+                "decision='promote_checkpoint' if threshold >= 0.5 else 'loop_back';"
+                "write_decision('{{config.decision_uri}}', decision)"
+            ),
+        ],
+    ),
     "workbench.rl.report_failure": ToolEntry(
         name="workbench.rl.report_failure",
         description="Write terminal RL failure report when threshold is not met.",

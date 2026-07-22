@@ -1,0 +1,160 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Adversarial scenario hardening loop.
+#
+# Generate adversarial scenarios against a policy-under-test, rank them, then
+# enter a bounded outer loop: retrain the policy on the mined hard scenarios,
+# re-evaluate on the adversarial set, and gate on the failure rate. If the
+# policy is still brittle, loop back and retrain; once it is robust, publish the
+# hardened checkpoint. Modeled on sim2real-vlm-rl.yaml (loop + writesDecision
+# gate + loop-back transition).
+
+metadata:
+  name: adversarial-scenario-hardening
+  description: >
+    Adversarial scenario generation (RL adversary) -> rank -> bounded hardening
+    loop (retrain policy on mined hard scenarios, evaluate, gate on failure
+    rate, loop back or promote) -> publish hardened policy.
+
+config:
+  bucket: example-bucket
+  prefix: "scenario-hardening/{{run.id}}"
+
+  outer_iterations: 3
+  failure_rate_threshold: "0.5"
+
+  policy_uri: "s3://{{config.bucket}}/policies/under-test/checkpoint.pt"
+  base_config_uri: "s3://{{config.bucket}}/scenario-gen/base/task.json"
+  task_name: Isaac-Cartpole-v0
+  num_scenarios: "16"
+  adversary_steps: "200000"
+  rank_top_k: "4"
+
+  train_steps: "500000"
+  learning_rate: "0.0003"
+  batch_size: "256"
+  eval_episodes: "50"
+
+  adversarial_set_uri: "s3://{{config.bucket}}/{{config.prefix}}/adversarial/"
+  ranked_set_uri: "s3://{{config.bucket}}/{{config.prefix}}/ranked/"
+  train_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/hard-scenarios/"
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/policy/latest.ckpt"
+  eval_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/metrics/eval.json"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json"
+  release_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/policy/release/"
+
+resources:
+  adversary-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+  control-cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 8Gi
+    image: python:3.11-slim
+
+initial: generate
+
+states:
+  generate:
+    description: Train an adversarial RL agent and mine a ranked adversarial set.
+    toolRef: workbench.scenario_gen.generate
+    resources: adversary-gpu
+    inputs:
+      - uri: "{{config.policy_uri}}"
+        schema: npa.rl.policy_checkpoint.v1
+      - uri: "{{config.base_config_uri}}"
+        schema: npa.scenario_gen.base_config.v1
+    outputs:
+      - uri: "{{config.adversarial_set_uri}}manifest.json"
+        schema: npa.scenario_gen.adversarial_set.v1
+    next: rank
+
+  rank:
+    description: Score/rank adversarial scenarios by failure severity + diversity.
+    needs: [generate]
+    toolRef: workbench.scenario_gen.rank
+    resources: control-cpu
+    inputs:
+      - uri: "{{config.adversarial_set_uri}}manifest.json"
+        schema: npa.scenario_gen.adversarial_set.v1
+    outputs:
+      - uri: "{{config.ranked_set_uri}}ranked.json"
+        schema: npa.scenario_gen.ranked_set.v1
+    next: harden
+
+  harden:
+    description: Bounded hardening loop — retrain, evaluate, gate on failure rate.
+    needs: [rank]
+    loop:
+      max: "{{config.outer_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - retrain
+      - evaluate
+      - decide
+    next: publish
+
+  retrain:
+    description: Retrain the policy-under-test on the mined hard scenarios.
+    toolRef: workbench.rl.policy_train
+    resources: trainer-gpu
+    inputs:
+      - uri: "{{config.ranked_set_uri}}ranked.json"
+        schema: npa.scenario_gen.ranked_set.v1
+    outputs:
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.rl.policy_checkpoint.v1
+
+  evaluate:
+    description: Roll out the policy-under-test on the adversarial scenarios.
+    needs: [retrain]
+    toolRef: workbench.rl.evaluate_policy
+    resources: trainer-gpu
+    inputs:
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.rl.policy_checkpoint.v1
+    outputs:
+      - uri: "{{config.eval_report_uri}}"
+        schema: npa.rl.eval_report.v1
+
+  decide:
+    description: Gate on failure rate — promote when robust, else loop back to retrain.
+    writesDecision: true
+    needs: [evaluate]
+    toolRef: workbench.scenario_gen.write_hardening_decision
+    resources: control-cpu
+    inputs:
+      - uri: "{{config.eval_report_uri}}"
+        schema: npa.rl.eval_report.v1
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.scenario_gen.hardening_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: publish
+      - when: loop_back
+        goto: harden
+
+  publish:
+    description: Publish the hardened policy checkpoint with a release manifest.
+    needs: [harden]
+    toolRef: workbench.rl.publish_policy
+    resources: control-cpu
+    inputs:
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.rl.policy_checkpoint.v1
+      - uri: "{{config.decision_uri}}"
+        schema: npa.scenario_gen.hardening_decision.v1
+    outputs:
+      - uri: "{{config.release_uri}}manifest.json"
+        schema: npa.rl.policy_release.v1
+    terminal: true
