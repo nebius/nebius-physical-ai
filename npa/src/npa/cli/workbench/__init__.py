@@ -19,6 +19,7 @@ from npa.cli.isaac_lab import app as isaac_lab_app
 from npa.cli.workbench.sonic import app as sonic_app
 from npa.cli.workbench.lancedb import app as lancedb_app
 from npa.cli.workbench.detection_training import app as detection_training_app
+from npa.cli.workbench.dataset import app as dataset_app
 from npa.cli.workbench.golden_eval import app as golden_eval_app
 from npa.cli.workbench.token_factory import app as token_factory_app
 from npa.cli.workbench.vlm_eval import app as vlm_eval_app
@@ -54,6 +55,7 @@ app.add_typer(sonic_app, name="sonic")
 app.add_typer(mjlab_app, name="mjlab")
 app.add_typer(lancedb_app, name="lancedb")
 app.add_typer(detection_training_app, name="detection-training")
+app.add_typer(dataset_app, name="dataset")
 app.add_typer(vlm_eval_app, name="vlm-eval")
 app.add_typer(token_factory_app, name="token-factory")
 app.add_typer(byof_app, name="byof")
