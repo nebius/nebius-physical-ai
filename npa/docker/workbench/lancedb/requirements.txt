@@ -1,10 +1,4 @@
-lancedb==0.30.2
-fastapi
-uvicorn[standard]
-boto3
-numpy
-pyarrow
-pillow
-pydantic
-torch==2.12.1
+# Unique to npa-lancedb: the CLIP embedding stack. The shared FastAPI + lancedb +
+# pyarrow + pillow + boto3 + torch/CUDA stack is provided by the
+# npa-workbench-cuda-base image this Dockerfile builds on.
 transformers==5.10.2

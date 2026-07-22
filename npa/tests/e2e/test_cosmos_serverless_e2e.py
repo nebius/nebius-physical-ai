@@ -24,11 +24,12 @@ from npa.clients.serverless import (
     EndpointStatus,
     NotEnoughResourcesError,
     ServerlessClient,
+    ServerlessClientError,
 )
 from npa.clients.http import HTTPClient, ServerError
 from npa.deploy.images import container_image_for_tool
 
-from ._serverless_fallback import FallbackChain
+from ._serverless_fallback import FallbackChain, ensure_serverless_phase0
 from ._serverless_images import resolve_serverless_gpu_preset, resolve_serverless_gpu_type
 
 
@@ -57,6 +58,26 @@ def _platform() -> str:
     if explicit:
         return explicit
     return resolve_serverless_gpu_type()
+
+
+def _platform_candidates() -> list[str]:
+    """Ordered GPU platforms to try before giving up on capacity (NER).
+
+    Prefer ``NPA_E2E_SERVERLESS_GPU_TYPES`` (comma-separated). Otherwise start
+    from the resolved platform and fall back across the other RT-core / datacenter
+    families. GPU families are configurable, never region-hard-coded.
+    """
+
+    explicit = os.environ.get("NPA_E2E_SERVERLESS_GPU_TYPES", "").strip()
+    if explicit:
+        raw = [p.strip() for p in explicit.split(",") if p.strip()]
+    else:
+        raw = [_platform(), "gpu-rtx6000", "gpu-h100", "gpu-h200-sxm", "gpu-l40s-d"]
+    ordered: list[str] = []
+    for platform in raw:
+        if platform and platform not in ordered:
+            ordered.append(platform)
+    return ordered
 
 
 def _preset() -> str:
@@ -148,13 +169,14 @@ def _wait_for_inference_job(endpoint_url: str, job_id: str) -> dict[str, object]
     )
 
 
-def _endpoint_spec(project_id: str, name: str) -> EndpointSpec:
+def _endpoint_spec(project_id: str, name: str, *, platform: str | None = None) -> EndpointSpec:
+    resolved_platform = (platform or "").strip() or _platform()
     return EndpointSpec(
         name=name,
         project_id=project_id,
         image=_image(),
-        platform=_platform(),
-        preset=_preset(),
+        platform=resolved_platform,
+        preset=resolve_serverless_gpu_preset("1gpu-16vcpu-200gb", platform=resolved_platform),
         container_ports=[8080],
         env={
             "COSMOS_MODEL_ID": DEFAULT_MODEL,
@@ -171,22 +193,48 @@ def _endpoint_spec(project_id: str, name: str) -> EndpointSpec:
 
 
 def _create_with_fallback(client: ServerlessClient, name: str) -> tuple[str, EndpointInfo]:
-    chain = FallbackChain.instance()
+    """Create the endpoint, rotating across projects *and* GPU families.
+
+    On not-enough-resources (NER) for a project we rotate to the next project;
+    when a whole project chain is NER-exhausted for one GPU family we retry the
+    next configured GPU family. Non-auth serverless errors (e.g. a fallback
+    project the account cannot access) exhaust that project rather than failing
+    the run, so an inaccessible fallback never masks real capacity elsewhere.
+    """
+
     last_error: BaseException | None = None
-    while True:
-        project_id = chain.current_project()
-        if project_id is None:
-            pytest.skip(f"All projects in fallback chain are NER-exhausted: {last_error}")
-        try:
-            return project_id, client.create_endpoint(
-                _endpoint_spec(project_id, name),
-                extra_env=_endpoint_extra_env(),
-            )
-        except NotEnoughResourcesError as exc:
-            last_error = exc
-            chain.mark_ner(project_id)
-        except AuthError:
-            raise
+    for platform in _platform_candidates():
+        # Fresh chain per GPU family: a project that is NER for one family may
+        # still have capacity for another.
+        chain = FallbackChain(ensure_serverless_phase0())
+        while True:
+            project_id = chain.current_project()
+            if project_id is None:
+                break
+            try:
+                return project_id, client.create_endpoint(
+                    _endpoint_spec(project_id, name, platform=platform),
+                    extra_env=_endpoint_extra_env(),
+                )
+            except NotEnoughResourcesError as exc:
+                last_error = exc
+                chain.mark_ner(project_id)
+            except AuthError:
+                raise
+            except ServerlessClientError as exc:
+                # e.g. PermissionDenied on a fallback project: skip it rather
+                # than erroring the whole run.
+                last_error = exc
+                print(
+                    f"!!! serverless create failed on {project_id} "
+                    f"({platform}): {exc}; skipping project",
+                    flush=True,
+                )
+                chain.mark_ner(project_id)
+    pytest.skip(
+        f"All projects/GPU families exhausted or inaccessible for serverless "
+        f"create: {last_error}"
+    )
 
 
 @pytest.fixture(scope="module")
