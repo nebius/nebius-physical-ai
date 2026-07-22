@@ -14,6 +14,7 @@ __all__ = [
     "lerobot",
     "mjlab",
     "retargeting",
+    "scenario_gen",
     "sonic",
     "training_config",
     "trigger",
