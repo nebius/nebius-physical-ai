@@ -57,8 +57,10 @@ terraform version
 ### Fast install by platform
 
 Copy-paste once per machine. All paths install the Nebius CLI, clone NPA, create
-a venv, and verify `npa`. Finish with `nebius profile create` and
-`npa configure` (Section 4).
+a venv, and verify `npa`. Then set up credentials in Section 4 with
+`npa configure`, which creates or reuses your Nebius CLI profile for you (no
+manual `nebius profile create` step). Run `npa configure` only after you have a
+Nebius project and tenant id ready (Section 4a).
 
 | Platform | Shell | Nebius CLI |
 | --- | --- | --- |
@@ -78,11 +80,13 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -e npa
 npa --version
-nebius profile create
-npa configure
 ```
 
-Optional operator tools: `brew install python@3.12 kubectl terraform jq`.
+Then continue with credential setup in Section 4 (`npa configure`).
+
+Optional operator tools: `brew install python@3.12 jq`, plus `kubectl` and
+`terraform` from their official installers (Terraform is no longer in
+Homebrew core: `brew install hashicorp/tap/terraform`).
 
 **Linux (Debian/Ubuntu)**
 
@@ -98,12 +102,15 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -e npa
 npa --version
-nebius profile create
-npa configure
 ```
 
-Optional: `sudo apt-get install -y kubectl terraform jq` (or install kubectl
-from the [Kubernetes docs](https://kubernetes.io/docs/tasks/tools/)).
+Then continue with credential setup in Section 4 (`npa configure`).
+
+Optional operator tools: `sudo apt-get install -y jq`. `kubectl` and
+`terraform` are **not** in the stock Ubuntu apt repositories — install
+`kubectl` from the [Kubernetes docs](https://kubernetes.io/docs/tasks/tools/)
+and `terraform` from
+[HashiCorp's apt repo](https://developer.hashicorp.com/terraform/install#linux).
 
 **Windows (WSL2)**
 
@@ -221,12 +228,12 @@ create one first; see the README **Nebius AI Cloud account** section,
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
-Run interactive setup in a terminal. `npa configure` detects an existing
-authenticated Nebius CLI profile (via `nebius iam get-access-token`), prompts
-for your tenant id and project id (no defaults are shown), guides you to reuse
-an existing bucket or create a default `npa-bucket` (standard storage, size
-limit in GB), and only runs profile creation when none is authenticated. It
-then writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`:
+Run interactive setup in a terminal. `npa configure` creates or reuses your
+Nebius CLI profile first, then prompts for your project id and tenant id (in
+that order, no defaults shown), your region and container registry (defaults are
+discovered from the project), and guides you to reuse an existing bucket or
+create a default `npa-bucket` (standard storage, size limit in GB). It then
+writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`:
 
 ```bash
 npa configure
@@ -249,8 +256,10 @@ Keep these non-secret values handy for later workbench deploys:
   <https://docs.nebius.com/iam/get-tenants>.
 - `<NEBIUS_REGION>`: the region where the project exists, for example
   `eu-north1`.
-- `<PROJECT_ALIAS>`: a local alias you choose for `npa`, for example
-  `quickstart`.
+- `<PROJECT_ALIAS>`: the local profile key `npa configure` writes for this
+  project. It is set automatically to your region (for example `eu-north1`) and
+  becomes `default_project` in `~/.npa/config.yaml`. Pass it as
+  `-p <PROJECT_ALIAS>` to workbench commands (or omit `-p` to use the default).
 
 ### 4b. Required credential key names
 
@@ -349,17 +358,22 @@ These commands should not provision cloud resources:
 
 ```bash
 npa --help
-npa configure
+npa configure --show
 ```
 
 Gate: both commands render local CLI output without requiring Kubernetes, S3,
-NGC, or Hugging Face network access.
+NGC, or Hugging Face network access. Note that a bare `npa configure` in a
+terminal is interactive and provisions object storage by default (it creates an
+S3 bucket and access key); use `npa configure --show` for a read-only view of
+the file layout, or `npa configure --no-provision` to enter existing S3
+credentials by hand.
 
 ### 5a. Your first real result (offline)
 
 You can produce a real eval result with no cloud, GPU, or credentials. The
 `vlm-eval benchmark` command scores a shipped, labeled rollout set with the
-offline `stub` backend:
+offline `stub` backend. Run it from the repository root — the `--dataset` path
+is relative to it (or pass an absolute path):
 
 ```bash
 npa workbench vlm-eval benchmark \
@@ -523,7 +537,7 @@ This same serverless job is available three coherent ways:
 
 Because this launches a real, potentially long GPU job, run it from a durable
 launcher (your job queue / SkyPilot-managed job) rather than an interactive
-session you might close. See [the Cosmos guide](../.agents/skills/workbench/cosmos/SKILL.md)
+session you might close. See [the Cosmos guide](../skills/tools/cosmos/SKILL.md)
 and [the workflows guide](workbench-yaml-guide.md) for routing, backend
 selection, and known limits. Isaac Lab is the simulation counterpart but is
 RT-core-only (L40S / RTX Pro 6000); see its guide before choosing GPU type.
