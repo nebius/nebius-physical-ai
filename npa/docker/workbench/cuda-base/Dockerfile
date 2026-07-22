@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir \
     "pydantic==2.13.4" \
     "pillow==12.2.0" \
     "boto3==1.42.9" \
-    "numpy"
+    "numpy==2.4.6"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
 

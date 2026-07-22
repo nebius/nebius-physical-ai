@@ -22,10 +22,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # CPU torch keeps the image lean and avoids CUDA/driver coupling; SONIC ONNX
-# export loads the checkpoint on CPU and traces the MLP policy. Pre-installing
+# export loads the checkpoint on CPU and traces the MLP policy. Pin to the same
+# torch as the CUDA workbench images for parity/reproducibility; pre-installing
 # the CPU wheel means the subsequent npa[sonic] install treats torch as
 # satisfied instead of pulling the multi-GB CUDA build.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.12.1"
+RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.12.1"
 
 COPY npa/pyproject.toml /opt/npa/pyproject.toml
 COPY npa/src /opt/npa/src
