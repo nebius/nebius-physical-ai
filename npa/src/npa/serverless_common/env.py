@@ -20,6 +20,11 @@ def require_s3_credentials(
     silent fall-back to empty S3 credentials only surfaces minutes later inside
     the running job (after the GPU is already billing). Validate at submit time
     instead, and name every missing field so the fix is obvious.
+
+    Note: ``endpoint_url`` is required because these jobs run against Nebius
+    object storage, which always needs an explicit S3 endpoint. This check is
+    Nebius-specific and would need relaxing to support the implicit AWS default
+    endpoint.
     """
 
     creds = s3_credentials or {}

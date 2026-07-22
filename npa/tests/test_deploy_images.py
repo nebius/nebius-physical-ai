@@ -8,7 +8,46 @@ from npa.deploy.images import (
     container_image_for_tool,
     default_vlm_image,
     default_workbench_image,
+    primary_container_registry,
+    registry_from_env,
+    registry_from_id,
 )
+
+
+def test_registry_from_id_expands_against_primary_region() -> None:
+    assert registry_from_id("myregid123") == "cr.eu-north1.nebius.cloud/myregid123"
+    # Surrounding whitespace is stripped.
+    assert registry_from_id("  myregid123 ") == "cr.eu-north1.nebius.cloud/myregid123"
+
+
+def test_registry_from_env_prefers_npa_registry(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/team")
+    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
+    assert registry_from_env() == "registry.example/team"
+
+
+def test_registry_from_env_falls_back_to_registry_id(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
+    assert registry_from_env() == "cr.eu-north1.nebius.cloud/myregid123"
+
+
+def test_registry_from_env_empty_when_unset(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_ID", raising=False)
+    assert registry_from_env() == ""
+
+
+def test_primary_container_registry_honors_registry_id(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
+    assert primary_container_registry() == "cr.eu-north1.nebius.cloud/myregid123"
+
+
+def test_primary_container_registry_defaults_when_unset(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_ID", raising=False)
+    assert primary_container_registry() == DEFAULT_CONTAINER_REGISTRY
 
 
 def test_default_registry_is_real_first_party_registry() -> None:

@@ -17,10 +17,20 @@ if [ "${1:-}" = "--check" ]; then
   CHECK=1
 fi
 
+# Single cleanup handler: bash keeps only the last `trap ... EXIT`, so both the
+# scratch help file and the --check temp dir must be removed from one place.
+TMP_FILE=""
+TEMP_DOCS_DIR=""
+cleanup() {
+  [ -n "$TMP_FILE" ] && rm -f "$TMP_FILE"
+  [ -n "$TEMP_DOCS_DIR" ] && rm -rf "$TEMP_DOCS_DIR"
+}
+trap cleanup EXIT
+
 DOCS_DIR="docs/cli"
 if [ "$CHECK" -eq 1 ]; then
-  DOCS_DIR="$(mktemp -d)"
-  trap 'rm -rf "$DOCS_DIR"' EXIT
+  TEMP_DOCS_DIR="$(mktemp -d)"
+  DOCS_DIR="$TEMP_DOCS_DIR"
 fi
 
 discover_commands() {
@@ -59,14 +69,22 @@ mkdir -p "$DOCS_DIR"
 # identical to `--check`).
 rm -f "$DOCS_DIR"/*.md
 
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+TMP_FILE="$(mktemp)"
+tmp="$TMP_FILE"
 
 document_command() {
   local output_name="$1"
   shift
   local command_path=("$@")
   local output="${DOCS_DIR}/${output_name}.md"
+  # Pages are keyed by leaf group name. Generation starts from a clean slate, so
+  # a pre-existing file here means two distinct subgroups share a leaf name and
+  # would silently overwrite each other. Fail loudly instead.
+  if [ -f "$output" ]; then
+    echo "ERROR: doc name collision for '${output_name}' (${command_path[*]}); a" \
+         "same-named subgroup already generated ${output}. Use a unique group name." >&2
+    exit 1
+  fi
   "${command_path[@]}" --help > "$tmp"
   python3 scripts/_help_to_markdown.py "$tmp" "$output_name" "${command_path[*]}" > "$output"
 }

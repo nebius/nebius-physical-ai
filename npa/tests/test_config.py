@@ -691,3 +691,96 @@ def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None
     data = yaml.safe_load(isolated_config.read_text())
     assert "proj-a" not in data["projects"]
     assert data["default_project"] == "proj-b"
+
+
+# ── workbench_type alias guard ───────────────────────────────────────────
+
+
+def test_guard_workbench_type_allows_matching_type() -> None:
+    # No raise when the alias type is in the tool's accepted set.
+    config._guard_workbench_type({"workbench_type": "groot"}, "groot", name="wb")
+    config._guard_workbench_type(
+        {"workbench_type": "groot-container"}, "groot", name="wb"
+    )
+
+
+def test_guard_workbench_type_rejects_foreign_alias() -> None:
+    with pytest.raises(config.ConfigError, match="is a 'groot' workbench, not cosmos"):
+        config._guard_workbench_type({"workbench_type": "groot"}, "cosmos", name="wb")
+
+
+def test_guard_workbench_type_is_legacy_safe() -> None:
+    # Aliases written by older clients omit workbench_type -> never blocked.
+    config._guard_workbench_type({}, "cosmos", name="wb")
+    config._guard_workbench_type({"workbench_type": ""}, "cosmos", name="wb")
+    # Unknown expected tool and None expected are both no-ops.
+    config._guard_workbench_type({"workbench_type": "groot"}, "unknown-tool", name="wb")
+    config._guard_workbench_type({"workbench_type": "groot"}, None, name="wb")
+
+
+def _write_typed_workbench(path: Path, wtype: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "proj": {
+                        "workbenches": {
+                            "wb": {
+                                "workbench_type": wtype,
+                                "ssh": {
+                                    "host": "h",
+                                    "user": "ubuntu",
+                                    "key_path": "~/.ssh/k",
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+
+def test_resolve_ssh_config_guard_rejects_wrong_tool(isolated_config: Path) -> None:
+    _write_typed_workbench(isolated_config, "groot")
+    with pytest.raises(config.ConfigError, match="not cosmos"):
+        config.resolve_ssh_config(
+            project="proj", name="wb", expected_workbench_type="cosmos"
+        )
+
+
+def test_resolve_ssh_config_guard_allows_matching_tool(isolated_config: Path) -> None:
+    _write_typed_workbench(isolated_config, "groot")
+    resolved = config.resolve_ssh_config(
+        project="proj", name="wb", expected_workbench_type="groot"
+    )
+    assert resolved.workbench_type == "groot"
+
+
+# ── resolve_container_registry honors NPA_REGISTRY_ID ─────────────────────
+
+
+def test_resolve_container_registry_honors_registry_id(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A project section with no container_registry override falls through to env.
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump({"projects": {"proj": {"workbenches": {}}}})
+    )
+    monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
+    assert (
+        config.resolve_container_registry("proj")
+        == "cr.eu-north1.nebius.cloud/myregid123"
+    )
+
+
+def test_resolve_container_registry_prefers_project_override(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_full_config(isolated_config)
+    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
+    # proj-a has an explicit container_registry, which wins over env.
+    assert config.resolve_container_registry("proj-a") == "registry.example/npa"
