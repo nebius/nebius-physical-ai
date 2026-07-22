@@ -317,7 +317,7 @@ CPU-only service. Validate it with the local container smoke before any VM
 smoke:
 
 ```bash
-docker build -f npa/docker/workbench/lancedb/Dockerfile -t npa-lancedb:0.30.2 npa/
+docker build -f npa/docker/workbench/lancedb/Dockerfile -t npa-lancedb:0.30.3 npa/
 
 npa workbench lancedb deploy \
   --runtime container \
@@ -325,7 +325,7 @@ npa workbench lancedb deploy \
   --port 8686 \
   --auth-mode none \
   --replace \
-  --image npa-lancedb:0.30.2
+  --image npa-lancedb:0.30.3
 
 npa workbench lancedb create-table \
   --endpoint http://localhost:8686 \
@@ -400,7 +400,7 @@ npa/.venv/bin/pytest npa/tests/e2e/test_lancedb_e2e.py -m e2e_serverless -k lanc
 Resources used:
 
 - Project: `<YOUR_PROJECT_ID>` (`eu-north1`)
-- Runtime: local Docker container, image `npa-lancedb:0.30.2`
+- Runtime: local Docker container, image `npa-lancedb:0.30.3`
 - S3 bucket: `<your-bucket>`
 - Storage prefix: `s3://${NPA_S3_BUCKET}/w7lancedb-e2e-<timestamp>-<id>/db/`
 - Test duration: about 20 seconds when the image is already built

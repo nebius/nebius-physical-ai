@@ -13,55 +13,7 @@ work lives).
 
 ## Active
 
-### High
-
-#### [H] Parameterize Isaac Lab -> LeRobot formatter
-
-- **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
-- **Status**: Fixed.
-- **Current issue**: `npa/src/npa/adapter/isaac_lab_lerobot.py` remains G1-bound
-  through hardcoded state names, dimensions, schema shape, and robot type.
-- **Next step**: Introduce a `LeRobotFeatureSpec` dataclass and split
-  sim-specific extraction from shared LeRobot parquet/schema/metadata writing.
-
-#### [H] Isaac Lab train does not export trajectories or list registered tasks
-
-- **Surfaced by**: 2026-05-09 physical AI demo investigation.
-- **Status**: Fixed.
-- **Current issue**: `npa workbench isaac-lab train` writes summaries and a
-  random-policy checkpoint but not synced observation/action/state episodes;
-  the CLI also lacks a public `list-tasks` command.
-- **Next step**: Add opt-in trajectory export with the numpy episode contract and
-  add a task listing command with tests or documented runtime limitations.
-
-#### [H] GR00T BYOVM env omits inherited S3 credentials
-
-- **Surfaced by**: 2026-05-09 8x H200 validation.
-- **Status**: Fixed.
-- **Current issue**: GR00T BYOVM env files inherited HF/GPU values but omitted
-  project storage credentials present in Cosmos and FiftyOne env files.
-- **Next step**: Write merged project storage credentials into
-  `/etc/npa-groot-server/env` and include those keys in deploy env audit.
-
-#### [H] Cosmos infer surfaces S3 upload AccessDenied as an uncaught traceback
-
-- **Surfaced by**: 2026-05-09 8x H200 rerun.
-- **Status**: Fixed.
-- **Current issue**: Cosmos generation can complete successfully, then local S3
-  upload failure prints a Python traceback instead of a clean command error.
-- **Next step**: Catch upload failures, report the generated VM-local file path,
-  and return an actionable storage-credentials error.
-
 ### Medium
-
-#### [M] Cosmos requires manual serve after deploy/restart with no auto-load
-
-- **Surfaced by**: 2026-05-09 demo runbook dry-run.
-- **Status**: Fixed.
-- **Current issue**: `cosmos status` reports unloaded after deploy or service
-  restart until the operator manually runs `cosmos serve`.
-- **Next step**: Add an explicit deploy auto-serve option or make the post-deploy
-  `serve` requirement prominent in CLI help and standard runbooks.
 
 #### [M] Add standalone LeRobot library validation test
 
@@ -90,32 +42,18 @@ work lives).
 - **Next step**: Decide public versus internal methods, add re-exports,
   document the API, and cover imports/behavior in tests.
 
-#### [M] `<tool> status` without `-p`/`-n` hits an unconfigured default endpoint
-
-- **Surfaced by**: 2026-05-09 validation.
-- **Status**: Fixed.
-- **Current issue**: Omitted project/name flags can silently hit a stale or
-  computed endpoint, producing misleading failure output.
-- **Next step**: Error and prompt for an alias, or track and use the most recent
-  alias explicitly.
-
-### Low
-
-#### [L] VM `deploy --destroy` runs Terraform destroy with no confirmation
-
-- **Surfaced by**: 2026-06-11 Cosmos VM teardown.
-- **Status**: Fixed.
-- **Current issue**: For Terraform-managed (`--runtime vm`) aliases,
-  `cosmos deploy --destroy` proceeds straight to `terraform destroy` with no
-  confirmation prompt; `--yes` only gates `--replace`, so a mistyped `-n` alias
-  is destroyed immediately. BYOVM destroy is non-destructive (it only
-  unregisters the alias). The same unguarded VM-destroy path likely exists in the
-  other workbench deploy commands (groot, fiftyone, isaac-lab).
-- **Next step**: Prompt before VM destroy unless `--yes` (or `--dry-run`) is
-  passed, and apply the same guard consistently across the workbench tools.
-
 ## Resolved (recent)
 
+- 2026-07-22 - FIXME Active bookkeeping: removed seven stale `Status: Fixed`
+  entries that were already covered under Resolved (Isaac Lab→LeRobot
+  formatter, Isaac Lab train trajectories/`list-tasks`, GR00T BYOVM S3
+  inheritance, Cosmos infer S3 AccessDenied, Cosmos auto-serve after deploy,
+  `<tool> status` without `-p`/`-n`, VM `deploy --destroy` confirmation).
+- 2026-07-22 - LeRobot serverless train/profile-train fail fast on empty S3
+  credentials via `require_s3_credentials` before `create_job` (parity with
+  Cosmos/FiftyOne/Genesis/GR00T/Isaac Lab/SONIC).
+- 2026-07-22 - `npa configure` prompts for a project alias (default = region)
+  and echoes `-p <alias>` usage after writing `~/.npa/config.yaml`.
 - 2026-07-21 - FiftyOne BYOVM auto health fallback now spends a short public
   budget (`FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES = 3`, ~21s) before falling back
   to SSH-local readiness (`npa/src/npa/cli/fiftyone/__init__.py`).
@@ -143,13 +81,13 @@ work lives).
   `sha256:9ae0ca513a7cf03af3562c91a6e811cd2b68abe168e36899d37f7cb4cb4ebaaa`). The
   superseded broken `0.1.1-genuine-sm120` tag was deleted from the registry.
 - 2026-07-19 - Remote install/SSH failures now surface a compact, actionable
-  error (step label + exit code + stderr tail) with the full command and output
-  behind `NPA_DEBUG=1`. Root-caused in `SSHClient.run_or_raise`
-  (`npa.clients.ssh.format_remote_failure`) and the FiftyOne clone; retires the
-  full-script dumps across Cosmos install/serve, FiftyOne, GR00T, Isaac Lab,
-  LeRobot, and Genesis. Hiding the command by default also stops leaking the
-  inlined docker-login `registry_token`. Original FIXME entry: `[M] Cosmos deploy
-  install failure dumps the full install script and traceback`.
+  error (step label + exit code + stderr tail) with the full remote stderr
+  behind `NPA_DEBUG=1` (the failing command is never echoed, so inlined
+  registry tokens stay out of operator logs). Root-caused in
+  `SSHClient.run_or_raise` (`npa.clients.ssh.format_remote_failure`) and the
+  FiftyOne clone; retires the full-script dumps across Cosmos install/serve,
+  FiftyOne, GR00T, Isaac Lab, LeRobot, and Genesis. Original FIXME entry:
+  `[M] Cosmos deploy install failure dumps the full install script and traceback`.
 - 2026-07-19 - Isaac Lab -> LeRobot formatter parameterized via
   `LeRobotFeatureSpec` with a G1 default spec (decoupled state/action dims).
 - 2026-07-19 - `npa workbench isaac-lab list-tasks` (remote gym registry) and

@@ -1,11 +1,7 @@
-fastapi==0.136.1
-uvicorn[standard]==0.38.0
-lancedb==0.30.2
-pyarrow==23.0.1
-pillow==12.2.0
-boto3==1.42.9
-pydantic==2.13.4
+# Unique to npa-detection-training: the detector train/eval torch extensions and
+# COCO metrics. The shared FastAPI + lancedb + pyarrow + pillow + boto3 +
+# pydantic + torch/CUDA stack is provided by the npa-workbench-cuda-base image
+# this Dockerfile builds on.
+torchvision==0.27.1
 torchmetrics==1.8.2
 pycocotools==2.0.10
-torch==2.12.1
-torchvision==0.27.1

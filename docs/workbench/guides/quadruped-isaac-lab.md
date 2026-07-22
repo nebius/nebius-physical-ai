@@ -96,4 +96,4 @@ npa workbench isaac-lab eval \
 - Cookbook: [Isaac Lab BYOF](../cookbooks/byof-isaac-lab/README.md)
 - Workflows: `npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml`,
   `isaac-lab-rl-sweep.yaml`; runner `npa/scripts/run_isaac_lab_rl.py`
-- Skill: `.agents/skills/workbench/isaac-lab/SKILL.md`
+- Skill: `skills/tools/isaac-lab/SKILL.md`

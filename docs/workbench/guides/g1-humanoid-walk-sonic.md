@@ -113,4 +113,4 @@ plan = sonic.materialize_workflow(
 
 - Cookbook: [SONIC G1 Fine-Tune to MuJoCo MVP](../cookbooks/sonic-mvp-g1-mujoco.md)
 - Workflow YAML: `npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml`
-- Skill: `.agents/skills/workbench/sonic/SKILL.md`
+- Skill: `skills/tools/sonic/SKILL.md`

@@ -19,7 +19,7 @@ command you'll later point at a real VLM backend.
 ## Fast path
 
 Run the benchmark against the shipped sample set with the offline `stub`
-backend:
+backend (from the repository root — the `--dataset` path is relative to it):
 
 ```bash
 npa workbench vlm-eval benchmark \
@@ -75,4 +75,4 @@ credentials — the report shape never changes.
 
 - Cookbook: [VLM-Eval Loop Runbook](../cookbooks/vlm-eval-loop-runbook.md)
 - Workflow YAML: `npa/src/npa/workflows/skypilot/vlm-eval.yaml`
-- Skill: `.agents/skills/workbench/vlm-eval/SKILL.md`
+- Used as the scorer inside the sim-to-real loop: `skills/workflows/sim-to-real/SKILL.md`

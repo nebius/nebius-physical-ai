@@ -1,6 +1,6 @@
 # Sim-To-Real H100 Quickstart
 
-> **Production loop:** The maintained 13-stage VLM→RL pipeline is documented under
+> **Production loop:** The maintained 14-stage VLM→RL pipeline is documented under
 > [guides/sim2real-workflow.md](guides/sim2real-workflow.md) with data types in
 > [guides/sim2real-data-contracts.md](guides/sim2real-data-contracts.md).
 > This page covers the **legacy** `sim_to_real` H100 proof path only.

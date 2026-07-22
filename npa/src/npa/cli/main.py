@@ -536,13 +536,26 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     }
     wrote_config = False
     if project_id or tenant_id:
-        alias = region or "default"
+        # Local name for later `-p <alias>` flags. Default to the region so a
+        # first-time configure without an explicit choice still resolves.
+        alias_default = region or "default"
+        alias = (
+            ask(
+                "Project alias (local name for -p)",
+                default=alias_default,
+            )
+            or alias_default
+        )
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True
 
     typer.echo(f"\nWrote {credentials_path} (chmod 600).")
     if wrote_config:
-        typer.echo(f"Wrote {CONFIG_PATH}.")
+        typer.echo(
+            f"Wrote {CONFIG_PATH} (project alias: {alias}). "
+            f"Pass `-p {alias}` to workbench commands, or omit `-p` to use this "
+            "default."
+        )
     else:
         typer.echo(
             "Skipped ~/.npa/config.yaml: provide a Nebius project id to write a "

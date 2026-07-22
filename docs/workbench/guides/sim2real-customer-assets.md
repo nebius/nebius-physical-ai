@@ -193,7 +193,7 @@ registry-qualified Cosmos Transfer image.
 
 ## S3 layout
 
-See [sim2real-data-contracts.md § S3 layout](./sim2real-data-contracts.md#artifact-paths).
+See [sim2real-data-contracts.md § S3 layout](./sim2real-data-contracts.md#s3-layout).
 
 ---
 
@@ -231,17 +231,16 @@ Stage 2 asset materialization + `POLICY_IMAGE` / augment placeholder fallbacks.
 
 ## Preflight
 
-Validate trigger path, optional asset URIs, and image seams before submit:
+Validate credentials before submit, then confirm trigger/asset URIs resolve in
+object storage:
 
 ```bash
-npa workbench health sim2real \
-  --s3-bucket <bucket> \
-  --s3-endpoint <your-s3-compatible-endpoint> \
-  --trigger-dataset-uri "s3://<bucket>/sim2real-triggers/<run-id>/lerobot-<task>/" \
-  --policy-image "<registry>/npa-reference-policy:0.1.2"
+npa workbench health preflight
+# Confirm the trigger dataset (and optional BYO asset URIs) exist under your bucket.
 ```
 
-Add `--assets-uri` and `--scene-spec-uri` when testing BYO scene wiring.
+See [sim2real-operate](../../../skills/workflows/sim2real-operate/SKILL.md) for
+cluster-side preflight (kube context, registry secret, gated HF models).
 
 ---
 

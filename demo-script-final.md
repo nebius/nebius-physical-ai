@@ -1,5 +1,11 @@
 # Nebius Physical AI Workbench Demo Script
 
+> **Legacy / unmaintained.** This root-level demo script predates the current
+> workbench flow and references retired commands. For the maintained
+> walkthrough see
+> [docs/workbench/guides/sim2real-demo-script-10min.md](docs/workbench/guides/sim2real-demo-script-10min.md)
+> and [docs/quickstart.md](docs/quickstart.md). Kept for historical context only.
+
 ## Pre-demo setup
 
 ### Option A: One command (default teacher)

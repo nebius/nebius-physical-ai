@@ -103,4 +103,4 @@ the data came from a real robot, a teleop session, or a simulator.
 
 - LeRobot CLI: `npa workbench lerobot train | eval | serve | infer | list-checkpoints | benchmark`
 - Reachy 2 in LeRobot: https://huggingface.co/docs/lerobot/main/en/reachy2
-- Skill: `.agents/skills/workbench/lerobot/SKILL.md`
+- Skill: `skills/tools/lerobot/SKILL.md`

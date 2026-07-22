@@ -234,7 +234,7 @@ def run_command(
     ),
     output_json: bool = typer.Option(False, "--output-json", help="Print only JSON."),
 ) -> None:
-    """Run the full 13-stage Sim2Real workflow."""
+    """Run the full 14-stage Sim2Real workflow."""
 
     config = build_config_from_env(
         run_id=run_id,

@@ -91,15 +91,15 @@ SUCCESS_THRESHOLD=0.75
 
 **Before submit:** complete [Hugging Face model access](#hugging-face-model-access-self-hosted-workbench) — accept `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason2-2B`, and `nvidia/Cosmos-Transfer2.5-2B`, put `HF_TOKEN` in `~/.npa/credentials.yaml`, and ensure cluster secret `hf-ngc-tokens` is present.
 
-Run preflight first (recommended):
+Run credential preflight first (recommended):
 
 ```bash
-npa workbench health sim2real \
-  --s3-bucket <your-bucket> \
-  --s3-endpoint <your-endpoint> \
-  --k8s-context <your-k8s-context> \
-  --k8s-kubeconfig ~/.npa/clusters/<your-k8s-context>/kubeconfig
+npa workbench health preflight
 ```
+
+For cluster/config coherence before a staged submit, follow the operator checks
+in [sim2real-operate](../../../skills/workflows/sim2real-operate/SKILL.md)
+(`kubectl` context, registry pull secret, HF gated-model access).
 
 Then submit:
 
@@ -195,7 +195,7 @@ that owns the token.
 huggingface-cli whoami
 # Optional: probe a repo you accepted
 python -c "from huggingface_hub import hf_hub_download; hf_hub_download('nvidia/Cosmos-Reason2-8B', 'config.json')"
-npa workbench health sim2real --checks tokens,registry,cluster
+npa workbench health preflight --checks hf,ngc,s3,token_factory
 ```
 
 If a sibling Job fails with `GatedRepoError` or `403`, re-open the repo page,
@@ -447,7 +447,7 @@ Asset handoff and scorecard: [sim2real-customer-assets.md](./sim2real-customer-a
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_sim2real_loop.py -q
-npa workbench health sim2real --checks config,coherence
+npa workbench health preflight
 ```
 
 ## Upload behavior (`--upload-artifacts`)
