@@ -55,6 +55,20 @@ def test_lancedb_deploy_vm_requires_storage_path() -> None:
     assert "--storage-path is required" in result.output
 
 
+def test_lancedb_deploy_vm_blocked_message_is_actionable() -> None:
+    result = runner.invoke(
+        lancedb_app,
+        ["deploy", "--runtime", "vm", "--storage-path", "/tmp/lancedb-smoke"],
+    )
+
+    assert result.exit_code == 1
+    normalized = " ".join(result.output.split())
+    assert "not available from this command yet" in normalized
+    assert "--runtime container" in normalized
+    # No internal jargon leaks to users.
+    assert "run allowlist" not in normalized
+
+
 def test_lancedb_deploy_cloud_requires_endpoint_and_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LANCEDB_API_KEY", raising=False)
 
