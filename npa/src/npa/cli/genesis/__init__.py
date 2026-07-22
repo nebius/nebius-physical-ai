@@ -119,6 +119,31 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def _genesis_local_import(module: str, *names: str) -> tuple[Any, ...]:
+    """Import names from ``npa.genesis.<module>`` for local execution.
+
+    Genesis submodules import ``torch`` at module load, so a plain
+    ``pip install -e npa`` (no GPU extra) raises a bare
+    ``ModuleNotFoundError: No module named 'torch'``. Turn that into an
+    actionable hint that also points at the remote and serverless paths.
+    """
+
+    import importlib
+
+    try:
+        mod = importlib.import_module(f"npa.genesis.{module}")
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "torch"
+        _fail(
+            f"Genesis local commands need the GPU extra (missing '{missing}'). "
+            'Install it with: pip install -e "npa[genesis]" (adds torch + Genesis). '
+            "To run on a remote workbench VM instead, pass -p <project> -n <workbench>; "
+            "for a no-GPU serverless smoke, add --runtime serverless --project-id <id>."
+        )
+        raise  # unreachable: _fail raises typer.Exit
+    return tuple(getattr(mod, name) for name in names)
+
+
 def _output(data: dict[str, Any], fmt: OutputFormat) -> None:
     if fmt == OutputFormat.json:
         typer.echo(json.dumps(data, indent=2))
@@ -866,7 +891,7 @@ def _split_genesis_training_overrides(
 def _ppo_config_from_overrides(overrides: dict[str, Any]):
     if not overrides:
         return None
-    from npa.genesis.train_teacher import PPOConfig
+    (PPOConfig,) = _genesis_local_import("train_teacher", "PPOConfig")
 
     config = PPOConfig()
     for key, value in overrides.items():
@@ -998,7 +1023,9 @@ def train_teacher_cmd(
     console.print(f"  output: {output}")
     console.print(f"  device: {device}")
 
-    from npa.genesis.train_teacher import TrainingError, train_teacher
+    TrainingError, train_teacher = _genesis_local_import(
+        "train_teacher", "TrainingError", "train_teacher"
+    )
 
     try:
         result = train_teacher(
@@ -1091,7 +1118,9 @@ def generate_demos_cmd(
         console.print(f"  gpu_count={configured_gpu_count}  mode=multiprocess")
     console.print(f"  output: {target_output}")
 
-    from npa.genesis.generate_demos import DemoGenerationError, generate_demos
+    DemoGenerationError, generate_demos = _genesis_local_import(
+        "generate_demos", "DemoGenerationError", "generate_demos"
+    )
 
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
     local_output = Path(target_output)
@@ -1192,7 +1221,9 @@ def eval_teacher_cmd(
     console.print(f"  checkpoint: {ckpt}")
     console.print(f"  n_envs={n_envs}  seed={seed}")
 
-    from npa.genesis.generate_demos import DemoGenerationError, eval_teacher
+    DemoGenerationError, eval_teacher = _genesis_local_import(
+        "generate_demos", "DemoGenerationError", "eval_teacher"
+    )
 
     try:
         rate = eval_teacher(
@@ -1276,7 +1307,9 @@ def eval_student_cmd(
     console.print(f"  n_envs={n_envs}  n_episodes={n_episodes}")
     console.print(f"  output: {output}")
 
-    from npa.genesis.eval_student import EvalError, eval_student
+    EvalError, eval_student = _genesis_local_import(
+        "eval_student", "EvalError", "eval_student"
+    )
 
     tsr = teacher_success_rate if teacher_success_rate >= 0.0 else None
     try:
@@ -1359,7 +1392,9 @@ def diagnose_cmd(
     if env_overrides:
         console.print(f"  overrides: {env_overrides}")
 
-    from npa.genesis.diagnose import DiagnoseError, diagnose_teacher, save_diagnosis
+    DiagnoseError, diagnose_teacher, save_diagnosis = _genesis_local_import(
+        "diagnose", "DiagnoseError", "diagnose_teacher", "save_diagnosis"
+    )
 
     try:
         result = diagnose_teacher(
@@ -1536,7 +1571,9 @@ def tune_cmd(
         console.print(f"  overrides: {env_overrides}")
     console.print(f"  output: {output}")
 
-    from npa.genesis.tune import TuneError, tune_teacher
+    TuneError, tune_teacher = _genesis_local_import(
+        "tune", "TuneError", "tune_teacher"
+    )
 
     try:
         result = tune_teacher(

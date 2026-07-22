@@ -86,14 +86,29 @@ class RunContext:
         }
 
 
+def _resolve_assume(spec: NpaWorkflowSpec, assume_decision: str | None) -> str:
+    """Normalize the planning branch assumption.
+
+    Only loop-free specs get an empty assumption. Specs with dynamic transitions
+    still default to ``loop_back`` so their loops expand; loop-free specs no
+    longer report a spurious ``loop_back_to_inner_loop``.
+    """
+
+    raw_assume = (assume_decision or "").strip() or str(
+        spec.config.get("plan_assume_decision") or ""
+    )
+    if not raw_assume and any(state.transitions for state in spec.states.values()):
+        raw_assume = "loop_back"
+    return normalize_decision(raw_assume)
+
+
 def build_plan(
     spec: NpaWorkflowSpec,
     *,
     run_id: str = "plan-run",
     assume_decision: str = "",
 ) -> ExecutionPlan:
-    raw_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
-    assume = normalize_decision(raw_assume)
+    assume = _resolve_assume(spec, assume_decision)
     ctx = _make_context(spec, run_id=run_id)
     plan = ExecutionPlan(
         workflow=spec.name,
@@ -118,8 +133,7 @@ def run_workflow(
     artifact_checker: Any | None = None,
     state_store: RunStateStore | None = None,
 ) -> dict[str, Any]:
-    raw_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
-    assume = normalize_decision(raw_assume)
+    assume = _resolve_assume(spec, assume_decision)
     ctx = _make_context(spec, run_id=run_id)
     store = state_store
     if store is None and persist_state:

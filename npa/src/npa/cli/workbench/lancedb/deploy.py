@@ -271,7 +271,12 @@ def deploy_cmd(
             "status": "blocked",
             "storage_path": resolved_storage,
             "image": image_ref,
-            "reason": "VM/BYOVM app deploy needs Workbench parent registration outside this run allowlist.",
+            "reason": (
+                "LanceDB VM/BYOVM app deploy is not available from this command yet: "
+                "the wrapper must be registered through the shared Workbench deploy "
+                "path. Use --runtime container for a local server, --runtime cloud for "
+                "LanceDB Cloud, or pass --dry-run to preview the plan."
+            ),
             "skip_infra": skip_infra,
             "skip_app": skip_app,
             "dry_run": dry_run,
