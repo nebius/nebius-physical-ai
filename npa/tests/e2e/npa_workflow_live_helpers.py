@@ -128,23 +128,27 @@ def seed_live_workflow_inputs(
         )
         return
 
-    if spec_name == "token-factory-cosmos-reason.yaml":
+    if spec_name in ("token-factory-cosmos-reason.yaml", "tokenfactory-cosmos-gate.yaml"):
         try:
             from PIL import Image, ImageDraw
         except ImportError as exc:  # pragma: no cover
-            pytest.fail(f"Pillow required to seed reason fixtures: {exc}")
-        image = Image.new("RGB", (320, 240), (200, 200, 200))
-        draw = ImageDraw.Draw(image)
-        draw.rectangle([0, 180, 320, 240], fill=(120, 90, 60))
-        draw.rectangle([120, 100, 200, 180], fill=(180, 40, 40))
-        buf = BytesIO()
-        image.save(buf, format="PNG")
-        client.put_object(
-            Bucket=bucket,
-            Key=f"{marker}/scene/frame_000.png",
-            Body=buf.getvalue(),
-            ContentType="image/png",
-        )
+            pytest.fail(f"Pillow required to seed scene fixtures: {exc}")
+        # The cosmos-gate loop reasons over several scene frames before it can
+        # gate; seed a small batch so the reason-scene stage has real inputs.
+        frame_count = 1 if spec_name == "token-factory-cosmos-reason.yaml" else 3
+        for index in range(frame_count):
+            image = Image.new("RGB", (320, 240), (200, 200, 200))
+            draw = ImageDraw.Draw(image)
+            draw.rectangle([0, 180, 320, 240], fill=(120, 90, 60))
+            draw.rectangle([120 + index * 10, 100, 200 + index * 10, 180], fill=(180, 40, 40))
+            buf = BytesIO()
+            image.save(buf, format="PNG")
+            client.put_object(
+                Bucket=bucket,
+                Key=f"{marker}/scene/frame_{index:03d}.png",
+                Body=buf.getvalue(),
+                ContentType="image/png",
+            )
         return
 
 
