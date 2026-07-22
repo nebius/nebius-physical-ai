@@ -31,7 +31,8 @@
 # Where to set values:
 #   1. Persistent defaults — `npa configure` writes ~/.npa/config.yaml + credentials.yaml
 #   2. Per-machine operator shell — ~/.npa/sim2real-operator.env (source before submit)
-#   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE` or --env-file
+#   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE`, or
+#      source an env overlay (e.g. quickstart.env) into the shell before submit
 #   4. Direct K8s submit — <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh reads
 #      S3_BUCKET + NPA_SIM2REAL_TRIGGER_DATASET_URI from the environment
 #
@@ -226,7 +227,7 @@ run: |
     --policy-image "${POLICY_IMAGE:-}"
     --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.1}"
     --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}"
-    --eval-image "${EVAL_IMAGE:-npa-loop-eval:0.1.2-genuine-sm120}"
+    --eval-image "${EVAL_IMAGE:-npa-loop-eval:0.1.3-genuine-sm120}"
     --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}"
     --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
     --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"

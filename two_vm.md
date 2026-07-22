@@ -1,5 +1,11 @@
 # Genesis Distillation Pipeline — Session State
 
+> **Legacy / unmaintained.** This root-level file captures a one-off two-VM
+> session state and is not a current setup guide. For platform setup see
+> [docs/quickstart.md](docs/quickstart.md) and
+> [docs/workbench/getting-started.md](docs/workbench/getting-started.md). Kept
+> for historical context only.
+
 ## VMs
 
 | Alias | GPU | IP | SSH | Status |

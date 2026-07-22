@@ -147,12 +147,56 @@ class WorkbenchConfig:
     gpu_count: int = 0
     detected_gpu_count: int = 0
     cuda_visible_devices: str = ""
+    workbench_type: str = ""
     serverless: ServerlessConfig = field(default_factory=ServerlessConfig)
     serverless_job: ServerlessJobConfig = field(default_factory=ServerlessJobConfig)
 
 
 class ConfigError(Exception):
     pass
+
+
+# Accepted ``workbench_type`` values per tool. A workbench alias written by a
+# newer client records the tool it belongs to; this lets a tool refuse to act
+# on another tool's alias (e.g. ``npa workbench cosmos status`` on a LeRobot
+# alias) instead of SSHing in and mis-reporting a foreign VM.
+WORKBENCH_TYPE_ALIASES: dict[str, set[str]] = {
+    "cosmos": {"cosmos"},
+    "fiftyone": {"fiftyone"},
+    "genesis": {"genesis"},
+    "groot": {"groot", "groot-container"},
+    "isaac-lab": {"isaac-lab"},
+    "lancedb": {"lancedb"},
+    "lerobot": {"lerobot", "lerobot-container"},
+    "sonic": {"sonic", "sonic-container"},
+}
+
+
+def _guard_workbench_type(
+    wb: dict[str, Any],
+    expected: str | None,
+    *,
+    name: str,
+) -> None:
+    """Raise if a resolved alias belongs to a different tool.
+
+    Only enforced when the entry records a ``workbench_type`` (aliases written
+    by older clients omit it, so those stay permissive to avoid false
+    negatives). Unknown ``expected`` tools are treated as no-ops.
+    """
+    if not expected:
+        return
+    accepted = WORKBENCH_TYPE_ALIASES.get(expected)
+    if not accepted:
+        return
+    actual = str(wb.get("workbench_type", "") or "").strip().lower()
+    if not actual or actual in accepted:
+        return
+    raise ConfigError(
+        f"Workbench '{name}' is a '{actual}' workbench, not {expected}. "
+        f"Use the '{actual}' commands for it, or pass -n/--name to select a "
+        f"{expected} workbench."
+    )
 
 
 # ── YAML helpers ─────────────────────────────────────────────────────────
@@ -407,7 +451,13 @@ def resolve_container_registry(project: str | None = None) -> str:
     if isinstance(proj, dict):
         value = str(proj.get("container_registry", "") or "")
     if not value:
-        value = os.environ.get("NPA_REGISTRY", "")
+        # Honor both NPA_REGISTRY and NPA_REGISTRY_ID here, matching
+        # deploy.images.primary_container_registry, so exporting only
+        # NPA_REGISTRY_ID does not silently fall back to the default registry
+        # on tool-deploy paths (lerobot/fiftyone/sonic/detection-training/sim2real).
+        from npa.deploy.images import registry_from_env
+
+        value = registry_from_env()
     if not value:
         value = str(yml.get("container_registry", "") or "")
     return value.rstrip("/") if value else DEFAULT_CONTAINER_REGISTRY
@@ -689,6 +739,7 @@ def resolve_config(
     checkpoint_bucket: str | None = None,
     storage_endpoint_url: str | None = None,
     hf_token: str | None = None,
+    expected_workbench_type: str | None = None,
 ) -> WorkbenchConfig:
     """Resolve configuration with precedence: explicit args > env > credentials > yaml."""
     yml = _load_yaml()
@@ -697,6 +748,7 @@ def resolve_config(
     credentials = resolve_credentials()
     resolved_project = _resolved_project_name(yml, project)
     resolved_name = _resolved_workbench_name(proj, name, yml)
+    _guard_workbench_type(wb, expected_workbench_type, name=resolved_name)
 
     def pick(cli_val: str | None, env_key: str, *yaml_path: str) -> str:
         if cli_val:
@@ -751,6 +803,7 @@ def resolve_config(
     gpu_count_raw = pick(None, "", "gpu_count")
     detected_gpu_count_raw = pick(None, "", "detected_gpu_count")
     cuda_visible_devices = pick(None, "", "cuda_visible_devices")
+    workbench_type = pick(None, "", "workbench_type")
 
     if runtime != "serverless":
         _require(ep, "Workbench endpoint", "NPA_WORKBENCH_ENDPOINT")
@@ -786,6 +839,7 @@ def resolve_config(
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
         detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
         cuda_visible_devices=cuda_visible_devices,
+        workbench_type=workbench_type,
         serverless=serverless,
         serverless_job=serverless_job,
     )
@@ -798,6 +852,7 @@ def resolve_ssh_config(
     ssh_host: str | None = None,
     ssh_user: str | None = None,
     ssh_key: str | None = None,
+    expected_workbench_type: str | None = None,
 ) -> WorkbenchConfig:
     """Resolve workbench config requiring only SSH fields (no endpoint).
 
@@ -810,6 +865,7 @@ def resolve_ssh_config(
     credentials = resolve_credentials()
     resolved_project = _resolved_project_name(yml, project)
     resolved_name = _resolved_workbench_name(proj, name, yml)
+    _guard_workbench_type(wb, expected_workbench_type, name=resolved_name)
 
     def pick(cli_val: str | None, env_key: str, *yaml_path: str) -> str:
         if cli_val:
@@ -859,6 +915,7 @@ def resolve_ssh_config(
     gpu_count_raw = pick(None, "", "gpu_count")
     detected_gpu_count_raw = pick(None, "", "detected_gpu_count")
     cuda_visible_devices = pick(None, "", "cuda_visible_devices")
+    workbench_type = pick(None, "", "workbench_type")
 
     _require(s_host, "SSH host", "NPA_SSH_HOST")
     _require(s_user, "SSH user", "NPA_SSH_USER")
@@ -891,6 +948,7 @@ def resolve_ssh_config(
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
         detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
         cuda_visible_devices=cuda_visible_devices,
+        workbench_type=workbench_type,
     )
 
 

@@ -60,12 +60,18 @@ SUPPORTED_TOOL_VERSIONS = {
     "envgen": "0.1.2",
     "reference-policy": "0.1.2",
     "lerobot-vlm-rl": "0.1.1",
-    # 0.1.2-genuine-sm120 was rebuilt without working Blackwell (sm_120) Genesis
-    # kernels and crashes heldout_eval on RTX PRO 6000 with "CUDA error: no kernel
-    # image is available for execution on the device". 0.1.1 is the proven-good
-    # build (matches sim2real.constants.DEFAULT_EVAL_TAG). Re-bump only after a
-    # 0.1.3 rebuild restores sm_120 Genesis kernels.
-    "loop-eval": "0.1.1-genuine-sm120",
+    # 0.1.3-genuine-sm120 is the canonical pin (matches
+    # sim2real.constants.DEFAULT_EVAL_TAG). Rebuilt+pushed 2026-07-21 from
+    # npa-genesis:0.4.6-sm80-sm90-sm120-latest (torch 2.9.0+cu130;
+    # torch._C._cuda_getArchFlags() reports sm_75..sm_120 + compute_120). It
+    # supersedes 0.1.1-genuine-sm120, whose bundled torch was 2.6.0+cu124
+    # (sm_50..sm_90 only) and crashed heldout_eval on RTX PRO 6000 (sm_120) with
+    # "no kernel image is available for execution on the device", and
+    # 0.1.2-genuine-sm120 (never pushed to the registry). Validated end-to-end on
+    # an RTX PRO 6000 node (sm_120) 2026-07-21: torch matmul + gs.init(gpu) + a
+    # FrankaPickPlaceEnv step, no "no kernel image" error. 0.1.1 has been deleted
+    # from the registry.
+    "loop-eval": "0.1.3-genuine-sm120",
     "rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
@@ -197,15 +203,29 @@ def container_image_for_tool(
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
-def primary_container_registry() -> str:
-    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+def registry_from_id(registry_id: str) -> str:
+    """Build a full registry locator from a bare Nebius registry id.
+
+    A bare id (``NPA_REGISTRY_ID``) is expanded against the primary region so it
+    resolves the same way on every registry path (see ``resolve_container_registry``).
+    """
+    return f"cr.eu-north1.nebius.cloud/{registry_id.strip()}"
+
+
+def registry_from_env() -> str:
+    """Return the registry from NPA_REGISTRY, then NPA_REGISTRY_ID, else ""."""
     explicit = os.environ.get("NPA_REGISTRY", "").strip()
     if explicit:
         return explicit
     registry_id = os.environ.get("NPA_REGISTRY_ID", "").strip()
     if registry_id:
-        return f"cr.eu-north1.nebius.cloud/{registry_id}"
-    return DEFAULT_CONTAINER_REGISTRY
+        return registry_from_id(registry_id)
+    return ""
+
+
+def primary_container_registry() -> str:
+    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+    return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
 _primary_registry = primary_container_registry

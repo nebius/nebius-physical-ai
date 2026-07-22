@@ -98,7 +98,9 @@ fi
 sudo systemctl restart docker
 sudo usermod -aG docker {shlex.quote(ssh_user)} || true
 """
-    ssh.run_or_raise(f"bash -lc {shlex.quote(install_cmd)}")
+    ssh.run_or_raise(
+        f"bash -lc {shlex.quote(install_cmd)}", label="Container runtime install"
+    )
 
 
 def write_remote_env_file(
@@ -217,9 +219,11 @@ def deploy_workbench_container(
             f"printf %s {shlex.quote(registry_token)} | "
             f"sudo docker login {shlex.quote(registry)} -u iam --password-stdin || true"
         )
-        ssh.run_or_raise(f"bash -lc {shlex.quote(login_cmd)}")
+        ssh.run_or_raise(f"bash -lc {shlex.quote(login_cmd)}", label="Docker registry login")
 
-    ssh.run_or_raise(f"sudo docker pull {shlex.quote(image_ref)}")
+    ssh.run_or_raise(
+        f"sudo docker pull {shlex.quote(image_ref)}", label="Docker image pull"
+    )
 
     gpu_flag = "--gpus all " if gpu else ""
     env_flag = f"--env-file {shlex.quote(env_file)} " if env_file else ""
@@ -399,7 +403,9 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 sudo usermod -aG docker {shlex.quote(ssh_user)} || true
 """
-    ssh.run_or_raise(f"bash -lc {shlex.quote(install_cmd)}")
+    ssh.run_or_raise(
+        f"bash -lc {shlex.quote(install_cmd)}", label="LeRobot runtime install"
+    )
 
     if registry_token:
         registry = image_ref.split("/", 1)[0]
@@ -407,9 +413,11 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
             f"printf %s {shlex.quote(registry_token)} | "
             f"sudo docker login {shlex.quote(registry)} -u iam --password-stdin || true"
         )
-        ssh.run_or_raise(f"bash -lc {shlex.quote(login_cmd)}")
+        ssh.run_or_raise(f"bash -lc {shlex.quote(login_cmd)}", label="Docker registry login")
 
-    ssh.run_or_raise(f"sudo docker pull {shlex.quote(image_ref)}")
+    ssh.run_or_raise(
+        f"sudo docker pull {shlex.quote(image_ref)}", label="Docker image pull"
+    )
 
     env_args = {
         "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),

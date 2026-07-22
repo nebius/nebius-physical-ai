@@ -15,9 +15,15 @@ from typing import Optional
 import typer
 
 from npa.clients.credentials import load_credentials
+from npa.clients.huggingface import validate_hf_access
 from npa.clients.kube import run_kubectl
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
+from npa.workflows.credential_preflight import (
+    CREDENTIAL_CHECKS,
+    CredentialProbes,
+    run_credential_preflight,
+)
 from npa.workflows.sim2real_health import (
     ALL_CHECKS,
     DoctorProbes,
@@ -26,6 +32,7 @@ from npa.workflows.sim2real_health import (
     PASS,
     SKIP,
     WARN,
+    format_check_report,
     has_failure,
     run_preflight,
 )
@@ -74,6 +81,80 @@ def _kube_runner_factory(context: str, kubeconfig: str):
         )
 
     return _run
+
+
+def _emit_results(results, *, output_json: bool) -> None:
+    """Render a list of CheckResult objects as text or JSON."""
+
+    typer.echo(format_check_report(results, output_json=output_json))
+
+
+def _token_factory_verifier() -> list[str]:
+    """Live Token Factory auth probe: resolve the key and list models."""
+
+    from npa.clients.token_factory import TokenFactoryClient, resolve_config
+
+    config = resolve_config(require_api_key=True)
+    return TokenFactoryClient(config=config).list_models()
+
+
+@app.command("preflight")
+def preflight_command(
+    checks: str = typer.Option(
+        ",".join(CREDENTIAL_CHECKS),
+        "--checks",
+        help=(
+            "Comma-separated checks to run, or 'all'. "
+            f"Choices: all, {', '.join(CREDENTIAL_CHECKS)}."
+        ),
+    ),
+    offline: bool = typer.Option(
+        False,
+        "--offline",
+        help="Skip live network probes (HF/S3/Token Factory); only check presence.",
+    ),
+    warn_only: bool = typer.Option(
+        False, "--warn-only", help="Exit 0 even when a check fails."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+) -> None:
+    """Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job.
+
+    A single PASS/WARN/FAIL/SKIP report over the credentials nearly every
+    workbench tool needs, so cold-start credential gaps surface here instead of
+    mid-run. Exits non-zero on any FAIL unless ``--warn-only`` is passed.
+    """
+
+    selected = [item.strip() for item in checks.split(",") if item.strip()]
+    if "all" in selected:
+        selected = list(CREDENTIAL_CHECKS)
+    unknown = [item for item in selected if item not in CREDENTIAL_CHECKS]
+    if unknown:
+        raise typer.BadParameter(
+            f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(CREDENTIAL_CHECKS)}."
+        )
+
+    credentials = load_credentials()
+    if offline:
+        probes = CredentialProbes()
+    else:
+        probes = CredentialProbes(
+            hf_validator=validate_hf_access,
+            # Probe with the resolved credentials (endpoint/keys often live in
+            # ~/.npa rather than the process env), not env-only defaults.
+            s3_client_factory=lambda: StorageClient.from_environment(
+                endpoint_url=credentials.s3_endpoint,
+                aws_access_key_id=credentials.s3_access_key_id,
+                aws_secret_access_key=credentials.s3_secret_access_key,
+            ),
+            token_factory_verifier=_token_factory_verifier,
+        )
+
+    results = run_credential_preflight(credentials, probes=probes, checks=selected)
+    _emit_results(results, output_json=output_json)
+
+    if has_failure(results) and not warn_only:
+        raise typer.Exit(code=1)
 
 
 @app.command("sim2real", hidden=True)

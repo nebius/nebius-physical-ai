@@ -63,8 +63,9 @@ def _run_container(
     replace: bool,
     dry_run: bool,
 ) -> str:
+    s3_env = storage_env()
     env = {
-        **storage_env(),
+        **s3_env,
         "LANCEDB_STORAGE_PATH": storage_path,
         "LANCEDB_PORT": str(port),
         "LANCEDB_AUTH_MODE": auth_mode,
@@ -74,6 +75,18 @@ def _run_container(
         endpoint_url = storage_endpoint_url(storage_endpoint)
         env["AWS_ENDPOINT_URL"] = endpoint_url
         env["NEBIUS_S3_ENDPOINT"] = endpoint_url
+    # An s3:// storage path needs live credentials; storage_env() silently drops
+    # empty values, so a missing key would only fail once the container tries to
+    # reach the bucket. Catch it up front.
+    if storage_path.startswith("s3://"):
+        has_endpoint = bool(env.get("AWS_ENDPOINT_URL"))
+        if not env.get("AWS_ACCESS_KEY_ID") or not env.get("AWS_SECRET_ACCESS_KEY") or not has_endpoint:
+            fail(
+                "LanceDB storage path "
+                f"{storage_path} is on S3 but S3 credentials are incomplete. Run "
+                "`npa configure` or export AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, "
+                "and an endpoint (AWS_ENDPOINT_URL or --storage-endpoint) before deploying."
+            )
     if auth_mode == "token" and not env["LANCEDB_TOKEN"]:
         fail(f"{token_env} is required when --auth-mode token")
 
@@ -271,7 +284,12 @@ def deploy_cmd(
             "status": "blocked",
             "storage_path": resolved_storage,
             "image": image_ref,
-            "reason": "VM/BYOVM app deploy needs Workbench parent registration outside this run allowlist.",
+            "reason": (
+                "LanceDB VM/BYOVM app deploy is not available from this command yet: "
+                "the wrapper must be registered through the shared Workbench deploy "
+                "path. Use --runtime container for a local server, --runtime cloud for "
+                "LanceDB Cloud, or pass --dry-run to preview the plan."
+            ),
             "skip_infra": skip_infra,
             "skip_app": skip_app,
             "dry_run": dry_run,

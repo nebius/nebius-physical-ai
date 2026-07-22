@@ -124,9 +124,11 @@ from npa.deploy.safety import (
     format_replacement_required_error,
 )
 from npa.serverless_common import (
+    MissingS3CredentialsError,
     SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
+    require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
     split_serverless_env,
@@ -437,6 +439,7 @@ def _get_config(**overrides: str):
         return resolve_config(
             project=_project_alias or None,
             name=_workbench_name or None,
+            expected_workbench_type="cosmos",
             **{k: v for k, v in overrides.items() if v is not None},
         )
     except ConfigError as exc:
@@ -448,6 +451,7 @@ def _get_ssh_config(**overrides: str):
         return resolve_ssh_config(
             project=_project_alias or None,
             name=_workbench_name or None,
+            expected_workbench_type="cosmos",
             **{k: v for k, v in overrides.items() if v is not None},
         )
     except ConfigError as exc:
@@ -1400,14 +1404,20 @@ def _serverless_job_env(
         or shared_env.get("HF_TOKEN")
         or shared_env.get("HUGGING_FACE_HUB_TOKEN")
     )
+    s3_credentials = {
+        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_secret_access_key": storage.aws_secret_access_key
+        or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
+        "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
+    }
+    try:
+        require_s3_credentials(s3_credentials, context="Cosmos serverless jobs")
+    except MissingS3CredentialsError as exc:
+        _fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
         hf_token=hf_token or None,
-        s3_credentials={
-            "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
-            "aws_secret_access_key": storage.aws_secret_access_key or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
-            "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
-        },
+        s3_credentials=s3_credentials,
         extra_env={"NPA_REQUIRE_HF": "1" if require_hf else "0"},
     )
     return split_serverless_env(env)
@@ -2757,6 +2767,7 @@ def deploy_cmd(
                             model, server_port, no_guardrails=no_guardrails
                         ),
                         stream=True,
+                        label="Cosmos install",
                     )
                 except SSHError as exc:
                     fail_app(f"Cosmos installation failed: {exc}")
@@ -3071,9 +3082,10 @@ def serve_cmd(
         ssh = SSHClient(cfg.ssh)
         try:
             _, out, err = ssh.run_or_raise(
-                _build_serve_command(model, port, no_guardrails=no_guardrails)
+                _build_serve_command(model, port, no_guardrails=no_guardrails),
+                label="Cosmos serve",
             )
-            ssh.run_or_raise(_build_load_command(port, model))
+            ssh.run_or_raise(_build_load_command(port, model), label="Cosmos model load")
         except SSHError as exc:
             _fail(f"SSH error: {exc}")
             return

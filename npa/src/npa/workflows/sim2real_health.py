@@ -340,8 +340,8 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
             status=WARN,
             summary="Some images are not fully qualified for a pull check.",
             remedy=(
-                "Set NPA_REGISTRY or pass fully-qualified <registry>/<image>:<tag> "
-                "values so the agent-sa pull path can be verified."
+                "Set NPA_REGISTRY (or NPA_REGISTRY_ID) or pass fully-qualified "
+                "<registry>/<image>:<tag> values so the agent-sa pull path can be verified."
             ),
             details=tuple(sorted(set(not_actionable))),
         )
@@ -564,6 +564,44 @@ def has_failure(results: list[CheckResult]) -> bool:
     return any(result.status == FAIL for result in results)
 
 
+_STATUS_ICON = {PASS: "PASS", WARN: "WARN", FAIL: "FAIL", SKIP: "SKIP"}
+
+
+def format_check_report(results: list[CheckResult], *, output_json: bool) -> str:
+    """Render a list of CheckResults as the shared preflight report.
+
+    Single source of truth for how ``npa`` preflight surfaces (workbench health
+    and agent) print their PASS/WARN/FAIL/SKIP output, so they stay aligned.
+    """
+
+    import json
+
+    if output_json:
+        return json.dumps(
+            {"checks": [result.as_dict() for result in results], "ok": not has_failure(results)},
+            indent=2,
+            sort_keys=True,
+        )
+    lines: list[str] = []
+    for result in results:
+        lines.append(
+            f"[{_STATUS_ICON.get(result.status, result.status)}] "
+            f"{result.name}: {result.summary}"
+        )
+        for detail in result.details:
+            lines.append(f"        - {detail}")
+        if result.remedy and result.status in {FAIL, WARN, SKIP}:
+            lines.append(f"        fix: {result.remedy}")
+    counts = {status: 0 for status in (PASS, WARN, FAIL, SKIP)}
+    for result in results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+    lines.append(
+        f"summary: {counts[PASS]} pass, {counts[WARN]} warn, "
+        f"{counts[FAIL]} fail, {counts[SKIP]} skip"
+    )
+    return "\n".join(lines)
+
+
 def _short(text: str, limit: int = 240) -> str:
     collapsed = " ".join(str(text).split())
     if len(collapsed) > limit:
@@ -586,6 +624,7 @@ __all__ = [
     "check_s3",
     "check_tokens",
     "coherence_failures",
+    "format_check_report",
     "has_failure",
     "run_preflight",
 ]

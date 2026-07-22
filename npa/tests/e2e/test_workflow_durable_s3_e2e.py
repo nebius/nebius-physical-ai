@@ -24,10 +24,53 @@ from npa.orchestration.skypilot.workflow_state import redact_text
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot]
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
-DEFAULT_KUBE_CONTEXT = "npa-rtxpro-mk8s"
 SECRET_HF_MARKER = "hf_npae2eworkflowsecret1234567890"
 SECRET_AWS_MARKER = "AKIAABCDEFGHIJKLMNOP"
+
+
+def _is_storage_endpoint_unreachable(output: str) -> bool:
+    """True when a submit failed because the bucket's S3 endpoint is unreachable.
+
+    This happens when the workflow bucket lives in a different region/tenant than
+    the SkyPilot controller, so the controller cannot resolve/reach the bucket at
+    launch time. It is an environment co-location mismatch, not a code failure, so
+    the caller skips rather than fails.
+    """
+
+    text = (output or "").lower()
+    return "endpointconnectionerror" in text or "could not connect to the endpoint url" in text
+
+
+def _default_kube_context() -> str:
+    """Resolve the kube context from params/config, never a hard-coded region.
+
+    Order: ``NPA_E2E_KUBECONTEXT`` -> ``NPA_E2E_KUBECONTEXT_FALLBACK`` ->
+    ``kubectl config current-context``. Skips when none is available so a run
+    is never silently pinned to a specific region's cluster.
+    """
+
+    explicit = os.environ.get("NPA_E2E_KUBECONTEXT", "").strip()
+    if explicit:
+        return explicit
+    fallback = os.environ.get("NPA_E2E_KUBECONTEXT_FALLBACK", "").strip()
+    if fallback:
+        return fallback
+    try:
+        result = subprocess.run(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        current = (result.stdout or "").strip()
+        if current:
+            return current
+    except (OSError, subprocess.SubprocessError):
+        pass
+    pytest.skip(
+        "No kube context configured; set NPA_E2E_KUBECONTEXT for the durable-S3 test"
+    )
 
 
 def test_workbench_workflow_durable_s3_monitor_live(
@@ -39,7 +82,7 @@ def test_workbench_workflow_durable_s3_monitor_live(
     _require_live_mode()
     sky_bin = _sky_bin()
     cli_bin = _npa_bin()
-    kube_context = os.environ.get("NPA_E2E_KUBECONTEXT", DEFAULT_KUBE_CONTEXT)
+    kube_context = _default_kube_context()
     kubeconfig = _kubeconfig_for_context(kube_context)
     _assert_kube_context_ready(kube_context, kubeconfig)
 
@@ -94,6 +137,15 @@ def test_workbench_workflow_durable_s3_monitor_live(
     try:
         submit = _run(submit_cmd, env=env, cwd=ROOT, timeout=2400)
         _write_command_evidence(evidence_dir, "submit", submit, submit_cmd, credentials_env)
+        if submit.returncode != 0:
+            combined = f"{submit.stdout}\n{submit.stderr}"
+            if _is_storage_endpoint_unreachable(combined):
+                pytest.skip(
+                    "Workflow bucket is not reachable from the SkyPilot controller's "
+                    "region/tenant (co-locate the workflow bucket with the "
+                    f"controller infra {kube_context}): "
+                    + redact_text(combined, credentials_env.values())[-300:]
+                )
         assert submit.returncode == 0, redact_text(submit.stdout + submit.stderr, credentials_env.values())
         submit_payload = json.loads(submit.stdout)
         job_id = str(submit_payload.get("job_id") or "")
@@ -269,10 +321,11 @@ def _s3_endpoint(project: str | None) -> str:
         or credentials.s3_endpoint
         or os.environ.get("AWS_ENDPOINT_URL", "")
         or os.environ.get("NEBIUS_S3_ENDPOINT", "")
-        or DEFAULT_ENDPOINT
     )
     if not endpoint:
-        pytest.skip("S3 endpoint is not configured")
+        pytest.skip(
+            "S3 endpoint is not configured; set project storage or AWS_ENDPOINT_URL"
+        )
     return endpoint
 
 

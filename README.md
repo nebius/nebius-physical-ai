@@ -55,7 +55,7 @@ with the same install.
 | -------------------------------------------------- | ------------ | ---------------------------------------- | -------------------------------------------------------- |
 | **A. [60-second try-it](#a-60-second-try-it)**     | ~60 s        | Python 3.10+                             | A scored VLM benchmark report — no cloud, no GPU, no key |
 | **B. [First workload on Nebius](#b-first-workload-on-nebius)** | ~15 min | Nebius account · `nebius` CLI            | A configured project running managed Workbench tools     |
-| **C. [Self-hosted `npa agent`](#c-self-hosted-npa-agent)** | ~20 min | Nebius account · Terraform · SSH key    | A browser-based chat workbench VM with embedded Rerun    |
+| **C. [Self-hosted `npa agent`](#c-self-hosted-npa-agent)** | ~20 min | Authenticated `nebius` profile · Terraform · SSH key pair · Token Factory key · writable S3 creds | A browser-based chat workbench VM with embedded Rerun    |
 
 All three share the same one-time install:
 
@@ -81,7 +81,8 @@ npa --version
 ### A. 60-second try-it
 
 Score a shipped sample rollout set with the offline stub backend — no
-credentials of any kind:
+credentials of any kind. Run these from the repository root; the `--dataset`
+and spec paths are relative to it:
 
 ```bash
 npa workbench vlm-eval benchmark \
@@ -158,7 +159,8 @@ Composable `toolRef` steps: [`npa.workflow` tool catalog](docs/workbench/npa-wor
    ```
 
 3. Interactive setup — creates or reuses your Nebius CLI profile and prompts
-   for tenant, project, region, bucket, and optional API keys:
+   for project, tenant, region, container registry, bucket, and optional API
+   keys (in that order):
 
    ```bash
    npa configure --interactive
@@ -186,6 +188,10 @@ embedded [Rerun](https://www.rerun.io) viewer for `.rrd` recordings, and
 draft/validate/plan/submit endpoints for `npa.workflow/v0.0.1` specs.
 
 ```bash
+# Check prerequisites first (terraform, SSH key pair, Nebius auth, Token Factory
+# key) — no cloud side effects, so late failures surface before any VM is built:
+npa agent preflight
+
 npa agent fresh-setup \
   --project my-agent --name agent \
   --project-id project-... --tenant-id tenant-... --region eu-north1
@@ -205,9 +211,12 @@ teardown/reproduce loop: [skills/workflows/agent-fresh-operate/SKILL.md](skills/
 A short list of things that catch first-time users mid-run. Skim before your
 first GPU submit.
 
-- **Run preflight.** `npa workbench health sim2real` is a single
-  PASS/WARN/FAIL/SKIP check over config, coherence, S3, registry, tokens,
-  and cluster. See [FTUE-AUDIT.md § friction 1](FTUE-AUDIT.md#friction-points-ordered).
+- **Run preflight.** `npa workbench health preflight` is a single
+  PASS/WARN/FAIL/SKIP check over the credentials nearly every job needs —
+  Hugging Face, NVIDIA NGC, Nebius object storage (S3), and Token Factory.
+  Add `--offline` to check presence only (no network), or `--json` for
+  machine-readable output. See
+  [FTUE-AUDIT.md § friction 1](FTUE-AUDIT.md#friction-points-ordered).
 - **GPU routing matters.** Isaac Lab needs an **RT-core** GPU (L40S / RTX
   Pro 6000), not an H100. See [docs/workbench/troubleshooting/known-footguns.md § L40S Capacity](docs/workbench/troubleshooting/known-footguns.md#l40s-capacity-is-on-demand-zero).
 - **Registry pull secrets expire silently.** A `401` on image pull usually
@@ -257,7 +266,8 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
   see [`vlm-eval-single.yaml`](npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml).
 - **`token-factory`** wraps Nebius Token Factory for zero-GPU inference,
   captioning, and reasoning against your own frames.
-- **`health`** runs preflight checks before a Sim2Real submit.
+- **`health preflight`** validates HF / NGC / S3 / Token Factory credentials
+  before a deploy or GPU job.
 - **`sonic export`** converts locomotion checkpoints to ONNX.
 - **`workflow validate-spec` / `plan-spec` / `run-spec` / `submit`** operate on
   customer-facing `npa.workflow/v0.0.1` specs — see
@@ -280,7 +290,7 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
 | Zero-GPU LLM    | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
 | Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                           |
-| Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health sim2real`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
+| Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
 | Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
 
 </details>

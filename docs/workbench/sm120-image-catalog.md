@@ -14,7 +14,7 @@ Manifest source: `npa/docker/workbench/sm120-images.json`.
 | `npa-genesis` | `0.4.6-sm80-sm90-sm120-latest` | Genesis and Sim2Real base layered on the sm_120 runtime. |
 | `npa-envgen` | `0.1.2` | Sim2Real environment generation. |
 | `npa-reference-policy` | `0.1.2` | Reference BYO-compatible action policy. |
-| `npa-loop-eval` | `0.1.2-genuine-sm120` | Sim2Real evaluation. |
+| `npa-loop-eval` | `0.1.3-genuine-sm120` | Sim2Real evaluation. |
 | `npa-lerobot-vlm-rl` | `0.1.1` | LeRobot VLM/RL runtime layered on the sm_120 Genesis base. |
 | `npa-cosmos3-reason` | `3.0.1-genuine-sm120` | Cosmos3 reasoning on the sm_120 CUDA 13 base. |
 | `npa-sonic` | `0.1.2-k8s-runtime` | SONIC Kubernetes runtime using GPU-operator-mounted NVIDIA driver libraries. |

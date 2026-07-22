@@ -8,8 +8,8 @@ Usage: npa workbench lerobot [OPTIONS] COMMAND [ARGS]...
 LeRobot policy training, evaluation, serving, and inference.
 
 Options
---project  -p  TEXT  Project alias (as configured in ~/.npa/config.yaml).
---name  -n  TEXT  Workbench instance name within the project.
+--project  -p  <str>  Project alias (as configured in ~/.npa/config.yaml).
+--name  -n  <str>  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
 list  List configured LeRobot workbenches (excludes Genesis VMs).
@@ -31,8 +31,8 @@ train-student  Train a vision-only student policy via LeRobot imitation learning
 
 | Option | Description |
 | --- | --- |
-| `--project` | -p  TEXT  Project alias (as configured in ~/.npa/config.yaml). |
-| `--name` | -n  TEXT  Workbench instance name within the project. |
+| `--project` | -p  <str>  Project alias (as configured in ~/.npa/config.yaml). |
+| `--name` | -n  <str>  Workbench instance name within the project. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

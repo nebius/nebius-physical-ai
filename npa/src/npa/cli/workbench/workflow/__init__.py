@@ -1469,7 +1469,8 @@ def plan_spec_cmd(
         typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
         return
     typer.echo(f"workflow: {plan.workflow}")
-    typer.echo(f"assume_decision: {plan.assume_decision}")
+    if plan.assume_decision:
+        typer.echo(f"assume_decision: {plan.assume_decision}")
     for index, step in enumerate(plan.steps, start=1):
         label = step.state
         if step.iteration is not None:

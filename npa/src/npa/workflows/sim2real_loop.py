@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import container_image_for_tool, registry_from_env
 from npa.workbench.cosmos.reason import (
     CosmosReasonError,
     apply_cosmos_reason_kubernetes_env,
@@ -63,9 +63,13 @@ DEFAULT_VLM_IMAGE_TAG = "3.0.1-genuine-sm120"
 DEFAULT_ENVGEN_TAG = "0.1.2"
 DEFAULT_REFERENCE_POLICY_TAG = "0.1.2"
 DEFAULT_TRAINER_TAG = "0.1.1"
-# 0.1.2-genuine-sm120 lost working Blackwell (sm_120) Genesis kernels and crashes
-# heldout_eval on RTX PRO 6000; 0.1.1 is the proven-good build. See images.py.
-DEFAULT_EVAL_TAG = "0.1.1-genuine-sm120"
+# 0.1.3-genuine-sm120 is the canonical pin: rebuilt 2026-07-21 from
+# npa-genesis:0.4.6-sm80-sm90-sm120 (torch 2.9.0+cu130; _cuda_getArchFlags shows
+# sm_120/compute_120). It replaces 0.1.1-genuine-sm120, whose bundled torch was
+# sm_90-capped and crashed on RTX PRO 6000, and 0.1.2-genuine-sm120 (never in the
+# registry). Validated end-to-end on RTX PRO 6000 (sm_120) 2026-07-21. See
+# images.py and FIXME.md.
+DEFAULT_EVAL_TAG = "0.1.3-genuine-sm120"
 DEFAULT_ISAAC_TAG = "2.3.2.post1"
 # Pluggable held-out sim backend. Genesis remains fully supported; Isaac Lab
 # (Isaac Sim headless) is the default and requires RT-core GPUs (L40S / RTX Pro).
@@ -298,7 +302,7 @@ def new_run_id(prefix: str = "sim2real-b") -> str:
 def default_vlm_image(*, registry: str | None = None) -> str:
     """Return the reference Cosmos3-reason-compatible VLM image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("cosmos3-reason", registry=registry)
     return f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
 
@@ -306,7 +310,7 @@ def default_vlm_image(*, registry: str | None = None) -> str:
 def default_envgen_image(*, registry: str | None = None) -> str:
     """Return the reference env-generation image used by Stages 3-6."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("envgen", registry=registry)
     return f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
 
@@ -314,7 +318,7 @@ def default_envgen_image(*, registry: str | None = None) -> str:
 def default_augment_image(*, registry: str | None = None) -> str:
     """Return the reference Cosmos2 transfer image used by Stage 3."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("cosmos2-transfer", registry=registry)
     return f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
 
@@ -322,7 +326,7 @@ def default_augment_image(*, registry: str | None = None) -> str:
 def default_policy_image(*, registry: str | None = None) -> str:
     """Return the reference action-generation policy image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("reference-policy", registry=registry)
     return f"npa-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
 
@@ -330,7 +334,7 @@ def default_policy_image(*, registry: str | None = None) -> str:
 def default_trainer_image(*, registry: str | None = None) -> str:
     """Return the reference VLM-signal LeRobot trainer image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("lerobot-vlm-rl", registry=registry)
     return f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
 
@@ -338,7 +342,7 @@ def default_trainer_image(*, registry: str | None = None) -> str:
 def default_eval_image(*, registry: str | None = None) -> str:
     """Return the reference held-out eval harness image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("loop-eval", registry=registry)
     return f"npa-loop-eval:{DEFAULT_EVAL_TAG}"
 
@@ -346,7 +350,7 @@ def default_eval_image(*, registry: str | None = None) -> str:
 def default_isaac_image(*, registry: str | None = None) -> str:
     """Return the Isaac Lab held-out rollout image (Isaac Sim headless)."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("isaac-lab", registry=registry)
     return f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
 
@@ -369,7 +373,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         or os.environ.get("S3_BUCKET")
         or ""
     )
-    registry = os.environ.get("NPA_REGISTRY", "")
+    registry = registry_from_env()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
     elif "NPA_SIM2REAL_PREFIX" in os.environ:
@@ -711,7 +715,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
 
 
 def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
-    """Return canonical S3 artifact URIs for the full 13-stage workflow."""
+    """Return canonical S3 artifact URIs for the full 14-stage workflow."""
 
     if not config.s3_bucket:
         return {}

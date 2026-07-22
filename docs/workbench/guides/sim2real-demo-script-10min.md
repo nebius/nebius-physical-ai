@@ -50,7 +50,7 @@ s3://<bucket>/<prefix>/<run-id>/
 
 ---
 
-## Stage → artifact map (13 stages)
+## Stage → artifact map (14 stages)
 
 Use this table as the backbone of the demo. Every row is a file or prefix you can open live or from pre-staged S3.
 
@@ -69,6 +69,7 @@ Use this table as the backbone of the demo. Every row is a file or prefix you ca
 | 11 | **Threshold gate** | Compare `success_rate` to threshold (demo: 0.45) | `outer_loop/decision.json`; promote → `checkpoints/candidate/candidate.json`; fail → `outer_loop/loopback.json` | **Fallback story** (below) |
 | 12 | **Real-world validation (BYO seam)** | Documented external stub | `stage_12_external_validation/external_stub.json` | Always SEAM; customer hook point |
 | 13 | **Retrigger** | Next dataset batch → back to Stage 1 | `stage_13_retrigger/retrigger.json` | Loop-of-loops metadata |
+| 14 | **Rerun visualization** | Local `.rrd` timeline of rollouts, critiques, and held-out scores | `reports/sim2real.rrd` | Uploaded with the run tree when the `stage_14_rerun_viz` tier is **WORKS** |
 
 **Cross-cutting artifacts** (show at end):
 
@@ -92,7 +93,7 @@ Canonical URI is in `artifact_uris()` as `stage_14_rerun_viz_rrd`. The full run 
 
 ### 0:00–0:45 — Hook
 
-> "This is a **13-stage, inspectable sim-to-real loop**: real robot data triggers the run, simulation generates environments, a VLM critiques rollouts, we convert critique into RL signal, train, evaluate on held-out sim, and either promote a checkpoint or loop back. Every stage writes JSON to object storage — no black box."
+> "This is a **14-stage, inspectable sim-to-real loop**: real robot data triggers the run, simulation generates environments, a VLM critiques rollouts, we convert critique into RL signal, train, evaluate on held-out sim, and either promote a checkpoint or loop back. Every stage writes JSON to object storage — no black box."
 
 Show one slide or browser tab: pipeline diagram from [sim2real-architecture.md](./sim2real-architecture.md) (preamble → outer loop → finalize).
 

@@ -113,7 +113,7 @@ def test_signal_diversity_report_accepts_varied_batch() -> None:
     ("image", "expected"),
     [
         ("npa-cosmos3-reason:3.0.1-genuine-sm120", "Always"),
-        ("npa-loop-eval:0.1.2-genuine-sm120", "Always"),
+        ("npa-loop-eval:0.1.3-genuine-sm120", "Always"),
         ("npa-loop-eval:0.1.1", "IfNotPresent"),
         ("registry.example/team/npa-loop-eval:0.1.1", "IfNotPresent"),
         ("npa-loop-eval@sha256:" + "a" * 64, "IfNotPresent"),

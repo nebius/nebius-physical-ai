@@ -13,10 +13,14 @@ DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
 DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-golden-eval-smoke-20260616T033000Z"
 DEFAULT_VLM_IMAGE_TAG = "3.0.1-genuine-sm120"
-DEFAULT_ENVGEN_TAG = "0.1.1"
-DEFAULT_REFERENCE_POLICY_TAG = "0.1.1"
-DEFAULT_TRAINER_TAG = "0.1.0"
-DEFAULT_EVAL_TAG = "0.1.1-genuine-sm120"
+# Reference-image pins. Canonical source of truth is pyproject.toml
+# ([tool.npa.supported-tools], mirrored in npa/src/npa/deploy/images.py); keep
+# these no-registry fallbacks in sync so the staged engine (models.py) and the
+# legacy loop (sim2real_loop.py) resolve identical defaults.
+DEFAULT_ENVGEN_TAG = "0.1.2"
+DEFAULT_REFERENCE_POLICY_TAG = "0.1.2"
+DEFAULT_TRAINER_TAG = "0.1.1"
+DEFAULT_EVAL_TAG = "0.1.3-genuine-sm120"
 DEFAULT_ISAAC_TAG = "2.3.2.post1"
 # Pluggable held-out sim backend. Genesis remains fully supported; Isaac Lab
 # (Isaac Sim headless) is the default and requires RT-core GPUs (L40S / RTX Pro).

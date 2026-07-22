@@ -5,6 +5,46 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
+class MissingS3CredentialsError(ValueError):
+    """Raised when a serverless job would launch without usable S3 credentials."""
+
+
+def require_s3_credentials(
+    s3_credentials: Mapping[str, str] | None,
+    *,
+    context: str = "the serverless job",
+) -> None:
+    """Fail fast if any S3 credential a remote job needs is missing.
+
+    Serverless jobs allocate paid GPUs *before* the container starts, so a
+    silent fall-back to empty S3 credentials only surfaces minutes later inside
+    the running job (after the GPU is already billing). Validate at submit time
+    instead, and name every missing field so the fix is obvious.
+
+    Note: ``endpoint_url`` is required because these jobs run against Nebius
+    object storage, which always needs an explicit S3 endpoint. This check is
+    Nebius-specific and would need relaxing to support the implicit AWS default
+    endpoint.
+    """
+
+    creds = s3_credentials or {}
+    missing = [
+        label
+        for label, key in (
+            ("access key id (AWS_ACCESS_KEY_ID)", "aws_access_key_id"),
+            ("secret access key (AWS_SECRET_ACCESS_KEY)", "aws_secret_access_key"),
+            ("endpoint url (AWS_ENDPOINT_URL)", "endpoint_url"),
+        )
+        if not str(creds.get(key, "") or "").strip()
+    ]
+    if missing:
+        raise MissingS3CredentialsError(
+            f"Missing S3 {', '.join(missing)} for {context}. Run `npa configure` "
+            "or export the AWS_* variables before submitting so the remote job "
+            "can read inputs and write artifacts."
+        )
+
+
 def build_serverless_job_env(
     *,
     output_path: str,

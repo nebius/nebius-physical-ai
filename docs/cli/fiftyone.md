@@ -8,8 +8,8 @@ Usage: npa workbench fiftyone [OPTIONS] COMMAND [ARGS]...
 Voxel51 FiftyOne dataset curation and visualization workbench.
 
 Options
---project  -p  TEXT  Project alias from ~/.npa/config.yaml.
---name  -n  TEXT  Workbench instance name within the project.
+--project  -p  <str>  Project alias from ~/.npa/config.yaml.
+--name  -n  <str>  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
 ensure-ingress  Ensure public ingress for the saved FiftyOne BYOVM alias.
@@ -32,8 +32,8 @@ datasets  Inspect datasets through the FiftyOne GraphQL API.
 
 | Option | Description |
 | --- | --- |
-| `--project` | -p  TEXT  Project alias from ~/.npa/config.yaml. |
-| `--name` | -n  TEXT  Workbench instance name within the project. |
+| `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. |
+| `--name` | -n  <str>  Workbench instance name within the project. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
@@ -60,9 +60,6 @@ datasets  Inspect datasets through the FiftyOne GraphQL API.
 ```bash
 npa workbench fiftyone --help
 npa workbench fiftyone ensure-ingress --help
-npa workbench fiftyone launch --address 0.0.0.0 --port 5151
 ```
-
-`--address 0.0.0.0` binds the FiftyOne App for public endpoint use; the app is unauthenticated, so only expose trusted datasets.
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `fiftyone`.

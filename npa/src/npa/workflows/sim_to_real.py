@@ -21,7 +21,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
-from npa.deploy.images import container_image_for_tool, supported_tool_version
+from npa.deploy.images import (
+    container_image_for_tool,
+    registry_from_env,
+    supported_tool_version,
+)
 from npa.viz.adapters.lerobot_to_rerun import RerunAdapterError, lerobot_dataset_logical_to_rerun
 from npa.workbench.lerobot.policy_container import (
     DEFAULT_POLICY_TYPE,
@@ -266,7 +270,7 @@ def new_run_id(prefix: str = "sim-to-real") -> str:
 def default_policy_image(*, registry: str | None = None) -> str:
     """Return the default BYO-compatible LeRobot policy image."""
 
-    if registry or os.environ.get("NPA_REGISTRY"):
+    if registry or registry_from_env():
         return container_image_for_tool("lerobot-policy", registry=registry)
     return f"npa-lerobot-policy:{supported_tool_version('lerobot-policy')}"
 

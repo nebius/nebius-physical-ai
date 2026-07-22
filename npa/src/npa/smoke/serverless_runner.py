@@ -21,6 +21,7 @@ from npa.clients.serverless import ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool
 from npa.serverless_common import (
     build_serverless_job_env,
+    require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
     split_serverless_env,
@@ -43,6 +44,16 @@ def _project_id(explicit: str | None) -> str:
         value = os.environ.get(key, "").strip()
         if value:
             return value
+    # `npa configure` writes the project id to ~/.npa/config.yaml under
+    # projects.<alias>.project_id, so honor that before failing.
+    try:
+        from npa.clients.config import resolve_environment
+
+        env_cfg = resolve_environment(None)
+    except Exception:
+        env_cfg = None
+    if env_cfg and env_cfg.project_id:
+        return env_cfg.project_id
     creds_path = Path("~/.npa/credentials.yaml").expanduser()
     if creds_path.is_file():
         raw = yaml.safe_load(creds_path.read_text()) or {}
@@ -50,8 +61,9 @@ def _project_id(explicit: str | None) -> str:
         if value:
             return value
     raise RuntimeError(
-        "No Nebius project id; set NEBIUS_PROJECT_ID or nebius.project_id in "
-        "~/.npa/credentials.yaml, or pass project_id explicitly."
+        "No Nebius project id; run `npa configure` (writes projects.<alias>."
+        "project_id to ~/.npa/config.yaml), set NEBIUS_PROJECT_ID, or pass "
+        "project_id explicitly."
     )
 
 
@@ -88,14 +100,16 @@ def submit_golden_eval(
     platform, preset, gpu_count = resolve_gpu_platform(gpu, 1)
     subnet_id = resolve_subnet(resolved_project)
 
+    s3_credentials = {
+        "aws_access_key_id": cfg.s3_access_key_id,
+        "aws_secret_access_key": cfg.s3_secret_access_key,
+        "endpoint_url": cfg.s3_endpoint,
+    }
+    require_s3_credentials(s3_credentials, context=f"the {tool} golden eval job")
     full_env = build_serverless_job_env(
         output_path=output_path,
         hf_token=cfg.hf_token,
-        s3_credentials={
-            "aws_access_key_id": cfg.s3_access_key_id,
-            "aws_secret_access_key": cfg.s3_secret_access_key,
-            "endpoint_url": cfg.s3_endpoint,
-        },
+        s3_credentials=s3_credentials,
         extra_env={
             "NPA_GOLDEN_EVAL": tool,
             # Smoke modules import npa.smoke.*; skip eager SDK imports that pull

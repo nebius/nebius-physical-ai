@@ -41,3 +41,21 @@ jobs:
       - name: Mypy (advisory, non-blocking)
         continue-on-error: true
         run: cd npa && mypy src/npa --ignore-missing-imports --no-error-summary
+
+  docs-drift:
+    # Fail when docs/cli/ is out of date relative to `npa --help`.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install npa
+        run: cd npa && pip install -e .
+
+      - name: Check CLI reference drift
+        run: bash scripts/build_docs.sh --check
