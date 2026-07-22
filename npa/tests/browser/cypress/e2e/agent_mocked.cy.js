@@ -257,7 +257,7 @@ describe("NPA agent UI with mocked APIs", () => {
   it("covers artifact discovery, dynamic artifact load button, and camera cards", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#artifactPrefix").type("sim2real-b");
+    // Discovery is generic (no path prefix); all runs show.
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     // Consolidated picker may already have mock-run selected — force list via button.
@@ -286,7 +286,6 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#artifactPrefix").clear().type("sim2real-b/custom-assets");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
@@ -361,20 +360,35 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("@windowOpen").should("have.been.called");
   });
 
-  it("triggers run discovery when a prefix is typed and Enter is pressed", () => {
+  it("finds runs by name/ID via a client-side filter (no path prefix needed)", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    // Regression guard: the Prefix input must re-run discovery on Enter, without
-    // also clicking "Discover runs".
-    cy.get("#artifactPrefix").clear().type("physical-ai-data-factory{enter}");
+    // Generic discovery lists every run — no prefix/category to type.
+    cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#artifactDiscoverStatus").should("contain.text", "latest first");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values).to.include(NON_STOCK_RUN_ID);
+      expect(values).to.include("mock-run");
+    });
+    // Typing part of a run name/ID filters the list client-side.
+    cy.get("#artifactPrefix").clear().type("non-stock");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values).to.include(NON_STOCK_RUN_ID);
+      expect(values).to.not.include("mock-run");
+    });
+    // Clearing restores the full list.
+    cy.get("#artifactPrefix").clear();
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values).to.include("mock-run");
+    });
   });
 
   it("filters artifacts by workflow stage and tags timeline rows by stage", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#artifactPrefix").clear().type("sim2real-b/custom-assets");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);

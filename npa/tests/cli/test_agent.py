@@ -726,22 +726,23 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "list_artifacts" in embedded
 
 
-def test_bootstrap_artifact_prefix_triggers_discovery() -> None:
-    """Typing a prefix + Enter (or blur) must re-run run discovery.
-
-    Regression guard: previously the Prefix input had no listener, so typing a
-    value did nothing until the operator also clicked "Discover runs". The UI
-    lives in agent_ui.html, so assert against the rendered UI bundle.
+def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
+    """The run finder must let operators find runs by NAME/ID (client-side
+    filter), not by an S3 path/category. Discovery is always generic.
     """
     source = _agent_ui_bundle()
-    assert 'const artifactPrefixInput = document.getElementById("artifactPrefix")' in source
-    assert 'artifactPrefixInput.addEventListener("keydown"' in source
-    assert 'artifactPrefixInput.addEventListener("change", discoverFromPrefix)' in source
-    # The prefix-driven discovery must call the runs endpoint refresh.
-    assert "const discoverFromPrefix = async () =>" in source
-    assert "await refreshArtifactRuns();" in source
-    # Placeholder should tell the operator that Enter triggers discovery.
-    assert "then Enter" in source
+    # Field is a run name/ID finder, not an "Artifact prefix" path.
+    assert 'Find run (name or ID)' in source
+    assert "type part of a run name or ID" in source
+    assert "Artifact prefix" not in source
+    # It filters the discovered run list client-side (no path prefix to the server).
+    assert "function runFilterValue()" in source
+    assert "const runFilter = runFilterValue().toLowerCase();" in source
+    assert 'runFilterInput.addEventListener("input"' in source
+    # Discovery is generic (no ?prefix= path); the old prefix-path helper is gone.
+    assert 'apiJson("/api/artifacts/runs?limit=100")' in source
+    assert "discoverFromPrefix" not in source
+    assert "artifactPrefixValue" not in source
 
 
 def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
@@ -768,8 +769,8 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     # The filter's stage derivation must match the timeline/backend compound keys
     # (e.g. eval/heldout) so clicking a stage filters instead of yielding nothing.
     assert 'if (first === "eval" && parts[1]) return "eval/" + parts[1];' in source
-    # Workflow status must scope to the artifact prefix like loadRunDetails.
-    assert 'const status = await loadJson("/api/workflows/sim2real/status" + q);' in source
+    # Workflow status resolves the run generically (no path prefix required).
+    assert 'const status = await loadJson("/api/workflows/sim2real/status");' in source
 
 
 def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
@@ -866,24 +867,22 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     assert "find_run_artifacts(" in source
 
 
-def test_run_details_threads_artifact_prefix_for_stage_determination() -> None:
-    """Stage determination must honor the artifact prefix so a run stored outside
-    the default discovery prefix (e.g. physical-ai-data-factory) resolves its real
-    artifact-backed stages instead of the generic sim2real 'not_run' template.
+def test_run_details_resolves_run_generically_by_id() -> None:
+    """Stage determination must resolve a run generically by id (across all
+    categories under the run root) so any run shows real artifact-backed stages
+    instead of the generic sim2real 'not_run' template — no path/prefix required.
     """
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Backend threads prefix through resolver -> artifact-backed details.
+    # Backend resolves the run generically across categories (no prefix needed).
     assert "def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = \"\")" in source
-    assert "def _sim2real_run_details(state: dict, run_id: str = \"\", prefix: str = \"\")" in source
-    assert "_artifact_backed_run_details(state, resolved_run_id, prefix=prefix)" in source
-    assert "def sim2real_run_detail(run_id: str, prefix: str = \"\")" in source
-    assert "def sim2real_status(run_id: str = \"\", prefix: str = \"\")" in source
-    # Frontend passes the active artifact prefix when loading run details / run.
+    assert "find_run_artifacts(" in source
+    # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
-    assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target) + q' in ui
-    assert "body: JSON.stringify({ run_id: runId, prefix: artifactPrefixValue() })" in ui
+    assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
+    assert "body: JSON.stringify({ run_id: runId })" in ui
+    assert "prefix: artifactPrefixValue()" not in ui
 
 
 def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:

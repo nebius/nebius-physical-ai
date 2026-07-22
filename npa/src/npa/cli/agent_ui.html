@@ -1388,8 +1388,8 @@
               </div>
               <div class="field-row" style="margin-top:8px;">
                 <div class="field">
-                  <label for="artifactPrefix">Artifact prefix</label>
-                  <input id="artifactPrefix" type="text" placeholder="prefix, then Enter (e.g. physical-ai-data-factory)" />
+                  <label for="artifactPrefix">Find run (name or ID)</label>
+                  <input id="artifactPrefix" type="search" placeholder="type part of a run name or ID (optional)" />
                 </div>
                 <div class="field">
                   <label for="artifactTypeFilter">Type</label>
@@ -2024,26 +2024,23 @@
             });
           }
         }
-        // Typing a prefix + Enter (or blur) re-runs run discovery, so the operator
-        // does not also have to click "Discover runs".
-        const artifactPrefixInput = document.getElementById("artifactPrefix");
-        if (artifactPrefixInput) {
-          const discoverFromPrefix = async () => {
-            const list = document.getElementById("artifactList");
-            if (list) list.textContent = "Discovering runs...";
-            try {
-              await refreshArtifactRuns();
-              if (list) list.textContent = "";
-            } catch (err) {
-              if (list) list.textContent = "Discover runs failed: " + String((err && err.message) || err);
-            }
-          };
-          artifactPrefixInput.addEventListener("keydown", async (event) => {
+        // "Find run (name or ID)" box: filters the discovered run list as you type
+        // (client-side, by run name/ID). Enter re-discovers all runs then filters.
+        // No path/category is ever required to find a run.
+        const runFilterInput = document.getElementById("artifactPrefix");
+        if (runFilterInput) {
+          runFilterInput.addEventListener("input", () => {
+            applyMergedRunSelectors(activeRunId);
+          });
+          runFilterInput.addEventListener("keydown", async (event) => {
             if (event.key !== "Enter") return;
             event.preventDefault();
-            await discoverFromPrefix();
+            try {
+              await refreshArtifactRuns();
+            } catch (err) {
+              showToast("Discover runs failed: " + String((err && err.message) || err), "error");
+            }
           });
-          artifactPrefixInput.addEventListener("change", discoverFromPrefix);
         }
         const robotPreset = document.getElementById("robotPreset");
         if (robotPreset) {
@@ -4257,7 +4254,9 @@
       async function loadJson(path) {
         return await apiJson(path);
       }
-      function artifactPrefixValue() {
+      function runFilterValue() {
+        // Client-side filter over the discovered run list by run name / ID.
+        // (Not an S3 path — runs are found generically by id server-side.)
         const input = document.getElementById("artifactPrefix");
         return String((input && input.value) || "").trim();
       }
@@ -4455,7 +4454,17 @@
         const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
         mergedRunsCache = merged;
         const chosen = String(current || activeRunId || "").trim();
-        fillRunSelectOptionsRich(document.getElementById("runIdSelect"), merged, chosen);
+        // Filter the Rerun-tab run picker by the "Find run (name or ID)" box.
+        const runFilter = runFilterValue().toLowerCase();
+        const runList = runFilter
+          ? merged.filter((run) => String((run && run.run_id) || "").toLowerCase().includes(runFilter))
+          : merged;
+        fillRunSelectOptionsRich(document.getElementById("runIdSelect"), runList, chosen);
+        const status = document.getElementById("artifactDiscoverStatus");
+        if (status && runFilter) {
+          status.textContent = String(runList.length) + " of " + String(merged.length) +
+            " run" + (merged.length === 1 ? "" : "s") + " match [" + runFilter + "]";
+        }
         const stagesInput = document.getElementById("stagesRunInput");
         const stagesQuery = String((stagesInput && stagesInput.value) || "").trim();
         if (stagesQuery) {
@@ -4467,9 +4476,9 @@
         return merged;
       }
       async function refreshArtifactRuns() {
-        const prefix = artifactPrefixValue();
-        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix) + "&limit=100") : "?limit=100";
-        const data = await apiJson("/api/artifacts/runs" + query);
+        // Always discover ALL runs generically (server finds runs by id across
+        // the whole run root); the name/ID box only filters the list client-side.
+        const data = await apiJson("/api/artifacts/runs?limit=100");
         discoveredArtifactRuns = Array.isArray(data.runs) ? data.runs : [];
         // API already returns latest-first; keep that order when merging.
         const merged = applyMergedRunSelectors(activeRunId);
@@ -4486,9 +4495,8 @@
         const runId = selectedRunIdFromUi();
         if (!runId) throw new Error("Select a run or enter a run_id first");
         syncRunChooserFields(runId);
-        const prefix = artifactPrefixValue();
-        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix)) : "";
-        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + query);
+        // No path prefix: the server locates the run by id across the whole run root.
+        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId));
         const list = document.getElementById("artifactList");
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
@@ -5002,14 +5010,11 @@
       }
       async function loadRunDetails(runId) {
         const target = String(runId || activeRunId || "").trim();
-        // Pass the artifact prefix so stage determination scopes to the run's
-        // actual location (e.g. physical-ai-data-factory), instead of falling
-        // back to the generic sim2real "Not run" stage template.
-        const pfx = artifactPrefixValue();
-        const q = pfx ? ("?prefix=" + encodeURIComponent(pfx)) : "";
+        // No prefix needed: the server resolves the run by id across the whole
+        // run root and returns its real artifact-backed stages.
         const path = target
-          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target) + q
-          : "/api/workflows/sim2real/status" + q;
+          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
+          : "/api/workflows/sim2real/status";
         try {
           const data = await loadJson(path);
           renderRunDetails(data);
@@ -5028,7 +5033,7 @@
         const data = await apiJson("/api/sim-viz/load-run", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ run_id: runId, prefix: artifactPrefixValue() }),
+          body: JSON.stringify({ run_id: runId }),
         });
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
@@ -5128,11 +5133,7 @@
         }
       }
       async function showWorkflowStatus() {
-        // Scope to the active artifact prefix so a run under a non-default prefix
-        // shows its real artifact-backed stages, not the generic Not-run template.
-        const pfx = artifactPrefixValue();
-        const q = pfx ? ("?prefix=" + encodeURIComponent(pfx)) : "";
-        const status = await loadJson("/api/workflows/sim2real/status" + q);
+        const status = await loadJson("/api/workflows/sim2real/status");
         renderRunDetails(status);
         appendChat(
           "assistant",
