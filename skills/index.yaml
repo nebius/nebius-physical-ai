@@ -266,6 +266,23 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/skypilot/retargeting.yaml
+  - name: scenario-gen
+    category: tools
+    when_to_use: "Generate adversarial scenarios via an RL adversary that maximizes failures of a policy-under-test, rank mined hard scenarios, or wire the adversarial-scenario-hardening workflow."
+    path: skills/tools/scenario-gen/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "scenario-gen", "generate", "--help"]
+        contains: "output"
+      - type: cli_help
+        args: ["workbench", "scenario-gen", "rank", "--help"]
+        contains: "output"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/adversarial-scenario-hardening.yaml
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/scenario-gen-adversarial.yaml
   - name: skypilot-workflows
     category: tools
     when_to_use: "SkyPilot workflow authoring, runner scripts, limitations, and cleanup."
