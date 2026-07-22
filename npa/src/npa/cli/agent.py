@@ -198,7 +198,19 @@ def _embedded_agent_chat_source() -> str:
     return raw
 
 
+def _embedded_agent_actions_source() -> str:
+    """Return agent_actions.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_actions.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
+_AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1742,6 +1754,7 @@ def _bootstrap_agent_stack(
     )
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
+    agent_actions_source = _embedded_agent_actions_source()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -3481,6 +3494,8 @@ def _chat_with_resilience(
 
 {_AGENT_CHAT_EMBED}
 
+{_AGENT_ACTIONS_EMBED}
+
 {_AGENT_WORKFLOW_EMBED}
 
 {_AGENT_ARTIFACTS_EMBED}
@@ -4904,6 +4919,128 @@ def chat(payload: dict):
         "skills_used": skill_names,
     }}
 
+def _act_response_to_dict(result) -> dict:
+    # Route handlers may return either a plain dict or a JSONResponse; the action
+    # loop needs a JSON-serializable observation either way.
+    if isinstance(result, JSONResponse):
+        try:
+            return json.loads(result.body.decode("utf-8"))
+        except Exception as exc:
+            return {{"error": f"could not decode response: {{exc}}"}}
+    if isinstance(result, dict):
+        return result
+    return {{"value": str(result)}}
+
+def _agent_act_tools():
+    def _tool_health(args):
+        return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
+
+    def _tool_sim_viz_status(args):
+        return _act_response_to_dict(sim_viz_status())
+
+    def _tool_sim2real_status(args):
+        return _act_response_to_dict(sim2real_status(run_id=str(args.get("run_id") or "")))
+
+    def _tool_artifacts_runs(args):
+        limit = args.get("limit")
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 10
+        return _act_response_to_dict(artifacts_runs(prefix=str(args.get("prefix") or ""), limit=limit))
+
+    def _tool_artifacts_run(args):
+        run_id = str(args.get("run_id") or "").strip()
+        if not run_id:
+            return {{"error": "run_id is required"}}
+        return _act_response_to_dict(artifacts_for_run(run_id))
+
+    def _tool_validate(args):
+        spec = str(args.get("spec_yaml") or args.get("yaml") or "")
+        if not spec.strip():
+            return {{"error": "spec_yaml is required"}}
+        return _act_response_to_dict(validate_workflow({{"yaml": spec}}))
+
+    def _tool_plan(args):
+        spec = str(args.get("spec_yaml") or args.get("yaml") or "")
+        if not spec.strip():
+            return {{"error": "spec_yaml is required"}}
+        return _act_response_to_dict(
+            plan_workflow({{"yaml": spec, "run_id": str(args.get("run_id") or "agent-act")}})
+        )
+
+    def _tool_submit(args):
+        return _act_response_to_dict(submit_sim2real({{"run_id": str(args.get("run_id") or "")}}))
+
+    return {{
+        "health": _tool_health,
+        "sim_viz_status": _tool_sim_viz_status,
+        "sim2real_status": _tool_sim2real_status,
+        "artifacts_runs": _tool_artifacts_runs,
+        "artifacts_run": _tool_artifacts_run,
+        "workflow_validate_spec": _tool_validate,
+        "workflow_plan_spec": _tool_plan,
+        "sim2real_submit": _tool_submit,
+    }}
+
+@app.post("/agent/act")
+def agent_act(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    raw_messages = body.get("messages", [])
+    goal = str(body.get("goal") or "").strip()
+    if not goal and isinstance(raw_messages, list):
+        goal = _last_user_message(raw_messages)
+    if not goal:
+        raise HTTPException(status_code=400, detail="goal or messages is required")
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        act_state = {{}}
+    session_token = str(act_state.get("confirm_token") or "")
+    confirm_token = str(body.get("confirm_token") or "").strip()
+    try:
+        max_steps = int(body.get("max_steps"))
+    except (TypeError, ValueError):
+        max_steps = DEFAULT_MAX_STEPS
+    max_steps = max(1, min(max_steps, 12))
+
+    def _model_call(messages, tier="cheap"):
+        data, _provider, _model = _chat_with_resilience(
+            messages=messages, tier=tier, interactive=True
+        )
+        return data
+
+    tier = classify_tier(goal)
+    live_ctx = format_live_context_block(state)
+    result = run_action_loop(
+        goal,
+        tools=_agent_act_tools(),
+        model_call=_model_call,
+        confirm_token=confirm_token,
+        session_token=session_token,
+        tier=tier,
+        max_steps=max_steps,
+        live_context=live_ctx,
+    )
+    if result.get("needs_confirmation"):
+        new_token = secrets.token_hex(8)
+        act_state["confirm_token"] = new_token
+        act_state["pending_action"] = result.get("proposed_action")
+        state = _load_state()
+        state["agent_act"] = act_state
+        _save_state(state)
+        result["confirm_token"] = new_token
+    elif act_state.get("confirm_token"):
+        state = _load_state()
+        act_state = state.get("agent_act") if isinstance(state.get("agent_act"), dict) else {{}}
+        act_state["confirm_token"] = ""
+        act_state["pending_action"] = None
+        state["agent_act"] = act_state
+        _save_state(state)
+    result["grounded"] = False
+    result["mode"] = "agent-act"
+    return result
+
 @app.get("/health")
 def health():
     return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
@@ -6281,6 +6418,7 @@ sudo systemctl restart npa-agent-backend
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
+        .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
