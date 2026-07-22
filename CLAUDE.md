@@ -21,8 +21,11 @@ making architecture, review, or domain judgments.
 - `skills/atomic/physical-ai-context/SKILL.md`: robotics, sim-to-real,
   GPU-routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K
   context.
+- `skills/tools/scenario-gen/SKILL.md`: adversarial scenario generation — an RL
+ adversary that maximizes failures of a policy-under-test, scenario ranking, and
+ the adversarial-scenario-hardening workflow.
 - `skills/tools/mjlab/SKILL.md`: MJLab locomotion evaluation and SONIC checkpoint
-  scoring.
+ scoring.
 - `skills/tools/retargeting/SKILL.md`: motion retargeting in SONIC locomotion
   workflows.
 - `skills/workflows/sim-to-real/SKILL.md`: generic sim-to-real workflow

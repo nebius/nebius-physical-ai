@@ -1,0 +1,50 @@
+# Adversarial scenario generation on Isaac Lab RL, headless on RTX PRO 6000
+# Blackwell Kubernetes. Trains an adversary that maximizes failures of a
+# policy-under-test and emits a ranked adversarial scenario set to S3.
+name: scenario-gen-adversarial
+execution: serial
+---
+name: scenario-gen-adversarial-rtxpro
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 16
+  memory: 64
+  # Replace <your-registry-id> with your Nebius container registry ID.
+  # Keep this image on an RT-core-capable Isaac Lab build (adversary RL backend).
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+envs:
+  NPA_RUN_ID: "<your-run-id>"
+  # Policy-under-test checkpoint and base task/scene config live on S3.
+  POLICY_URI: "s3://${NPA_S3_BUCKET}/policies/<your-policy>/checkpoint.pt"
+  BASE_CONFIG_URI: "s3://${NPA_S3_BUCKET}/scenario-gen/base/<your-task>.json"
+  SCENARIO_TASK: "Isaac-Cartpole-v0"
+  NUM_SCENARIOS: "16"
+  ADVERSARY_STEPS: "200000"
+  RANK_TOP_K: "4"
+  # Batch jobs are headless: never trigger a rendering path.
+  HEADLESS: "1"
+  ADVERSARIAL_SET_URI: "s3://${NPA_S3_BUCKET}/scenario-gen/${NPA_RUN_ID}/adversarial/"
+  RANKED_SET_URI: "s3://${NPA_S3_BUCKET}/scenario-gen/${NPA_RUN_ID}/ranked/"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="$(command -v python3 || command -v python)"
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  npa workbench scenario-gen generate \
+    --policy-uri "${POLICY_URI}" \
+    --input-path "${BASE_CONFIG_URI}" \
+    --output-path "${ADVERSARIAL_SET_URI}" \
+    --task "${SCENARIO_TASK}" \
+    --num-scenarios "${NUM_SCENARIOS}" \
+    --adversary-steps "${ADVERSARY_STEPS}" \
+    --workflow-run "${NPA_RUN_ID}" \
+    --output json
+  npa workbench scenario-gen rank \
+    --input-path "${ADVERSARIAL_SET_URI}manifest.json" \
+    --output-path "${RANKED_SET_URI}" \
+    --top-k "${RANK_TOP_K}" \
+    --workflow-run "${NPA_RUN_ID}" \
+    --output json
