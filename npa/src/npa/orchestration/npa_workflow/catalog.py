@@ -309,6 +309,122 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             ),
         ],
     ),
+    "workbench.dataset.ingest": ToolEntry(
+        name="workbench.dataset.ingest",
+        description=(
+            "Ingest raw sensor data, validate against a sensor schema, normalize "
+            "to canonical records, and register a versioned dataset-of-record manifest."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "ingest",
+            "--input-path",
+            "{{config.raw_sensor_uri}}",
+            "--output-path",
+            "{{config.dataset_root_uri}}",
+            "--dataset-id",
+            "{{config.dataset_id}}",
+            "--version",
+            "{{config.dataset_version}}",
+            "--source",
+            "{{config.dataset_source}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.dataset.validate": ToolEntry(
+        name="workbench.dataset.validate",
+        description="Validate a dataset manifest against schema + quality thresholds.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "validate",
+            "--input-path",
+            "{{config.manifest_uri}}",
+            "--output-path",
+            "{{config.validation_uri}}",
+            "--completeness-min",
+            "{{config.completeness_min}}",
+            "--max-corruption-rate",
+            "{{config.max_corruption_rate}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.dataset.curate": ToolEntry(
+        name="workbench.dataset.curate",
+        description="Slice a dataset version by event/location/quality with lineage.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "curate",
+            "--input-path",
+            "{{config.manifest_uri}}",
+            "--output-path",
+            "{{config.curated_root_uri}}",
+            "--event",
+            "{{config.event_of_interest}}",
+            "--location",
+            "{{config.location_of_interest}}",
+            "--quality-metric",
+            "{{config.quality_metric}}",
+            "--min-quality",
+            "{{config.min_quality}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.dataset.query": ToolEntry(
+        name="workbench.dataset.query",
+        description="Query dataset records by event/location/quality facets (LanceDB-backed).",
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "query",
+            "--input-path",
+            "{{config.curated_manifest_uri}}",
+            "--event",
+            "{{config.event_of_interest}}",
+            "--location",
+            "{{config.location_of_interest}}",
+            "--lancedb-endpoint",
+            "{{config.lancedb_endpoint}}",
+        ],
+    ),
+    "workbench.dataset.write_quality_decision": ToolEntry(
+        name="workbench.dataset.write_quality_decision",
+        description="Write accept/reject decision from a validation quality gate.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "from npa.orchestration.npa_workflow.decisions import write_decision;"
+                "threshold=float('{{config.quality_gate}}');"
+                "decision='promote_checkpoint' if threshold >= 0.5 else 'loop_back';"
+                "write_decision('{{config.decision_uri}}', decision)"
+            ),
+        ],
+    ),
+    "workbench.dataset.report_rejection": ToolEntry(
+        name="workbench.dataset.report_rejection",
+        description="Write terminal rejection report when a dataset breaches the quality gate.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "payload={'validation_uri':'{{config.validation_uri}}','decision_uri':'{{config.decision_uri}}',"
+                "'status':'rejected'};"
+                "Path('/tmp/npa-dataset-rejection.json').write_text(json.dumps(payload));"
+                "print(json.dumps(payload))"
+            ),
+        ],
+    ),
     "workbench.lancedb.import_bdd100k": ToolEntry(
         name="workbench.lancedb.import_bdd100k",
         description="Import BDD100K rows into LanceDB through the workbench service.",
