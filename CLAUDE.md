@@ -21,8 +21,11 @@ making architecture, review, or domain judgments.
 - `skills/atomic/physical-ai-context/SKILL.md`: robotics, sim-to-real,
   GPU-routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K
   context.
+- `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
+ and query production sensor data as a versioned, lineage-tracked dataset
+ (FiftyOne curation + LanceDB query index).
 - `skills/tools/mjlab/SKILL.md`: MJLab locomotion evaluation and SONIC checkpoint
-  scoring.
+ scoring.
 - `skills/tools/retargeting/SKILL.md`: motion retargeting in SONIC locomotion
   workflows.
 - `skills/workflows/sim-to-real/SKILL.md`: generic sim-to-real workflow
