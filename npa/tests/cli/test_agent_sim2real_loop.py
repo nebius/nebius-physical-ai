@@ -213,6 +213,86 @@ def test_drive_stops_when_no_adjuster_wired():
     assert result["stopped_reason"] == L.STOP_NO_ADJUSTMENT
 
 
+def test_resolve_drive_config_reuses_proposed_config_on_confirm():
+    # Propose turn: no run_id, no active run -> factory mints one, once.
+    minted = {"n": 0}
+
+    def _factory():
+        minted["n"] += 1
+        return f"agent-drive-{minted['n']:04d}"
+
+    cfg1 = L.resolve_drive_config(
+        {"threshold": 0.8}, has_confirm_token=False, run_id_factory=_factory
+    )
+    assert cfg1["run_id"] == "agent-drive-0001"
+    proposed = {"action": "drive_sim2real", "config": cfg1}
+    digest = L.drive_action_digest(proposed)
+
+    # Confirm turn: reuse the pending config so the digest is IDENTICAL (the bug
+    # was re-minting a fresh run_id here, which changed the digest forever).
+    cfg2 = L.resolve_drive_config(
+        {"threshold": 0.8},
+        pending_config=cfg1,
+        has_confirm_token=True,
+        run_id_factory=_factory,
+    )
+    assert cfg2 == cfg1
+    assert L.drive_action_digest({"action": "drive_sim2real", "config": cfg2}) == digest
+    assert minted["n"] == 1  # factory not called again on confirm
+
+
+def test_drive_propose_then_confirm_round_trip_auto_run_id():
+    # End-to-end propose->confirm on the auto-generated run_id path (regression
+    # for the "can never be confirmed" bug). Mirrors the route's token/digest flow.
+    def _status(run_id):
+        return {"ok": True, "sim_viz": {"run_id": run_id}, "run": {"run_id": run_id}}
+
+    def _gate(rid, it):
+        return {"success_rate": 0.95, "threshold": 0.8}
+
+    factory = lambda: "agent-drive-abcd"  # noqa: E731 - deterministic for the test
+
+    # 1) Propose (no token): route resolves cfg, drive returns needs_confirmation.
+    cfg = L.resolve_drive_config({"threshold": 0.8}, has_confirm_token=False, run_id_factory=factory)
+    proposed = L.drive_sim2real_loop(
+        "drive", config=cfg, launch=lambda c: {"ok": True, "run_id": c["run_id"]},
+        status=_status, gate=_gate,
+    )
+    assert proposed["needs_confirmation"] is True
+    issued_digest = proposed["proposed_action"]["digest"]
+    token = "issued-token"
+
+    # 2) Confirm: route reuses the pending cfg + issued token/digest -> launches.
+    cfg2 = L.resolve_drive_config(
+        {"threshold": 0.8}, pending_config=cfg, has_confirm_token=True, run_id_factory=factory
+    )
+    launched = {"n": 0}
+    confirmed = L.drive_sim2real_loop(
+        "drive", config=cfg2,
+        launch=lambda c: (launched.__setitem__("n", launched["n"] + 1), {"ok": True, "run_id": c["run_id"]})[1],
+        status=_status, gate=_gate,
+        confirm_token=token, session_token=token, confirm_digest=issued_digest,
+    )
+    assert launched["n"] == 1
+    assert confirmed["stopped_reason"] == L.STOP_PROMOTED
+    assert confirmed["final_run_id"] == "agent-drive-abcd"
+
+
+def test_gate_with_config_threshold_fills_missing_threshold():
+    # Report carries success_rate but no threshold -> config threshold makes it
+    # decidable (the documented config.threshold knob must not be a no-op).
+    base_gate = lambda rid, it: {"success_rate": 0.9}  # noqa: E731
+    wrapped = L.gate_with_config_threshold(base_gate, 0.8)
+    metrics = wrapped("run", 1)
+    assert metrics["threshold"] == 0.8
+    ev = L.evaluate_gate(metrics)
+    assert ev["has_signal"] is True
+    assert ev["decision"] == L.DECISION_PROMOTE
+    # A report threshold is never overwritten by the config default.
+    keep = L.gate_with_config_threshold(lambda rid, it: {"success_rate": 0.9, "threshold": 0.95}, 0.1)
+    assert keep("run", 1)["threshold"] == 0.95
+
+
 def test_drive_confirm_token_is_bound_to_config_digest():
     proposed_cfg = {"run_id": "run-d", "threshold": 0.8}
     digest = L.drive_action_digest({"action": "drive_sim2real", "config": proposed_cfg})

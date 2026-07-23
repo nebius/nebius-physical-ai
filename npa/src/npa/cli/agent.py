@@ -5061,21 +5061,25 @@ def chat(payload: dict):
     }}
 
 def _consume_agent_confirm_token():
-    # Single-use consume: return the pending (token, digest) and clear the gate
-    # in state before any side effect so a replayed request cannot re-authorize.
+    # Single-use consume: return the pending (token, digest, pending_action) and
+    # clear the gate in state before any side effect so a replayed request cannot
+    # re-authorize. Only call this when the request actually presents a
+    # confirm_token, so an unrelated turn never burns a pending gate.
     state = _load_state()
     act_state = state.get("agent_act")
     if not isinstance(act_state, dict):
-        return "", ""
+        return "", "", None
     token = str(act_state.get("confirm_token") or "")
     digest = str(act_state.get("confirm_digest") or "")
+    pending = act_state.get("pending_action")
+    pending = pending if isinstance(pending, dict) else None
     if token:
         act_state["confirm_token"] = ""
         act_state["confirm_digest"] = ""
         act_state["pending_action"] = None
         state["agent_act"] = act_state
         _save_state(state)
-    return token, digest
+    return token, digest, pending
 
 def _issue_agent_confirm_token(action, digest):
     # Issue a fresh token bound to a specific proposed action digest.
@@ -5179,10 +5183,13 @@ def agent_act(payload: dict):
         raise HTTPException(status_code=400, detail="goal or messages is required")
     # Cap the goal so one oversized paste cannot blow the planner budget.
     _budget_ok, goal = enforce_input_budget(goal)
-    # Consume the single-use confirmation token: read it, then clear the pending
-    # gate in state before running the loop so a replay cannot re-authorize.
-    session_token, confirm_digest = _consume_agent_confirm_token()
     confirm_token = str(body.get("confirm_token") or "").strip()
+    # Only consume (and clear) the pending gate when the operator actually
+    # presents a token — an unrelated turn must not burn a pending confirmation.
+    if confirm_token:
+        session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+    else:
+        session_token, confirm_digest = "", ""
     try:
         max_steps = int(body.get("max_steps"))
     except (TypeError, ValueError):
@@ -5260,15 +5267,27 @@ def agent_sim2real_drive(payload: dict):
     config = body.get("config") if isinstance(body.get("config"), dict) else {{}}
     goal = str(body.get("goal") or "drive the sim2real outer loop").strip()
     state = _load_state()
-    session_token, confirm_digest = _consume_agent_confirm_token()
     confirm_token = str(body.get("confirm_token") or "").strip()
+    # Only consume the pending gate when a token is actually presented (so an
+    # unrelated drive request cannot burn it).
+    if confirm_token:
+        session_token, confirm_digest, pending = _consume_agent_confirm_token()
+    else:
+        session_token, confirm_digest, pending = "", "", None
     default_run = ""
     sim_viz = state.get("sim_viz", {{}})
     if isinstance(sim_viz, dict):
         default_run = str(sim_viz.get("run_id") or "").strip()
-    cfg = dict(config)
-    if not str(cfg.get("run_id") or "").strip():
-        cfg["run_id"] = default_run or f"agent-drive-{{secrets.token_hex(4)}}"
+    pending_cfg = pending.get("config") if isinstance(pending, dict) else None
+    # On a confirming turn, reuse the exact proposed config so the confirmation
+    # digest is stable; otherwise build fresh, minting a run_id at most once.
+    cfg = resolve_drive_config(
+        config,
+        pending_config=pending_cfg,
+        has_confirm_token=bool(confirm_token),
+        active_run_id=default_run,
+        run_id_factory=lambda: f"agent-drive-{{secrets.token_hex(4)}}",
+    )
     try:
         max_iterations = int(body.get("max_iterations") or cfg.get("max_iterations") or 3)
     except (TypeError, ValueError):
@@ -5294,12 +5313,14 @@ def agent_sim2real_drive(payload: dict):
             mode = "low_success"
         return {{"failure_mode": mode, "signals": signals, "notes": "; ".join(signals.get("notes", []))}}
 
+    # Honor the operator-configured threshold when the run report omits one.
+    _gate = gate_with_config_threshold(_sim2real_gate_metrics, cfg.get("threshold"))
     result = drive_sim2real_loop(
         goal,
         config=cfg,
         launch=_launch,
         status=_status,
-        gate=_sim2real_gate_metrics,
+        gate=_gate,
         diagnose=_diagnose,
         confirm_token=confirm_token,
         session_token=session_token,

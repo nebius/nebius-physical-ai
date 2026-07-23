@@ -53,6 +53,58 @@ def drive_action_digest(action: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def resolve_drive_config(
+    request_config: Any,
+    *,
+    pending_config: dict[str, Any] | None = None,
+    has_confirm_token: bool = False,
+    active_run_id: str = "",
+    run_id_factory: Callable[[], str] | None = None,
+) -> dict[str, Any]:
+    """Resolve the drive config so the confirmation digest is stable across turns.
+
+    The confirmation gate binds a token to the digest of the proposed config. If
+    the route re-minted a random ``run_id`` on every request, the confirming turn
+    would produce a *different* digest and could never satisfy the gate — an
+    unbreakable propose loop. On a confirming turn (``has_confirm_token`` with a
+    stored ``pending_config``) we therefore reuse the exact proposed config;
+    otherwise we build a fresh config, filling a missing ``run_id`` from the
+    active run or a one-shot ``run_id_factory``.
+    """
+    if has_confirm_token and isinstance(pending_config, dict) and pending_config:
+        return dict(pending_config)
+    cfg = dict(request_config) if isinstance(request_config, dict) else {}
+    if not str(cfg.get("run_id") or "").strip():
+        run_id = str(active_run_id or "").strip()
+        if not run_id and run_id_factory is not None:
+            run_id = str(run_id_factory() or "").strip()
+        if run_id:
+            cfg["run_id"] = run_id
+    return cfg
+
+
+def gate_with_config_threshold(
+    gate_fn: Callable[[str, int], Any],
+    config_threshold: Any,
+) -> Callable[[str, int], dict[str, Any]]:
+    """Wrap a gate reader so the operator-configured ``threshold`` is honored.
+
+    The real gate reads metrics from the run report, which may carry a
+    ``success_rate`` but no ``threshold``. Without a threshold ``evaluate_gate``
+    cannot decide (``has_signal`` stays False). This wrapper fills the threshold
+    from the drive config when the report omits it, so the documented
+    ``config.threshold`` knob actually gates.
+    """
+    def _gate(run_id: str, iteration: int) -> dict[str, Any]:
+        raw = gate_fn(run_id, iteration)
+        metrics = dict(raw) if isinstance(raw, dict) else {}
+        if metrics.get("threshold") is None and config_threshold is not None:
+            metrics["threshold"] = config_threshold
+        return metrics
+
+    return _gate
+
+
 def evaluate_gate(gate_result: Any) -> dict[str, Any]:
     """Derive a normalized promote/loop-back decision from gate metrics.
 

@@ -130,6 +130,9 @@ def _keyword_intent(lowered: str, known_intents: frozenset[str]) -> str | None:
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
+    # Intentionally separate from agent_actions._extract_json_object: both modules
+    # are inlined into the same embedded backend namespace, so keeping distinct
+    # names avoids one clobbering the other (see the _sem_* helpers below).
     raw = str(text or "").strip()
     if not raw:
         return None

@@ -25,6 +25,9 @@ from typing import Any, Callable
 
 MEMORY_KEY_PREFIX = "runs/"
 INDEX_KEY = "index.json"
+# Cap the most-recent-first index so it cannot grow without bound across many
+# drives. Per-run records stay on the store; only the index list is trimmed.
+MAX_INDEX_ENTRIES = 500
 
 # Run ids come from requests; constrain them to a safe token so a crafted id
 # (e.g. "../../session_state") can never escape the memory store directory.
@@ -142,11 +145,14 @@ class RunMemory:
         return [str(x) for x in data] if isinstance(data, list) else []
 
     def _write_index(self, run_ids: list[str]) -> None:
-        # De-dupe preserving most-recent-first ordering.
+        # De-dupe preserving most-recent-first ordering, then cap the index size
+        # so it cannot grow unbounded over many drives.
         seen: list[str] = []
         for run_id in run_ids:
             if run_id and run_id not in seen:
                 seen.append(run_id)
+            if len(seen) >= MAX_INDEX_ENTRIES:
+                break
         self._store.write(INDEX_KEY, json.dumps(seen))
 
     def record_run(

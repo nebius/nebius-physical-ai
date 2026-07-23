@@ -121,6 +121,16 @@ def test_record_run_stamps_provenance_source():
     assert drive_rec["source"] == "drive"
 
 
+def test_run_index_is_capped():
+    mem = M.RunMemory(M.InMemoryStore())
+    for i in range(M.MAX_INDEX_ENTRIES + 25):
+        mem.record_run(f"run-{i}", {"success_rate": 0.1})
+    # The full index never exceeds the cap, and the most-recent run stays first.
+    all_runs = mem.list_runs(limit=10_000)
+    assert len(all_runs) <= M.MAX_INDEX_ENTRIES
+    assert all_runs[0] == f"run-{M.MAX_INDEX_ENTRIES + 24}"
+
+
 def test_json_file_store_roundtrip(tmp_path):
     store = M.JsonFileStore(str(tmp_path / "memory"))
     mem = M.RunMemory(store)

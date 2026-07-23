@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from npa.agent_backend.memory import (  # noqa: F401
     INDEX_KEY,
+    MAX_INDEX_ENTRIES,
     MEMORY_KEY_PREFIX,
     InMemoryStore,
     JsonFileStore,
@@ -17,6 +18,7 @@ from npa.agent_backend.memory import (  # noqa: F401
 
 __all__ = [
     "INDEX_KEY",
+    "MAX_INDEX_ENTRIES",
     "MEMORY_KEY_PREFIX",
     "InMemoryStore",
     "JsonFileStore",
