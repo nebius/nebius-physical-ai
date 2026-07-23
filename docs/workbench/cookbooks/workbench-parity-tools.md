@@ -107,3 +107,31 @@ aws s3 ls s3://${BUCKET}/dataset-smoke/${RUN_ID}/curated/
   `npa workbench workflow submit`.
 - These specs keep `example-bucket` in-repo for hygiene; always run against a
   substituted temp copy.
+- **PATH for decision-writer stages:** the dataset quality gate (and the
+  scenario-gen hardening gate) run a small `python3 -c "from
+  npa.orchestration.npa_workflow.decisions import write_decision ..."`. Ensure
+  the `python3` on `PATH` is the interpreter that has `npa` installed (e.g.
+  `export PATH="$(dirname "$(command -v npa)"):$PATH"` or activate the npa
+  venv) before `run-spec --execute`, otherwise the gate stage fails with
+  `ModuleNotFoundError: No module named 'npa.orchestration'`.
+- **S3 endpoint:** the tools' storage layer honors `AWS_ENDPOINT_URL`; verify
+  artifacts with the npa storage helpers or `aws s3 --endpoint-url "$AWS_ENDPOINT_URL"`,
+  since older `aws` CLIs ignore the env var and hit real AWS.
+
+## Live validation
+
+Both smokes were run end-to-end on a live Nebius S3 environment via
+`npa workbench workflow run-spec --execute`:
+
+- `scenario-gen-smoke`: `status: completed`, steps `generate` + `rank` `ok`;
+  wrote `adversarial/manifest.json` (`npa.scenario_gen.adversarial_set.v1`, 8
+  scenarios), `adversarial/scenarios/*.json`, and `ranked/ranked.json`
+  (`npa.scenario_gen.ranked_set.v1`) with lineage threaded to the policy/base
+  URIs.
+- `dataset-of-record-smoke`: `status: completed`, steps `ingest, validate,
+  quality-gate, curate, register` `ok`; wrote the versioned
+  `dataset/.../manifest.json` (`npa.dataset.manifest.v1`, quality stats +
+  lineage), `validation/validation_report.json` (`passed: true`),
+  `gate/decision.json` (`promote_checkpoint`), and a content-addressed
+  `curated/.../manifest.json` whose lineage records the parent version and the
+  `{event: cut_in}` filter predicate.
