@@ -147,6 +147,33 @@ Rollback: test-only; delete the adversarial module + test + baseline.
   `retrieval/search` returns grounded citations, the tracer records spans, and the
   adversarial scorecard runs. All AI Cloud resources torn down after.
 
+### Live validation (completed)
+
+Re-bootstrapped an existing agent VM from this branch over SSH (operator/dev VM →
+agent VM) and validated against real HTTPS + real Nebius Token Factory inference
+(embedding model auto-discovered as `Qwen/Qwen3-Embedding-8B`; no new AI Cloud
+resources provisioned, so nothing to destroy — the corpus/trace files written
+during validation were cleaned off the shared VM afterward):
+
+- `POST /api/agent/retrieval/index` → indexed **1129 chunks / 168 documents** from
+  the staged repo `docs/`+`skills/` using real Token Factory embeddings
+  (`backend: json`).
+- `GET /api/agent/retrieval/search` → grounded, well-ranked citations (e.g. a
+  sim2real-gate query top-matched the workflow mapping/decision docs at score
+  ~0.72; a Cosmos query top-matched `tools/cosmos/SKILL.md` at ~0.74).
+- `POST /api/agent/act` → the bounded loop invoked the read-only `retrieval_search`
+  tool and stopped `done`; a GPU-launch goal correctly returned
+  `needs_confirmation` (gate held, nothing launched).
+- `GET /api/agent/trace/spans` → structured spans recorded
+  (`agent.act` root → `call.retrieval_search` → `final`, and `confirm.sim2real_submit`);
+  `POST /api/agent/trace/analyze` clustered 2 traces into 2 signatures with 0
+  silent failures.
+- Grounded-first preserved: `what is the current sim2real status` → `grounded:true`
+  at 0 tokens; a non-intent doc question
+  (`partner capability roadmap … NuRec / CAD-to-SimReady`) fell through to
+  `tier: retrieval-grounded` with 5 citations from `architecture/partner-skills-roadmap.md`.
+- Adversarial scorecard ran green (defense_rate 1.0) via the CI-safe suite.
+
 ## Optional dependencies
 
 New capabilities are optional extras so core install stays lean and CI stays
