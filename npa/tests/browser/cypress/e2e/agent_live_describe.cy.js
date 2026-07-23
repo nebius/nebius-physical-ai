@@ -80,8 +80,13 @@ describe("NPA agent live Describe-this + splash cover", () => {
     // Provenance drives the "smarter Describe this": it must name the workflow
     // stage + the components/models that produced the run's data, from real S3
     // artifacts (Cosmos Transfer 2.5 on GPU, Token Factory VLM, etc.).
+    const auth = {
+      username: Cypress.env("agentUser") || Cypress.env("NPA_AGENT_USER"),
+      password: Cypress.env("agentPassword") || Cypress.env("NPA_AGENT_PASSWORD"),
+    };
     cy.request({
       url: "/api/artifacts/runs",
+      auth,
       failOnStatusCode: false,
     }).then((runsResp) => {
       if (runsResp.status !== 200 || !runsResp.body || !Array.isArray(runsResp.body.runs)) {
@@ -101,6 +106,7 @@ describe("NPA agent live Describe-this + splash cover", () => {
       expect(runId, "discovered run id").to.not.eq("");
       cy.request({
         url: "/api/artifacts/provenance/" + encodeURIComponent(runId),
+        auth,
         failOnStatusCode: false,
       }).then((provResp) => {
         expect(provResp.status, "provenance endpoint status").to.eq(200);
