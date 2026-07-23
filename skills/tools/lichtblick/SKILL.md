@@ -37,8 +37,18 @@ data/config dirs are owned by that user so the server starts cleanly.
 ## Deploy / launch contract
 
 - Cross-tool data flows through S3 only. `serve`/`launch` take `--input-path`
-  (S3 or local MCAP/bag/db3) and optional `--output-path`; the viewer opens the
-  staged artifact via a deep-linked `?ds=remote-file&ds.url=...` URL.
+  (S3 or local MCAP/bag/db3) and optional `--output-path`; the artifact is
+  **staged into the viewer's own origin** (`/srv/data/<name>`, served by the same
+  Caddy on `:8080`) and opened via a deep-linked `?ds=remote-file&ds.url=...` URL.
+- Because the MCAP is co-served from the viewer origin, the browser fetch is
+  same-origin: **no bucket CORS, no pre-signed URL, and no http/https
+  mixed-content block** are involved. (Pointing `ds.url` directly at an S3 URL
+  instead would require bucket CORS + a presigned URL + an https viewer — that is
+  deliberately not this tool's path.) Caddy serves the MCAP with
+  `Accept-Ranges: bytes`, so Lichtblick streams it via HTTP range requests.
+- The deep link always targets the app root `/` (data source in the query
+  string), never a client-routed sub-path, so `caddy file-server` needs no SPA
+  fallback: `GET /` always returns `index.html`.
 - `--host` / `--port` control the bind (default `0.0.0.0:8080`).
 - The CLI resolves the `npa-lichtblick` image via
   `npa.deploy.images.container_image_for_tool` (registry from

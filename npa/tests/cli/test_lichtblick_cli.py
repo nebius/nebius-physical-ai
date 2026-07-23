@@ -52,6 +52,10 @@ def test_dockerfile_exists_and_is_non_root_service() -> None:
     # Digest-pinned bases (fiftyone header convention).
     assert "node:22-bookworm@sha256:" in text
     assert "caddy:2.11.4-alpine@sha256:" in text
+    # OSS source is commit-pinned (immutable), not just tag-pinned.
+    assert "ARG LICHTBLICK_COMMIT=" in text
+    assert 'git fetch --depth 1 origin "${LICHTBLICK_COMMIT}"' in text
+    assert 'if [ "${head}" != "${LICHTBLICK_COMMIT}" ]' in text
     # Caddy's XDG dirs must be writable by the non-root runtime user.
     assert "chown -R 65534:65534" in text
 
@@ -99,6 +103,13 @@ def test_serve_plans_viewer_for_s3_mcap() -> None:
     assert payload["port"] == DEFAULT_PORT
     assert payload["served_artifact_path"] == "/srv/data/recording.mcap"
     assert "ds=remote-file" in payload["viewer_url"]
+    # The deep link targets the app root `/` with the data source as a query
+    # string (never a client-routed sub-path), so caddy file-server needs no SPA
+    # fallback: `GET /` always serves index.html.
+    assert payload["viewer_url"].startswith("http://0.0.0.0:8080/?")
+    # The co-served artifact URL shares the viewer origin -> no CORS / no
+    # mixed-content / no signed URL needed for the browser to fetch the MCAP.
+    assert "ds.url=http%3A%2F%2F0.0.0.0%3A8080%2Fdata%2Frecording.mcap" in payload["viewer_url"]
 
 
 def test_serve_rejects_unsupported_artifact() -> None:

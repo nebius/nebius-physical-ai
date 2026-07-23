@@ -9,27 +9,44 @@
 # Digest pinned 2026-07-23.
 #   Build stage tag:   node:22-bookworm
 #   Runtime stage tag: caddy:2.11.4-alpine
-# To update: bump LICHTBLICK_VERSION, then re-resolve both digests via the
-# registry API and update the @sha256 pins below.
+# To update: bump LICHTBLICK_VERSION + LICHTBLICK_COMMIT together (the commit is
+# the load-bearing selector; the version/tag is a human-readable label), then
+# re-resolve both base digests via the registry API and update the @sha256 pins.
 
 ARG LICHTBLICK_VERSION=1.26.0
+# Immutable commit pin for the OSS source. Git tags are mutable, so pin the exact
+# commit that v${LICHTBLICK_VERSION} pointed at (lichtblick-suite/lichtblick).
+# Resolve with:
+#   curl -fsSL https://api.github.com/repos/lichtblick-suite/lichtblick/git/refs/tags/v<ver>
+ARG LICHTBLICK_COMMIT=635393f99b0ed3b627506e5c04a9ab70d2a09966
 
 # ---- build stage: compile the static web bundle from OSS source ----
 # Full (non-slim) node image so native yarn/node-gyp deps build like upstream.
 FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37 AS build
 
 ARG LICHTBLICK_VERSION
+ARG LICHTBLICK_COMMIT
 ENV LICHTBLICK_VERSION=${LICHTBLICK_VERSION} \
+    LICHTBLICK_COMMIT=${LICHTBLICK_COMMIT} \
     DEBIAN_FRONTEND=noninteractive \
     CI=true
 
 WORKDIR /src
 
-# Shallow-clone exactly the pinned OSS tag, then assert the checked-out source
-# version matches the pinned ARG before spending time on the web build.
-RUN git clone --depth 1 --branch "v${LICHTBLICK_VERSION}" \
-      https://github.com/lichtblick-suite/lichtblick.git . \
-    && node -e "const v=require('./package.json').version; if (v !== process.env.LICHTBLICK_VERSION) { throw new Error('expected lichtblick '+process.env.LICHTBLICK_VERSION+', found '+v); } console.log('LICHTBLICK_SOURCE_VERSION_OK '+v);"
+# Fetch exactly the pinned commit (immutable), then assert both the checked-out
+# HEAD SHA and package.json version match the pins before the web build. A
+# retagged upstream v${LICHTBLICK_VERSION} cannot silently change what we ship:
+# the commit pin is the load-bearing selector. Fetch-by-SHA works because GitHub
+# allows fetching reachable commits.
+RUN git init -q . \
+    && git remote add origin https://github.com/lichtblick-suite/lichtblick.git \
+    && git fetch --depth 1 origin "${LICHTBLICK_COMMIT}" \
+    && git checkout -q FETCH_HEAD \
+    && head="$(git rev-parse HEAD)" \
+    && if [ "${head}" != "${LICHTBLICK_COMMIT}" ]; then \
+         echo "expected commit ${LICHTBLICK_COMMIT}, found ${head}" >&2; exit 1; \
+       fi \
+    && node -e "const v=require('./package.json').version; if (v !== process.env.LICHTBLICK_VERSION) { throw new Error('expected lichtblick '+process.env.LICHTBLICK_VERSION+', found '+v); } console.log('LICHTBLICK_SOURCE_VERSION_OK '+v+' @ '+process.env.LICHTBLICK_COMMIT);"
 
 RUN corepack enable \
     && yarn install --immutable \

@@ -32,6 +32,25 @@ The `nvcr.io/nvidia/isaac-lab:2.3.2` base is still tag-only because anonymous
 manifest access did not return a digest; its Dockerfile carries a TODO marker
 until CI or an operator has registry auth for NGC digest resolution.
 
+### OSS source-built images (Lichtblick)
+
+Some workbench images build a third-party OSS project from source rather than
+installing a published package. `npa-lichtblick` compiles the Lichtblick web
+viewer (MPL-2.0) from `lichtblick-suite/lichtblick`. Git tags are mutable, so
+these images pin the **exact upstream commit SHA**, not just the release tag:
+
+```dockerfile
+ARG LICHTBLICK_VERSION=1.26.0
+ARG LICHTBLICK_COMMIT=635393f99b0ed3b627506e5c04a9ab70d2a09966
+```
+
+The build fetches that commit, asserts `git rev-parse HEAD` equals the pinned
+SHA, and asserts `package.json` version equals `LICHTBLICK_VERSION`. A retagged
+or force-moved upstream `v1.26.0` therefore cannot silently change what ships —
+the commit is the load-bearing selector, and the version/tag is a human label.
+To update, resolve the new tag's commit via the GitHub refs API and bump both
+`LICHTBLICK_VERSION` and `LICHTBLICK_COMMIT` together.
+
 ### npa Image Tags
 
 npa-published runtime images use two tag families:
@@ -103,6 +122,9 @@ Build determinism is partial:
   selected wheel versions.
 - npa source: copied from the checked-out repository and installed into the
   image, so the Git commit is part of provenance.
+- OSS source-built images: third-party sources built from Git (e.g. Lichtblick)
+  are pinned by upstream commit SHA and verified at build time (see "OSS
+  source-built images" above), so the exact source revision is deterministic.
 - Apt packages: installed by name without package-version pins. Rebuilds can
   drift when Ubuntu repositories update.
 - Python installer tooling: several Dockerfiles upgrade `pip`, `setuptools`,
