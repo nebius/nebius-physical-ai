@@ -521,15 +521,15 @@ containers:
       timeout_seconds: 60
       status: ready
 
-  foxglove:
-    image: npa-foxglove
-    dockerfile: npa/docker/workbench/foxglove/Dockerfile
+  lichtblick:
+    image: npa-lichtblick
+    dockerfile: npa/docker/workbench/lichtblick/Dockerfile
     physical_ai:
       useful: true
       role: >-
-        Lichtblick (MPL-2.0 OSS Foxglove Studio fork) web viewer for MCAP /
-        ROS-bag / robotics log artifacts; the browser-based analog of the Rerun
-        viewer for inspecting Physical AI recordings staged from S3.
+        Lichtblick — an open-source (MPL-2.0), Foxglove-compatible web viewer for
+        MCAP / ROS-bag / robotics log artifacts; the browser-based analog of the
+        Rerun viewer for inspecting Physical AI recordings staged from S3.
     safety:
       runs_as: nobody
       base_image: caddy:2.11.4-alpine
@@ -541,7 +541,7 @@ containers:
         outbound calls beyond the viewer bind. Source fetch happens at build time.
     golden_eval:
       kind: build-import
-      command: 'sh -c "test -s /srv/index.html && grep -qx 1.26.0 /opt/npa/foxglove/VERSION"'
+      command: 'sh -c "test -s /srv/index.html && grep -qx 1.26.0 /opt/npa/lichtblick/VERSION"'
       gpu: none
       timeout_seconds: 60
       status: ready

@@ -97,8 +97,8 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     "rerun-viewer": [
         "rerun SDK import + __version__",
     ],
-    "foxglove": [
-        "static Lichtblick/Foxglove web bundle present (/srv/index.html)",
+    "lichtblick": [
+        "static Lichtblick (Foxglove-compatible) web bundle present (/srv/index.html)",
         "served bundle version pin (VERSION == 1.26.0)",
     ],
 }
