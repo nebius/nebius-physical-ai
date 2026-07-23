@@ -693,6 +693,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.checkpoint_uri}}",
             "--data-path",
             "{{config.data_uri}}",
+            "--output-path",
+            "{{config.training_uri}}",
             "--output",
             "json",
         ],

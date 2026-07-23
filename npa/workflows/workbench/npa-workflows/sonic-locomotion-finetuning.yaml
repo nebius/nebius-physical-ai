@@ -19,6 +19,7 @@ config:
 
   motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/"
   retargeted_uri: "s3://{{config.bucket}}/{{config.prefix}}/retargeted/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
   mjlab_uri: "s3://{{config.bucket}}/{{config.prefix}}/mjlab/"
 
 resources:

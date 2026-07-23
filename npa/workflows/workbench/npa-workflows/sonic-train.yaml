@@ -12,6 +12,7 @@ config:
   sonic_runtime: serverless
   checkpoint_uri: "nvidia/GEAR-SONIC"
   data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
 
 resources:
   gpu:
