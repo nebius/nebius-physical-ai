@@ -97,3 +97,9 @@ images:
     tier: job
     ports: [9090]
     final_user: nobody
+  foxglove:
+    dockerfile: foxglove/Dockerfile
+    tier: service
+    ports: [8080]
+    final_user: nobody
+    notes: "Lichtblick (MPL-2.0) static web viewer; caddy file-server default CMD + HEALTHCHECK."
