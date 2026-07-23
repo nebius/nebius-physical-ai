@@ -50,11 +50,15 @@ resources:
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 64Gi
+    # Provision the GPU cluster through npa before submit if it is absent.
+    # `true` uses config defaults; a mapping can set clusterName/context/project.
+    deployIfAbsent: true
   trainer-gpu:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 64Gi
+    deployIfAbsent: true
   control-cpu:
     cloud: kubernetes
     cpus: 4
