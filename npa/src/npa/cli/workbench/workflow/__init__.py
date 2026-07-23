@@ -110,6 +110,15 @@ def submit_cmd(
             "but do not submit."
         ),
     ),
+    deploy_if_absent: bool = typer.Option(
+        True,
+        "--deploy-if-absent/--no-deploy-if-absent",
+        help=(
+            "For npa.workflow specs: honor resource `deployIfAbsent` and provision "
+            "missing Kubernetes/GPU clusters via npa before submit (idempotent). "
+            "With --plan-only the provisioning is dry-run only."
+        ),
+    ),
     tool: str = typer.Option(
         "",
         "--tool",
@@ -302,6 +311,27 @@ def submit_cmd(
 
     prepared_npa = None
     if is_npa_workflow_spec(yaml_path):
+        if deploy_if_absent:
+            from npa.orchestration.npa_workflow.deploy import (
+                ensure_infra_present,
+                parse_deploy_targets,
+            )
+            from npa.orchestration.npa_workflow.spec import load_spec as _load_deploy_spec
+
+            try:
+                deploy_targets = parse_deploy_targets(_load_deploy_spec(yaml_path))
+                if deploy_targets:
+                    for record in ensure_infra_present(deploy_targets, dry_run=plan_only):
+                        typer.echo(
+                            "deployIfAbsent["
+                            f"{record['profile']}]: {record['status']} "
+                            f"context={record['context']} "
+                            f"actions={','.join(record['actions']) or 'none'}",
+                            err=True,
+                        )
+            except NpaWorkflowError as exc:
+                _fail(str(exc))
+                return
         image_overrides: dict[str, str] = {}
         # ``none`` / ``default`` clears workbench image pins so tasks use the
         # SkyPilot default image (needed when registry images fail k8s apt-ssh).
