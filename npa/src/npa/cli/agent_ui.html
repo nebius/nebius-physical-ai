@@ -4297,17 +4297,51 @@
         const input = document.getElementById("artifactStageFilter");
         return String((input && input.value) || "").trim();
       }
-      function deriveArtifactStage(key, runId) {
+      function scopedAfterRun(key, runId) {
         let scoped = String(key || "");
         const rid = String(runId || "");
         const marker = "/" + rid + "/";
         const idx = scoped.indexOf(marker);
         if (idx >= 0) {
-          // Real keys with a discovery prefix: <prefix>/<runId>/<stage>/...
+          // Real keys with a discovery prefix: <prefix>/<runId>/<...>
           scoped = scoped.slice(idx + marker.length);
         } else if (rid && scoped.startsWith(rid + "/")) {
-          // Empty-prefix keys: <runId>/<stage>/...
+          // Empty-prefix keys: <runId>/<...>
           scoped = scoped.slice(rid.length + 1);
+        }
+        return scoped.replace(/^\/+/, "");
+      }
+      function runStageWrapper(artifacts, runId) {
+        // Mirror agent_stages.run_stage_wrapper: strip common workflow-name
+        // nesting (<run>/<workflow-name>/<stage>/...) so the real stages surface.
+        const scoped = (Array.isArray(artifacts) ? artifacts : [])
+          .map((it) => scopedAfterRun((it && it.key) || "", runId))
+          .filter(Boolean);
+        if (!scoped.length) return "";
+        const parts = [];
+        let tails = scoped;
+        while (true) {
+          const firsts = new Set(tails.map((t) => t.split("/")[0]));
+          if (firsts.size !== 1) break;
+          const seg = tails[0].split("/")[0];
+          const next = [];
+          let ok = true;
+          for (const t of tails) {
+            const rest = t.startsWith(seg + "/") ? t.slice(seg.length + 1) : "";
+            if (rest.indexOf("/") < 0) { ok = false; break; }
+            next.push(rest);
+          }
+          if (!ok) break;
+          parts.push(seg);
+          tails = next;
+        }
+        return parts.join("/");
+      }
+      function deriveArtifactStage(key, runId, wrapper) {
+        let scoped = scopedAfterRun(key, runId);
+        const wrap = String(wrapper || "").replace(/^\/+|\/+$/g, "");
+        if (wrap && scoped.startsWith(wrap + "/")) {
+          scoped = scoped.slice(wrap.length + 1);
         }
         const parts = scoped.split("/").filter(Boolean);
         const first = parts[0] || "artifacts";
@@ -4325,8 +4359,9 @@
         const select = document.getElementById("artifactStageFilter");
         if (!select) return;
         const current = String(select.value || "").trim();
+        const wrapper = runStageWrapper(artifacts, runId);
         const stages = Array.from(new Set(
-          (Array.isArray(artifacts) ? artifacts : []).map((item) => deriveArtifactStage(item.key, runId))
+          (Array.isArray(artifacts) ? artifacts : []).map((item) => deriveArtifactStage(item.key, runId, wrapper))
         )).sort();
         select.innerHTML = '<option value="">All stages</option>' +
           stages.map((s) => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join("");
@@ -4339,9 +4374,10 @@
         const sortMode = artifactSortValue();
         const preferredKey = String((preferred && preferred.key) || "");
         const typeRank = { rerun: 0, video: 1, image: 2, json: 3, text: 4, download: 5 };
+        const stageWrapper = runStageWrapper(artifacts, runId);
         const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {
           if (filter && String(item.render || "download") !== filter) return false;
-          if (stageFilter && deriveArtifactStage(item.key, runId) !== stageFilter) return false;
+          if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;
           return true;
         });
         items.sort((a, b) => {

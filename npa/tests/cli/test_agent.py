@@ -756,11 +756,13 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     # Stage selector in the artifact browser.
     assert 'id="artifactStageFilter"' in source
     assert "function artifactStageFilterValue()" in source
-    assert "function deriveArtifactStage(key, runId)" in source
+    assert "function deriveArtifactStage(key, runId, wrapper)" in source
     assert "function populateArtifactStageFilter(artifacts, runId)" in source
     assert "populateArtifactStageFilter(artifacts, runId);" in source
+    # Deeply-nested runs (<run>/<workflow-name>/<stage>/...) expose real stages.
+    assert "function runStageWrapper(artifacts, runId)" in source
     # Stage participates in filtering and re-renders on change.
-    assert "if (stageFilter && deriveArtifactStage(item.key, runId) !== stageFilter) return false;" in source
+    assert "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;" in source
     assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
     # Timeline stage rows are tagged and clickable to drive the stage filter.
     assert "stage_key: stageKey," in source
