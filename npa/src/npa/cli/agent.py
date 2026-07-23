@@ -64,7 +64,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072201"
+AGENT_UI_VERSION = "2026072301"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -125,6 +125,10 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "Describe this — capturing",
     "client_max_body_size 32m",
     "maxChars = 700000",
+    # Grounded original-input ("what was the original input image") resolution.
+    "_maybe_origin_reply",
+    "build_run_origin",
+    "Grounded origin facts for this run",
 )
 
 AGENT_CHAT_QUEUE_CONTRACT = (
@@ -4675,6 +4679,79 @@ def _maybe_stage_count_numeric_reply(user_text: str, state: dict[str, Any]) -> s
         value -= int(match.group(1))
     return str(value)
 
+# Plain-string origin-question detector (no regex: this code is embedded verbatim
+# inside the backend f-string, where backslash escapes are unsafe).
+_ORIGIN_NOUNS = (
+    "image", "images", "frame", "frames", "input", "inputs", "scene",
+    "footage", "clip", "clips", "photo", "photos", "picture", "pictures",
+    "visual", "render", "data",
+)
+_ORIGIN_WORDS = (
+    "original", "source", "raw", "initial", "underlying", "starting",
+    "came from", "come from", "comes from", "where did", "where does",
+)
+
+def _origin_question(user_text: str) -> bool:
+    t = str(user_text or "").lower()
+    if not t:
+        return False
+    has_noun = any(n in t for n in _ORIGIN_NOUNS)
+    has_origin = any(w in t for w in _ORIGIN_WORDS)
+    if has_origin and has_noun:
+        return True
+    if "input" in t and ("what" in t or "which" in t):
+        return True
+    if "cosmos" in t and ("transform" in t or "input" in t or "start" in t):
+        return True
+    return False
+
+def _maybe_origin_reply(user_text: str, *, visual_context=None, state=None):
+    # Grounded answer to "what was the original input image?" — resolved from the
+    # active run's REAL artifacts (source frames if stored; otherwise the earliest
+    # stored visuals + augment engine + what the VLM labeled), never guessed.
+    if not _origin_question(user_text):
+        return None, []
+    vc = visual_context if isinstance(visual_context, dict) else {{}}
+    run_id = str(vc.get("run_id") or "").strip()
+    if not run_id:
+        st = state if isinstance(state, dict) else _load_state()
+        sv = _sim_viz_for_run(st)
+        run_id = str(sv.get("run_id") or "").strip()
+    if not run_id or run_id == "franka-demo":
+        return None, []
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception:
+        return None, []
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = find_run_artifacts(
+            settings["bucket"],
+            base_prefix=settings.get("prefix", ""),
+            run_id=normalized_run,
+            s3=s3,
+        )
+        keys = [str(a.key or "") for a in artifacts]
+        if not keys:
+            return None, []
+
+        def _read_json(key: str):
+            if not key:
+                return None
+            try:
+                body = s3.get_object(Bucket=settings["bucket"], Key=key)["Body"].read()
+                return json.loads(body)
+            except Exception:
+                return None
+
+        origin = build_run_origin(keys, run_id=normalized_run, read_json=_read_json)
+        summary = str(origin.get("summary") or "").strip()
+        if not summary:
+            return None, []
+        return summary, ["artifacts/provenance/" + normalized_run]
+    except Exception:
+        return None, []
+
 def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     last_user = _last_user_message(raw_messages)
     if not last_user:
@@ -4748,6 +4825,42 @@ def chat(payload: dict):
     # Preserve merged session history across the LLM path (do not rebuild from a
     # short client payload and wipe prior turns after the model returns).
     merged_history = list(history)
+    # Grounded "where did this come from / what was the original input" answer.
+    # Resolved from the active run's real artifacts. For a metadata/text turn we
+    # return it directly (deterministic, 0 tokens); for a framed vision turn we
+    # inject it so the model's "Where it comes from" is grounded, not guessed.
+    origin_reply, origin_apis = _maybe_origin_reply(
+        last_content, visual_context=visual_context, state=state
+    )
+    if origin_reply and not has_image_content(llm_messages):
+        history = [*merged_history, {{"role": "assistant", "content": origin_reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
+            }}
+        )
+        state = _load_state()
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        return {{
+            "ok": True,
+            "model": model,
+            "reply": origin_reply,
+            "reasoning": None,
+            "grounded": True,
+            "tier": "grounded-provenance",
+            "apis_used": origin_apis,
+            "skills_used": ["agent-visual-feedback"],
+            "session_id": session["id"],
+            "session": {{
+                "id": session["id"],
+                "title": session["title"],
+                "memory_uri": session.get("memory_uri", ""),
+                "message_count": len(session.get("chat_history", [])),
+            }},
+        }}
     # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
     if (not visual_turn) and re.search(
         r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
@@ -4876,6 +4989,13 @@ def chat(payload: dict):
     visual_block = format_visual_context_block(visual_context)
     if visual_block:
         system_content += "\\n\\n" + visual_block
+    if origin_reply:
+        # Ground the "Where it comes from" / original-input story with real facts.
+        system_content += (
+            "\\n\\nGrounded origin facts for this run (use verbatim for the original "
+            "input / 'where it comes from'; do NOT contradict or hedge past these):\\n"
+            + origin_reply
+        )
     if visual_turn and not has_image_content(llm_messages):
         system_content += (
             "\\n\\nIMPORTANT: No viewer frame image is attached to this turn. "

@@ -735,6 +735,13 @@ describe("NPA agent UI with mocked APIs", () => {
             model: "nvidia/Cosmos-Transfer2.5-2B",
           },
         ],
+        origin: {
+          run_id: "paidf-mock-1",
+          original_present: false,
+          summary:
+            "No separate original input image was stored for run `paidf-mock-1` — the " +
+            "earliest stored visuals are the Cosmos Transfer 2.5 augment OUTPUTS.",
+        },
       },
     }).as("provenance");
     cy.intercept("POST", "/api/chat", (req) => {
@@ -767,6 +774,9 @@ describe("NPA agent UI with mocked APIs", () => {
       const body = interception.request.body;
       expect(body.visual_context.provenance, "visual_context.provenance").to.be.a("string");
       expect(body.visual_context.provenance).to.match(/Cosmos Transfer 2\.5/);
+      // Grounded original-input resolution rides along with provenance.
+      expect(body.visual_context.origin, "visual_context.origin").to.be.a("string");
+      expect(body.visual_context.origin).to.match(/No separate original input image was stored/);
       const last = body.messages[body.messages.length - 1];
       const textPart = Array.isArray(last.content)
         ? last.content.find((part) => part && String(part.type || "").includes("text"))
@@ -774,6 +784,8 @@ describe("NPA agent UI with mocked APIs", () => {
       const promptText = String((textPart && textPart.text) || "");
       expect(promptText, "prompt provenance section").to.match(/Pipeline provenance/i);
       expect(promptText).to.match(/Cosmos Transfer 2\.5/);
+      expect(promptText, "prompt original-input section").to.match(/Original input/i);
+      expect(promptText).to.match(/No separate original input image was stored/);
     });
   });
 

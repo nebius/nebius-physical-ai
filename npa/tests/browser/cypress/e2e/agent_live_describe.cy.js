@@ -113,6 +113,12 @@ describe("NPA agent live Describe-this + splash cover", () => {
         expect(provResp.body.ok, "provenance ok").to.eq(true);
         expect(provResp.body.components, "components").to.be.an("array");
         expect(provResp.body.summary, "summary").to.be.a("string");
+        // Grounded original-input resolution: names real source frames if stored,
+        // otherwise explains the earliest stored visuals — never a guess.
+        expect(provResp.body.origin, "origin").to.be.an("object");
+        expect(provResp.body.origin.summary, "origin.summary").to.be.a("string");
+        expect(provResp.body.origin.summary.length, "origin.summary non-empty").to.be.greaterThan(0);
+        expect(provResp.body.origin, "origin.original_present flag").to.have.property("original_present");
         if (provResp.body.components.length > 0) {
           const stages = provResp.body.components.map((c) => String(c.stage || ""));
           const hasKnownStage = stages.some((s) =>

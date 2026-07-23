@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from npa.workflows.data_factory_provenance import build_run_provenance
+from npa.workflows.data_factory_provenance import build_run_origin, build_run_provenance
 
 RUN = "paidf-1"
 PFX = f"checkpoints/physical-ai-data-factory/{RUN}"
@@ -65,3 +65,71 @@ def test_provenance_only_reports_present_stages() -> None:
     prov = build_run_provenance(keys, run_id=RUN)
     stages = {c["stage"] for c in prov["components"]}
     assert stages == {"Augment"}
+
+
+def test_provenance_carries_origin() -> None:
+    prov = build_run_provenance(KEYS, run_id=RUN, read_json=_read_gpu)
+    assert "origin" in prov
+    assert prov["origin"]["run_id"] == RUN
+
+
+# The real paidf GPU run had NO source-frames / annotate-originals stage: the only
+# stored visuals are the Cosmos Transfer 2.5 augmented frames.
+_NO_ORIGINAL_KEYS = [
+    f"{PFX}/configs/manifest.json",
+    f"{PFX}/cosmos_augmented/manifest.json",
+    f"{PFX}/cosmos_augmented/aug-{RUN}/metadata.json",
+    f"{PFX}/cosmos_augmented/aug-{RUN}/augmented_video.mp4",
+    f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
+    f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00001.png",
+    f"{PFX}/labeled_augmented/captions.json",
+    f"{PFX}/curation/report.json",
+    f"{PFX}/reports/final.json",
+]
+
+
+def _read_no_original(key: str):
+    if key.endswith("cosmos_augmented/manifest.json"):
+        return {"mode": "cosmos_transfer2.5_gpu"}
+    if key.endswith("labeled_augmented/captions.json"):
+        return {
+            "model": "Qwen/Qwen2.5-VL-72B-Instruct",
+            "input_path": f"s3://bucket/{PFX}/cosmos_augmented/aug-{RUN}/",
+        }
+    if key.endswith("configs/manifest.json"):
+        return {"variables": {"road_condition": ["dry", "wet"], "weather": ["clear"]}}
+    return {}
+
+
+def test_origin_when_no_original_input_stored() -> None:
+    origin = build_run_origin(_NO_ORIGINAL_KEYS, run_id=RUN, read_json=_read_no_original)
+    assert origin["original_present"] is False
+    assert origin["original_inputs"] == []
+    # Earliest stored visual is the Cosmos Transfer augmented output, not an original.
+    assert origin["earliest_visual"]["stage"] == "Augment"
+    assert origin["earliest_visual"]["count"] == 3  # 2 frames + 1 video
+    assert origin["augment"]["engine"] == "cosmos_transfer_2.5_gpu"
+    assert "cosmos_augmented/aug-" in origin["labeled_from"]
+    summary = origin["summary"].lower()
+    assert "no separate original input image was stored" in summary
+    assert "augment outputs" in summary
+    assert "cosmos transfer 2.5" in summary
+    # Grounds the "generated from config, not an uploaded image" story.
+    assert "road_condition" in origin["summary"]
+    assert "pseudo-labeled those augmented frames" in origin["summary"]
+
+
+def test_origin_when_source_frames_uploaded() -> None:
+    keys = [
+        f"{PFX}/input/clip0/frame-00000.png",
+        f"{PFX}/input/clip0/frame-00001.png",
+        f"{PFX}/labeled_original/captions.json",
+        f"{PFX}/cosmos_augmented/manifest.json",
+        f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
+    ]
+    origin = build_run_origin(keys, run_id=RUN, read_json=_read_gpu)
+    assert origin["original_present"] is True
+    assert len(origin["original_inputs"]) == 2
+    assert origin["original_inputs"][0]["kind"] == "image"
+    assert "uploaded source" in origin["summary"].lower()
+    assert "input/clip0/frame-00000.png" in origin["summary"]

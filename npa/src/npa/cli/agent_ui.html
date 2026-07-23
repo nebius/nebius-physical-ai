@@ -3243,6 +3243,11 @@
           try {
             const prov = await loadJson("/api/artifacts/provenance/" + encodeURIComponent(meta.run_id));
             if (prov && prov.summary) meta.provenance = String(prov.summary).slice(0, 800);
+            // Grounded original-input resolution (source frames if stored; else the
+            // earliest stored visuals + augment engine + what the VLM labeled).
+            if (prov && prov.origin && prov.origin.summary) {
+              meta.origin = String(prov.origin.summary).slice(0, 700);
+            }
           } catch (_provErr) { /* best-effort context */ }
         }
         // Keep prompt construction aligned with agent_visual_feedback.describe_user_prompt.
@@ -3266,6 +3271,11 @@
             if (part.trim()) promptLines.push("- " + part.trim());
           }
         }
+        if (meta.origin) {
+          promptLines.push("");
+          promptLines.push("Original input (grounded in the run's real artifacts — what the earliest/original data actually was):");
+          promptLines.push("- " + String(meta.origin));
+        }
         if (textExcerpt) {
           promptLines.push("- data_excerpt:");
           promptLines.push("```");
@@ -3287,7 +3297,7 @@
           "",
           "Instructions: Inspect attached pixels when present. Dense RGB, tiled envs, robot meshes, colored skeletons/wireframes on a dark grid, or synthetic cameras are not blank.",
           "Only call a frame blank when it is uniform black/white/gray with no structure.",
-          "Reply with: What I see → Where it comes from (pipeline stage + components/models from the provenance) → Likely meaning → Operator feedback → Next actions."
+          "Reply with: What I see → Where it comes from (pipeline stage + components/models from the provenance; if an Original input block is given, state what the original/earliest input actually was or that no separate original was stored — do not guess) → Likely meaning → Operator feedback → Next actions."
         );
         return {
           kind: visualKind,
