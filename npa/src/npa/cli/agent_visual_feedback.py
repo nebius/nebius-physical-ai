@@ -542,3 +542,170 @@ def build_multimodal_user_content(
         parts.append({"type": "text", "text": prompt})
     parts.append({"type": "image_url", "image_url": {"url": safe}})
     return parts
+
+
+# ── Quantitative viewer eval (Gap 4) ─────────────────────────────────────────
+# Beyond captioning: turn a run/rollout report into numeric signals the Phase-C
+# diagnose step and the operator can act on. These operate on report/metric
+# JSON, never pixels, and are pure so they unit-test with zero infra.
+
+# A success_rate at or below this floor with no spread is treated as a collapsed
+# / degenerate policy rather than a merely low score.
+COLLAPSE_SUCCESS_FLOOR = 1e-6
+
+
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    result: float | None = None
+    if isinstance(value, (int, float)):
+        result = float(value)
+    elif isinstance(value, str):
+        try:
+            result = float(value.strip())
+        except (ValueError, AttributeError):
+            return None
+    if result is None:
+        return None
+    # Reject NaN / infinity so signals stay JSON-valid and comparisons sane.
+    if result != result or result in (float("inf"), float("-inf")):
+        return None
+    return result
+
+
+def _per_env_scores(report: Mapping[str, Any]) -> list[float]:
+    per_env = report.get("per_env")
+    scores: list[float] = []
+    if isinstance(per_env, list):
+        for entry in per_env:
+            if isinstance(entry, Mapping):
+                value = _coerce_float(
+                    entry.get("success_rate")
+                    if entry.get("success_rate") is not None
+                    else entry.get("success")
+                    if entry.get("success") is not None
+                    else entry.get("reward")
+                )
+            else:
+                value = _coerce_float(entry)
+            if value is not None:
+                scores.append(value)
+    return scores
+
+
+def extract_quantitative_signals(report: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Compute numeric signals from a rollout / held-out eval report.
+
+    Returns ``{has_signal, success_rate, threshold, num_envs, passed_envs,
+    spread, degenerate, policy_collapse, meets_threshold, notes}``. Missing
+    fields degrade gracefully (``has_signal=False``) so callers never fabricate a
+    score.
+    """
+    data = report if isinstance(report, Mapping) else {}
+    success_rate = _coerce_float(data.get("success_rate"))
+    threshold = _coerce_float(data.get("threshold"))
+    scores = _per_env_scores(data)
+    num_envs = len(scores)
+    passed_envs = sum(1 for s in scores if s > 0)
+    spread = (max(scores) - min(scores)) if scores else 0.0
+
+    has_signal = success_rate is not None or num_envs > 0
+    if success_rate is None and num_envs > 0:
+        success_rate = sum(scores) / float(num_envs)
+
+    notes: list[str] = []
+    policy_collapse = False
+    degenerate = False
+    # Collapse means a floor score with no spread — if some envs pass (per-env
+    # spread > floor / passed_envs > 0) it is a low score, not a collapse.
+    no_spread = num_envs == 0 or (spread <= COLLAPSE_SUCCESS_FLOOR and passed_envs == 0)
+    if (
+        has_signal
+        and success_rate is not None
+        and success_rate <= COLLAPSE_SUCCESS_FLOOR
+        and no_spread
+    ):
+        policy_collapse = True
+        notes.append("success_rate at floor with no spread — likely policy collapse")
+    if num_envs >= 2 and spread <= COLLAPSE_SUCCESS_FLOOR and passed_envs == 0:
+        degenerate = True
+        if "collapse" not in " ".join(notes):
+            notes.append("all envs identical at zero — degenerate rollout")
+    meets_threshold = (
+        success_rate is not None and threshold is not None and success_rate >= threshold
+    )
+    if has_signal and not notes:
+        if meets_threshold:
+            notes.append("success_rate meets threshold")
+        elif threshold is not None:
+            notes.append("below-threshold success_rate")
+    if not has_signal:
+        notes.append("no numeric signal available in report")
+    return {
+        "has_signal": has_signal,
+        "success_rate": success_rate,
+        "threshold": threshold,
+        "num_envs": num_envs,
+        "passed_envs": passed_envs,
+        "spread": round(spread, 6),
+        "degenerate": degenerate,
+        "policy_collapse": policy_collapse,
+        "meets_threshold": meets_threshold,
+        "notes": notes,
+    }
+
+
+def compare_rollouts(
+    run_a: Mapping[str, Any] | None,
+    run_b: Mapping[str, Any] | None,
+    *,
+    label_a: str = "A",
+    label_b: str = "B",
+) -> dict[str, Any]:
+    """Compare two rollout reports (run B vs baseline run A).
+
+    Returns ``{delta_success_rate, regressed, improved, verdict, a, b, notes}``
+    where ``delta = B - A``. Used to answer "did run B regress vs run A" from
+    stored metrics, not model recall.
+    """
+    sig_a = extract_quantitative_signals(run_a)
+    sig_b = extract_quantitative_signals(run_b)
+    sr_a = sig_a.get("success_rate")
+    sr_b = sig_b.get("success_rate")
+    delta = None
+    regressed = False
+    improved = False
+    notes: list[str] = []
+    if sr_a is not None and sr_b is not None:
+        delta = round(sr_b - sr_a, 6)
+        if delta < 0:
+            regressed = True
+            notes.append(f"{label_b} success_rate dropped {abs(delta):.4f} vs {label_a}")
+        elif delta > 0:
+            improved = True
+            notes.append(f"{label_b} success_rate improved {delta:.4f} vs {label_a}")
+        else:
+            notes.append("no change in success_rate")
+    else:
+        notes.append("insufficient signal to compare success_rate")
+    if sig_b.get("policy_collapse") and not sig_a.get("policy_collapse"):
+        regressed = True
+        notes.append(f"{label_b} shows policy collapse not present in {label_a}")
+    insufficient = sr_a is None or sr_b is None
+    if regressed:
+        verdict = "regression"
+    elif improved:
+        verdict = "improvement"
+    elif insufficient:
+        verdict = "insufficient_signal"
+    else:
+        verdict = "no_change"
+    return {
+        "delta_success_rate": delta,
+        "regressed": regressed,
+        "improved": improved,
+        "verdict": verdict,
+        "a": sig_a,
+        "b": sig_b,
+        "notes": notes,
+    }
