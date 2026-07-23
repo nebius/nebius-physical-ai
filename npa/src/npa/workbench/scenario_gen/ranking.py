@@ -13,8 +13,10 @@ class ScenarioRankError(RuntimeError):
     """Raised when ranking an adversarial scenario set fails."""
 
 
-def ranked_manifest_uri(output_uri: str, run_id: str) -> str:
-    return uri_join(output_uri, run_id, "ranked.json")
+def ranked_manifest_uri(output_uri: str) -> str:
+    # Deterministic top-level path so a workflow can resolve the ranked set from
+    # ``--output-path`` alone.
+    return uri_join(output_uri, "ranked.json")
 
 
 def rank_scenarios(request: RankRequest, *, run_id: str | None = None) -> RankResponse:
@@ -55,7 +57,7 @@ def rank_scenarios(request: RankRequest, *, run_id: str | None = None) -> RankRe
     scored.sort(key=lambda item: (item["rank_score"], item["severity"]), reverse=True)
     top = scored[: request.top_k]
 
-    target_uri = ranked_manifest_uri(request.output_uri, resolved_run_id)
+    target_uri = ranked_manifest_uri(request.output_uri)
     ranked_payload = {
         "schema": RANKED_SET_SCHEMA,
         "run_id": resolved_run_id,

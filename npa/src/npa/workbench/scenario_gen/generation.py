@@ -59,12 +59,15 @@ def make_run_id(prefix: str, manifest_sha256: str) -> str:
     return f"{prefix}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{manifest_sha256[:12]}"
 
 
-def manifest_uri(output_uri: str, run_id: str) -> str:
-    return uri_join(output_uri, run_id, "manifest.json")
+def manifest_uri(output_uri: str) -> str:
+    # Deterministic top-level path so downstream stages (e.g. rank) can resolve
+    # the adversarial set from ``--output-path`` alone. The run id lives in the
+    # manifest body for identity, not in the path.
+    return uri_join(output_uri, "manifest.json")
 
 
-def scenario_config_uri(output_uri: str, run_id: str, scenario_id: str) -> str:
-    return uri_join(output_uri, run_id, "scenarios", f"{scenario_id}.json")
+def scenario_config_uri(output_uri: str, scenario_id: str) -> str:
+    return uri_join(output_uri, "scenarios", f"{scenario_id}.json")
 
 
 def simulate_adversary(request: GenerateRequest, seed: int) -> list[dict[str, Any]]:
@@ -155,7 +158,7 @@ def generate_scenarios(
             severity=failure_score,
             diversity=diversity.get(scenario_id, 0.0),
             metrics={k: float(v) for k, v in candidate.get("metrics", {}).items()},
-            config_uri=scenario_config_uri(request.output_uri, resolved_run_id, scenario_id),
+            config_uri=scenario_config_uri(request.output_uri, scenario_id),
         )
         records.append(record)
 
@@ -168,7 +171,7 @@ def generate_scenarios(
         base_config_uri=request.base_config_uri,
         task_name=request.task_name,
     )
-    target_manifest_uri = manifest_uri(request.output_uri, resolved_run_id)
+    target_manifest_uri = manifest_uri(request.output_uri)
     manifest_payload = {
         "schema": ADVERSARIAL_SET_SCHEMA,
         "run_id": resolved_run_id,
