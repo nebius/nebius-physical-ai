@@ -5461,7 +5461,32 @@ def agent_memory_compare(run_a: str, run_b: str):
 # ── Blueprint Phase H: retrieval / grounding ─────────────────────────────────
 # LanceDB-backed vector store + Token Factory embeddings + provider-agnostic
 # web_search. Endpoints/keys come from env/config (never hardcoded).
-EMBED_MODEL = os.environ.get("NPA_AGENT_EMBED_MODEL", "").strip() or "BAAI/bge-en-icl"
+EMBED_MODEL_ENV = os.environ.get("NPA_AGENT_EMBED_MODEL", "").strip()
+EMBED_MODEL_FALLBACK = "BAAI/bge-en-icl"
+_EMBED_MODEL_CACHE = {{"model": "", "expires_at": 0.0}}
+
+def _resolve_embed_model():
+    # Explicit operator override wins; otherwise auto-discover an embedding model
+    # the key actually serves (so we never hardcode a model this key lacks).
+    if EMBED_MODEL_ENV:
+        return EMBED_MODEL_ENV
+    now = time.monotonic()
+    cache = _EMBED_MODEL_CACHE
+    if cache.get("model") and cache.get("expires_at", 0.0) > now:
+        return cache["model"]
+    model = EMBED_MODEL_FALLBACK
+    try:
+        for mid in _fetch_token_factory_models():
+            low = str(mid).lower()
+            if "embed" in low or "bge" in low or "e5-" in low or low.endswith("-e5"):
+                model = mid
+                break
+    except Exception:
+        pass
+    cache["model"] = model
+    cache["expires_at"] = now + 300.0
+    return model
+
 LANCEDB_URI = os.environ.get("NPA_AGENT_LANCEDB_URI", "").strip()
 LANCEDB_TABLE = os.environ.get("NPA_AGENT_LANCEDB_TABLE", "").strip() or "npa_corpus"
 SEARXNG_URL = os.environ.get("NPA_AGENT_SEARXNG_URL", "").strip().rstrip("/")
@@ -5487,7 +5512,7 @@ def _embed_texts(texts):
     response = httpx.post(
         url,
         headers={{"Authorization": f"Bearer {{api_key}}", "Content-Type": "application/json"}},
-        json={{"model": EMBED_MODEL, "input": items}},
+        json={{"model": _resolve_embed_model(), "input": items}},
         timeout=60.0,
     )
     response.raise_for_status()
@@ -5582,7 +5607,7 @@ def agent_retrieval_index(payload: dict):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"indexing failed: {{exc}}")
     result["roots"] = roots
-    result["embed_model"] = EMBED_MODEL
+    result["embed_model"] = _resolve_embed_model()
     result["backend"] = "lancedb" if (LANCEDB_URI and dim) else "json"
     return result
 
@@ -5615,7 +5640,7 @@ def agent_retrieval_status():
         "ok": True,
         "chunks": store.count(),
         "sources": store.sources(),
-        "embed_model": EMBED_MODEL,
+        "embed_model": _resolve_embed_model(),
         "backend": "lancedb" if LANCEDB_URI else "json",
         "web_search": bool(SEARXNG_URL),
     }}
