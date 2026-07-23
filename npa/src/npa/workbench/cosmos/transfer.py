@@ -167,10 +167,151 @@ def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> l
     return sorted(dest_dir.glob("frame-*.png"))
 
 
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".ppm", ".webp"}
+_PERTURBATIONS = ("lighting", "contrast", "color", "blur")
+
+
+def _apply_perturbation(image: Any, perturbation: str, *, seed: int) -> Any:
+    """Apply one deterministic, real image transform (a perturbation ControlNet
+    would drive in the full model; here a genuine PIL transform, not a no-op)."""
+
+    import random
+
+    from PIL import ImageEnhance, ImageFilter
+
+    rng = random.Random(seed)
+    if perturbation == "lighting":
+        return ImageEnhance.Brightness(image).enhance(rng.uniform(0.55, 1.6))
+    if perturbation == "contrast":
+        return ImageEnhance.Contrast(image).enhance(rng.uniform(0.6, 1.7))
+    if perturbation == "color":
+        return ImageEnhance.Color(image).enhance(rng.uniform(0.3, 1.9))
+    if perturbation == "blur":
+        return image.filter(ImageFilter.GaussianBlur(radius=rng.uniform(0.6, 2.2)))
+    return image
+
+
+def _collect_source_images(src_dir: Path, max_inputs: int) -> list[Path]:
+    return sorted(
+        (p for p in src_dir.rglob("*") if p.suffix.lower() in _IMAGE_SUFFIXES),
+        key=lambda p: p.name,
+    )[:max_inputs]
+
+
+def reference_augment_frames(
+    input_uri: str,
+    output_uri: str,
+    *,
+    run_id: str = "",
+    variants_per_frame: int = 2,
+    max_inputs: int = 8,
+) -> dict[str, Any]:
+    """Produce real augmented image frames without the heavy Cosmos model.
+
+    Downloads the source frames from ``input_uri``, applies genuine per-frame PIL
+    augmentations (lighting / contrast / color / blur), and writes/uploads the
+    augmented PNGs to ``output_uri`` so downstream stages (e.g. VLM critique) get
+    real image frames instead of a descriptor stub. Used when the
+    Cosmos-Transfer2.5 runtime image is not present; ``--execute`` runs the real
+    model instead.
+
+    ``s3://`` URIs are read/written via :class:`StorageClient`; any other value is
+    treated as a local directory (keeps the function unit-testable without S3).
+    """
+
+    import json
+    import tempfile
+
+    from PIL import Image
+
+    def _is_s3(uri: str) -> bool:
+        return uri.strip().startswith("s3://")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src_dir = Path(tmp) / "src"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(tmp) / "out"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        storage = None
+        if _is_s3(input_uri) or _is_s3(output_uri):
+            from npa.clients.storage import StorageClient
+
+            storage = StorageClient.from_environment()
+
+        if _is_s3(input_uri):
+            storage.download_directory(input_uri, str(src_dir))
+        else:
+            local_src = Path(input_uri.replace("local://", "").replace("file://", ""))
+            if local_src.is_dir():
+                for item in local_src.rglob("*"):
+                    if item.is_file():
+                        dest = src_dir / item.relative_to(local_src)
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, dest)
+
+        sources = _collect_source_images(src_dir, max_inputs)
+        if not sources:
+            raise RuntimeError(
+                f"cosmos2 transfer: no source images found under {input_uri!r}; "
+                "expected at least one .png/.jpg frame to augment."
+            )
+
+        index: list[dict[str, Any]] = []
+        frame_no = 0
+        for src in sources:
+            base = Image.open(src).convert("RGB")
+            for variant in range(max(1, variants_per_frame)):
+                perturbation = _PERTURBATIONS[frame_no % len(_PERTURBATIONS)]
+                augmented = _apply_perturbation(base, perturbation, seed=frame_no)
+                name = f"frame-{frame_no:05d}.png"
+                augmented.save(out_dir / name)
+                index.append(
+                    {
+                        "frame_id": f"frame-{frame_no:05d}",
+                        "perturbation": perturbation,
+                        "source": src.name,
+                        "variant": variant,
+                    }
+                )
+                frame_no += 1
+
+        (out_dir / "index.json").write_text(
+            json.dumps(
+                {
+                    "schema": "npa.sim2real.augmented_frames.v1",
+                    "run_id": run_id,
+                    "frame_count": frame_no,
+                    "frames": index,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+        if _is_s3(output_uri):
+            storage.upload_directory(str(out_dir), output_uri)
+            frames_uri = output_uri
+        else:
+            dest_dir = Path(output_uri.replace("local://", "").replace("file://", ""))
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            for item in out_dir.iterdir():
+                shutil.copy2(item, dest_dir / item.name)
+            frames_uri = str(dest_dir)
+
+    return {
+        "augmented_frames_uri": frames_uri,
+        "frame_count": frame_no,
+        "source_frame_count": len(sources),
+    }
+
+
 __all__ = [
     "cosmos_transfer_available",
     "cosmos_transfer_repo",
     "ensure_env",
     "extract_frames",
+    "reference_augment_frames",
     "run_cosmos_transfer",
 ]

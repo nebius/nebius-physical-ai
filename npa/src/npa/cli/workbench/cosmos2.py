@@ -51,20 +51,45 @@ def transfer_cmd(
             run_id=run_id,
         )
     )
-    if execute:
-        from npa.workbench.cosmos.transfer import cosmos_transfer_available, run_cosmos_transfer
+    from npa.workbench.cosmos.transfer import (
+        cosmos_transfer_available,
+        reference_augment_frames,
+        run_cosmos_transfer,
+    )
 
-        if not cosmos_transfer_available():
-            raise typer.BadParameter(
-                "--execute needs the cosmos-transfer2.5 runtime "
-                "(run inside the npa-cosmos2-transfer image on a GPU)."
-            )
+    runtime_available = cosmos_transfer_available()
+    if execute and not runtime_available:
+        raise typer.BadParameter(
+            "--execute needs the cosmos-transfer2.5 runtime "
+            "(run inside the npa-cosmos2-transfer image on a GPU)."
+        )
+
+    if execute or runtime_available:
+        # Real Cosmos-Transfer2.5 world-transfer model. Publish the generated
+        # video to output_uri so downstream stages (VLM critique) can consume it.
         transfer = run_cosmos_transfer(run_id=run_id, spec=spec or None)
+        output_video = transfer["video_path"]
+        if output_uri.strip().startswith("s3://"):
+            from npa.clients.storage import StorageClient
+
+            output_video = StorageClient.from_environment().upload_file(
+                transfer["video_path"], output_uri
+            )
         payload["status"] = "executed"
         payload["mode"] = "cosmos_transfer2.5"
-        payload["output_video"] = transfer["video_path"]
+        payload["output_video"] = output_video
+        payload["augmented_frames_uri"] = output_uri
         payload["video_bytes"] = transfer["video_bytes"]
         payload["control_spec"] = transfer["spec"]
+    else:
+        # No heavy model runtime: run a genuine reference augmentation that
+        # writes real augmented image frames to output_uri (not a descriptor stub).
+        augment = reference_augment_frames(input_uri, output_uri, run_id=run_id)
+        payload["status"] = "executed_reference"
+        payload["mode"] = "reference_augment"
+        payload["augmented_frames_uri"] = augment["augmented_frames_uri"]
+        payload["frame_count"] = augment["frame_count"]
+
     if output_json is not None:
         payload = write_manifest(payload, output_json)
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
