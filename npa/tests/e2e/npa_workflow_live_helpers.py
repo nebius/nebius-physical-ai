@@ -151,6 +151,61 @@ def seed_live_workflow_inputs(
             )
         return
 
+    if spec_name == "sonic-locomotion-finetuning.yaml":
+        # SONIC retargeting needs a real G1 motion dataset (SOMA/G1 CSV clips,
+        # each a directory with joint_pos.csv/body_pos.csv/body_quat.csv). We do
+        # not vendor the dual-licensed upstream data; the operator points
+        # NPA_E2E_SONIC_MOTION_SRC at a staged real dataset (an ``s3://`` prefix
+        # or local directory, e.g. NVlabs/GR00T-WholeBodyControl
+        # gear_sonic_deploy/reference/example after ``git lfs pull``).
+        src = os.environ.get("NPA_E2E_SONIC_MOTION_SRC", "").strip()
+        if not src:
+            pytest.skip(
+                "NPA_E2E_SONIC_MOTION_SRC not set; stage a real SOMA/G1 motion "
+                "dataset (soma-csv clips) and point this at it."
+            )
+        _seed_prefix_from_source(src, bucket, f"{marker}/source/", client)
+        return
+
+
+def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client) -> None:
+    """Copy a real dataset (``s3://`` prefix or local dir) into ``dest_prefix``."""
+
+    source = source.strip()
+    if source.startswith("s3://"):
+        without = source[len("s3://") :]
+        src_bucket, _, src_prefix = without.partition("/")
+        src_prefix = src_prefix.lstrip("/")
+        paginator = client.get_paginator("list_objects_v2")
+        copied = 0
+        for page in paginator.paginate(Bucket=src_bucket, Prefix=src_prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                rel = key[len(src_prefix) :].lstrip("/")
+                if not rel:
+                    continue
+                client.copy_object(
+                    Bucket=bucket,
+                    Key=f"{dest_prefix}{rel}",
+                    CopySource={"Bucket": src_bucket, "Key": key},
+                )
+                copied += 1
+        if copied == 0:
+            pytest.fail(f"NPA_E2E_SONIC_MOTION_SRC {source!r} had no objects to seed")
+        return
+
+    local_root = Path(source.replace("file://", ""))
+    if not local_root.is_dir():
+        pytest.fail(f"NPA_E2E_SONIC_MOTION_SRC {source!r} is not an s3:// URI or a directory")
+    uploaded = 0
+    for item in sorted(local_root.rglob("*")):
+        if item.is_file():
+            rel = item.relative_to(local_root).as_posix()
+            client.upload_file(str(item), bucket, f"{dest_prefix}{rel}")
+            uploaded += 1
+    if uploaded == 0:
+        pytest.fail(f"NPA_E2E_SONIC_MOTION_SRC {source!r} contained no files to seed")
+
 
 def materialize_live_spec(
     tmp_path: Path,
