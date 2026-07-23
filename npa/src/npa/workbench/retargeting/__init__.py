@@ -422,6 +422,9 @@ def _combined_pkl_output(source_format: str, individual: bool, input_is_file: bo
         return False
     if input_is_file:
         return True
+    if source_format == "motion-lib":
+        # A directory motion-lib copy preserves the upstream PKL layout/names.
+        return False
     if source_format in {"deploy-pkl", "teleop-pkl", "soma-csv"}:
         return True
     if source_format == "bones-seed-csv":
