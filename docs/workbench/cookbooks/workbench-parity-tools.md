@@ -118,6 +118,60 @@ aws s3 ls s3://${BUCKET}/dataset-smoke/${RUN_ID}/curated/
   artifacts with the npa storage helpers or `aws s3 --endpoint-url "$AWS_ENDPOINT_URL"`,
   since older `aws` CLIs ignore the env var and hit real AWS.
 
+## GPU provisioning via npa (`deployIfAbsent`)
+
+Always deploy GPUs through `npa` — never call `sky`/`kubectl`/terraform
+directly. An `npa.workflow` resource profile can declare `deployIfAbsent` so
+`npa workbench workflow submit` provisions the target Kubernetes/GPU cluster (via
+`npa`'s `provision_if_absent`) *before* submitting, instead of failing when the
+cluster is missing:
+
+```yaml
+resources:
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    deployIfAbsent: true            # config defaults; idempotent (reuses if present)
+  trainer-gpu-explicit:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    deployIfAbsent:
+      clusterName: npa-rtxpro-mk8s
+      context: npa-rtxpro-mk8s
+      project: default
+      skipS3: true
+```
+
+Submit as usual; provisioning runs first (dry-run under `--plan-only`, skip with
+`--no-deploy-if-absent`):
+
+```bash
+npa workbench workflow submit \
+  npa/workflows/workbench/npa-workflows/adversarial-scenario-hardening.yaml \
+  --run-id hardening-1 --infra k8s/npa-rtxpro-mk8s --deploy-if-absent \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+## Isolated dev-VM sessions (shared VM safety)
+
+The dev/operator VM is shared by many concurrent agents. Do NOT `git checkout`
+in the shared clone — another agent's checkout will change your working tree and
+editable `npa` install mid-run. Use `npa/scripts/dev_vm_isolated_session.sh`,
+which gives every run its own **git worktree + venv + tmux session**:
+
+```bash
+# create an isolated workspace for a branch
+npa/scripts/dev_vm_isolated_session.sh start cursor/<branch>-02d7 gpu-run-1
+# run npa inside it (never touches the shared checkout)
+npa/scripts/dev_vm_isolated_session.sh exec gpu-run-1 \
+  'npa workbench workflow submit <spec>.yaml --run-id gpu-run-1 --deploy-if-absent ...'
+npa/scripts/dev_vm_isolated_session.sh list
+npa/scripts/dev_vm_isolated_session.sh stop gpu-run-1   # tears down worktree+venv+tmux
+```
+
+Set `NPA_ISOLATED_FAST=1` to skip the per-run venv and reuse the shared venv's
+deps via `PYTHONPATH` (faster start when branch dependencies are unchanged).
+
 ## Live validation
 
 Both smokes were run end-to-end on a live Nebius S3 environment via
