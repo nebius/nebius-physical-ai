@@ -500,7 +500,10 @@ def _ensure_converter_deps() -> None:
         except ImportError:
             missing.append(module)
     if missing:
-        _run_checked([_python_executable(), "-m", "pip", "install", "-q", *missing])
+        _run_checked(
+            [_python_executable(), "-m", "pip", "install", "-q", *missing],
+            cwd=Path.cwd(),
+        )
 
 
 def _run_upstream_preprocess(
