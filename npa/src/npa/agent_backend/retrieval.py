@@ -314,15 +314,26 @@ class _LanceVectorStore:
         return len(rows)
 
     def search(self, vector: Sequence[float], k: int = DEFAULT_TOP_K) -> list[dict[str, Any]]:
-        results = self._table.search(list(vector)).limit(max(1, int(k))).to_list()
+        query = self._table.search(list(vector))
+        # Use cosine distance so ``score`` lands on the SAME 0..1 cosine scale as
+        # the pure-python stores; the shared ``min_score`` floor then behaves
+        # identically across backends (LanceDB cosine ``_distance`` == 1 - cosine
+        # similarity, so similarity == 1 - distance).
+        try:
+            query = query.distance_type("cosine")
+        except Exception:  # noqa: BLE001 - older lancedb spelling
+            try:
+                query = query.metric("cosine")
+            except Exception:  # noqa: BLE001 - fall back to the backend default
+                pass
+        results = query.limit(max(1, int(k))).to_list()
         hits: list[dict[str, Any]] = []
         for row in results:
             hit = {key: value for key, value in row.items() if key != "vector"}
-            # LanceDB returns L2 ``_distance``; map to a 0..1 similarity so the
-            # min-score floor and ranking behave like the cosine stores.
             distance = row.get("_distance")
             if isinstance(distance, (int, float)):
-                hit["score"] = 1.0 / (1.0 + float(distance))
+                # Clamp: cosine distance is in [0, 2]; map to a [0, 1] similarity.
+                hit["score"] = max(0.0, min(1.0, 1.0 - float(distance)))
             else:
                 hit["score"] = 0.0
             hits.append(hit)
@@ -569,3 +580,30 @@ def format_grounded_answer(query: str, citations: Sequence[dict[str, Any]]) -> s
     lines.append("")
     lines.append("_Grounded on indexed corpus — no generated content beyond the cited snippets._")
     return "\n".join(lines)
+
+
+def grounded_reply_from_result(
+    query: str, result: dict[str, Any], *, min_score: float = DEFAULT_MIN_SCORE
+) -> dict[str, Any] | None:
+    """Decide whether a :func:`retrieve` result should ground a ``/chat`` turn.
+
+    Returns a ``{answer, citations}`` payload when retrieval succeeded and the
+    top citation clears ``min_score`` (the chat confidence floor); otherwise
+    ``None`` so the caller falls through to its existing path unchanged. Pure and
+    deterministic, so the retrieval fallthrough *decision* is unit-tested here —
+    the embedded backend glue (build store → count guard → call retrieve) just
+    delegates to this helper.
+    """
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
+    citations = result.get("citations") or []
+    if not citations or not isinstance(citations[0], dict):
+        return None
+    top = citations[0].get("score")
+    # Reject missing / NaN / below-floor top scores (NaN != NaN).
+    if not isinstance(top, (int, float)) or top != top or top < float(min_score):
+        return None
+    return {
+        "answer": format_grounded_answer(query, citations),
+        "citations": citations,
+    }

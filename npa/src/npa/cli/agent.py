@@ -5668,16 +5668,11 @@ def _maybe_retrieval_grounded(query):
         )
     except Exception:
         return None
-    citations = result.get("citations") or []
-    if not result.get("ok") or not citations:
-        return None
-    top = citations[0].get("score") if isinstance(citations[0], dict) else 0
-    if not isinstance(top, (int, float)) or top < RETRIEVAL_CHAT_MIN_SCORE:
-        return None
-    return {{
-        "answer": _retrieval.format_grounded_answer(query, citations),
-        "citations": citations,
-    }}
+    # Gating + formatting decision lives in the tested pure helper so this
+    # embedded glue is thin (build store -> count guard -> retrieve -> delegate).
+    return _retrieval.grounded_reply_from_result(
+        query, result, min_score=RETRIEVAL_CHAT_MIN_SCORE
+    )
 
 # ── Blueprint Phase I: observability ─────────────────────────────────────────
 # Structured spans via an injected tracer (Null by default; Langfuse/OTel when

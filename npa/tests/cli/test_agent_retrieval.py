@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from npa.cli import agent_retrieval as R
 
 
@@ -190,6 +192,38 @@ def test_format_grounded_answer_handles_no_citations():
     assert "no indexed grounding" in answer.lower()
 
 
+# ── /chat retrieval-fallthrough gating (pure, mirrors the embedded glue) ─────
+
+
+def test_grounded_reply_from_result_grounds_above_floor():
+    result = {
+        "ok": True,
+        "citations": [
+            {"title": "Genesis", "uri": "docs/genesis.md", "kind": "doc", "score": 0.72, "snippet": "Genesis simulator."},
+        ],
+    }
+    reply = R.grounded_reply_from_result("genesis?", result, min_score=0.35)
+    assert reply is not None
+    assert reply["citations"][0]["uri"] == "docs/genesis.md"
+    assert "docs/genesis.md" in reply["answer"]
+
+
+def test_grounded_reply_from_result_declines_below_floor():
+    result = {"ok": True, "citations": [{"uri": "docs/x.md", "score": 0.20, "snippet": "weak"}]}
+    assert R.grounded_reply_from_result("q", result, min_score=0.35) is None
+
+
+def test_grounded_reply_from_result_declines_when_not_ok_or_empty():
+    assert R.grounded_reply_from_result("q", {"ok": False, "citations": []}) is None
+    assert R.grounded_reply_from_result("q", {"ok": True, "citations": []}) is None
+
+
+def test_grounded_reply_from_result_rejects_nan_and_missing_score():
+    nan = float("nan")
+    assert R.grounded_reply_from_result("q", {"ok": True, "citations": [{"uri": "d", "score": nan, "snippet": "s"}]}) is None
+    assert R.grounded_reply_from_result("q", {"ok": True, "citations": [{"uri": "d", "snippet": "s"}]}) is None
+
+
 def test_index_corpus_raises_on_embed_count_mismatch():
     store = R.InMemoryVectorStore()
 
@@ -209,3 +243,23 @@ def test_norm_helper_is_finite():
     # Guard: cosine of a vector with itself is 1 (within fp tolerance).
     vec = [0.1, 0.2, 0.3, 0.4]
     assert math.isclose(R.cosine_similarity(vec, vec), 1.0, rel_tol=1e-9)
+
+
+def test_lance_store_scores_on_cosine_scale(tmp_path):
+    # LanceDB store must return scores on the SAME 0..1 cosine scale as the pure
+    # stores so the shared min_score floor behaves identically across backends.
+    pytest.importorskip("lancedb")
+    store = R.build_lance_store(str(tmp_path / "lance"), "corpus", dim=3)
+    store.add(
+        [
+            {"id": "a", "text": "alpha", "vector": [1.0, 0.0, 0.0], "uri": "a.md"},
+            {"id": "b", "text": "beta", "vector": [0.0, 1.0, 0.0], "uri": "b.md"},
+        ]
+    )
+    hits = store.search([1.0, 0.0, 0.0], k=2)
+    assert hits[0]["uri"] == "a.md"
+    # Exact self-match ~1.0 (cosine); orthogonal ~0.0 — both within [0, 1].
+    assert hits[0]["score"] == pytest.approx(1.0, abs=1e-5)
+    assert all(0.0 <= h["score"] <= 1.0 for h in hits)
+    orthogonal = next(h for h in hits if h["uri"] == "b.md")
+    assert orthogonal["score"] < 0.5
