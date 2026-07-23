@@ -54,3 +54,39 @@ def test_cli_plan_spec_json() -> None:
     payload = json.loads(result.output)
     assert payload["workflow"] == "tokenfactory-rollout-judge"
     assert len(payload["steps"]) == 2
+
+
+def test_cli_plan_spec_omits_assume_decision_for_loop_free_spec() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(SPECS / "vlm-eval-single.yaml"),
+            "--run-id",
+            "smoke-loopfree",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "assume_decision:" not in result.output
+
+
+def test_cli_plan_spec_shows_assume_decision_for_loop_spec() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(SPECS / "tokenfactory-cosmos-gate.yaml"),
+            "--run-id",
+            "smoke-loop",
+            "--assume-decision",
+            "loop_back",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "assume_decision: loop_back_to_inner_loop" in result.output

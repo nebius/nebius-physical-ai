@@ -81,6 +81,29 @@ class SkyPilotSubmitError(RuntimeError):
     """Raised when a SkyPilot workflow cannot be submitted."""
 
 
+def _controller_region_from_infra(
+    infra: str,
+    controller_backend: ControllerBackend,
+) -> str | None:
+    """Derive a Kubernetes controller context from a ``k8s/<context>`` infra.
+
+    Co-locating the managed-jobs controller with the job's kube context keeps
+    the controller in the same region as its tasks, so launch-time bucket mounts
+    resolve against the matching object-storage endpoint instead of falling back
+    to a different region. Returns ``None`` for non-Kubernetes backends or when
+    ``infra`` does not name a context.
+    """
+
+    if controller_backend != "kubernetes":
+        return None
+    value = (infra or "").strip()
+    for prefix in ("k8s/", "kubernetes/"):
+        if value.startswith(prefix):
+            context = value[len(prefix):].strip()
+            return context or None
+    return None
+
+
 def submit_workflow(
     yaml_path: Path,
     run_id: str,
@@ -121,6 +144,7 @@ def submit_workflow(
         global_config = apply_controller_override(
             _load_base_config(runtime_config.global_config_path),
             controller_backend=controller_backend,
+            controller_region=_controller_region_from_infra(infra, controller_backend),
         )
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")

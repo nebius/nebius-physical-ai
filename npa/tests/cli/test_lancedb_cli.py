@@ -55,6 +55,20 @@ def test_lancedb_deploy_vm_requires_storage_path() -> None:
     assert "--storage-path is required" in result.output
 
 
+def test_lancedb_deploy_vm_blocked_message_is_actionable() -> None:
+    result = runner.invoke(
+        lancedb_app,
+        ["deploy", "--runtime", "vm", "--storage-path", "/tmp/lancedb-smoke"],
+    )
+
+    assert result.exit_code == 1
+    normalized = " ".join(result.output.split())
+    assert "not available from this command yet" in normalized
+    assert "--runtime container" in normalized
+    # No internal jargon leaks to users.
+    assert "run allowlist" not in normalized
+
+
 def test_lancedb_deploy_cloud_requires_endpoint_and_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LANCEDB_API_KEY", raising=False)
 
@@ -109,6 +123,75 @@ def test_lancedb_deploy_validates_port_range() -> None:
 
     assert result.exit_code == 1
     assert "--port must be between" in result.output
+
+
+def test_lancedb_container_s3_path_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    # storage_env drops empty S3 values; an s3:// storage path with no creds
+    # must fail up front instead of only once the container hits the bucket.
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            "s3://my-bucket/lancedb",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "S3 credentials are incomplete" in result.output
+
+
+def test_lancedb_container_s3_path_ok_with_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(
+        lancedb_deploy,
+        "storage_env",
+        lambda: {
+            "AWS_ACCESS_KEY_ID": "AK",
+            "AWS_SECRET_ACCESS_KEY": "SK",
+            "AWS_ENDPOINT_URL": "https://storage.example.nebius.cloud",
+        },
+    )
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            "s3://my-bucket/lancedb",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_lancedb_container_local_path_skips_s3_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A local storage path needs no S3 credentials, so the guard must not fire.
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            "/tmp/lancedb",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
 
 
 def test_lancedb_status_endpoint_required() -> None:

@@ -76,7 +76,7 @@ a "non-default S3-compatible endpoint."
   `CapabilityContract`). Promoting the seams to explicit keyword parameters would
   change the public SDK signature; deferred.
 - **`sim2real` name collision.** ~~Two surfaces share the "sim2real" name: the
-  13-stage VLM-to-RL loop (`npa workbench workflow submit` on the sim2real runbook) and the separate
+  14-stage VLM-to-RL loop (`npa workbench workflow submit` on the sim2real runbook) and the separate
   sim-to-real H100 quickstart/pipeline. A first-time user cannot tell which is
   canonical. Naming reconciliation is deferred.~~ **Closed:** the spelling is
   now the documented disambiguator (`sim2real` = staged VLM-to-RL loop,

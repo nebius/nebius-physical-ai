@@ -152,17 +152,22 @@ def run(
     console.print(f"  $ {ge.command}")
 
     if serverless:
+        from npa.serverless_common import MissingS3CredentialsError
         from npa.smoke.serverless_runner import submit_golden_eval
 
         def _on_change(job: object) -> None:
             err_console.print(f"  -> {getattr(job, 'status', '?')}")
 
-        result = submit_golden_eval(
-            name,
-            gpu_type=gpu or None,
-            timeout=timeout,
-            on_state_change=_on_change,
-        )
+        try:
+            result = submit_golden_eval(
+                name,
+                gpu_type=gpu or None,
+                timeout=timeout,
+                on_state_change=_on_change,
+            )
+        except MissingS3CredentialsError as exc:
+            err_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
         console.print_json(json.dumps(result))
         if not result.get("ok"):
             raise typer.Exit(code=1)

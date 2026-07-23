@@ -85,7 +85,7 @@ them, but the workbench is built to be swapped:
 When you're ready for the production recipes, head to the
 [cookbooks](../cookbooks/README.md).
 
-## Sim-to-real (13-stage production loop)
+## Sim-to-real (14-stage production loop)
 
 These guides are separate from the easy PushT walkthrough above. They document the
 full VLM→RL loop, data contracts, and cluster operations:

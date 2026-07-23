@@ -115,10 +115,10 @@ real:
 - Genesis **training** works headless on Nebius. **Visual demo rendering at
   scale** is currently limited by EGL/DRI device access in containers; 480x640
   targeted renders work via the Mesa fallback. See
-  `.agents/skills/workbench/genesis/SKILL.md` for the current state.
+  `skills/tools/genesis/SKILL.md` for the current state.
 
 ## Dig deeper
 
 - Env source: `npa/src/npa/genesis/env_pick_place.py`
 - Commands: `npa workbench genesis train-teacher | generate-demos | eval-teacher | eval-student | diagnose | tune`
-- Skill: `.agents/skills/workbench/genesis/SKILL.md`
+- Skill: `skills/tools/genesis/SKILL.md`

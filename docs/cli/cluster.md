@@ -12,6 +12,8 @@ Options
 Commands
 deploy  Bootstrap an NPA Workbench cluster target with local state and a cached kubeconfig.
 destroy  Clean up an NPA Workbench cluster target and remove its local profile state.
+up  Create or update the Terraform-managed NPA Kubernetes cluster.
+down  Destroy the Terraform-managed NPA Kubernetes cluster.
 status  Show NPA cluster target state from Nebius and the local cache.
 list  List NPA Workbench cluster targets known locally or in the configured project.
 node-group  Manage GPU node groups attached to NPA Workbench cluster targets.
@@ -32,6 +34,8 @@ operation inspection, version listing, compatibility matrix), use `nebius mk8s` 
 | --- | --- |
 | `deploy` | Bootstrap an NPA Workbench cluster target with local state and a cached kubeconfig. |
 | `destroy` | Clean up an NPA Workbench cluster target and remove its local profile state. |
+| `up` | Create or update the Terraform-managed NPA Kubernetes cluster. |
+| `down` | Destroy the Terraform-managed NPA Kubernetes cluster. |
 | `status` | Show NPA cluster target state from Nebius and the local cache. |
 | `list` | List NPA Workbench cluster targets known locally or in the configured project. |
 | `node-group` | Manage GPU node groups attached to NPA Workbench cluster targets. |

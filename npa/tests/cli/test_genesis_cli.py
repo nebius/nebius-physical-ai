@@ -145,6 +145,62 @@ def test_train_teacher_dispatches(monkeypatch: pytest.MonkeyPatch, mocker) -> No
     train_teacher.assert_called_once()
 
 
+def test_train_teacher_missing_torch_shows_actionable_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    real_import = importlib.import_module
+
+    def fake_import(name, *args, **kwargs):
+        if name == "npa.genesis.train_teacher":
+            raise ModuleNotFoundError("No module named 'torch'", name="torch")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    result = runner.invoke(
+        app,
+        ["workbench", "genesis", "train-teacher", "--n-envs", "1", "--max-iterations", "1"],
+    )
+
+    assert result.exit_code == 1, result.output
+    normalized = " ".join(result.output.split())
+    # Rendered (rich-escaped) extra, not a bare ModuleNotFoundError.
+    assert 'npa[genesis]' in normalized
+    assert "-p <project> -n <workbench>" in normalized
+    assert "serverless" in normalized
+
+
+def test_train_teacher_internal_import_error_is_not_masked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A genuine missing npa.genesis submodule is an internal bug and must
+    # surface as-is, not be reported as a missing GPU extra.
+    import importlib
+
+    real_import = importlib.import_module
+
+    def fake_import(name, *args, **kwargs):
+        if name == "npa.genesis.train_teacher":
+            raise ModuleNotFoundError(
+                "No module named 'npa.genesis.train_teacher'",
+                name="npa.genesis.train_teacher",
+            )
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    result = runner.invoke(
+        app,
+        ["workbench", "genesis", "train-teacher", "--n-envs", "1", "--max-iterations", "1"],
+    )
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ModuleNotFoundError)
+    assert "npa[genesis]" not in " ".join(result.output.split())
+
+
 def test_train_teacher_rejects_bad_n_envs() -> None:
     result = runner.invoke(
         app,

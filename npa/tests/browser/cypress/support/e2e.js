@@ -678,7 +678,7 @@ Cypress.Commands.add("installAgentApiMocks", installAgentApiMocks);
 Cypress.Commands.add("visitMockAgent", () => {
   installAgentApiMocks();
   cy.visit("/");
-  cy.get("meta[name='npa-ui-version']").should("have.attr", "content").and("match", /^\d+|dev$/);
+  cy.get("meta[name='npa-ui-version']").should("have.attr", "content").and("match", /^(\d+|dev)$/);
   cy.get("#statusBar").should("exist");
 });
 

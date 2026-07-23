@@ -1,5 +1,10 @@
 # NPA CLI Reference
 
+> **Legacy / unmaintained.** This root-level file is an older CLI snapshot and
+> can drift from the shipped commands. The canonical CLI references are
+> [docs/cli/README.md](docs/cli/README.md) and [npa/README.md](npa/README.md);
+> `npa --help` is always authoritative. Kept for historical context only.
+
 Complete reference for the `npa` command-line tool. Use this to generate correct commands.
 
 ## Command Hierarchy

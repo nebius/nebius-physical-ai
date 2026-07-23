@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from npa.deploy.images import registry_from_env
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENVGEN_SHARD_COUNT,
@@ -60,7 +61,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("S3_BUCKET")
             or ""
         )
-    registry = os.environ.get("NPA_REGISTRY", "")
+    registry = registry_from_env()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
     elif "NPA_SIM2REAL_PREFIX" in os.environ:
@@ -402,7 +403,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
 
 
 def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
-    """Return canonical S3 artifact URIs for the full 13-stage workflow."""
+    """Return canonical S3 artifact URIs for the full 14-stage workflow."""
 
     if not config.s3_bucket:
         return {}

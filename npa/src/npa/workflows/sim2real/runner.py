@@ -11,7 +11,7 @@ from npa.workflows.sim2real.state import WorkflowState
 
 
 class Sim2RealWorkflow:
-    """Run the 13-stage VLM→RL loop with explicit stage boundaries.
+    """Run the 14-stage VLM→RL loop with explicit stage boundaries.
 
     This is the canonical orchestrator. SkyPilot runbooks, SDK helpers, and
     legacy CLIs should delegate here instead of re-implementing bash loops or
