@@ -2,7 +2,27 @@ from __future__ import annotations
 
 import pytest
 
-from npa.workbench.vlm_eval import VlmEvalError, _resolve_api_key, _resolve_endpoint_url
+from npa.workbench.vlm_eval import (
+    VlmEvalError,
+    _resolve_api_key,
+    _resolve_endpoint_url,
+    evaluate_vlm,
+)
+
+
+def test_api_backend_defaults_to_token_factory_served_vision_model(tmp_path) -> None:
+    """The Token Factory API serves Qwen2.5-VL-72B, not vlm_eval's self-hosted
+    default (Qwen2-VL-7B, which 404s), so the api backend must pick the served
+    model unless --model is overridden."""
+    from npa.clients.token_factory import DEFAULT_VISION_MODEL
+
+    result = evaluate_vlm(
+        input_path="s3://ignored",
+        output_path=str(tmp_path / "out.json"),
+        backend="api",
+        score=0.9,  # skips the real VLM call
+    )
+    assert result.model == DEFAULT_VISION_MODEL
 
 
 def test_api_backend_defaults_to_token_factory_base_url(monkeypatch) -> None:
