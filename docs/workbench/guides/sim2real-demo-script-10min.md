@@ -45,7 +45,7 @@ s3://<bucket>/<prefix>/<run-id>/
    ```
 
 3. **Optional: pre-stage a loop-back run** — Second run where `eval/heldout/report.json` has `success_rate` below threshold and `outer_loop/loopback.json` exists (for held-out failure narrative).
-4. **Preflight** — `npa workbench health sim2real --checks all` (PASS on S3, tokens, GPU count).
+4. **Preflight** — `npa workbench health preflight` (PASS/WARN/FAIL on HF, NGC, S3, Token Factory).
 5. **Open tabs:** S3 browser (pre-staged root), terminal (`kubectl logs -f`), Rerun viewer with pre-staged `.rrd`.
 
 ---
@@ -215,18 +215,15 @@ jq '.components[] | select(.name=="stage_14_rerun_viz") | {tier, message}' \
 
 ### 9:30–10:00 — Close
 
-> "Thirteen stages, every artifact addressable on S3, three BYO seams for assets / real-world eval / retrigger, staged CLI for CI and human gates, one module behind runbook and direct K8s submit. Questions?"
+> "Fourteen stages, every artifact addressable on S3, three BYO seams for assets / real-world eval / retrigger, staged CLI for CI and human gates, one module behind runbook and direct K8s submit. Questions?"
 
 ---
 
 ## Demo commands (copy-paste)
 
 ```bash
-# Preflight
-npa workbench health sim2real \
-  --s3-bucket <bucket> \
-  --s3-endpoint https://storage.eu-north1.nebius.cloud \
-  --checks all
+# Preflight (credentials)
+npa workbench health preflight
 
 # Submit live run
 export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
