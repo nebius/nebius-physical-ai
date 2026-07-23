@@ -231,6 +231,13 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
         lines.append(f"- artifact: `{artifact_key}`")
     if note:
         lines.append(f"- note: {note[:320]}")
+    provenance = str(meta.get("provenance") or "").strip()
+    if provenance:
+        lines.append("")
+        lines.append("Pipeline provenance (where this data came from + components that produced it):")
+        for part in provenance.split("; "):
+            if part.strip():
+                lines.append(f"- {part.strip()[:200]}")
     if text_excerpt:
         lines.append("- data_excerpt:")
         lines.append("```")
@@ -268,9 +275,13 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
             "Reply structure:",
             "1. **What I see** — concrete visual description (or metadata-only "
             "limits).",
-            "2. **Likely meaning** — how this relates to the active run / stack.",
-            "3. **Operator feedback** — what looks healthy vs suspicious.",
-            "4. **Next actions** — 2–4 concrete clicks/commands in the agent UI "
+            "2. **Where it comes from** — the pipeline stage that produced this "
+            "visual and the components/models behind the data (use the Pipeline "
+            "provenance above; name the stage + component, e.g. Cosmos Transfer "
+            "2.5 on GPU, Token Factory VLM). Say 'unknown' if no provenance given.",
+            "3. **Likely meaning** — how this relates to the active run / stack.",
+            "4. **Operator feedback** — what looks healthy vs suspicious.",
+            "5. **Next actions** — 2–4 concrete clicks/commands in the agent UI "
             "or CLI.",
         ]
     )
@@ -343,6 +354,7 @@ def format_visual_context_block(meta: Mapping[str, Any] | None) -> str:
         "note",
         "visualization_note",
         "workflow_name",
+        "provenance",
         "text_excerpt",
     )
     lines = ["Active visual context for this Describe-this turn:"]

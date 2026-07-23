@@ -205,6 +205,7 @@ _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
+_AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
@@ -259,6 +260,17 @@ def _embedded_agent_artifacts_source() -> str:
     import re
 
     path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_provenance_source() -> str:
+    """Return workflows/data_factory_provenance.py source embedded into the backend."""
+    import re
+
+    path = Path(__file__).resolve().parents[1] / "workflows" / "data_factory_provenance.py"
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -1748,6 +1760,7 @@ def _bootstrap_agent_stack(
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
     agent_stages_source = _embedded_agent_stages_source()
+    agent_provenance_source = _embedded_agent_provenance_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -3520,6 +3533,8 @@ def _chat_with_resilience(
 {_AGENT_RRD_PROXY_EMBED}
 
 {_AGENT_STAGES_EMBED}
+
+{_AGENT_PROVENANCE_EMBED}
 
 {_AGENT_CHAT_EMBED}
 
@@ -5419,6 +5434,41 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
+@app.get("/artifacts/provenance/{{run_id:path}}")
+def artifacts_run_provenance(run_id: str, prefix: str = ""):
+    # Where a run's data came from in the pipeline + which components produced it,
+    # grounded in the run's real artifacts (and manifests) so Describe-this can
+    # explain provenance instead of guessing.
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = []
+        if prefix:
+            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3)
+        if not artifacts:
+            artifacts = find_run_artifacts(settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3)
+        keys = [str(a.key or "") for a in artifacts]
+
+        def _read_json(key: str):
+            if not key:
+                return None
+            try:
+                body = s3.get_object(Bucket=settings["bucket"], Key=key)["Body"].read()
+                return json.loads(body)
+            except Exception:
+                return None
+
+        prov = build_run_provenance(keys, run_id=normalized_run, read_json=_read_json)
+        return {{"ok": True, "run_id": normalized_run, **prov}}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
 @app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])
 def artifact_file(filename: str):
     safe_name = Path(str(filename)).name
@@ -6350,6 +6400,7 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
         .replace(_AGENT_STAGES_EMBED, agent_stages_source)
+        .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
     local_setup_script = ""

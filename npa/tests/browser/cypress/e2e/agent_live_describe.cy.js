@@ -76,6 +76,53 @@ describe("NPA agent live Describe-this + splash cover", () => {
     });
   });
 
+  it("serves grounded pipeline provenance for a discovered run", () => {
+    // Provenance drives the "smarter Describe this": it must name the workflow
+    // stage + the components/models that produced the run's data, from real S3
+    // artifacts (Cosmos Transfer 2.5 on GPU, Token Factory VLM, etc.).
+    cy.request({
+      url: "/api/artifacts/runs",
+      failOnStatusCode: false,
+    }).then((runsResp) => {
+      if (runsResp.status !== 200 || !runsResp.body || !Array.isArray(runsResp.body.runs)) {
+        cy.log("Skipping provenance check: /api/artifacts/runs unavailable in this env");
+        return;
+      }
+      const runs = runsResp.body.runs;
+      // Prefer a data-factory / paidf run; fall back to any run with artifacts.
+      const preferred =
+        runs.find((r) => /paidf|data-factory/i.test(String((r && (r.run_id || r.id)) || ""))) ||
+        runs[0];
+      if (!preferred) {
+        cy.log("Skipping provenance check: no runs discovered");
+        return;
+      }
+      const runId = String(preferred.run_id || preferred.id || "").trim();
+      expect(runId, "discovered run id").to.not.eq("");
+      cy.request({
+        url: "/api/artifacts/provenance/" + encodeURIComponent(runId),
+        failOnStatusCode: false,
+      }).then((provResp) => {
+        expect(provResp.status, "provenance endpoint status").to.eq(200);
+        expect(provResp.body.ok, "provenance ok").to.eq(true);
+        expect(provResp.body.components, "components").to.be.an("array");
+        expect(provResp.body.summary, "summary").to.be.a("string");
+        if (provResp.body.components.length > 0) {
+          const stages = provResp.body.components.map((c) => String(c.stage || ""));
+          const hasKnownStage = stages.some((s) =>
+            /augment|annotate|pseudo-label|attribute|curation|visualize|config|source/i.test(s),
+          );
+          expect(hasKnownStage, "at least one known pipeline stage").to.eq(true);
+          // Every component names both a stage and the producing component.
+          provResp.body.components.forEach((c) => {
+            expect(String(c.stage || ""), "stage label").to.not.eq("");
+            expect(String(c.component || ""), "component label").to.not.eq("");
+          });
+        }
+      });
+    });
+  });
+
   it("attaches a live Rerun frame via MediaStream bridge (not metadata-only)", () => {
     cy.get("#tabRerun").click();
     cy.get("body").should("have.class", "viewer-focus");
@@ -143,6 +190,17 @@ describe("NPA agent live Describe-this + splash cover", () => {
         expect(imagePart).to.exist;
         expect(imagePart.image_url.url).to.match(/^data:image\/jpeg;base64,/);
         expect(imagePart.image_url.url.length).to.be.greaterThan(4000);
+        // When the loaded run has artifacts, Describe-this carries grounded
+        // provenance so the answer can explain where the visual came from.
+        if (body.visual_context.provenance) {
+          expect(body.visual_context.provenance).to.be.a("string");
+          const textPart = last.content.find(
+            (part) => part && String(part.type || "").includes("text"),
+          );
+          if (textPart) {
+            expect(String(textPart.text || "")).to.match(/provenance/i);
+          }
+        }
       });
 
       cy.get("#chatLog .msg-row.assistant", { timeout: 180000 }).should("exist");

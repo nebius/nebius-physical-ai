@@ -718,6 +718,65 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog .msg-row.assistant").should("not.contain.text", "completely uniform gray");
   });
 
+  it("Describe this carries grounded pipeline provenance when a run is loaded", () => {
+    cy.intercept("GET", "**/api/artifacts/provenance/**", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        run_id: "paidf-mock-1",
+        summary:
+          "Augment — Cosmos Transfer 2.5 (nvidia/Cosmos-Transfer2.5-2B) [GPU (Nebius K8s)]; " +
+          "Pseudo-label augmented — Token Factory VLM (Qwen/Qwen2.5-VL-72B-Instruct) [hosted GPU (Token Factory)]",
+        components: [
+          {
+            stage: "Augment",
+            component: "Cosmos Transfer 2.5",
+            runtime: "GPU (Nebius K8s)",
+            model: "nvidia/Cosmos-Transfer2.5-2B",
+          },
+        ],
+      },
+    }).as("provenance");
+    cy.intercept("POST", "/api/chat", (req) => {
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          grounded: false,
+          tier: "vision",
+          model: "Qwen/Qwen2.5-VL-72B-Instruct",
+          session_id: req.body.session_id || "default",
+          reply: "**What I see**: augmented road scene.\n**Where it comes from**: Cosmos Transfer 2.5 augment stage.",
+        },
+      });
+    }).as("provChat");
+
+    cy.get("#tabRerun").click();
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame").should(($frame) => {
+      $frame[0].contentWindow.__NPA_MOCK_RERUN__.setMode("content");
+    });
+    // A loaded run id is what triggers the grounded provenance fetch.
+    cy.get("#simRunId").then(($el) => {
+      $el[0].textContent = "paidf-mock-1";
+    });
+
+    cy.get("#describeVisual").click({ force: true });
+    cy.wait("@provenance");
+    cy.wait("@provChat", { timeout: 20000 }).then((interception) => {
+      const body = interception.request.body;
+      expect(body.visual_context.provenance, "visual_context.provenance").to.be.a("string");
+      expect(body.visual_context.provenance).to.match(/Cosmos Transfer 2\.5/);
+      const last = body.messages[body.messages.length - 1];
+      const textPart = Array.isArray(last.content)
+        ? last.content.find((part) => part && String(part.type || "").includes("text"))
+        : { text: last.content };
+      const promptText = String((textPart && textPart.text) || "");
+      expect(promptText, "prompt provenance section").to.match(/Pipeline provenance/i);
+      expect(promptText).to.match(/Cosmos Transfer 2\.5/);
+    });
+  });
+
   it("Describe this stays metadata-only for uniform gray canvases", () => {
     cy.get("#tabRerun").click();
     cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");

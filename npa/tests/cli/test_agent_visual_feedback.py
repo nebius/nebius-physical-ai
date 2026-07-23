@@ -41,6 +41,30 @@ def test_describe_user_prompt_is_kind_specific() -> None:
     assert "pixels" in data.lower() or "pixels" in vf._KIND_GUIDANCE["data"]
 
 
+def test_describe_prompt_includes_pipeline_provenance() -> None:
+    prov = (
+        "Augment — Cosmos Transfer 2.5 (nvidia/Cosmos-Transfer2.5-2B) [GPU (Nebius K8s)]; "
+        "Pseudo-label augmented — Token Factory VLM (Qwen/Qwen2.5-VL-72B-Instruct) [hosted GPU (Token Factory)]"
+    )
+    prompt = vf.describe_user_prompt(
+        "rerun",
+        {"run_id": "paidf-1", "capture": "frame", "has_image": True, "provenance": prov},
+    )
+    assert "Pipeline provenance" in prompt
+    assert "Cosmos Transfer 2.5" in prompt
+    assert "Token Factory VLM" in prompt
+    # The reply structure must ask the model to state where the visual comes from.
+    assert "Where it comes from" in prompt
+
+
+def test_visual_context_block_surfaces_provenance() -> None:
+    block = vf.format_visual_context_block(
+        {"run_id": "paidf-1", "provenance": "Augment — Cosmos Transfer 2.5 [GPU (Nebius K8s)]"}
+    )
+    assert "provenance" in block
+    assert "Cosmos Transfer 2.5" in block
+
+
 def test_metadata_only_grounded_reply_never_invents_pixels() -> None:
     reply = vf.build_metadata_only_visual_reply(
         {

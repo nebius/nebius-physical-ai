@@ -3237,6 +3237,14 @@
           capture: imageDataUrl ? "frame" : (textExcerpt ? "text" : "metadata-only"),
           has_image: Boolean(imageDataUrl),
         };
+        // Grounded pipeline provenance: which stage produced this visual and the
+        // components/models behind the data, read from the run's real artifacts.
+        if (meta.run_id) {
+          try {
+            const prov = await loadJson("/api/artifacts/provenance/" + encodeURIComponent(meta.run_id));
+            if (prov && prov.summary) meta.provenance = String(prov.summary).slice(0, 800);
+          } catch (_provErr) { /* best-effort context */ }
+        }
         // Keep prompt construction aligned with agent_visual_feedback.describe_user_prompt.
         const promptLines = [
           "[npa-visual-feedback] Describe this " + visualKind + " viewer and give operator feedback.",
@@ -3251,6 +3259,13 @@
         if (meta.camera) promptLines.push("- camera: `" + meta.camera + "`");
         if (meta.artifact_key) promptLines.push("- artifact: `" + meta.artifact_key + "`");
         if (meta.note) promptLines.push("- note: " + meta.note.slice(0, 280));
+        if (meta.provenance) {
+          promptLines.push("");
+          promptLines.push("Pipeline provenance (where this data came from + components that produced it):");
+          for (const part of String(meta.provenance).split("; ")) {
+            if (part.trim()) promptLines.push("- " + part.trim());
+          }
+        }
         if (textExcerpt) {
           promptLines.push("- data_excerpt:");
           promptLines.push("```");
@@ -3272,7 +3287,7 @@
           "",
           "Instructions: Inspect attached pixels when present. Dense RGB, tiled envs, robot meshes, colored skeletons/wireframes on a dark grid, or synthetic cameras are not blank.",
           "Only call a frame blank when it is uniform black/white/gray with no structure.",
-          "Reply with: What I see → Likely meaning → Operator feedback → Next actions."
+          "Reply with: What I see → Where it comes from (pipeline stage + components/models from the provenance) → Likely meaning → Operator feedback → Next actions."
         );
         return {
           kind: visualKind,
