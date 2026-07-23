@@ -147,6 +147,75 @@ def seed_live_workflow_inputs(
         )
         return
 
+    # VLM-eval GPU twins score a rollout: seed a short RGB frame sequence under
+    # the rollouts prefix so the self-hosted VLM has real frames to evaluate.
+    if spec_name in {
+        "vlm-eval-single.yaml",
+        "vlm-eval-benchmark.yaml",
+        "tokenfactory-rollout-judge.yaml",
+    }:
+        _seed_rollout_frames(client, bucket=bucket, marker=marker)
+        if spec_name == "tokenfactory-rollout-judge.yaml":
+            # This twin also reasons over a captured scene before judging.
+            _seed_scene_frame(client, bucket=bucket, marker=marker)
+        return
+
+
+def _seed_scene_frame(client, *, bucket: str, marker: str) -> None:
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover
+        pytest.fail(f"Pillow required to seed scene fixtures: {exc}")
+    image = Image.new("RGB", (320, 240), (200, 200, 200))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([0, 180, 320, 240], fill=(120, 90, 60))
+    draw.rectangle([120, 100, 200, 180], fill=(180, 40, 40))
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{marker}/scene/frame_000.png",
+        Body=buf.getvalue(),
+        ContentType="image/png",
+    )
+
+
+def _seed_rollout_frames(
+    client, *, bucket: str, marker: str, episodes: int = 1, frames: int = 4
+) -> None:
+    """Upload a short RGB rollout (a cube moving toward a target) to `rollouts/`.
+
+    The VLM-eval tool discovers image frames recursively under the rollouts URI
+    prefix, so a small deterministic sequence is enough real input for a live
+    self-hosted VLM score.
+    """
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover
+        pytest.fail(f"Pillow required to seed rollout fixtures: {exc}")
+    for episode in range(max(1, episodes)):
+        for frame in range(max(1, frames)):
+            image = Image.new("RGB", (320, 240), (30, 30, 30))
+            draw = ImageDraw.Draw(image)
+            # Static green target.
+            draw.rectangle([250, 150, 300, 200], fill=(40, 200, 40))
+            # Red cube advancing left→right across frames toward the target.
+            x = 40 + frame * 50
+            draw.rectangle([x, 150, x + 40, 200], fill=(200, 40, 40))
+            draw.rectangle([0, 200, 320, 240], fill=(90, 70, 50))  # table
+            buf = BytesIO()
+            image.save(buf, format="PNG")
+            client.put_object(
+                Bucket=bucket,
+                Key=f"{marker}/rollouts/episode_{episode:03d}/frame_{frame:03d}.png",
+                Body=buf.getvalue(),
+                ContentType="image/png",
+            )
+
 
 def materialize_live_spec(
     tmp_path: Path,
