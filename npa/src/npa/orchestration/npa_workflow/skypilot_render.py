@@ -236,6 +236,46 @@ def default_npa_setup() -> str:
         "    fi\n"
         "  fi\n"
         "fi\n"
+        # Opt-in branch overlay: reinstall npa from NPA_SRC_S3_URI on TOP of a
+        # baked workbench image so branch code (e.g. a new augment prompt path)
+        # actually runs on GPU without rebuilding the image. Default off (no-op).
+        "if [ \"$NPA_SRC_OVERLAY\" = \"1\" ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
+        "  python3 -m pip install -q boto3\n"
+        "  python3 - <<'PY'\n"
+        "import os, pathlib\n"
+        "from urllib.parse import urlparse\n"
+        "import boto3\n"
+        "from botocore.client import Config\n"
+        "uri = os.environ['NPA_SRC_S3_URI'].rstrip('/')\n"
+        "parsed = urlparse(uri if '://' in uri else f's3://{uri}')\n"
+        "bucket, prefix = parsed.netloc, parsed.path.lstrip('/')\n"
+        "dest = pathlib.Path('/tmp/npa-src-overlay')\n"
+        "dest.mkdir(parents=True, exist_ok=True)\n"
+        "print('overlay syncing', uri, '->', dest, flush=True)\n"
+        "kwargs = {'config': Config(signature_version='s3v4')}\n"
+        "if os.environ.get('AWS_ENDPOINT_URL'):\n"
+        "    kwargs['endpoint_url'] = os.environ['AWS_ENDPOINT_URL']\n"
+        "s3 = boto3.client('s3', **kwargs)\n"
+        "token = None\n"
+        "while True:\n"
+        "    kw = {'Bucket': bucket, 'Prefix': prefix}\n"
+        "    if token:\n"
+        "        kw['ContinuationToken'] = token\n"
+        "    resp = s3.list_objects_v2(**kw)\n"
+        "    for obj in resp.get('Contents') or ():\n"
+        "        key = obj['Key']\n"
+        "        rel = key[len(prefix):].lstrip('/') if prefix else key\n"
+        "        if not rel or key.endswith('/'):\n"
+        "            continue\n"
+        "        out = dest / rel\n"
+        "        out.parent.mkdir(parents=True, exist_ok=True)\n"
+        "        s3.download_file(bucket, key, str(out))\n"
+        "    if not resp.get('IsTruncated'):\n"
+        "        break\n"
+        "    token = resp.get('NextContinuationToken')\n"
+        "PY\n"
+        "  python3 -m pip install -q -e /tmp/npa-src-overlay --no-deps\n"
+        "fi\n"
         "command -v npa >/dev/null 2>&1 || "
         "{ echo 'npa still missing after setup' >&2; exit 1; }\n"
     )
@@ -359,6 +399,20 @@ def build_skypilot_task_doc(
             )
         envs["NPA_SRC_S3_URI"] = src_uri
         doc["envs"] = envs
+    else:
+        # Image is pinned (baked npa). Opt-in overlay: when NPA_SRC_OVERLAY=1,
+        # propagate the source URI + flag so setup reinstalls branch npa on top
+        # (used to run un-imaged branch code — e.g. a new augment path — on GPU).
+        import os as _os
+
+        if str(_os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"}:
+            src_uri = (
+                _os.environ.get("NPA_SRC_S3_URI") or _os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
+            ).strip()
+            if src_uri:
+                envs["NPA_SRC_S3_URI"] = src_uri
+                envs["NPA_SRC_OVERLAY"] = "1"
+                doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,

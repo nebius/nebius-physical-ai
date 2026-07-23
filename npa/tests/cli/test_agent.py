@@ -2051,3 +2051,16 @@ def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
     )
     record = {"project_id": "project-u00zhx4tpr00xh99b28n52"}
     assert _resolve_agent_service_account_id("rtxpro", record) == "serviceaccount-u00s24wzj2wk8z9tqq"
+
+
+def test_run_details_surface_per_stage_workflow_logs() -> None:
+    """Run details must surface real per-stage execution (command/returncode/status)
+    from the npa.workflow run manifest so operators can view logs of each stage."""
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "def _workflow_run_steps(" in source
+    assert "/npa-workflow/manifest.json" in source
+    assert '"workflow_steps": workflow_steps' in source
+    # Enriched logs include the per-stage command lines.
+    assert "workflow_steps = _workflow_run_steps(" in source

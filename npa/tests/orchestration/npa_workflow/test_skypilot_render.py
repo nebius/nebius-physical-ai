@@ -416,3 +416,14 @@ def test_workbench_workflow_submit_npa_var_merges_config(
     )
     assert result.exit_code == 0, result.output
     assert "my-live-bucket" in str(captured["content"])
+
+
+def test_default_npa_setup_has_optin_source_overlay() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+    # Opt-in overlay: gated on NPA_SRC_OVERLAY, reinstalls branch npa on top of a
+    # baked image so branch code runs on GPU without an image rebuild. Default off.
+    assert 'if [ "$NPA_SRC_OVERLAY" = "1" ]' in setup
+    assert "/tmp/npa-src-overlay" in setup
+    assert "pip install -q -e /tmp/npa-src-overlay --no-deps" in setup

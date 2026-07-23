@@ -2261,6 +2261,45 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
     return stages
 
 
+def _workflow_run_steps(s3, bucket: str, keys: list) -> list:
+    # Read the npa.workflow run manifest (<run>/npa-workflow/manifest.json) and
+    # return per-stage execution records: state, command, returncode, status,
+    # iteration, output_uri. Empty list when the run was not scheduler-driven.
+    manifest_key = ""
+    for key in keys:
+        if str(key).endswith("/npa-workflow/manifest.json"):
+            manifest_key = str(key)
+            break
+    if not manifest_key:
+        return []
+    try:
+        body = s3.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
+        manifest = json.loads(body)
+    except Exception:
+        return []
+    out = []
+    for step in manifest.get("steps", []) if isinstance(manifest, dict) else []:
+        if not isinstance(step, dict):
+            continue
+        argv = step.get("argv") or []
+        command = " ".join(str(a) for a in argv) if isinstance(argv, list) else str(argv)
+        outputs = step.get("outputs") or []
+        output_uri = ""
+        if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
+            output_uri = str(outputs[0].get("uri") or "")
+        out.append(
+            {{
+                "stage": str(step.get("state") or ""),
+                "status": str(step.get("status") or ""),
+                "returncode": step.get("returncode"),
+                "iteration": step.get("iteration"),
+                "command": command[:2000],
+                "output_uri": output_uri,
+            }}
+        )
+    return out
+
+
 def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> dict | None:
     if not run_id:
         return None
@@ -2293,6 +2332,11 @@ def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> 
     # generic-find paths).
     marker = "/" + str(run_id) + "/"
     effective_prefix = keys[0].split(marker, 1)[0] if marker in keys[0] else settings.get("prefix", "")
+    # Real per-stage execution record written by the npa.workflow scheduler:
+    # each step's state, exact command (argv), returncode, status, loop iteration.
+    # This is the authoritative "logs of each stage" surface (the artifact-derived
+    # stages below cover "artifacts of each stage").
+    workflow_steps = _workflow_run_steps(s3, settings["bucket"], keys)
     workflow_stage_defs = _workflow_stage_defs_from_state(state)
     overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
     stages = build_artifact_backed_stages(
@@ -2333,12 +2377,25 @@ def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> 
         "updated_at": max((str(item.last_modified or "") for item in artifacts), default=_now_iso()),
         "selection": {{}},
         "stages": stages,
+        "workflow_steps": workflow_steps,
         "logs": [
             {{
                 "timestamp": _now_iso(),
                 "level": "info",
                 "message": f"Derived stage timeline from {{len(artifacts)}} S3 artifacts.",
             }},
+            *[
+                {{
+                    "timestamp": _now_iso(),
+                    "level": "info" if str(step.get("status") or "") in ("ok", "succeeded", "") and (step.get("returncode") in (0, None)) else "error",
+                    "message": (
+                        f"[{{step.get('stage') or '?'}}"
+                        + (f" #{{step.get('iteration')}}" if step.get("iteration") not in (None, "") else "")
+                        + f"] rc={{step.get('returncode')}} ({{step.get('status') or 'n/a'}}) $ {{step.get('command') or ''}}"
+                    ),
+                }}
+                for step in workflow_steps
+            ],
             {{
                 "timestamp": _now_iso(),
                 "level": "info" if rrd_ready else "warn",
