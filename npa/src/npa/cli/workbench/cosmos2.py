@@ -78,18 +78,23 @@ def transfer_cmd(
                 "--execute needs the cosmos-transfer2.5 runtime "
                 "(run inside the npa-cosmos2-transfer image on a GPU)."
             )
-        transfer = run_cosmos_transfer(run_id=run_id, spec=spec or None)
+        # The sampled appearance combo carries the prompt that actually conditions
+        # the augmentation, so the output pixels reflect the config (not just a label).
+        variables = _first_augmentation(configs_uri) if configs_uri else {}
+        transfer = run_cosmos_transfer(
+            run_id=run_id, spec=spec or None, prompt=str(variables.get("prompt") or "") or None
+        )
         payload["status"] = "executed"
         payload["mode"] = "cosmos_transfer2.5"
         payload["output_video"] = transfer["video_path"]
         payload["video_bytes"] = transfer["video_bytes"]
         payload["control_spec"] = transfer["spec"]
+        payload["prompt"] = str(variables.get("prompt") or "")
         # Publish the real generated video + extracted frames to S3 so downstream
         # stages (pseudo-label, grade, visualize) consume real augmented frames.
         if output_uri.startswith("s3://"):
             from npa.workbench.cosmos.transfer import publish_transfer_to_s3
 
-            variables = _first_augmentation(configs_uri) if configs_uri else {}
             published = publish_transfer_to_s3(
                 transfer, output_uri, run_id=run_id, variables=variables
             )

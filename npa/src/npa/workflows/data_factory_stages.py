@@ -23,11 +23,33 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+# Appearance-only variables for the demo's indoor tabletop-manipulation footage
+# (a robot arm folding cloth). These must match the SCENE so the sampled combo is
+# coherent with the pixels AND can drive the Cosmos Transfer prompt — appearance
+# only (lighting/background/materials), never the geometry or the folding motion.
 APPEARANCE_VARIABLES = {
-    "time_of_day": ["morning", "midday", "evening", "night"],
-    "weather": ["clear", "overcast", "rainy", "foggy"],
-    "road_condition": ["dry", "wet"],
+    "lighting": ["bright daylight", "warm lamp light", "dim evening light", "cool overhead light"],
+    "background": ["plain wall", "cluttered shelves", "sunlit window", "hanging curtain"],
+    "cloth_color": ["blue", "red", "white", "green"],
+    "surface": ["beige sofa", "wooden table", "gray countertop"],
 }
+
+
+def prompt_from_combo(combo: dict[str, Any]) -> str:
+    """Turn a sampled appearance combo into a natural-language Cosmos prompt.
+
+    Keeps the scene/action fixed (robot folding cloth) and varies only appearance,
+    so the augmentation is a faithful re-render of the SAME clip under new looks.
+    """
+    cloth = str(combo.get("cloth_color") or "").strip()
+    surface = str(combo.get("surface") or "").strip()
+    lighting = str(combo.get("lighting") or "").strip()
+    background = str(combo.get("background") or "").strip()
+    return (
+        f"A robot arm folding a {cloth or 'blue'} cloth on a {surface or 'beige sofa'}, "
+        f"{lighting or 'bright daylight'}, {background or 'plain wall'} in the background. "
+        "Photorealistic, same motion and layout, appearance changed only."
+    )
 
 
 def _storage():
@@ -111,9 +133,16 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
     except (TypeError, ValueError):
         n = 2
     rng = random.Random(seed or None)
-    combos = [{k: rng.choice(v) for k, v in APPEARANCE_VARIABLES.items()} for _ in range(max(1, n))]
+    combos = []
+    for _ in range(max(1, n)):
+        combo = {k: rng.choice(v) for k, v in APPEARANCE_VARIABLES.items()}
+        # The prompt is what actually conditions the Cosmos Transfer augmentation,
+        # so the sampled appearance drives the pixels (not just a Rerun label).
+        combo["prompt"] = prompt_from_combo(combo)
+        combos.append(combo)
     manifest = {
         "schema": "npa.data_factory.configs.v1",
+        "scene": "indoor robot arm folding cloth (tabletop manipulation)",
         "n_augmentations": len(combos),
         "variables": APPEARANCE_VARIABLES,
         "augmentations": combos,

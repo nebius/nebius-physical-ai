@@ -79,10 +79,35 @@ def ensure_env(repo: Path) -> Path:
     return py
 
 
+def _spec_with_prompt(repo: Path, spec: str, prompt: str) -> str:
+    """Write a copy of ``spec`` with its text prompt overridden; return its path.
+
+    Cosmos controlnet specs carry the text prompt that steers appearance. Patching
+    it lets the sampled appearance combo actually condition the diffusion (same
+    control video / motion, new look) instead of being a decorative label. The
+    copy sits next to the original so relative control-asset paths still resolve.
+    Best-effort: on any failure we fall back to the original spec.
+    """
+    import json as _json
+
+    try:
+        spec_path = repo / spec
+        data = _json.loads(spec_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return spec
+        data["prompt"] = prompt
+        patched = spec_path.with_name("_npa_prompted_" + spec_path.name)
+        patched.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+        return str(patched.relative_to(repo))
+    except Exception:  # noqa: BLE001 - prompt override is best-effort
+        return spec
+
+
 def run_cosmos_transfer(
     *,
     run_id: str = "",
     spec: str | None = None,
+    prompt: str | None = None,
     out_subdir: str | None = None,
     hf_home: str | None = None,
 ) -> dict[str, Any]:
@@ -90,11 +115,16 @@ def run_cosmos_transfer(
 
     ``spec`` is a controlnet_spec path relative to the transfer repo (defaults to
     the env override ``COSMOS_TRANSFER_SPEC`` or the bundled depth example).
+    ``prompt`` (or ``COSMOS_TRANSFER_PROMPT``), when set, overrides the spec's text
+    prompt so the sampled appearance actually conditions the augmentation.
     """
 
     repo = cosmos_transfer_repo()
     py = ensure_env(repo)
     spec = spec or os.environ.get("COSMOS_TRANSFER_SPEC", DEFAULT_SPEC)
+    prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
+    if prompt:
+        spec = _spec_with_prompt(repo, spec, prompt)
     out = out_subdir or f"outputs/{run_id or 'transfer'}"
     out_abs = repo / out
     if out_abs.exists():

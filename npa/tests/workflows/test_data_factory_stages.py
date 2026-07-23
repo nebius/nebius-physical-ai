@@ -14,10 +14,22 @@ def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
     assert result["n_augmentations"] == 3
     assert len(result["augmentations"]) == 3
     for combo in result["augmentations"]:
-        assert combo["weather"] in dfs.APPEARANCE_VARIABLES["weather"]
-        assert combo["time_of_day"] in dfs.APPEARANCE_VARIABLES["time_of_day"]
+        # Appearance vars match the actual (indoor manipulation) scene domain.
+        assert combo["cloth_color"] in dfs.APPEARANCE_VARIABLES["cloth_color"]
+        assert combo["lighting"] in dfs.APPEARANCE_VARIABLES["lighting"]
+        # Each combo carries the prompt that actually conditions the augmentation.
+        assert combo["cloth_color"] in combo["prompt"]
+        assert "folding" in combo["prompt"]
     assert out.is_file()
     assert json.loads(out.read_text())["schema"] == "npa.data_factory.configs.v1"
+
+
+def test_prompt_from_combo_is_appearance_only() -> None:
+    combo = {"cloth_color": "red", "surface": "wooden table", "lighting": "dim evening light", "background": "plain wall"}
+    prompt = dfs.prompt_from_combo(combo)
+    assert "red cloth" in prompt
+    assert "wooden table" in prompt
+    assert "appearance changed only" in prompt
 
 
 def test_generate_configs_is_deterministic_by_seed(tmp_path: Path) -> None:
@@ -134,7 +146,9 @@ def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -
 
     combo = _first_augmentation(configs_uri)
     assert combo == manifest["augmentations"][0]
-    assert set(combo) == {"time_of_day", "weather", "road_condition"}
+    assert set(combo) == {"lighting", "background", "cloth_color", "surface", "prompt"}
+    # The prompt is what the augment stage feeds into Cosmos Transfer.
+    assert combo["prompt"]
 
 
 def test_generate_configs_non_numeric_count_falls_back(tmp_path: Path) -> None:
