@@ -236,6 +236,12 @@ def list_runs(
                 run_id = _run_id_for_key(key, normalized_prefix)
                 if not run_id:
                     continue
+                # A run is a directory (``<run_id>/<stage>/...``). Skip bare files
+                # sitting directly under the prefix (e.g. ``<cat>/records.json``),
+                # which are not runs — this keeps generic root-level discovery clean.
+                remainder = key[len(normalized_prefix):] if normalized_prefix else key
+                if "/" not in remainder.lstrip("/"):
+                    continue
                 render = render_hint_for_object(key=key)
                 current = summary.setdefault(
                     run_id,
@@ -293,7 +299,9 @@ def list_run_categories(bucket: str, *, base_prefix: str = "", s3=None) -> list[
     return categories
 
 
-def discovery_categories(bucket: str, *, base_prefix: str = "", s3=None) -> list[str]:
+def discovery_categories(
+    bucket: str, *, base_prefix: str = "", exclude: "set[str] | None" = None, s3=None
+) -> list[str]:
     """Return every candidate *run-parent* prefix in the bucket, generically.
 
     Runs live one level below a category prefix (``<category>/<run_id>/...``).
@@ -309,19 +317,26 @@ def discovery_categories(bucket: str, *, base_prefix: str = "", s3=None) -> list
     2. categories at the bucket root (``<category>``), excluding ``base_prefix``
        itself — its children are categories, not runs, and are covered by (1).
 
+    ``exclude`` drops categories whose first path segment matches (e.g. the
+    agent's own state/memory root), so infra prefixes never masquerade as runs.
+
     Prefixes are returned without a trailing slash, de-duplicated, base-first.
     """
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
     base = str(base_prefix or "").strip().strip("/")
+    excluded = {str(x).strip().strip("/") for x in (exclude or set()) if str(x).strip().strip("/")}
     ordered: list[str] = []
     seen: set[str] = set()
 
     def _add(prefix: str) -> None:
         value = str(prefix or "").strip().strip("/")
-        if value and value not in seen:
-            seen.add(value)
-            ordered.append(value)
+        if not value or value in seen:
+            return
+        if value in excluded or value.split("/", 1)[0] in excluded:
+            return
+        seen.add(value)
+        ordered.append(value)
 
     if base:
         for category in list_run_categories(bucket, base_prefix=base, s3=s3):
@@ -334,19 +349,27 @@ def discovery_categories(bucket: str, *, base_prefix: str = "", s3=None) -> list
     return ordered
 
 
-def list_all_runs(bucket: str, *, base_prefix: str = "", limit: int = 50, s3=None) -> RunListPage:
+def list_all_runs(
+    bucket: str,
+    *,
+    base_prefix: str = "",
+    limit: int = 50,
+    exclude: "set[str] | None" = None,
+    s3=None,
+) -> RunListPage:
     """Discover runs across every category in the bucket generically.
 
     Enumerates category folders under the configured base root AND at the bucket
     root (see :func:`discovery_categories`) and merges each category's runs
     (dedup by run_id, keep newest), latest-first. No workflow path is hardcoded;
-    a new workflow folder — under any root — shows up automatically.
+    a new workflow folder — under any root — shows up automatically. ``exclude``
+    drops infra roots (e.g. the agent's own state prefix) from the listing.
     """
     if limit <= 0:
         raise ArtifactDiscoveryError("limit must be > 0")
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
-    categories = discovery_categories(bucket, base_prefix=base_prefix, s3=s3)
+    categories = discovery_categories(bucket, base_prefix=base_prefix, exclude=exclude, s3=s3)
     if not categories:
         # Flat layout: run_ids sit directly under the root.
         return list_runs(bucket, prefix=base_prefix, limit=limit, s3=s3)

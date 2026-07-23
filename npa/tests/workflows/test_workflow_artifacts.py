@@ -283,3 +283,41 @@ def test_find_run_artifacts_locates_root_level_run() -> None:
         "scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json",
         "scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json",
     ]
+
+
+def test_list_runs_skips_bare_files_not_run_dirs() -> None:
+    # A file sitting directly under a category is not a run directory.
+    s3 = _PrefixAwareS3([
+        ("scenario-gen-smoke/records.json", "2026-07-23T00:00:00+00:00"),
+        ("scenario-gen-smoke/real-run-1/npa-workflow/status.json", "2026-07-23T10:00:00+00:00"),
+    ])
+    page = list_runs("bucket", prefix="scenario-gen-smoke", limit=50, s3=s3)
+    ids = [r.run_id for r in page.runs]
+    assert ids == ["real-run-1"]
+    assert "records.json" not in ids
+
+
+def test_discovery_categories_excludes_infra_roots() -> None:
+    from npa.workflows.artifacts import discovery_categories
+
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("npa-agent/session-state/a/b.json", "2026-07-23T00:00:00+00:00"),
+        ("npa-agent/tenants/t/chat-sessions/s.json", "2026-07-23T00:00:00+00:00"),
+    ]
+    cats = discovery_categories(
+        "bucket", base_prefix="checkpoints", exclude={"npa-agent"}, s3=_PrefixAwareS3(layout)
+    )
+    assert "npa-agent" not in cats
+    assert "scenario-gen-smoke" in cats
+
+
+def test_list_all_runs_excludes_infra_roots() -> None:
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("npa-agent/session-state/a/state.json", "2026-07-23T00:00:00+00:00"),
+    ]
+    page = list_all_runs(
+        "bucket", base_prefix="checkpoints", limit=50, exclude={"npa-agent"}, s3=_PrefixAwareS3(layout)
+    )
+    ids = [r.run_id for r in page.runs]
+    assert "session-state" not in ids
+    assert "scenario-gen-smoke-1" in ids

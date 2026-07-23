@@ -2711,6 +2711,19 @@ def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") 
         return _join_agent_s3_prefix(base, requested)
     return _join_agent_s3_prefix(base, "sim2real-b")
 
+def _discovery_exclude_roots() -> set:
+    # Bucket-root prefixes that hold the agent's own state/chat-memory, not runs.
+    # Derived from the configured prefixes so generic discovery never lists them.
+    roots = set()
+    for prefix in (
+        str(_state_s3_settings().get("prefix") or ""),
+        _chat_memory_prefix(),
+    ):
+        top = str(prefix or "").strip().strip("/").split("/", 1)[0]
+        if top:
+            roots.add(top)
+    return roots
+
 
 def _agent_s3_client():
     settings = _agent_s3_settings()
@@ -5503,12 +5516,20 @@ def artifacts_runs(prefix: str = "", limit: int = 50):
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
             page = list_runs(settings["bucket"], prefix=effective_prefix, limit=limit, s3=s3)
             return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
-        # No user prefix: scan the single run root generically. Runs live under
-        # <root>/<category>/<run_id>/... (root from config, e.g. "checkpoints");
-        # list_all_runs enumerates the category folders from S3 and merges them,
-        # so every workflow's runs show without hardcoding any workflow path.
+        # No user prefix: discover runs generically across ALL bucket roots.
+        # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
+        # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
+        # (e.g. scenario-gen-smoke/..., physical-ai-data-factory/...). list_all_runs
+        # enumerates category folders under both roots and merges them, so every
+        # workflow's runs show without hardcoding any workflow path.
         base = settings.get("prefix", "")
-        page = list_all_runs(settings["bucket"], base_prefix=base, limit=limit, s3=s3)
+        page = list_all_runs(
+            settings["bucket"],
+            base_prefix=base,
+            limit=limit,
+            exclude=_discovery_exclude_roots(),
+            s3=s3,
+        )
         return {{"ok": True, "bucket": settings["bucket"], "prefix": base, "base_prefix": base, **page.to_dict()}}
     except HTTPException:
         raise

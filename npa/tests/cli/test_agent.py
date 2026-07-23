@@ -855,13 +855,15 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
 
 
 def test_default_run_discovery_is_generic_not_hardcoded() -> None:
-    """Default (no-prefix) run discovery must scan the single run root generically
-    (enumerate category folders from S3), NOT hardcode any workflow path."""
+    """Default (no-prefix) run discovery must scan the bucket generically
+    (enumerate category folders under every root from S3), NOT hardcode any
+    workflow path, and drop the agent's own infra roots from the listing."""
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Generic scan of the configured run root; no hardcoded workflow prefixes.
-    assert "page = list_all_runs(settings[\"bucket\"], base_prefix=base, limit=limit, s3=s3)" in source
+    # Generic scan across all bucket roots; no hardcoded workflow prefixes.
+    assert "page = list_all_runs(" in source
+    assert "exclude=_discovery_exclude_roots()" in source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
     # Per-run lookup also falls back to a generic cross-category find.
     assert "find_run_artifacts(" in source
