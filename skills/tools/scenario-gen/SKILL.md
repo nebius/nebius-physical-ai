@@ -6,9 +6,15 @@ description: Use when generating adversarial scenarios via RL, ranking mined fai
 # Scenario Gen (Adversarial Scenario Generation)
 
 Adversarial scenario generation productizes the Isaac Lab RL capability as a
-first-class hard-case miner: an RL adversary perturbs the environment / other
+first-class hard-case miner: an adversary perturbs the environment / other
 agents to *maximize failures* of a policy-under-test, surfacing hard scenarios
 for regression and hardening.
+
+The adversary backend is pluggable. The **intended production backend is an
+Isaac Lab RL adversary** (reward = the policy-under-test's violation rate). The
+**default backend is not RL** — it is a deterministic, GPU-free heuristic search
+that acts as a functional scaffold/stand-in so the tool runs and is testable
+without a GPU. Plug in the real backend via ``adversary_backend``.
 
 ## Three-access pattern
 
@@ -45,8 +51,8 @@ Endpoints: `/health`, `/status`, `/system-info`, `/list`, `POST /generate`,
 - `POST /rank`: score/rank a generated set by weighted failure severity +
   diversity; emits `npa.scenario_gen.ranked_set.v1`.
 
-The RL backend is pluggable (`adversary_backend`). The default is a
-deterministic, dependency-light simulated adversary so the tool runs and tests
+The adversary backend is pluggable (`adversary_backend`). The default is a
+deterministic, dependency-light heuristic (not RL) so the tool runs and tests
 without a GPU; a live run swaps in the Isaac Lab RL backend.
 
 ## GPU routing

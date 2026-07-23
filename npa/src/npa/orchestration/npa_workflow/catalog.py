@@ -297,8 +297,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.scenario_gen.generate": ToolEntry(
         name="workbench.scenario_gen.generate",
         description=(
-            "Train an adversarial RL agent that maximizes failures of a "
-            "policy-under-test and emit a ranked adversarial scenario set."
+            "Mine a ranked adversarial scenario set that maximizes failures of a "
+            "policy-under-test via a pluggable adversary backend (Isaac Lab RL "
+            "intended; deterministic heuristic default, GPU-free)."
         ),
         argv_template=[
             "npa",

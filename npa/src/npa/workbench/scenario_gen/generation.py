@@ -1,12 +1,16 @@
-"""Adversarial scenario generation on top of the workbench RL backend.
+"""Adversarial scenario generation with a pluggable adversary backend.
 
-The adversary is an RL agent whose reward is the *failure* of a
-policy-under-test: it perturbs the environment / other-agent behavior to drive
-the policy into violations, surfacing hard scenarios for regression and
-hardening. The real training pass runs on the Isaac Lab RL backend; the default
-backend here is a deterministic simulated search so the tool is usable and
-testable without a GPU. Swap the backend via ``adversary_backend`` to plug in a
-live Isaac Lab adversary.
+The goal is to mine scenarios that *maximize the failure* of a
+policy-under-test — perturbations of the environment / other-agent behavior that
+drive the policy into violations, surfacing hard cases for regression and
+hardening. The intended production backend is an Isaac Lab RL adversary whose
+reward is the policy-under-test's violation rate; plug it in via
+``adversary_backend``.
+
+The **default** backend (``simulate_adversary``) is NOT reinforcement learning:
+it is a deterministic, dependency-light heuristic search (seeded sampling scored
+by a failure model) so the tool is usable and testable without a GPU. It is a
+functional scaffold and a stand-in for the RL backend, not a trained adversary.
 """
 
 from __future__ import annotations
@@ -71,12 +75,13 @@ def scenario_config_uri(output_uri: str, scenario_id: str) -> str:
 
 
 def simulate_adversary(request: GenerateRequest, seed: int) -> list[dict[str, Any]]:
-    """Deterministic stand-in for an Isaac Lab adversarial RL rollout.
+    """Deterministic heuristic stand-in for an Isaac Lab adversarial RL rollout.
 
-    Samples perturbation vectors and scores each by a heuristic failure model
-    that rewards larger, correlated perturbations (an adversary maximizing the
-    policy-under-test's violation rate). This keeps generation dependency-light
-    and reproducible; a live backend replaces it via ``adversary_backend``.
+    This is NOT RL. It samples perturbation vectors and scores each by a
+    heuristic failure model that rewards larger, correlated perturbations (a
+    proxy for an adversary maximizing the policy-under-test's violation rate).
+    It keeps generation dependency-light and reproducible for CI/demos; a real
+    Isaac Lab RL adversary replaces it via ``adversary_backend``.
     """
 
     rng = random.Random(seed)

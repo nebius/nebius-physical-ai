@@ -127,7 +127,9 @@ def system_info_payload() -> dict[str, Any]:
         "tool": "scenario_gen",
         "python": platform.python_version(),
         "platform": platform.platform(),
-        "rl_backend": "isaac_lab",
+        "adversary_backend": "pluggable",
+        "default_backend": "deterministic_heuristic (not RL, GPU-free)",
+        "intended_rl_backend": "isaac_lab",
         "gpu_routing": "RTX PRO 6000 or L40S (RT-core capable)",
     }
     try:

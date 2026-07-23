@@ -25,7 +25,10 @@ from npa.workbench.scenario_gen.schemas import (
 
 app = typer.Typer(
     name="scenario-gen",
-    help="Adversarial scenario generation: RL adversary that mines policy failures.",
+    help=(
+        "Adversarial scenario generation: mine hard scenarios that fail a "
+        "policy-under-test (pluggable Isaac Lab RL backend; deterministic default)."
+    ),
     no_args_is_help=True,
 )
 
@@ -66,7 +69,11 @@ def generate_cmd(
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
     output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
 ) -> None:
-    """Train an adversary and mine ranked adversarial scenarios."""
+    """Mine ranked adversarial scenarios against a policy-under-test.
+
+    Uses the pluggable adversary backend (Isaac Lab RL intended; deterministic
+    heuristic default when no GPU backend is configured).
+    """
     payload = {
         "policy_uri": policy_uri,
         "base_config_uri": input_path,
