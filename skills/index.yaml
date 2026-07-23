@@ -174,16 +174,16 @@ skills:
       - type: cli_help
         args: ["workbench", "fiftyone", "load-dataset", "--help"]
         contains: "dataset"
-  - name: foxglove
+  - name: lichtblick
     category: tools
-    when_to_use: "Deploy, launch, or review the Foxglove (Lichtblick OSS, MPL-2.0) web viewer for MCAP, ROS-bag, and robotics log artifacts staged from S3."
-    path: skills/tools/foxglove/SKILL.md
+    when_to_use: "Deploy, launch, or review the Lichtblick web viewer — an open-source (MPL-2.0), Foxglove-compatible MCAP / ROS-bag / robotics log viewer for artifacts staged from S3."
+    path: skills/tools/lichtblick/SKILL.md
     smoke:
       - type: cli_help
-        args: ["workbench", "foxglove", "serve", "--help"]
+        args: ["workbench", "lichtblick", "serve", "--help"]
         contains: "input-path"
       - type: file_exists
-        path: npa/docker/workbench/foxglove/Dockerfile
+        path: npa/docker/workbench/lichtblick/Dockerfile
   - name: genesis
     category: tools
     when_to_use: "Genesis simulation, RL teacher training, visual demo generation, and EGL behavior."

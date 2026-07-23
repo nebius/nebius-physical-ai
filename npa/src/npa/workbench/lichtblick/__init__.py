@@ -1,12 +1,14 @@
-"""Foxglove (Lichtblick OSS) web-viewer launch helpers for Workbench.
+"""Lichtblick web-viewer launch helpers for Workbench.
 
-Single source of truth for the ``foxglove`` tool. The CLI
-(``npa workbench foxglove ...``) and SDK (``npa.sdk.workbench.foxglove``) both
-call into these functions; no launch logic is duplicated across access paths.
+Lichtblick is an open-source, Foxglove-compatible MCAP / ROS-bag / robotics log
+viewer (MPL-2.0). This module is the single source of truth for the
+``lichtblick`` tool. The CLI (``npa workbench lichtblick ...``) and SDK
+(``npa.sdk.workbench.lichtblick``) both call into these functions; no launch
+logic is duplicated across access paths.
 
-The viewer is a static web app (Lichtblick, MPL-2.0) that opens MCAP / ROS-bag /
-robotics log artifacts staged from S3. Cross-tool data flows through S3 only, so
-every command takes ``--input-path`` / ``--output-path`` S3 (or local) URIs.
+The viewer is a static web app that opens log artifacts staged from S3. Cross-tool
+data flows through S3 only, so every command takes ``--input-path`` /
+``--output-path`` S3 (or local) URIs.
 
 This module is import-safe: it pulls in no GPU, Docker, or network dependencies
 at import time, so it is usable from unit tests and the CLI alike. Actually
@@ -30,12 +32,12 @@ SERVED_DATA_DIR = "/srv/data"
 SUPPORTED_SUFFIXES = (".mcap", ".bag", ".db3")
 
 
-class FoxgloveError(ValueError):
-    """Raised when a Foxglove viewer launch request is invalid."""
+class LichtblickError(ValueError):
+    """Raised when a Lichtblick viewer launch request is invalid."""
 
 
 @dataclass(frozen=True)
-class FoxgloveLaunchPlan:
+class LichtblickLaunchPlan:
     """A fully-resolved, infra-free description of how to launch the viewer."""
 
     status: str
@@ -59,26 +61,26 @@ def _validate_artifact(input_path: str) -> str:
 
     value = (input_path or "").strip()
     if not value:
-        raise FoxgloveError("--input-path is required (S3 or local MCAP/bag artifact).")
+        raise LichtblickError("--input-path is required (S3 or local MCAP/bag artifact).")
     if "://" in value and not value.startswith("s3://"):
         scheme = value.split("://", 1)[0]
-        raise FoxgloveError(
+        raise LichtblickError(
             f"--input-path must be an s3:// URI or a local path, got scheme {scheme!r}."
         )
     if value.startswith("s3://"):
         without_scheme = value[len("s3://") :]
         bucket, _, key = without_scheme.partition("/")
         if not bucket or not key:
-            raise FoxgloveError(f"invalid s3 input path: {value}")
+            raise LichtblickError(f"invalid s3 input path: {value}")
         name = PurePosixPath(key).name
     else:
         name = PurePosixPath(value).name
     if not name:
-        raise FoxgloveError(f"could not derive an artifact name from {value!r}.")
+        raise LichtblickError(f"could not derive an artifact name from {value!r}.")
     if PurePosixPath(name).suffix.lower() not in SUPPORTED_SUFFIXES:
         supported = ", ".join(SUPPORTED_SUFFIXES)
-        raise FoxgloveError(
-            f"unsupported artifact {name!r}; Foxglove opens {supported} logs."
+        raise LichtblickError(
+            f"unsupported artifact {name!r}; Lichtblick opens {supported} logs."
         )
     return name
 
@@ -90,7 +92,7 @@ def _resolve_image(image: str, *, registry: str | None, tag: str | None) -> str:
     # deploy stack or registry resolution.
     from npa.deploy.images import container_image_for_tool
 
-    return container_image_for_tool("foxglove", registry=registry, tag=tag)
+    return container_image_for_tool("lichtblick", registry=registry, tag=tag)
 
 
 def build_launch_plan(
@@ -102,22 +104,23 @@ def build_launch_plan(
     output_path: str = "",
     registry: str | None = None,
     tag: str | None = None,
-) -> FoxgloveLaunchPlan:
-    """Return a validated, infra-free plan for serving ``input_path`` in Foxglove.
+) -> LichtblickLaunchPlan:
+    """Return a validated, infra-free plan for serving ``input_path`` in Lichtblick.
 
-    The plan resolves the ``npa-foxglove`` image, the container run command, and a
-    deep-linked viewer URL that opens the served artifact. Nothing is executed;
+    The plan resolves the ``npa-lichtblick`` image, the container run command, and
+    a deep-linked viewer URL that opens the served artifact. Nothing is executed;
     :func:`launch_viewer` performs the actual (opt-in) container run.
     """
 
     name = _validate_artifact(input_path)
     resolved_host = (host or DEFAULT_HOST).strip() or DEFAULT_HOST
     if port <= 0 or port > 65535:
-        raise FoxgloveError(f"--port must be in 1..65535, got {port}.")
+        raise LichtblickError(f"--port must be in 1..65535, got {port}.")
     resolved_image = _resolve_image(image, registry=registry, tag=tag)
     served_artifact_path = f"{SERVED_DATA_DIR}/{name}"
 
-    # Foxglove/Lichtblick opens a remote file via the ds=remote-file data source.
+    # Lichtblick opens a remote file via the ds=remote-file data source (the same
+    # deep-link scheme Foxglove-compatible viewers accept).
     served_url = f"http://{resolved_host}:{port}/data/{name}"
     viewer_url = (
         f"http://{resolved_host}:{port}/?ds=remote-file"
@@ -129,7 +132,7 @@ def build_launch_plan(
         f"-v <local-artifact>:{served_artifact_path}:ro {resolved_image}"
     )
 
-    return FoxgloveLaunchPlan(
+    return LichtblickLaunchPlan(
         status="planned",
         input_path=input_path.strip(),
         artifact_name=name,
@@ -145,11 +148,11 @@ def build_launch_plan(
 
 
 def launch_viewer(
-    plan: FoxgloveLaunchPlan,
+    plan: LichtblickLaunchPlan,
     *,
     local_artifact: str,
     runner: Callable[[list[str]], Any],
-) -> FoxgloveLaunchPlan:
+) -> LichtblickLaunchPlan:
     """Execute the viewer container via an injected ``runner`` (opt-in).
 
     ``runner`` receives the argv list (typically ``subprocess.run``). Injecting it
@@ -158,7 +161,7 @@ def launch_viewer(
 
     artifact = (local_artifact or "").strip()
     if not artifact:
-        raise FoxgloveError("local_artifact is required to launch the viewer.")
+        raise LichtblickError("local_artifact is required to launch the viewer.")
     argv = [
         "docker",
         "run",
@@ -170,15 +173,15 @@ def launch_viewer(
         plan.image,
     ]
     runner(argv)
-    return FoxgloveLaunchPlan(**{**plan.to_dict(), "status": "launched", "staged": True})
+    return LichtblickLaunchPlan(**{**plan.to_dict(), "status": "launched", "staged": True})
 
 
 __all__ = [
     "CONTAINER_PORT",
     "DEFAULT_HOST",
     "DEFAULT_PORT",
-    "FoxgloveError",
-    "FoxgloveLaunchPlan",
+    "LichtblickError",
+    "LichtblickLaunchPlan",
     "SUPPORTED_SUFFIXES",
     "build_launch_plan",
     "launch_viewer",
