@@ -113,6 +113,12 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             params=("spec_yaml", "run_id"),
         ),
         ToolSpec(
+            "retrieval_search",
+            read_only=True,
+            summary="Retrieve grounded citations from the indexed docs/skills corpus.",
+            params=("query", "k"),
+        ),
+        ToolSpec(
             "sim2real_submit",
             read_only=False,
             requires_confirmation=True,
