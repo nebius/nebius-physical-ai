@@ -21,7 +21,10 @@ from npa.workbench.lichtblick import (
     LichtblickError,
     LichtblickLaunchPlan,
     build_launch_plan,
+    build_mcap_from_frames,
     launch_viewer,
+    serve_viewer,
+    stage_input_to_mcap,
 )
 
 runner = CliRunner()
@@ -158,3 +161,147 @@ def test_launch_viewer_requires_local_artifact() -> None:
     plan = build_launch_plan(input_path="s3://b/k/x.mcap", image="npa-lichtblick:test")
     with pytest.raises(LichtblickError):
         launch_viewer(plan, local_artifact="", runner=lambda argv: None)
+
+
+# --------------------------------------------------------------------------- #
+# Tangible capability: robot camera frames -> MCAP, staging, and real launch.
+# --------------------------------------------------------------------------- #
+_PNG = b"\x89PNG\r\n\x1a\n"
+
+
+class _FakeS3:
+    """Minimal boto3 s3 stand-in for infra-free staging tests."""
+
+    def __init__(self, blobs: dict[str, bytes]) -> None:
+        self.blobs = blobs
+
+    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):  # noqa: N803
+        contents = [{"Key": k} for k in sorted(self.blobs) if k.startswith(Prefix)]
+        return {"Contents": contents, "IsTruncated": False}
+
+    def download_file(self, Bucket, Key, Filename):  # noqa: N803
+        with open(Filename, "wb") as handle:
+            handle.write(self.blobs[Key])
+
+
+def test_build_mcap_from_frames_roundtrip(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    frames = []
+    for i in range(3):
+        p = tmp_path / f"frame-{i:04d}.png"
+        p.write_bytes(_PNG + f"frame{i}".encode())
+        frames.append(str(p))
+    out = tmp_path / "camera.mcap"
+    info = build_mcap_from_frames(frames, str(out), topic="/rollout/camera", fps=5.0)
+    assert info["message_count"] == 3
+    assert out.is_file()
+
+    with open(out, "rb") as fh:
+        reader = make_reader(fh)
+        summary = reader.get_summary()
+        topics = [c.topic for c in summary.channels.values()]
+        schema_names = [s.name for s in summary.schemas.values()]
+        messages = list(reader.iter_messages())
+    assert topics == ["/rollout/camera"]
+    assert "foxglove.CompressedImage" in schema_names
+    assert len(messages) == 3
+    # Deterministic 5 fps timeline: 0ns, 200ms, 400ms.
+    log_times = [m[2].log_time for m in messages]
+    assert log_times == [0, 200_000_000, 400_000_000]
+
+
+def test_build_mcap_from_frames_rejects_empty(tmp_path: Path) -> None:
+    with pytest.raises(LichtblickError):
+        build_mcap_from_frames([], str(tmp_path / "x.mcap"))
+
+
+def test_stage_frames_from_s3_builds_mcap(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    s3 = _FakeS3(
+        {
+            "run/augment/frames/frame-00000.png": _PNG + b"a",
+            "run/augment/frames/frame-00001.png": _PNG + b"b",
+            "run/augment/cosmos2-transfer-result.json": b"{}",  # non-image, ignored
+        }
+    )
+    mcap_path, count = stage_input_to_mcap(
+        "s3://bucket/run/augment/frames/",
+        str(tmp_path / "work"),
+        from_frames=True,
+        s3_client=s3,
+    )
+    assert count == 2
+    assert mcap_path.endswith("camera.mcap")
+    assert Path(mcap_path).is_file()
+
+
+def test_stage_local_mcap_copies_as_is(tmp_path: Path) -> None:
+    src = tmp_path / "recording.mcap"
+    src.write_bytes(b"\x89MCAP0\r\n")
+    out, count = stage_input_to_mcap(str(src), str(tmp_path / "work"), from_frames=False)
+    assert count is None
+    assert Path(out).read_bytes() == b"\x89MCAP0\r\n"
+
+
+def test_serve_viewer_execute_stages_and_launches(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    s3 = _FakeS3(
+        {
+            "run/rollouts/iter_01/rollout-0000/camera/000.png": _PNG + b"1",
+            "run/rollouts/iter_01/rollout-0000/camera/001.png": _PNG + b"2",
+        }
+    )
+    calls: list[list[str]] = []
+    plan = serve_viewer(
+        input_path="s3://bucket/run/rollouts/iter_01/rollout-0000/camera/",
+        from_frames=True,
+        execute=True,
+        image="npa-lichtblick:test",
+        s3_client=s3,
+        runner=calls.append,
+        workdir=str(tmp_path / "work"),
+    )
+    assert plan.status == "launched"
+    assert plan.staged is True
+    assert plan.message_count == 2
+    assert plan.served_artifact_path == "/srv/data/camera.mcap"
+    argv = calls[0]
+    assert argv[:3] == ["docker", "run", "--rm"]
+    assert "-d" in argv
+    assert any(a.endswith(":/srv/data/camera.mcap:ro") for a in argv)
+    assert "npa-lichtblick:test" in argv
+
+
+def test_serve_from_frames_plan_only_does_not_touch_s3() -> None:
+    # execute=False must not require S3 or build an MCAP; it just plans.
+    plan = serve_viewer(
+        input_path="s3://bucket/run/augment/frames/",
+        from_frames=True,
+        execute=False,
+        image="npa-lichtblick:test",
+    )
+    assert plan.status == "planned"
+    assert plan.artifact_name == "camera.mcap"
+    assert "camera.mcap" in plan.viewer_url
+
+
+def test_cli_serve_from_frames_plan() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "lichtblick",
+            "serve",
+            "--input-path",
+            "s3://bucket/run/augment/frames/",
+            "--from-frames",
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["artifact_name"] == "camera.mcap"
+    assert payload["image"] == "cr.example/reg/npa-lichtblick:1.26.0"

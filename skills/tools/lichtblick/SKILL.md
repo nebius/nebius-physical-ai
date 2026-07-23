@@ -22,8 +22,16 @@ required.
 CLI:
 
 ```bash
-npa workbench lichtblick serve --input-path s3://bucket/run/recording.mcap
-npa workbench lichtblick launch --input-path s3://bucket/run/recording.mcap
+# View an existing MCAP (plan only by default; --execute stages + launches):
+npa workbench lichtblick serve --input-path s3://bucket/run/recording.mcap --execute
+
+# Pack a robot camera-frame sequence (e.g. sim2real rollout/augment frames) into
+# a real MCAP of foxglove.CompressedImage messages, then serve it:
+npa workbench lichtblick serve \
+  --input-path s3://bucket/sim2real-b/<run-id>/augment/frames/ \
+  --from-frames --fps 10 --topic /sim2real/augment/camera --execute
+
+npa workbench lichtblick launch  # alias for serve
 npa workbench lichtblick status
 npa workbench lichtblick list
 ```
@@ -34,12 +42,29 @@ Container: `caddy file-server` serves the static Lichtblick bundle on `:8080`
 (default CMD), with a `HEALTHCHECK` on `/`. Final `USER nobody`; Caddy's XDG
 data/config dirs are owned by that user so the server starts cleanly.
 
+## What it does (tangible)
+
+Lichtblick consumes real Physical AI workflow artifacts from S3 (mirroring how
+`rerun-viewer` consumes `sim2real.rrd` — a separate viewer, not embedded in the
+pipeline):
+
+- **MCAP export** (`--from-frames`): `build_mcap_from_frames` turns the Sim2Real
+  pipeline's `rollouts/.../camera` and `augment/frames` image artifacts into a
+  real MCAP of `foxglove.CompressedImage` messages at a chosen `--fps`, so the
+  robot camera stream plays on a timeline. Verified end-to-end: 32 Cosmos-Transfer2.5
+  augment frames → a 9.5 MB MCAP → rendered in a headless browser on topic
+  `/sim2real/augment/camera` (200 + 206 range fetches, 0 console errors).
+- **Staging + launch** (`--execute`): `serve_viewer` stages the artifact from S3
+  (`stage_input_to_mcap`) and runs the `npa-lichtblick` container so the log is
+  live at the returned URL. Without `--execute` it prints the plan (infra-free).
+
 ## Deploy / launch contract
 
 - Cross-tool data flows through S3 only. `serve`/`launch` take `--input-path`
-  (S3 or local MCAP/bag/db3) and optional `--output-path`; the artifact is
-  **staged into the viewer's own origin** (`/srv/data/<name>`, served by the same
-  Caddy on `:8080`) and opened via a deep-linked `?ds=remote-file&ds.url=...` URL.
+  (S3 or local MCAP/bag/db3, or a camera-frames prefix with `--from-frames`) and
+  optional `--output-path`; the artifact is **staged into the viewer's own origin**
+  (`/srv/data/<name>`, served by the same Caddy on `:8080`) and opened via a
+  deep-linked `?ds=remote-file&ds.url=...` URL.
 - Because the MCAP is co-served from the viewer origin, the browser fetch is
   same-origin: **no bucket CORS, no pre-signed URL, and no http/https
   mixed-content block** are involved. (Pointing `ds.url` directly at an S3 URL
