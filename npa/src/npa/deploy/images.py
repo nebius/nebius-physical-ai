@@ -39,7 +39,7 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
     "loop-eval": "npa-loop-eval",
     "rerun-viewer": "npa-rerun-viewer",
-    "foxglove": "npa-foxglove",
+    "lichtblick": "npa-lichtblick",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
 }
@@ -74,8 +74,8 @@ SUPPORTED_TOOL_VERSIONS = {
     # from the registry.
     "loop-eval": "0.1.3-genuine-sm120",
     "rerun-viewer": "0.31.4",
-    # Lichtblick (MPL-2.0) OSS Foxglove-Studio fork; static web viewer bundle.
-    "foxglove": "1.26.0",
+    # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
+    "lichtblick": "1.26.0",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     "nebius-cli": "0.12.192",

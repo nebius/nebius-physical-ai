@@ -1,9 +1,9 @@
-# Foxglove OSS web viewer (Lichtblick).
+# Lichtblick web viewer — an open-source, Foxglove-compatible MCAP / ROS log viewer.
 #
 # OSS source: lichtblick-suite/lichtblick (LICENSE: MPL-2.0), the actively
 # maintained community fork of the archived, relicensed Foxglove Studio. This
-# image ships ONLY the permissively licensed OSS web build; it never requires a
-# Foxglove account or any proprietary/closed SaaS component. Pinned to tag
+# image ships ONLY the permissively licensed Lichtblick web build; it never
+# requires an account or any proprietary/closed component. Pinned to tag
 # v${LICHTBLICK_VERSION}.
 #
 # Digest pinned 2026-07-23.
@@ -40,24 +40,32 @@ FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4
 
 ARG LICHTBLICK_VERSION
 
-LABEL npa.tool="foxglove" \
+LABEL npa.tool="lichtblick" \
       npa.version="${LICHTBLICK_VERSION}"
 
-ENV FOXGLOVE_VERSION=${LICHTBLICK_VERSION}
+# Caddy resolves its data/config dirs from these XDG paths. Point them at
+# locations the non-root runtime user owns so `caddy file-server` can initialize
+# storage without crashing on start.
+ENV LICHTBLICK_VERSION=${LICHTBLICK_VERSION} \
+    XDG_DATA_HOME=/data \
+    XDG_CONFIG_HOME=/config
 
 WORKDIR /srv
 
 # Static web bundle (index.html + wasm/js) served by caddy on :8080.
 COPY --from=build /src/web/.webpack ./
 # Keep the source version manifest for the golden-eval / build-time assertion.
-COPY --from=build /src/package.json /opt/npa/foxglove/package.json
+COPY --from=build /src/package.json /opt/npa/lichtblick/package.json
 
 # Build-time assertion: the served bundle version matches the pinned ARG. Mirrors
 # the fiftyone metadata.version() check, adapted to the web asset's version file.
-RUN grep -q "\"version\": \"${LICHTBLICK_VERSION}\"" /opt/npa/foxglove/package.json \
+# Also give the non-root user ownership of the served tree and Caddy's XDG dirs.
+RUN grep -q "\"version\": \"${LICHTBLICK_VERSION}\"" /opt/npa/lichtblick/package.json \
     && test -s /srv/index.html \
-    && printf '%s\n' "${LICHTBLICK_VERSION}" > /opt/npa/foxglove/VERSION \
-    && echo "FOXGLOVE_BUILD_VERSION_OK ${LICHTBLICK_VERSION}"
+    && printf '%s\n' "${LICHTBLICK_VERSION}" > /opt/npa/lichtblick/VERSION \
+    && mkdir -p /data/caddy /config/caddy \
+    && chown -R 65534:65534 /srv /data /config \
+    && echo "LICHTBLICK_BUILD_VERSION_OK ${LICHTBLICK_VERSION}"
 
 EXPOSE 8080
 
