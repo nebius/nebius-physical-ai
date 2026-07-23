@@ -484,6 +484,25 @@ def _resolve_upstream_root(explicit_home: str, work_dir: Path) -> Path:
     return target
 
 
+def _ensure_converter_deps() -> None:
+    """Ensure the upstream SONIC motion-lib converter's deps are importable.
+
+    ``convert_soma_csv_to_motion_lib.py`` imports joblib, pandas and scipy. When
+    retargeting runs in a lean base image (no dedicated workbench image), install
+    them on demand -- the same runtime-provisioning pattern as the upstream repo
+    fetch -- so the CPU converter works without pulling the retargeting image.
+    """
+
+    missing = []
+    for module in ("joblib", "pandas", "scipy"):
+        try:
+            __import__(module)
+        except ImportError:
+            missing.append(module)
+    if missing:
+        _run_checked([_python_executable(), "-m", "pip", "install", "-q", *missing])
+
+
 def _run_upstream_preprocess(
     *,
     upstream_root: Path,
@@ -499,6 +518,8 @@ def _run_upstream_preprocess(
     script = upstream_root / script_name
     if not script.exists():
         raise RetargetingError(f"Upstream SONIC script not found: {script}")
+
+    _ensure_converter_deps()
 
     command = [
         _python_executable(),
