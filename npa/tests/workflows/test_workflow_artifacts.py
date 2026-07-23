@@ -239,3 +239,47 @@ def test_find_run_artifacts_locates_run_in_any_category() -> None:
     # A run under a different category is also found without a hardcoded prefix.
     assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="run-a", s3=s3)
     assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="missing", s3=s3) == []
+
+
+# Runs also live at the BUCKET ROOT under a category (not under the configured
+# base root), e.g. scenario-gen-smoke/<run>/... and physical-ai-data-factory/<run>/...
+# Discovery must span both roots so these are visible + openable.
+_MULTI_ROOT_LAYOUT = _LAYOUT + [
+    ("scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json", "2026-07-23T15:32:22+00:00"),
+    ("scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json", "2026-07-23T15:32:20+00:00"),
+    ("physical-ai-data-factory/paidf-root-1/reports/final.json", "2026-07-19T00:00:00+00:00"),
+]
+
+
+def test_discovery_categories_spans_base_and_bucket_root() -> None:
+    from npa.workflows.artifacts import discovery_categories
+
+    cats = discovery_categories("bucket", base_prefix="checkpoints", s3=_PrefixAwareS3(_MULTI_ROOT_LAYOUT))
+    # Base-root categories come first, then root-level categories; the base root
+    # itself ("checkpoints") is NOT treated as a run parent (its children are cats).
+    assert "checkpoints/sim2real-b" in cats
+    assert "checkpoints/physical-ai-data-factory" in cats
+    assert "scenario-gen-smoke" in cats
+    assert "physical-ai-data-factory" in cats
+    assert "checkpoints" not in cats
+
+
+def test_list_all_runs_surfaces_root_level_runs() -> None:
+    s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=s3)
+    ids = [r.run_id for r in page.runs]
+    # Root-level runs are discovered alongside checkpoints runs, newest first.
+    assert ids[0] == "scenario-gen-smoke-1"
+    assert set(ids) == {"scenario-gen-smoke-1", "paidf-1", "paidf-root-1", "run-a", "default"}
+
+
+def test_find_run_artifacts_locates_root_level_run() -> None:
+    s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
+    arts = find_run_artifacts(
+        "bucket", base_prefix="checkpoints", run_id="scenario-gen-smoke-1", s3=s3
+    )
+    keys = sorted(a.key for a in arts)
+    assert keys == [
+        "scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json",
+        "scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json",
+    ]

@@ -293,18 +293,60 @@ def list_run_categories(bucket: str, *, base_prefix: str = "", s3=None) -> list[
     return categories
 
 
-def list_all_runs(bucket: str, *, base_prefix: str = "", limit: int = 50, s3=None) -> RunListPage:
-    """Discover runs across every category under ``base_prefix`` generically.
+def discovery_categories(bucket: str, *, base_prefix: str = "", s3=None) -> list[str]:
+    """Return every candidate *run-parent* prefix in the bucket, generically.
 
-    Enumerates the category folders under the single root and merges each
-    category's runs (dedup by run_id, keep newest), latest-first. No workflow
-    path is hardcoded; a new workflow folder shows up automatically.
+    Runs live one level below a category prefix (``<category>/<run_id>/...``).
+    Categories themselves may sit either under a configured base root
+    (``<base>/<category>/<run_id>/...``, e.g. ``checkpoints/sim2real-b/...``) or
+    directly at the bucket root (``<category>/<run_id>/...``, e.g.
+    ``scenario-gen-smoke/...``, ``physical-ai-data-factory/...``). Different
+    workflows write to different roots, so discovery must span both.
+
+    This merges, in order (newest-workflow-agnostic, no hardcoded paths):
+
+    1. categories under the configured ``base_prefix`` (``<base>/<category>``);
+    2. categories at the bucket root (``<category>``), excluding ``base_prefix``
+       itself — its children are categories, not runs, and are covered by (1).
+
+    Prefixes are returned without a trailing slash, de-duplicated, base-first.
+    """
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    base = str(base_prefix or "").strip().strip("/")
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(prefix: str) -> None:
+        value = str(prefix or "").strip().strip("/")
+        if value and value not in seen:
+            seen.add(value)
+            ordered.append(value)
+
+    if base:
+        for category in list_run_categories(bucket, base_prefix=base, s3=s3):
+            _add(category)
+    for category in list_run_categories(bucket, base_prefix="", s3=s3):
+        # The base root's children are categories (handled above), not runs.
+        if base and category.strip("/") == base:
+            continue
+        _add(category)
+    return ordered
+
+
+def list_all_runs(bucket: str, *, base_prefix: str = "", limit: int = 50, s3=None) -> RunListPage:
+    """Discover runs across every category in the bucket generically.
+
+    Enumerates category folders under the configured base root AND at the bucket
+    root (see :func:`discovery_categories`) and merges each category's runs
+    (dedup by run_id, keep newest), latest-first. No workflow path is hardcoded;
+    a new workflow folder — under any root — shows up automatically.
     """
     if limit <= 0:
         raise ArtifactDiscoveryError("limit must be > 0")
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
-    categories = list_run_categories(bucket, base_prefix=base_prefix, s3=s3)
+    categories = discovery_categories(bucket, base_prefix=base_prefix, s3=s3)
     if not categories:
         # Flat layout: run_ids sit directly under the root.
         return list_runs(bucket, prefix=base_prefix, limit=limit, s3=s3)
@@ -315,31 +357,37 @@ def list_all_runs(bucket: str, *, base_prefix: str = "", limit: int = 50, s3=Non
             page = list_runs(bucket, prefix=category, limit=limit, s3=s3)
         except ArtifactDiscoveryError:
             continue
-        total += page.total_runs
         for run in page.runs:
             current = best.get(run.run_id)
             if current is None or run.last_modified > current.last_modified:
                 best[run.run_id] = run
+    total = len(best)
     runs = sorted(best.values(), key=lambda item: (item.last_modified, item.run_id), reverse=True)
-    truncated = len(runs) > limit or total > len(runs)
+    truncated = len(runs) > limit
     if len(runs) > limit:
         runs = runs[:limit]
     return RunListPage(runs=runs, truncated=truncated, total_runs=total, limit=limit)
 
 
 def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -> "list[Artifact]":
-    """Locate a run's artifacts across categories without a hardcoded path.
+    """Locate a run's artifacts anywhere in the bucket without a hardcoded path.
 
-    Tries each ``<root>/<category>/<run_id>/`` until artifacts are found, so a run
-    stored under any workflow folder resolves generically.
+    Probes each candidate parent prefix (categories under the base root and at
+    the bucket root — see :func:`discovery_categories`) as ``<parent>/<run_id>/``
+    and returns the first non-empty match, then falls back to the flat layouts
+    (``<base>/<run_id>/`` and ``<run_id>/``). Run ids are unique, so the first
+    hit is authoritative — a run stored under any workflow root resolves.
     """
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
-    categories = list_run_categories(bucket, base_prefix=base_prefix, s3=s3)
-    if not categories:
-        return list_artifacts(bucket, run_id, prefix=base_prefix, s3=s3)
+    categories = discovery_categories(bucket, base_prefix=base_prefix, s3=s3)
     for category in categories:
         artifacts = list_artifacts(bucket, run_id, prefix=category, s3=s3)
+        if artifacts:
+            return artifacts
+    # Flat fallbacks: run directly under the base root, or at the bucket root.
+    for flat_prefix in (base_prefix, ""):
+        artifacts = list_artifacts(bucket, run_id, prefix=flat_prefix, s3=s3)
         if artifacts:
             return artifacts
     return []
