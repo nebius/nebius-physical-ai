@@ -223,6 +223,38 @@ def test_build_mcap_from_frames_rejects_empty(tmp_path: Path) -> None:
         build_mcap_from_frames([], str(tmp_path / "x.mcap"))
 
 
+def test_build_mcap_transcodes_ppm_rollout_frames(tmp_path: Path) -> None:
+    """Sim2Real rollout raw ``.ppm`` frames are transcoded to PNG, not skipped."""
+
+    pytest.importorskip("mcap")
+    import base64
+
+    from mcap.reader import make_reader
+
+    from npa.workbench.lichtblick import IMAGE_SUFFIXES
+
+    assert ".ppm" in IMAGE_SUFFIXES
+
+    frames = []
+    for i in range(2):
+        path = tmp_path / f"camera-{i:04d}.ppm"
+        # Minimal 2x1 binary PPM (P6): header then RGB bytes.
+        path.write_bytes(b"P6\n2 1\n255\n" + bytes([i * 40, 10, 20, 30, 40, 50]))
+        frames.append(str(path))
+    out = tmp_path / "rollout.mcap"
+    info = build_mcap_from_frames(frames, str(out), topic="/rollouts/camera", fps=2.0)
+    assert info["message_count"] == 2
+
+    with open(out, "rb") as fh:
+        reader = make_reader(fh)
+        messages = list(reader.iter_messages())
+    assert len(messages) == 2
+    payload = json.loads(messages[0][2].data)
+    assert payload["format"] == "png"
+    # The transcoded bytes are a real PNG the browser can decode.
+    assert base64.b64decode(payload["data"]).startswith(_PNG)
+
+
 def test_stage_frames_from_s3_builds_mcap(tmp_path: Path) -> None:
     pytest.importorskip("mcap")
     s3 = _FakeS3(

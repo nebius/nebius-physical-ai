@@ -10,8 +10,9 @@ What it does that is tangible:
 - ``build_mcap_from_frames`` turns a sequence of PNG/JPEG robot camera frames
   (e.g. the Sim2Real ``augment/frames`` artifacts, or any PNG/JPEG rollout camera
   export) into a real MCAP of ``foxglove.CompressedImage`` messages that a
-  Foxglove-compatible viewer can play back. Raw ``.ppm`` rollout frames are not
-  browser-decodable as CompressedImage and are skipped (convert to PNG first).
+  Foxglove-compatible viewer can play back. Raw ``.ppm`` rollout frames (and other
+  PIL-readable formats) are transcoded to PNG bytes first via ``pillow`` so
+  genuine rollout cameras render.
 - ``stage_input_to_mcap`` stages an artifact from S3 (or local): either an
   existing ``.mcap`` (downloaded as-is) or a camera-frames prefix (downloaded and
   packed into an MCAP via the exporter).
@@ -42,8 +43,15 @@ CONTAINER_PORT = 8080
 SERVED_DATA_DIR = "/srv/data"
 # Recognized robotics log containers the viewer can open directly.
 SUPPORTED_SUFFIXES = (".mcap", ".bag", ".db3")
+# Camera-frame image types a browser can decode directly as a CompressedImage;
+# these are packed byte-for-byte with no re-encoding.
+NATIVE_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+# Additional PIL-readable camera-frame types that browsers cannot decode as a
+# CompressedImage (e.g. the Sim2Real rollout raw ``.ppm`` dumps). The exporter
+# transcodes these to PNG bytes before packing so genuine rollout cameras render.
+CONVERTIBLE_IMAGE_SUFFIXES = (".ppm", ".pgm", ".pnm", ".bmp", ".webp", ".tif", ".tiff", ".gif")
 # Camera-frame image types the frames->MCAP exporter accepts.
-IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+IMAGE_SUFFIXES = NATIVE_IMAGE_SUFFIXES + CONVERTIBLE_IMAGE_SUFFIXES
 DEFAULT_CAMERA_TOPIC = "/camera"
 DEFAULT_FPS = 10.0
 
@@ -63,6 +71,46 @@ _COMPRESSED_IMAGE_SCHEMA: dict[str, Any] = {
         "format": {"type": "string"},
     },
 }
+
+
+def encode_frame_to_compressed_bytes(path: str) -> tuple[bytes, str]:
+    """Return ``(payload, format)`` for a camera frame file, browser-decodable.
+
+    PNG/JPEG frames are returned byte-for-byte. Any other PIL-readable frame
+    (e.g. the Sim2Real rollout raw ``.ppm`` dumps) is transcoded to PNG bytes,
+    because a browser cannot decode those directly inside a CompressedImage.
+    """
+
+    lower = path.lower()
+    if lower.endswith(".png"):
+        with open(path, "rb") as handle:
+            return handle.read(), "png"
+    if lower.endswith((".jpg", ".jpeg")):
+        with open(path, "rb") as handle:
+            return handle.read(), "jpeg"
+    import io
+
+    from PIL import Image
+
+    with Image.open(path) as image:
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+        return buffer.getvalue(), "png"
+
+
+def compressed_image_message(
+    payload: bytes, *, fmt: str, stamp_ns: int, frame_id: str
+) -> dict[str, Any]:
+    """Build a ``foxglove.CompressedImage`` JSON message (base64 ``data``)."""
+
+    import base64
+
+    return {
+        "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+        "frame_id": frame_id,
+        "data": base64.b64encode(payload).decode("ascii"),
+        "format": fmt,
+    }
 
 
 class LichtblickError(ValueError):
@@ -107,7 +155,6 @@ def build_mcap_from_frames(
     timeline. Returns a summary dict (mcap_path, message_count, topic, fps).
     """
 
-    import base64
     import json
 
     from mcap.writer import Writer
@@ -131,16 +178,11 @@ def build_mcap_from_frames(
             topic=topic, message_encoding="json", schema_id=schema_id
         )
         for index, path in enumerate(frame_paths):
-            with open(path, "rb") as frame:
-                payload = frame.read()
-            fmt = "png" if path.lower().endswith(".png") else "jpeg"
+            payload, fmt = encode_frame_to_compressed_bytes(path)
             stamp = index * period_ns
-            message = {
-                "timestamp": {"sec": stamp // 1_000_000_000, "nsec": stamp % 1_000_000_000},
-                "frame_id": frame_id,
-                "data": base64.b64encode(payload).decode("ascii"),
-                "format": fmt,
-            }
+            message = compressed_image_message(
+                payload, fmt=fmt, stamp_ns=stamp, frame_id=frame_id
+            )
             writer.add_message(
                 channel_id=channel_id,
                 log_time=stamp,
@@ -494,16 +536,20 @@ def _default_docker_runner(argv: list[str]) -> Any:
 
 __all__ = [
     "CONTAINER_PORT",
+    "CONVERTIBLE_IMAGE_SUFFIXES",
     "DEFAULT_CAMERA_TOPIC",
     "DEFAULT_FPS",
     "DEFAULT_HOST",
     "DEFAULT_PORT",
     "IMAGE_SUFFIXES",
+    "NATIVE_IMAGE_SUFFIXES",
     "LichtblickError",
     "LichtblickLaunchPlan",
     "SUPPORTED_SUFFIXES",
     "build_launch_plan",
     "build_mcap_from_frames",
+    "compressed_image_message",
+    "encode_frame_to_compressed_bytes",
     "launch_viewer",
     "serve_viewer",
     "stage_input_to_mcap",
