@@ -27,6 +27,9 @@ making architecture, review, or domain judgments.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
  and query production sensor data as a versioned, lineage-tracked dataset
  (FiftyOne curation + LanceDB query index).
+- `skills/tools/insights/SKILL.md`: lineage graph + common metrics store over
+ workflow-run artifacts — non-invasive ingest-run, query, compare, lineage
+ traversal, and dashboard (CPU-only, append-only S3 JSONL, LanceDB-optional).
 - `skills/tools/mjlab/SKILL.md`: MJLab locomotion evaluation and SONIC checkpoint
  scoring.
 - `skills/tools/retargeting/SKILL.md`: motion retargeting in SONIC locomotion

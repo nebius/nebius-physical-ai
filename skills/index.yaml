@@ -183,6 +183,24 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/src/npa/workflows/skypilot/dataset-ingest-curate.yaml
+  - name: insights
+    category: tools
+    when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."
+    path: skills/tools/insights/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "insights", "query", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "insights", "compare", "--help"]
+        contains: "base-run"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/insights-smoke.yaml
+          - npa/workflows/workbench/npa-workflows/hardening-with-insights.yaml
+      - type: workflow_yaml
+        paths:
+          - npa/src/npa/workflows/skypilot/insights-aggregate.yaml
   - name: fiftyone
     category: tools
     when_to_use: "FiftyOne deployment, dataset curation, visualization, launch, and load-dataset behavior."
