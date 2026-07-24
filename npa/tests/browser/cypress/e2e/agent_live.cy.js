@@ -493,6 +493,68 @@ describe("NPA agent UI against live infra", () => {
     });
   });
 
+  it("surfaces a searched run in both pickers via the server (q=) search path", function () {
+    // Reproduces the "runs don't show" report against the deployed agent:
+    // typing a fragment must render the matching run as an <option> in BOTH the
+    // Rerun-tab (#runIdSelect) and Stages-tab (#stagesRunSelect) pickers, driven
+    // by the debounced server search (/api/artifacts/runs?q=). When an old run
+    // beyond the newest page is configured via NPA_AGENT_CYPRESS_SEARCH_RUN_ID,
+    // this proves the union path (server search + client render) end-to-end;
+    // otherwise it falls back to a run discovered on the default page.
+    liveAgentRequest("/api/artifacts/runs?limit=100").then((resp) => {
+      expect(resp.status).to.eq(200);
+      const runs = (resp.body && resp.body.runs) || [];
+      expect(runs.length, "default page runs").to.be.greaterThan(0);
+
+      const configured = String(
+        Cypress.env("NPA_AGENT_CYPRESS_SEARCH_RUN_ID") ||
+          Cypress.env("NPA_AGENT_SEARCH_RUN_ID") ||
+          "",
+      ).trim();
+
+      const resolveTarget = configured
+        ? liveAgentRequest(
+            `/api/artifacts/runs?limit=100&q=${encodeURIComponent(configured)}`,
+          ).then((qr) => {
+            const qruns = (qr.body && qr.body.runs) || [];
+            const hit =
+              qruns.find((r) => String((r && r.run_id) || "").includes(configured)) ||
+              qruns[0];
+            return String((hit && hit.run_id) || configured).trim();
+          })
+        : cy.wrap(
+            String((runs[runs.length - 1] && runs[runs.length - 1].run_id) || "").trim(),
+          );
+
+      resolveTarget.then((targetRunId) => {
+        expect(targetRunId, "target run id").to.not.eq("");
+        const fragment = configured
+          ? configured
+          : targetRunId.length > 12
+            ? targetRunId.slice(0, 12)
+            : targetRunId;
+
+        // Rerun-tab picker: typing the fragment triggers the debounced server
+        // search; the matching run must render as an option (Cypress retries the
+        // assertion while the 350ms debounce + fetch complete).
+        cy.get("#tabRerun").click();
+        cy.get("#artifactPrefix", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
+        cy.get("#runIdSelect option", { timeout: 30000 }).should(($opts) => {
+          const values = [...$opts].map((o) => o.value).filter(Boolean);
+          expect(values, "Rerun picker surfaces the searched run").to.include(targetRunId);
+        });
+
+        // Stages-tab picker: same server-search path must populate the select.
+        cy.get("#tabMain").click();
+        cy.get("#stagesRunInput", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
+        cy.get("#stagesRunSelect option", { timeout: 30000 }).should(($opts) => {
+          const values = [...$opts].map((o) => o.value).filter(Boolean);
+          expect(values, "Stages picker surfaces the searched run").to.include(targetRunId);
+        });
+      });
+    });
+  });
+
   it("submits Sim2Real from the UI when live destructive Cypress is enabled", function () {
     if (!destructiveLiveEnabled()) {
       this.skip();
