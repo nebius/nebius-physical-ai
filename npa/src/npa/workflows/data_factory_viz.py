@@ -126,6 +126,19 @@ def build_run_rrd(
                     recording=rec,
                 )
 
+        # Log every pipeline stage's report as a static text document so the whole
+        # run — sampled scenarios, the hallucination / attribute-verify grade, the
+        # curation report, the finalize aggregate, and a stage log/timeline — is
+        # inspectable inside the embedded Rerun viewer alongside the input/output
+        # images, not just the frames.
+        for entity, body in _load_stage_docs(local).items():
+            rr.log(
+                entity,
+                rr.TextDocument(body, media_type="text/markdown"),
+                static=True,
+                recording=rec,
+            )
+
         if logged == 0:
             raise DataFactoryVizError(
                 f"no input/augmented frames found under {input_uri}; nothing to visualize"
@@ -156,6 +169,95 @@ def _augmentation_label(clip_dir: Path) -> str:
     return ", ".join(f"{k}={v}" for k, v in variables.items())
 
 
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (ValueError, OSError):
+        return None
+
+
+def _json_block(title: str, payload: Any) -> str:
+    body = json.dumps(payload, indent=2, sort_keys=True)
+    return f"## {title}\n\n```json\n{body}\n```\n"
+
+
+def _load_stage_docs(local: Path) -> dict[str, str]:
+    """Build per-stage markdown docs (scenarios, hallucination/grade, curation,
+    finalize, and a stage log) so the full pipeline is viewable in the Rerun panel.
+
+    Every entry is optional — a stage that did not persist its artifact is simply
+    skipped, so this stays robust for partial runs.
+    """
+    docs: dict[str, str] = {}
+    stage_log: list[str] = []
+
+    # Stage 1 — sampled scenarios (Config Generation). This is the "various
+    # scenarios" the augment stage multiplies over.
+    cfg = _read_json(local / "configs" / "manifest.json")
+    if isinstance(cfg, dict):
+        combos = cfg.get("augmentations") or []
+        lines = [f"**Scene:** {cfg.get('scene', 'n/a')}", f"**Scenarios sampled:** {len(combos)}", ""]
+        for i, combo in enumerate(combos):
+            if isinstance(combo, dict):
+                prompt = str(combo.get("prompt") or "")
+                attrs = ", ".join(f"{k}={v}" for k, v in combo.items() if k != "prompt")
+                lines.append(f"- **scenario {i}** — {attrs}")
+                if prompt:
+                    lines.append(f"    - prompt: _{prompt}_")
+        docs["pipeline/1_scenarios"] = "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
+        stage_log.append(f"configs: {len(combos)} scenario(s) sampled")
+
+    # Augment fan-out — how many Cosmos Transfer 2.5 variants were produced.
+    aug = _read_json(local / "cosmos_augmented" / "manifest.json")
+    if isinstance(aug, dict):
+        variants = aug.get("variants") or aug.get("clips") or []
+        docs["pipeline/2_augment"] = _json_block("Augment — Cosmos Transfer 2.5 (multiply)", aug)
+        stage_log.append(
+            f"augment: {aug.get('variant_count', len(variants))} variant(s), "
+            f"mode={aug.get('mode', 'n/a')}, input_conditioned={aug.get('input_conditioned')}"
+        )
+
+    # Evaluate & Validate — the hallucination / attribute-verification grade.
+    grade_dir = local / "grade"
+    grade_docs: list[str] = []
+    for name in ("vlm_eval_stub.json", "vlm_eval.json"):
+        ev = _read_json(grade_dir / name)
+        if isinstance(ev, dict):
+            grade_docs.append(_json_block("Attribute verification / hallucination check (VLM)", ev))
+            stage_log.append(f"grade: vlm score={ev.get('score')}, model={ev.get('model', 'n/a')}")
+            break
+    dec = _read_json(grade_dir / "decision.json")
+    if isinstance(dec, dict):
+        grade_docs.append(_json_block("Quality gate decision", dec))
+        stage_log.append(f"grade: decision={dec.get('decision', 'n/a')}")
+    if grade_docs:
+        docs["pipeline/3_grade"] = "\n".join(grade_docs)
+
+    # Curation report.
+    cur = _read_json(local / "curation" / "report.json")
+    if isinstance(cur, dict):
+        docs["pipeline/4_curation"] = _json_block("Curation report", cur)
+        stage_log.append(
+            f"curation: {cur.get('augmented_clips', 0)} clip(s), "
+            f"multiply={(cur.get('multiply') or {}).get('mode', 'n/a')}"
+        )
+
+    # Finalize aggregate report.
+    fin = _read_json(local / "reports" / "final.json")
+    if isinstance(fin, dict):
+        docs["pipeline/5_finalize"] = _json_block("Finalize — aggregate report", fin)
+        stage_log.append(
+            f"finalize: {fin.get('artifact_count', 0)} artifacts, "
+            f"multiply_mode={fin.get('multiply_mode', 'n/a')}"
+        )
+
+    if stage_log:
+        docs["pipeline/0_log"] = (
+            "## Pipeline stage log\n\n" + "\n".join(f"- {line}" for line in stage_log) + "\n"
+        )
+    return docs
+
+
 def _load_captions(local: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     for name in ("labeled_original", "labeled_augmented"):
@@ -183,7 +285,16 @@ def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClie
     client = storage_client or StorageClient.from_environment()
     dest.mkdir(parents=True, exist_ok=True)
     root = input_uri.rstrip("/")
-    for sub in ("input", "cosmos_augmented", "labeled_original", "labeled_augmented"):
+    for sub in (
+        "input",
+        "cosmos_augmented",
+        "labeled_original",
+        "labeled_augmented",
+        "configs",
+        "grade",
+        "curation",
+        "reports",
+    ):
         try:
             client.download_path(f"{root}/{sub}/", str(dest / sub))
         except Exception:

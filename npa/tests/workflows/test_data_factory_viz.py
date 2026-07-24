@@ -66,6 +66,85 @@ def test_augmented_frames_get_distinct_time_points(tmp_path: Path, monkeypatch) 
     assert sorted(seen) == [0, 1, 2, 3], seen
 
 
+def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
+    """The Rerun recording must surface every stage — scenarios, hallucination /
+    grade, curation, finalize, and a stage log — not just the frames."""
+    import json
+
+    from npa.workflows.data_factory_viz import _load_stage_docs
+
+    run = tmp_path / "run"
+    (run / "configs").mkdir(parents=True)
+    (run / "configs" / "manifest.json").write_text(json.dumps({
+        "scene": "robot folding cloth",
+        "augmentations": [
+            {"cloth_color": "blue", "prompt": "a blue cloth, bright daylight"},
+            {"cloth_color": "red", "prompt": "a red cloth, dim evening light"},
+        ],
+    }))
+    (run / "cosmos_augmented").mkdir(parents=True)
+    (run / "cosmos_augmented" / "manifest.json").write_text(json.dumps({
+        "mode": "cosmos_transfer2.5_gpu", "variant_count": 2, "input_conditioned": True,
+        "clips": ["aug-0", "aug-1"], "variants": [{"clip": "aug-0"}, {"clip": "aug-1"}],
+    }))
+    (run / "grade").mkdir(parents=True)
+    (run / "grade" / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.82, "model": "Qwen/Qwen2.5-VL-72B-Instruct"}))
+    (run / "grade" / "decision.json").write_text(json.dumps({"decision": "promote_checkpoint"}))
+    (run / "curation").mkdir(parents=True)
+    (run / "curation" / "report.json").write_text(json.dumps({"augmented_clips": 2, "multiply": {"mode": "multi-variant"}}))
+    (run / "reports").mkdir(parents=True)
+    (run / "reports" / "final.json").write_text(json.dumps({"artifact_count": 20, "multiply_mode": "multi-variant"}))
+
+    docs = _load_stage_docs(run)
+    assert set(docs) == {
+        "pipeline/0_log",
+        "pipeline/1_scenarios",
+        "pipeline/2_augment",
+        "pipeline/3_grade",
+        "pipeline/4_curation",
+        "pipeline/5_finalize",
+    }
+    assert "2 scenario" in docs["pipeline/1_scenarios"] or "Scenarios sampled:** 2" in docs["pipeline/1_scenarios"]
+    assert "a red cloth" in docs["pipeline/1_scenarios"]
+    # Hallucination / attribute-verify grade + gate decision are both present.
+    assert "0.82" in docs["pipeline/3_grade"]
+    assert "promote_checkpoint" in docs["pipeline/3_grade"]
+    # Stage log lists each stage.
+    assert "augment" in docs["pipeline/0_log"]
+    assert "grade" in docs["pipeline/0_log"]
+
+
+def test_build_run_rrd_logs_pipeline_docs(tmp_path: Path, monkeypatch) -> None:
+    """End-to-end: a run tree with stage reports logs pipeline/* text docs into the
+    recording alongside the input/augmented frames."""
+    pytest.importorskip("rerun")
+    import json
+
+    import npa.workflows.data_factory_viz as viz
+
+    run = tmp_path / "run"
+    _write_png(run / "input" / "video_0_frame_01.png", (10, 20, 30))
+    aug = run / "cosmos_augmented" / "aug-0"
+    _write_png(aug / "frame-00000.png", (11, 22, 33))
+    (aug / "metadata.json").write_text('{"variables": {"cloth_color": "blue"}}')
+    (run / "grade").mkdir(parents=True)
+    (run / "grade" / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.9}))
+
+    import rerun as rr
+
+    logged_entities: list[str] = []
+    real_log = rr.log
+
+    def spy_log(entity, *args, **kwargs):
+        logged_entities.append(entity)
+        return real_log(entity, *args, **kwargs)
+
+    monkeypatch.setattr(rr, "log", spy_log)
+    build_run_rrd(str(run), str(tmp_path / "reports" / "sim2real.rrd"))
+    assert any(e.startswith("pipeline/") for e in logged_entities)
+    assert "pipeline/3_grade" in logged_entities
+
+
 def test_build_run_rrd_requires_rrd_output(tmp_path: Path) -> None:
     with pytest.raises(DataFactoryVizError):
         build_run_rrd(str(tmp_path), str(tmp_path / "out.json"))
