@@ -2064,3 +2064,14 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
     assert '"workflow_steps": workflow_steps' in source
     # Enriched logs include the per-stage command lines.
     assert "workflow_steps = _workflow_run_steps(" in source
+
+
+def test_artifact_file_transcodes_non_web_images_to_png() -> None:
+    """Non-web images (.ppm sim camera frames, .bmp, .tiff) must be transcoded to
+    PNG by the artifact file endpoint so they are viewable in the Rerun/Image panes."""
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "needs_image_transcode(safe_name)" in source
+    assert 'format="PNG"' in source
+    assert 'media_type="image/png"' in source

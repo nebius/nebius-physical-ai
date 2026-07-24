@@ -41,7 +41,19 @@ except Exception:  # pragma: no cover - embedded backend fallback
 
 _RERUN_EXTENSIONS = {".rrd"}
 _VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
-_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+# Browser-native image formats an <img> tag can render directly.
+_WEB_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+# Image formats a browser CANNOT render natively (e.g. sim-rollout camera frames
+# saved as Netpbm .ppm). They are still images — classified as "image" so they
+# appear as viewable — and are transcoded to PNG on the way out (see
+# needs_image_transcode / the agent's /api/artifacts/file endpoint).
+_NON_WEB_IMAGE_EXTENSIONS = {".ppm", ".pgm", ".pbm", ".pnm", ".bmp", ".tif", ".tiff"}
+_IMAGE_EXTENSIONS = _WEB_IMAGE_EXTENSIONS | _NON_WEB_IMAGE_EXTENSIONS
+
+
+def needs_image_transcode(name: str) -> bool:
+    """True when ``name`` is an image a browser cannot render natively (→ PNG)."""
+    return Path(str(name or "")).suffix.lower() in _NON_WEB_IMAGE_EXTENSIONS
 _JSON_EXTENSIONS = {".json"}
 _TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
 _RENDER_ORDER = {

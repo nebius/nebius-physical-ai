@@ -1852,7 +1852,7 @@ from urllib.parse import quote
 import httpx
 import yaml
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 app = FastAPI(title="npa-agent")
 TOOL_CATALOG = {catalog_json}
@@ -5675,6 +5675,21 @@ def artifact_file(filename: str):
     target = RECORDINGS_DIR / safe_name
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
+    # Browsers cannot render Netpbm (.ppm/.pgm/.pbm/.pnm), .bmp, or .tiff. Sim
+    # rollout camera frames are saved as .ppm, so transcode to PNG on the way out
+    # to make them viewable in the Rerun/Image panes and artifact previews.
+    if needs_image_transcode(safe_name):
+        try:
+            import io as _io
+
+            from PIL import Image as _Image
+
+            with _Image.open(target) as _im:
+                _buf = _io.BytesIO()
+                _im.convert("RGB").save(_buf, format="PNG")
+            return Response(content=_buf.getvalue(), media_type="image/png")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"image transcode failed: {{exc}}") from exc
     # artifact_media_type comes from the embedded workflows/artifacts.py module.
     return FileResponse(str(target), media_type=artifact_media_type(safe_name))
 

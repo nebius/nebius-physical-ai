@@ -321,3 +321,18 @@ def test_list_all_runs_excludes_infra_roots() -> None:
     ids = [r.run_id for r in page.runs]
     assert "session-state" not in ids
     assert "scenario-gen-smoke-1" in ids
+
+
+def test_ppm_and_netpbm_are_images_and_need_transcode() -> None:
+    from npa.workflows.artifacts import needs_image_transcode, render_hint_for_object
+
+    # Sim-rollout camera frames are saved as .ppm — classified as viewable images.
+    assert render_hint_for_object(key="run/actions/rollout/camera-000.ppm") == "image"
+    assert render_hint_for_object(key="run/x.bmp") == "image"
+    # Browser cannot render these natively → must transcode to PNG on the way out.
+    for name in ("camera-000.ppm", "x.pgm", "y.bmp", "z.tiff"):
+        assert needs_image_transcode(name) is True
+    # Web-native images are served as-is (no transcode).
+    for name in ("frame.png", "a.jpg", "b.webp"):
+        assert needs_image_transcode(name) is False
+    assert render_hint_for_object(key="run/frame.png") == "image"
