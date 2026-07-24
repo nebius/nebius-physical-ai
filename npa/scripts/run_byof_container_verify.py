@@ -33,8 +33,9 @@ from npa.orchestration.skypilot.signal_teardown import (
 
 DEFAULT_YAML = (
     Path(__file__).resolve().parents[1]
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "byof-container-smoke-rtxpro.yaml"
 )

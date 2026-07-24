@@ -11,34 +11,37 @@ EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-r
 PIPELINE_YAML = (
     ROOT
     / "npa"
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "sonic-locomotion-finetuning.yaml"
 )
 RETARGETING_YAML = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "retargeting.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "retargeting.yaml"
 )
-MJLAB_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "mjlab-eval.yaml"
+MJLAB_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "mjlab-eval.yaml"
 SONIC_EXPORT_YAML = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-export.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-export.yaml"
 )
 SONIC_EVAL_YAML = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-eval.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-eval.yaml"
 )
 SONIC_EXPORT_EVAL_YAML = (
     ROOT
     / "npa"
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "sonic-export-eval.yaml"
 )
 SONIC_TRAIN_STANDALONE_YAML = (
     ROOT
     / "npa"
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "sonic-train-standalone.yaml"
 )

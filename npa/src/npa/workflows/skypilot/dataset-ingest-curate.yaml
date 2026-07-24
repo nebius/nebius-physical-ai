@@ -1,0 +1,80 @@
+# Dataset-of-record ingest + curate on Kubernetes. Ingest/validate/curate run on
+# CPU; an optional GPU stage backfills embeddings into the LanceDB query index.
+name: dataset-ingest-curate
+execution: serial
+---
+name: dataset-ingest-curate-cpu
+resources:
+  cloud: kubernetes
+  cpus: 8
+  memory: 32
+  # Replace <your-registry-id> with your Nebius container registry ID.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-dataset:0.1.0"
+envs:
+  NPA_RUN_ID: "<your-run-id>"
+  RAW_SENSOR_URI: "s3://${NPA_S3_BUCKET}/raw-sensor/<your-source>/records.json"
+  DATASET_ROOT_URI: "s3://${NPA_S3_BUCKET}/dataset-of-record/${NPA_RUN_ID}/"
+  DATASET_ID: "fleet-dataset"
+  DATASET_VERSION: "v1"
+  DATASET_SOURCE: "production-fleet"
+  COMPLETENESS_MIN: "0.5"
+  MAX_CORRUPTION_RATE: "0.1"
+  EVENT_OF_INTEREST: "cut_in"
+  LOCATION_OF_INTEREST: ""
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="$(command -v python3 || command -v python)"
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  MANIFEST_URI="${DATASET_ROOT_URI}${DATASET_ID}/${DATASET_VERSION}/manifest.json"
+  npa workbench dataset ingest \
+    --input-path "${RAW_SENSOR_URI}" \
+    --output-path "${DATASET_ROOT_URI}" \
+    --dataset-id "${DATASET_ID}" \
+    --version "${DATASET_VERSION}" \
+    --source "${DATASET_SOURCE}" \
+    --workflow-run "${NPA_RUN_ID}" \
+    --output json
+  npa workbench dataset validate \
+    --input-path "${MANIFEST_URI}" \
+    --output-path "${DATASET_ROOT_URI}validation/" \
+    --completeness-min "${COMPLETENESS_MIN}" \
+    --max-corruption-rate "${MAX_CORRUPTION_RATE}" \
+    --workflow-run "${NPA_RUN_ID}" \
+    --output json
+  npa workbench dataset curate \
+    --input-path "${MANIFEST_URI}" \
+    --output-path "${DATASET_ROOT_URI}curated/" \
+    --event "${EVENT_OF_INTEREST}" \
+    --location "${LOCATION_OF_INTEREST}" \
+    --workflow-run "${NPA_RUN_ID}" \
+    --output json
+---
+name: dataset-embedding-backfill-gpu
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Optional GPU stage: backfill CLIP embeddings into the LanceDB query index.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.1.0"
+envs:
+  NPA_RUN_ID: "<your-run-id>"
+  LANCE_TABLE: "fleet_dataset"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/lancedb/dataset-of-record/"
+  LANCEDB_ENDPOINT: "http://npa-lancedb.workbench.svc.cluster.local:8686"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -euo pipefail
+run: |
+  set -euo pipefail
+  # Optional: backfill CLIP embeddings so dataset query can rank by similarity.
+  npa workbench lancedb backfill \
+    --udf clip_embedding \
+    --table "${LANCE_TABLE}" \
+    --lance-uri "${LANCE_URI}" \
+    --batch-size 32 \
+    --service \
+    --endpoint "${LANCEDB_ENDPOINT}"

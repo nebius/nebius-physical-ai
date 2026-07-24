@@ -26,7 +26,7 @@ app = typer.Typer(
 )
 console = Console(stderr=True)
 
-WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/retargeting.yaml")
+WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/retargeting.yaml")
 DEFAULT_RETARGETING_IMAGE_ENV = "NPA_RETARGETING_IMAGE"
 
 

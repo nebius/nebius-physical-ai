@@ -303,7 +303,7 @@ Token Factory **hosts** the model. Your code only makes an HTTPS call, so the
 You do **not** need to provision compute for the reasoner.
 
 > The repo also ships heavier SkyPilot templates
-> (`npa/workflows/workbench/skypilot/token-factory-cosmos-reason.yaml`) that run
+> (`npa/src/npa/workflows/skypilot/token-factory-cosmos-reason.yaml`) that run
 > the *orchestration* on Nebius Kubernetes. Those require a container image in
 > your registry, an S3 bucket, and a cluster — **skip them for a hackathon.**
 > The three paths above are all you need.

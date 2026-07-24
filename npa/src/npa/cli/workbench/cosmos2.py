@@ -86,7 +86,12 @@ def transfer_cmd(
     execute: bool = typer.Option(
         False,
         "--execute",
-        help="Run the real Cosmos-Transfer2.5 model (requires the transfer image/GPU).",
+        help=(
+            "Force the real Cosmos-Transfer2.5 model (requires the transfer image/GPU). "
+            "Note: when that runtime is already present on the host the real model runs "
+            "even without --execute; --execute only makes its absence a hard error "
+            "instead of falling back to reference augmentation."
+        ),
     ),
     spec: str = typer.Option(
         "", "--spec", help="controlnet_spec path (relative to the transfer repo) for --execute."
@@ -118,7 +123,14 @@ def transfer_cmd(
     control_weight: float = typer.Option(1.0, "--control-weight", help="Control weight for input-conditioning."),
     guidance: float = typer.Option(3.0, "--guidance", help="Classifier-free guidance for input-conditioning."),
 ) -> None:
-    """Build the Cosmos2 transfer stage manifest (or run the real model with --execute)."""
+    """Build the Cosmos2 transfer stage manifest, then produce real output.
+
+    Mode is chosen by runtime availability, not just the flag: if the
+    Cosmos-Transfer2.5 runtime is present (or ``--execute`` is passed) the real
+    world-transfer model runs and publishes a video; otherwise a genuine
+    reference augmentation writes real augmented image frames. Inspect
+    ``output_kind`` in the manifest ("video" vs "frames") to disambiguate.
+    """
 
     payload = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(
@@ -130,23 +142,39 @@ def transfer_cmd(
             run_id=run_id,
         )
     )
-    if execute:
-        from npa.workbench.cosmos.transfer import cosmos_transfer_available, run_cosmos_transfer
+    from npa.workbench.cosmos.transfer import (
+        cosmos_transfer_available,
+        reference_augment_frames,
+        run_cosmos_transfer,
+    )
 
-        if not cosmos_transfer_available():
-            raise typer.BadParameter(
-                "--execute needs the cosmos-transfer2.5 runtime "
-                "(run inside the npa-cosmos2-transfer image on a GPU)."
-            )
-        # The sampled appearance combo carries the prompt that actually conditions
-        # the augmentation, so the output pixels reflect the config (not just a label).
+    runtime_available = cosmos_transfer_available()
+    if execute and not runtime_available:
+        raise typer.BadParameter(
+            "--execute needs the cosmos-transfer2.5 runtime "
+            "(run inside the npa-cosmos2-transfer image on a GPU)."
+        )
+
+    if execute or runtime_available:
+        # Real Cosmos-Transfer2.5 world-transfer model.
+        #
+        # Data Factory context (paidf `transfer_execute` passes --configs-uri, or the
+        # caller opts into input-conditioning): the sampled appearance combo drives
+        # the prompt, the augment optionally CONDITIONS on the run's real input clip
+        # (edge control computed on-the-fly — a genuine augmentation of that footage,
+        # not the bundled example), and the result is published in the per-clip layout
+        # that data_factory curate / build_run_rrd / provenance consume. Opt-in via
+        # --input-video, --condition-on-input, or NPA_COSMOS_CONDITION_ON_INPUT=1.
+        #
+        # Otherwise (generic `transfer` for sim2real / cosmos-gate / fanout): keep the
+        # flat single-video publish + sim2real-engine field convention unchanged.
+        condition_requested = bool(
+            input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT")
+        )
+        data_factory_mode = bool(configs_uri) or condition_requested
         variables = _first_augmentation(configs_uri) if configs_uri else {}
-        # Optionally CONDITION on the caller's real input clip so the output is a
-        # genuine augmentation of that footage (not the bundled example). Opt-in via
-        # --input-video, --condition-on-input, or NPA_COSMOS_CONDITION_ON_INPUT=1;
-        # default off preserves the existing bundled-example behavior + golden eval.
         local_input = ""
-        if input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT"):
+        if condition_requested:
             local_input = _materialize_input_clip(input_video or input_uri)
         # Env fallbacks let a submit tune conditioning without changing the toolRef argv.
         control = (os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control)
@@ -166,7 +194,7 @@ def transfer_cmd(
             guidance=guidance,
         )
         payload["status"] = "executed"
-        payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+        payload["output_kind"] = "video"
         payload["output_video"] = transfer["video_path"]
         payload["video_bytes"] = transfer["video_bytes"]
         payload["control_spec"] = transfer["spec"]
@@ -175,17 +203,47 @@ def transfer_cmd(
         if local_input:
             payload["input_video"] = local_input
             payload["control"] = transfer.get("control", control)
-        # Publish the real generated video + extracted frames to S3 so downstream
-        # stages (pseudo-label, grade, visualize) consume real augmented frames.
-        if output_uri.startswith("s3://"):
-            from npa.workbench.cosmos.transfer import publish_transfer_to_s3
+        if output_uri.strip().startswith("s3://"):
+            if data_factory_mode:
+                # Per-clip layout consumed by data_factory curate / build_run_rrd /
+                # provenance (cosmos_augmented/<clip>/{augmented_video.mp4, frame-*,
+                # metadata.json} + run-level manifest.json).
+                from npa.workbench.cosmos.transfer import publish_transfer_to_s3
 
-            published = publish_transfer_to_s3(
-                transfer, output_uri, run_id=run_id, variables=variables
-            )
-            payload["augmented_video_uri"] = published["augmented_video_uri"]
-            payload["frame_count"] = published["frame_count"]
-            payload["augmentation_variables"] = variables
+                published = publish_transfer_to_s3(
+                    transfer, output_uri, run_id=run_id, variables=variables
+                )
+                payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+                payload["augmented_video_uri"] = published["augmented_video_uri"]
+                payload["frame_count"] = published["frame_count"]
+                payload["augmentation_variables"] = variables
+                # attribute-verify reads --input-path {{augmented_frames_uri}} (the prefix).
+                payload["augmented_frames_uri"] = output_uri
+            else:
+                # Generic single-video publish + sim2real-engine field convention.
+                from npa.clients.storage import StorageClient
+
+                output_video = StorageClient.from_environment().upload_file(
+                    transfer["video_path"], output_uri
+                )
+                payload["mode"] = "cosmos_transfer2.5"
+                payload["output_video"] = output_video
+                payload["augmented_video_uri"] = output_video
+                payload["augmented_frames_uri"] = output_uri
+        else:
+            payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+            payload["augmented_video_uri"] = transfer["video_path"]
+            payload["augmented_frames_uri"] = output_uri
+    else:
+        # No heavy model runtime: run a genuine reference augmentation that
+        # writes real augmented image frames to output_uri (not a descriptor stub).
+        augment = reference_augment_frames(input_uri, output_uri, run_id=run_id)
+        payload["status"] = "executed_reference"
+        payload["mode"] = "reference_augment"
+        payload["output_kind"] = "frames"
+        payload["augmented_frames_uri"] = augment["augmented_frames_uri"]
+        payload["frame_count"] = augment["frame_count"]
+
     if output_json is not None:
         payload = write_manifest(payload, output_json)
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))

@@ -15,7 +15,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-SKYPILOT_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+SKYPILOT_SPECS = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 RUNNER = CliRunner()
 
 # Specs with dynamic transitions / decision-gated loops need an assumed decision

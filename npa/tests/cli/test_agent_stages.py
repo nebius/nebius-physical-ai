@@ -192,3 +192,86 @@ def test_run_stage_wrapper_leaves_flat_layouts_untouched() -> None:
         "checkpoints/paidf/run-1/reports/sim2real.rrd",
     ]
     assert run_stage_wrapper(reports_only, "run-1", "checkpoints/paidf") == ""
+
+
+# ── custom npa.workflow runs: per-state subprefix → named succeeded stages ────
+# Regression for the "almost all stages show not run / no artifacts" report: a
+# custom workflow (not the 14-stage sim2real engine) that persists each state's
+# outputs under <run_id>/<state>/... must render one succeeded stage per state,
+# and a run with no persisted artifacts must render no succeeded stages.
+
+_REDTEAM_KEYS = [
+    "checkpoints/sim2real-b/redteam-1/hypothesize-failures/tasks.txt",
+    "checkpoints/sim2real-b/redteam-1/hypothesize-failures/hypotheses.jsonl",
+    "checkpoints/sim2real-b/redteam-1/derive-mitigation-prompts/mitigation_prompts.txt",
+    "checkpoints/sim2real-b/redteam-1/synthesize-mitigations/mitigations.jsonl",
+    "checkpoints/sim2real-b/redteam-1/assemble-eval-contract/eval_contract.jsonl",
+    "checkpoints/sim2real-b/redteam-1/reports/summary.json",
+    "checkpoints/sim2real-b/redteam-1/spec/sim2real-redteam-mitigation.yaml",
+    "checkpoints/sim2real-b/redteam-1/state/workflow_state.json",
+]
+
+
+def test_per_state_subprefix_yields_one_named_succeeded_stage_each() -> None:
+    stages = build_artifact_backed_stages(
+        _REDTEAM_KEYS,
+        run_id="redteam-1",
+        prefix="checkpoints/sim2real-b",
+        workflow_stage_defs=[],  # custom workflow: no engine stage-defs overlay
+        overlay_unmatched=False,
+    )
+    by_id = {s["id"]: s for s in stages}
+    # Each workflow state that persisted artifacts becomes its own succeeded row.
+    for state_id in (
+        "hypothesize-failures",
+        "derive-mitigation-prompts",
+        "synthesize-mitigations",
+        "assemble-eval-contract",
+        "reports",
+    ):
+        assert state_id in by_id, (state_id, list(by_id))
+        assert by_id[state_id]["status"] == "succeeded"
+    # The two files under hypothesize-failures collapse into one stage row.
+    assert by_id["hypothesize-failures"]["summary"].startswith("2 artifacts")
+    # Custom state names get a readable title-cased label (not left blank).
+    assert by_id["hypothesize-failures"]["label"] == "Hypothesize failures"
+    # Known key keeps its curated label.
+    assert by_id["reports"]["label"] == "Reports / visualization"
+
+
+def test_artifact_stage_key_strips_per_state_prefix() -> None:
+    key = "checkpoints/sim2real-b/redteam-1/assemble-eval-contract/eval_contract.jsonl"
+    assert artifact_stage_key(key, "redteam-1", "checkpoints/sim2real-b") == "assemble-eval-contract"
+
+
+def test_no_artifacts_yields_no_succeeded_stages() -> None:
+    # The reported symptom's root cause: a run that persisted nothing to storage
+    # has no artifact-backed stages to show (the UI then renders them as not-run).
+    assert (
+        build_artifact_backed_stages(
+            [],
+            run_id="redteam-local-only",
+            prefix="checkpoints/sim2real-b",
+            workflow_stage_defs=[],
+            overlay_unmatched=False,
+        )
+        == []
+    )
+
+
+def test_owned_run_without_artifacts_shows_all_stages_pending() -> None:
+    # Same symptom via the overlay path: an owned run whose states have no
+    # artifacts yet renders every workflow state as pending ("not run").
+    workflow_defs = [
+        ("hypothesize-failures", "Hypothesize failures", ["hypothesize-failures"]),
+        ("synthesize-mitigations", "Synthesize mitigations", ["synthesize-mitigations"]),
+    ]
+    stages = build_artifact_backed_stages(
+        [],
+        run_id="redteam-owned",
+        prefix="checkpoints/sim2real-b",
+        workflow_stage_defs=workflow_defs,
+        overlay_unmatched=True,
+    )
+    assert stages, "owned run should still surface its declared stages"
+    assert all(s["status"] == "pending" for s in stages)

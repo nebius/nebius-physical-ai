@@ -281,7 +281,7 @@ def test_workbench_workflow_submit_warns_on_unresolved_placeholders(mocker, tmp_
 
 
 def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
-    yaml_path = REPO_ROOT / "workflows/workbench/skypilot/sonic-train-standalone.yaml"
+    yaml_path = REPO_ROOT / "src/npa/workflows/skypilot/sonic-train-standalone.yaml"
     captured: dict[str, object] = {}
 
     def fake_submit_workflow(path, run_id, **kwargs):
@@ -342,7 +342,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
 
 
 def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
-    yaml_path = REPO_ROOT / "workflows/workbench/skypilot/sonic-train-standalone.yaml"
+    yaml_path = REPO_ROOT / "src/npa/workflows/skypilot/sonic-train-standalone.yaml"
     captured: dict[str, object] = {}
 
     def fake_submit_workflow(path, run_id, **kwargs):
@@ -396,7 +396,7 @@ def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
 
 
 def test_workbench_workflow_submit_materializes_sonic_mvp_workflow(mocker) -> None:
-    yaml_path = REPO_ROOT / "workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"
+    yaml_path = REPO_ROOT / "src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml"
     captured: dict[str, object] = {}
 
     def fake_submit_workflow(path, run_id, **kwargs):

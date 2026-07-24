@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: cosmos3-reason
   description: Build a Cosmos3 reason-stage manifest over input frames.
-  skypilotTwin: npa/workflows/workbench/skypilot/cosmos3-reason.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos3-reason.yaml
 
 config:
   bucket: example-bucket

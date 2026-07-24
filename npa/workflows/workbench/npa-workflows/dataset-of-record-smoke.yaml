@@ -1,0 +1,135 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# CPU-only live smoke for the dataset-of-record tool.
+#
+# Exercises ingest -> validate -> quality gate -> curate -> register(query)
+# end-to-end against real S3 with no GPU and no LanceDB/FiftyOne (manifest
+# fallback). The gate reads config.quality_gate (>= 0.5 promotes) and writes a
+# decision to S3 that the interpreter branches on. Requires a raw fixture at
+# config.raw_sensor_uri. See docs/workbench/cookbooks/workbench-parity-tools.md.
+
+metadata:
+  name: dataset-of-record-smoke
+  description: >
+    CPU-only live smoke: dataset ingest -> validate -> quality gate -> curate ->
+    register queryable version, using the manifest-backed query fallback.
+
+config:
+  bucket: example-bucket
+  prefix: "dataset-smoke/{{run.id}}"
+
+  dataset_id: smoke-fleet
+  dataset_version: v1
+  dataset_source: smoke-fixture
+
+  completeness_min: "0.3"
+  max_corruption_rate: "0.5"
+  quality_gate: "0.5"
+
+  event_of_interest: cut_in
+  location_of_interest: ""
+  quality_metric: completeness
+  min_quality: "-1"
+
+  lancedb_endpoint: ""
+
+  raw_sensor_uri: "s3://{{config.bucket}}/dataset-of-record-fixtures/records.json"
+  dataset_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/{{config.dataset_id}}/{{config.dataset_version}}/manifest.json"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json"
+  curated_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/curated/"
+  # Register/query the ingested (deterministic) version; curated child versions
+  # are content-addressed, so a live smoke queries the registered manifest.
+  curated_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/{{config.dataset_id}}/{{config.dataset_version}}/manifest.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+  control-cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+    image: python:3.11-slim
+
+initial: ingest
+
+states:
+  ingest:
+    description: Ingest the raw sensor fixture into a versioned manifest.
+    toolRef: workbench.dataset.ingest
+    resources: cpu
+    inputs:
+      - uri: "{{config.raw_sensor_uri}}"
+        schema: npa.dataset.raw_sensor.v1
+    outputs:
+      - uri: "{{config.manifest_uri}}"
+        schema: npa.dataset.manifest.v1
+    next: validate
+
+  validate:
+    description: Validate schema + quality metrics and emit a report.
+    needs: [ingest]
+    toolRef: workbench.dataset.validate
+    resources: cpu
+    inputs:
+      - uri: "{{config.manifest_uri}}"
+        schema: npa.dataset.manifest.v1
+    outputs:
+      - uri: "{{config.validation_uri}}validation_report.json"
+        schema: npa.dataset.validation_report.v1
+    next: quality-gate
+
+  quality-gate:
+    description: Accept when quality passes, else reject the version.
+    writesDecision: true
+    needs: [validate]
+    toolRef: workbench.dataset.write_quality_decision
+    resources: control-cpu
+    inputs:
+      - uri: "{{config.validation_uri}}validation_report.json"
+        schema: npa.dataset.validation_report.v1
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.dataset.quality_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: curate
+      - when: loop_back
+        goto: reject
+
+  curate:
+    description: Curate the event-of-interest slice into a child version.
+    needs: [quality-gate]
+    toolRef: workbench.dataset.curate
+    resources: cpu
+    inputs:
+      - uri: "{{config.manifest_uri}}"
+        schema: npa.dataset.manifest.v1
+    outputs:
+      - uri: "{{config.curated_root_uri}}"
+        schema: npa.dataset.manifest.v1
+    next: register
+
+  register:
+    description: Register the queryable version (manifest-backed query).
+    needs: [curate]
+    toolRef: workbench.dataset.query
+    resources: cpu
+    inputs:
+      - uri: "{{config.curated_manifest_uri}}"
+        schema: npa.dataset.manifest.v1
+    terminal: true
+
+  reject:
+    description: Record explicit rejection when the quality gate is not met.
+    needs: [quality-gate]
+    toolRef: workbench.dataset.report_rejection
+    resources: control-cpu
+    inputs:
+      - uri: "{{config.validation_uri}}validation_report.json"
+        schema: npa.dataset.validation_report.v1
+    terminal: true

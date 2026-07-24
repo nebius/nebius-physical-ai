@@ -10,8 +10,8 @@ Token Factory working alongside Nebius compute, not just on its own.
 | --- | --- | --- | --- |
 | **train-triage** | Serverless GPU Job (LeRobot train) | Text model writes a triage report from the run's artifacts | [`run_tokenfactory_train_triage.py`](../../../npa/scripts/run_tokenfactory_train_triage.py) |
 | **sim-sweep** | N serverless GPU Jobs (LeRobot train fan-out) | Text model designs the sweep, then ranks the runs | [`run_tokenfactory_sim_sweep.py`](../../../npa/scripts/run_tokenfactory_sim_sweep.py) |
-| **rollout-judge** | Managed Kubernetes GPU (LeRobot eval rollout) | Hosted VLM scores the rollout (`vlm-eval --backend api`) | [`tokenfactory-rollout-judge.yaml`](../../../npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml) |
-| **scene-to-rollout-judge** | Managed Kubernetes GPU (LeRobot eval rollout) | Reasoner extracts a plan, then a VLM judges the rollout against it | [`tokenfactory-scene-to-rollout-judge.yaml`](../../../npa/workflows/workbench/skypilot/tokenfactory-scene-to-rollout-judge.yaml) |
+| **rollout-judge** | Managed Kubernetes GPU (LeRobot eval rollout) | Hosted VLM scores the rollout (`vlm-eval --backend api`) | [`tokenfactory-rollout-judge.yaml`](../../../npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml) |
+| **scene-to-rollout-judge** | Managed Kubernetes GPU (LeRobot eval rollout) | Reasoner extracts a plan, then a VLM judges the rollout against it | [`tokenfactory-scene-to-rollout-judge.yaml`](../../../npa/src/npa/workflows/skypilot/tokenfactory-scene-to-rollout-judge.yaml) |
 
 All are intentionally **smoke-sized** so they are cheap to run end-to-end. New to
 composing these? Read
@@ -71,7 +71,7 @@ npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml \
+  npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml \
   --run-id rollout-judge \
   --var NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1 \
   --var NPA_TOKEN_FACTORY_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-cosmos:1.0.9 \
@@ -84,7 +84,7 @@ Pass the key and storage creds as secrets when launching the YAML directly:
 ```bash
 sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml
+  npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml
 ```
 
 Output: a `vlm-eval` task-success report under `JUDGE_URI` with per-rollout
@@ -132,7 +132,7 @@ rollout accomplished the plan.
 npa skypilot bootstrap
 
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/tokenfactory-scene-to-rollout-judge.yaml \
+  npa/src/npa/workflows/skypilot/tokenfactory-scene-to-rollout-judge.yaml \
   --run-id scene-judge \
   --var NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1 \
   --var NPA_TOKEN_FACTORY_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-cosmos:1.0.9 \

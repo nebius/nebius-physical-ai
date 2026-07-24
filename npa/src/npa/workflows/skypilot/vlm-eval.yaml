@@ -1,0 +1,87 @@
+# Evaluate rollout artifacts with a self-hosted open VLM.
+#
+# Declarative: npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
+# Guide:       docs/workbench/npa-workflow-guide.md
+# Index:       npa/src/npa/workflows/skypilot/README.md
+#
+name: vlm-eval
+execution: serial
+---
+name: vlm-eval-self-hosted
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 80
+  # NPA_VLM_IMAGE is BYO-overridable. The default is a pushed first-party
+  # CUDA/PyTorch Workbench image; set NPA_VLM_IMAGE to a prebuilt VLM/vLLM image
+  # when you need pinned serving dependencies.
+  image_id: "docker:${NPA_VLM_IMAGE}"
+envs:
+  NPA_VLM_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
+  EVAL_INPUT_URI: "s3://<your-bucket-name>/sim-to-real/<run-id>/rollouts/"
+  VLM_EVAL_OUTPUT_URI: "s3://<your-bucket-name>/sim-to-real/<run-id>/vlm-eval/"
+  VLM_EVAL_TASK: "sim-to-real"
+  VLM_BACKEND: "self-hosted"
+  VLM_MODEL: "Qwen/Qwen2-VL-7B-Instruct"
+  VLM_ENDPOINT_URL: "http://127.0.0.1:8000/v1"
+  VLM_FRAME_SELECTION: "keyframes"
+  VLM_MAX_FRAMES: "4"
+  VLM_SUCCESS_THRESHOLD: "0.8"
+  VLM_TRUST_REMOTE_CODE: "1"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_DRY_RUN: "0"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+  python3 - <<'PY'
+  import importlib.util
+  import subprocess
+  import sys
+
+  if importlib.util.find_spec("vllm") is None:
+      subprocess.check_call([sys.executable, "-m", "pip", "install", "vllm>=0.8.5"])
+  PY
+run: |
+  set -euo pipefail
+
+  trust_args=()
+  if [[ "${VLM_TRUST_REMOTE_CODE}" == "1" ]]; then
+    trust_args+=(--trust-remote-code)
+  fi
+
+  python3 -m vllm.entrypoints.openai.api_server \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --model "${VLM_MODEL}" \
+    --served-model-name "${VLM_MODEL}" \
+    "${trust_args[@]}" \
+    > vlm-server.log 2>&1 &
+  vlm_pid=$!
+  trap 'kill "${vlm_pid}" 2>/dev/null || true' EXIT
+
+  for _attempt in $(seq 1 120); do
+    if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "${vlm_pid}" 2>/dev/null; then
+      tail -200 vlm-server.log >&2 || true
+      exit 1
+    fi
+    sleep 5
+  done
+  curl -fsS http://127.0.0.1:8000/health >/dev/null
+
+  npa workbench vlm-eval run \
+    --input-path "${EVAL_INPUT_URI}" \
+    --output-path "${VLM_EVAL_OUTPUT_URI}" \
+    --task "${VLM_EVAL_TASK}" \
+    --backend "${VLM_BACKEND}" \
+    --model "${VLM_MODEL}" \
+    --endpoint-url "${VLM_ENDPOINT_URL}" \
+    --frame-selection "${VLM_FRAME_SELECTION}" \
+    --max-frames "${VLM_MAX_FRAMES}" \
+    --success-threshold "${VLM_SUCCESS_THRESHOLD}" \
+    --output json

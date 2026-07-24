@@ -39,6 +39,8 @@ config:
   distant_view: bdd100k_distant_person_train
 
   source_uri: "s3://{{config.bucket}}/raw-bdd100k/night-subset/"
+  # 0 = ingest the real source; set >0 to synthesize rows for a dataset-free smoke.
+  synthetic_rows: "0"
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lancedb/"
   nighttime_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/nighttime"
   distant_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/distant"

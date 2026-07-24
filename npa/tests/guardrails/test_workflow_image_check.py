@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_workflow_image_extraction_finds_skypilot_images() -> None:
-    workflow_dir = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+    workflow_dir = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
     images = image_refs_for_workflows(sorted(workflow_dir.glob("*.yaml")))
 
     assert images

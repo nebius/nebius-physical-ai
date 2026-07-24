@@ -56,7 +56,7 @@ npa workbench workflow validate-spec \
    `npa/src/npa/orchestration/npa_workflow/catalog.py`.
 4. Sync the human catalog in `docs/workbench/npa-workflow-tool-catalog.md`
    (enforced by `test_catalog_doc_sync.py`).
-5. Add a SkyPilot smoke under `npa/workflows/workbench/skypilot/` when GPU
+5. Add a SkyPilot smoke under `npa/src/npa/workflows/skypilot/` when GPU
    evidence is required.
 
 Do **not** invent a parallel registry skill here; solution-specific catalogs are
@@ -89,7 +89,7 @@ a skill lands).
 | Model | Path | Use |
 | --- | --- | --- |
 | Declarative `npa.workflow` | `npa/workflows/workbench/npa-workflows/` | Agent/plan/validate; `toolRef` catalog |
-| SkyPilot task YAML | `npa/workflows/workbench/skypilot/` | Live GPU/container smokes and production jobs |
+| SkyPilot task YAML | `npa/src/npa/workflows/skypilot/` | Live GPU/container smokes and production jobs |
 
 BYOF uses both: `byof.yaml` for the declarative contract, SkyPilot YAMLs for
 live verify. Prefer declarative specs for composition; keep SkyPilot for

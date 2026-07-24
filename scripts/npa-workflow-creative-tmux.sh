@@ -96,7 +96,7 @@ while true; do
 from pathlib import Path
 import yaml
 
-root = Path("npa/workflows/workbench/skypilot")
+root = Path("npa/src/npa/workflows/skypilot")
 failed = []
 for path in sorted(root.glob("*.yaml")):
     try:

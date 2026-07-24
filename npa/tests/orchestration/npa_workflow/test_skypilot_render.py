@@ -29,7 +29,7 @@ from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-SKYPILOT_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+SKYPILOT_SPECS = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 RUNNER = CliRunner()
 
 

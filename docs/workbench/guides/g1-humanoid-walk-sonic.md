@@ -45,7 +45,7 @@ Submit the fine-tune + MuJoCo-eval workflow on H100 spot (docker-payload mode):
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml \
+  npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml \
   --tool sonic \
   --run-id sonic-g1-$(date -u +%Y%m%dT%H%M%SZ) \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
@@ -74,7 +74,7 @@ from pathlib import Path
 from npa.sdk.workbench import sonic
 
 plan = sonic.materialize_workflow(
-    Path("npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"),
+    Path("npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml"),
     run_id="sonic-g1-proof",
     registry="cr.eu-north1.nebius.cloud/<registry-id>",
     gpu_target="h100",
@@ -112,5 +112,5 @@ plan = sonic.materialize_workflow(
 ## Dig deeper
 
 - Cookbook: [SONIC G1 Fine-Tune to MuJoCo MVP](../cookbooks/sonic-mvp-g1-mujoco.md)
-- Workflow YAML: `npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml`
+- Workflow YAML: `npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml`
 - Skill: `skills/tools/sonic/SKILL.md`

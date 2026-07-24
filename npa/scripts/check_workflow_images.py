@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strict-placeholders", action="store_true")
     args = parser.parse_args(argv)
 
-    workflow_dir = args.repo_root / "npa" / "workflows" / "workbench" / "skypilot"
+    workflow_dir = args.repo_root / "npa" / "src" / "npa" / "workflows" / "skypilot"
     images = image_refs_for_workflows(sorted(workflow_dir.glob("*.yaml")))
     unresolved = sorted({image for image in images if unresolved_image_placeholders(image)})
     if unresolved and not args.strict_placeholders:

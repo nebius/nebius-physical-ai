@@ -33,7 +33,7 @@ from pathlib import Path
 
 import yaml
 
-source = Path("npa/workflows/workbench/skypilot/sim-to-real-loop.yaml")
+source = Path("npa/src/npa/workflows/skypilot/sim-to-real-loop.yaml")
 target = Path("/tmp/vlm-eval-loop.yaml")
 docs = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
 task = docs[1]

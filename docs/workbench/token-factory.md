@@ -155,7 +155,7 @@ sky jobs launch \
   --secret NEBIUS_TOKEN_FACTORY_KEY \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/skypilot/token-factory-caption.yaml
+  npa/src/npa/workflows/skypilot/token-factory-caption.yaml
 ```
 
 Other workflows: `token-factory-generate.yaml`,

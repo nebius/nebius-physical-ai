@@ -32,7 +32,7 @@ SkyPilot submission behavior.
 - YAML: prefer `npa.workflow/v0.0.1` specs under
   `npa/workflows/workbench/npa-workflows/` for authoring. `npa workbench
   workflow submit` accepts those specs (plans → renders → SkyPilot) and still
-  accepts raw SkyPilot YAML under `npa/workflows/workbench/skypilot/` for
+  accepts raw SkyPilot YAML under `npa/src/npa/workflows/skypilot/` for
   operator/runtime and SkyPilot-only exceptions (parallel, burst, runbook).
 
 ## Live submit prerequisites (real cluster)

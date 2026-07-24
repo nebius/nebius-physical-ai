@@ -1,0 +1,169 @@
+# What:   Train a policy on a Nebius k8s GPU, then triage the run with Token Factory.
+# Guide:  docs/workbench/cookbooks/tokenfactory-compute-combos.md
+# Runner: npa workbench workflow submit (two-stage serial pipeline)
+# Index:  npa/src/npa/workflows/skypilot/README.md
+#
+# Declarative YAML form of the train-triage combo (the imperative form is the
+# runner npa/scripts/run_tokenfactory_train_triage.py, which uses a serverless
+# GPU Job). A "combo" workflow: real Nebius cloud compute + hosted Token Factory.
+#   Stage 1 (Nebius Managed Kubernetes GPU): lerobot-train trains a smoke policy
+#           and uploads its run artifacts (config + logs + checkpoint) to S3.
+#   Stage 2 (CPU, zero-GPU): a Token Factory text model reads those artifacts and
+#           writes a triage report. No local GPU/vLLM serving stage.
+# Provide the API key (and S3 creds) as SkyPilot secrets at launch:
+#   sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
+#     --secret AWS_SECRET_ACCESS_KEY tokenfactory-train-triage.yaml
+name: tokenfactory-train-triage
+execution: serial
+---
+# Stage 1: train a smoke policy on a Nebius Managed Kubernetes GPU.
+name: train-gpu
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # GPU defaults to H100:1. Change resources.accelerators to L40S:1 or H200:1 to
+  # match your cluster's capacity before launch.
+  image_id: "docker:${NPA_LEROBOT_IMAGE}"
+envs:
+  NPA_LEROBOT_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:0.5.1"
+  POLICY_TYPE: "act"
+  DATASET: "lerobot/pusht"
+  STEPS: "50"
+  BATCH_SIZE: "4"
+  # Where the run artifacts (config, logs, checkpoint) are written and read by triage.
+  ARTIFACTS_URI: "s3://<your-bucket-name>/tokenfactory/<run-id>/train/"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -e
+run: |
+  set -euo pipefail
+  if [[ "${ARTIFACTS_URI}" != s3://* ]]; then
+    echo "ARTIFACTS_URI must be an s3:// URI" >&2
+    exit 1
+  fi
+  source /opt/lerobot/venv/bin/activate
+  if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi
+  mkdir -p /tmp/hf_home
+  export HF_HOME=/tmp/hf_home
+
+  out_dir="/tmp/lerobot_output"
+  rm -rf "${out_dir}"
+  lerobot-train \
+    --policy.type="${POLICY_TYPE}" \
+    --policy.push_to_hub=false \
+    --dataset.repo_id="${DATASET}" \
+    --output_dir="${out_dir}" \
+    --steps="${STEPS}" \
+    --save_freq="${STEPS}" \
+    --eval_freq=1000000 \
+    --batch_size="${BATCH_SIZE}" \
+    --policy.device=cuda \
+    --eval.batch_size=1 \
+    --eval.n_episodes=1
+
+  # Upload the run artifacts (config + logs + checkpoint) to S3 for the triage stage.
+  python3 - "${out_dir}" "${ARTIFACTS_URI}" <<'PY'
+  import os
+  import pathlib
+  import sys
+  from urllib.parse import urlparse
+
+  import boto3
+
+  local = pathlib.Path(sys.argv[1])
+  parsed = urlparse(sys.argv[2])
+  prefix = parsed.path.strip("/")
+  prefix = (prefix + "/") if prefix else ""
+  s3 = boto3.client(
+      "s3",
+      endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None,
+  )
+  uploaded = 0
+  for path in local.rglob("*"):
+      if path.is_file():
+          s3.upload_file(str(path), parsed.netloc, prefix + str(path.relative_to(local)))
+          uploaded += 1
+  print(f"NPA_TRAIN_UPLOADED {uploaded} files -> {sys.argv[2]}", flush=True)
+  PY
+---
+# Stage 2: triage the run with a hosted Token Factory text model (zero-GPU).
+name: tokenfactory-triage
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  image_id: "docker:${NPA_TOKEN_FACTORY_IMAGE}"
+envs:
+  NPA_TOKEN_FACTORY_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
+  ARTIFACTS_URI: "s3://<your-bucket-name>/tokenfactory/<run-id>/train/"
+  TRIAGE_URI: "s3://<your-bucket-name>/tokenfactory/<run-id>/triage/"
+  TRIAGE_MODEL: "meta-llama/Llama-3.3-70B-Instruct"
+  TRIAGE_MAX_TOKENS: "1024"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+run: |
+  set -euo pipefail
+  if [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]]; then
+    echo "NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY ..." >&2
+    exit 1
+  fi
+  # Download the textual artifacts and build a triage prompt with the same pure
+  # helpers the runner uses, then have a hosted text model write the report.
+  work=/tmp/npa-triage
+  rm -rf "${work}" && mkdir -p "${work}/artifacts"
+  python3 - "${ARTIFACTS_URI}" "${work}" <<'PY'
+  import os
+  import pathlib
+  import sys
+  from urllib.parse import urlparse
+
+  import boto3
+
+  from npa.workflows.token_factory_combos import (
+      DEFAULT_TRIAGE_SYSTEM_PROMPT,
+      build_triage_prompt,
+      render_triage_prompts_jsonl,
+      summarize_run_artifacts,
+  )
+
+  artifacts_uri, work = sys.argv[1], pathlib.Path(sys.argv[2])
+  parsed = urlparse(artifacts_uri)
+  prefix = parsed.path.lstrip("/")
+  s3 = boto3.client(
+      "s3",
+      endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None,
+  )
+  text_suffixes = {".json", ".jsonl", ".log", ".md", ".txt", ".yaml", ".yml"}
+  dest = work / "artifacts"
+  paginator = s3.get_paginator("list_objects_v2")
+  for page in paginator.paginate(Bucket=parsed.netloc, Prefix=prefix):
+      for obj in page.get("Contents", []):
+          key = obj["Key"]
+          if pathlib.Path(key).suffix.lower() not in text_suffixes:
+              continue
+          rel = key[len(prefix):].lstrip("/")
+          target = dest / rel
+          target.parent.mkdir(parents=True, exist_ok=True)
+          s3.download_file(parsed.netloc, key, str(target))
+  digest = summarize_run_artifacts(dest)
+  prompt = build_triage_prompt(job_name="tokenfactory-train-triage", output_uri=artifacts_uri, artifact_digest=digest)
+  (work / "prompts.jsonl").write_text(
+      render_triage_prompts_jsonl([{"id": "triage", "prompt": prompt}]), encoding="utf-8"
+  )
+  (work / "system_prompt.txt").write_text(DEFAULT_TRIAGE_SYSTEM_PROMPT, encoding="utf-8")
+  print("NPA_TRIAGE_PROMPT_READY", flush=True)
+  PY
+
+  npa workbench token-factory generate \
+    --input-path "${work}/prompts.jsonl" \
+    --output-path "${TRIAGE_URI}" \
+    --model "${TRIAGE_MODEL}" \
+    --system-prompt "$(cat "${work}/system_prompt.txt")" \
+    --max-tokens "${TRIAGE_MAX_TOKENS}" \
+    --output json

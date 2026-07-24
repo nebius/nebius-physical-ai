@@ -1,0 +1,1061 @@
+# BDD100K reproduction pipeline.
+#
+# Guide:   docs/workbench/cookbooks/bdd100k-pipeline.md (prerequisites, run, verify)
+# Demo:    docs/demos/bdd100k-lancedb-demo.md
+# Runner:  npa/scripts/run_bdd100k_pipeline.py (renders run-scoped S3 paths)
+# Index:   npa/src/npa/workflows/skypilot/README.md
+#
+# SkyPilot 0.12.2 supports serial pipelines and all-parallel job groups, but
+# not mixed dependency graphs in one YAML. Training and evaluation therefore
+# run serially here; split them into separate parallel job groups only when the
+# orchestration layer supports cross-job dependencies.
+name: bdd100k-pipeline
+execution: serial
+---
+# Stage 1: import the BDD100K subset into a per-run LanceDB table.
+name: bdd100k-ingest
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  # Pinned first-party LanceDB image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  BDD100K_SOURCE_URI: "s3://${NPA_S3_BUCKET}/raw-bdd100k/subset-demo/"
+  BDD100K_LIMIT: "10000"
+  BDD100K_SYNTHETIC_ROWS: "0"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  LANCE_TABLE: bdd100k
+  LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
+  LANCEDB_TOKEN: ""
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${LANCEDB_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${LANCEDB_TOKEN}")
+  fi
+
+  post_lancedb() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${LANCEDB_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "LanceDB ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${LANCEDB_ENDPOINT}/health" | jq -e '.status == "ok"'
+  if [[ "${BDD100K_SYNTHETIC_ROWS}" != "0" ]]; then
+    payload=$(jq -n \
+      --arg table "${LANCE_TABLE}" \
+      --arg lance_uri "${LANCE_URI}" \
+      --argjson synthetic "${BDD100K_SYNTHETIC_ROWS}" \
+      '{table: $table, lance_uri: $lance_uri, synthetic: $synthetic, splits: ["train", "val"]}')
+  else
+    payload=$(jq -n \
+      --arg source "${BDD100K_SOURCE_URI}" \
+      --arg table "${LANCE_TABLE}" \
+      --arg lance_uri "${LANCE_URI}" \
+      --argjson limit "${BDD100K_LIMIT}" \
+      '{source: $source, table: $table, lance_uri: $lance_uri, limit: $limit, splits: ["train", "val"]}')
+  fi
+  post_lancedb "/import-bdd100k" "${payload}" import-response.json
+  jq -e '.total_rows > 0 and .table == env.LANCE_TABLE' import-response.json
+---
+# Stage 2: backfill CPU UDF columns required by the views and duplicate checks.
+name: bdd100k-backfill-cpu
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  # Pinned first-party LanceDB image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  LANCE_TABLE: bdd100k
+  CPU_BACKFILL_BATCH_SIZE: "512"
+  LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
+  LANCEDB_TOKEN: ""
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${LANCEDB_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${LANCEDB_TOKEN}")
+  fi
+
+  post_lancedb() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${LANCEDB_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "LanceDB ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${LANCEDB_ENDPOINT}/health" | jq -e '.status == "ok"'
+  for udf in has_person has_rider person_bbox_area_pct dhash is_duplicate; do
+    payload=$(jq -n \
+      --arg table "${LANCE_TABLE}" \
+      --arg lance_uri "${LANCE_URI}" \
+      --arg udf "${udf}" \
+      --argjson batch_size "${CPU_BACKFILL_BATCH_SIZE}" \
+      '{table: $table, lance_uri: $lance_uri, udf: $udf, batch_size: $batch_size}')
+    post_lancedb "/backfill" "${payload}" "backfill-${udf}.json"
+    jq -e '.table == env.LANCE_TABLE and .udf == "'"${udf}"'" and .gpu_used == false' "backfill-${udf}.json"
+  done
+---
+# Stage 3: backfill CLIP embeddings through the GPU UDF path.
+name: bdd100k-backfill-clip
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Pinned first-party LanceDB image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  LANCE_TABLE: bdd100k
+  CLIP_BATCH_SIZE: "32"
+  CLIP_DEVICE: cuda:0
+  LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
+  LANCEDB_TOKEN: ""
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${LANCEDB_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${LANCEDB_TOKEN}")
+  fi
+
+  post_lancedb() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${LANCEDB_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "LanceDB ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${LANCEDB_ENDPOINT}/health" | jq -e '.status == "ok"'
+  payload=$(jq -n \
+    --arg table "${LANCE_TABLE}" \
+    --arg lance_uri "${LANCE_URI}" \
+    --arg device "${CLIP_DEVICE}" \
+    --argjson batch_size "${CLIP_BATCH_SIZE}" \
+    '{table: $table, lance_uri: $lance_uri, udf: "clip_embedding", batch_size: $batch_size, device: $device, precision: "float32"}')
+  post_lancedb "/backfill" "${payload}" backfill-clip.json
+  jq -e '.table == env.LANCE_TABLE and .udf == "clip_embedding" and .output_column == "clip_embedding" and .gpu_used == true' backfill-clip.json
+---
+# Stage 4: create the three failure-mode materialized views used for training.
+name: bdd100k-create-mvs
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  # Pinned first-party LanceDB image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  LANCE_TABLE: bdd100k
+  LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
+  LANCEDB_TOKEN: ""
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${LANCEDB_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${LANCEDB_TOKEN}")
+  fi
+
+  post_lancedb() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${LANCEDB_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "LanceDB ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${LANCEDB_ENDPOINT}/health" | jq -e '.status == "ok"'
+
+  create_mv() {
+    local view_name="$1"
+    local filter_sql="$2"
+    local output="$3"
+    payload=$(jq -n \
+      --arg name "${view_name}" \
+      --arg source_table "${LANCE_TABLE}" \
+      --arg filter_sql "${filter_sql}" \
+      --arg lance_uri "${LANCE_URI}" \
+      '{name: $name, source_table: $source_table, filter_sql: $filter_sql, lance_uri: $lance_uri}')
+    post_lancedb "/create-mv" "${payload}" "${output}"
+    jq -e '.view_name == "'"${view_name}"'" and .row_count >= 0' "${output}"
+  }
+
+  create_mv bdd100k_rider_train "has_rider = true AND split = 'train'" mv-rider.json
+  create_mv bdd100k_nighttime_person_train "timeofday = 'night' AND has_person = true AND split = 'train'" mv-nighttime.json
+  create_mv bdd100k_distant_person_train "has_person = true AND person_bbox_area_pct < 0.01 AND split = 'train'" mv-distant.json
+---
+# Stage 5a: train on the rider failure-mode view.
+name: bdd100k-train-rider
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 64
+  # Pinned first-party detection-training image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  VIEW_NAME: bdd100k_rider_train
+  VIEW_SLUG: bdd100k_rider_train
+  TRAIN_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/training/bdd100k_rider_train"
+  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
+  DETECTION_TRAINING_TOKEN: ""
+  # Synthetic BDD100K data - category names match the synthetic data generator.
+  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
+  # Real BDD100K data - uncomment the line below and comment the line above.
+  # BDD100K_LABEL_MAP: '{"pedestrian":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motorcycle":6,"bicycle":7,"traffic light":8,"traffic sign":9}'
+  TRAIN_EPOCHS: "10"
+  TRAIN_BATCH_SIZE: "8"
+  TRAIN_LEARNING_RATE: "0.005"
+  TRAIN_POLL_SECONDS: "30"
+  TRAIN_TIMEOUT_SECONDS: "21600"
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${DETECTION_TRAINING_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${DETECTION_TRAINING_TOKEN}")
+  fi
+
+  post_detection() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${DETECTION_TRAINING_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  get_detection() {
+    local path="$1"
+    local output="$2"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}${path}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}/health" | jq -e '.status == "ok"'
+  payload=$(jq -n \
+    --arg view "${VIEW_NAME}" \
+    --arg lance_uri "${LANCE_URI}" \
+    --arg output_uri "${TRAIN_OUTPUT_URI}" \
+    --arg data_path "${NPA_TRAINING_DATA_PATH:-${LANCE_URI}}" \
+    --argjson overrides "${NPA_TRAINING_OVERRIDES_JSON:-[]}" \
+    --arg wandb_enabled "${NPA_TRAINING_WANDB_ENABLED:-0}" \
+    --arg wandb_project "${NPA_TRAINING_WANDB_PROJECT:-}" \
+    --arg wandb_run_name "${NPA_TRAINING_WANDB_RUN_NAME:-}" \
+    --arg wandb_mode "${WANDB_MODE:-disabled}" \
+    --arg checkpoint_s3_uri "${NPA_CHECKPOINT_S3_URI:-${TRAIN_OUTPUT_URI}}" \
+    --arg checkpoint_s3_endpoint_url "${NPA_CHECKPOINT_S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL:-}}" \
+    --argjson label_map "${BDD100K_LABEL_MAP}" \
+    --argjson epochs "${TRAIN_EPOCHS}" \
+    --argjson batch_size "${TRAIN_BATCH_SIZE}" \
+    --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, data_path: $data_path, overrides: $overrides, wandb: {enabled: ($wandb_enabled == "1"), project: $wandb_project, run_name: $wandb_run_name, mode: $wandb_mode}, checkpoint_s3: {uri: $checkpoint_s3_uri, endpoint_url: $checkpoint_s3_endpoint_url}, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+  post_detection "/train" "${payload}" train-response.json
+  run_id=$(jq -r '.run_id' train-response.json)
+  deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
+  while true; do
+    get_detection "/status?run_id=${run_id}" train-status.json
+    status=$(jq -r '.status' train-status.json)
+    if [[ "${status}" == "completed" ]]; then
+      break
+    fi
+    if [[ "${status}" == "failed" ]]; then
+      cat train-status.json >&2
+      exit 1
+    fi
+    if (( SECONDS > deadline )); then
+      echo "Training timed out for ${VIEW_NAME}" >&2
+      cat train-status.json >&2
+      exit 1
+    fi
+    sleep "${TRAIN_POLL_SECONDS}"
+  done
+  jq -e '.status == "completed" and .epochs_completed == .total_epochs and .checkpoint_uri_pattern != ""' train-status.json
+---
+# Stage 5b: train on the nighttime-person failure-mode view.
+name: bdd100k-train-nighttime
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 64
+  # Pinned first-party detection-training image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  VIEW_NAME: bdd100k_nighttime_person_train
+  VIEW_SLUG: bdd100k_nighttime_person_train
+  TRAIN_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/training/bdd100k_nighttime_person_train"
+  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
+  DETECTION_TRAINING_TOKEN: ""
+  # Synthetic BDD100K data - category names match the synthetic data generator.
+  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
+  # Real BDD100K data - uncomment the line below and comment the line above.
+  # BDD100K_LABEL_MAP: '{"pedestrian":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motorcycle":6,"bicycle":7,"traffic light":8,"traffic sign":9}'
+  TRAIN_EPOCHS: "10"
+  TRAIN_BATCH_SIZE: "8"
+  TRAIN_LEARNING_RATE: "0.005"
+  TRAIN_POLL_SECONDS: "30"
+  TRAIN_TIMEOUT_SECONDS: "21600"
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${DETECTION_TRAINING_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${DETECTION_TRAINING_TOKEN}")
+  fi
+
+  post_detection() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${DETECTION_TRAINING_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  get_detection() {
+    local path="$1"
+    local output="$2"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}${path}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}/health" | jq -e '.status == "ok"'
+  payload=$(jq -n \
+    --arg view "${VIEW_NAME}" \
+    --arg lance_uri "${LANCE_URI}" \
+    --arg output_uri "${TRAIN_OUTPUT_URI}" \
+    --arg data_path "${NPA_TRAINING_DATA_PATH:-${LANCE_URI}}" \
+    --argjson overrides "${NPA_TRAINING_OVERRIDES_JSON:-[]}" \
+    --arg wandb_enabled "${NPA_TRAINING_WANDB_ENABLED:-0}" \
+    --arg wandb_project "${NPA_TRAINING_WANDB_PROJECT:-}" \
+    --arg wandb_run_name "${NPA_TRAINING_WANDB_RUN_NAME:-}" \
+    --arg wandb_mode "${WANDB_MODE:-disabled}" \
+    --arg checkpoint_s3_uri "${NPA_CHECKPOINT_S3_URI:-${TRAIN_OUTPUT_URI}}" \
+    --arg checkpoint_s3_endpoint_url "${NPA_CHECKPOINT_S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL:-}}" \
+    --argjson label_map "${BDD100K_LABEL_MAP}" \
+    --argjson epochs "${TRAIN_EPOCHS}" \
+    --argjson batch_size "${TRAIN_BATCH_SIZE}" \
+    --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, data_path: $data_path, overrides: $overrides, wandb: {enabled: ($wandb_enabled == "1"), project: $wandb_project, run_name: $wandb_run_name, mode: $wandb_mode}, checkpoint_s3: {uri: $checkpoint_s3_uri, endpoint_url: $checkpoint_s3_endpoint_url}, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+  post_detection "/train" "${payload}" train-response.json
+  run_id=$(jq -r '.run_id' train-response.json)
+  deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
+  while true; do
+    get_detection "/status?run_id=${run_id}" train-status.json
+    status=$(jq -r '.status' train-status.json)
+    if [[ "${status}" == "completed" ]]; then
+      break
+    fi
+    if [[ "${status}" == "failed" ]]; then
+      cat train-status.json >&2
+      exit 1
+    fi
+    if (( SECONDS > deadline )); then
+      echo "Training timed out for ${VIEW_NAME}" >&2
+      cat train-status.json >&2
+      exit 1
+    fi
+    sleep "${TRAIN_POLL_SECONDS}"
+  done
+  jq -e '.status == "completed" and .epochs_completed == .total_epochs and .checkpoint_uri_pattern != ""' train-status.json
+---
+# Stage 5c: train on the distant-person failure-mode view.
+name: bdd100k-train-distant
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 64
+  # Pinned first-party detection-training image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  VIEW_NAME: bdd100k_distant_person_train
+  VIEW_SLUG: bdd100k_distant_person_train
+  TRAIN_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/training/bdd100k_distant_person_train"
+  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
+  DETECTION_TRAINING_TOKEN: ""
+  # Synthetic BDD100K data - category names match the synthetic data generator.
+  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
+  # Real BDD100K data - uncomment the line below and comment the line above.
+  # BDD100K_LABEL_MAP: '{"pedestrian":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motorcycle":6,"bicycle":7,"traffic light":8,"traffic sign":9}'
+  TRAIN_EPOCHS: "10"
+  TRAIN_BATCH_SIZE: "8"
+  TRAIN_LEARNING_RATE: "0.005"
+  TRAIN_POLL_SECONDS: "30"
+  TRAIN_TIMEOUT_SECONDS: "21600"
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${DETECTION_TRAINING_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${DETECTION_TRAINING_TOKEN}")
+  fi
+
+  post_detection() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${DETECTION_TRAINING_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  get_detection() {
+    local path="$1"
+    local output="$2"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}${path}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}/health" | jq -e '.status == "ok"'
+  payload=$(jq -n \
+    --arg view "${VIEW_NAME}" \
+    --arg lance_uri "${LANCE_URI}" \
+    --arg output_uri "${TRAIN_OUTPUT_URI}" \
+    --arg data_path "${NPA_TRAINING_DATA_PATH:-${LANCE_URI}}" \
+    --argjson overrides "${NPA_TRAINING_OVERRIDES_JSON:-[]}" \
+    --arg wandb_enabled "${NPA_TRAINING_WANDB_ENABLED:-0}" \
+    --arg wandb_project "${NPA_TRAINING_WANDB_PROJECT:-}" \
+    --arg wandb_run_name "${NPA_TRAINING_WANDB_RUN_NAME:-}" \
+    --arg wandb_mode "${WANDB_MODE:-disabled}" \
+    --arg checkpoint_s3_uri "${NPA_CHECKPOINT_S3_URI:-${TRAIN_OUTPUT_URI}}" \
+    --arg checkpoint_s3_endpoint_url "${NPA_CHECKPOINT_S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL:-}}" \
+    --argjson label_map "${BDD100K_LABEL_MAP}" \
+    --argjson epochs "${TRAIN_EPOCHS}" \
+    --argjson batch_size "${TRAIN_BATCH_SIZE}" \
+    --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, data_path: $data_path, overrides: $overrides, wandb: {enabled: ($wandb_enabled == "1"), project: $wandb_project, run_name: $wandb_run_name, mode: $wandb_mode}, checkpoint_s3: {uri: $checkpoint_s3_uri, endpoint_url: $checkpoint_s3_endpoint_url}, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+  post_detection "/train" "${payload}" train-response.json
+  run_id=$(jq -r '.run_id' train-response.json)
+  deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
+  while true; do
+    get_detection "/status?run_id=${run_id}" train-status.json
+    status=$(jq -r '.status' train-status.json)
+    if [[ "${status}" == "completed" ]]; then
+      break
+    fi
+    if [[ "${status}" == "failed" ]]; then
+      cat train-status.json >&2
+      exit 1
+    fi
+    if (( SECONDS > deadline )); then
+      echo "Training timed out for ${VIEW_NAME}" >&2
+      cat train-status.json >&2
+      exit 1
+    fi
+    sleep "${TRAIN_POLL_SECONDS}"
+  done
+  jq -e '.status == "completed" and .epochs_completed == .total_epochs and .checkpoint_uri_pattern != ""' train-status.json
+---
+# Stage 6a: evaluate the rider model against the rider failure-mode view.
+name: bdd100k-eval-rider
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Pinned first-party detection-training image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  VIEW_NAME: bdd100k_rider_train
+  VIEW_SLUG: bdd100k_rider_train
+  EVAL_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/eval/bdd100k_rider_train"
+  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
+  DETECTION_TRAINING_TOKEN: ""
+  NEBIUS_S3_ENDPOINT: https://storage.eu-north1.nebius.cloud
+  WRITE_CANONICAL_EVAL_METRICS: "1"
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${DETECTION_TRAINING_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${DETECTION_TRAINING_TOKEN}")
+  fi
+
+  get_detection() {
+    local path="$1"
+    local output="$2"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}${path}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  post_detection() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${DETECTION_TRAINING_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}/health" | jq -e '.status == "ok"'
+  get_detection "/runs" runs.json
+  pattern=$(jq -r --arg slug "/training/${VIEW_SLUG}/" '[.runs[] | select(.status == "completed" and (.checkpoint_uri_pattern | contains($slug)))] | last | .checkpoint_uri_pattern // ""' runs.json)
+  epochs=$(jq -r --arg slug "/training/${VIEW_SLUG}/" '[.runs[] | select(.status == "completed" and (.checkpoint_uri_pattern | contains($slug)))] | last | .total_epochs // ""' runs.json)
+  if [[ -z "${pattern}" || -z "${epochs}" ]]; then
+    echo "No completed training run found for ${VIEW_NAME}" >&2
+    cat runs.json >&2
+    exit 1
+  fi
+  checkpoint_uri=$(printf "%s" "${pattern}" | sed "s/{epoch}/${epochs}/g")
+  payload=$(jq -n \
+    --arg checkpoint_uri "${checkpoint_uri}" \
+    --arg eval_view "${VIEW_NAME}" \
+    --arg lance_uri "${LANCE_URI}" \
+    --arg output_uri "${EVAL_OUTPUT_URI}" \
+    '{checkpoint_uri: $checkpoint_uri, eval_view: $eval_view, lance_uri: $lance_uri, output_uri: $output_uri}')
+  post_detection "/eval" "${payload}" eval-response.json
+  jq -e '(.mAP | type == "number") and (.mAP_50 | type == "number") and (.mAP_75 | type == "number")' eval-response.json
+  if [[ "${WRITE_CANONICAL_EVAL_METRICS}" == "1" ]] && command -v aws >/dev/null 2>&1; then
+    aws s3 cp eval-response.json "${EVAL_OUTPUT_URI%/}/metrics.json" --endpoint-url "${NEBIUS_S3_ENDPOINT}"
+  fi
+---
+# Stage 6b: evaluate the nighttime-person model against its training view.
+name: bdd100k-eval-nighttime
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Pinned first-party detection-training image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  VIEW_NAME: bdd100k_nighttime_person_train
+  VIEW_SLUG: bdd100k_nighttime_person_train
+  EVAL_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/eval/bdd100k_nighttime_person_train"
+  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
+  DETECTION_TRAINING_TOKEN: ""
+  NEBIUS_S3_ENDPOINT: https://storage.eu-north1.nebius.cloud
+  WRITE_CANONICAL_EVAL_METRICS: "1"
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${DETECTION_TRAINING_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${DETECTION_TRAINING_TOKEN}")
+  fi
+
+  get_detection() {
+    local path="$1"
+    local output="$2"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}${path}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  post_detection() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${DETECTION_TRAINING_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}/health" | jq -e '.status == "ok"'
+  get_detection "/runs" runs.json
+  pattern=$(jq -r --arg slug "/training/${VIEW_SLUG}/" '[.runs[] | select(.status == "completed" and (.checkpoint_uri_pattern | contains($slug)))] | last | .checkpoint_uri_pattern // ""' runs.json)
+  epochs=$(jq -r --arg slug "/training/${VIEW_SLUG}/" '[.runs[] | select(.status == "completed" and (.checkpoint_uri_pattern | contains($slug)))] | last | .total_epochs // ""' runs.json)
+  if [[ -z "${pattern}" || -z "${epochs}" ]]; then
+    echo "No completed training run found for ${VIEW_NAME}" >&2
+    cat runs.json >&2
+    exit 1
+  fi
+  checkpoint_uri=$(printf "%s" "${pattern}" | sed "s/{epoch}/${epochs}/g")
+  payload=$(jq -n \
+    --arg checkpoint_uri "${checkpoint_uri}" \
+    --arg eval_view "${VIEW_NAME}" \
+    --arg lance_uri "${LANCE_URI}" \
+    --arg output_uri "${EVAL_OUTPUT_URI}" \
+    '{checkpoint_uri: $checkpoint_uri, eval_view: $eval_view, lance_uri: $lance_uri, output_uri: $output_uri}')
+  post_detection "/eval" "${payload}" eval-response.json
+  jq -e '(.mAP | type == "number") and (.mAP_50 | type == "number") and (.mAP_75 | type == "number")' eval-response.json
+  if [[ "${WRITE_CANONICAL_EVAL_METRICS}" == "1" ]] && command -v aws >/dev/null 2>&1; then
+    aws s3 cp eval-response.json "${EVAL_OUTPUT_URI%/}/metrics.json" --endpoint-url "${NEBIUS_S3_ENDPOINT}"
+  fi
+---
+# Stage 6c: evaluate the distant-person model against its training view.
+name: bdd100k-eval-distant
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Pinned first-party detection-training image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  VIEW_NAME: bdd100k_distant_person_train
+  VIEW_SLUG: bdd100k_distant_person_train
+  EVAL_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/eval/bdd100k_distant_person_train"
+  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
+  DETECTION_TRAINING_TOKEN: ""
+  NEBIUS_S3_ENDPOINT: https://storage.eu-north1.nebius.cloud
+  WRITE_CANONICAL_EVAL_METRICS: "1"
+setup: |
+  set -e
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl jq
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ca-certificates curl jq
+    elif command -v microdnf >/dev/null 2>&1; then
+      microdnf install -y ca-certificates curl jq
+    else
+      echo "curl and jq are required for BDD100K pipeline tasks" >&2
+      exit 1
+    fi
+  fi
+run: |
+  set -euo pipefail
+
+  auth_args=()
+  if [[ -n "${DETECTION_TRAINING_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${DETECTION_TRAINING_TOKEN}")
+  fi
+
+  get_detection() {
+    local path="$1"
+    local output="$2"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}${path}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  post_detection() {
+    local path="$1"
+    local payload="$2"
+    local output="$3"
+    local code
+    code=$(curl -sS -o "${output}" -w "%{http_code}" -X POST \
+      "${DETECTION_TRAINING_ENDPOINT}${path}" \
+      -H "Content-Type: application/json" \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      --data "${payload}")
+    if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+      echo "Detection-training ${path} failed with HTTP ${code}" >&2
+      cat "${output}" >&2
+      exit 1
+    fi
+    jq . "${output}"
+  }
+
+  curl -fsS ${auth_args[@]+"${auth_args[@]}"} "${DETECTION_TRAINING_ENDPOINT}/health" | jq -e '.status == "ok"'
+  get_detection "/runs" runs.json
+  pattern=$(jq -r --arg slug "/training/${VIEW_SLUG}/" '[.runs[] | select(.status == "completed" and (.checkpoint_uri_pattern | contains($slug)))] | last | .checkpoint_uri_pattern // ""' runs.json)
+  epochs=$(jq -r --arg slug "/training/${VIEW_SLUG}/" '[.runs[] | select(.status == "completed" and (.checkpoint_uri_pattern | contains($slug)))] | last | .total_epochs // ""' runs.json)
+  if [[ -z "${pattern}" || -z "${epochs}" ]]; then
+    echo "No completed training run found for ${VIEW_NAME}" >&2
+    cat runs.json >&2
+    exit 1
+  fi
+  checkpoint_uri=$(printf "%s" "${pattern}" | sed "s/{epoch}/${epochs}/g")
+  payload=$(jq -n \
+    --arg checkpoint_uri "${checkpoint_uri}" \
+    --arg eval_view "${VIEW_NAME}" \
+    --arg lance_uri "${LANCE_URI}" \
+    --arg output_uri "${EVAL_OUTPUT_URI}" \
+    '{checkpoint_uri: $checkpoint_uri, eval_view: $eval_view, lance_uri: $lance_uri, output_uri: $output_uri}')
+  post_detection "/eval" "${payload}" eval-response.json
+  jq -e '(.mAP | type == "number") and (.mAP_50 | type == "number") and (.mAP_75 | type == "number")' eval-response.json
+  if [[ "${WRITE_CANONICAL_EVAL_METRICS}" == "1" ]] && command -v aws >/dev/null 2>&1; then
+    aws s3 cp eval-response.json "${EVAL_OUTPUT_URI%/}/metrics.json" --endpoint-url "${NEBIUS_S3_ENDPOINT}"
+  fi
+---
+# Stage 7: launch a public FiftyOne App for review.
+name: bdd100k-fiftyone-app
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  ports: 5151
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <fiftyone-image-tag> with the output of: npa workbench fiftyone system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>"
+envs:
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
+  FIFTYONE_DEFAULT_APP_ADDRESS: "0.0.0.0"
+  FIFTYONE_DEFAULT_APP_PORT: "5151"
+  FIFTYONE_PUBLIC_URL: ""
+run: |
+  set -euo pipefail
+  NPA_PYTHON="${NPA_PYTHON:-python3}"
+  "${NPA_PYTHON}" - <<'PY'
+  from __future__ import annotations
+
+  import os
+  import signal
+  import time
+
+  try:
+      import fiftyone as fo
+  except ModuleNotFoundError:
+      lancedb_endpoint = os.environ.get("LANCEDB_ENDPOINT", "")
+      detection_endpoint = os.environ.get("DETECTION_TRAINING_ENDPOINT", "")
+      if (
+          lancedb_endpoint.startswith("http://127.0.0.1:")
+          and detection_endpoint.startswith("http://127.0.0.1:")
+      ):
+          print("NPA_FIFTYONE_APP_SKIPPED mock endpoint validation", flush=True)
+          raise SystemExit(0)
+      raise
+
+  stop = False
+
+
+  def handle_stop(signum, frame):
+      global stop
+      stop = True
+
+
+  signal.signal(signal.SIGINT, handle_stop)
+  signal.signal(signal.SIGTERM, handle_stop)
+
+  address = os.environ.get("FIFTYONE_DEFAULT_APP_ADDRESS", "0.0.0.0")
+  port = int(os.environ.get("FIFTYONE_DEFAULT_APP_PORT", "5151"))
+  dataset_name = os.environ.get("FIFTYONE_DATASET_NAME", "").strip()
+  dataset = None
+  if dataset_name and dataset_name in fo.list_datasets():
+      dataset = fo.load_dataset(dataset_name)
+  session = fo.launch_app(dataset, remote=True, address=address, port=port, auto=False)
+  endpoint = os.environ.get("FIFTYONE_PUBLIC_URL", "").strip()
+  if not endpoint:
+      endpoint = f"http://{address}:{port}"
+      print(
+          f"NPA_FIFTYONE_ENDPOINT_HINT run `sky status --endpoint {port} <cluster>` "
+          "to resolve the public URL",
+          flush=True,
+      )
+  print(f"NPA_FIFTYONE_APP_READY {endpoint}", flush=True)
+  try:
+      while not stop:
+          time.sleep(1)
+  finally:
+      session.close()
+  PY

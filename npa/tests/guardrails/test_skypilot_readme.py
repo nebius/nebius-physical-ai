@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SKYPILOT_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+SKYPILOT_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 README = SKYPILOT_DIR / "README.md"
 
 

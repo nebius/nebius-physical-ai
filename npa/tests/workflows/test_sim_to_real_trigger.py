@@ -19,7 +19,7 @@ from npa.workflows.sim_to_real_trigger import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-TRIGGER_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-trigger.yaml"
+TRIGGER_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-trigger.yaml"
 
 
 class MissingObject(Exception):

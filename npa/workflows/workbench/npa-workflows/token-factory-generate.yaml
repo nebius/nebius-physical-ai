@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: token-factory-generate
   description: Generate text completions with Nebius Token Factory (zero-GPU).
-  skypilotTwin: npa/workflows/workbench/skypilot/token-factory-generate.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/token-factory-generate.yaml
 
 config:
   bucket: example-bucket

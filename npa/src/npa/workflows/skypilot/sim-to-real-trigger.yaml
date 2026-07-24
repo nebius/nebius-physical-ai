@@ -1,0 +1,57 @@
+# Standalone S3-compatible retrigger for the sim-to-real pipeline.
+# Credentials are supplied at launch through environment/secret injection; do
+# not write access keys or tokens into this file.
+name: sim-to-real-retrigger
+resources:
+  cloud: kubernetes
+  cpus: 2+
+  memory: 8+
+envs:
+  NPA_TRIGGER_S3_ENDPOINT: "https://s3.example.invalid"
+  NPA_TRIGGER_S3_BUCKET: "example-bucket"
+  NPA_TRIGGER_S3_PREFIX: "datasets/lerobot-pusht/"
+  NPA_TRIGGER_WATERMARK_URI: "s3://example-bucket/datasets/lerobot-pusht/.npa/sim-to-real-retrigger-watermark.json"
+  NPA_TRIGGER_POLL_INTERVAL: "60"
+  NPA_TRIGGER_MAX_POLLS: "0"
+  NPA_TRIGGER_MAX_LAUNCHES: "0"
+  NPA_TRIGGER_PIPELINE_YAML: "npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml"
+  NPA_TRIGGER_PIPELINE_BUCKET: "example-bucket"
+  NPA_TRIGGER_PIPELINE_S3_PREFIX: "sim-to-real/{run_id}"
+  NPA_TRIGGER_PIPELINE_INPUT_DATA_URI: "s3://example-bucket/datasets/lerobot-pusht/"
+  NPA_TRIGGER_PIPELINE_RENDER_ONLY: "false"
+  NPA_TRIGGER_TASK_CLOUD: "kubernetes"
+  NPA_TRIGGER_CONTROLLER_BACKEND: "kubernetes"
+  NPA_TRIGGER_SUBMIT_TIMEOUT: "1800"
+  NPA_GPU_TYPE: "H100:1"
+  NPA_GPU_FAILOVER: "H200:1,L40S:1"
+setup: |
+  set -e
+  if [ -d ./npa ]; then
+    python3 -m venv ./npa/.venv
+    ./npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
+    ./npa/.venv/bin/python -m pip install -e ./npa
+  else
+    echo "Expected SkyPilot workdir to contain ./npa" >&2
+    exit 2
+  fi
+run: |
+  set -euo pipefail
+
+  ./npa/.venv/bin/python -m npa.workflows.sim_to_real_trigger watch \
+    --s3-endpoint "${NPA_TRIGGER_S3_ENDPOINT}" \
+    --s3-bucket "${NPA_TRIGGER_S3_BUCKET}" \
+    --s3-prefix "${NPA_TRIGGER_S3_PREFIX}" \
+    --watermark-uri "${NPA_TRIGGER_WATERMARK_URI}" \
+    --pipeline-yaml "${NPA_TRIGGER_PIPELINE_YAML}" \
+    --pipeline-bucket "${NPA_TRIGGER_PIPELINE_BUCKET}" \
+    --pipeline-s3-prefix "${NPA_TRIGGER_PIPELINE_S3_PREFIX}" \
+    --pipeline-input-data-uri "${NPA_TRIGGER_PIPELINE_INPUT_DATA_URI}" \
+    --task-cloud "${NPA_TRIGGER_TASK_CLOUD}" \
+    --controller-backend "${NPA_TRIGGER_CONTROLLER_BACKEND}" \
+    --gpu "${NPA_GPU_TYPE}" \
+    --gpu-failover "${NPA_GPU_FAILOVER}" \
+    --submit-timeout "${NPA_TRIGGER_SUBMIT_TIMEOUT}" \
+    --poll-interval "${NPA_TRIGGER_POLL_INTERVAL}" \
+    --max-polls "${NPA_TRIGGER_MAX_POLLS}" \
+    --max-launches "${NPA_TRIGGER_MAX_LAUNCHES}" \
+    $(if [ "${NPA_TRIGGER_PIPELINE_RENDER_ONLY}" = "true" ]; then printf '%s' "--pipeline-render-only"; fi)

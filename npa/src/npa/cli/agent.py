@@ -202,7 +202,71 @@ def _embedded_agent_chat_source() -> str:
     return raw
 
 
+def _embedded_agent_actions_source() -> str:
+    """Return agent_actions.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_actions.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_recordings_source() -> str:
+    """Return agent_recordings.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_recordings.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_sim2real_loop_source() -> str:
+    """Return agent_sim2real_loop.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_sim2real_loop.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_semantic_router_source() -> str:
+    """Return agent_semantic_router.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_semantic_router.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _shipped_agent_backend_module_source(name: str) -> str:
+    """Return the FULL source of a shipped agent_backend module.
+
+    Unlike the embed readers, shipped modules are uploaded to the VM as their own
+    importable files (Phase G), so the source is returned verbatim — docstring and
+    ``from __future__`` line intact — not inlined into the backend f-string.
+    """
+    path = Path(__file__).resolve().parents[1] / "agent_backend" / f"{name}.py"
+    return path.read_text(encoding="utf-8")
+
+
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
+_AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
+_AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
+_AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
+_AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
+# Phase G: shipped (uploaded + imported) rather than embedded.
+_AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
+# Blueprint Phases H/I: also shipped as importable files.
+_AGENT_RETRIEVAL_SHIP = "__NPA_AGENT_RETRIEVAL_SHIP__"
+_AGENT_TRACE_SHIP = "__NPA_AGENT_TRACE_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1436,6 +1500,13 @@ def _create_agent_source_archive() -> str:
     with tarfile.open(tmp.name, "w:gz") as archive:
         archive.add(repo_root / "npa", arcname="npa", filter=_filter)
         archive.add(repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter)
+        # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
+        # corpus (Blueprint Phase H) can ground on them at
+        # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.
+        for extra in ("docs", "skills"):
+            extra_path = repo_root / extra
+            if extra_path.exists():
+                archive.add(extra_path, arcname=extra, filter=_filter)
     return tmp.name
 
 
@@ -1758,6 +1829,13 @@ def _bootstrap_agent_stack(
     )
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
+    agent_actions_source = _embedded_agent_actions_source()
+    agent_recordings_source = _embedded_agent_recordings_source()
+    agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
+    agent_semantic_router_source = _embedded_agent_semantic_router_source()
+    agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
+    agent_retrieval_ship_source = _shipped_agent_backend_module_source("retrieval")
+    agent_trace_ship_source = _shipped_agent_backend_module_source("trace")
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -1836,6 +1914,17 @@ cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
 NPA_AGENT_PUBLIC_URL=https://{host}
 NPA_AGENT_PUBLIC_HOST={host}
 ENV
+sudo mkdir -p /opt/npa-agent/agent_backend
+printf '' | sudo tee /opt/npa-agent/agent_backend/__init__.py >/dev/null
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
+{_AGENT_MEMORY_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
+{_AGENT_RETRIEVAL_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/trace.py >/dev/null
+{_AGENT_TRACE_SHIP}
+PY
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
 import os
@@ -3201,18 +3290,38 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     if not isinstance(latest, dict):
         latest = {{}}
     run_id = str(current.get("run_id") or latest.get("run_id") or "").strip()
-    if not run_id.startswith("sim2real-"):
+    if not run_id or run_id == "franka-demo":
         return None
-    candidates = [RECORDINGS_DIR / f"{{run_id}}.rrd", RECORDING_PATH, RRD_PATH]
-    source = next((item for item in candidates if item.is_file() and item.stat().st_size > 65536), None)
+    # Reattach the run's OWN recording by content (run-specific entities), not by
+    # a fragile size threshold — the stock demo is ~68KB and would pass a size
+    # check. Recognize any run id (agent-run-*, sim2real-*, …) and fall back to
+    # the run's local reports/ recording when the run-scoped copy is missing.
+    def _has_run_entities(item):
+        try:
+            return item.is_file() and recording_has_run_entities(item.read_bytes())
+        except Exception:
+            return False
+
+    run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
+    candidates = [
+        run_rec,
+        Path("/opt/npa-agent/runs") / run_id / "reports" / "sim2real.rrd",
+    ]
+    source = next((item for item in candidates if _has_run_entities(item)), None)
     if source is None:
         return None
-    if source != RECORDING_PATH:
-        _publish_rrd_recording(source)
-    if source != RRD_PATH and RECORDING_PATH.is_file():
+    # Ensure a run-scoped copy exists, then publish it as the active recording.
+    if source != run_rec:
+        try:
+            RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, run_rec)
+        except Exception:
+            pass
+    _publish_rrd_recording(run_rec if run_rec.is_file() else source)
+    if RECORDING_PATH.is_file():
         RRD_PATH.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(RECORDING_PATH, RRD_PATH)
-    _restart_rerun_serve(force=False)
+    _restart_rerun_serve(force=True)
     selection = _stock_franka_selection()
     state["selection"] = selection
     cam = (camera or "workspace").strip() or "workspace"
@@ -3611,6 +3720,24 @@ def _chat_with_resilience(
 {_AGENT_PROVENANCE_EMBED}
 
 {_AGENT_CHAT_EMBED}
+
+{_AGENT_ACTIONS_EMBED}
+
+{_AGENT_RECORDINGS_EMBED}
+
+{_AGENT_SIM2REAL_LOOP_EMBED}
+
+{_AGENT_SEMANTIC_ROUTER_EMBED}
+
+# Phase G: run memory is a SHIPPED module (uploaded to /opt/npa-agent/agent_backend
+# and imported here) rather than string-substituted into this f-string.
+import sys as _npa_sys
+if "/opt/npa-agent" not in _npa_sys.path:
+    _npa_sys.path.insert(0, "/opt/npa-agent")
+from agent_backend.memory import RunMemory, JsonFileStore
+# Blueprint Phases H/I: retrieval + observability are also shipped modules.
+from agent_backend import retrieval as _retrieval
+from agent_backend import trace as _agent_tracing
 
 {_AGENT_WORKFLOW_EMBED}
 
@@ -4133,14 +4260,36 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
             details["result"] = "completed_missing_report"
             _append_run_log(details, "Runner completed but report file was not found.", level="warn")
         if rrd_path.is_file():
-            _publish_rrd_recording(rrd_path)
+            # Save a run-scoped copy so the run's recording is stable and cannot
+            # be clobbered by a later franka-demo load / bootstrap.
+            run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
             try:
-                shutil.copy2(rrd_path, RRD_PATH)
+                RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(rrd_path, run_rec)
             except Exception:
                 pass
-            _restart_rerun_serve(force=True)
-            _wait_rerun_web_viewer_healthy()
-            _append_run_log(details, f"Published Rerun recording: {{rrd_path}}")
+            # Only serve/claim the recording as run data when it actually holds
+            # run-specific entities — never let the stock franka demo masquerade.
+            try:
+                _run_specific = recording_has_run_entities(rrd_path.read_bytes())
+            except Exception:
+                _run_specific = False
+            if _run_specific:
+                _publish_rrd_recording(rrd_path)
+                try:
+                    shutil.copy2(rrd_path, RRD_PATH)
+                except Exception:
+                    pass
+                _restart_rerun_serve(force=True)
+                _wait_rerun_web_viewer_healthy()
+                _append_run_log(details, f"Published run-specific Rerun recording: {{run_rec}}")
+            else:
+                _append_run_log(
+                    details,
+                    "Run .rrd has no run-specific entities; not marking Rerun ready "
+                    "(refusing to serve the stock demo as run data).",
+                    level="warn",
+                )
         uploaded = []
         try:
             uploaded = _upload_output_tree()
@@ -4159,19 +4308,31 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
     if rrd_path.is_file():
+        try:
+            _run_specific = recording_has_run_entities(rrd_path.read_bytes())
+        except Exception:
+            _run_specific = False
+        run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
+        recording_uri = f"file://{{run_rec}}" if run_rec.is_file() else ""
+        # rerun_ready / rrd_uri only when the recording is genuinely run-specific.
         sim_viz.update(
             {{
                 "run_id": run_id,
                 "stage": "completed",
-                "rrd_uri": f"file://{{RECORDING_PATH}}",
+                "rrd_uri": recording_uri if _run_specific else "",
+                "recording_uri": recording_uri,
                 "rrd_updated_at": _now_iso(),
-                "rerun_ready": RECORDING_PATH.is_file() and _rerun_web_viewer_healthy(),
-                "rerun_iframe_url": _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")),
+                "rerun_ready": bool(_run_specific and RECORDING_PATH.is_file() and _rerun_web_viewer_healthy()),
+                "rerun_iframe_url": (
+                    _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")) if _run_specific else ""
+                ),
                 "camera": str(sim_viz.get("camera") or "workspace"),
             }}
         )
     else:
-        sim_viz.update({{"run_id": run_id, "stage": "completed", "rrd_updated_at": _now_iso()}})
+        sim_viz.update(
+            {{"run_id": run_id, "stage": "completed", "rrd_updated_at": _now_iso(), "rerun_ready": False}}
+        )
     state["sim_viz"] = sim_viz
     _record_sim_viz_run(state, sim_viz)
     _save_state(state)
@@ -4859,6 +5020,29 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
             payload["workflow_draft"] = draft
     return payload
 
+# In-process cache for the semantic intent fallthrough so repeated paraphrases
+# short-circuit to 0 tokens after the first classification.
+_SEMANTIC_INTENT_CACHE = {{}}
+
+def _semantic_route(user_text: str) -> dict:
+    known = frozenset(INTENT_APIS.keys())
+
+    def _model_call(messages, tier="cheap"):
+        data, _provider, _model = _chat_with_resilience(
+            messages=messages, tier=tier, interactive=True
+        )
+        return data
+
+    try:
+        return classify_intent_semantic(
+            user_text,
+            known_intents=known,
+            model_call=_model_call,
+            cache=_SEMANTIC_INTENT_CACHE,
+        )
+    except Exception:
+        return {{"intent": None, "mode": "none", "confidence": 0.0, "tokens": 0, "source": "none"}}
+
 @app.post("/chat")
 def chat(payload: dict):
     raw_messages = payload.get("messages", [])
@@ -5038,6 +5222,100 @@ def chat(payload: dict):
     live_ctx = format_live_context_block(_load_state())
     last_user = text_from_messages(llm_messages)
     intent = match_chat_intent(last_user) if not visual_turn else None
+    # Semantic fallthrough (Phase D): only when the deterministic regex router
+    # missed. Keyword/cache hits cost 0 tokens; a genuine miss spends one cheap
+    # structured call. A mapped intent produces a side-effect-free grounded reply.
+    semantic_tokens = 0
+    if intent is None and not visual_turn:
+        semantic = _semantic_route(last_user)
+        semantic_tokens = int(semantic.get("tokens") or 0)
+        sem_mode = str(semantic.get("mode") or "none")
+        mapped = str(semantic.get("intent") or "") if sem_mode == "intent" else ""
+        sem_reply = ""
+        if mapped:
+            sem_reply = build_grounded_reply(mapped, _load_state(), TOOL_REFS)
+        elif sem_mode == "action":
+            # The turn needs a multi-step tool loop; point at the confirmation-gated
+            # action endpoint instead of auto-spending GPU from a chat turn.
+            sem_reply = (
+                "**This looks like a multi-step task.** I can run it as a bounded, "
+                "confirmation-gated tool loop.\\n"
+                "- Use `POST /api/agent/act` with a JSON body carrying your goal.\\n"
+                "- Read-only tools run automatically; GPU/state-changing tools return a "
+                "confirmation token you re-send to execute.\\n"
+                "- The full step trace (`steps`, `tools_used`) comes back in the response."
+            )
+        if sem_reply:
+            grounded_zero = semantic_tokens == 0
+            history = [*merged_history, {{"role": "assistant", "content": sem_reply}}][-80:]
+            session.update(
+                {{
+                    "id": session_id,
+                    "title": str(session.get("title") or _chat_session_title(history)),
+                    "chat_history": history,
+                }}
+            )
+            state = _load_state()
+            session = _save_chat_session(state, session, active=True)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "model": model,
+                "reply": sem_reply,
+                "reasoning": None,
+                "grounded": grounded_zero,
+                "tier": "semantic-" + str(semantic.get("source") or sem_mode),
+                "usage": {{"total_tokens": semantic_tokens}},
+                "semantic_intent": mapped,
+                "semantic_mode": sem_mode,
+                "apis_used": [],
+                "apis_suggested": apis_for_intent(mapped) if mapped else [],
+                "session_id": session["id"],
+                "session": {{
+                    "id": session["id"],
+                    "title": session["title"],
+                    "memory_uri": session.get("memory_uri", ""),
+                    "message_count": len(session.get("chat_history", [])),
+                }},
+            }}
+    # Retrieval grounded-first fallthrough (Blueprint Phase H): after the regex
+    # AND semantic routers miss, answer from the indexed docs/skills corpus with
+    # cited, extractive grounding (0 generation tokens). Only fires when a corpus
+    # is indexed and the top match clears the confidence floor; otherwise /chat is
+    # byte-for-byte unchanged.
+    if intent is None and not visual_turn:
+        retrieved = _maybe_retrieval_grounded(last_user)
+        if retrieved is not None:
+            reply = str(retrieved.get("answer") or "").strip()
+            history = [*merged_history, {{"role": "assistant", "content": reply}}][-80:]
+            session.update(
+                {{
+                    "id": session_id,
+                    "title": str(session.get("title") or _chat_session_title(history)),
+                    "chat_history": history,
+                }}
+            )
+            state = _load_state()
+            session = _save_chat_session(state, session, active=True)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "model": model,
+                "reply": reply,
+                "reasoning": None,
+                "grounded": True,
+                "tier": "retrieval-grounded",
+                "usage": {{"total_tokens": 0}},
+                "citations": retrieved.get("citations") or [],
+                "apis_used": ["agent/retrieval/search"],
+                "session_id": session["id"],
+                "session": {{
+                    "id": session["id"],
+                    "title": session["title"],
+                    "memory_uri": session.get("memory_uri", ""),
+                    "message_count": len(session.get("chat_history", [])),
+                }},
+            }}
     # Cost-tier routing: vision when an image is attached; otherwise escalate
     # Describe-this metadata-only turns to reasoning (not cheap caption fluff).
     tier = classify_tier(last_user, intent=intent, messages=llm_messages)
@@ -5110,6 +5388,12 @@ def chat(payload: dict):
         interactive=True,
     )
     turn_usage = usage_summary(data)
+    # Include any tokens spent on the semantic classifier so cost telemetry is
+    # not under-reported when the fallthrough consulted the model then fell back.
+    if semantic_tokens:
+        turn_usage = dict(turn_usage)
+        turn_usage["total_tokens"] = int(turn_usage.get("total_tokens", 0)) + semantic_tokens
+        turn_usage["semantic_tokens"] = semantic_tokens
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
@@ -5150,6 +5434,632 @@ def chat(payload: dict):
         }},
         "skills_used": skill_names,
     }}
+
+def _consume_agent_confirm_token():
+    # Single-use consume: return the pending (token, digest, pending_action) and
+    # clear the gate in state before any side effect so a replayed request cannot
+    # re-authorize. Only call this when the request actually presents a
+    # confirm_token, so an unrelated turn never burns a pending gate.
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        return "", "", None
+    token = str(act_state.get("confirm_token") or "")
+    digest = str(act_state.get("confirm_digest") or "")
+    pending = act_state.get("pending_action")
+    pending = pending if isinstance(pending, dict) else None
+    if token:
+        act_state["confirm_token"] = ""
+        act_state["confirm_digest"] = ""
+        act_state["pending_action"] = None
+        state["agent_act"] = act_state
+        _save_state(state)
+    return token, digest, pending
+
+def _issue_agent_confirm_token(action, digest):
+    # Issue a fresh token bound to a specific proposed action digest.
+    token = secrets.token_hex(8)
+    state = _load_state()
+    act_state = state.get("agent_act")
+    if not isinstance(act_state, dict):
+        act_state = {{}}
+    act_state["confirm_token"] = token
+    act_state["confirm_digest"] = str(digest or "")
+    act_state["pending_action"] = action if isinstance(action, dict) else {{}}
+    state["agent_act"] = act_state
+    _save_state(state)
+    return token
+
+def _act_response_to_dict(result) -> dict:
+    # Route handlers may return either a plain dict or a JSONResponse; the action
+    # loop needs a JSON-serializable observation either way.
+    if isinstance(result, JSONResponse):
+        try:
+            return json.loads(result.body.decode("utf-8"))
+        except Exception as exc:
+            return {{"error": f"could not decode response: {{exc}}"}}
+    if isinstance(result, dict):
+        return result
+    return {{"value": str(result)}}
+
+def _agent_act_tools():
+    def _tool_health(args):
+        return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
+
+    def _tool_sim_viz_status(args):
+        return _act_response_to_dict(sim_viz_status())
+
+    def _tool_sim2real_status(args):
+        return _act_response_to_dict(sim2real_status(run_id=str(args.get("run_id") or "")))
+
+    def _tool_artifacts_runs(args):
+        limit = args.get("limit")
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 10
+        return _act_response_to_dict(artifacts_runs(prefix=str(args.get("prefix") or ""), limit=limit))
+
+    def _tool_artifacts_run(args):
+        run_id = str(args.get("run_id") or "").strip()
+        if not run_id:
+            return {{"error": "run_id is required"}}
+        return _act_response_to_dict(artifacts_for_run(run_id))
+
+    def _tool_validate(args):
+        # Read-only: use the pure validator/planner so the loop never mutates the
+        # persisted workflow draft as a side effect of "validating".
+        spec = str(args.get("spec_yaml") or args.get("yaml") or "")
+        if not spec.strip():
+            return {{"error": "spec_yaml is required"}}
+        validation = validate_workflow_yaml_text(spec, tool_refs=frozenset(TOOL_REFS))
+        plan = (
+            plan_workflow_yaml_text(spec, run_id="agent-act-validate", tool_refs=frozenset(TOOL_REFS))
+            if validation.get("ok")
+            else {{"ok": False}}
+        )
+        return {{
+            "ok": bool(validation.get("ok")),
+            "validation": validation,
+            "runnable": bool(validation.get("ok") and plan.get("ok")),
+        }}
+
+    def _tool_plan(args):
+        spec = str(args.get("spec_yaml") or args.get("yaml") or "")
+        if not spec.strip():
+            return {{"error": "spec_yaml is required"}}
+        plan = plan_workflow_yaml_text(
+            spec, run_id=str(args.get("run_id") or "agent-act"), tool_refs=frozenset(TOOL_REFS)
+        )
+        return {{"ok": bool(plan.get("ok")), "plan": plan}}
+
+    def _tool_submit(args):
+        return _act_response_to_dict(submit_sim2real({{"run_id": str(args.get("run_id") or "")}}))
+
+    def _tool_retrieval_search(args):
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return {{"error": "query is required"}}
+        try:
+            k = max(1, min(int(args.get("k") or RETRIEVAL_TOP_K), 20))
+        except (TypeError, ValueError):
+            k = RETRIEVAL_TOP_K
+        store = _agent_retrieval_store_for_query(query)
+        return _retrieval.retrieve(query, embed=_embed_texts, store=store, k=k)
+
+    return {{
+        "health": _tool_health,
+        "sim_viz_status": _tool_sim_viz_status,
+        "sim2real_status": _tool_sim2real_status,
+        "artifacts_runs": _tool_artifacts_runs,
+        "artifacts_run": _tool_artifacts_run,
+        "workflow_validate_spec": _tool_validate,
+        "workflow_plan_spec": _tool_plan,
+        "retrieval_search": _tool_retrieval_search,
+        "sim2real_submit": _tool_submit,
+    }}
+
+@app.post("/agent/act")
+def agent_act(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    raw_messages = body.get("messages", [])
+    goal = str(body.get("goal") or "").strip()
+    if not goal and isinstance(raw_messages, list):
+        goal = _last_user_message(raw_messages)
+    if not goal:
+        raise HTTPException(status_code=400, detail="goal or messages is required")
+    # Cap the goal so one oversized paste cannot blow the planner budget.
+    _budget_ok, goal = enforce_input_budget(goal)
+    confirm_token = str(body.get("confirm_token") or "").strip()
+    # Only consume (and clear) the pending gate when the operator actually
+    # presents a token — an unrelated turn must not burn a pending confirmation.
+    if confirm_token:
+        session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+    else:
+        session_token, confirm_digest = "", ""
+    try:
+        max_steps = int(body.get("max_steps"))
+    except (TypeError, ValueError):
+        max_steps = DEFAULT_MAX_STEPS
+    max_steps = max(1, min(max_steps, 12))
+
+    def _model_call(messages, tier="cheap"):
+        data, _provider, _model = _chat_with_resilience(
+            messages=messages, tier=tier, interactive=True
+        )
+        return data
+
+    tier = classify_tier(goal)
+    live_ctx = format_live_context_block(_load_state())
+    result = run_action_loop(
+        goal,
+        tools=_agent_act_tools(),
+        model_call=_model_call,
+        confirm_token=confirm_token,
+        session_token=session_token,
+        confirm_digest=confirm_digest,
+        tier=tier,
+        max_steps=max_steps,
+        live_context=live_ctx,
+    )
+    if result.get("needs_confirmation"):
+        proposed = result.get("proposed_action") if isinstance(result.get("proposed_action"), dict) else {{}}
+        digest = str(proposed.get("digest") or action_digest({{k: v for k, v in proposed.items() if k != "digest"}}))
+        result["confirm_token"] = _issue_agent_confirm_token(proposed, digest)
+    result["grounded"] = False
+    result["mode"] = "agent-act"
+    result["allowlist"] = allowlist_specs()
+    result["input_budget_ok"] = _budget_ok
+    # Phase I: record structured spans for the offline analyzer / injected tracer.
+    _record_agent_trace(result)
+    return result
+
+def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
+    # Read gate metrics only from real run artifacts; never fabricate a score.
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return {{}}
+    # Real runner writes /opt/npa-agent/runs/<run_id>/reports/sim2real-report.json
+    # with an outer_loop.latest_decision / latest_heldout_report schema.
+    report_path = Path("/opt/npa-agent/runs") / run_id / "reports" / "sim2real-report.json"
+    try:
+        report = json.loads(report_path.read_text())
+    except Exception:
+        report = {{}}
+    if not isinstance(report, dict):
+        return {{}}
+    outer_loop = report.get("outer_loop") if isinstance(report.get("outer_loop"), dict) else {{}}
+    decision = outer_loop.get("latest_decision") if isinstance(outer_loop.get("latest_decision"), dict) else {{}}
+    heldout = (
+        outer_loop.get("latest_heldout_report")
+        if isinstance(outer_loop.get("latest_heldout_report"), dict)
+        else {{}}
+    )
+    success_rate = (
+        decision.get("success_rate")
+        if decision.get("success_rate") is not None
+        else heldout.get("success_rate")
+    )
+    threshold = decision.get("threshold")
+    metrics = {{}}
+    if success_rate is not None:
+        metrics["success_rate"] = success_rate
+    if threshold is not None:
+        metrics["threshold"] = threshold
+    if decision.get("decision"):
+        metrics["decision"] = decision.get("decision")
+    return metrics
+
+@app.post("/agent/sim2real/drive")
+def agent_sim2real_drive(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    config = body.get("config") if isinstance(body.get("config"), dict) else {{}}
+    goal = str(body.get("goal") or "drive the sim2real outer loop").strip()
+    state = _load_state()
+    confirm_token = str(body.get("confirm_token") or "").strip()
+    # Only consume the pending gate when a token is actually presented (so an
+    # unrelated drive request cannot burn it).
+    if confirm_token:
+        session_token, confirm_digest, pending = _consume_agent_confirm_token()
+    else:
+        session_token, confirm_digest, pending = "", "", None
+    default_run = ""
+    sim_viz = state.get("sim_viz", {{}})
+    if isinstance(sim_viz, dict):
+        default_run = str(sim_viz.get("run_id") or "").strip()
+    pending_cfg = pending.get("config") if isinstance(pending, dict) else None
+    # On a confirming turn, reuse the exact proposed config so the confirmation
+    # digest is stable; otherwise build fresh, minting a run_id at most once.
+    cfg = resolve_drive_config(
+        config,
+        pending_config=pending_cfg,
+        has_confirm_token=bool(confirm_token),
+        active_run_id=default_run,
+        run_id_factory=lambda: f"agent-drive-{{secrets.token_hex(4)}}",
+    )
+    try:
+        max_iterations = int(body.get("max_iterations") or cfg.get("max_iterations") or 3)
+    except (TypeError, ValueError):
+        max_iterations = 3
+    max_iterations = max(1, min(max_iterations, 5))
+
+    def _launch(loop_cfg):
+        return _act_response_to_dict(
+            submit_sim2real({{"run_id": str(loop_cfg.get("run_id") or "")}})
+        )
+
+    def _status(run_id):
+        return _act_response_to_dict(sim2real_status(run_id=str(run_id or "")))
+
+    def _diagnose(gate_result, run_status):
+        # Quantitative viewer eval (Phase F Gap 4) feeds the diagnosis.
+        signals = extract_quantitative_signals(gate_result if isinstance(gate_result, dict) else {{}})
+        if not signals.get("has_signal"):
+            mode = "insufficient_signal"
+        elif signals.get("policy_collapse") or signals.get("degenerate"):
+            mode = "policy_collapse"
+        else:
+            mode = "low_success"
+        return {{"failure_mode": mode, "signals": signals, "notes": "; ".join(signals.get("notes", []))}}
+
+    # Honor the operator-configured threshold when the run report omits one.
+    _gate = gate_with_config_threshold(_sim2real_gate_metrics, cfg.get("threshold"))
+    result = drive_sim2real_loop(
+        goal,
+        config=cfg,
+        launch=_launch,
+        status=_status,
+        gate=_gate,
+        diagnose=_diagnose,
+        confirm_token=confirm_token,
+        session_token=session_token,
+        confirm_digest=confirm_digest,
+        max_iterations=max_iterations,
+        confirmation_ok=confirmation_ok,
+    )
+    if result.get("needs_confirmation"):
+        proposed = result.get("proposed_action") if isinstance(result.get("proposed_action"), dict) else {{}}
+        digest = str(proposed.get("digest") or "")
+        result["confirm_token"] = _issue_agent_confirm_token(proposed, digest)
+    result["grounded"] = False
+    result["mode"] = "sim2real-drive"
+    result["apis_used"] = ["workflows/sim2real/submit", "workflows/sim2real/status"]
+    # Persist the drive outcome to cross-run memory (Phase F Gap 5) so later
+    # sessions can compare/explain regressions from stored metadata.
+    if not result.get("needs_confirmation") and result.get("final_run_id"):
+        try:
+            last_gate = {{}}
+            iters = result.get("iterations") or []
+            if iters and isinstance(iters[-1], dict):
+                last_gate = iters[-1].get("gate") or {{}}
+            _agent_run_memory().record_run(
+                result["final_run_id"],
+                {{
+                    "decision": result.get("decision"),
+                    "stopped_reason": result.get("stopped_reason"),
+                    "iterations": len(iters),
+                    "success_rate": last_gate.get("success_rate"),
+                    "threshold": last_gate.get("threshold"),
+                    "recorded_at": _now_iso(),
+                }},
+                source="drive",
+            )
+        except Exception:
+            pass
+    # Phase I: record structured spans for the offline analyzer / injected tracer.
+    _record_agent_trace(result)
+    return result
+
+def _agent_run_memory():
+    return RunMemory(
+        JsonFileStore("/opt/npa-agent/memory"),
+        comparator=compare_rollouts,
+    )
+
+@app.post("/agent/memory/record")
+def agent_memory_record(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    run_id = str(body.get("run_id") or "").strip()
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {{}}
+    record = _agent_run_memory().record_run(run_id, metadata)
+    return {{"ok": True, "record": record}}
+
+@app.get("/agent/memory/runs")
+def agent_memory_runs(limit: int = 20):
+    return {{"ok": True, "runs": _agent_run_memory().list_runs(limit=limit)}}
+
+@app.get("/agent/memory/run/{{run_id:path}}")
+def agent_memory_run(run_id: str):
+    record = _agent_run_memory().get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="run not found in memory")
+    return {{"ok": True, "record": record}}
+
+@app.get("/agent/memory/compare")
+def agent_memory_compare(run_a: str, run_b: str):
+    return _agent_run_memory().compare_runs(run_a, run_b)
+
+# ── Blueprint Phase H: retrieval / grounding ─────────────────────────────────
+# LanceDB-backed vector store + Token Factory embeddings + provider-agnostic
+# web_search. Endpoints/keys come from env/config (never hardcoded).
+EMBED_MODEL_ENV = os.environ.get("NPA_AGENT_EMBED_MODEL", "").strip()
+EMBED_MODEL_FALLBACK = "BAAI/bge-en-icl"
+_EMBED_MODEL_CACHE = {{"model": "", "expires_at": 0.0}}
+
+def _resolve_embed_model():
+    # Explicit operator override wins; otherwise auto-discover an embedding model
+    # the key actually serves (so we never hardcode a model this key lacks).
+    if EMBED_MODEL_ENV:
+        return EMBED_MODEL_ENV
+    now = time.monotonic()
+    cache = _EMBED_MODEL_CACHE
+    if cache.get("model") and cache.get("expires_at", 0.0) > now:
+        return cache["model"]
+    model = EMBED_MODEL_FALLBACK
+    try:
+        for mid in _fetch_token_factory_models():
+            low = str(mid).lower()
+            if "embed" in low or "bge" in low or "e5-" in low or low.endswith("-e5"):
+                model = mid
+                break
+    except Exception:
+        pass
+    cache["model"] = model
+    cache["expires_at"] = now + 300.0
+    return model
+
+LANCEDB_URI = os.environ.get("NPA_AGENT_LANCEDB_URI", "").strip()
+LANCEDB_TABLE = os.environ.get("NPA_AGENT_LANCEDB_TABLE", "").strip() or "npa_corpus"
+SEARXNG_URL = os.environ.get("NPA_AGENT_SEARXNG_URL", "").strip().rstrip("/")
+RETRIEVAL_DIR = Path("/opt/npa-agent/retrieval")
+RETRIEVAL_TOP_K = _retrieval.DEFAULT_TOP_K
+RETRIEVAL_CHAT_MIN_SCORE = 0.35
+try:
+    RETRIEVAL_CHAT_MIN_SCORE = float(os.environ.get("NPA_AGENT_RETRIEVAL_CHAT_MIN_SCORE", "0.35"))
+except (TypeError, ValueError):
+    RETRIEVAL_CHAT_MIN_SCORE = 0.35
+
+def _embed_texts(texts):
+    items = [str(t) for t in (texts or [])]
+    if not items:
+        return []
+    api_key = _provider_api_key("token_factory")
+    if not api_key:
+        raise RuntimeError("missing Token Factory API key for embeddings")
+    base_url = _provider_base_url("token_factory")
+    if not base_url:
+        raise RuntimeError("missing Token Factory base URL for embeddings")
+    url = f"{{base_url}}/embeddings"
+    response = httpx.post(
+        url,
+        headers={{"Authorization": f"Bearer {{api_key}}", "Content-Type": "application/json"}},
+        json={{"model": _resolve_embed_model(), "input": items}},
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError("Token Factory embeddings response missing data")
+    ordered = sorted(rows, key=lambda r: r.get("index", 0) if isinstance(r, dict) else 0)
+    vectors = []
+    for row in ordered:
+        embedding = row.get("embedding") if isinstance(row, dict) else None
+        vectors.append([float(x) for x in (embedding or [])])
+    return vectors
+
+def _agent_web_search(query):
+    # Provider-agnostic live grounding: SearXNG self-hosted on AI Cloud (via npa)
+    # exposes an OpenSearch-style JSON API. A hosted search can be swapped in by
+    # matching this {{title, url, snippet}} shape — no Tavily dependency.
+    if not SEARXNG_URL:
+        return []
+    try:
+        response = httpx.get(
+            f"{{SEARXNG_URL}}/search",
+            params={{"q": str(query or ""), "format": "json"}},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return []
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(results, list):
+        return []
+    out = []
+    for item in results[:10]:
+        if not isinstance(item, dict):
+            continue
+        out.append({{
+            "title": item.get("title") or "",
+            "url": item.get("url") or "",
+            "snippet": item.get("content") or "",
+        }})
+    return out
+
+def _agent_retrieval_store(dim=None):
+    if LANCEDB_URI and dim:
+        try:
+            return _retrieval.build_lance_store(LANCEDB_URI, LANCEDB_TABLE, dim=int(dim))
+        except Exception:
+            pass
+    return _retrieval.JsonVectorStore(str(RETRIEVAL_DIR / "corpus.json"))
+
+def _agent_retrieval_store_for_query(query):
+    # Only probe the embedding dim (an extra embed call) when a Lance store is
+    # configured; the pure-python Json store needs no schema dim.
+    if not LANCEDB_URI:
+        return _agent_retrieval_store(dim=None)
+    try:
+        qvec = _embed_texts([str(query or "")])
+        dim = len(qvec[0]) if qvec and qvec[0] else None
+    except Exception:
+        dim = None
+    return _agent_retrieval_store(dim=dim)
+
+def _agent_retrieval_roots(body):
+    roots = body.get("roots") if isinstance(body, dict) else None
+    if isinstance(roots, list) and roots:
+        return [str(r) for r in roots if str(r).strip()]
+    return [
+        str(NPA_SOURCE_ROOT / "docs"),
+        str(NPA_SOURCE_ROOT / "skills"),
+        str(NPA_SOURCE_ROOT / "npa" / "docs"),
+        "/opt/npa-agent/repo/docs",
+        "/opt/npa-agent/repo/skills",
+    ]
+
+@app.post("/agent/retrieval/index")
+def agent_retrieval_index(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    roots = _agent_retrieval_roots(body)
+    documents = list(_retrieval.iter_corpus_documents(roots))
+    if not documents:
+        return {{"ok": False, "error": "no corpus documents found", "roots": roots}}
+    dim = None
+    try:
+        probe = _embed_texts([(documents[0][2][:200] or "probe")])
+        dim = len(probe[0]) if probe and probe[0] else None
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"embedding probe failed: {{exc}}")
+    store = _agent_retrieval_store(dim=dim)
+    try:
+        result = _retrieval.index_corpus(documents, embed=_embed_texts, store=store, source="repo")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"indexing failed: {{exc}}")
+    result["roots"] = roots
+    result["embed_model"] = _resolve_embed_model()
+    result["backend"] = "lancedb" if (LANCEDB_URI and dim) else "json"
+    return result
+
+@app.get("/agent/retrieval/search")
+def agent_retrieval_search(q: str = "", k: int = RETRIEVAL_TOP_K, web: bool = False):
+    query = str(q or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="q is required")
+    try:
+        kk = max(1, min(int(k), 20))
+    except (TypeError, ValueError):
+        kk = RETRIEVAL_TOP_K
+    store = _agent_retrieval_store_for_query(query)
+    result = _retrieval.retrieve(
+        query,
+        embed=_embed_texts,
+        store=store,
+        k=kk,
+        web_search=_agent_web_search if web else None,
+        index_web=bool(web),
+    )
+    result["answer"] = _retrieval.format_grounded_answer(query, result.get("citations") or [])
+    result["grounded"] = True
+    return result
+
+@app.get("/agent/retrieval/status")
+def agent_retrieval_status():
+    store = _agent_retrieval_store(dim=None)
+    return {{
+        "ok": True,
+        "chunks": store.count(),
+        "sources": store.sources(),
+        "embed_model": _resolve_embed_model(),
+        "backend": "lancedb" if LANCEDB_URI else "json",
+        "web_search": bool(SEARXNG_URL),
+    }}
+
+def _maybe_retrieval_grounded(query):
+    query = str(query or "").strip()
+    if not query:
+        return None
+    store = _agent_retrieval_store(dim=None)
+    # Only fire when a corpus is actually indexed; otherwise /chat is unchanged.
+    if store.count() <= 0:
+        return None
+    try:
+        result = _retrieval.retrieve(
+            query, embed=_embed_texts, store=store, k=RETRIEVAL_TOP_K,
+            min_score=RETRIEVAL_CHAT_MIN_SCORE,
+        )
+    except Exception:
+        return None
+    # Gating + formatting decision lives in the tested pure helper so this
+    # embedded glue is thin (build store -> count guard -> retrieve -> delegate).
+    return _retrieval.grounded_reply_from_result(
+        query, result, min_score=RETRIEVAL_CHAT_MIN_SCORE
+    )
+
+# ── Blueprint Phase I: observability ─────────────────────────────────────────
+# Structured spans via an injected tracer (Null by default; Langfuse/OTel when
+# configured) + a persisted ring buffer feeding the offline analyzer.
+TRACE_DIR = Path("/opt/npa-agent/trace")
+TRACE_MAX = 200
+
+def _agent_tracer():
+    lf_public = os.environ.get("NPA_AGENT_LANGFUSE_PUBLIC_KEY", "").strip()
+    lf_secret = os.environ.get("NPA_AGENT_LANGFUSE_SECRET_KEY", "").strip()
+    lf_host = os.environ.get("NPA_AGENT_LANGFUSE_HOST", "").strip()
+    if lf_public and lf_secret:
+        try:
+            return _agent_tracing.build_langfuse_tracer(
+                public_key=lf_public, secret_key=lf_secret, host=lf_host
+            )
+        except Exception:
+            pass
+    return _agent_tracing.NullTracer()
+
+def _spans_for_trace(trace):
+    if isinstance(trace, dict) and "steps" in trace:
+        return _agent_tracing.spans_from_action_loop(trace)
+    return _agent_tracing.spans_from_drive(trace)
+
+def _record_agent_trace(result):
+    if not isinstance(result, dict):
+        return
+    try:
+        TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        path = TRACE_DIR / "recent.json"
+        try:
+            existing = json.loads(path.read_text())
+            if not isinstance(existing, list):
+                existing = []
+        except Exception:
+            existing = []
+        existing.append(result)
+        existing = existing[-TRACE_MAX:]
+        path.write_text(json.dumps(existing))
+        _agent_tracing.record_spans(_agent_tracer(), _spans_for_trace(result))
+    except Exception:
+        pass
+
+def _recent_agent_traces():
+    try:
+        data = json.loads((TRACE_DIR / "recent.json").read_text())
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+@app.get("/agent/trace/spans")
+def agent_trace_spans(limit: int = 20):
+    try:
+        lim = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        lim = 20
+    spans = []
+    for trace in _recent_agent_traces()[-lim:]:
+        if not isinstance(trace, dict):
+            continue
+        spans.extend(s.to_dict() for s in _spans_for_trace(trace))
+    return {{"ok": True, "spans": spans, "count": len(spans)}}
+
+@app.post("/agent/trace/analyze")
+def agent_trace_analyze(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    traces = body.get("traces")
+    if not isinstance(traces, list) or not traces:
+        traces = _recent_agent_traces()
+    return _agent_tracing.analyze_traces(traces)
 
 @app.get("/health")
 def health():
@@ -5265,9 +6175,28 @@ def tool(tool_ref: str):
         return {{"ok": False, "error": "unknown toolRef", "tool_ref": tool_ref}}
     return {{"ok": True, "tool_ref": tool_ref, **payload}}
 
+def _served_recording_is_run_specific() -> bool:
+    try:
+        return RECORDING_PATH.is_file() and recording_has_run_entities(RECORDING_PATH.read_bytes())
+    except Exception:
+        return False
+
 @app.get("/sim-viz/status")
 def sim_viz_status(run_id: str = ""):
     state = _load_state()
+    # Self-heal: if the active run is a real run but the served recording is the
+    # stock demo (clobbered by a later franka load / bootstrap), reattach the
+    # run's own recording so we never serve/claim the demo as run data.
+    _sv = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
+    _active_run = str(_sv.get("run_id") or "").strip()
+    _target_run = str(run_id or "").strip() or _active_run
+    if _target_run and _target_run != "franka-demo" and not _served_recording_is_run_specific():
+        _cam = str(_sv.get("camera") or "workspace") or "workspace"
+        try:
+            if _wire_active_sim2real_recording(state, camera=_cam) is not None:
+                state = _load_state()
+        except Exception:
+            pass
     payload = _sim_viz_for_run(state, run_id=run_id)
     requested_run = str(run_id or "").strip()
     # Prefer the live sim_viz snapshot when it matches — history can lag behind
@@ -5302,6 +6231,12 @@ def sim_viz_status(run_id: str = ""):
     # Read-only: do not _record/_save here. Concurrent GET status polls were
     # racing load-run and wiping artifact_render from sim_viz_runs.
     payload_run = str(payload.get("run_id") or "").strip()
+    # Honest gate: a real run must not report rerun_ready / a run rrd_uri unless
+    # the served recording actually holds run-specific entities (never the demo).
+    if payload_run and payload_run != "franka-demo" and not _served_recording_is_run_specific():
+        payload["rerun_ready"] = False
+        payload["rrd_uri"] = ""
+        payload["recording_status"] = "run_recording_unavailable"
     run_has_specific_rrd = bool(str(payload.get("rrd_uri") or "").strip())
     live_url = str(payload.get("live_grpc_url") or "").strip()
     may_use_default_recording = payload_run in {"", "franka-demo"} and not requested_run
@@ -6612,6 +7547,13 @@ sudo systemctl restart npa-agent-backend
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
+        .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
+        .replace(_AGENT_RECORDINGS_EMBED, agent_recordings_source)
+        .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
+        .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
+        .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
+        .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)
+        .replace(_AGENT_TRACE_SHIP, agent_trace_ship_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)

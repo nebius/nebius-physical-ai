@@ -3,10 +3,10 @@
 **Declarative spec:** [bdd100k-pipeline.yaml](../../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
 (`npa.workflow/v0.0.1`) — readable stage graph with `toolRef`s. See
 [npa-workflow-guide.md](../npa-workflow-guide.md). **SkyPilot execution** (below)
-uses `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
+uses `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`.
 
 This cookbook describes the SkyPilot workflow at
-`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
+`npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`.
 
 > This pipeline reproduces LanceDB's autonomous-vehicle perception walkthrough on
 > Nebius Physical AI Workbench (adding a FiftyOne/Voxel51 review stage). See
@@ -147,7 +147,7 @@ submission time:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
+  --yaml npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --lancedb-endpoint http://<your-lancedb-endpoint>:8686 \
   --run-id <your-run-id>
@@ -188,7 +188,7 @@ summary in addition to stdout:
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
+  --yaml npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --mock-endpoints \
   --run-id demo-validate \
@@ -219,7 +219,7 @@ suite) run it under `script(1)`:
 script -q -e -c '
   npa/.venv/bin/python -m pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q
   npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
-    --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
+    --yaml npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml \
     --synthetic 5000 --mock-endpoints --run-id demo-recording
 ' /tmp/bdd100k-demo-recording.log
 ```
@@ -245,7 +245,7 @@ Full submission requires a working SkyPilot 0.12.2 binary:
 ```bash
 export NPA_SKYPILOT_BIN=/opt/npa/skypilot/bin/sky
 python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
+  --yaml npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --run-id bdd100k-pipeline-$(date -u +%Y%m%dT%H%M%SZ) \
   --cleanup

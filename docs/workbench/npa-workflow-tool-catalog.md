@@ -38,6 +38,15 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.rl.write_success_decision` | RL decision writer | eval report URI, `config.success_threshold` | training decision JSON | no |
 | `workbench.rl.publish_policy` | policy release writer | checkpoint + decision URIs | release manifest | no |
 | `workbench.rl.report_failure` | failure report writer | eval + decision URIs | failure report | no |
+| `workbench.scenario_gen.generate` | `npa workbench scenario-gen generate` | `config.policy_uri`, `config.base_config_uri` | `config.adversarial_set_uri` (adversarial set manifest) | no |
+| `workbench.scenario_gen.rank` | `npa workbench scenario-gen rank` | `config.adversarial_set_uri` | `config.ranked_set_uri` | no |
+| `workbench.scenario_gen.write_hardening_decision` | hardening decision writer | `config.failure_rate_threshold`, `config.decision_uri` | hardening decision JSON | no |
+| `workbench.dataset.ingest` | `npa workbench dataset ingest` | `config.raw_sensor_uri`, `config.dataset_id` | versioned dataset manifest (`npa.dataset.manifest.v1`) | no |
+| `workbench.dataset.validate` | `npa workbench dataset validate` | `config.manifest_uri` | `npa.dataset.validation_report.v1` | no |
+| `workbench.dataset.curate` | `npa workbench dataset curate` | `config.manifest_uri`, `config.event_of_interest` | curated dataset version manifest | no |
+| `workbench.dataset.query` | `npa workbench dataset query` | `config.curated_manifest_uri` | matching records (LanceDB-backed) | no |
+| `workbench.dataset.write_quality_decision` | dataset quality-gate decision writer | `config.quality_gate`, `config.decision_uri` | accept/reject decision JSON | no |
+| `workbench.dataset.report_rejection` | dataset rejection report writer | `config.validation_uri`, `config.decision_uri` | rejection report | no |
 | `workbench.lancedb.import_bdd100k` | `npa workbench lancedb import-bdd100k --service` | `config.source_uri`, `config.lance_uri` | LanceDB table | no |
 | `workbench.lancedb.backfill_cpu_bundle` | five CPU UDF backfills | `config.lance_table`, `config.lance_uri` | enriched table | no |
 | `workbench.lancedb.backfill_clip` | CLIP embedding UDF | `config.lance_uri` | `clip_embedding` column | no |

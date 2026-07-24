@@ -11,10 +11,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 SINGLE_YAML = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-train.yaml"
 )
 SWEEP_YAML = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-sweep.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-sweep.yaml"
 )
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_isaac_lab_rl.py"
 
@@ -55,10 +55,10 @@ def test_isaac_lab_yaml_files_have_no_literal_aws_endpoint_placeholders() -> Non
     yaml_paths = [
         SINGLE_YAML,
         SWEEP_YAML,
-        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro.yaml",
-        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro-smoke.yaml",
-        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "byof-datagen-rtxpro-smoke.yaml",
-        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "byof-container-smoke-rtxpro.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-train-rtxpro.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-train-rtxpro-smoke.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "byof-datagen-rtxpro-smoke.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "byof-container-smoke-rtxpro.yaml",
     ]
     for path in yaml_paths:
         text = path.read_text(encoding="utf-8")
