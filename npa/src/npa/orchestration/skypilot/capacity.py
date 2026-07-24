@@ -4,8 +4,14 @@ A ``sky launch`` (or ``sky jobs launch``) that fails because the requested GPU
 tier has no free capacity ("NER" -- not-enough-resources) should be retried on
 the next GPU tier, whereas a configuration or code failure should fail fast so
 it is not masked by cycling through every accelerator. This module centralizes
-the text signatures that mark a capacity shortfall so the GPU-chain launch
-helpers (and live GPU tests) can make that distinction consistently.
+the text signatures that mark a capacity shortfall.
+
+Current consumers are the raw-SkyPilot live GPU tests (e.g.
+``test_cosmos3_inference_raw_sky_e2e``, ``test_sim_to_real_raw_sky_e2e``,
+``test_sonic_export_eval_e2e``), which walk a GPU candidate list and skip on
+capacity. Production launch helpers do not yet retry on this signal; any that
+add capacity-aware GPU-tier cycling should classify failures through here rather
+than re-deriving the pattern list.
 """
 
 from __future__ import annotations
