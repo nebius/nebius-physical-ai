@@ -485,6 +485,78 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             ),
         ],
     ),
+    "workbench.insights.record": ToolEntry(
+        name="workbench.insights.record",
+        description=(
+            "Record metric emissions + lineage edges (from an upstream metrics "
+            "JSON) into the append-only insights store keyed by run id."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "record",
+            "--input-path",
+            "{{config.metrics_input_uri}}",
+            "--output-path",
+            "{{config.insights_store_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.insights.ingest_run": ToolEntry(
+        name="workbench.insights.ingest_run",
+        description=(
+            "Non-invasively scan an S3 run prefix for known tool manifests/reports "
+            "and extract their metrics + provenance into the insights store."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "ingest-run",
+            "--input-path",
+            "{{config.run_prefix_uri}}",
+            "--output-path",
+            "{{config.insights_store_uri}}",
+            "--workflow",
+            "{{config.workflow_name}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.insights.compare": ToolEntry(
+        name="workbench.insights.compare",
+        description="Compare a metric set between two runs; flag regressed/improved.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "compare",
+            "--input-path",
+            "{{config.insights_store_uri}}",
+            "--base-run",
+            "{{config.base_run}}",
+            "--candidate-run",
+            "{{config.candidate_run}}",
+            "--output-path",
+            "{{config.comparison_uri}}",
+        ],
+    ),
+    "workbench.insights.dashboard": ToolEntry(
+        name="workbench.insights.dashboard",
+        description="Emit a dashboard rollup JSON + self-contained static HTML report.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "dashboard",
+            "--input-path",
+            "{{config.insights_store_uri}}",
+            "--output-path",
+            "{{config.dashboard_uri}}",
+        ],
+    ),
     "workbench.lancedb.import_bdd100k": ToolEntry(
         name="workbench.lancedb.import_bdd100k",
         description="Import BDD100K rows into LanceDB through the workbench service.",
