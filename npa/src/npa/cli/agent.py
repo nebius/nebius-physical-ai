@@ -49,6 +49,7 @@ app = typer.Typer(
 DEFAULT_AGENT_PORT = 8088
 DEFAULT_BACKEND_PORT = 8787
 DEFAULT_RERUN_PORT = 9090
+DEFAULT_LICHTBLICK_PORT = 8081
 DEFAULT_PROJECT_ALIAS = "us-central1"
 DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
@@ -1685,6 +1686,7 @@ def _nginx_agent_site_body(
     *,
     backend_port: int,
     rerun_port: int,
+    lichtblick_port: int = DEFAULT_LICHTBLICK_PORT,
 ) -> str:
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
     return f"""  auth_basic "NPA Agent";
@@ -1756,6 +1758,32 @@ def _nginx_agent_site_body(
   location /rerun/ {{
     auth_basic off;
     proxy_pass http://127.0.0.1:{rerun_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    add_header Cache-Control "public, max-age=3600" always;
+  }}
+  location /lichtblick/recordings/ {{
+    auth_basic off;
+    alias /opt/npa-agent/recordings/;
+    default_type application/octet-stream;
+    add_header Cache-Control "no-cache" always;
+    # nginx's static module already emits `Accept-Ranges: bytes`; do NOT add it again
+    # (a duplicate makes the browser join it to "bytes, bytes", which fails Lichtblick's
+    # `headers.get("accept-ranges") === "bytes"` range-support check).
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Range" always;
+    # Lichtblick/Foxglove stream MCAP via HTTP Range and require Accept-Ranges to be a
+    # readable (CORS-exposed) response header, else "Support for HTTP Range request" fails.
+    add_header Access-Control-Expose-Headers "Accept-Ranges, Content-Length, Content-Range" always;
+    add_header Cross-Origin-Resource-Policy "cross-origin" always;
+  }}
+  location /lichtblick/ {{
+    auth_basic off;
+    proxy_pass http://127.0.0.1:{lichtblick_port}/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_connect_timeout 30s;
@@ -1857,6 +1885,10 @@ server {{
 """
     nebius_profile = "cursor-sa"
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
+    lichtblick_port = DEFAULT_LICHTBLICK_PORT
+    lichtblick_image = str(
+        os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
+    )
     setup_script = f"""set -euo pipefail
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates
@@ -1935,6 +1967,8 @@ RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
 
 RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
+MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
+LICHTBLICK_RECORDING_HTTP_PATH = "/lichtblick/recordings/sim2real.mcap"
 
 
 def _agent_public_origin() -> str:
@@ -1968,6 +2002,33 @@ def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
     recording = _rerun_recording_url()
     # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
     return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
+
+
+def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
+    origin = _agent_public_origin()
+    path = LICHTBLICK_RECORDING_HTTP_PATH
+    url = f"{{origin}}{{path}}" if origin else path
+    if cache_bust:
+        url = f"{{url}}?t={{int(time.time() * 1000)}}"
+    return url
+
+
+def _lichtblick_iframe_url(*, mcap_url: str = "") -> str:
+    # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
+    # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
+    source = mcap_url or _lichtblick_recording_url()
+    return f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
+
+
+def _publish_mcap_recording(source: Path) -> Path:
+    source = Path(source)
+    if not source.is_file():
+        return MCAP_RECORDING_PATH
+    MCAP_RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MCAP_RECORDING_PATH.with_suffix(".mcap.tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(MCAP_RECORDING_PATH)
+    return MCAP_RECORDING_PATH
 
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
@@ -2031,6 +2092,10 @@ DEFAULT_SIM_VIZ = {{
     "camera": "workspace",
     "rerun_ready": False,
     "rerun_iframe_url": "/rerun/",
+    "mcap_uri": "",
+    "mcap_updated_at": "",
+    "lichtblick_ready": False,
+    "lichtblick_iframe_url": "/lichtblick/",
 }}
 SIM2REAL_STAGE_TEMPLATE = [
     ("submit", "Submit request"),
@@ -3060,6 +3125,19 @@ def _apply_loaded_artifact(
                 "held-out simulation camera stream; any 3D Franka/world entities are "
                 "reference proxy context, not custom hardware footage."
             )
+    elif render == "mcap":
+        _publish_mcap_recording(local_path)
+        mcap_url = _lichtblick_recording_url()
+        sim_viz["mcap_uri"] = f"file://{{MCAP_RECORDING_PATH}}"
+        sim_viz["mcap_updated_at"] = now
+        sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+        sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+        sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
+        sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
+        sim_viz["visualization_note"] = (
+            "Sim2Real MCAP loaded into the embedded Lichtblick (Foxglove-compatible) "
+            "viewer: rollout camera, VLM critiques, and reward/advantage signals."
+        )
     else:
         filename = _artifact_filename(key)
         target = RECORDINGS_DIR / filename
@@ -7196,6 +7274,26 @@ StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 UNIT
+# Lichtblick (Foxglove-compatible MCAP viewer) sidecar — best-effort: the agent UI
+# embeds it at /lichtblick/ and co-serves the run MCAP at /lichtblick/recordings/.
+# Requires docker + the npa-lichtblick image on the VM; degrades gracefully if absent.
+sudo mkdir -p /opt/npa-agent/recordings
+sudo touch /opt/npa-agent/recordings/sim2real.mcap
+cat <<'UNIT' | sudo tee /etc/systemd/system/npa-lichtblick.service >/dev/null
+[Unit]
+Description=NPA Lichtblick MCAP viewer sidecar
+After=network.target docker.service
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f npa-lichtblick
+ExecStart=/usr/bin/docker run --rm --name npa-lichtblick -p 127.0.0.1:{lichtblick_port}:8080 -v /opt/npa-agent/recordings/sim2real.mcap:/srv/data/sim2real.mcap:ro {lichtblick_image}
+ExecStop=-/usr/bin/docker rm -f npa-lichtblick
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+[Install]
+WantedBy=multi-user.target
+UNIT
 sudo htpasswd -bc /etc/nginx/.npa-agent-htpasswd {shlex.quote(auth_user)} {shlex.quote(auth_password)}
 {https_ssl_setup}
 cat <<'NGINX' | sudo tee /etc/nginx/sites-available/npa-agent >/dev/null
@@ -7213,6 +7311,8 @@ sudo systemctl reset-failed npa-agent-backend npa-rerun nginx || true
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
+# Best-effort Lichtblick sidecar (never blocks deploy if docker/image are absent).
+sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick sidecar not started (docker/image unavailable; /lichtblick/ embed degrades gracefully)"
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
@@ -8259,6 +8359,21 @@ def verify_live_cmd(
             continue
     if not rerun_static_ok:
         _fail("rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)")
+
+    # Lichtblick embed probe (informational): the recordings alias serves the co-served
+    # MCAP same-origin, and /lichtblick/ proxies the viewer sidecar. The sidecar is
+    # best-effort (docker/image), so this never fails the run — it reports embed status.
+    for lichtblick_path in ("/lichtblick/recordings/sim2real.mcap", "/lichtblick/"):
+        try:
+            lb_resp = httpx.get(
+                f"{agent_base}{lichtblick_path}",
+                auth=(auth_user, auth_password),
+                timeout=15.0,
+                verify=tls_verify,
+            )
+            typer.echo(f"lichtblick embed probe {lichtblick_path} -> {lb_resp.status_code}")
+        except httpx.HTTPError as exc:
+            typer.echo(f"lichtblick embed probe {lichtblick_path} -> error: {exc}")
 
     from npa.agent_rerun_bundle_check import (
         check_rerun_bundle_load_budget,

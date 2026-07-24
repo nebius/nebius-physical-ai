@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover - embedded backend fallback
         return value
 
 _RERUN_EXTENSIONS = {".rrd"}
+_MCAP_EXTENSIONS = {".mcap"}
 _VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _JSON_EXTENSIONS = {".json"}
@@ -146,6 +147,8 @@ def render_hint_for_object(*, key: str, content_type: str = "") -> str:
     ext = Path(key).suffix.lower()
     if ext in _RERUN_EXTENSIONS:
         return "rerun"
+    if ext in _MCAP_EXTENSIONS:
+        return "mcap"
     if ext in _VIDEO_EXTENSIONS:
         return "video"
     if ext in _IMAGE_EXTENSIONS:
@@ -177,7 +180,7 @@ def render_hint_for_object(*, key: str, content_type: str = "") -> str:
 
 
 def is_inline_render(render: str) -> bool:
-    return render in {"rerun", "video", "image", "json", "text"}
+    return render in {"rerun", "mcap", "video", "image", "json", "text"}
 
 
 def artifact_media_type(filename: str) -> str:

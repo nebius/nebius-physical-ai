@@ -75,6 +75,9 @@ const SIM_VIZ = {
   rrd_updated_at: "2026-07-07T03:33:00Z",
   rerun_ready: true,
   rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=workspace",
+  mcap_uri: "file:///opt/npa-agent/recordings/sim2real.mcap",
+  lichtblick_ready: true,
+  lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
   // Intentionally not alphabetical — UI must keep latest-first order.
   available_run_ids: ["submitted-run", "mock-run"],
   available_runs: [
@@ -105,6 +108,9 @@ const NON_STOCK_SIM_VIZ = {
   artifact_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
   artifact_preview_url: "/rerun/recordings/sim2real.rrd",
   artifact_download_url: "/rerun/recordings/sim2real.rrd",
+  mcap_uri: `file:///opt/npa-agent/recordings/sim2real.mcap`,
+  lichtblick_ready: true,
+  lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
 };
 
 const RUN_DETAILS = {
@@ -189,6 +195,13 @@ const NON_STOCK_ARTIFACTS = [
     size: 8192,
   },
   {
+    key: `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.mcap`,
+    render: "mcap",
+    inline: true,
+    size: 16384,
+  },
+  {
     key: `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`,
     s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`,
     render: "video",
@@ -259,6 +272,8 @@ const STATIC_BUTTON_IDS = [
   "artifactLoadRunArtifacts",
   "openRerun",
   "loadRerunViewer",
+  "openLichtblick",
+  "loadLichtblickViewer",
 ];
 
 const FIELD_IDS = [
@@ -294,6 +309,9 @@ const FIELD_IDS = [
   "simCamera",
   "renderedDataSummary",
   "rerunFrame",
+  "lichtblickFrame",
+  "renderModeLichtblick",
+  "viewerPaneLichtblick",
   "artifactPreviewHost",
   "tabChat",
   "tabRerun",
@@ -317,6 +335,7 @@ function renderForArtifactKey(key) {
     return artifact.render;
   }
   if (String(key || "").endsWith(".rrd")) return "rerun";
+  if (String(key || "").endsWith(".mcap")) return "mcap";
   if (String(key || "").match(/\.(mp4|webm|mov)$/)) return "video";
   if (String(key || "").match(/\.(png|jpg|jpeg|gif|webp)$/)) return "image";
   if (String(key || "").endsWith(".json")) return "json";
@@ -330,6 +349,22 @@ function simVizForArtifact(key) {
   const previewPath = `/api/artifacts/file/${encodeURIComponent(key.replaceAll("/", "__"))}`;
   if (render === "rerun") {
     return { ...base, artifact_render: render, artifact_key: key, artifact_uri: `s3://mock/${key}` };
+  }
+  if (render === "mcap") {
+    return {
+      ...base,
+      rrd_uri: "",
+      rerun_ready: false,
+      rerun_iframe_url: "/rerun/",
+      artifact_render: render,
+      artifact_key: key,
+      artifact_uri: `s3://mock/${key}`,
+      mcap_uri: "file:///opt/npa-agent/recordings/sim2real.mcap",
+      lichtblick_ready: true,
+      lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
+      artifact_preview_url: "/lichtblick/recordings/sim2real.mcap",
+      artifact_download_url: "/lichtblick/recordings/sim2real.mcap",
+    };
   }
   return {
     ...base,

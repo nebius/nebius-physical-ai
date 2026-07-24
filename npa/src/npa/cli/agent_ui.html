@@ -368,7 +368,8 @@
         z-index: 0;
       }
       .viewer-pane.is-inactive-viewer .rerun-frame-shell,
-      .viewer-pane.is-inactive-viewer #rerunFrame {
+      .viewer-pane.is-inactive-viewer #rerunFrame,
+      .viewer-pane.is-inactive-viewer #lichtblickFrame {
         min-height: 560px;
         height: 100%;
       }
@@ -418,7 +419,8 @@
           radial-gradient(circle at 20% 0%, rgba(229, 255, 79, 0.08), transparent 35%),
           linear-gradient(180deg, #0f172a 0%, #020617 100%);
       }
-      #rerunFrame {
+      #rerunFrame,
+      #lichtblickFrame {
         display: block;
         width: 100%;
         height: 100%;
@@ -1238,7 +1240,7 @@
       </header>
       <nav class="main-tabs" role="tablist" aria-label="Workbench views">
         <button id="tabChat" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="chat">Chat</button>
-        <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
+        <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Viewer</button>
       </nav>
       <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
         <span class="chat-fab-icon" aria-hidden="true">
@@ -1451,6 +1453,7 @@
               <h3>Viewer</h3>
               <div class="render-mode-tabs" role="tablist" aria-label="Artifact render mode">
                 <button type="button" class="render-mode-tab is-active" id="renderModeRerun" data-render-mode="rerun">Rerun</button>
+                <button type="button" class="render-mode-tab" id="renderModeLichtblick" data-render-mode="lichtblick">Lichtblick</button>
                 <button type="button" class="render-mode-tab" id="renderModeVideo" data-render-mode="video">Video</button>
                 <button type="button" class="render-mode-tab" id="renderModeImage" data-render-mode="image">Image</button>
                 <button type="button" class="render-mode-tab" id="renderModeData" data-render-mode="data">Data</button>
@@ -1465,8 +1468,11 @@
                 <div class="btn-row">
                   <button id="openRerun" class="btn" type="button">Open in Rerun</button>
                   <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button>
+                  <button id="openLichtblick" class="btn" type="button" title="Open the sim2real MCAP in the embedded Lichtblick viewer">Open in Lichtblick</button>
+                  <button id="loadLichtblickViewer" class="btn" type="button" title="Reload the Lichtblick MCAP recording">Reload Lichtblick data</button>
                   <button id="describeVisual" class="btn btn-primary" type="button" title="Capture the current viewer and ask the agent for feedback">Describe this</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
+                  <a id="openFullLichtblick" class="btn" href="/lichtblick/" target="_blank" rel="noopener">Open full Lichtblick</a>
                 </div>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
               </div>
@@ -1482,6 +1488,15 @@
                   <div id="rerunBundleCover" class="rerun-bundle-cover" hidden aria-live="polite">
                     <p class="cover-title">Preparing viewer…</p>
                     <p class="cover-hint" data-default-hint="Caching Rerun assets for a seamless viewer open.">Caching Rerun assets for a seamless viewer open.</p>
+                  </div>
+                </div>
+              </div>
+              <div id="viewerPaneLichtblick" class="viewer-pane is-inactive-viewer">
+                <div class="rerun-frame-shell">
+                  <iframe id="lichtblickFrame" title="lichtblick" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+                  <div id="lichtblickPlaceholder" class="rerun-placeholder lichtblick-placeholder" hidden>
+                    <p><strong>Lichtblick</strong> (Foxglove-compatible MCAP viewer)</p>
+                    <p class="hint">Load a run with a <code>reports/sim2real.mcap</code> to play its camera, VLM critiques, and reward signals here.</p>
                   </div>
                 </div>
               </div>
@@ -1880,6 +1895,8 @@
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
+        bindClick("openLichtblick", openLichtblickTab, "Open Lichtblick");
+        bindClick("loadLichtblickViewer", () => reloadLichtblickViewer(), "Reload Lichtblick data");
         bindClick("applySelection", applySelection, "Apply stock selection");
         bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
         bindClick("workflowStatus", showWorkflowStatus, "Workflow status");
@@ -3285,6 +3302,8 @@
       let rerunIframeLoaded = false;
       let rerunBootInProgress = false;
       let mountedRerunRunKey = "";
+      let lichtblickIframeLoaded = false;
+      let currentLichtblickSimViz = null;
       let activeRunId = "";
       let activeArtifactRender = "";
       let lastRerunBlobStatus = "pending";
@@ -3570,21 +3589,72 @@
       let activeRenderMode = "rerun";
       function setRenderMode(mode) {
         const next = String(mode || "rerun");
-        activeRenderMode = next === "video" || next === "image" || next === "data" ? next : "rerun";
+        activeRenderMode = ["video", "image", "data", "lichtblick"].includes(next) ? next : "rerun";
         document.querySelectorAll(".render-mode-tab").forEach((btn) => {
           btn.classList.toggle("is-active", btn.getAttribute("data-render-mode") === activeRenderMode);
         });
         const rerunPane = document.getElementById("viewerPaneRerun");
+        const lichtblickPane = document.getElementById("viewerPaneLichtblick");
         const mediaPane = document.getElementById("viewerPaneMedia");
         const isRerun = activeRenderMode === "rerun";
-        if (rerunPane) {
-          rerunPane.classList.toggle("is-active-viewer", isRerun);
-          rerunPane.classList.toggle("is-inactive-viewer", !isRerun);
+        const isLichtblick = activeRenderMode === "lichtblick";
+        const isMedia = !isRerun && !isLichtblick;
+        const togglePane = (pane, active) => {
+          if (!pane) return;
+          pane.classList.toggle("is-active-viewer", active);
+          pane.classList.toggle("is-inactive-viewer", !active);
+        };
+        togglePane(rerunPane, isRerun);
+        togglePane(lichtblickPane, isLichtblick);
+        togglePane(mediaPane, isMedia);
+        if (isLichtblick) {
+          mountLichtblickIframe(currentLichtblickSimViz || {});
         }
-        if (mediaPane) {
-          mediaPane.classList.toggle("is-active-viewer", !isRerun);
-          mediaPane.classList.toggle("is-inactive-viewer", isRerun);
+      }
+      // --- Lichtblick (Foxglove-compatible MCAP viewer) embed ---------------
+      function lichtblickIframeUrlFor(simViz) {
+        // Prefer the backend-computed URL (same-origin nginx proxy or sidecar port);
+        // fall back to the co-served viewer root so the embed still mounts.
+        const url = String((simViz && simViz.lichtblick_iframe_url) || "").trim();
+        return url || "/lichtblick/";
+      }
+      function applyLichtblickSimViz(simViz) {
+        currentLichtblickSimViz = simViz || {};
+        const ready = Boolean(simViz && (simViz.lichtblick_ready || simViz.mcap_uri));
+        const full = document.getElementById("openFullLichtblick");
+        if (full) full.setAttribute("href", lichtblickIframeUrlFor(simViz));
+        const placeholder = document.getElementById("lichtblickPlaceholder");
+        if (placeholder) placeholder.hidden = ready;
+        // If the Lichtblick pane is already the active viewer, keep it in sync.
+        if (activeRenderMode === "lichtblick") mountLichtblickIframe(simViz);
+      }
+      function mountLichtblickIframe(simViz) {
+        const iframe = document.getElementById("lichtblickFrame");
+        if (!iframe) return;
+        const placeholder = document.getElementById("lichtblickPlaceholder");
+        const ready = Boolean(simViz && (simViz.lichtblick_ready || simViz.mcap_uri));
+        const src = lichtblickIframeUrlFor(simViz);
+        if (iframe.getAttribute("src") !== src) {
+          iframe.setAttribute("src", src);
         }
+        lichtblickIframeLoaded = true;
+        if (placeholder) placeholder.hidden = ready;
+      }
+      function openLichtblickTab() {
+        setRenderMode("lichtblick");
+        const url = lichtblickIframeUrlFor(currentLichtblickSimViz || {});
+        if (url) window.open(url, "_blank", "noopener");
+        return false;
+      }
+      async function reloadLichtblickViewer() {
+        setRenderMode("lichtblick");
+        const iframe = document.getElementById("lichtblickFrame");
+        if (iframe) {
+          lichtblickIframeLoaded = false;
+          iframe.setAttribute("src", "about:blank");
+        }
+        mountLichtblickIframe(currentLichtblickSimViz || {});
+        setStatus("Reloaded Lichtblick data");
       }
       async function authenticatedPreviewObjectUrl(previewUrl, host) {
         const resp = await fetchWithTimeout(previewUrl, { credentials: "include" }, 60000);
@@ -4402,8 +4472,8 @@
           const s3uri = String(item.s3_uri || "");
           const basename = key.split("/").pop() || key;
           const isPreferred = preferredKey && preferredKey === key;
-          const actionLabel = render === "rerun" ? "View in Rerun" : (render === "video" ? "Play" : "Load");
-          const primary = (render === "rerun" || render === "video") ? " btn-primary" : "";
+          const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : (render === "video" ? "Play" : "Load"));
+          const primary = (render === "rerun" || render === "mcap" || render === "video") ? " btn-primary" : "";
           return (
             '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '">' +
             '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
@@ -4533,6 +4603,7 @@
         } else {
           node.textContent = "Rendering: no run artifact loaded yet.";
         }
+        applyLichtblickSimViz(simViz);
       }
       async function loadArtifact(payload) {
         const body = {
@@ -4561,6 +4632,10 @@
             rerunIframeLoaded = false;
             await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
           }
+        } else if (render === "mcap" || render === "lichtblick") {
+          hideArtifactPreview();
+          setRenderMode("lichtblick");
+          mountLichtblickIframe(simViz);
         } else {
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
           await showArtifactPreview(simViz, render);
@@ -5146,6 +5221,9 @@
           rerunViewerLooksDisplayReady,
           rerunViewerShowsBundleSplash,
           rerunViewerHasNonBlankCanvas,
+          applyLichtblickSimViz,
+          mountLichtblickIframe,
+          lichtblickIframeUrlFor,
         };
         try {
           wireUi();

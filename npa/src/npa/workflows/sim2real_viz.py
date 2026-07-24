@@ -43,6 +43,45 @@ class RerunUnavailableError(Sim2RealVizError):
     """Raised when the ``rerun`` SDK is not importable (caller WARNs and skips)."""
 
 
+class McapUnavailableError(Sim2RealVizError):
+    """Raised when the ``mcap`` writer is not importable (caller WARNs and skips)."""
+
+
+MCAP_FRAME_ID = "sim2real"
+# foxglove.Log level for INFO-severity critique/summary messages.
+_LOG_LEVEL_INFO = 2
+_LOG_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "title": "foxglove.Log",
+    "properties": {
+        "timestamp": {
+            "type": "object",
+            "title": "time",
+            "properties": {"sec": {"type": "integer"}, "nsec": {"type": "integer"}},
+        },
+        "level": {"type": "integer"},
+        "message": {"type": "string"},
+        "name": {"type": "string"},
+        "file": {"type": "string"},
+        "line": {"type": "integer"},
+    },
+}
+# Generic numeric sample so a Foxglove/Lichtblick Plot panel can chart any signal.
+_SCALAR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "title": "npa.sim2real.Scalar",
+    "properties": {
+        "timestamp": {
+            "type": "object",
+            "title": "time",
+            "properties": {"sec": {"type": "integer"}, "nsec": {"type": "integer"}},
+        },
+        "value": {"type": "number"},
+        "label": {"type": "string"},
+    },
+}
+
+
 @dataclass(frozen=True)
 class Sim2RealVizResult:
     """Result of emitting a Sim2Real Rerun recording."""
@@ -66,6 +105,30 @@ class Sim2RealVizResult:
             "heldout_env_count": self.heldout_env_count,
             "heldout_frame_count": self.heldout_frame_count,
             "mp4_paths": list(self.mp4_paths),
+        }
+
+
+@dataclass(frozen=True)
+class Sim2RealMcapResult:
+    """Result of emitting a Sim2Real Lichtblick/Foxglove MCAP recording."""
+
+    status: str
+    output_mcap_path: str
+    channel_counts: dict[str, int] = field(default_factory=dict)
+    message_count: int = 0
+    camera_message_count: int = 0
+    scalar_message_count: int = 0
+    log_message_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "output_mcap_path": self.output_mcap_path,
+            "channel_counts": dict(self.channel_counts),
+            "message_count": self.message_count,
+            "camera_message_count": self.camera_message_count,
+            "scalar_message_count": self.scalar_message_count,
+            "log_message_count": self.log_message_count,
         }
 
 
@@ -615,6 +678,19 @@ def _rollout_frames(rollout_dir: Path) -> list[np.ndarray]:
     return frames
 
 
+def _rollout_frame_paths(rollout_dir: Path) -> list[Path]:
+    """Ordered rollout camera frame paths (``.ppm`` preferred, else PNG/JPEG)."""
+
+    ppm = sorted(rollout_dir.glob("camera-*.ppm"))
+    if ppm:
+        return ppm
+    return [
+        path
+        for path in sorted(rollout_dir.iterdir())
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    ]
+
+
 def _read_image(path: Path) -> np.ndarray | None:
     suffix = path.suffix.lower()
     if suffix == ".ppm":
@@ -732,15 +808,16 @@ def _maybe_write_mp4(rollout_dir: Path, frames: list[np.ndarray]) -> Path | None
     return output_path
 
 
-def _write_png(path: Path, frame: np.ndarray) -> None:
+def _png_bytes(frame: np.ndarray) -> bytes:
     import struct
     import zlib
 
-    height, width = int(frame.shape[0]), int(frame.shape[1])
+    array = np.ascontiguousarray(frame, dtype=np.uint8)
+    height, width = int(array.shape[0]), int(array.shape[1])
     raw = bytearray()
     for row in range(height):
         raw.append(0)
-        raw.extend(frame[row].tobytes())
+        raw.extend(array[row].tobytes())
 
     def _chunk(tag: bytes, payload: bytes) -> bytes:
         return struct.pack("!I", len(payload)) + tag + payload + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
@@ -750,7 +827,11 @@ def _write_png(path: Path, frame: np.ndarray) -> None:
     png += _chunk(b"IHDR", header)
     png += _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     png += _chunk(b"IEND", b"")
-    path.write_bytes(png)
+    return png
+
+
+def _write_png(path: Path, frame: np.ndarray) -> None:
+    path.write_bytes(_png_bytes(frame))
 
 
 def _usable_camera_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
@@ -840,6 +921,325 @@ def _as_float_list(value: Any) -> list[float]:
     if isinstance(value, (list, tuple)):
         return [float(item) for item in value]
     return [float(value)]
+
+
+class _McapEmitter:
+    """Lazily-registered MCAP channel writer for Sim2Real recordings."""
+
+    def __init__(self, writer: Any) -> None:
+        self._writer = writer
+        self._schema_ids: dict[str, int] = {}
+        self._channel_ids: dict[str, int] = {}
+        self.channel_counts: dict[str, int] = {}
+        self.camera_message_count = 0
+        self.scalar_message_count = 0
+        self.log_message_count = 0
+
+    def _schema(self, name: str, schema: dict[str, Any]) -> int:
+        if name not in self._schema_ids:
+            self._schema_ids[name] = self._writer.register_schema(
+                name=name, encoding="jsonschema", data=json.dumps(schema).encode("utf-8")
+            )
+        return self._schema_ids[name]
+
+    def _channel(self, topic: str, schema_name: str, schema: dict[str, Any]) -> int:
+        if topic not in self._channel_ids:
+            schema_id = self._schema(schema_name, schema)
+            self._channel_ids[topic] = self._writer.register_channel(
+                topic=topic, message_encoding="json", schema_id=schema_id
+            )
+        return self._channel_ids[topic]
+
+    def _add(self, topic: str, channel_id: int, message: dict[str, Any], stamp_ns: int) -> None:
+        self._writer.add_message(
+            channel_id=channel_id,
+            log_time=stamp_ns,
+            publish_time=stamp_ns,
+            data=json.dumps(message).encode("utf-8"),
+        )
+        self.channel_counts[topic] = self.channel_counts.get(topic, 0) + 1
+
+    def log_image_bytes(self, topic: str, payload: bytes, fmt: str, stamp_ns: int) -> None:
+        from npa.workbench.lichtblick import (
+            _COMPRESSED_IMAGE_SCHEMA,
+            compressed_image_message,
+        )
+
+        channel_id = self._channel(topic, "foxglove.CompressedImage", _COMPRESSED_IMAGE_SCHEMA)
+        message = compressed_image_message(
+            payload, fmt=fmt, stamp_ns=stamp_ns, frame_id=MCAP_FRAME_ID
+        )
+        self._add(topic, channel_id, message, stamp_ns)
+        self.camera_message_count += 1
+
+    def log_scalar(self, topic: str, value: float, stamp_ns: int, *, label: str = "") -> None:
+        channel_id = self._channel(topic, "npa.sim2real.Scalar", _SCALAR_SCHEMA)
+        message = {
+            "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+            "value": float(value),
+            "label": label,
+        }
+        self._add(topic, channel_id, message, stamp_ns)
+        self.scalar_message_count += 1
+
+    def log_text(self, topic: str, message_text: str, stamp_ns: int, *, name: str = "") -> None:
+        channel_id = self._channel(topic, "foxglove.Log", _LOG_SCHEMA)
+        message = {
+            "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+            "level": _LOG_LEVEL_INFO,
+            "message": message_text,
+            "name": name,
+            "file": "",
+            "line": 0,
+        }
+        self._add(topic, channel_id, message, stamp_ns)
+        self.log_message_count += 1
+
+
+def emit_sim2real_mcap(
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+    output_mcap: Path | None = None,
+) -> Sim2RealMcapResult:
+    """Write ``reports/sim2real.mcap`` from the same inputs as the ``.rrd``.
+
+    Emits the rollout/held-out camera frames as ``foxglove.CompressedImage`` (raw
+    ``.ppm`` dumps are transcoded to PNG), VLM critiques as ``foxglove.Log``, and
+    reward/advantage/score signals as numeric samples a Plot panel can chart, so a
+    Foxglove-compatible viewer (Lichtblick) can play back the same rollout as
+    Rerun. Reuses ``npa.workbench.lichtblick`` for the CompressedImage encoding.
+    """
+
+    writer_cls, compression_none = _import_mcap()
+    local_dir = Path(local_dir)
+    output_mcap = (
+        Path(output_mcap) if output_mcap is not None else local_dir / "reports" / "sim2real.mcap"
+    )
+    if output_mcap.suffix.lower() != ".mcap":
+        raise Sim2RealVizError(f"MCAP output path must end in .mcap, got: {output_mcap}")
+    output_mcap.parent.mkdir(parents=True, exist_ok=True)
+
+    frame_period_ns = int(ROLLOUT_FRAME_SECONDS * 1_000_000_000)
+    heldout_period_ns = int(HELDOUT_STEP_SECONDS * 1_000_000_000)
+
+    heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
+    has_heldout_cameras = bool(heldout_episodes)
+
+    from npa.workbench.lichtblick import encode_frame_to_compressed_bytes
+
+    with open(output_mcap, "wb") as handle:
+        # Uncompressed chunks: valid MCAP that needs no lz4/zstandard C-extension,
+        # so the finalize stage works in minimal in-pod environments.
+        writer = writer_cls(handle, compression=compression_none)
+        writer.start(profile="", library="npa-sim2real")
+        emitter = _McapEmitter(writer)
+
+        stamp_ns = 0
+        for record in inner_evidence.get("iterations") or []:
+            iteration = int(record.get("iteration", 1))
+            actions_dir = _maybe_path(record.get("actions_dir"))
+            eval_dir = _maybe_path(record.get("vlm_eval_dir"))
+            signal_dir = _maybe_path(record.get("signal_dir"))
+            for rollout_dir in _rollout_dirs(actions_dir):
+                frame_paths = _rollout_frame_paths(rollout_dir)
+                if has_heldout_cameras and is_reference_stub_rollout(
+                    rollout_dir, [f for p in frame_paths if (f := _read_image(p)) is not None]
+                ):
+                    continue
+                rollout_id = rollout_dir.name
+                root = f"/rollouts/iter_{iteration:02d}/{rollout_id}"
+                evaluation = _read_json(eval_dir / f"{rollout_id}.json") if eval_dir else {}
+                signal = _read_json(signal_dir / f"{rollout_id}.json") if signal_dir else {}
+                stamp_ns = _emit_mcap_rollout(
+                    emitter,
+                    root=root,
+                    frame_paths=frame_paths,
+                    evaluation=evaluation,
+                    signal=signal,
+                    start_ns=stamp_ns,
+                    frame_period_ns=frame_period_ns,
+                    encode=encode_frame_to_compressed_bytes,
+                )
+
+        for index, value in enumerate(inner_evidence.get("reward_trend") or []):
+            emitter.log_scalar(
+                "/signal/reward_trend",
+                float(value),
+                index * frame_period_ns,
+                label="reward_trend",
+            )
+
+        _emit_mcap_heldout_cameras(
+            emitter, heldout_episodes, frame_period_ns=frame_period_ns
+        )
+        _emit_mcap_heldout_scores(emitter, heldout_report, heldout_period_ns=heldout_period_ns)
+
+        writer.finish()
+
+    if not output_mcap.exists() or output_mcap.stat().st_size == 0:
+        raise Sim2RealVizError(f"MCAP recording was not written: {output_mcap}")
+    total = (
+        emitter.camera_message_count
+        + emitter.scalar_message_count
+        + emitter.log_message_count
+    )
+    if total == 0:
+        raise Sim2RealVizError(
+            "Sim2Real MCAP recording has no camera, signal, critique, or held-out content"
+        )
+    return Sim2RealMcapResult(
+        status="written",
+        output_mcap_path=str(output_mcap),
+        channel_counts=emitter.channel_counts,
+        message_count=total,
+        camera_message_count=emitter.camera_message_count,
+        scalar_message_count=emitter.scalar_message_count,
+        log_message_count=emitter.log_message_count,
+    )
+
+
+def emit_sim2real_mcap_if_enabled(
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+    output_mcap: Path | None = None,
+) -> dict[str, Any]:
+    """Best-effort ``reports/sim2real.mcap`` emission for the finalize stage.
+
+    Gated behind ``NPA_SIM2REAL_MCAP`` (default on when rerun viz is on). Degrades
+    gracefully (returns a ``skipped``/``disabled`` status dict, never raises) so a
+    missing ``mcap`` writer or unreadable frame can never fail the finalize stage,
+    mirroring the ``.rrd`` path. Shared by both loop engines.
+    """
+
+    import os
+
+    toggle = str(os.environ.get("NPA_SIM2REAL_MCAP", "1")).strip().lower()
+    if toggle in {"0", "false", "no", "off", ""}:
+        return {"status": "disabled", "reason": "NPA_SIM2REAL_MCAP is off"}
+    try:
+        result = emit_sim2real_mcap(
+            local_dir=local_dir,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+            output_mcap=output_mcap,
+        )
+    except McapUnavailableError as exc:
+        return {"status": "skipped", "reason": str(exc)}
+    except Sim2RealVizError as exc:
+        logging.getLogger(__name__).warning("Sim2Real MCAP emission failed: %s", exc)
+        return {"status": "skipped", "reason": str(exc)}
+    return result.to_dict()
+
+
+def _emit_mcap_rollout(
+    emitter: _McapEmitter,
+    *,
+    root: str,
+    frame_paths: list[Path],
+    evaluation: dict[str, Any],
+    signal: dict[str, Any],
+    start_ns: int,
+    frame_period_ns: int,
+    encode: Any,
+) -> int:
+    per_step_eval = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(evaluation.get("per_step") or [])
+    }
+    per_step_signal = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(signal.get("per_step") or [])
+    }
+    score = evaluation.get("score")
+    summary = str(evaluation.get("summary") or "")
+    stamp_ns = start_ns
+    for step, path in enumerate(frame_paths):
+        try:
+            payload, fmt = encode(str(path))
+        except Exception:
+            logging.getLogger(__name__).debug("skipping unreadable frame %s", path, exc_info=True)
+            stamp_ns += frame_period_ns
+            continue
+        emitter.log_image_bytes(f"{root}/camera", payload, fmt, stamp_ns)
+
+        eval_step = per_step_eval.get(step, {})
+        critique = str(eval_step.get("critique_text") or summary or "")
+        tags = eval_step.get("error_tags") or []
+        if critique:
+            overlay = critique if not tags else f"{critique} [error_tags: {', '.join(str(t) for t in tags)}]"
+            emitter.log_text(f"{root}/critique", overlay, stamp_ns, name=root.strip("/"))
+        if score is not None:
+            emitter.log_scalar(f"{root}/score", float(score), stamp_ns, label="score")
+
+        signal_step = per_step_signal.get(step, {})
+        if "reward" in signal_step:
+            emitter.log_scalar("/signal/reward", float(signal_step["reward"]), stamp_ns, label="reward")
+        if signal_step.get("advantage") is not None:
+            emitter.log_scalar(
+                "/signal/advantage", float(signal_step["advantage"]), stamp_ns, label="advantage"
+            )
+        stamp_ns += frame_period_ns
+    if summary:
+        score_value = f"{float(score):.3f}" if score is not None else "n/a"
+        emitter.log_text(
+            f"{root}/summary",
+            f"score={score_value} :: {summary}",
+            start_ns,
+            name=root.strip("/"),
+        )
+    return stamp_ns
+
+
+def _emit_mcap_heldout_cameras(
+    emitter: _McapEmitter,
+    episodes: list[tuple[str, list[np.ndarray]]],
+    *,
+    frame_period_ns: int,
+) -> None:
+    for episode_index, (env_id, frames) in enumerate(episodes):
+        root = f"/heldout/camera/{env_id}"
+        stamp_ns = 0
+        for frame in frames:
+            payload = _png_bytes(frame)
+            emitter.log_image_bytes(f"{root}/camera", payload, "png", stamp_ns)
+            if episode_index == 0:
+                emitter.log_image_bytes("/camera", payload, "png", stamp_ns)
+            stamp_ns += frame_period_ns
+
+
+def _emit_mcap_heldout_scores(
+    emitter: _McapEmitter,
+    heldout_report: dict[str, Any] | None,
+    *,
+    heldout_period_ns: int,
+) -> None:
+    report = heldout_report or {}
+    success_rate = report.get("success_rate")
+    if success_rate is not None:
+        emitter.log_scalar("/heldout/success_rate", float(success_rate), 0, label="success_rate")
+    stamp_ns = 0
+    for index, item in enumerate(report.get("per_env") or []):
+        if not isinstance(item, dict):
+            continue
+        env_id = str(item.get("env_id") or f"heldout-{index:04d}")
+        score = float(item.get("score", 0.0))
+        emitter.log_scalar("/heldout/scores", score, stamp_ns, label=env_id)
+        emitter.log_scalar(f"/heldout/per_env/{env_id}", score, stamp_ns, label=env_id)
+        stamp_ns += heldout_period_ns
+
+
+def _import_mcap() -> tuple[Any, Any]:
+    try:
+        from mcap.writer import CompressionType, Writer
+    except ImportError as exc:  # pragma: no cover
+        raise McapUnavailableError(
+            "mcap is not installed; skipping Sim2Real MCAP visualization"
+        ) from exc
+    return Writer, CompressionType.NONE
 
 
 def _import_rerun() -> tuple[Any, Any]:
