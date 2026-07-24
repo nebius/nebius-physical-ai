@@ -134,9 +134,11 @@ states:
 
   augment:
     description: >
-      Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 re-renders each source clip
-      under the sampled appearance conditions (GPU tier). Appearance-only: lighting,
-      weather, surface -- never scene geometry. This is a member of the `grade`
+      Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE inference per
+      sampled appearance combo (config.n_augmentations), so N combos -> N scenario
+      variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
+      Appearance-only: lighting, weather, surface -- never scene geometry. This is
+      a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.
     needs: [annotate-original]

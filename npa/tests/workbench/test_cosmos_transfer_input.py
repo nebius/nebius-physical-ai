@@ -131,6 +131,73 @@ def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatc
     assert meta["conditioned_input"] == "robot_input.mp4"
 
 
+def test_multi_variant_publish_writes_one_clip_per_combo(tmp_path: Path, monkeypatch) -> None:
+    """publish_transfer_clip (per combo) + write_run_manifest (once) must emit one
+    clip dir per sampled scenario and a run manifest that records the fan-out."""
+    monkeypatch.setattr(tx, "extract_frames", lambda vp, dest, max_frames=8: [])
+
+    uploaded: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            uploaded.append(uri)
+            return uri
+
+    storage = FakeStorage()
+    combos = [
+        {"cloth_color": "blue", "prompt": "a blue cloth, bright daylight"},
+        {"cloth_color": "red", "prompt": "a red cloth, dim evening light"},
+        {"cloth_color": "white", "prompt": "a white cloth, cool overhead light"},
+    ]
+    clips = []
+    for i, combo in enumerate(combos):
+        video = tmp_path / f"out{i}.mp4"
+        video.write_bytes(b"x" * 200_000)
+        clips.append(
+            tx.publish_transfer_clip(
+                {"video_path": str(video), "video_bytes": 200_000, "spec": f"spec{i}",
+                 "input_conditioned": True, "input_video": "/tmp/robot.mp4", "control": "edge"},
+                "s3://bkt/run1/cosmos_augmented/",
+                run_id="run1",
+                clip_name=f"aug-run1-{i}",
+                variables=combo,
+                storage_client=storage,
+            )
+        )
+    manifest = tx.write_run_manifest(clips, "s3://bkt/run1/cosmos_augmented/", run_id="run1", storage_client=storage)
+
+    assert manifest["variant_count"] == 3
+    assert manifest["multiply_mode"] == "multi-variant"
+    assert manifest["clips"] == ["aug-run1-0", "aug-run1-1", "aug-run1-2"]
+    assert len(manifest["variants"]) == 3
+    assert manifest["variants"][1]["prompt"] == "a red cloth, dim evening light"
+    # One metadata.json + one augmented_video.mp4 per clip, plus one run manifest.
+    assert sum(u.endswith("metadata.json") for u in uploaded) == 3
+    assert sum(u.endswith("augmented_video.mp4") for u in uploaded) == 3
+    assert sum(u.endswith("cosmos_augmented/manifest.json") for u in uploaded) == 1
+
+
+def test_single_variant_manifest_reports_single_mode(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(tx, "extract_frames", lambda vp, dest, max_frames=8: [])
+    video = tmp_path / "out.mp4"
+    video.write_bytes(b"x" * 200_000)
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            return uri
+
+    manifest = tx.publish_transfer_to_s3(
+        {"video_path": str(video), "video_bytes": 200_000, "spec": "s"},
+        "s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        variables={"cloth_color": "blue"},
+        storage_client=FakeStorage(),
+    )
+    assert manifest["variant_count"] == 1
+    assert manifest["multiply_mode"] == "single-variant"
+    assert manifest["clips"] == ["aug-run1"]
+
+
 def test_materialize_input_clip_local_path(tmp_path: Path) -> None:
     from npa.cli.workbench.cosmos2 import _materialize_input_clip
 

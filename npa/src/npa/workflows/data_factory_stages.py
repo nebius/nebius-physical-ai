@@ -198,19 +198,24 @@ def curate(augment_uri: str, report_uri: str) -> dict[str, Any]:
     _, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
     rels = [k[len(aug_prefix):] for k in keys if k.startswith(aug_prefix)]
     clips = sorted({r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]})
+    multi = len(clips) > 1
     report = {
         "schema": "npa.fiftyone.curation.v1",
         "augmented_clips": len(clips),
         "clip_ids": clips,
         "video_count": len(videos),
         "frame_count": len(frames),
-        # Honest, machine-readable limitation: one Cosmos Transfer --execute per
-        # run emits a single appearance variant, so augmented_clips reflects
-        # single-variant output regardless of the sampled n_augmentations.
-        # N-variant "multiply" (one inference per sampled combo) is a follow-up.
+        # Machine-readable "multiply" status: the augment stage runs one Cosmos
+        # Transfer 2.5 inference per sampled appearance combo, so augmented_clips
+        # reflects how many scenario variants the run actually produced.
         "multiply": {
-            "mode": "single-variant",
-            "note": "one Cosmos Transfer 2.5 --execute per run; N-variant multiply is a tracked follow-up",
+            "mode": "multi-variant" if multi else "single-variant",
+            "variant_count": len(clips),
+            "note": (
+                f"{len(clips)} Cosmos Transfer 2.5 scenario variants (one inference per sampled combo)"
+                if multi
+                else "one Cosmos Transfer 2.5 scenario variant for this run"
+            ),
         },
         "status": "curated",
     }
@@ -233,15 +238,28 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
         after_run = k.split(marker, 1)[-1] if marker in f"/{k}" else k
         stage = after_run.split("/", 1)[0] if "/" in after_run else after_run
         stages[stage] = stages.get(stage, 0) + 1
+    # Count augmented scenario variants (per-clip subdirs under cosmos_augmented/,
+    # excluding the top-level run manifest) so the final report reflects the real
+    # "multiply" fan-out — one Cosmos Transfer 2.5 inference per sampled combo.
+    aug_marker = "cosmos_augmented/"
+    aug_clips: set[str] = set()
+    for k in keys:
+        if aug_marker in k:
+            rest = k.split(aug_marker, 1)[1]
+            seg = rest.split("/", 1)[0] if "/" in rest else ""
+            if seg:
+                aug_clips.add(seg)
+    n_variants = len(aug_clips)
     report = {
         "schema": "npa.sim2real.e2e_report.v1",
         "status": "completed",
         "artifact_count": len(keys),
         "stages": stages,
         "has_rrd": any(k.endswith(".rrd") for k in keys),
-        # Mirror the curate caveat so the final report is honest on its own:
-        # augmentation currently produces one variant per run (see curate report).
-        "multiply_mode": "single-variant",
+        # Mirror the curate report so the final report is honest on its own: how
+        # many Cosmos Transfer 2.5 scenario variants this run produced.
+        "multiply_mode": "multi-variant" if n_variants > 1 else "single-variant",
+        "variant_count": n_variants,
     }
     report["written_uri"] = _upload_json(report, report_uri)
     print(json.dumps(report))

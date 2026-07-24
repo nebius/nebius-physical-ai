@@ -275,29 +275,29 @@ def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> l
     return sorted(dest_dir.glob("frame-*.png"))
 
 
-def publish_transfer_to_s3(
+def publish_transfer_clip(
     transfer: dict[str, Any],
     output_uri: str,
     *,
     run_id: str = "",
-    variables: dict[str, Any] | None = None,
     clip_name: str = "",
+    variables: dict[str, Any] | None = None,
     max_frames: int = 8,
     storage_client: Any = None,
 ) -> dict[str, Any]:
-    """Upload a real Cosmos-Transfer2.5 result to S3 in the per-clip layout that
-    ``data_factory_stages.curate`` and ``data_factory_viz.build_run_rrd`` consume.
+    """Publish ONE real Cosmos-Transfer2.5 result as a per-clip dir under
+    ``output_uri`` (the ``cosmos_augmented/`` prefix), returning the clip's
+    descriptor (no run-level manifest is written here).
 
-    Writes, under ``output_uri`` (the ``cosmos_augmented/`` prefix):
+    Writes:
 
         <clip>/augmented_video.mp4
         <clip>/frame-00000.png ...
         <clip>/metadata.json      (variables + mode, for the Rerun label)
-        manifest.json             (run-level augment manifest; augment output)
 
-    NOTE: a single ``--execute`` runs one transfer, so this emits one clip dir.
-    Multi-variant "multiply" (one clip dir per sampled augmentation) needs one
-    inference per combo and is tracked as follow-up.
+    This is the unit of "multiply": the caller runs one inference per sampled
+    appearance combo and publishes each as its own clip, then calls
+    :func:`write_run_manifest` once to emit the run-level ``manifest.json``.
     """
 
     if not output_uri.startswith("s3://"):
@@ -336,6 +336,7 @@ def publish_transfer_to_s3(
             "mode": "cosmos_transfer2.5_gpu",
             "clip": clip,
             "variables": variables or {},
+            "prompt": str((variables or {}).get("prompt") or ""),
             "control_spec": transfer.get("spec", ""),
             "input_conditioned": input_conditioned,
             "conditioned_input": conditioned_input,
@@ -345,25 +346,109 @@ def publish_transfer_to_s3(
         cm.write_text(_json.dumps(clip_meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         client.upload_file(str(cm), f"{clip_base}metadata.json")
 
-        manifest = {
-            "schema": "npa.cosmos2.transfer.v1",
-            "mode": "cosmos_transfer2.5_gpu",
-            "status": "executed",
-            "run_id": run_id,
-            "clips": [clip],
-            "augmented_video_uri": video_uri,
-            "frame_count": len(frame_index),
-            "frames": frame_index,
-            "control_spec": transfer.get("spec", ""),
-            "video_bytes": transfer.get("video_bytes", 0),
-            "input_conditioned": input_conditioned,
-            "conditioned_input": conditioned_input,
-            "control": conditioned_control,
-        }
+    return {
+        "clip": clip,
+        "clip_base": clip_base,
+        "augmented_video_uri": video_uri,
+        "frame_count": len(frame_index),
+        "frames": frame_index,
+        "control_spec": transfer.get("spec", ""),
+        "video_bytes": int(transfer.get("video_bytes", 0) or 0),
+        "input_conditioned": input_conditioned,
+        "conditioned_input": conditioned_input,
+        "control": conditioned_control,
+        "variables": variables or {},
+    }
+
+
+def write_run_manifest(
+    clips: list[dict[str, Any]],
+    output_uri: str,
+    *,
+    run_id: str = "",
+    storage_client: Any = None,
+) -> dict[str, Any]:
+    """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
+    produced by the (possibly multi-variant) augment stage; return the manifest.
+
+    ``clips`` are the descriptors returned by :func:`publish_transfer_clip`.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    import json as _json
+    import tempfile as _tempfile
+
+    client = storage_client or StorageClient.from_environment()
+    base = output_uri if output_uri.endswith("/") else output_uri + "/"
+    first = clips[0] if clips else {}
+    frames = [f for c in clips for f in c.get("frames", [])]
+    manifest = {
+        "schema": "npa.cosmos2.transfer.v1",
+        "mode": "cosmos_transfer2.5_gpu",
+        "status": "executed",
+        "run_id": run_id,
+        "clips": [c.get("clip", "") for c in clips],
+        "variant_count": len(clips),
+        # "multiply": one Cosmos Transfer 2.5 inference per sampled appearance
+        # combo. >1 clips means the run genuinely amplified across scenarios.
+        "multiply_mode": "multi-variant" if len(clips) > 1 else "single-variant",
+        "augmented_video_uri": first.get("augmented_video_uri", ""),
+        "augmented_videos": [c.get("augmented_video_uri", "") for c in clips],
+        "frame_count": sum(int(c.get("frame_count", 0) or 0) for c in clips),
+        "frames": frames,
+        "control_spec": first.get("control_spec", ""),
+        "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
+        "input_conditioned": bool(first.get("input_conditioned")),
+        "conditioned_input": first.get("conditioned_input", ""),
+        "control": first.get("control", ""),
+        "variants": [
+            {
+                "clip": c.get("clip", ""),
+                "variables": c.get("variables", {}),
+                "prompt": str((c.get("variables") or {}).get("prompt") or ""),
+                "frame_count": int(c.get("frame_count", 0) or 0),
+                "augmented_video_uri": c.get("augmented_video_uri", ""),
+            }
+            for c in clips
+        ],
+    }
+    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-man-") as tmp:
         mp = Path(tmp) / "manifest.json"
         mp.write_text(_json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         client.upload_file(str(mp), f"{base}manifest.json")
     return manifest
+
+
+def publish_transfer_to_s3(
+    transfer: dict[str, Any],
+    output_uri: str,
+    *,
+    run_id: str = "",
+    variables: dict[str, Any] | None = None,
+    clip_name: str = "",
+    max_frames: int = 8,
+    storage_client: Any = None,
+) -> dict[str, Any]:
+    """Upload a single real Cosmos-Transfer2.5 result to S3 in the per-clip layout
+    that ``data_factory_stages.curate`` and ``data_factory_viz.build_run_rrd``
+    consume, plus the run-level manifest. Single-variant convenience wrapper
+    around :func:`publish_transfer_clip` + :func:`write_run_manifest`; multi-variant
+    callers publish each clip themselves and write one combined manifest.
+    """
+
+    clip = publish_transfer_clip(
+        transfer,
+        output_uri,
+        run_id=run_id,
+        clip_name=clip_name,
+        variables=variables,
+        max_frames=max_frames,
+        storage_client=storage_client,
+    )
+    return write_run_manifest([clip], output_uri, run_id=run_id, storage_client=storage_client)
 
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".ppm", ".webp"}
@@ -514,7 +599,9 @@ __all__ = [
     "cosmos_transfer_repo",
     "ensure_env",
     "extract_frames",
+    "publish_transfer_clip",
     "publish_transfer_to_s3",
     "reference_augment_frames",
     "run_cosmos_transfer",
+    "write_run_manifest",
 ]

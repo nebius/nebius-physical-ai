@@ -221,6 +221,61 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(tmp_path: Pat
     assert out_rrd.is_file()
 
 
+def test_curate_reports_multi_variant_for_multiple_clips(tmp_path: Path, monkeypatch) -> None:
+    """N augmented clip dirs (multiply) must be counted and reported multi-variant."""
+    keys = [
+        "p/cosmos_augmented/manifest.json",
+        "p/cosmos_augmented/aug-run-0/augmented_video.mp4",
+        "p/cosmos_augmented/aug-run-0/frame-00000.png",
+        "p/cosmos_augmented/aug-run-0/metadata.json",
+        "p/cosmos_augmented/aug-run-1/augmented_video.mp4",
+        "p/cosmos_augmented/aug-run-1/frame-00000.png",
+        "p/cosmos_augmented/aug-run-1/metadata.json",
+        "p/cosmos_augmented/aug-run-2/augmented_video.mp4",
+        "p/cosmos_augmented/aug-run-2/metadata.json",
+    ]
+    monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
+    assert report["augmented_clips"] == 3
+    assert set(report["clip_ids"]) == {"aug-run-0", "aug-run-1", "aug-run-2"}
+    assert report["video_count"] == 3
+    assert report["multiply"]["mode"] == "multi-variant"
+    assert report["multiply"]["variant_count"] == 3
+
+
+def test_finalize_reports_multi_variant_from_clip_dirs(tmp_path: Path, monkeypatch) -> None:
+    keys = [
+        "physical-ai-data-factory/run1/input/video_0.mp4",
+        "physical-ai-data-factory/run1/cosmos_augmented/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/aug-run1-0/augmented_video.mp4",
+        "physical-ai-data-factory/run1/cosmos_augmented/aug-run1-1/augmented_video.mp4",
+        "physical-ai-data-factory/run1/reports/sim2real.rrd",
+    ]
+    monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    report = dfs.finalize("s3://b/physical-ai-data-factory/run1/", "s3://b/.../final.json")
+    assert report["multiply_mode"] == "multi-variant"
+    assert report["variant_count"] == 2
+
+
+def test_all_augmentations_reads_every_combo(tmp_path: Path) -> None:
+    from npa.cli.workbench.cosmos2 import _all_augmentations, _first_augmentation
+
+    configs_uri = str(tmp_path / "configs") + "/"
+    manifest = dfs.generate_configs(configs_uri, "4", seed="multi")
+    combos = _all_augmentations(configs_uri)
+    assert len(combos) == 4
+    assert combos == manifest["augmentations"]
+    assert _first_augmentation(configs_uri) == combos[0]
+
+
+def test_all_augmentations_missing_manifest_returns_empty(tmp_path: Path) -> None:
+    from npa.cli.workbench.cosmos2 import _all_augmentations
+
+    assert _all_augmentations(str(tmp_path / "nope") + "/") == []
+
+
 def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> None:
     keys = [
         "physical-ai-data-factory/run1/input/video_0.mp4",

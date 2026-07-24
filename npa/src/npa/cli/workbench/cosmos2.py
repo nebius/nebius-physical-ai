@@ -22,17 +22,28 @@ app = typer.Typer(
 )
 
 
-def _first_augmentation(configs_uri: str) -> dict:
-    """Read the Config-Gen manifest and return the first sampled combo (or {})."""
+def _all_augmentations(configs_uri: str) -> list[dict]:
+    """Read the Config-Gen manifest and return every sampled appearance combo.
+
+    Each combo drives one Cosmos Transfer 2.5 inference ("multiply"), so a config
+    manifest with N augmentations yields N scenario variants. Best-effort: returns
+    [] on any read failure so the caller can fall back to a single default render.
+    """
     try:
         from npa.workflows.data_factory_stages import _download_json
 
         uri = configs_uri if configs_uri.endswith(".json") else configs_uri.rstrip("/") + "/manifest.json"
         manifest = _download_json(uri)
         combos = manifest.get("augmentations") or []
-        return combos[0] if combos and isinstance(combos[0], dict) else {}
+        return [c for c in combos if isinstance(c, dict)]
     except Exception:  # noqa: BLE001 - variables are advisory metadata, never fatal
-        return {}
+        return []
+
+
+def _first_augmentation(configs_uri: str) -> dict:
+    """Read the Config-Gen manifest and return the first sampled combo (or {})."""
+    combos = _all_augmentations(configs_uri)
+    return combos[0] if combos else {}
 
 
 _VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv", ".avi")
@@ -172,7 +183,6 @@ def transfer_cmd(
             input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT")
         )
         data_factory_mode = bool(configs_uri) or condition_requested
-        variables = _first_augmentation(configs_uri) if configs_uri else {}
         local_input = ""
         if condition_requested:
             local_input = _materialize_input_clip(input_video or input_uri)
@@ -184,42 +194,88 @@ def transfer_cmd(
             control_weight = float(_cw)
         if _g:
             guidance = float(_g)
-        transfer = run_cosmos_transfer(
-            run_id=run_id,
-            spec=spec or None,
-            prompt=str(variables.get("prompt") or "") or None,
-            input_video=local_input or None,
-            control=control,
-            control_weight=control_weight,
-            guidance=guidance,
-        )
-        payload["status"] = "executed"
-        payload["output_kind"] = "video"
-        payload["output_video"] = transfer["video_path"]
-        payload["video_bytes"] = transfer["video_bytes"]
-        payload["control_spec"] = transfer["spec"]
-        payload["prompt"] = str(variables.get("prompt") or "")
-        payload["input_conditioned"] = bool(local_input)
-        if local_input:
-            payload["input_video"] = local_input
-            payload["control"] = transfer.get("control", control)
-        if output_uri.strip().startswith("s3://"):
-            if data_factory_mode:
-                # Per-clip layout consumed by data_factory curate / build_run_rrd /
-                # provenance (cosmos_augmented/<clip>/{augmented_video.mp4, frame-*,
-                # metadata.json} + run-level manifest.json).
-                from npa.workbench.cosmos.transfer import publish_transfer_to_s3
 
-                published = publish_transfer_to_s3(
-                    transfer, output_uri, run_id=run_id, variables=variables
+        if data_factory_mode and output_uri.strip().startswith("s3://"):
+            # Augment & MULTIPLY. Run one REAL Cosmos Transfer 2.5 inference per
+            # sampled appearance combo (each with its own prompt), publishing each
+            # as its own per-clip dir under the cosmos_augmented/ prefix, then write
+            # a single run-level manifest.json listing them all. A config manifest
+            # with N augmentations therefore yields N scenario variants (not one
+            # image). The per-clip layout is what data_factory curate /
+            # build_run_rrd / provenance consume.
+            from npa.workbench.cosmos.transfer import (
+                publish_transfer_clip,
+                write_run_manifest,
+            )
+
+            combos = _all_augmentations(configs_uri) if configs_uri else []
+            if not combos:
+                combos = [{}]
+            clips: list[dict] = []
+            for i, combo in enumerate(combos):
+                variant_run = f"{run_id}-v{i}" if run_id else f"v{i}"
+                transfer = run_cosmos_transfer(
+                    run_id=variant_run,
+                    spec=spec or None,
+                    prompt=str(combo.get("prompt") or "") or None,
+                    input_video=local_input or None,
+                    control=control,
+                    control_weight=control_weight,
+                    guidance=guidance,
                 )
-                payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
-                payload["augmented_video_uri"] = published["augmented_video_uri"]
-                payload["frame_count"] = published["frame_count"]
-                payload["augmentation_variables"] = variables
-                # attribute-verify reads --input-path {{augmented_frames_uri}} (the prefix).
-                payload["augmented_frames_uri"] = output_uri
-            else:
+                clip_name = f"aug-{run_id}-{i}" if run_id else f"aug{i}"
+                clips.append(
+                    publish_transfer_clip(
+                        transfer,
+                        output_uri,
+                        run_id=run_id,
+                        clip_name=clip_name,
+                        variables=combo,
+                    )
+                )
+            manifest = write_run_manifest(clips, output_uri, run_id=run_id)
+            payload["status"] = "executed"
+            payload["output_kind"] = "video"
+            payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+            payload["augmented_video_uri"] = manifest["augmented_video_uri"]
+            payload["augmented_videos"] = manifest["augmented_videos"]
+            payload["frame_count"] = manifest["frame_count"]
+            payload["variant_count"] = manifest["variant_count"]
+            payload["multiply_mode"] = manifest["multiply_mode"]
+            payload["clips"] = manifest["clips"]
+            payload["augmentation_variables"] = combos[0]
+            payload["prompt"] = str((combos[0] or {}).get("prompt") or "")
+            payload["input_conditioned"] = bool(local_input)
+            payload["control_spec"] = manifest["control_spec"]
+            if local_input:
+                payload["input_video"] = local_input
+                payload["control"] = manifest["control"]
+            # attribute-verify reads --input-path {{augmented_frames_uri}} (the prefix).
+            payload["augmented_frames_uri"] = output_uri
+        else:
+            # Single inference: generic transfer (sim2real / cosmos-gate / fanout)
+            # or a non-S3 output. Unchanged field convention.
+            variables = _first_augmentation(configs_uri) if configs_uri else {}
+            transfer = run_cosmos_transfer(
+                run_id=run_id,
+                spec=spec or None,
+                prompt=str(variables.get("prompt") or "") or None,
+                input_video=local_input or None,
+                control=control,
+                control_weight=control_weight,
+                guidance=guidance,
+            )
+            payload["status"] = "executed"
+            payload["output_kind"] = "video"
+            payload["output_video"] = transfer["video_path"]
+            payload["video_bytes"] = transfer["video_bytes"]
+            payload["control_spec"] = transfer["spec"]
+            payload["prompt"] = str(variables.get("prompt") or "")
+            payload["input_conditioned"] = bool(local_input)
+            if local_input:
+                payload["input_video"] = local_input
+                payload["control"] = transfer.get("control", control)
+            if output_uri.strip().startswith("s3://"):
                 # Generic single-video publish + sim2real-engine field convention.
                 from npa.clients.storage import StorageClient
 
@@ -230,10 +286,10 @@ def transfer_cmd(
                 payload["output_video"] = output_video
                 payload["augmented_video_uri"] = output_video
                 payload["augmented_frames_uri"] = output_uri
-        else:
-            payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
-            payload["augmented_video_uri"] = transfer["video_path"]
-            payload["augmented_frames_uri"] = output_uri
+            else:
+                payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+                payload["augmented_video_uri"] = transfer["video_path"]
+                payload["augmented_frames_uri"] = output_uri
     else:
         # No heavy model runtime: run a genuine reference augmentation that
         # writes real augmented image frames to output_uri (not a descriptor stub).
