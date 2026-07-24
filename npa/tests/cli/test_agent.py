@@ -872,10 +872,9 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     # Generic scan across all bucket roots; no hardcoded workflow prefixes.
     # The endpoint calls the cached wrapper with all_categories=True (which
-    # discovers via list_all_runs under the hood); the embedded artifacts module
-    # still defines list_all_runs.
+    # discovers via list_all_runs under the hood, in the embedded artifacts module).
+    assert "list_runs_cached(" in source
     assert "all_categories=True" in source
-    assert "def list_all_runs(" in source
     assert "exclude=_discovery_exclude_roots()" in source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
     # Per-run lookup also falls back to a generic cross-category find.
