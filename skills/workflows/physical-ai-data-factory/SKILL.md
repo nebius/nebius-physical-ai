@@ -44,16 +44,17 @@ the `real-components` skill). The `augment` stage runs the real Cosmos Transfer
 2.5 model on GPU via `--execute` and publishes the generated video + extracted
 frames to `augment_uri`, which the grade / re-label / visualize stages consume.
 
-**Config → augment scope (honest caveat).** `generate-configs` samples
-appearance combos (weather / time-of-day / road-condition); the `augment`
-toolRef passes `--configs-uri` so the first sampled combo is recorded as the
-clip's `metadata.json` `variables` (which drives the Rerun label and proves the
-config manifest is consumed, not decorative). A single `--execute` emits **one**
-variant. N-variant "multiply" (one inference per sampled combo) is a tracked
-follow-up — do not describe the current blueprint as generating N
-condition-specific variants. The single-variant limitation is surfaced in the
-machine-readable artifacts (`multiply` in the curation report, `multiply_mode` in
-the finalize report), so the outputs are honest on their own, not only in docs.
+**Config → augment MULTIPLY.** `generate-configs` samples N appearance combos
+(from `config.n_augmentations`); the `augment` toolRef passes `--configs-uri`, and
+the augment stage runs **one real Cosmos Transfer 2.5 inference per sampled combo**
+— each combo's prompt drives a distinct appearance, and each is published as its
+own per-clip dir under `cosmos_augmented/<clip>/` with its own `metadata.json`
+`variables` (which drives that clip's Rerun label). So an N-augmentation config
+yields **N scenario variants**, not one image. The fan-out is surfaced in the
+machine-readable artifacts: `variant_count` / `multiply_mode` in the augment
+run-level `manifest.json`, `multiply` (mode + `variant_count`) in the curation
+report, and `multiply_mode` / `variant_count` in the finalize report. (A config
+with a single combo still emits one variant — `multiply_mode: single-variant`.)
 
 **Input conditioning (real augmentation of the caller's clip).** By default the
 augment renders the bundled, self-contained control example (`robot_depth_spec.json`),
@@ -107,12 +108,19 @@ npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)
   `publish_transfer_to_s3` uploads the real Cosmos Transfer 2.5 result in the
   **per-clip** layout the consumers require:
   `cosmos_augmented/<clip>/{augmented_video.mp4, frame-*.png, metadata.json}`
-  plus a run-level `cosmos_augmented/manifest.json`. `curate` counts clip
+  plus a run-level `cosmos_augmented/manifest.json`.   `curate` counts clip
   subdirs (not top-level files) and `build_run_rrd` reads each clip's
   `metadata.json` for its Rerun label. Producer and consumers share this shape;
-  `test_publish_transfer_layout_interoperates_with_curate_and_viz` guards it. A
-  single `--execute` emits one clip dir; N-variant "multiply" (one dir per
-  sampled augmentation) needs one inference per combo (follow-up).
+  `test_publish_transfer_layout_interoperates_with_curate_and_viz` guards it. The
+  augment stage "multiplies": it runs one inference per sampled combo and emits
+  one clip dir per variant (`publish_transfer_clip` per clip + a single
+  `write_run_manifest`), so N sampled combos → N clip dirs.
+- **Full pipeline in the Rerun panel:** `build_run_rrd` logs the run's input
+  frames and each augmented clip's frames/label PLUS a static text doc per stage
+  — sampled scenarios (config), the attribute-verify / hallucination grade + gate
+  decision, the curation report, the finalize aggregate, and a stage log — under
+  the `pipeline/*` entities, so the whole pipeline (logs, hallucination check,
+  input + output images) is viewable in one embedded Rerun recording.
 - **Viewing in the NPA agent:** every stage lands under one S3 run prefix
   (`input/ configs/ labeled_original/ cosmos_augmented/ grade/ labeled_augmented/
   curation/ reports/`). The `visualize` stage writes `reports/sim2real.rrd`,
