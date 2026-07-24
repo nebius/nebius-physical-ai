@@ -669,6 +669,48 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
+  it("loads the full run list into the picker by default (no search needed)", () => {
+    // Guards the "runs don't show" fix: the default (no-query) discovery must
+    // request a high limit and render EVERY run — including ones far older than
+    // the historical 100-run cap — so the operator never has to guess a search
+    // fragment just to see a run that exists.
+    const bigList = Array.from({ length: 150 }, (_unused, i) => {
+      const idx = String(i).padStart(3, "0");
+      return {
+        run_id: `bulk-run-${idx}`,
+        has_viewable: true,
+        artifact_count: 1,
+        // Descending timestamps so index 149 is the oldest (would fall off a
+        // 100-run page).
+        last_modified: `2026-06-${String((i % 27) + 1).padStart(2, "0")}T00:00:${idx.slice(-2)}Z`,
+      };
+    });
+    let capturedUrl = "";
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      capturedUrl = String(req.url || "");
+      req.reply({
+        statusCode: 200,
+        body: { ok: true, runs: bigList, total_runs: bigList.length, truncated: false },
+      });
+    }).as("artifactRunsFull");
+
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRunsFull");
+    cy.wrap(null).should(() => {
+      const limitMatch = capturedUrl.match(/[?&]limit=(\d+)/);
+      expect(limitMatch, "default discovery sends a limit").to.not.eq(null);
+      expect(Number(limitMatch[1]), "default discovery limit exceeds the old 100 cap").to.be.greaterThan(100);
+    });
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values.length, "all runs render without search").to.eq(bigList.length);
+      // The oldest run (would fall off a 100-run page) is present by default.
+      expect(values, "oldest run shows without typing").to.include("bulk-run-149");
+    });
+  });
+
   it("rejects uniform gray / blank canvases in frameLooksBlank", () => {
     cy.window().then((win) => {
       const api = win.__NPA_AGENT_TEST__;

@@ -4432,6 +4432,11 @@
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
       let mergedRunsCache = [];
+      // Load the whole run list into the picker by default so every run shows
+      // without the operator having to guess a search fragment. The server still
+      // supports (q=) search for buckets larger than this, and the "Find run" /
+      // Stages search boxes union those server matches on top.
+      const ARTIFACT_RUN_LIST_LIMIT = 2000;
       function selectedRunIdFromUi() {
         const select = document.getElementById("runIdSelect");
         const stages = document.getElementById("stagesRunSelect");
@@ -4567,7 +4572,7 @@
         // newest page) so old runs beyond the default limit are still findable,
         // and union the matches into the discovered list.
         const q = String(query || "").trim();
-        const url = "/api/artifacts/runs?limit=100" + (q ? "&q=" + encodeURIComponent(q) : "");
+        const url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
         const data = await apiJson(url);
         const runs = Array.isArray(data.runs) ? data.runs : [];
         if (q) {
