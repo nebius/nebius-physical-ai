@@ -63,7 +63,7 @@ npa/docker/workbench/sonic/build.sh \
 The raw SkyPilot workflow is:
 
 ```text
-npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml
+npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml
 ```
 
 It has two stages:
@@ -82,7 +82,7 @@ For the proven VM path, use docker-payload mode plus registry auth:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml \
+  npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml \
   --tool sonic \
   --run-id sonic-mvp-$(date -u +%Y%m%dT%H%M%SZ) \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
@@ -109,7 +109,7 @@ from pathlib import Path
 from npa.sdk.workbench import sonic
 
 plan = sonic.materialize_workflow(
-    Path("npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"),
+    Path("npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml"),
     run_id="sonic-mvp-proof",
     registry="cr.eu-north1.nebius.cloud/<registry-id>",
     gpu_target="h100",

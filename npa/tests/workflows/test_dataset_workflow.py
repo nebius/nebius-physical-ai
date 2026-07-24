@@ -9,7 +9,7 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "dataset-ingest-curate.yaml"
-SKYPILOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "dataset-ingest-curate.yaml"
+SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "dataset-ingest-curate.yaml"
 
 
 def test_workflow_validates_and_gates_on_quality() -> None:

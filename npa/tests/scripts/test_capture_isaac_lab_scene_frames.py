@@ -9,7 +9,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CAPTURE_SCRIPT = REPO_ROOT / "npa" / "scripts" / "capture_isaac_lab_scene_frames.py"
-WORKFLOW = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-franka-capture-reason.yaml"
+WORKFLOW = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-franka-capture-reason.yaml"
 EXAMPLE = REPO_ROOT / "npa" / "examples" / "isaac_franka_token_factory_reason.py"
 SAMPLE_FRAMES = REPO_ROOT / "docs" / "assets" / "hackathon" / "isaac-franka-lift-cube"
 

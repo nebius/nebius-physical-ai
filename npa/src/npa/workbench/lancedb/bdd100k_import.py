@@ -154,8 +154,13 @@ def import_bdd100k(
     target_uri = validate_lance_uri(lance_uri)
     if limit is not None and limit < 1:
         raise BDD100KValidationError("limit must be a positive integer when provided")
-    if synthetic is not None and synthetic < 1:
-        raise BDD100KValidationError("synthetic must be a positive integer when provided")
+    if synthetic is not None and synthetic < 0:
+        raise BDD100KValidationError("synthetic must be a non-negative integer when provided")
+    if synthetic == 0:
+        # 0 means "no synthetic rows -> read the real source", so a pipeline can
+        # carry a single `--synthetic {{config.synthetic_rows}}` arg and toggle
+        # synthetic smoke vs real ingest purely by config (0 = real source).
+        synthetic = None
     if synthetic is None and not source.strip():
         raise BDD100KSourceError("source is required when synthetic is not set")
     if batch_size < 1:

@@ -1,21 +1,32 @@
-# Raw SkyPilot Workbench YAMLs
+# Internal SkyPilot task templates
 
-Declarative authoring specs (`apiVersion: npa.workflow/v0.0.1`) live in
-[`../npa-workflows/`](../npa-workflows/README.md). Prefer those for readable
-stage graphs; use this directory for SkyPilot execution and GPU task details.
+**This directory is not the supported workflow catalog.** The supported,
+customer-facing specs are the declarative `npa.workflow` YAMLs
+(`apiVersion: npa.workflow/v0.0.1`) under
+`npa/workflows/workbench/npa-workflows/`. Author and submit those; SkyPilot is
+only the execution engine.
+
+These files are internal, package-owned runtime resources: raw SkyPilot task
+YAMLs that the `npa/scripts/run_*.py` wrappers and `npa.workflow` engine render
+and launch. They were relocated here (out of `npa/workflows/workbench/`) so the
+shown catalog is exclusively `npa.workflow` specs, while SkyPilot-only
+capabilities that the engine cannot yet express (parallel sweeps, burst submit,
+the trigger watch-loop, and the legacy H100 sim-to-real pipeline/loop) keep a
+runnable home.
 
 **Preferred submit path:** `npa workbench workflow submit <npa.workflow.yaml>`
-plans the state graph, renders a serial SkyPilot multi-doc YAML, and submits
-it. Raw YAMLs in this directory remain the production runtime reference and
-the home for SkyPilot-only exceptions (parallel sweeps, burst, Sim2Real
-runbook siblings, global config). See the twin matrix in
-[`../npa-workflows/README.md`](../npa-workflows/README.md).
+plans the state graph, renders a serial SkyPilot multi-doc YAML, and submits it.
+Use the raw YAMLs here only to inspect or operate the underlying SkyPilot task
+directly.
 
-This directory contains standalone SkyPilot task YAMLs for Workbench
-reference paths. The supported first path is the Python wrapper or `npa`
-CLI for each workflow because wrappers inject secrets, validate image
-overrides, and clean up owned clusters. Use these raw YAMLs when you need to
-inspect or operate the underlying SkyPilot task directly.
+**BYOF resource profiles** (the GPU solution-smoke task and the RTX PRO
+`imagePullSecrets` global config) that the declarative BYOF specs and the BYOF
+runner depend on live under `npa/src/npa/workflows/byof/profiles/`, alongside
+this directory.
+
+The supported first path is the Python wrapper or `npa` CLI for each workflow
+because wrappers inject secrets, validate image overrides, and clean up owned
+clusters.
 
 ## Run Pattern
 
@@ -137,10 +148,10 @@ sky launch -y --infra kubernetes/<context-name> -c cosmos3-reason /tmp/cosmos3-r
 sky launch -y --infra kubernetes/<context-name> -c cosmos3-t2i /tmp/cosmos3-text-to-image-inference.yaml
 sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-sweep /tmp/isaac-lab-rl-sweep.yaml
 sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-train /tmp/isaac-lab-rl-train.yaml
-sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro /tmp/isaac-lab-rl-train-rtxpro.yaml
-sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro-smoke /tmp/isaac-lab-rl-train-rtxpro-smoke.yaml
+sky launch -y --config npa/src/npa/workflows/byof/profiles/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro /tmp/isaac-lab-rl-train-rtxpro.yaml
+sky launch -y --config npa/src/npa/workflows/byof/profiles/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro-smoke /tmp/isaac-lab-rl-train-rtxpro-smoke.yaml
 npa burst submit-yaml /tmp/isaac-lab-cosmos-sdg-burst-smoke.yaml --name <run-id>
-sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c byof-datagen-rtxpro-smoke /tmp/byof-datagen-rtxpro-smoke.yaml
+sky launch -y --config npa/src/npa/workflows/byof/profiles/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c byof-datagen-rtxpro-smoke /tmp/byof-datagen-rtxpro-smoke.yaml
 sky launch -y --infra kubernetes/<context-name> -c mjlab-eval /tmp/mjlab-eval.yaml
 sky launch -y --infra kubernetes/<context-name> -c retargeting /tmp/retargeting.yaml
 sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c scenario-gen-adversarial /tmp/scenario-gen-adversarial.yaml

@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: mjlab-eval
   description: Score a SONIC locomotion checkpoint with MJLab metrics.
-  skypilotTwin: npa/workflows/workbench/skypilot/mjlab-eval.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/mjlab-eval.yaml
 
 config:
   bucket: example-bucket

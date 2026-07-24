@@ -178,7 +178,7 @@ config:
   solution_name: "droid-policy-learning"
   capability_name: "rlds_config_generator_contract"
   smoke_artifact_name: "droid_rlds_config_generator.json"
-  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
+  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "droid_100"
   iterations: 1
   num_envs: 1

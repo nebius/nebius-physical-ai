@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
-SKYPILOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 CAPTION_YAML = SKYPILOT / "token-factory-caption.yaml"
 GENERATE_YAML = SKYPILOT / "token-factory-generate.yaml"
 REASON_YAML = SKYPILOT / "token-factory-cosmos-reason.yaml"

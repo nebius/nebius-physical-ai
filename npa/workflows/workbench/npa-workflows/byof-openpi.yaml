@@ -164,7 +164,7 @@ config:
   solution_name: "openpi"
   capability_name: "policy_config_materialization"
   smoke_artifact_name: "openpi_pi05_droid_config.json"
-  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
+  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "pi05_droid"
   iterations: 1
   num_envs: 1

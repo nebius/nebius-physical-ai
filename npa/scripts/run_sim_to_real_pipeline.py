@@ -61,8 +61,9 @@ from npa.workflows.lerobot_dataset import DEFAULT_PUBLIC_LEROBOT_REPO, DEFAULT_P
 
 DEFAULT_YAML = (
     Path(__file__).resolve().parents[1]
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "sim-to-real-pipeline.yaml"
 )

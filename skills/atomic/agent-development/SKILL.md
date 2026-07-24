@@ -168,6 +168,44 @@ default; `agent_backend/` is the shipped-package migration target (uploaded to
 migrated pilot; `cli/agent_memory.py` is a re-export shim. Rendered-backend
 compile check: `npa/tests/cli/test_agent_backend_render.py`.
 
+## Blueprint incorporation (retrieval, observability, adversarial eval)
+
+Open-source-only parity with the Nebius "Blueprints" reference agent — Token
+Factory (LLM + embeddings) + AI Cloud only, no LangSmith/Pinecone/Tavily/
+Snowglobe. Design doc: `docs/architecture/blueprint-incorporation-plan.md`.
+
+- **Retrieval / grounding (Phase H)** — shipped `npa/src/npa/agent_backend/retrieval.py`
+  (shim `cli/agent_retrieval.py`). `index_corpus()` chunks + embeds repo
+  `docs/`+`skills/` (and optional live web) into an injected vector store
+  (`InMemoryVectorStore` / `JsonVectorStore` / `build_lance_store` for **LanceDB**);
+  `retrieve()` returns typed `Citation`s; `format_grounded_answer()` is extractive
+  (0 generation tokens). `embed` and `web_search` (SearXNG-shaped, provider-
+  agnostic) are injected. Read-only `retrieval_search` tool in `TOOL_ALLOWLIST`;
+  routes `POST /api/agent/retrieval/index`, `GET /api/agent/retrieval/search`,
+  `GET /api/agent/retrieval/status`; grounded-first `/chat` fallthrough that only
+  fires when a corpus is indexed and the top match clears the score floor.
+- **Observability (Phase I)** — shipped `npa/src/npa/agent_backend/trace.py`
+  (shim `cli/agent_trace.py`). `spans_from_action_loop` / `spans_from_drive` wrap
+  the existing step/iteration traces in structured spans emitted through an
+  **injected tracer** (`NullTracer` default; `build_langfuse_tracer` /
+  `build_otel_tracer` guarded). `redact_attributes` keeps secrets/PII out of
+  spans. `analyze_traces` clusters traces + flags silent failures (truncation,
+  empty tool results, unsurfaced errors, max-steps). Routes:
+  `GET /api/agent/trace/spans`, `POST /api/agent/trace/analyze`.
+- **Adversarial eval (Phase J)** — `npa/tests/agent_eval/adversarial.py`: persona
+  (Token-Factory-generated, mocked in CI) × prompt-injection scenarios run
+  against the real modules; `validate_output` uses guardrails-ai when installed
+  (`npa[agent-eval]`) else a pure validator. `test_agent_adversarial_scorecard.py`
+  gates `defense_rate` **delta-vs-baseline** (`adversarial_baseline.json`).
+
+**Optional extras (injected/guarded, absent degrades gracefully):**
+`npa[lancedb]` (LanceDB store), `npa[agent-eval]` (guardrails-ai),
+`npa[agent-trace]` (langfuse / opentelemetry-sdk). Embeddings default to
+`NPA_AGENT_EMBED_MODEL` (confirm with `npa workbench token-factory models`);
+LanceDB URI, SearXNG URL, and tracer keys are env/config-resolved, never
+hardcoded. New agentic tests: `test_agent_retrieval.py`, `test_agent_trace.py`,
+and `agent_eval/test_agent_adversarial_scorecard.py`.
+
 ## Source Layout
 
 - CLI + bootstrap + embedded backend: `npa/src/npa/cli/agent.py`

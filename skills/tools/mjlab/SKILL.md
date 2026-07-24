@@ -20,8 +20,8 @@ npa workbench mjlab list
 
 SkyPilot YAML:
 
-- `npa/workflows/workbench/skypilot/mjlab-eval.yaml`
-- `npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml`
+- `npa/src/npa/workflows/skypilot/mjlab-eval.yaml`
+- `npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml`
 
 ## Routing And Data Flow
 

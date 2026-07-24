@@ -11,7 +11,7 @@
 #     --secret NEBIUS_TOKEN_FACTORY_KEY \
 #     --secret AWS_ACCESS_KEY_ID \
 #     --secret AWS_SECRET_ACCESS_KEY \
-#     npa/workflows/workbench/skypilot/isaac-franka-capture-reason.yaml
+#     npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml
 name: isaac-franka-capture-reason
 execution: serial
 ---

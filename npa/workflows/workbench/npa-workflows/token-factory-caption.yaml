@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: token-factory-caption
   description: Caption a folder of images with Nebius Token Factory (zero-GPU).
-  skypilotTwin: npa/workflows/workbench/skypilot/token-factory-caption.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/token-factory-caption.yaml
 
 config:
   bucket: example-bucket

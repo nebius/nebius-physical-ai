@@ -15,12 +15,14 @@ from typing import Any
 import pytest
 import yaml
 
+from npa.orchestration.skypilot.capacity import is_capacity_error
+
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
 BLUEPRINT = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-export-eval.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-export-eval.yaml"
 )
 DEFAULT_IMAGE = "docker:python:3.11-slim"
 DEFAULT_GPU = "L40S:1"
@@ -200,23 +202,25 @@ def _gpu_candidates() -> list[str]:
     return list(DEFAULT_GPU_CANDIDATES)
 
 
+# Broader SkyPilot provisioning markers specific to this export/eval GPU chain,
+# layered on top of the shared high-confidence capacity classifier.
+_EXPORT_EVAL_EXTRA_CAPACITY_MARKERS = (
+    "insufficient",
+    "resource unavailable",
+    "catalog does not contain",
+    "cannot be scheduled",
+    "failed to provision",
+    "no feasible",
+    "could not provision",
+)
+
+
 def _is_capacity_error(result: subprocess.CompletedProcess[str]) -> bool:
-    text = _strip_ansi(f"{result.stdout}\n{result.stderr}").lower()
-    return any(
-        marker in text
-        for marker in (
-            "insufficient",
-            "out of capacity",
-            "resource unavailable",
-            "resourcesunavailableerror",
-            "no resource satisfying",
-            "catalog does not contain",
-            "cannot be scheduled",
-            "failed to provision",
-            "no feasible",
-            "could not provision",
-        )
-    )
+    text = _strip_ansi(f"{result.stdout}\n{result.stderr}")
+    if is_capacity_error(text):
+        return True
+    lowered = text.lower()
+    return any(marker in lowered for marker in _EXPORT_EVAL_EXTRA_CAPACITY_MARKERS)
 
 
 def _gpu_slug(gpu: str) -> str:

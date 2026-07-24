@@ -188,7 +188,7 @@ Launch with both credential sets as secrets:
 
 ```bash
 sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
-  --secret AWS_SECRET_ACCESS_KEY npa/workflows/workbench/skypilot/<your>.yaml
+  --secret AWS_SECRET_ACCESS_KEY npa/src/npa/workflows/skypilot/<your>.yaml
 ```
 
 Worked examples: `tokenfactory-rollout-judge.yaml` (GPU rollout → VLM judge) and
@@ -222,7 +222,7 @@ The **YAML combos** are submittable from the SDK too, via `npa.workflow.submit`:
 from npa import workflow
 
 workflow.submit(
-    "npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml",
+    "npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml",
     run_id="rollout-judge",
     var=[
         "NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1",

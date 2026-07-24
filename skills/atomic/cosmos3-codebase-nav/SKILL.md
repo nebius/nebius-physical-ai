@@ -29,8 +29,8 @@ Primary NPA files:
 | Cosmos3 access, fetch, redaction, parser config, inference arg builder | `npa/src/npa/workbench/cosmos/cosmos3.py` |
 | Human CLI commands for real workflows | `npa/src/npa/cli/cosmos/__init__.py` |
 | SDK compatibility exports | `npa/src/npa/workbench/cosmos/__init__.py`, `npa/src/npa/sdk/workbench/cosmos.py` |
-| Fetch workflow | `npa/workflows/workbench/skypilot/cosmos3-ea-fetch.yaml` |
-| Text-to-image H100 smoke workflow | `npa/workflows/workbench/skypilot/cosmos3-text-to-image-inference.yaml` |
+| Fetch workflow | `npa/src/npa/workflows/skypilot/cosmos3-ea-fetch.yaml` |
+| Text-to-image H100 smoke workflow | `npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml` |
 | Unit tests for access, fetch, inference YAML, and skill artifacts | `npa/tests/workbench/test_cosmos3_access.py` |
 | CLI tests for `check` and `fetch` | `npa/tests/cli/test_cosmos3_cli.py` |
 

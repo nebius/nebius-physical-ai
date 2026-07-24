@@ -275,7 +275,7 @@ config:
   solution_name: "maniskill"
   capability_name: "gymnasium_pickcube_registration"
   smoke_artifact_name: "maniskill_pickcube_step.json"
-  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
+  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "PickCube-v1"
   iterations: 1
   num_envs: 1

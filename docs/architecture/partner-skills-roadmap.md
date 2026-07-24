@@ -25,7 +25,7 @@ Until a partner capability has that footing, it stays here as a blueprint.
 ## Architecture Constraints (must hold for every onboarded skill)
 
 - **SkyPilot is the sole orchestrator.** Every multi-stage job is a SkyPilot YAML
-  under `npa/workflows/workbench/skypilot/`, submitted via
+  under `npa/src/npa/workflows/skypilot/`, submitted via
   `npa workbench workflow submit`. Do not add a second orchestrator.
 - **Nebius substrate.** Managed Kubernetes (`npa-workbench-eu-north1`,
   `eu-north1`), S3 on `storage.eu-north1.nebius.cloud`, vLLM/serverless serving,
@@ -85,7 +85,7 @@ stack:
 
 | Concern | NPA implementation |
 | --- | --- |
-| Multi-stage orchestration | SkyPilot YAML under `npa/workflows/workbench/skypilot/`, submitted via `npa workbench workflow submit`; status/logs via `npa workbench workflow status/logs` |
+| Multi-stage orchestration | SkyPilot YAML under `npa/src/npa/workflows/skypilot/`, submitted via `npa workbench workflow submit`; status/logs via `npa workbench workflow status/logs` |
 | GPU scheduling | SkyPilot `--gpus` + Nebius GPU routing (`nebius-infra`); RT-core paths (Isaac-render pose defects) on L40S / RTX PRO 6000 |
 | Inference endpoints | NPA vLLM/serverless serving on Nebius (OpenAI-compatible); `vlm-eval` for VLM scoring/labeling |
 | Video augmentation worker | NPA `cosmos` tool (`npa workbench cosmos`) |

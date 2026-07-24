@@ -40,8 +40,9 @@ from npa.orchestration.skypilot._bin import (
 
 DEFAULT_YAML = (
     Path(__file__).resolve().parents[1]
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "bdd100k-pipeline.yaml"
 )

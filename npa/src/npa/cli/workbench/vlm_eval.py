@@ -39,8 +39,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console(stderr=True)
-WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/vlm-eval.yaml")
-BENCHMARK_WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/vlm-eval-benchmark.yaml")
+WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/vlm-eval.yaml")
+BENCHMARK_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/vlm-eval-benchmark.yaml")
 
 
 class OutputFormat(str, Enum):

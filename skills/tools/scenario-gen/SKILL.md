@@ -75,7 +75,7 @@ existing `workbench.rl.policy_train` on the same RT-core class or H100.
 ## SkyPilot + workflow
 
 - SkyPilot (headless, `cloud: kubernetes`, RTX PRO 6000):
-  `npa/workflows/workbench/skypilot/scenario-gen-adversarial.yaml`
+  `npa/src/npa/workflows/skypilot/scenario-gen-adversarial.yaml`
 - Declarative hardening pipeline (generate -> rank -> retrain/evaluate/gate loop
   -> publish): `npa/workflows/workbench/npa-workflows/adversarial-scenario-hardening.yaml`
 

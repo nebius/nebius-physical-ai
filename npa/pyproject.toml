@@ -46,6 +46,17 @@ lancedb = [
 ]
 # Rerun viewer/recording integration (`npa rerun`, sim-viz adapters).
 viz = ["rerun-sdk==0.31.4"]
+# Blueprint Phase J: guardrails-ai output validators for the adversarial eval.
+# Injected/guarded — the pure-python validator is the default; absence degrades
+# gracefully (see npa/tests/agent_eval/adversarial.py).
+agent-eval = ["guardrails-ai>=0.5"]
+# Blueprint Phase I: self-hostable OSS tracing adapters behind an injected
+# tracer (NullTracer is the default; these back build_langfuse_tracer /
+# build_otel_tracer in npa/src/npa/agent_backend/trace.py).
+agent-trace = [
+    "langfuse>=2.0",
+    "opentelemetry-sdk>=1.20",
+]
 # Everything the previous monolithic install provided, minus GPU extras.
 full = ["npa[data,lancedb,viz,server]"]
 server = ["fastapi~=0.136.1"]

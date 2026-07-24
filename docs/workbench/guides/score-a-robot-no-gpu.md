@@ -74,5 +74,5 @@ credentials — the report shape never changes.
 ## Dig deeper
 
 - Cookbook: [VLM-Eval Loop Runbook](../cookbooks/vlm-eval-loop-runbook.md)
-- Workflow YAML: `npa/workflows/workbench/skypilot/vlm-eval.yaml`
+- Workflow YAML: `npa/src/npa/workflows/skypilot/vlm-eval.yaml`
 - Used as the scorer inside the sim-to-real loop: `skills/workflows/sim-to-real/SKILL.md`

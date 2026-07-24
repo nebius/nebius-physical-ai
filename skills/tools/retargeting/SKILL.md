@@ -21,8 +21,8 @@ npa workbench sonic retargeting list
 
 SkyPilot YAML:
 
-- `npa/workflows/workbench/skypilot/retargeting.yaml`
-- `npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml`
+- `npa/src/npa/workflows/skypilot/retargeting.yaml`
+- `npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml`
 
 ## Routing And Data Flow
 

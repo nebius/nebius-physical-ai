@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from npa.orchestration.skypilot.capacity import is_capacity_error
+
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
@@ -18,8 +20,9 @@ ROOT = Path(__file__).resolve().parents[3]
 YAML_PATH = (
     ROOT
     / "npa"
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "cosmos3-text-to-image-inference.yaml"
 )
@@ -43,8 +46,9 @@ def test_cosmos3_text_to_image_raw_sky_public_defaults(tmp_path: Path) -> None:
     yaml_path = (
         workdir
         / "npa"
+        / "src"
+        / "npa"
         / "workflows"
-        / "workbench"
         / "skypilot"
         / "cosmos3-text-to-image-inference.yaml"
     )
@@ -90,14 +94,24 @@ def test_cosmos3_text_to_image_raw_sky_public_defaults(tmp_path: Path) -> None:
                 attempts.append(attempt)
                 _write_evidence(evidence_dir, run_id=run_id, attempts=attempts)
                 return
-            attempt["status"] = "failed"
+            # Retry the next GPU tier only on a capacity shortfall (NER); fail
+            # fast on any other error so genuine bugs are not masked by cycling
+            # through every accelerator.
+            combined_output = f"{result.stdout}\n{result.stderr}"
+            attempt["status"] = "capacity_skipped" if is_capacity_error(combined_output) else "failed"
         finally:
             _sky_down_and_poll(sky_bin, cluster, evidence_dir=evidence_dir)
         attempts.append(attempt)
+        if attempt["status"] == "failed":
+            _write_evidence(evidence_dir, run_id=run_id, attempts=attempts)
+            pytest.fail(
+                f"Cosmos3 inference raw SkyPilot run failed on GPU {gpu} with a "
+                f"non-capacity error; evidence={evidence_dir}"
+            )
 
     _write_evidence(evidence_dir, run_id=run_id, attempts=attempts)
     pytest.fail(
-        f"Cosmos3 inference raw SkyPilot run failed on all GPU tiers; evidence={evidence_dir}"
+        f"Cosmos3 inference raw SkyPilot run found no capacity on any GPU tier; evidence={evidence_dir}"
     )
 
 

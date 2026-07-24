@@ -7,7 +7,7 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "adversarial-scenario-hardening.yaml"
-SKYPILOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "scenario-gen-adversarial.yaml"
+SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "scenario-gen-adversarial.yaml"
 
 
 def test_workflow_validates_and_expands_hardening_loop() -> None:

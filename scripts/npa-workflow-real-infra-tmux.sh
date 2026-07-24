@@ -166,7 +166,7 @@ print('scheduler tasks', len(r['scheduler']['tasks']))
 from pathlib import Path
 import yaml
 
-root = Path("npa/workflows/workbench/skypilot")
+root = Path("npa/src/npa/workflows/skypilot")
 for path in sorted(root.glob("*.yaml")):
     docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d is not None]
     assert docs and docs[0].get("name"), path.name

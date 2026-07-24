@@ -1,7 +1,7 @@
 # SONIC Locomotion Fine-Tuning
 
 This cookbook describes the SkyPilot workflow at
-`npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml`.
+`npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml`.
 
 The workflow composes three Workbench stages:
 
@@ -51,15 +51,15 @@ npa workbench mjlab workflow
 
 Those commands point to:
 
-- `npa/workflows/workbench/skypilot/retargeting.yaml`
-- `npa/workflows/workbench/skypilot/mjlab-eval.yaml`
+- `npa/src/npa/workflows/skypilot/retargeting.yaml`
+- `npa/src/npa/workflows/skypilot/mjlab-eval.yaml`
 
 ## Raw SkyPilot
 
 Copy the YAML, edit literals, then run it directly with SkyPilot:
 
 ```bash
-cp npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml /tmp/sonic.yaml
+cp npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml /tmp/sonic.yaml
 # Edit /tmp/sonic.yaml so image_id, AWS_ENDPOINT_URL, and all s3:// prefixes
 # contain concrete values. Do not leave ${VAR} in envs or image_id fields.
 sky jobs launch \
@@ -86,7 +86,7 @@ npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml \
+  npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml \
   --run-id sonic-locomotion-<run-id> \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --npa-image cr.eu-north1.nebius.cloud/<registry-id>/npa:<tag> \
@@ -103,7 +103,7 @@ fallback:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml \
+  npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml \
   --run-id sonic-locomotion-<run-id> \
   --controller-backend kubernetes
 ```
@@ -140,7 +140,7 @@ from pathlib import Path
 from npa.sdk.workbench import sonic
 
 sonic.submit_workflow(
-    Path("npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"),
+    Path("npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml"),
     run_id="sonic-locomotion-run",
     registry="cr.eu-north1.nebius.cloud/<registry-id>",
     npa_image="cr.eu-north1.nebius.cloud/<registry-id>/npa:<tag>",
