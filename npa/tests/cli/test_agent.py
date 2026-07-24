@@ -740,7 +740,10 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "const runFilter = runFilterValue().toLowerCase();" in source
     assert 'runFilterInput.addEventListener("input"' in source
     # Discovery is generic (no ?prefix= path); the old prefix-path helper is gone.
-    assert '"/api/artifacts/runs?limit=100"' in source
+    # The picker loads the full run list by default (not just the newest 100) so
+    # older runs show without the operator having to guess a search fragment.
+    assert "const ARTIFACT_RUN_LIST_LIMIT = 2000;" in source
+    assert '"/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT' in source
     # Typing in the box also triggers a SERVER-side search so runs beyond the
     # newest page (by name/ID) are findable, not just client-side filtering.
     assert "&q=" in source
