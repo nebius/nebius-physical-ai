@@ -49,6 +49,7 @@ def _generate_request(tmp_path: Path, **overrides: Any) -> GenerateRequest:
         "output_uri": str(tmp_path / "adv"),
         "num_scenarios": 2,
         "workflow_run": "run-xyz",
+        "visualize": False,
     }
     payload.update(overrides)
     return GenerateRequest(**payload)
@@ -97,6 +98,50 @@ def test_generate_scenarios_empty_backend_raises(tmp_path: Path) -> None:
             _generate_request(tmp_path),
             adversary_backend=lambda _request, _seed: [],
         )
+
+
+def test_generate_emits_rerun_rrd(tmp_path: Path) -> None:
+    pytest.importorskip("rerun")
+    response = generate_scenarios(
+        _generate_request(tmp_path, num_scenarios=4, visualize=True),
+        run_id="run-viz",
+        adversary_backend=_fake_backend,
+    )
+    assert response.viz_uri.endswith("scenarios.rrd")
+    rrd = Path(response.viz_uri)
+    assert rrd.exists() and rrd.stat().st_size > 0
+
+
+def test_render_adversarial_rrd_direct(tmp_path: Path) -> None:
+    pytest.importorskip("rerun")
+    from npa.workbench.scenario_gen.generation import generate_scenarios as gen
+    from npa.workbench.scenario_gen.visualization import render_adversarial_rrd
+
+    response = gen(_generate_request(tmp_path, visualize=False), run_id="r", adversary_backend=_fake_backend)
+    manifest = json.loads(Path(response.manifest_uri).read_text())
+    from npa.workbench.scenario_gen.schemas import ScenarioRecord
+
+    records = [ScenarioRecord.model_validate(s) for s in manifest["scenarios"]]
+    uri = render_adversarial_rrd(records, output_uri=str(tmp_path / "viz"), task_name="Isaac-Cartpole-v0", run_id="r")
+    assert uri.endswith("scenarios.rrd")
+    assert Path(uri).exists() and Path(uri).stat().st_size > 0
+
+
+def test_generate_skips_viz_when_rerun_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import npa.workbench.scenario_gen.visualization as viz
+
+    def _no_rerun() -> Any:
+        raise ImportError("rerun not installed")
+
+    monkeypatch.setattr(viz, "_import_rerun", _no_rerun)
+    response = generate_scenarios(
+        _generate_request(tmp_path, visualize=True),
+        run_id="run-noviz",
+        adversary_backend=_fake_backend,
+    )
+    assert response.viz_uri == ""
+    # Generation still succeeds and writes the JSON manifest.
+    assert Path(response.manifest_uri).exists()
 
 
 def test_generate_request_validation() -> None:
