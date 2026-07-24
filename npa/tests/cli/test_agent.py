@@ -2079,3 +2079,12 @@ def test_artifact_file_transcodes_non_web_images_to_png() -> None:
     assert "needs_image_transcode(safe_name)" in source
     assert 'format="PNG"' in source
     assert 'media_type="image/png"' in source
+
+
+def test_stages_tab_run_search_uses_server_search() -> None:
+    """The Stages-tab run search must also query the server (not just filter the
+    fetched page) so runs older than the newest page are findable there too."""
+    source = _agent_ui_bundle()
+    assert "stagesSearchTimer" in source
+    # Both run-search boxes wire the debounced server search.
+    assert source.count("await refreshArtifactRuns(value)") >= 2

@@ -1988,8 +1988,21 @@
         }, "Load run for stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
         if (stagesRunInput) {
+          let stagesSearchTimer = null;
           stagesRunInput.addEventListener("input", () => {
+            // Immediate client-side filter…
             filterStagesRunSelect(String(stagesRunInput.value || ""));
+            // …plus a debounced SERVER search so runs older than the newest page
+            // are surfaced by name/ID (then re-filtered into this select).
+            const value = String(stagesRunInput.value || "").trim();
+            if (stagesSearchTimer) clearTimeout(stagesSearchTimer);
+            if (!value) return;
+            stagesSearchTimer = setTimeout(async () => {
+              try {
+                await refreshArtifactRuns(value);
+                filterStagesRunSelect(String(stagesRunInput.value || ""));
+              } catch (_err) { /* keep client-side view on search failure */ }
+            }, 350);
           });
           stagesRunInput.addEventListener("keydown", (event) => {
             if (event.key !== "Enter") return;
