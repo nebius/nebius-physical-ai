@@ -318,14 +318,18 @@ class _LanceVectorStore:
         # Use cosine distance so ``score`` lands on the SAME 0..1 cosine scale as
         # the pure-python stores; the shared ``min_score`` floor then behaves
         # identically across backends (LanceDB cosine ``_distance`` == 1 - cosine
-        # similarity, so similarity == 1 - distance).
-        try:
-            query = query.distance_type("cosine")
-        except Exception:  # noqa: BLE001 - older lancedb spelling
+        # similarity, so similarity == 1 - distance). ``distance_type`` is the
+        # current lancedb spelling, ``metric`` the older one; if neither is
+        # available we fall back to the backend default metric.
+        for _setter_name in ("distance_type", "metric"):
+            setter = getattr(query, _setter_name, None)
+            if setter is None:
+                continue
             try:
-                query = query.metric("cosine")
-            except Exception:  # noqa: BLE001 - fall back to the backend default
-                pass
+                query = setter("cosine")
+            except (TypeError, ValueError):  # wrong signature / unsupported metric
+                continue
+            break
         results = query.limit(max(1, int(k))).to_list()
         hits: list[dict[str, Any]] = []
         for row in results:
