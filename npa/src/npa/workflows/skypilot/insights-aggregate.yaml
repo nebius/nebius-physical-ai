@@ -1,0 +1,38 @@
+# Insights aggregation on Kubernetes. CPU-only and headless: scanning run
+# prefixes and rolling up metrics + lineage needs no GPU and no rendering path.
+name: insights-aggregate
+execution: serial
+---
+name: insights-aggregate-cpu
+resources:
+  cloud: kubernetes
+  cpus: 2
+  memory: 8
+  # Replace <your-registry-id> with your Nebius container registry ID.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-insights:0.1.0"
+envs:
+  HEADLESS: "1"
+  NPA_RUN_ID: "<your-run-id>"
+  RUN_PREFIX_URI: "s3://${NPA_S3_BUCKET}/runs/<your-run-id>/"
+  INSIGHTS_STORE_URI: "s3://${NPA_S3_BUCKET}/insights/store/"
+  DASHBOARD_URI: "s3://${NPA_S3_BUCKET}/insights/dashboard/<your-run-id>/"
+  WORKFLOW_NAME: "adversarial-scenario-hardening"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="$(command -v python3 || command -v python)"
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  # Non-invasively ingest an existing run prefix into the append-only store.
+  npa workbench insights ingest-run \
+    --input-path "${RUN_PREFIX_URI}" \
+    --output-path "${INSIGHTS_STORE_URI}" \
+    --workflow "${WORKFLOW_NAME}" \
+    --workflow-run "${NPA_RUN_ID}" \
+    --output json
+  # Roll up metrics + lineage and write a self-contained static HTML report.
+  npa workbench insights dashboard \
+    --input-path "${INSIGHTS_STORE_URI}" \
+    --output-path "${DASHBOARD_URI}" \
+    --output json
