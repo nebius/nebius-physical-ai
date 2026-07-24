@@ -48,6 +48,7 @@ def generate(
     batch_size: int = DEFAULT_BATCH_SIZE,
     seed: int = DEFAULT_SEED,
     workflow_run: str = "",
+    visualize: bool = True,
     mode: str | None = None,
     service: bool = False,
     endpoint: str = "",
@@ -66,6 +67,7 @@ def generate(
         batch_size=batch_size,
         seed=seed,
         workflow_run=workflow_run,
+        visualize=visualize,
     )
     if _resolve_mode(mode=mode, service=service):
         return GenerateResponse.model_validate(

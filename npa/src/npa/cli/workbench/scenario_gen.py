@@ -64,6 +64,7 @@ def generate_cmd(
     batch_size: int = typer.Option(DEFAULT_BATCH_SIZE, "--batch-size", help="Adversary batch size."),
     seed: int = typer.Option(DEFAULT_SEED, "--seed", help="Adversary sampling seed."),
     workflow_run: str = typer.Option("", "--workflow-run", help="Workflow run id threaded into lineage."),
+    visualize: bool = typer.Option(True, "--visualize/--no-visualize", help="Emit a Rerun .rrd visualization next to the manifest."),
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Scenario-gen service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
@@ -85,6 +86,7 @@ def generate_cmd(
         "batch_size": batch_size,
         "seed": seed,
         "workflow_run": workflow_run,
+        "visualize": visualize,
     }
     if service:
         result = request_json("POST", resolve_endpoint(endpoint), "/generate", payload=payload, token_env=token_env, timeout=120.0)

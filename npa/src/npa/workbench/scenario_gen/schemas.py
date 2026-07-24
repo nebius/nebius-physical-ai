@@ -67,6 +67,7 @@ class GenerateRequest(BaseModel):
     batch_size: int = Field(DEFAULT_BATCH_SIZE, ge=1)
     seed: int = Field(DEFAULT_SEED, ge=0)
     workflow_run: str = ""
+    visualize: bool = True
 
     @field_validator("policy_uri", "base_config_uri", "output_uri", "task_name")
     @classmethod
@@ -89,6 +90,7 @@ class GenerateResponse(BaseModel):
     adversarial_set_schema: str = ADVERSARIAL_SET_SCHEMA
     top_severity: float = 0.0
     manifest_sha256: str = ""
+    viz_uri: str = ""
     lineage: Lineage = Field(default_factory=Lineage)
 
 

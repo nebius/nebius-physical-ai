@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import random
 import time
@@ -42,6 +43,8 @@ PERTURBATION_AXES: tuple[str, ...] = (
 )
 
 AdversaryBackend = Callable[["GenerateRequest", int], list[dict[str, Any]]]
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ScenarioGenError(RuntimeError):
@@ -190,6 +193,20 @@ def generate_scenarios(
 
     _emit_artifacts(request, resolved_run_id, records, manifest_payload, target_manifest_uri)
 
+    viz_target = ""
+    if request.visualize:
+        try:
+            from .visualization import render_adversarial_rrd
+
+            viz_target = render_adversarial_rrd(
+                records,
+                output_uri=request.output_uri,
+                task_name=request.task_name,
+                run_id=resolved_run_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - visualization is best-effort
+            LOGGER.warning("scenario-gen rerun visualization skipped: %s", exc)
+
     top_severity = records[0].severity if records else 0.0
     return GenerateResponse(
         run_id=resolved_run_id,
@@ -198,6 +215,7 @@ def generate_scenarios(
         scenario_count=len(records),
         top_severity=top_severity,
         manifest_sha256=manifest,
+        viz_uri=viz_target,
         lineage=lineage,
     )
 
