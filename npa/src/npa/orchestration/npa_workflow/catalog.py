@@ -294,6 +294,66 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             ),
         ],
     ),
+    "workbench.scenario_gen.generate": ToolEntry(
+        name="workbench.scenario_gen.generate",
+        description=(
+            "Mine a ranked adversarial scenario set that maximizes failures of a "
+            "policy-under-test via a pluggable adversary backend (Isaac Lab RL "
+            "intended; deterministic heuristic default, GPU-free)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "scenario-gen",
+            "generate",
+            "--policy-uri",
+            "{{config.policy_uri}}",
+            "--input-path",
+            "{{config.base_config_uri}}",
+            "--output-path",
+            "{{config.adversarial_set_uri}}",
+            "--task",
+            "{{config.task_name}}",
+            "--num-scenarios",
+            "{{config.num_scenarios}}",
+            "--adversary-steps",
+            "{{config.adversary_steps}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.scenario_gen.rank": ToolEntry(
+        name="workbench.scenario_gen.rank",
+        description="Score/rank adversarial scenarios by failure severity + diversity.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "scenario-gen",
+            "rank",
+            "--input-path",
+            "{{config.adversarial_set_uri}}manifest.json",
+            "--output-path",
+            "{{config.ranked_set_uri}}",
+            "--top-k",
+            "{{config.rank_top_k}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.scenario_gen.write_hardening_decision": ToolEntry(
+        name="workbench.scenario_gen.write_hardening_decision",
+        description="Write promote/loop decision from the configured failure-rate threshold.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "from npa.orchestration.npa_workflow.decisions import write_decision;"
+                "threshold=float('{{config.failure_rate_threshold}}');"
+                "decision='promote_checkpoint' if threshold >= 0.5 else 'loop_back';"
+                "write_decision('{{config.decision_uri}}', decision)"
+            ),
+        ],
+    ),
     "workbench.rl.report_failure": ToolEntry(
         name="workbench.rl.report_failure",
         description="Write terminal RL failure report when threshold is not met.",
@@ -305,6 +365,122 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "payload={'eval_report_uri':'{{config.eval_report_uri}}','decision_uri':'{{config.decision_uri}}',"
                 "'status':'not_promoted'};"
                 "Path('/tmp/npa-rl-failure.json').write_text(json.dumps(payload));"
+                "print(json.dumps(payload))"
+            ),
+        ],
+    ),
+    "workbench.dataset.ingest": ToolEntry(
+        name="workbench.dataset.ingest",
+        description=(
+            "Ingest raw sensor data, validate against a sensor schema, normalize "
+            "to canonical records, and register a versioned dataset-of-record manifest."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "ingest",
+            "--input-path",
+            "{{config.raw_sensor_uri}}",
+            "--output-path",
+            "{{config.dataset_root_uri}}",
+            "--dataset-id",
+            "{{config.dataset_id}}",
+            "--version",
+            "{{config.dataset_version}}",
+            "--source",
+            "{{config.dataset_source}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.dataset.validate": ToolEntry(
+        name="workbench.dataset.validate",
+        description="Validate a dataset manifest against schema + quality thresholds.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "validate",
+            "--input-path",
+            "{{config.manifest_uri}}",
+            "--output-path",
+            "{{config.validation_uri}}",
+            "--completeness-min",
+            "{{config.completeness_min}}",
+            "--max-corruption-rate",
+            "{{config.max_corruption_rate}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.dataset.curate": ToolEntry(
+        name="workbench.dataset.curate",
+        description="Slice a dataset version by event/location/quality with lineage.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "curate",
+            "--input-path",
+            "{{config.manifest_uri}}",
+            "--output-path",
+            "{{config.curated_root_uri}}",
+            "--event",
+            "{{config.event_of_interest}}",
+            "--location",
+            "{{config.location_of_interest}}",
+            "--quality-metric",
+            "{{config.quality_metric}}",
+            "--min-quality",
+            "{{config.min_quality}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.dataset.query": ToolEntry(
+        name="workbench.dataset.query",
+        description="Query dataset records by event/location/quality facets (LanceDB-backed).",
+        argv_template=[
+            "npa",
+            "workbench",
+            "dataset",
+            "query",
+            "--input-path",
+            "{{config.curated_manifest_uri}}",
+            "--event",
+            "{{config.event_of_interest}}",
+            "--location",
+            "{{config.location_of_interest}}",
+            "--lancedb-endpoint",
+            "{{config.lancedb_endpoint}}",
+        ],
+    ),
+    "workbench.dataset.write_quality_decision": ToolEntry(
+        name="workbench.dataset.write_quality_decision",
+        description="Write accept/reject decision from a validation quality gate.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "from npa.orchestration.npa_workflow.decisions import write_decision;"
+                "threshold=float('{{config.quality_gate}}');"
+                "decision='promote_checkpoint' if threshold >= 0.5 else 'loop_back';"
+                "write_decision('{{config.decision_uri}}', decision)"
+            ),
+        ],
+    ),
+    "workbench.dataset.report_rejection": ToolEntry(
+        name="workbench.dataset.report_rejection",
+        description="Write terminal rejection report when a dataset breaches the quality gate.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "payload={'validation_uri':'{{config.validation_uri}}','decision_uri':'{{config.decision_uri}}',"
+                "'status':'rejected'};"
+                "Path('/tmp/npa-dataset-rejection.json').write_text(json.dumps(payload));"
                 "print(json.dumps(payload))"
             ),
         ],

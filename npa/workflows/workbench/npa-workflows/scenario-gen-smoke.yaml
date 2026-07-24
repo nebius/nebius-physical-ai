@@ -1,0 +1,61 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# CPU-only live smoke for the scenario-gen tool.
+#
+# Exercises the two scenario-gen endpoints end-to-end against real S3 with no
+# GPU: generate mines a ranked adversarial set with the deterministic default
+# adversary backend, then rank re-scores it by severity + diversity. Intended
+# for `npa workbench workflow run-spec --execute` on a configured environment.
+# See docs/workbench/cookbooks/workbench-parity-tools.md.
+
+metadata:
+  name: scenario-gen-smoke
+  description: >
+    CPU-only live smoke: scenario-gen generate (default adversary backend) then
+    rank, writing an adversarial set and a ranked set to S3.
+
+config:
+  bucket: example-bucket
+  prefix: "scenario-gen-smoke/{{run.id}}"
+
+  policy_uri: "s3://{{config.bucket}}/{{config.prefix}}/policy-under-test.ckpt"
+  base_config_uri: "s3://{{config.bucket}}/{{config.prefix}}/base-task.json"
+  task_name: Isaac-Cartpole-v0
+  num_scenarios: "8"
+  adversary_steps: "1000"
+  rank_top_k: "3"
+
+  adversarial_set_uri: "s3://{{config.bucket}}/{{config.prefix}}/adversarial/"
+  ranked_set_uri: "s3://{{config.bucket}}/{{config.prefix}}/ranked/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+
+initial: generate
+
+states:
+  generate:
+    description: Mine a ranked adversarial set with the default adversary backend.
+    toolRef: workbench.scenario_gen.generate
+    resources: cpu
+    outputs:
+      - uri: "{{config.adversarial_set_uri}}manifest.json"
+        schema: npa.scenario_gen.adversarial_set.v1
+    next: rank
+
+  rank:
+    description: Re-score the adversarial set by failure severity + diversity.
+    needs: [generate]
+    toolRef: workbench.scenario_gen.rank
+    resources: cpu
+    inputs:
+      - uri: "{{config.adversarial_set_uri}}manifest.json"
+        schema: npa.scenario_gen.adversarial_set.v1
+    outputs:
+      - uri: "{{config.ranked_set_uri}}ranked.json"
+        schema: npa.scenario_gen.ranked_set.v1
+    terminal: true
