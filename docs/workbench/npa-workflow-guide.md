@@ -37,7 +37,7 @@ README for the full catalog.
 or pass `--image` to a workbench image that already includes it. `--plan-only`
 does not mint or print live registry tokens.
 
-Golden specs (all pytest-guarded):
+Reference specs (all pytest-guarded):
 
 | File | Shows |
 | --- | --- |

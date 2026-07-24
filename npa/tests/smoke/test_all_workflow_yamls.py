@@ -18,6 +18,15 @@ NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 SKYPILOT_SPECS = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 RUNNER = CliRunner()
 
+# Specs with dynamic transitions / decision-gated loops need an assumed decision
+# to plan deterministically (CLI plan-spec / run-spec require --assume-decision).
+ASSUME_DECISION_SPECS = {
+    "sim2real-vlm-rl.yaml",
+    "tokenfactory-cosmos-gate.yaml",
+    "rl-policy-training-sim-success.yaml",
+    "physical-ai-data-factory.yaml",
+}
+
 
 def _skypilot_yaml_paths() -> list[Path]:
     return sorted(SKYPILOT_SPECS.glob("*.yaml"))
@@ -71,7 +80,7 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
         f"smoke-{path.stem}",
         "--json",
     ]
-    if path.name in {"sim2real-vlm-rl.yaml", "tokenfactory-cosmos-gate.yaml", "rl-policy-training-sim-success.yaml"}:
+    if path.name in ASSUME_DECISION_SPECS:
         plan_args.extend(["--assume-decision", assume])
     plan = RUNNER.invoke(app, plan_args)
     assert plan.exit_code == 0, plan.output
@@ -94,11 +103,7 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
             "--plan-only",
             "--scheduler-plan",
             "--json",
-            *(["--assume-decision", assume] if path.name in {
-                "sim2real-vlm-rl.yaml",
-                "tokenfactory-cosmos-gate.yaml",
-                "rl-policy-training-sim-success.yaml",
-            } else []),
+            *(["--assume-decision", assume] if path.name in ASSUME_DECISION_SPECS else []),
         ],
     )
     assert scheduler.exit_code == 0, scheduler.output

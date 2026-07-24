@@ -10,7 +10,10 @@ from npa.workflows.artifacts import (
     ArtifactDiscoveryError,
     artifact_media_type,
     download_s3_uri,
+    find_run_artifacts,
+    list_all_runs,
     list_artifacts,
+    list_run_categories,
     list_runs,
     render_hint_for_object,
     select_preferred_artifact,
@@ -162,3 +165,195 @@ def test_artifact_media_type_prefers_explicit_browser_types() -> None:
 def test_list_runs_requires_positive_limit() -> None:
     with pytest.raises(ArtifactDiscoveryError):
         list_runs("bucket", limit=0, s3=_FakeS3([]))
+
+
+class _PrefixAwareS3:
+    """Fake S3 that honors Prefix + Delimiter over an in-memory key store."""
+
+    def __init__(self, keys: list[tuple[str, str]]):
+        # keys: list of (key, iso_ts)
+        self._keys = keys
+
+    def get_paginator(self, name: str):
+        assert name == "list_objects_v2"
+        store = self._keys
+
+        class _P:
+            def paginate(self, Bucket=None, Prefix="", Delimiter=None):  # noqa: N803
+                if Delimiter:
+                    seen: set[str] = set()
+                    cps: list[dict] = []
+                    for key, _ts in store:
+                        if not key.startswith(Prefix):
+                            continue
+                        rest = key[len(Prefix):]
+                        if "/" not in rest:
+                            continue
+                        seg = rest.split("/", 1)[0]
+                        cp = Prefix + seg + "/"
+                        if seg and cp not in seen:
+                            seen.add(cp)
+                            cps.append({"Prefix": cp})
+                    yield {"CommonPrefixes": cps}
+                else:
+                    contents = [
+                        _obj(key, ts=ts) for key, ts in store if key.startswith(Prefix)
+                    ]
+                    yield {"Contents": contents}
+
+        return _P()
+
+
+_LAYOUT = [
+    ("checkpoints/sim2real-b/run-a/reports/sim2real.rrd", "2026-07-01T00:00:00+00:00"),
+    ("checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png", "2026-07-22T00:00:00+00:00"),
+    ("checkpoints/lerobot/default/model.pt", "2026-06-01T00:00:00+00:00"),
+]
+
+
+def test_list_run_categories_enumerates_dynamically() -> None:
+    s3 = _PrefixAwareS3(_LAYOUT)
+    cats = list_run_categories("bucket", base_prefix="checkpoints", s3=s3)
+    assert set(cats) == {
+        "checkpoints/sim2real-b",
+        "checkpoints/physical-ai-data-factory",
+        "checkpoints/lerobot",
+    }
+
+
+def test_list_all_runs_merges_across_categories_latest_first() -> None:
+    s3 = _PrefixAwareS3(_LAYOUT)
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=s3)
+    ids = [r.run_id for r in page.runs]
+    # All runs across every category, no hardcoded workflow path; newest first.
+    assert ids == ["paidf-1", "run-a", "default"]
+    assert page.total_runs == 3
+
+
+def test_find_run_artifacts_locates_run_in_any_category() -> None:
+    s3 = _PrefixAwareS3(_LAYOUT)
+    arts = find_run_artifacts("bucket", base_prefix="checkpoints", run_id="paidf-1", s3=s3)
+    assert [a.key for a in arts] == [
+        "checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png"
+    ]
+    # A run under a different category is also found without a hardcoded prefix.
+    assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="run-a", s3=s3)
+    assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="missing", s3=s3) == []
+
+
+# Runs also live at the BUCKET ROOT under a category (not under the configured
+# base root), e.g. scenario-gen-smoke/<run>/... and physical-ai-data-factory/<run>/...
+# Discovery must span both roots so these are visible + openable.
+_MULTI_ROOT_LAYOUT = _LAYOUT + [
+    ("scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json", "2026-07-23T15:32:22+00:00"),
+    ("scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json", "2026-07-23T15:32:20+00:00"),
+    ("physical-ai-data-factory/paidf-root-1/reports/final.json", "2026-07-19T00:00:00+00:00"),
+]
+
+
+def test_discovery_categories_spans_base_and_bucket_root() -> None:
+    from npa.workflows.artifacts import discovery_categories
+
+    cats = discovery_categories("bucket", base_prefix="checkpoints", s3=_PrefixAwareS3(_MULTI_ROOT_LAYOUT))
+    # Base-root categories come first, then root-level categories; the base root
+    # itself ("checkpoints") is NOT treated as a run parent (its children are cats).
+    assert "checkpoints/sim2real-b" in cats
+    assert "checkpoints/physical-ai-data-factory" in cats
+    assert "scenario-gen-smoke" in cats
+    assert "physical-ai-data-factory" in cats
+    assert "checkpoints" not in cats
+
+
+def test_list_all_runs_surfaces_root_level_runs() -> None:
+    s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=s3)
+    ids = [r.run_id for r in page.runs]
+    # Root-level runs are discovered alongside checkpoints runs, newest first.
+    assert ids[0] == "scenario-gen-smoke-1"
+    assert set(ids) == {"scenario-gen-smoke-1", "paidf-1", "paidf-root-1", "run-a", "default"}
+
+
+def test_find_run_artifacts_locates_root_level_run() -> None:
+    s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
+    arts = find_run_artifacts(
+        "bucket", base_prefix="checkpoints", run_id="scenario-gen-smoke-1", s3=s3
+    )
+    keys = sorted(a.key for a in arts)
+    assert keys == [
+        "scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json",
+        "scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json",
+    ]
+
+
+def test_list_runs_skips_bare_files_not_run_dirs() -> None:
+    # A file sitting directly under a category is not a run directory.
+    s3 = _PrefixAwareS3([
+        ("scenario-gen-smoke/records.json", "2026-07-23T00:00:00+00:00"),
+        ("scenario-gen-smoke/real-run-1/npa-workflow/status.json", "2026-07-23T10:00:00+00:00"),
+    ])
+    page = list_runs("bucket", prefix="scenario-gen-smoke", limit=50, s3=s3)
+    ids = [r.run_id for r in page.runs]
+    assert ids == ["real-run-1"]
+    assert "records.json" not in ids
+
+
+def test_discovery_categories_excludes_infra_roots() -> None:
+    from npa.workflows.artifacts import discovery_categories
+
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("npa-agent/session-state/a/b.json", "2026-07-23T00:00:00+00:00"),
+        ("npa-agent/tenants/t/chat-sessions/s.json", "2026-07-23T00:00:00+00:00"),
+    ]
+    cats = discovery_categories(
+        "bucket", base_prefix="checkpoints", exclude={"npa-agent"}, s3=_PrefixAwareS3(layout)
+    )
+    assert "npa-agent" not in cats
+    assert "scenario-gen-smoke" in cats
+
+
+def test_list_all_runs_excludes_infra_roots() -> None:
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("npa-agent/session-state/a/state.json", "2026-07-23T00:00:00+00:00"),
+    ]
+    page = list_all_runs(
+        "bucket", base_prefix="checkpoints", limit=50, exclude={"npa-agent"}, s3=_PrefixAwareS3(layout)
+    )
+    ids = [r.run_id for r in page.runs]
+    assert "session-state" not in ids
+    assert "scenario-gen-smoke-1" in ids
+
+
+def test_ppm_and_netpbm_are_images_and_need_transcode() -> None:
+    from npa.workflows.artifacts import needs_image_transcode, render_hint_for_object
+
+    # Sim-rollout camera frames are saved as .ppm — classified as viewable images.
+    assert render_hint_for_object(key="run/actions/rollout/camera-000.ppm") == "image"
+    assert render_hint_for_object(key="run/x.bmp") == "image"
+    # Browser cannot render these natively → must transcode to PNG on the way out.
+    for name in ("camera-000.ppm", "x.pgm", "y.bmp", "z.tiff"):
+        assert needs_image_transcode(name) is True
+    # Web-native images are served as-is (no transcode).
+    for name in ("frame.png", "a.jpg", "b.webp"):
+        assert needs_image_transcode(name) is False
+    assert render_hint_for_object(key="run/frame.png") == "image"
+
+
+def test_list_runs_contains_search_survives_limit() -> None:
+    # An old run beyond the newest `limit` must still be found by substring search.
+    keys = [(f"cat/run-new-{i:03d}/reports/r.json", f"2026-07-{(i%27)+1:02d}T00:00:00+00:00") for i in range(30)]
+    keys.append(("cat/rtxpro-staged-2x2-old/actions/train/camera-000.ppm", "2026-06-13T01:13:56+00:00"))
+    s3 = _PrefixAwareS3(keys)
+    # Without search, limit=5 returns only the 5 newest → the old run is cut off.
+    page = list_runs("bucket", prefix="cat", limit=5, s3=s3)
+    assert "rtxpro-staged-2x2-old" not in [r.run_id for r in page.runs]
+    # With substring search, the old run is found despite the small limit.
+    page = list_runs("bucket", prefix="cat", limit=5, contains="rtxpro-staged-2x2", s3=s3)
+    assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
+
+
+def test_list_all_runs_contains_search_across_roots() -> None:
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("sim2real-b/rtxpro-staged-2x2-old/actions/train/camera-000.ppm", "2026-06-13T01:13:56+00:00"),
+    ]
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=3, contains="rtxpro-staged", s3=_PrefixAwareS3(layout))
+    assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]

@@ -116,11 +116,82 @@ def test_build_stages_marks_matched_draft_state_succeeded() -> None:
     assert by_id["rollouts"]["status"] == "pending"
 
 
+def test_build_stages_emit_stage_key_for_clickable_timeline() -> None:
+    # Artifact-grouped stages (paidf-style, no draft) must carry stage_key so the
+    # agent timeline rows are clickable and scope the artifact browser.
+    keys = [
+        "checkpoints/physical-ai-data-factory/run-1/cosmos_augmented/aug-run-1/frame-00000.png",
+        "checkpoints/physical-ai-data-factory/run-1/curation/report.json",
+    ]
+    stages = build_artifact_backed_stages(
+        keys,
+        run_id="run-1",
+        prefix="checkpoints/physical-ai-data-factory",
+        workflow_stage_defs=[],
+        overlay_unmatched=False,
+    )
+    by_key = {s["stage_key"]: s for s in stages}
+    assert "cosmos_augmented" in by_key and "curation" in by_key
+    assert all(s.get("stage_key") for s in stages)
+
+
 def test_artifact_stage_key_and_label() -> None:
     key = "checkpoints/sim2real-b/run-1/isaac-capture/frame_001.png"
     assert artifact_stage_key(key, "run-1", "checkpoints/sim2real-b") == "isaac-capture"
     assert artifact_stage_label("isaac-capture") == "Isaac capture"
     assert artifact_stage_label("reports") == "Reports / visualization"
+
+
+# Runs nested as <run>/<workflow-name>/<stage>/... must expose their real stages,
+# not collapse into the single workflow-name wrapper row.
+_NESTED_KEYS = [
+    "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/plan/scene_reasoning.json",
+    "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/scene/frame_000.png",
+    "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/augment/frame-00000.png",
+    "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/gate/decision.json",
+    "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/scores/vlm_eval_stub.json",
+]
+
+
+def test_run_stage_wrapper_detects_workflow_name_nesting() -> None:
+    from npa.cli.agent_stages import run_stage_wrapper
+
+    assert run_stage_wrapper(_NESTED_KEYS, "run-1", "npa-workflow-e2e") == "tokenfactory-cosmos-gate"
+
+
+def test_nested_run_exposes_real_pipeline_stages_not_wrapper() -> None:
+    stages = build_artifact_backed_stages(
+        _NESTED_KEYS,
+        run_id="run-1",
+        prefix="npa-workflow-e2e",
+        workflow_stage_defs=[],
+        overlay_unmatched=False,
+    )
+    stage_keys = {s["stage_key"] for s in stages}
+    assert stage_keys == {"plan", "scene", "augment", "gate", "scores"}
+    assert "tokenfactory-cosmos-gate" not in stage_keys
+
+
+def test_artifact_stage_key_strips_wrapper() -> None:
+    key = "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/augment/frame-00000.png"
+    assert artifact_stage_key(key, "run-1", "npa-workflow-e2e", "tokenfactory-cosmos-gate") == "augment"
+
+
+def test_run_stage_wrapper_leaves_flat_layouts_untouched() -> None:
+    from npa.cli.agent_stages import run_stage_wrapper
+
+    # Multi-stage flat layout: no common wrapper.
+    flat = [
+        "checkpoints/paidf/run-1/configs/manifest.json",
+        "checkpoints/paidf/run-1/cosmos_augmented/manifest.json",
+    ]
+    assert run_stage_wrapper(flat, "run-1", "checkpoints/paidf") == ""
+    # A single real stage whose children are files must NOT be stripped.
+    reports_only = [
+        "checkpoints/paidf/run-1/reports/final.json",
+        "checkpoints/paidf/run-1/reports/sim2real.rrd",
+    ]
+    assert run_stage_wrapper(reports_only, "run-1", "checkpoints/paidf") == ""
 
 
 # ── custom npa.workflow runs: per-state subprefix → named succeeded stages ────

@@ -1,0 +1,24 @@
+NVIDIA Physical AI Skills
+
+Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+
+The NPA `physical-ai-data-factory` skill and the blueprint it documents
+(`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`) are an
+NPA-native re-implementation on Nebius + SkyPilot of the NVIDIA Physical AI Data
+Factory / Video Data Augmentation workflow. The design analysis was adapted from
+NVIDIA agent skills:
+
+  https://github.com/NVIDIA/skills
+  - skills/physical-ai-video-data-augmentation   (License: CC-BY-4.0 AND Apache-2.0)
+  - skills/physical-ai-infrastructure-setup-and-resilient-scaling (Apache-2.0)
+  - skills/physical-ai-neural-reconstruction     (Apache-2.0)
+  - skills/physical-ai-defect-image-generation   (CC-BY-4.0 AND Apache-2.0)
+
+NPA does not use NVIDIA OSMO. The upstream skills orchestrate on OSMO; the NPA
+skill orchestrates on SkyPilot and composes existing NPA workbench tools. Only
+the NPA-native `physical-ai-data-factory` workflow is shipped as a live skill;
+the other capabilities remain design/roadmap in
+`docs/architecture/partner-skills-roadmap.md` until they land on Nebius +
+SkyPilot with tests.
+
+Trademarks (NVIDIA, Omniverse, Cosmos, NuRec, Isaac) belong to NVIDIA.

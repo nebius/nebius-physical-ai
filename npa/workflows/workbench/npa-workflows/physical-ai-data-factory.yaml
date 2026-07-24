@@ -1,0 +1,270 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Reference blueprint: the NVIDIA Physical AI Data Factory, implemented natively
+# on Nebius + SkyPilot with NO OSMO orchestrator and NO new workbench tool -- it
+# is pure composition of existing NPA workbench tools.
+#
+# NVIDIA blueprint (OSMO-orchestrated) -> NPA mapping:
+#
+#   Stage 1  Config Generation      -> generate-configs   (sample appearance-only
+#                                       augmentation variables -> configs manifest)
+#   Stage 2a Understand & Annotate   -> annotate-original  (Token Factory VLM dense
+#                                       captioning of source video frames)
+#   Stage 2b Augment & Multiply      -> augment            (Cosmos Transfer 2.5,
+#                                       appearance-only re-render; GPU tier)
+#            Evaluate & Validate      -> grade loop         (Token Factory VLM
+#                                       attribute verification + promote/loop gate;
+#                                       the structural "hallucination" check is the
+#                                       classical CPU checker folded into the gate)
+#   Stage 3  Pseudo-Label Augmented  -> annotate-augmented (re-caption the augmented
+#                                       clips so the amplified set ships labeled)
+#   Stage 4  Curation                -> curate             (Voxel51 / FiftyOne review)
+#            Finalize                 -> finalize          (graded-dataset report)
+#
+# Runtime placement (see docs/workbench/guides/physical-ai-data-factory.md):
+#   Token Factory (zero-GPU, hosted): captioning, attribute verification. Verified
+#     models: Qwen/Qwen2.5-VL-72B-Instruct (VLM), nvidia/Cosmos3-Super-Reasoner
+#     (Cosmos-family critic), meta-llama/Llama-3.3-70B-Instruct (LLM).
+#   GPU (Nebius Managed K8s): Cosmos Transfer 2.5 augmentation only.
+#   CPU: config sampling, structural check, curation, finalize.
+#
+# Orchestration is SkyPilot (npa workbench workflow submit); every stage hands off
+# through S3 under a single run prefix so input / intermediate / output artifacts
+# are all discoverable in the NPA agent artifact browser
+# (GET /api/artifacts/runs?prefix=physical-ai-data-factory).
+
+metadata:
+  name: physical-ai-data-factory
+  description: >
+    NVIDIA Physical AI Data Factory implemented on Nebius + SkyPilot without OSMO:
+    config-gen -> annotate (Token Factory VLM) -> augment (Cosmos Transfer 2.5, GPU)
+    -> evaluate/validate gate loop -> re-label augmented -> FiftyOne curation ->
+    finalize. Pure composition of existing workbench tools; artifacts land under one
+    S3 run prefix for NPA-agent artifact viewing.
+
+config:
+  bucket: example-bucket
+  prefix: "physical-ai-data-factory/{{run.id}}"
+
+  # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
+  n_augmentations: "2"            # augmented variants sampled per source video
+  refinement_iterations: "2"      # max evaluate/validate passes before promote
+  grade_threshold: "0.5"          # min VLM attribute score to promote (else loop_back)
+  default_decision: promote_checkpoint
+
+  # --- Models (verified available on Nebius Token Factory) ---
+  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  vlm_backend: api
+  max_images: "8"
+  max_tokens: "512"
+
+  # --- S3 artifact layout: input / intermediate / output under one run prefix ---
+  input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  images_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  configs_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/"
+  captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_original/"
+  trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
+  augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  labeled_augmented_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/"
+  # lance_uri = the dataset the curate stage declares as its input (its `inputs:`
+  # block references {{config.lance_uri}}). The "lance" name is a LanceDB-era
+  # carryover from the AV/BDD100K curation pipelines; this video blueprint has no
+  # LanceDB table, so it simply points at the augmented set (same prefix as
+  # augment_uri) -- i.e. "the data to curate". The curate stage itself runs a
+  # real run.shell report over augment_uri (not the fiftyone.launch_app toolRef).
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
+  # run_root_uri = the run prefix (holds input/ + cosmos_augmented/ + labeled_*/);
+  # the visualize stage reads it to build a Rerun recording.
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
+  finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # Canonical SkyPilot name. Clusters that advertise a different product name
+    # (e.g. RTXPRO-6000-BLACKWELL-SERVER-EDITION) can override at submit time with
+    # NPA_WORKFLOW_GPU_ACCELERATOR=<name>:1 (see skypilot_render.normalize_resources).
+    accelerators: RTXPRO6000:1
+    cpus: 4
+    memory: 16Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: generate-configs
+
+states:
+  generate-configs:
+    description: >
+      Stage 1 - Config Generation. Sample appearance-only augmentation variable
+      combinations (weather / time_of_day / road_condition) and write a per-run
+      config manifest that drives the augment stage.
+    resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import generate_configs;
+        generate_configs('{{config.configs_uri}}', '{{config.n_augmentations}}', '{{run.id}}')"
+    outputs:
+      - uri: "{{config.configs_uri}}manifest.json"
+        schema: npa.data_factory.configs.v1
+    next: annotate-original
+
+  annotate-original:
+    description: >
+      Stage 2a - Understand & Annotate. Dense-caption the source video frames with a
+      hosted Token Factory VLM (zero-GPU) to produce pseudo-labels for the originals.
+    needs: [generate-configs]
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    inputs:
+      - uri: "{{config.images_uri}}"
+        schema: npa.data_factory.frames.v1
+    outputs:
+      - uri: "{{config.captions_uri}}captions.json"
+        schema: npa.token_factory.captions.v1
+    next: grade
+
+  augment:
+    description: >
+      Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 re-renders each source clip
+      under the sampled appearance conditions (GPU tier). Appearance-only: lighting,
+      weather, surface -- never scene geometry. This is a member of the `grade`
+      refinement loop: on a loop_back decision the loop re-runs augment (re-render),
+      re-verify, and re-gate, so a failed batch is actually re-augmented.
+    needs: [annotate-original]
+    toolRef: workbench.cosmos2.transfer_execute
+    resources: gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.data_factory.frames.v1
+    outputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.cosmos2.transfer.v1
+
+  grade:
+    description: >
+      Augment & Evaluate refinement loop. Each iteration: augment (Cosmos Transfer
+      2.5, GPU) -> attribute-verify (VLM) -> quality-gate. Loops back to RE-AUGMENT on
+      failure, up to refinement_iterations, and breaks as soon as the gate promotes.
+      augment lives INSIDE the loop so loop_back genuinely re-renders (the gate's
+      loop_back decision drives another augment pass via loop.until).
+    needs: [annotate-original]
+    loop:
+      max: "{{config.refinement_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - augment
+      - attribute-verify
+      - quality-gate
+    next: annotate-augmented
+
+  attribute-verify:
+    description: VLM-based attribute verification of the augmented clips (Token Factory).
+    # Runs the REAL vlm_eval tool with --backend api (config.vlm_backend). Its
+    # output file is named vlm_eval_stub.json -- a LEGACY filename of the vlm_eval
+    # tool (RESULT_FILENAME), NOT a stubbed stage; grade_gate imports that same
+    # constant so producer and consumer stay in sync.
+    toolRef: workbench.vlm_eval.run
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.sim2real.augment.v1
+    outputs:
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+        schema: npa.workbench.vlm_eval.report.v1
+
+  quality-gate:
+    description: >
+      Real quality gate — read the VLM attribute-verification score and write a
+      promote_checkpoint / loop_back decision. The enclosing `grade` loop reads this
+      decision (loop.until: promote_checkpoint): promote breaks the loop and proceeds
+      to annotate-augmented; loop_back re-runs the loop body (augment -> verify ->
+      gate). No explicit transitions here -- the loop drives control flow, and
+      transitions on a loop-sequence member are not evaluated at runtime.
+    writesDecision: true
+    needs: [attribute-verify]
+    resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import grade_gate;
+        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', '{{config.grade_threshold}}')"
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+
+  annotate-augmented:
+    description: >
+      Stage 3 - Pseudo-Label Augmented. Re-caption the promoted augmented clips with
+      the same hosted VLM so the amplified dataset ships fully labeled.
+    needs: [grade]
+    resources: cpu
+    run:
+      shell: >
+        npa workbench token-factory caption
+        --input-path "{{config.augmented_frames_uri}}"
+        --output-path "{{config.labeled_augmented_uri}}"
+        --model "{{config.caption_model}}"
+        --max-images "{{config.max_images}}"
+        --max-tokens "{{config.max_tokens}}"
+        --output json
+    outputs:
+      - uri: "{{config.labeled_augmented_uri}}captions.json"
+        schema: npa.token_factory.captions.v1
+    next: curate
+
+  curate:
+    description: >
+      Stage 4 - Curation. Build a real curation report over the augmented + graded
+      set (clip/frame counts, per-clip coverage, dedup) for Voxel51/FiftyOne review.
+    needs: [annotate-augmented]
+    resources: cpu
+    inputs:
+      - uri: "{{config.lance_uri}}"
+        schema: npa.cosmos2.transfer.v1
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import curate;
+        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}')"
+    outputs:
+      - uri: "{{config.curation_report_uri}}"
+        schema: npa.fiftyone.curation.v1
+    next: visualize
+
+  visualize:
+    description: >
+      Build a Rerun recording (reports/sim2real.rrd) from the run's input +
+      augmented frames and captions so the run renders in the NPA agent's
+      embedded Rerun viewer (the agent prefers reports/sim2real.rrd).
+    needs: [curate]
+    resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_viz import build_run_rrd;
+        print(build_run_rrd('{{config.run_root_uri}}', '{{config.rrd_uri}}'))"
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: npa.sim2real.rerun.v1
+    next: finalize
+
+  finalize:
+    description: >
+      Aggregate the run's stage artifacts into a real final augmented-and-graded
+      dataset report.
+    needs: [visualize]
+    resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import finalize;
+        finalize('{{config.run_root_uri}}', '{{config.finalize_report_uri}}')"
+    outputs:
+      - uri: "{{config.finalize_report_uri}}"
+        schema: npa.sim2real.e2e_report.v1
+    terminal: true

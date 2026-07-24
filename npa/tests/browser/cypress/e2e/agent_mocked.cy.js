@@ -1,5 +1,7 @@
 import {
   COMPLEX_WORKFLOW_YAML,
+  DF_INPUT_ONLY_RUN_ID,
+  DF_MOCK_RUN_ID,
   FIELD_IDS,
   GENERIC_WORKFLOW_YAML,
   NON_STOCK_RUN_ID,
@@ -36,11 +38,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdInput").clear({ force: true }).type("cosmos-reason-run", { force: true });
     cy.get("#loadRunData").click({ force: true });
     cy.wait("@loadRun");
-    // From Viewer, Chat tab opens the drawer; Full chat expands Stages/Workflow.
-    cy.get("#tabChat").click();
-    cy.get("#panelChat").should("have.class", "chat-drawer-open");
-    cy.get("#openFullChatTab").click();
+    // Clicking the Main tab from Viewer switches to the Main panel directly
+    // (it must NOT pop the chat drawer out).
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.get("#runSummary").should("contain.text", "cosmos-reason-run");
     cy.get("#stageList").should("contain.text", "Fetch checkpoint");
@@ -101,7 +103,7 @@ describe("NPA agent UI with mocked APIs", () => {
     }
     cy.get("#workflowYaml").should("contain.value", "apiVersion: npa.workflow/v0.0.1");
     cy.get("#workflowSubmitHint").should("contain.text", "plan-only");
-    cy.get("#tabChat").should("have.attr", "aria-selected", "true");
+    cy.get("#tabMain").should("have.attr", "aria-selected", "true");
     cy.get("#tabRerun").click();
     cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
     cy.get("#panelRerun").should("have.class", "is-active").and("have.attr", "aria-hidden", "false");
@@ -194,7 +196,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#loadFrankaRerun").click();
     cy.wait("@loadFranka");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded stock Franka");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
 
@@ -206,21 +208,21 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#submitWorkflow").click();
     cy.wait("@submitSim2Real");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Submitted Sim2Real run");
     cy.get("#runSummary").should("contain.text", "submitted-run");
 
     cy.get("#tabRerun").click();
     cy.get("#workflowStatus").click();
     cy.wait("@workflowStatus");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Latest workflow status");
 
     cy.get("#tabRerun").click();
     cy.get("#runIdInput").clear().type("mock-run");
     cy.get("#loadRunData").click();
     cy.wait("@loadRun");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded run context");
     cy.get("#runLog").should("contain.text", "mock run log");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
@@ -257,7 +259,7 @@ describe("NPA agent UI with mocked APIs", () => {
   it("covers artifact discovery, dynamic artifact load button, and camera cards", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#artifactPrefix").type("sim2real-b");
+    // Discovery is generic (no path prefix); all runs show.
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     // Consolidated picker may already have mock-run selected — force list via button.
@@ -273,10 +275,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Loaded artifact");
     cy.get("#artifactPreviewHost").should("not.have.attr", "hidden");
 
-    cy.get("#tabChat").click();
-    cy.get("#panelChat").should("have.class", "chat-drawer-open");
-    cy.get("#openFullChatTab").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active").and("have.attr", "aria-hidden", "false");
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
     cy.get("#panelRerun").should("have.class", "is-inactive");
   });
 
@@ -287,7 +288,6 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#artifactPrefix").clear().type("sim2real-b/custom-assets");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
@@ -319,7 +319,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
     cy.get("#loadRunData").click();
     cy.wait("@loadRun");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.get("#runSummary").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#stageList").should("contain.text", "Customer assets");
@@ -360,6 +360,112 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#openRerun").click();
     cy.get("@windowOpen").should("have.been.called");
+  });
+
+  it("finds runs by name/ID via a client-side filter (no path prefix needed)", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    // Generic discovery lists every run — no prefix/category to type.
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values).to.include(NON_STOCK_RUN_ID);
+      expect(values).to.include("mock-run");
+    });
+    // Typing part of a run name/ID filters the list client-side.
+    cy.get("#artifactPrefix").clear().type("non-stock");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values).to.include(NON_STOCK_RUN_ID);
+      expect(values).to.not.include("mock-run");
+    });
+    // Clearing restores the full list.
+    cy.get("#artifactPrefix").clear();
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values).to.include("mock-run");
+    });
+  });
+
+  it("shows per-stage provenance with an honest augment engine and click-to-filter", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    // Load a data-factory run whose augment is a REAL Cosmos Transfer 2.5 GPU render.
+    // Enter in the paste box loads the typed run and lists its artifacts.
+    cy.get("#runIdInput").clear({ force: true }).type(`${DF_MOCK_RUN_ID}{enter}`, { force: true });
+    cy.wait("@loadRun");
+    cy.wait("@dfArtifactList");
+    cy.wait("@artifactProvenance");
+
+    // The per-stage panel lists each pipeline stage with its producing component.
+    cy.get("#artifactProvenance").should("contain.text", "Pipeline stages");
+    cy.get("#artifactProvenance .prov-row").its("length").should("be.gte", 4);
+    cy.get("#artifactProvenance").should("contain.text", "Augment");
+    cy.get("#artifactProvenance").should("contain.text", "Cosmos Transfer 2.5");
+    // Honesty banner: this run's augment is real GPU, so it must say so (green).
+    cy.get("#artifactProvenance .prov-ok").should("contain.text", "real Cosmos Transfer 2.5");
+    cy.get("#artifactProvenance .prov-warn").should("not.exist");
+
+    // The Stage filter carries per-stage counts.
+    cy.get("#artifactStageFilter option").then(($opts) => {
+      const labels = [...$opts].map((o) => o.textContent || "");
+      expect(labels.some((t) => /cosmos_augmented \(\d+\)/.test(t)), "cosmos_augmented has a count").to.eq(true);
+      expect(labels.some((t) => /All stages \(\d+\)/.test(t)), "all-stages total").to.eq(true);
+    });
+
+    // Clicking the Augment stage row scopes the artifact list to that stage.
+    cy.get('#artifactProvenance .prov-clickable[data-stage="cosmos_augmented"]').click();
+    cy.wait("@dfArtifactList");
+    cy.get("#artifactStageFilter").should("have.value", "cosmos_augmented");
+    cy.get("#artifactList").should("contain.text", "cosmos_augmented/aug0/augmented_video.mp4");
+    cy.get("#artifactList").should("not.contain.text", "/input/video_0.mp4");
+  });
+
+  it("warns when a data-factory run has only raw input and no augmented output", () => {
+    cy.get("#tabRerun").click();
+    // A DF run with only input/ + configs/ (augment never produced output) must
+    // be flagged so a raw input clip is not mistaken for a Data Factory result.
+    cy.get("#runIdInput").clear({ force: true }).type(`${DF_INPUT_ONLY_RUN_ID}{enter}`, { force: true });
+    cy.wait("@loadRun");
+    cy.wait("@dfInputOnlyArtifactList");
+    cy.wait("@artifactProvenance");
+    cy.get("#artifactProvenance .prov-warn").should("contain.text", "no augmented output");
+    cy.get("#artifactProvenance .prov-ok").should("not.exist");
+  });
+
+  it("filters artifacts by workflow stage and tags timeline rows by stage", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
+
+    // The Stage (workflow-progress) selector is populated from the loaded
+    // artifacts' first path segment after the run id.
+    cy.get("#artifactStageFilter option").then(($opts) => {
+      const values = [...$opts].map((opt) => opt.value);
+      expect(values).to.include.members(["reports", "rollouts", "logs", "raw"]);
+    });
+
+    // Selecting a stage scopes the artifact list to that workflow-progress step.
+    cy.get("#artifactStageFilter").select("rollouts");
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
+    cy.get("#artifactList").should("not.contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+
+    // Clearing the stage filter restores the full listing.
+    cy.get("#artifactStageFilter").select("");
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+
+    // The artifact-derived timeline tags rows with a stage key so they are
+    // clickable to scope the browser. (The click handler is covered by the
+    // agent unit test; the periodic sim-viz poll re-renders #stageList in the
+    // mock, so a live click assertion here would be race-prone.)
+    cy.get("#stageList").should("exist");
   });
 
   it("grounds complex chat queries and complex workflow YAML drafts", () => {
@@ -445,12 +551,13 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#statusBar", { timeout: 10000 }).should("not.contain.text", "Caching Rerun assets");
   });
 
-  it("opens bottom-right chat widget on Viewer without covering Rerun permanently", () => {
+  it("opens the chat collapsible only via the chat button, and Main tab never pops it out", () => {
     cy.get("#tabRerun").click();
     cy.get("body").should("have.class", "viewer-focus");
     cy.get("#chatDrawerToggle").should("be.visible");
     cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
 
+    // The chat collapsible opens ONLY when the chat button (FAB) is clicked.
     cy.get("#chatDrawerToggle").click();
     cy.get("#panelChat").should("have.class", "chat-drawer-open");
     cy.get("#chatDrawerToggle").should("have.class", "is-open");
@@ -458,13 +565,50 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
     cy.get("#rerunBundleCover").should("have.attr", "hidden");
 
-    // Chat main-tab from Viewer opens the drawer instead of leaving Rerun.
-    cy.get("#tabChat").click();
-    cy.get("#panelChat").should("have.class", "chat-drawer-open");
-    cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#openFullChatTab").click();
+    // Regression guard: clicking the Main tab from the Viewer switches to the
+    // Main panel and must NOT pop the chat drawer out.
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
+    cy.get("#panelRerun").should("have.class", "is-inactive");
     cy.get("body").should("not.have.class", "viewer-focus");
+
+    // Returning to the Viewer and back to Main again still never pops the drawer.
+    cy.get("#tabRerun").click();
+    cy.get("body").should("have.class", "viewer-focus");
+    cy.get("#tabMain").click();
+    cy.get("#panelChat").should("not.have.class", "chat-drawer-open");
+    cy.get("#panelChat").should("have.class", "is-active");
+  });
+
+  it("labels the main tab 'Main' (renamed from Chat)", () => {
+    cy.get("#tabMain").should("exist").and("have.text", "Main");
+    cy.get("#tabMain").should("have.attr", "data-tab", "main");
+    cy.get("#tabChat").should("not.exist");
+  });
+
+  it("shows a scroll-to-bottom arrow when scrolled up and jumps to the latest message", () => {
+    // Fill the chat via real sends so the log overflows and can be scrolled.
+    for (let i = 0; i < 6; i += 1) {
+      cy.get("#chatInput").type(`Draft a 2-step Sim2Real workflow YAML please (${i})`, { delay: 0 });
+      cy.get("#chatSend").click();
+      cy.wait("@chat");
+    }
+    // Each new message auto-scrolls to the bottom, so the arrow is hidden.
+    cy.get("#chatScrollBottom").should("have.attr", "hidden");
+
+    // Scrolling up reveals the jump-to-latest arrow.
+    cy.get("#chatLog").scrollTo("top");
+    cy.get("#chatScrollBottom").should("not.have.attr", "hidden");
+    cy.get("#chatScrollBottom").should("be.visible");
+
+    // Clicking the arrow returns to the end of the chat and hides the arrow.
+    cy.get("#chatScrollBottom").click();
+    cy.get("#chatLog").should(($log) => {
+      const el = $log[0];
+      expect(el.scrollHeight - el.scrollTop - el.clientHeight).to.be.lessThan(41);
+    });
+    cy.get("#chatScrollBottom").should("have.attr", "hidden");
   });
 
   it("keeps local Workflow YAML edits across refresh-driven run loads", () => {
@@ -474,12 +618,12 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdInput").clear({ force: true }).type("cosmos-reason-run", { force: true });
     cy.get("#loadRunData").click({ force: true });
     cy.wait("@loadRun");
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#workflowYaml").should("contain.value", "local-edit");
   });
 
   it("Stages Load prefers pasted run id over a stale dropdown selection", () => {
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#stagesRunSelect").select("mock-run");
     cy.get("#stagesRunInput").clear().type("cosmos-reason-run", { delay: 0 });
     cy.get("#stagesLoadRun").click();
@@ -488,7 +632,7 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("Stages search filters the run list by name", () => {
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#stagesRunInput").clear().type("mock", { delay: 0 });
     cy.get("#stagesRunSearchHint").should("contain.text", "match");
     cy.get("#stagesRunSelect option").then(($opts) => {
@@ -499,6 +643,126 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stagesLoadRun").click();
     cy.wait("@loadRun");
     cy.get("#runSummary").should("contain.text", "mock-run");
+  });
+
+  it("surfaces an old run beyond the newest page via server-side (q=) search", () => {
+    // Reproduces the real-world "run doesn't show" case: the run is older than
+    // the newest page the default listing returns, so it only appears when the
+    // client asks the SERVER to search by name/ID (?q=). The default page must
+    // NOT contain it; the ?q= page must. Both the Rerun-tab and Stages-tab run
+    // pickers must render the option once the server search returns it.
+    const OLD_RUN_ID = "rtxpro-staged-2x2-20260613t011356z";
+    const FRAGMENT = "rtxpro-staged";
+    const oldRun = {
+      run_id: OLD_RUN_ID,
+      has_viewable: true,
+      artifact_count: 141,
+      last_modified: "2026-06-13T01:13:56Z",
+    };
+    const newestPage = [
+      {
+        run_id: NON_STOCK_RUN_ID,
+        has_viewable: true,
+        artifact_count: 5,
+        last_modified: "2026-07-11T18:00:00Z",
+      },
+      {
+        run_id: "mock-run",
+        has_viewable: true,
+        artifact_count: 1,
+        last_modified: "2026-07-07T03:33:00Z",
+      },
+    ];
+    // Registered inside the test so it takes precedence over the default
+    // "@artifactRuns" intercept for every subsequent /api/artifacts/runs call.
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const q = String((req.query && req.query.q) || "").trim().toLowerCase();
+      const matchesOld = q && OLD_RUN_ID.toLowerCase().includes(q);
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: matchesOld ? [oldRun] : newestPage,
+          total_runs: 328,
+          truncated: true,
+          query: q,
+        },
+      });
+    }).as("artifactRunsPaged");
+
+    // Rerun tab: the default listing omits the old run…
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRunsPaged");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values, "default page omits the old run").to.not.include(OLD_RUN_ID);
+    });
+    // …but typing a fragment triggers a debounced server search that finds it.
+    cy.get("#artifactPrefix").clear().type(FRAGMENT, { delay: 0 });
+    cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
+    });
+
+    // Stages tab: same server-search path must populate the stages picker.
+    cy.get("#tabMain").click();
+    cy.get("#stagesRunInput").clear().type(FRAGMENT, { delay: 0 });
+    cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
+    cy.get("#stagesRunSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values, "server search surfaces the old run in the Stages picker").to.include(OLD_RUN_ID);
+    });
+  });
+
+  it("loads the full run list into the picker by default (no search needed)", () => {
+    // Guards the "runs don't show" fix: the default (no-query) discovery must
+    // request a high limit and render EVERY run — including ones far older than
+    // the historical 100-run cap — so the operator never has to guess a search
+    // fragment just to see a run that exists.
+    const bigList = Array.from({ length: 150 }, (_unused, i) => {
+      const idx = String(i).padStart(3, "0");
+      return {
+        run_id: `bulk-run-${idx}`,
+        has_viewable: true,
+        artifact_count: 1,
+        // Descending timestamps so index 149 is the oldest (would fall off a
+        // 100-run page).
+        last_modified: `2026-06-${String((i % 27) + 1).padStart(2, "0")}T00:00:${idx.slice(-2)}Z`,
+      };
+    });
+    let capturedUrl = "";
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      capturedUrl = String(req.url || "");
+      req.reply({
+        statusCode: 200,
+        body: { ok: true, runs: bigList, total_runs: bigList.length, truncated: false },
+      });
+    }).as("artifactRunsFull");
+
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRunsFull");
+    cy.wrap(null).should(() => {
+      const limitMatch = capturedUrl.match(/[?&]limit=(\d+)/);
+      expect(limitMatch, "default discovery sends a limit").to.not.eq(null);
+      expect(Number(limitMatch[1]), "default discovery limit exceeds the old 100 cap").to.be.greaterThan(100);
+    });
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      // Far more than the historical 100-run cap render without any search
+      // (the picker also unions the sim-viz "known" runs, so allow >=).
+      expect(values.length, "all runs render without search").to.be.at.least(bigList.length);
+      const valueSet = new Set(values);
+      for (const run of bigList) {
+        expect(valueSet.has(run.run_id), `${run.run_id} present without search`).to.eq(true);
+      }
+      // The oldest run (would fall off a 100-run page) is present by default.
+      expect(values, "oldest run shows without typing").to.include("bulk-run-149");
+    });
   });
 
   it("rejects uniform gray / blank canvases in frameLooksBlank", () => {
@@ -620,6 +884,77 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     cy.get("#chatLog .msg-row.assistant").should("contain.text", "skeleton");
     cy.get("#chatLog .msg-row.assistant").should("not.contain.text", "completely uniform gray");
+  });
+
+  it("Describe this carries grounded pipeline provenance when a run is loaded", () => {
+    cy.intercept("GET", "**/api/artifacts/provenance/**", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        run_id: "paidf-mock-1",
+        summary:
+          "Augment — Cosmos Transfer 2.5 (nvidia/Cosmos-Transfer2.5-2B) [GPU (Nebius K8s)]; " +
+          "Pseudo-label augmented — Token Factory VLM (Qwen/Qwen2.5-VL-72B-Instruct) [hosted GPU (Token Factory)]",
+        components: [
+          {
+            stage: "Augment",
+            component: "Cosmos Transfer 2.5",
+            runtime: "GPU (Nebius K8s)",
+            model: "nvidia/Cosmos-Transfer2.5-2B",
+          },
+        ],
+        origin: {
+          run_id: "paidf-mock-1",
+          original_present: false,
+          summary:
+            "No separate original input image was stored for run `paidf-mock-1` — the " +
+            "earliest stored visuals are the Cosmos Transfer 2.5 augment OUTPUTS.",
+        },
+      },
+    }).as("provenance");
+    cy.intercept("POST", "/api/chat", (req) => {
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          grounded: false,
+          tier: "vision",
+          model: "Qwen/Qwen2.5-VL-72B-Instruct",
+          session_id: req.body.session_id || "default",
+          reply: "**What I see**: augmented road scene.\n**Where it comes from**: Cosmos Transfer 2.5 augment stage.",
+        },
+      });
+    }).as("provChat");
+
+    cy.get("#tabRerun").click();
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame").should(($frame) => {
+      $frame[0].contentWindow.__NPA_MOCK_RERUN__.setMode("content");
+    });
+    // A loaded run id is what triggers the grounded provenance fetch.
+    cy.get("#simRunId").then(($el) => {
+      $el[0].textContent = "paidf-mock-1";
+    });
+
+    cy.get("#describeVisual").click({ force: true });
+    cy.wait("@provenance");
+    cy.wait("@provChat", { timeout: 20000 }).then((interception) => {
+      const body = interception.request.body;
+      expect(body.visual_context.provenance, "visual_context.provenance").to.be.a("string");
+      expect(body.visual_context.provenance).to.match(/Cosmos Transfer 2\.5/);
+      // Grounded original-input resolution rides along with provenance.
+      expect(body.visual_context.origin, "visual_context.origin").to.be.a("string");
+      expect(body.visual_context.origin).to.match(/No separate original input image was stored/);
+      const last = body.messages[body.messages.length - 1];
+      const textPart = Array.isArray(last.content)
+        ? last.content.find((part) => part && String(part.type || "").includes("text"))
+        : { text: last.content };
+      const promptText = String((textPart && textPart.text) || "");
+      expect(promptText, "prompt provenance section").to.match(/Pipeline provenance/i);
+      expect(promptText).to.match(/Cosmos Transfer 2\.5/);
+      expect(promptText, "prompt original-input section").to.match(/Original input/i);
+      expect(promptText).to.match(/No separate original input image was stored/);
+    });
   });
 
   it("Describe this stays metadata-only for uniform gray canvases", () => {

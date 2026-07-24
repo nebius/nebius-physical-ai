@@ -219,6 +219,30 @@ def test_run_invokes_terraform_and_maps_capture_errors(
         provisioner._run(["plan"], cwd=tmp_path, capture=True)
 
 
+def test_run_strips_stale_iam_token_from_terraform_env(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    # A stale ambient NEBIUS_IAM_TOKEN must not reach the Terraform subprocess,
+    # otherwise the Nebius provider prefers it over the fresh -var iam_token.
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.setenv("NPA_NEBIUS_IAM_TOKEN", "stale-token-2")
+    monkeypatch.setenv("PATH_MARKER", "keep-me")
+    mocker.patch("shutil.which", return_value="/usr/bin/terraform")
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="ok", stderr=""
+        ),
+    )
+
+    provisioner._run(["plan"], cwd=tmp_path, capture=True)
+
+    passed_env = run.call_args.kwargs["env"]
+    assert "NEBIUS_IAM_TOKEN" not in passed_env
+    assert "NPA_NEBIUS_IAM_TOKEN" not in passed_env
+    assert passed_env.get("PATH_MARKER") == "keep-me"
+
+
 def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> None:
     run = mocker.patch(
         "npa.deploy.provisioner._run",

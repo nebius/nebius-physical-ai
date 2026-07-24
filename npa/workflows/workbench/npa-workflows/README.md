@@ -53,6 +53,7 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 | `bdd100k-pipeline.yaml` | 11-stage AV pipeline |
 | `av-night-scene-hardening.yaml` | AV night-scene hardening from diagram |
 | `cosmos-synth-fanout-curation.yaml` | Cosmos synth fan-out + curation |
+| `physical-ai-data-factory.yaml` | NVIDIA Physical AI Data Factory blueprint (no OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label → FiftyOne curate |
 | `mjlab-eval.yaml` | MJLab locomotion eval |
 | `retargeting.yaml` | Motion retargeting |
 | `sonic-train.yaml` | SONIC train |

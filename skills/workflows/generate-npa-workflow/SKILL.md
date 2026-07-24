@@ -1,6 +1,6 @@
 ---
 name: generate-npa-workflow
-description: Use when inventing a new npa.workflow/v0.0.1 pipeline from the tool catalog — creative stage graphs, loops, gates, and golden YAML output.
+description: Use when inventing a new npa.workflow/v0.0.1 pipeline from the tool catalog — creative stage graphs, loops, gates, and reference YAML output.
 ---
 
 # Generate NPA Workflow
@@ -8,7 +8,7 @@ description: Use when inventing a new npa.workflow/v0.0.1 pipeline from the tool
 ## When To Use
 
 Load **after** `author-npa-workflow` when the task is to **design a new pipeline**
-(not edit an existing golden spec). Use for creative mashups, customer demos, and
+(not edit an existing reference spec). Use for creative mashups, customer demos, and
 SkyPilot-to-spec conversions.
 
 ## Design Recipe
@@ -45,7 +45,7 @@ SkyPilot-to-spec conversions.
 - `inputs` / `outputs` with `uri` + `schema` labels when artifacts cross stages
 - Prefer `toolRef` over `run.shell`
 
-## Creative Example (golden)
+## Creative Example (reference)
 
 `npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml` — Token Factory
 reason → Cosmos augment → VLM critique loop with promote / re-augment gate.

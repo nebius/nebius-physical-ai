@@ -22,6 +22,7 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         "tokenfactory-cosmos-gate.yaml",
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
+        "physical-ai-data-factory.yaml",
     ],
 )
 def test_cli_validate_spec(name: str) -> None:

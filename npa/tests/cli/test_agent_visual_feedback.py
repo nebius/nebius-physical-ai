@@ -8,6 +8,7 @@ from npa.cli import agent_visual_feedback as vf
 from npa.cli.agent import (
     AGENT_UI_VERSION,
     AGENT_VISUAL_FEEDBACK_CONTRACT,
+    _embedded_agent_provenance_source,
     _embedded_agent_visual_feedback_source,
 )
 
@@ -39,6 +40,53 @@ def test_describe_user_prompt_is_kind_specific() -> None:
     data = vf.describe_user_prompt("data", {"text_excerpt": '{"success_rate": 0.4}'})
     assert "success_rate" in data
     assert "pixels" in data.lower() or "pixels" in vf._KIND_GUIDANCE["data"]
+
+
+def test_describe_prompt_includes_pipeline_provenance() -> None:
+    prov = (
+        "Augment — Cosmos Transfer 2.5 (nvidia/Cosmos-Transfer2.5-2B) [GPU (Nebius K8s)]; "
+        "Pseudo-label augmented — Token Factory VLM (Qwen/Qwen2.5-VL-72B-Instruct) [hosted GPU (Token Factory)]"
+    )
+    prompt = vf.describe_user_prompt(
+        "rerun",
+        {"run_id": "paidf-1", "capture": "frame", "has_image": True, "provenance": prov},
+    )
+    assert "Pipeline provenance" in prompt
+    assert "Cosmos Transfer 2.5" in prompt
+    assert "Token Factory VLM" in prompt
+    # The reply structure must ask the model to state where the visual comes from.
+    assert "Where it comes from" in prompt
+
+
+def test_visual_context_block_surfaces_provenance() -> None:
+    block = vf.format_visual_context_block(
+        {"run_id": "paidf-1", "provenance": "Augment — Cosmos Transfer 2.5 [GPU (Nebius K8s)]"}
+    )
+    assert "provenance" in block
+    assert "Cosmos Transfer 2.5" in block
+
+
+def test_describe_prompt_includes_grounded_origin() -> None:
+    origin = (
+        "No separate original input image was stored for run `paidf-1` — the earliest "
+        "stored visuals are the Cosmos Transfer 2.5 augment OUTPUTS."
+    )
+    prompt = vf.describe_user_prompt(
+        "rerun",
+        {"run_id": "paidf-1", "capture": "frame", "has_image": True, "origin": origin},
+    )
+    assert "Original input" in prompt
+    assert "No separate original input image was stored" in prompt
+    # The reply structure must tell the model to use grounded origin, not guess.
+    assert "Original input block" in prompt
+
+
+def test_visual_context_block_surfaces_origin() -> None:
+    block = vf.format_visual_context_block(
+        {"run_id": "paidf-1", "origin": "No separate original input image was stored for run `paidf-1`."}
+    )
+    assert "origin" in block
+    assert "No separate original input image was stored" in block
 
 
 def test_metadata_only_grounded_reply_never_invents_pixels() -> None:
@@ -215,6 +263,11 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "is_visual_feedback_turn(" in source
     assert "None if visual_turn else _agent_chat_with_tools" in source
     assert "infer_visual_domain_hints" in _embedded_agent_visual_feedback_source()
+    # Grounded original-input resolution is wired end to end (UI → backend).
+    assert "prov.origin" in ui_html
+    assert "meta.origin" in ui_html
+    assert "grounded-provenance" in source
+    assert "build_run_origin" in _embedded_agent_provenance_source()
 
 
 def test_build_multimodal_user_content() -> None:

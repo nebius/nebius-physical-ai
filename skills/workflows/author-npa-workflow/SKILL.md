@@ -73,7 +73,7 @@ NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu ./scripts/npa-workflow-submit-live-e2e.sh
 ./scripts/npa-workflow-submit-live-e2e.sh
 ```
 
-Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
+Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
 
 ```bash
 ./scripts/npa-workflow-real-infra-tmux.sh
@@ -89,8 +89,24 @@ Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
    `engine.py` per workflow. Parallel fan-out stays on raw SkyPilot YAMLs.
 5. Cross-stage data uses S3 URIs in `config` — tools are stateless.
 6. Group config: runtime knobs first, then `*_uri` keys under `config.prefix`.
+7. A `run.shell` state may import an npa module for logic that needs the package
+   (npa is pip-installed in the task): `python3 -c "from npa.workflows.<mod>
+   import <fn>; <fn>('{{config.a}}', '{{config.b}}')"` — prefer this over inlining
+   heavy logic. Put testable logic in a real module (e.g.
+   `npa/src/npa/workflows/data_factory_viz.py`) with a unit test.
+8. A `toolRef` argv template must match the tool's **actual CLI option names**
+   (e.g. `--input-uri`/`--output-uri`, not `--input-path`) and include required
+   flags like `--run-id`; a mismatch validates/plans fine but crashes on real
+   submit. Keep `catalog.py` and `docs/workbench/npa-workflow-tool-catalog.md` in
+   sync.
+9. **Live-infra is a priority** (`skills/atomic/testing-conventions/SKILL.md`): a
+   new spec must be registered in `SUBMIT_LIVE_MATRIX`
+   (`npa/src/npa/orchestration/npa_workflow/submit_matrix.py`); if it has a
+   dynamic gate/loop, also add it to `DYNAMIC_SPECS` in
+   `npa/tests/e2e/npa_workflow_live_helpers.py`. Use `plan_only=True` for
+   stub/GPU-wasteful stages. Don't stop at smoke.
 
-## Golden Examples
+## Reference Examples
 
 | Spec | Purpose |
 | --- | --- |
@@ -101,6 +117,7 @@ Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
 | `av-night-scene-hardening.yaml` | AV night-scene fan-out — two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Cosmos Transfer 2.5 synthetic fan-out → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
+| `physical-ai-data-factory.yaml` | NVIDIA Physical AI Data Factory (no OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label → FiftyOne curate → Rerun visualize; toolRefs + `run.shell` glue; dynamic gate |
 
 ## Verify
 

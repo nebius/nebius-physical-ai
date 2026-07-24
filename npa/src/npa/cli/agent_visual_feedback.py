@@ -231,6 +231,21 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
         lines.append(f"- artifact: `{artifact_key}`")
     if note:
         lines.append(f"- note: {note[:320]}")
+    provenance = str(meta.get("provenance") or "").strip()
+    if provenance:
+        lines.append("")
+        lines.append("Pipeline provenance (where this data came from + components that produced it):")
+        for part in provenance.split("; "):
+            if part.strip():
+                lines.append(f"- {part.strip()[:200]}")
+    origin = str(meta.get("origin") or "").strip()
+    if origin:
+        lines.append("")
+        lines.append(
+            "Original input (grounded in the run's real artifacts — what the "
+            "earliest/original data actually was):"
+        )
+        lines.append(f"- {origin[:600]}")
     if text_excerpt:
         lines.append("- data_excerpt:")
         lines.append("```")
@@ -268,9 +283,16 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
             "Reply structure:",
             "1. **What I see** — concrete visual description (or metadata-only "
             "limits).",
-            "2. **Likely meaning** — how this relates to the active run / stack.",
-            "3. **Operator feedback** — what looks healthy vs suspicious.",
-            "4. **Next actions** — 2–4 concrete clicks/commands in the agent UI "
+            "2. **Where it comes from** — the pipeline stage that produced this "
+            "visual and the components/models behind the data (use the Pipeline "
+            "provenance above; name the stage + component, e.g. Cosmos Transfer "
+            "2.5 on GPU, Token Factory VLM). If an Original input block is given, "
+            "state what the original/earliest input actually was (or that no "
+            "separate original was stored) using those grounded facts — do not "
+            "guess. Say 'unknown' only if no provenance/origin is given.",
+            "3. **Likely meaning** — how this relates to the active run / stack.",
+            "4. **Operator feedback** — what looks healthy vs suspicious.",
+            "5. **Next actions** — 2–4 concrete clicks/commands in the agent UI "
             "or CLI.",
         ]
     )
@@ -343,6 +365,8 @@ def format_visual_context_block(meta: Mapping[str, Any] | None) -> str:
         "note",
         "visualization_note",
         "workflow_name",
+        "provenance",
+        "origin",
         "text_excerpt",
     )
     lines = ["Active visual context for this Describe-this turn:"]
@@ -353,7 +377,7 @@ def format_visual_context_block(meta: Mapping[str, Any] | None) -> str:
         text = str(value).strip()
         if not text:
             continue
-        limit = 2500 if key == "text_excerpt" else 400
+        limit = 2500 if key == "text_excerpt" else (700 if key == "origin" else 400)
         if len(text) > limit:
             text = text[:limit] + "…"
         lowered = text.lower()

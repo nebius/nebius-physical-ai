@@ -87,11 +87,21 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
     nodes (including GPU nodes with spare CPU).
     """
 
+    import os as _os
+
+    # Cluster-specific GPU product override: SkyPilot k8s matches on the node's
+    # advertised accelerator name, which varies by cluster (e.g. RTXPRO6000 vs
+    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). Let operators override the spec's
+    # accelerators at submit time without editing the committed blueprint.
+    accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
+
     out: dict[str, Any] = {}
     for key in ("cloud", "accelerators", "cpus", "memory", "use_spot", "region"):
         if key not in resources or resources[key] in (None, ""):
             continue
         value = resources[key]
+        if key == "accelerators" and accel_override:
+            value = accel_override
         if key == "memory" and isinstance(value, str):
             stripped = value.strip()
             if stripped.lower().endswith("gi"):
@@ -236,6 +246,46 @@ def default_npa_setup() -> str:
         "    fi\n"
         "  fi\n"
         "fi\n"
+        # Opt-in branch overlay: reinstall npa from NPA_SRC_S3_URI on TOP of a
+        # baked workbench image so branch code (e.g. a new augment prompt path)
+        # actually runs on GPU without rebuilding the image. Default off (no-op).
+        "if [ \"$NPA_SRC_OVERLAY\" = \"1\" ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
+        "  python3 -m pip install -q boto3\n"
+        "  python3 - <<'PY'\n"
+        "import os, pathlib\n"
+        "from urllib.parse import urlparse\n"
+        "import boto3\n"
+        "from botocore.client import Config\n"
+        "uri = os.environ['NPA_SRC_S3_URI'].rstrip('/')\n"
+        "parsed = urlparse(uri if '://' in uri else f's3://{uri}')\n"
+        "bucket, prefix = parsed.netloc, parsed.path.lstrip('/')\n"
+        "dest = pathlib.Path('/tmp/npa-src-overlay')\n"
+        "dest.mkdir(parents=True, exist_ok=True)\n"
+        "print('overlay syncing', uri, '->', dest, flush=True)\n"
+        "kwargs = {'config': Config(signature_version='s3v4')}\n"
+        "if os.environ.get('AWS_ENDPOINT_URL'):\n"
+        "    kwargs['endpoint_url'] = os.environ['AWS_ENDPOINT_URL']\n"
+        "s3 = boto3.client('s3', **kwargs)\n"
+        "token = None\n"
+        "while True:\n"
+        "    kw = {'Bucket': bucket, 'Prefix': prefix}\n"
+        "    if token:\n"
+        "        kw['ContinuationToken'] = token\n"
+        "    resp = s3.list_objects_v2(**kw)\n"
+        "    for obj in resp.get('Contents') or ():\n"
+        "        key = obj['Key']\n"
+        "        rel = key[len(prefix):].lstrip('/') if prefix else key\n"
+        "        if not rel or key.endswith('/'):\n"
+        "            continue\n"
+        "        out = dest / rel\n"
+        "        out.parent.mkdir(parents=True, exist_ok=True)\n"
+        "        s3.download_file(bucket, key, str(out))\n"
+        "    if not resp.get('IsTruncated'):\n"
+        "        break\n"
+        "    token = resp.get('NextContinuationToken')\n"
+        "PY\n"
+        "  python3 -m pip install -q -e /tmp/npa-src-overlay --no-deps\n"
+        "fi\n"
         "command -v npa >/dev/null 2>&1 || "
         "{ echo 'npa still missing after setup' >&2; exit 1; }\n"
     )
@@ -326,6 +376,20 @@ def build_skypilot_task_doc(
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
         envs["NPA_TASK_IMAGE"] = image.removeprefix("docker:")
+    # Opt-in passthrough: when set at submit, propagate Cosmos input-conditioning
+    # knobs to stage pods so the augment conditions on the run's real input clip
+    # (edge control) instead of the bundled example. Unset by default → no change.
+    import os as _os_cond
+
+    for _cond_var in (
+        "NPA_COSMOS_CONDITION_ON_INPUT",
+        "NPA_COSMOS_CONTROL",
+        "NPA_COSMOS_CONTROL_WEIGHT",
+        "NPA_COSMOS_GUIDANCE",
+    ):
+        _cond_val = str(_os_cond.environ.get(_cond_var) or "").strip()
+        if _cond_val:
+            envs[_cond_var] = _cond_val
 
     doc: dict[str, Any] = {
         "name": scheduler_task["name"],
@@ -359,6 +423,20 @@ def build_skypilot_task_doc(
             )
         envs["NPA_SRC_S3_URI"] = src_uri
         doc["envs"] = envs
+    else:
+        # Image is pinned (baked npa). Opt-in overlay: when NPA_SRC_OVERLAY=1,
+        # propagate the source URI + flag so setup reinstalls branch npa on top
+        # (used to run un-imaged branch code — e.g. a new augment path — on GPU).
+        import os as _os
+
+        if str(_os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"}:
+            src_uri = (
+                _os.environ.get("NPA_SRC_S3_URI") or _os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
+            ).strip()
+            if src_uri:
+                envs["NPA_SRC_S3_URI"] = src_uri
+                envs["NPA_SRC_OVERLAY"] = "1"
+                doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,
@@ -399,6 +477,23 @@ def _inject_nebius_registry_docker_secrets(
         return
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
+    # Registry/credentials consistency guard (applies to EVERY stage image, not
+    # just Cosmos): SkyPilot logs into the image's registry host using
+    # SKYPILOT_DOCKER_PASSWORD. If that password authenticates to a DIFFERENT
+    # registry (SKYPILOT_DOCKER_SERVER), the pull is a 403 ErrImagePull that stalls
+    # provisioning. Fail fast with an actionable message at submit time. Only
+    # enforced when actually materializing creds (real submit), never plan-only.
+    if materialize:
+        creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
+        if creds_server and creds_server != server:
+            raise NpaWorkflowRenderError(
+                f"registry mismatch: task image is in {server!r} but the Docker "
+                f"credentials (SKYPILOT_DOCKER_SERVER) authenticate to {creds_server!r}. "
+                "Pinning images from a registry your credentials cannot pull causes a "
+                "403 ErrImagePull for every image. Pass --registry pointing at the "
+                f"credentials' registry {creds_server!r} (e.g. the primary workbench "
+                f"registry), or set SKYPILOT_DOCKER_* for {server!r}."
+            )
     username = (
         os.environ.get("SKYPILOT_DOCKER_USERNAME")
         or os.environ.get("NPA_REGISTRY_USERNAME")

@@ -218,6 +218,40 @@ const NON_STOCK_ARTIFACTS = [
   },
 ];
 
+// A Physical AI Data Factory run whose artifacts span every pipeline stage and
+// whose augment is a REAL Cosmos Transfer 2.5 GPU render — used to exercise the
+// per-stage provenance panel (counts, click-to-filter, honest engine banner).
+const DF_MOCK_RUN_ID = "paidf-mock-gpu-run";
+const DF_MOCK_ARTIFACTS = [
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/video_0.mp4`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/video_0.mp4`, render: "video", size: 4096 },
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/configs/manifest.json`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/configs/manifest.json`, render: "json", size: 512 },
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/augmented_video.mp4`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/augmented_video.mp4`, render: "video", size: 8192 },
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/metadata.json`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/metadata.json`, render: "json", size: 256 },
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/curation/report.json`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/curation/report.json`, render: "json", size: 256 },
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/reports/sim2real.rrd`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/reports/sim2real.rrd`, render: "rerun", size: 8192 },
+];
+const DF_MOCK_PROVENANCE = {
+  ok: true,
+  run_id: DF_MOCK_RUN_ID,
+  components: [
+    { stage: "Config generation", stage_key: "configs", component: "Appearance-variable sampler", runtime: "CPU", artifact_count: 1 },
+    { stage: "Source frames", stage_key: "input", component: "Uploaded source clips", runtime: "input", artifact_count: 1 },
+    { stage: "Augment", stage_key: "cosmos_augmented", component: "Cosmos Transfer 2.5", runtime: "GPU (Nebius K8s)", artifact_count: 2, engine: "cosmos_transfer_2.5_gpu", detail: "real Cosmos Transfer 2.5 diffusion on GPU", model: "nvidia/Cosmos-Transfer2.5-2B" },
+    { stage: "Curation", stage_key: "curation", component: "FiftyOne-style curation report", runtime: "CPU", artifact_count: 1 },
+    { stage: "Visualize + finalize", stage_key: "reports", component: "Rerun recording + aggregate report", runtime: "CPU", artifact_count: 1 },
+  ],
+  summary: "mock data-factory provenance",
+  origin: { original_present: true, original_inputs: [{ key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/video_0.mp4`, stage: "input", kind: "video" }], summary: "mock origin" },
+};
+
+// A Data Factory run that has only raw input (augment never produced output) —
+// the panel must warn so a raw input clip is not mistaken for a result.
+const DF_INPUT_ONLY_RUN_ID = "paidf-mock-input-only";
+const DF_INPUT_ONLY_ARTIFACTS = [
+  { key: `physical-ai-data-factory/${DF_INPUT_ONLY_RUN_ID}/input/video_0.mp4`, s3_uri: `s3://mock/${DF_INPUT_ONLY_RUN_ID}/input/video_0.mp4`, render: "video", size: 4096 },
+  { key: `physical-ai-data-factory/${DF_INPUT_ONLY_RUN_ID}/configs/manifest.json`, s3_uri: `s3://mock/${DF_INPUT_ONLY_RUN_ID}/configs/manifest.json`, render: "json", size: 512 },
+];
+
 const WORKFLOW_VALIDATION = {
   ok: true,
   status: "valid",
@@ -259,6 +293,7 @@ const STATIC_BUTTON_IDS = [
   "artifactLoadRunArtifacts",
   "openRerun",
   "loadRerunViewer",
+  "describeVisual",
 ];
 
 const FIELD_IDS = [
@@ -287,6 +322,7 @@ const FIELD_IDS = [
   "artifactPrefix",
   "artifactTypeFilter",
   "artifactSort",
+  "artifactStageFilter",
   "runsArtifactsPanel",
   "artifactList",
   "simRunId",
@@ -295,7 +331,7 @@ const FIELD_IDS = [
   "renderedDataSummary",
   "rerunFrame",
   "artifactPreviewHost",
-  "tabChat",
+  "tabMain",
   "tabRerun",
   "panelChat",
   "panelRerun",
@@ -619,6 +655,28 @@ function installAgentApiMocks() {
       },
     ],
   })).as("artifactList");
+  cy.intercept("GET", `/api/artifacts/run/${DF_MOCK_RUN_ID}*`, json({
+    run_id: DF_MOCK_RUN_ID,
+    prefix: "physical-ai-data-factory",
+    count: DF_MOCK_ARTIFACTS.length,
+    artifacts: DF_MOCK_ARTIFACTS,
+    preferred: DF_MOCK_ARTIFACTS[2],
+  })).as("dfArtifactList");
+  cy.intercept("GET", `/api/artifacts/run/${DF_INPUT_ONLY_RUN_ID}*`, json({
+    run_id: DF_INPUT_ONLY_RUN_ID,
+    prefix: "physical-ai-data-factory",
+    count: DF_INPUT_ONLY_ARTIFACTS.length,
+    artifacts: DF_INPUT_ONLY_ARTIFACTS,
+    preferred: DF_INPUT_ONLY_ARTIFACTS[0],
+  })).as("dfInputOnlyArtifactList");
+  cy.intercept("GET", "/api/artifacts/provenance/*", (req) => {
+    if (String(req.url || "").includes(DF_MOCK_RUN_ID)) {
+      req.reply(json(DF_MOCK_PROVENANCE));
+      return;
+    }
+    // Other runs: no data-factory provenance (keeps the panel honest/empty).
+    req.reply(json({ ok: true, run_id: "", components: [], summary: "", origin: {} }));
+  }).as("artifactProvenance");
   cy.intercept("POST", "/api/workflows/draft", json({
     ok: true,
     yaml: WORKFLOW_YAML,
@@ -698,6 +756,10 @@ export {
   ASSETS,
   CAMERAS,
   COMPLEX_WORKFLOW_YAML,
+  DF_INPUT_ONLY_ARTIFACTS,
+  DF_INPUT_ONLY_RUN_ID,
+  DF_MOCK_ARTIFACTS,
+  DF_MOCK_RUN_ID,
   FIELD_IDS,
   GENERIC_WORKFLOW_RUN_DETAILS,
   GENERIC_WORKFLOW_YAML,

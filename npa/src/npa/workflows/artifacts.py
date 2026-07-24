@@ -41,7 +41,19 @@ except Exception:  # pragma: no cover - embedded backend fallback
 
 _RERUN_EXTENSIONS = {".rrd"}
 _VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
-_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+# Browser-native image formats an <img> tag can render directly.
+_WEB_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+# Image formats a browser CANNOT render natively (e.g. sim-rollout camera frames
+# saved as Netpbm .ppm). They are still images — classified as "image" so they
+# appear as viewable — and are transcoded to PNG on the way out (see
+# needs_image_transcode / the agent's /api/artifacts/file endpoint).
+_NON_WEB_IMAGE_EXTENSIONS = {".ppm", ".pgm", ".pbm", ".pnm", ".bmp", ".tif", ".tiff"}
+_IMAGE_EXTENSIONS = _WEB_IMAGE_EXTENSIONS | _NON_WEB_IMAGE_EXTENSIONS
+
+
+def needs_image_transcode(name: str) -> bool:
+    """True when ``name`` is an image a browser cannot render natively (→ PNG)."""
+    return Path(str(name or "")).suffix.lower() in _NON_WEB_IMAGE_EXTENSIONS
 _JSON_EXTENSIONS = {".json"}
 _TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
 _RENDER_ORDER = {
@@ -219,6 +231,7 @@ def list_runs(
     *,
     prefix: str = "",
     limit: int = 50,
+    contains: str = "",
     s3=None,
 ) -> RunListPage:
     if limit <= 0:
@@ -235,6 +248,12 @@ def list_runs(
                 key = str(item.get("Key") or "")
                 run_id = _run_id_for_key(key, normalized_prefix)
                 if not run_id:
+                    continue
+                # A run is a directory (``<run_id>/<stage>/...``). Skip bare files
+                # sitting directly under the prefix (e.g. ``<cat>/records.json``),
+                # which are not runs — this keeps generic root-level discovery clean.
+                remainder = key[len(normalized_prefix):] if normalized_prefix else key
+                if "/" not in remainder.lstrip("/"):
                     continue
                 render = render_hint_for_object(key=key)
                 current = summary.setdefault(
@@ -258,12 +277,162 @@ def list_runs(
         )
         for run_id, payload in summary.items()
     ]
+    # Substring search (case-insensitive) applied BEFORE truncation so a matching
+    # run is found even when it is far older than the newest `limit` runs.
+    needle = str(contains or "").strip().lower()
+    if needle:
+        runs = [item for item in runs if needle in item.run_id.lower()]
     runs.sort(key=lambda item: (item.last_modified, item.run_id), reverse=True)
     total = len(runs)
     truncated = total > limit
     if truncated:
         runs = runs[:limit]
     return RunListPage(runs=runs, truncated=truncated, total_runs=total, limit=limit)
+
+
+def list_run_categories(bucket: str, *, base_prefix: str = "", s3=None) -> list[str]:
+    """Return the immediate sub-directory prefixes under ``base_prefix``.
+
+    Runs are stored as ``<root>/<category>/<run_id>/...`` (e.g.
+    ``checkpoints/sim2real-b/...``, ``checkpoints/physical-ai-data-factory/...``).
+    This enumerates the ``<category>`` folders dynamically from S3 so discovery
+    never hardcodes specific workflow paths. Returns category prefixes WITHOUT a
+    trailing slash. If the root has no sub-folders, returns ``[]``.
+    """
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    root = _normalize_prefix(base_prefix)
+    categories: list[str] = []
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=root, Delimiter="/"):
+            for common in page.get("CommonPrefixes", []) or []:
+                pfx = str(common.get("Prefix") or "").rstrip("/")
+                if pfx:
+                    categories.append(pfx)
+    except (ClientError, BotoCoreError) as exc:
+        raise ArtifactDiscoveryError(
+            f"failed to list run categories under s3://{bucket}/{root}: {exc}"
+        ) from exc
+    return categories
+
+
+def discovery_categories(
+    bucket: str, *, base_prefix: str = "", exclude: "set[str] | None" = None, s3=None
+) -> list[str]:
+    """Return every candidate *run-parent* prefix in the bucket, generically.
+
+    Runs live one level below a category prefix (``<category>/<run_id>/...``).
+    Categories themselves may sit either under a configured base root
+    (``<base>/<category>/<run_id>/...``, e.g. ``checkpoints/sim2real-b/...``) or
+    directly at the bucket root (``<category>/<run_id>/...``, e.g.
+    ``scenario-gen-smoke/...``, ``physical-ai-data-factory/...``). Different
+    workflows write to different roots, so discovery must span both.
+
+    This merges, in order (newest-workflow-agnostic, no hardcoded paths):
+
+    1. categories under the configured ``base_prefix`` (``<base>/<category>``);
+    2. categories at the bucket root (``<category>``), excluding ``base_prefix``
+       itself — its children are categories, not runs, and are covered by (1).
+
+    ``exclude`` drops categories whose first path segment matches (e.g. the
+    agent's own state/memory root), so infra prefixes never masquerade as runs.
+
+    Prefixes are returned without a trailing slash, de-duplicated, base-first.
+    """
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    base = str(base_prefix or "").strip().strip("/")
+    excluded = {str(x).strip().strip("/") for x in (exclude or set()) if str(x).strip().strip("/")}
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(prefix: str) -> None:
+        value = str(prefix or "").strip().strip("/")
+        if not value or value in seen:
+            return
+        if value in excluded or value.split("/", 1)[0] in excluded:
+            return
+        seen.add(value)
+        ordered.append(value)
+
+    if base:
+        for category in list_run_categories(bucket, base_prefix=base, s3=s3):
+            _add(category)
+    for category in list_run_categories(bucket, base_prefix="", s3=s3):
+        # The base root's children are categories (handled above), not runs.
+        if base and category.strip("/") == base:
+            continue
+        _add(category)
+    return ordered
+
+
+def list_all_runs(
+    bucket: str,
+    *,
+    base_prefix: str = "",
+    limit: int = 50,
+    exclude: "set[str] | None" = None,
+    contains: str = "",
+    s3=None,
+) -> RunListPage:
+    """Discover runs across every category in the bucket generically.
+
+    Enumerates category folders under the configured base root AND at the bucket
+    root (see :func:`discovery_categories`) and merges each category's runs
+    (dedup by run_id, keep newest), latest-first. No workflow path is hardcoded;
+    a new workflow folder — under any root — shows up automatically. ``exclude``
+    drops infra roots (e.g. the agent's own state prefix) from the listing.
+    """
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    categories = discovery_categories(bucket, base_prefix=base_prefix, exclude=exclude, s3=s3)
+    if not categories:
+        # Flat layout: run_ids sit directly under the root.
+        return list_runs(bucket, prefix=base_prefix, limit=limit, contains=contains, s3=s3)
+    best: dict[str, RunSummary] = {}
+    total = 0
+    for category in categories:
+        try:
+            page = list_runs(bucket, prefix=category, limit=limit, contains=contains, s3=s3)
+        except ArtifactDiscoveryError:
+            continue
+        for run in page.runs:
+            current = best.get(run.run_id)
+            if current is None or run.last_modified > current.last_modified:
+                best[run.run_id] = run
+    total = len(best)
+    runs = sorted(best.values(), key=lambda item: (item.last_modified, item.run_id), reverse=True)
+    truncated = len(runs) > limit
+    if len(runs) > limit:
+        runs = runs[:limit]
+    return RunListPage(runs=runs, truncated=truncated, total_runs=total, limit=limit)
+
+
+def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -> "list[Artifact]":
+    """Locate a run's artifacts anywhere in the bucket without a hardcoded path.
+
+    Probes each candidate parent prefix (categories under the base root and at
+    the bucket root — see :func:`discovery_categories`) as ``<parent>/<run_id>/``
+    and returns the first non-empty match, then falls back to the flat layouts
+    (``<base>/<run_id>/`` and ``<run_id>/``). Run ids are unique, so the first
+    hit is authoritative — a run stored under any workflow root resolves.
+    """
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    categories = discovery_categories(bucket, base_prefix=base_prefix, s3=s3)
+    for category in categories:
+        artifacts = list_artifacts(bucket, run_id, prefix=category, s3=s3)
+        if artifacts:
+            return artifacts
+    # Flat fallbacks: run directly under the base root, or at the bucket root.
+    for flat_prefix in (base_prefix, ""):
+        artifacts = list_artifacts(bucket, run_id, prefix=flat_prefix, s3=s3)
+        if artifacts:
+            return artifacts
+    return []
 
 
 def list_artifacts(

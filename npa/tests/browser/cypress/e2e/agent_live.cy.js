@@ -87,8 +87,11 @@ describe("NPA agent UI against live infra", () => {
     }
     cy.get("#chatForm").should("exist");
     cy.get("#workflowYaml").should("exist");
-    cy.get("#tabChat").should("exist");
+    cy.get("#tabMain").should("exist");
     cy.get("#tabRerun").should("exist");
+    // Describe-this (viewer capture) button and the artifact Stage filter must ship.
+    cy.get("#describeVisual").should("exist");
+    cy.get("#artifactStageFilter").should("exist");
     cy.get("#stagesPanel").should("exist");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
@@ -157,7 +160,7 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#workflowStatus").click();
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#runSummary", { timeout: 30000 }).should("contain.text", "status");
 
     cy.get("#tabRerun").click();
@@ -344,7 +347,7 @@ describe("NPA agent UI against live infra", () => {
       cy.contains("rerun").should("be.visible");
       cy.contains("reports/sim2real-report.json").should("be.visible");
     });
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     cy.get("#stageList", { timeout: 30000 }).within(() => {
       cy.contains("Trigger").should("be.visible");
@@ -362,7 +365,7 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#renderModeRerun").should("have.class", "is-active");
     // Tab panels stay mounted with opacity:0 when inactive — assert activation class,
     // not Cypress visibility (opacity:0 is treated as hidden).
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     cy.get("#chatForm").should("exist");
 
@@ -384,7 +387,7 @@ describe("NPA agent UI against live infra", () => {
       expect(frameRect.width, "rerunFrame has usable width").to.be.greaterThan(240);
       expect(frameRect.height, "rerunFrame has usable height").to.be.greaterThan(40);
     });
-    cy.get("#tabChat").click();
+    cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     for (const id of ["chatForm", "runDetails"]) {
       cy.get(`#${id}`).should("exist").and(($el) => {
@@ -487,6 +490,68 @@ describe("NPA agent UI against live infra", () => {
       cy.get("#artifactPreviewHost video")
         .should("have.attr", "data-preview-url")
         .and("include", ".mp4");
+    });
+  });
+
+  it("surfaces a searched run in both pickers via the server (q=) search path", function () {
+    // Reproduces the "runs don't show" report against the deployed agent:
+    // typing a fragment must render the matching run as an <option> in BOTH the
+    // Rerun-tab (#runIdSelect) and Stages-tab (#stagesRunSelect) pickers, driven
+    // by the debounced server search (/api/artifacts/runs?q=). When an old run
+    // beyond the newest page is configured via NPA_AGENT_CYPRESS_SEARCH_RUN_ID,
+    // this proves the union path (server search + client render) end-to-end;
+    // otherwise it falls back to a run discovered on the default page.
+    liveAgentRequest("/api/artifacts/runs?limit=100").then((resp) => {
+      expect(resp.status).to.eq(200);
+      const runs = (resp.body && resp.body.runs) || [];
+      expect(runs.length, "default page runs").to.be.greaterThan(0);
+
+      const configured = String(
+        Cypress.env("NPA_AGENT_CYPRESS_SEARCH_RUN_ID") ||
+          Cypress.env("NPA_AGENT_SEARCH_RUN_ID") ||
+          "",
+      ).trim();
+
+      const resolveTarget = configured
+        ? liveAgentRequest(
+            `/api/artifacts/runs?limit=100&q=${encodeURIComponent(configured)}`,
+          ).then((qr) => {
+            const qruns = (qr.body && qr.body.runs) || [];
+            const hit =
+              qruns.find((r) => String((r && r.run_id) || "").includes(configured)) ||
+              qruns[0];
+            return String((hit && hit.run_id) || configured).trim();
+          })
+        : cy.wrap(
+            String((runs[runs.length - 1] && runs[runs.length - 1].run_id) || "").trim(),
+          );
+
+      resolveTarget.then((targetRunId) => {
+        expect(targetRunId, "target run id").to.not.eq("");
+        const fragment = configured
+          ? configured
+          : targetRunId.length > 12
+            ? targetRunId.slice(0, 12)
+            : targetRunId;
+
+        // Rerun-tab picker: typing the fragment triggers the debounced server
+        // search; the matching run must render as an option (Cypress retries the
+        // assertion while the 350ms debounce + fetch complete).
+        cy.get("#tabRerun").click();
+        cy.get("#artifactPrefix", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
+        cy.get("#runIdSelect option", { timeout: 30000 }).should(($opts) => {
+          const values = [...$opts].map((o) => o.value).filter(Boolean);
+          expect(values, "Rerun picker surfaces the searched run").to.include(targetRunId);
+        });
+
+        // Stages-tab picker: same server-search path must populate the select.
+        cy.get("#tabMain").click();
+        cy.get("#stagesRunInput", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
+        cy.get("#stagesRunSelect option", { timeout: 30000 }).should(($opts) => {
+          const values = [...$opts].map((o) => o.value).filter(Boolean);
+          expect(values, "Stages picker surfaces the searched run").to.include(targetRunId);
+        });
+      });
     });
   });
 
