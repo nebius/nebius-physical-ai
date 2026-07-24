@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +35,45 @@ def _first_augmentation(configs_uri: str) -> dict:
         return {}
 
 
+_VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv", ".avi")
+
+
+def _env_truthy(name: str) -> bool:
+    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _materialize_input_clip(src: str) -> str:
+    """Resolve a local path or ``s3://`` URI to a local video file to condition on.
+
+    For an ``s3://`` prefix, downloads it and returns the first video found. Returns
+    "" when nothing usable is present (caller then falls back to the default,
+    bundled-example behavior). Best-effort: never raises on a missing input.
+    """
+    import glob as _glob
+    import tempfile
+
+    s = str(src or "").strip()
+    if not s:
+        return ""
+    if not s.startswith("s3://"):
+        return s if Path(s).is_file() else ""
+    try:
+        from npa.clients.storage import StorageClient
+
+        client = StorageClient.from_environment()
+        tmp = tempfile.mkdtemp(prefix="npa-cosmos-input-")
+        if s.lower().endswith(_VIDEO_EXTS):
+            return client.download_path(s, str(Path(tmp) / Path(s).name))
+        client.download_directory(s, tmp)
+        vids = sorted(
+            f for f in _glob.glob(str(Path(tmp) / "**" / "*"), recursive=True)
+            if f.lower().endswith(_VIDEO_EXTS) and Path(f).is_file()
+        )
+        return vids[0] if vids else ""
+    except Exception:  # noqa: BLE001 - input conditioning is opt-in; fall back cleanly
+        return ""
+
+
 @app.command("transfer")
 def transfer_cmd(
     input_uri: str = typer.Option(..., "--input-uri", help="Input frames, assets, or rollout URI."),
@@ -57,6 +97,26 @@ def transfer_cmd(
         help="Config-Gen manifest URI; the first sampled augmentation combo is "
         "recorded as the clip's appearance variables (drives the Rerun label).",
     ),
+    input_video: str = typer.Option(
+        "",
+        "--input-video",
+        help="Local path or s3:// URI of an input clip to CONDITION the augmentation "
+        "on. When set (with --execute), the output is a real augmentation of THIS "
+        "clip (edge control computed on-the-fly; prompt drives the new appearance).",
+    ),
+    condition_on_input: bool = typer.Option(
+        False,
+        "--condition-on-input",
+        help="Condition on the first video under --input-uri (opt-in). Also enabled by "
+        "NPA_COSMOS_CONDITION_ON_INPUT=1. Default off preserves the bundled-example path.",
+    ),
+    control: str = typer.Option(
+        "edge",
+        "--control",
+        help="Control modality for input-conditioning: 'edge' or 'vis' (computed on-the-fly).",
+    ),
+    control_weight: float = typer.Option(1.0, "--control-weight", help="Control weight for input-conditioning."),
+    guidance: float = typer.Option(3.0, "--guidance", help="Classifier-free guidance for input-conditioning."),
 ) -> None:
     """Build the Cosmos2 transfer stage manifest (or run the real model with --execute)."""
 
@@ -81,15 +141,32 @@ def transfer_cmd(
         # The sampled appearance combo carries the prompt that actually conditions
         # the augmentation, so the output pixels reflect the config (not just a label).
         variables = _first_augmentation(configs_uri) if configs_uri else {}
+        # Optionally CONDITION on the caller's real input clip so the output is a
+        # genuine augmentation of that footage (not the bundled example). Opt-in via
+        # --input-video, --condition-on-input, or NPA_COSMOS_CONDITION_ON_INPUT=1;
+        # default off preserves the existing bundled-example behavior + golden eval.
+        local_input = ""
+        if input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT"):
+            local_input = _materialize_input_clip(input_video or input_uri)
         transfer = run_cosmos_transfer(
-            run_id=run_id, spec=spec or None, prompt=str(variables.get("prompt") or "") or None
+            run_id=run_id,
+            spec=spec or None,
+            prompt=str(variables.get("prompt") or "") or None,
+            input_video=local_input or None,
+            control=control,
+            control_weight=control_weight,
+            guidance=guidance,
         )
         payload["status"] = "executed"
-        payload["mode"] = "cosmos_transfer2.5"
+        payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
         payload["output_video"] = transfer["video_path"]
         payload["video_bytes"] = transfer["video_bytes"]
         payload["control_spec"] = transfer["spec"]
         payload["prompt"] = str(variables.get("prompt") or "")
+        payload["input_conditioned"] = bool(local_input)
+        if local_input:
+            payload["input_video"] = local_input
+            payload["control"] = transfer.get("control", control)
         # Publish the real generated video + extracted frames to S3 so downstream
         # stages (pseudo-label, grade, visualize) consume real augmented frames.
         if output_uri.startswith("s3://"):

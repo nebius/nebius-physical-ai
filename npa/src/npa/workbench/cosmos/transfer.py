@@ -27,6 +27,55 @@ DEFAULT_REPO = "/opt/cosmos/cosmos-transfer2.5"
 # real transferred video; used when the workflow does not supply its own spec.
 DEFAULT_SPEC = "assets/robot_example/depth/robot_depth_spec.json"
 
+# Control modalities Cosmos Transfer 2.5 computes ON-THE-FLY from the input
+# ``video_path`` (Canny edge / bilateral blur), so conditioning on an arbitrary
+# input clip needs NO precomputed control asset. depth/seg require a precomputed
+# control file, so they are not used for self-contained input-only conditioning.
+INPUT_AUTO_CONTROLS = ("edge", "vis")
+DEFAULT_INPUT_CONTROL = "edge"
+# Neutral photoreal prompt used when the caller conditions on an input clip but
+# supplies no appearance prompt of its own.
+_DEFAULT_INPUT_PROMPT = (
+    "photorealistic, natural lighting, high detail, sharp focus, realistic textures"
+)
+
+
+def _spec_for_input_video(
+    repo: Path,
+    *,
+    input_video: str,
+    prompt: str,
+    control: str,
+    control_weight: float,
+    guidance: float,
+    name: str,
+) -> tuple[str, str]:
+    """Write a Cosmos Transfer 2.5 controlnet spec that CONDITIONS ON ``input_video``.
+
+    ``video_path`` is the caller's real input clip; the ``edge``/``vis`` control is
+    computed on-the-fly from it (no precomputed control asset), so the output
+    preserves the input's structure/motion while ``prompt`` drives a new
+    appearance -- i.e. a genuine augmentation of the caller's footage. Returns
+    ``(spec_path_relative_to_repo, control_modality)``.
+    """
+    import json as _json
+
+    modality = str(control or DEFAULT_INPUT_CONTROL).strip().lower()
+    if modality not in INPUT_AUTO_CONTROLS:
+        modality = DEFAULT_INPUT_CONTROL
+    spec = {
+        "name": str(name or "npa_input"),
+        "prompt": str(prompt or "").strip() or _DEFAULT_INPUT_PROMPT,
+        # Absolute path so it resolves regardless of where the spec file lives.
+        "video_path": str(Path(input_video).resolve()),
+        "guidance": guidance,
+        modality: {"control_weight": float(control_weight)},
+    }
+    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input"))
+    spec_path = repo / f"_npa_input_spec_{safe}.json"
+    spec_path.write_text(_json.dumps(spec, indent=2), encoding="utf-8")
+    return str(spec_path.relative_to(repo)), modality
+
 
 def cosmos_transfer_repo() -> Path:
     return Path(os.environ.get("COSMOS_TRANSFER_REPO", DEFAULT_REPO))
@@ -110,6 +159,10 @@ def run_cosmos_transfer(
     prompt: str | None = None,
     out_subdir: str | None = None,
     hf_home: str | None = None,
+    input_video: str | None = None,
+    control: str = DEFAULT_INPUT_CONTROL,
+    control_weight: float = 1.0,
+    guidance: float = 3.0,
 ) -> dict[str, Any]:
     """Run a real Cosmos-Transfer2.5 inference; return the generated video + metadata.
 
@@ -117,14 +170,33 @@ def run_cosmos_transfer(
     the env override ``COSMOS_TRANSFER_SPEC`` or the bundled depth example).
     ``prompt`` (or ``COSMOS_TRANSFER_PROMPT``), when set, overrides the spec's text
     prompt so the sampled appearance actually conditions the augmentation.
+
+    When ``input_video`` is provided the transfer is CONDITIONED ON THAT CLIP: a
+    controlnet spec is built with ``video_path`` = the input and an ``edge``/``vis``
+    control computed on-the-fly, so the output is a real augmentation of the
+    caller's footage (new appearance from ``prompt``, same structure/motion).
+    When ``input_video`` is absent, behavior is unchanged (bundled DEFAULT_SPEC or
+    the caller-supplied ``spec``), preserving the golden eval.
     """
 
     repo = cosmos_transfer_repo()
     py = ensure_env(repo)
-    spec = spec or os.environ.get("COSMOS_TRANSFER_SPEC", DEFAULT_SPEC)
-    prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
-    if prompt:
-        spec = _spec_with_prompt(repo, spec, prompt)
+    conditioned_control = ""
+    if input_video:
+        spec, conditioned_control = _spec_for_input_video(
+            repo,
+            input_video=input_video,
+            prompt=prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", ""),
+            control=control,
+            control_weight=control_weight,
+            guidance=guidance,
+            name=run_id or "input",
+        )
+    else:
+        spec = spec or os.environ.get("COSMOS_TRANSFER_SPEC", DEFAULT_SPEC)
+        prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
+        if prompt:
+            spec = _spec_with_prompt(repo, spec, prompt)
     out = out_subdir or f"outputs/{run_id or 'transfer'}"
     out_abs = repo / out
     if out_abs.exists():
@@ -152,14 +224,20 @@ def run_cosmos_transfer(
     )
     if not big:
         raise RuntimeError(f"cosmos-transfer2.5 produced no output video in {out_abs}")
-    control = [f for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True) if "control" in Path(f).name]
+    control_videos = [
+        f for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
+        if "control" in Path(f).name
+    ]
     return {
         "video_path": big[0],
         "video_bytes": os.path.getsize(big[0]),
-        "control_path": control[0] if control else "",
+        "control_path": control_videos[0] if control_videos else "",
         "out_dir": str(out_abs),
         "spec": spec,
         "repo": str(repo),
+        "input_conditioned": bool(input_video),
+        "input_video": str(input_video or ""),
+        "control": conditioned_control,
     }
 
 
@@ -236,6 +314,15 @@ def publish_transfer_to_s3(
     import json as _json
     import tempfile as _tempfile
 
+    # This publish path only runs after the REAL Cosmos Transfer 2.5 model
+    # executed on GPU, so record the GPU mode (kept in sync with the provenance
+    # classifier in data_factory_provenance.py). When the transfer was
+    # conditioned on the caller's input clip, record that provenance so the run
+    # view can show the augmentation is genuinely derived from real input.
+    input_conditioned = bool(transfer.get("input_conditioned"))
+    conditioned_input = Path(str(transfer.get("input_video") or "")).name
+    conditioned_control = str(transfer.get("control") or "")
+
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
         frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
@@ -246,10 +333,13 @@ def publish_transfer_to_s3(
 
         clip_meta = {
             "schema": "npa.cosmos2.transfer.v1",
-            "mode": "cosmos_transfer2.5",
+            "mode": "cosmos_transfer2.5_gpu",
             "clip": clip,
             "variables": variables or {},
             "control_spec": transfer.get("spec", ""),
+            "input_conditioned": input_conditioned,
+            "conditioned_input": conditioned_input,
+            "control": conditioned_control,
         }
         cm = Path(tmp) / "metadata.json"
         cm.write_text(_json.dumps(clip_meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -257,7 +347,7 @@ def publish_transfer_to_s3(
 
         manifest = {
             "schema": "npa.cosmos2.transfer.v1",
-            "mode": "cosmos_transfer2.5",
+            "mode": "cosmos_transfer2.5_gpu",
             "status": "executed",
             "run_id": run_id,
             "clips": [clip],
@@ -266,6 +356,9 @@ def publish_transfer_to_s3(
             "frames": frame_index,
             "control_spec": transfer.get("spec", ""),
             "video_bytes": transfer.get("video_bytes", 0),
+            "input_conditioned": input_conditioned,
+            "conditioned_input": conditioned_input,
+            "control": conditioned_control,
         }
         mp = Path(tmp) / "manifest.json"
         mp.write_text(_json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
