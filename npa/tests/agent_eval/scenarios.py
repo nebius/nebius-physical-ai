@@ -86,4 +86,17 @@ SCENARIOS: list[Scenario] = [
         goal="could you keep an eye on the simulation for me",
         expected={"intent": "watch_sim"},
     ),
+    # ── Blueprint Phase-H retrieval/grounding ────────────────────────────────
+    Scenario(
+        id="retrieval_genesis_doc",
+        kind="retrieval",
+        goal="genesis gpu physics simulator",
+        expected={
+            "uri": "docs/genesis.md",
+            "corpus": [
+                ("docs/genesis.md", "Genesis", "Genesis is a GPU physics simulator for robotics training."),
+                ("docs/storage.md", "Storage", "Configure S3 object storage buckets and credentials."),
+            ],
+        },
+    ),
 ]

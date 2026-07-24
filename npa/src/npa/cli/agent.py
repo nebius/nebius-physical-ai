@@ -260,6 +260,9 @@ _AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
 _AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
 # Phase G: shipped (uploaded + imported) rather than embedded.
 _AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
+# Blueprint Phases H/I: also shipped as importable files.
+_AGENT_RETRIEVAL_SHIP = "__NPA_AGENT_RETRIEVAL_SHIP__"
+_AGENT_TRACE_SHIP = "__NPA_AGENT_TRACE_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1481,6 +1484,13 @@ def _create_agent_source_archive() -> str:
     with tarfile.open(tmp.name, "w:gz") as archive:
         archive.add(repo_root / "npa", arcname="npa", filter=_filter)
         archive.add(repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter)
+        # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
+        # corpus (Blueprint Phase H) can ground on them at
+        # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.
+        for extra in ("docs", "skills"):
+            extra_path = repo_root / extra
+            if extra_path.exists():
+                archive.add(extra_path, arcname=extra, filter=_filter)
     return tmp.name
 
 
@@ -1808,6 +1818,8 @@ def _bootstrap_agent_stack(
     agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
     agent_semantic_router_source = _embedded_agent_semantic_router_source()
     agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
+    agent_retrieval_ship_source = _shipped_agent_backend_module_source("retrieval")
+    agent_trace_ship_source = _shipped_agent_backend_module_source("trace")
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -1889,6 +1901,12 @@ sudo mkdir -p /opt/npa-agent/agent_backend
 printf '' | sudo tee /opt/npa-agent/agent_backend/__init__.py >/dev/null
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
 {_AGENT_MEMORY_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
+{_AGENT_RETRIEVAL_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/trace.py >/dev/null
+{_AGENT_TRACE_SHIP}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
@@ -3586,6 +3604,9 @@ import sys as _npa_sys
 if "/opt/npa-agent" not in _npa_sys.path:
     _npa_sys.path.insert(0, "/opt/npa-agent")
 from agent_backend.memory import RunMemory, JsonFileStore
+# Blueprint Phases H/I: retrieval + observability are also shipped modules.
+from agent_backend import retrieval as _retrieval
+from agent_backend import trace as _agent_tracing
 
 {_AGENT_WORKFLOW_EMBED}
 
@@ -5017,6 +5038,44 @@ def chat(payload: dict):
                     "message_count": len(session.get("chat_history", [])),
                 }},
             }}
+    # Retrieval grounded-first fallthrough (Blueprint Phase H): after the regex
+    # AND semantic routers miss, answer from the indexed docs/skills corpus with
+    # cited, extractive grounding (0 generation tokens). Only fires when a corpus
+    # is indexed and the top match clears the confidence floor; otherwise /chat is
+    # byte-for-byte unchanged.
+    if intent is None and not visual_turn:
+        retrieved = _maybe_retrieval_grounded(last_user)
+        if retrieved is not None:
+            reply = str(retrieved.get("answer") or "").strip()
+            history = [*merged_history, {{"role": "assistant", "content": reply}}][-80:]
+            session.update(
+                {{
+                    "id": session_id,
+                    "title": str(session.get("title") or _chat_session_title(history)),
+                    "chat_history": history,
+                }}
+            )
+            state = _load_state()
+            session = _save_chat_session(state, session, active=True)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "model": model,
+                "reply": reply,
+                "reasoning": None,
+                "grounded": True,
+                "tier": "retrieval-grounded",
+                "usage": {{"total_tokens": 0}},
+                "citations": retrieved.get("citations") or [],
+                "apis_used": ["agent/retrieval/search"],
+                "session_id": session["id"],
+                "session": {{
+                    "id": session["id"],
+                    "title": session["title"],
+                    "memory_uri": session.get("memory_uri", ""),
+                    "message_count": len(session.get("chat_history", [])),
+                }},
+            }}
     # Cost-tier routing: vision when an image is attached; otherwise escalate
     # Describe-this metadata-only turns to reasoning (not cheap caption fluff).
     tier = classify_tier(last_user, intent=intent, messages=llm_messages)
@@ -5230,6 +5289,17 @@ def _agent_act_tools():
     def _tool_submit(args):
         return _act_response_to_dict(submit_sim2real({{"run_id": str(args.get("run_id") or "")}}))
 
+    def _tool_retrieval_search(args):
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return {{"error": "query is required"}}
+        try:
+            k = max(1, min(int(args.get("k") or RETRIEVAL_TOP_K), 20))
+        except (TypeError, ValueError):
+            k = RETRIEVAL_TOP_K
+        store = _agent_retrieval_store_for_query(query)
+        return _retrieval.retrieve(query, embed=_embed_texts, store=store, k=k)
+
     return {{
         "health": _tool_health,
         "sim_viz_status": _tool_sim_viz_status,
@@ -5238,6 +5308,7 @@ def _agent_act_tools():
         "artifacts_run": _tool_artifacts_run,
         "workflow_validate_spec": _tool_validate,
         "workflow_plan_spec": _tool_plan,
+        "retrieval_search": _tool_retrieval_search,
         "sim2real_submit": _tool_submit,
     }}
 
@@ -5292,6 +5363,8 @@ def agent_act(payload: dict):
     result["mode"] = "agent-act"
     result["allowlist"] = allowlist_specs()
     result["input_budget_ok"] = _budget_ok
+    # Phase I: record structured spans for the offline analyzer / injected tracer.
+    _record_agent_trace(result)
     return result
 
 def _sim2real_gate_metrics(run_id: str, iteration: int) -> dict:
@@ -5426,6 +5499,8 @@ def agent_sim2real_drive(payload: dict):
             )
         except Exception:
             pass
+    # Phase I: record structured spans for the offline analyzer / injected tracer.
+    _record_agent_trace(result)
     return result
 
 def _agent_run_memory():
@@ -5458,6 +5533,286 @@ def agent_memory_run(run_id: str):
 @app.get("/agent/memory/compare")
 def agent_memory_compare(run_a: str, run_b: str):
     return _agent_run_memory().compare_runs(run_a, run_b)
+
+# ── Blueprint Phase H: retrieval / grounding ─────────────────────────────────
+# LanceDB-backed vector store + Token Factory embeddings + provider-agnostic
+# web_search. Endpoints/keys come from env/config (never hardcoded).
+EMBED_MODEL_ENV = os.environ.get("NPA_AGENT_EMBED_MODEL", "").strip()
+EMBED_MODEL_FALLBACK = "BAAI/bge-en-icl"
+_EMBED_MODEL_CACHE = {{"model": "", "expires_at": 0.0}}
+
+def _resolve_embed_model():
+    # Explicit operator override wins; otherwise auto-discover an embedding model
+    # the key actually serves (so we never hardcode a model this key lacks).
+    if EMBED_MODEL_ENV:
+        return EMBED_MODEL_ENV
+    now = time.monotonic()
+    cache = _EMBED_MODEL_CACHE
+    if cache.get("model") and cache.get("expires_at", 0.0) > now:
+        return cache["model"]
+    model = EMBED_MODEL_FALLBACK
+    try:
+        for mid in _fetch_token_factory_models():
+            low = str(mid).lower()
+            if "embed" in low or "bge" in low or "e5-" in low or low.endswith("-e5"):
+                model = mid
+                break
+    except Exception:
+        pass
+    cache["model"] = model
+    cache["expires_at"] = now + 300.0
+    return model
+
+LANCEDB_URI = os.environ.get("NPA_AGENT_LANCEDB_URI", "").strip()
+LANCEDB_TABLE = os.environ.get("NPA_AGENT_LANCEDB_TABLE", "").strip() or "npa_corpus"
+SEARXNG_URL = os.environ.get("NPA_AGENT_SEARXNG_URL", "").strip().rstrip("/")
+RETRIEVAL_DIR = Path("/opt/npa-agent/retrieval")
+RETRIEVAL_TOP_K = _retrieval.DEFAULT_TOP_K
+RETRIEVAL_CHAT_MIN_SCORE = 0.35
+try:
+    RETRIEVAL_CHAT_MIN_SCORE = float(os.environ.get("NPA_AGENT_RETRIEVAL_CHAT_MIN_SCORE", "0.35"))
+except (TypeError, ValueError):
+    RETRIEVAL_CHAT_MIN_SCORE = 0.35
+
+def _embed_texts(texts):
+    items = [str(t) for t in (texts or [])]
+    if not items:
+        return []
+    api_key = _provider_api_key("token_factory")
+    if not api_key:
+        raise RuntimeError("missing Token Factory API key for embeddings")
+    base_url = _provider_base_url("token_factory")
+    if not base_url:
+        raise RuntimeError("missing Token Factory base URL for embeddings")
+    url = f"{{base_url}}/embeddings"
+    response = httpx.post(
+        url,
+        headers={{"Authorization": f"Bearer {{api_key}}", "Content-Type": "application/json"}},
+        json={{"model": _resolve_embed_model(), "input": items}},
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError("Token Factory embeddings response missing data")
+    ordered = sorted(rows, key=lambda r: r.get("index", 0) if isinstance(r, dict) else 0)
+    vectors = []
+    for row in ordered:
+        embedding = row.get("embedding") if isinstance(row, dict) else None
+        vectors.append([float(x) for x in (embedding or [])])
+    return vectors
+
+def _agent_web_search(query):
+    # Provider-agnostic live grounding: SearXNG self-hosted on AI Cloud (via npa)
+    # exposes an OpenSearch-style JSON API. A hosted search can be swapped in by
+    # matching this {{title, url, snippet}} shape — no Tavily dependency.
+    if not SEARXNG_URL:
+        return []
+    try:
+        response = httpx.get(
+            f"{{SEARXNG_URL}}/search",
+            params={{"q": str(query or ""), "format": "json"}},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return []
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(results, list):
+        return []
+    out = []
+    for item in results[:10]:
+        if not isinstance(item, dict):
+            continue
+        out.append({{
+            "title": item.get("title") or "",
+            "url": item.get("url") or "",
+            "snippet": item.get("content") or "",
+        }})
+    return out
+
+def _agent_retrieval_store(dim=None):
+    if LANCEDB_URI and dim:
+        try:
+            return _retrieval.build_lance_store(LANCEDB_URI, LANCEDB_TABLE, dim=int(dim))
+        except Exception:
+            pass
+    return _retrieval.JsonVectorStore(str(RETRIEVAL_DIR / "corpus.json"))
+
+def _agent_retrieval_store_for_query(query):
+    # Only probe the embedding dim (an extra embed call) when a Lance store is
+    # configured; the pure-python Json store needs no schema dim.
+    if not LANCEDB_URI:
+        return _agent_retrieval_store(dim=None)
+    try:
+        qvec = _embed_texts([str(query or "")])
+        dim = len(qvec[0]) if qvec and qvec[0] else None
+    except Exception:
+        dim = None
+    return _agent_retrieval_store(dim=dim)
+
+def _agent_retrieval_roots(body):
+    roots = body.get("roots") if isinstance(body, dict) else None
+    if isinstance(roots, list) and roots:
+        return [str(r) for r in roots if str(r).strip()]
+    return [
+        str(NPA_SOURCE_ROOT / "docs"),
+        str(NPA_SOURCE_ROOT / "skills"),
+        str(NPA_SOURCE_ROOT / "npa" / "docs"),
+        "/opt/npa-agent/repo/docs",
+        "/opt/npa-agent/repo/skills",
+    ]
+
+@app.post("/agent/retrieval/index")
+def agent_retrieval_index(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    roots = _agent_retrieval_roots(body)
+    documents = list(_retrieval.iter_corpus_documents(roots))
+    if not documents:
+        return {{"ok": False, "error": "no corpus documents found", "roots": roots}}
+    dim = None
+    try:
+        probe = _embed_texts([(documents[0][2][:200] or "probe")])
+        dim = len(probe[0]) if probe and probe[0] else None
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"embedding probe failed: {{exc}}")
+    store = _agent_retrieval_store(dim=dim)
+    try:
+        result = _retrieval.index_corpus(documents, embed=_embed_texts, store=store, source="repo")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"indexing failed: {{exc}}")
+    result["roots"] = roots
+    result["embed_model"] = _resolve_embed_model()
+    result["backend"] = "lancedb" if (LANCEDB_URI and dim) else "json"
+    return result
+
+@app.get("/agent/retrieval/search")
+def agent_retrieval_search(q: str = "", k: int = RETRIEVAL_TOP_K, web: bool = False):
+    query = str(q or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="q is required")
+    try:
+        kk = max(1, min(int(k), 20))
+    except (TypeError, ValueError):
+        kk = RETRIEVAL_TOP_K
+    store = _agent_retrieval_store_for_query(query)
+    result = _retrieval.retrieve(
+        query,
+        embed=_embed_texts,
+        store=store,
+        k=kk,
+        web_search=_agent_web_search if web else None,
+        index_web=bool(web),
+    )
+    result["answer"] = _retrieval.format_grounded_answer(query, result.get("citations") or [])
+    result["grounded"] = True
+    return result
+
+@app.get("/agent/retrieval/status")
+def agent_retrieval_status():
+    store = _agent_retrieval_store(dim=None)
+    return {{
+        "ok": True,
+        "chunks": store.count(),
+        "sources": store.sources(),
+        "embed_model": _resolve_embed_model(),
+        "backend": "lancedb" if LANCEDB_URI else "json",
+        "web_search": bool(SEARXNG_URL),
+    }}
+
+def _maybe_retrieval_grounded(query):
+    query = str(query or "").strip()
+    if not query:
+        return None
+    store = _agent_retrieval_store(dim=None)
+    # Only fire when a corpus is actually indexed; otherwise /chat is unchanged.
+    if store.count() <= 0:
+        return None
+    try:
+        result = _retrieval.retrieve(
+            query, embed=_embed_texts, store=store, k=RETRIEVAL_TOP_K,
+            min_score=RETRIEVAL_CHAT_MIN_SCORE,
+        )
+    except Exception:
+        return None
+    # Gating + formatting decision lives in the tested pure helper so this
+    # embedded glue is thin (build store -> count guard -> retrieve -> delegate).
+    return _retrieval.grounded_reply_from_result(
+        query, result, min_score=RETRIEVAL_CHAT_MIN_SCORE
+    )
+
+# ── Blueprint Phase I: observability ─────────────────────────────────────────
+# Structured spans via an injected tracer (Null by default; Langfuse/OTel when
+# configured) + a persisted ring buffer feeding the offline analyzer.
+TRACE_DIR = Path("/opt/npa-agent/trace")
+TRACE_MAX = 200
+
+def _agent_tracer():
+    lf_public = os.environ.get("NPA_AGENT_LANGFUSE_PUBLIC_KEY", "").strip()
+    lf_secret = os.environ.get("NPA_AGENT_LANGFUSE_SECRET_KEY", "").strip()
+    lf_host = os.environ.get("NPA_AGENT_LANGFUSE_HOST", "").strip()
+    if lf_public and lf_secret:
+        try:
+            return _agent_tracing.build_langfuse_tracer(
+                public_key=lf_public, secret_key=lf_secret, host=lf_host
+            )
+        except Exception:
+            pass
+    return _agent_tracing.NullTracer()
+
+def _spans_for_trace(trace):
+    if isinstance(trace, dict) and "steps" in trace:
+        return _agent_tracing.spans_from_action_loop(trace)
+    return _agent_tracing.spans_from_drive(trace)
+
+def _record_agent_trace(result):
+    if not isinstance(result, dict):
+        return
+    try:
+        TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        path = TRACE_DIR / "recent.json"
+        try:
+            existing = json.loads(path.read_text())
+            if not isinstance(existing, list):
+                existing = []
+        except Exception:
+            existing = []
+        existing.append(result)
+        existing = existing[-TRACE_MAX:]
+        path.write_text(json.dumps(existing))
+        _agent_tracing.record_spans(_agent_tracer(), _spans_for_trace(result))
+    except Exception:
+        pass
+
+def _recent_agent_traces():
+    try:
+        data = json.loads((TRACE_DIR / "recent.json").read_text())
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+@app.get("/agent/trace/spans")
+def agent_trace_spans(limit: int = 20):
+    try:
+        lim = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        lim = 20
+    spans = []
+    for trace in _recent_agent_traces()[-lim:]:
+        if not isinstance(trace, dict):
+            continue
+        spans.extend(s.to_dict() for s in _spans_for_trace(trace))
+    return {{"ok": True, "spans": spans, "count": len(spans)}}
+
+@app.post("/agent/trace/analyze")
+def agent_trace_analyze(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    traces = body.get("traces")
+    if not isinstance(traces, list) or not traces:
+        traces = _recent_agent_traces()
+    return _agent_tracing.analyze_traces(traces)
 
 @app.get("/health")
 def health():
@@ -6866,6 +7221,8 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
         .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
         .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
+        .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)
+        .replace(_AGENT_TRACE_SHIP, agent_trace_ship_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)

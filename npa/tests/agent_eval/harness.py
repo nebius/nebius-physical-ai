@@ -15,6 +15,7 @@ from typing import Any
 
 from npa.cli import agent_actions
 from npa.cli import agent_chat
+from npa.cli import agent_retrieval
 from npa.cli import agent_semantic_router
 from npa.cli import agent_sim2real_loop
 from npa.cli import agent_workflow
@@ -174,12 +175,37 @@ def _run_semantic(sc: Scenario) -> EvalResult:
     )
 
 
+def _fake_embed(texts, dim: int = 32):
+    vectors = []
+    for text in texts:
+        vec = [0.0] * dim
+        for token in str(text).lower().split():
+            vec[hash(token) % dim] += 1.0
+        vectors.append(vec)
+    return vectors
+
+
+def _run_retrieval(sc: Scenario) -> EvalResult:
+    # End-state: indexing the corpus then retrieving returns a citation whose uri
+    # matches the expected source. Fully mocked embedder -> 0 tokens.
+    store = agent_retrieval.InMemoryVectorStore()
+    corpus = sc.expected.get("corpus") or []
+    documents = [(uri, title, text) for uri, title, text in corpus]
+    agent_retrieval.index_corpus(documents, embed=_fake_embed, store=store, source="repo")
+    result = agent_retrieval.retrieve(sc.goal, embed=_fake_embed, store=store, k=3, min_score=0.0)
+    citations = result.get("citations") or []
+    expected_uri = sc.expected.get("uri")
+    success = bool(result.get("ok")) and bool(citations) and citations[0].get("uri") == expected_uri
+    return EvalResult(sc.id, sc.kind, success, steps=1, tokens=0, detail=f"count={result.get('count')}")
+
+
 _RUNNERS = {
     "grounded": _run_grounded,
     "workflow": _run_workflow,
     "action_loop": _run_action_loop,
     "sim2real_loop": _run_sim2real_loop,
     "semantic": _run_semantic,
+    "retrieval": _run_retrieval,
 }
 
 
