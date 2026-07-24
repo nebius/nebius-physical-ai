@@ -358,6 +358,40 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
     assert "auth_basic off;" in rerun_asset_location
 
 
+def test_bootstrap_embeds_lichtblick_viewer() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
+    assert "location /lichtblick/recordings/" in source
+    assert "location /lichtblick/ {{" in source
+    assert "proxy_pass http://127.0.0.1:{lichtblick_port}/;" in source
+    # backend: sim-viz status carries the Lichtblick embed fields.
+    assert 'LICHTBLICK_RECORDING_HTTP_PATH = "/lichtblick/recordings/sim2real.mcap"' in source
+    assert "def _lichtblick_iframe_url" in source
+    assert '"lichtblick_ready": False,' in source
+    assert '"lichtblick_iframe_url": "/lichtblick/",' in source
+    assert "def _publish_mcap_recording" in source
+    assert 'elif render == "mcap":' in source
+    # best-effort viewer sidecar unit.
+    assert "npa-lichtblick.service" in source
+    # verify() probes the embed plumbing.
+    assert "lichtblick embed probe" in source
+
+
+def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
+    source = _agent_ui_bundle()
+    assert 'id="renderModeLichtblick"' in source
+    assert 'data-render-mode="lichtblick"' in source
+    assert 'id="lichtblickFrame"' in source
+    assert 'id="viewerPaneLichtblick"' in source
+    assert 'bindClick("openLichtblick"' in source
+    assert 'bindClick("loadLichtblickViewer"' in source
+    assert "function applyLichtblickSimViz" in source
+    assert "function mountLichtblickIframe" in source
+    assert "View in Lichtblick" in source
+
+
 def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
     from npa.cli import agent as agent_module
 

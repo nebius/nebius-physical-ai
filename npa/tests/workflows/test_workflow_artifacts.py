@@ -151,6 +151,14 @@ def test_render_hint_detects_text_csv_and_unknown_fallback() -> None:
     assert render_hint_for_object(key="x/opaque.new") == "download"
 
 
+def test_render_hint_maps_mcap_to_lichtblick_render() -> None:
+    from npa.workflows.artifacts import is_inline_render
+
+    assert render_hint_for_object(key="run/reports/sim2real.mcap") == "mcap"
+    # MCAP is an inline (viewable) render so the artifact browser offers it.
+    assert is_inline_render("mcap") is True
+
+
 def test_artifact_media_type_prefers_explicit_browser_types() -> None:
     assert artifact_media_type("demo.mp4") == "video/mp4"
     assert artifact_media_type("demo.webm") == "video/webm"
