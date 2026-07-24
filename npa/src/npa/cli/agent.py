@@ -4519,6 +4519,7 @@ _INTENT_SKILLS = {{
     "create_workflow": ("author-npa-workflow",),
     "create_vlm_rl_workflow": ("author-npa-workflow", "sim-to-real"),
     "create_gate_workflow": ("author-npa-workflow", "sim-to-real"),
+    "create_data_factory_workflow": ("physical-ai-data-factory", "author-npa-workflow"),
     "live_infra_loop": ("submit-workflow", "gpu-selection"),
     "mk8s_provision": ("nebius-infra", "submit-workflow"),
     "soperator": ("soperator", "nebius-infra"),
@@ -4809,6 +4810,7 @@ def _maybe_toolground_chat_reply(
         "create_gate_workflow",
         "create_loop_gate_workflow",
         "create_rl_policy_workflow",
+        "create_data_factory_workflow",
     }}:
         draft = generate_workflow_draft(
             user_text=user_text,

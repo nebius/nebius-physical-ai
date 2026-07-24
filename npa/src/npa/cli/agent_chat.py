@@ -120,6 +120,21 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "create_data_factory_workflow",
+        re.compile(
+            r"\b(?:create|generate|build|make|draft|compose|write|author)\b"
+            r".{0,140}\b(?:paidf|physical[\s-]?ai[\s-]?data[\s-]?factory|data[\s-]?factory)\b"
+            r"|\b(?:paidf|physical[\s-]?ai[\s-]?data[\s-]?factory)\b.{0,80}\b(?:workflow|yaml|spec|pipeline|blueprint)\b"
+            r"|\bdata[\s-]?factory\b.{0,80}\b(?:workflow|yaml|spec|pipeline|blueprint)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write|author)\b"
+            r".{0,120}\bvideo[\s-]?(?:data[\s-]?)?augmentation\b.{0,80}\b(?:workflow|yaml|spec|pipeline)\b"
+            r"|\baugment\b.{0,80}\b(?:fan[\s-]?out|fanout|multiply|amplify)\b.{0,80}\b(?:scenario|scenarios|variant|variants)\b"
+            r"|\b(?:fan[\s-]?out|fanout|multiply|amplify)\b.{0,60}\b(?:scenario|scenarios|variant|variants)\b.{0,80}\baugment\b"
+            r"|\b(?:cosmos[\s-]?transfer)\b.{0,80}\b(?:multiply|fan[\s-]?out|scenarios?|variants?)\b.{0,80}\b(?:workflow|yaml|spec|pipeline)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "create_vlm_rl_workflow",
         re.compile(
             r"\b(?:create|generate|build|make|draft|compose|write)\b"
@@ -419,6 +434,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_loop_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_rl_policy_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "create_data_factory_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
     "infra_backends": ["infra/k8s", "infra/provision", "workflows/submit"],
     "mk8s_provision": ["infra/mk8s", "infra/mk8s/provision", "infra/k8s"],
@@ -1297,6 +1313,7 @@ def build_grounded_reply(
         "create_gate_workflow",
         "create_loop_gate_workflow",
         "create_rl_policy_workflow",
+        "create_data_factory_workflow",
     }:
         draft = state.get("workflow_draft", {})
         if not isinstance(draft, dict):
@@ -1323,6 +1340,8 @@ def build_grounded_reply(
                     template = "loop-gate"
                 elif intent == "create_rl_policy_workflow":
                     template = "rl-policy-success"
+                elif intent == "create_data_factory_workflow":
+                    template = "physical-ai-data-factory"
                 else:
                     template = "two-step"
             return format_generate_workflow(yaml_text, validation, template=template, plan=plan, runnable=runnable)

@@ -14,6 +14,8 @@ from npa.cli.agent_chat import (
 )
 from npa.cli.agent_workflow import (
     choose_workflow_template,
+    extract_data_factory_params,
+    generate_data_factory_yaml,
     generate_isaac_byof_yaml,
     generate_gpu_cross_region_yaml,
     generate_rl_policy_training_yaml,
@@ -109,6 +111,108 @@ def test_create_workflow_apis() -> None:
     apis = apis_for_intent("create_workflow")
     assert any(path.endswith("draft") for path in apis)
     assert any("validate" in path for path in apis)
+
+
+def test_generate_data_factory_yaml_validates_and_plans() -> None:
+    yaml_text = generate_data_factory_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True
+    assert result["name"] == "physical-ai-data-factory"
+    expected = {
+        "generate-configs",
+        "annotate-original",
+        "augment",
+        "grade",
+        "attribute-verify",
+        "quality-gate",
+        "annotate-augmented",
+        "curate",
+        "visualize",
+        "finalize",
+    }
+    assert expected.issubset(set(result["states"]))
+    plan = plan_workflow_yaml_text(yaml_text, run_id="paidf-demo")
+    assert plan["ok"] is True
+    tool_refs = [step.get("tool_ref") for step in plan["steps"]]
+    assert "workbench.cosmos2.transfer_execute" in tool_refs
+    assert "workbench.token_factory.caption" in tool_refs
+
+
+def test_extract_data_factory_params_fanout_gpus_subject() -> None:
+    params = extract_data_factory_params(
+        "augment my warehouse robot clips and fan out 6 scenarios on at least 4 GPUs"
+    )
+    assert params["n_augmentations"] == 6
+    assert params["gpu_count"] == 4
+    assert "warehouse robot clips" in params["augment_subject"]
+
+    # "8 variants" style also parses.
+    p2 = extract_data_factory_params("generate a paidf workflow with 8 scenario variants")
+    assert p2["n_augmentations"] == 8
+
+
+def test_data_factory_yaml_reflects_requested_fanout_and_gpus() -> None:
+    yaml_text = generate_data_factory_yaml(
+        user_text="augment the robot arm demos and fan out 6 scenarios using 6 gpus"
+    )
+    data = yaml.safe_load(yaml_text)
+    assert data["config"]["n_augmentations"] == "6"
+    assert data["config"]["variant_parallelism"] == "6"
+    assert data["config"]["augment_subject"].startswith("robot arm demos")
+    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO6000:6"
+    # Parallelism never exceeds the GPU count.
+    capped = generate_data_factory_yaml(
+        user_text="augment the clips and fan out 8 scenarios on 4 gpus"
+    )
+    cd = yaml.safe_load(capped)
+    assert cd["config"]["n_augmentations"] == "8"
+    assert cd["config"]["variant_parallelism"] == "4"
+    assert cd["resources"]["gpu"]["accelerators"] == "RTXPRO6000:4"
+
+
+def test_default_data_factory_uses_four_gpus() -> None:
+    data = yaml.safe_load(generate_data_factory_yaml())
+    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO6000:4"
+    assert data["config"]["variant_parallelism"] == "4"
+    assert data["config"]["n_augmentations"] == "4"
+
+
+def test_match_create_data_factory_intent() -> None:
+    assert (
+        match_chat_intent("write me a paidf npa workflow to augment and fan out scenarios")
+        == "create_data_factory_workflow"
+    )
+    assert (
+        match_chat_intent("augment my robot clips and fan out 4 scenarios")
+        == "create_data_factory_workflow"
+    )
+    assert (
+        match_chat_intent("generate a physical ai data factory workflow yaml")
+        == "create_data_factory_workflow"
+    )
+
+
+def test_choose_template_selects_data_factory() -> None:
+    selection = choose_workflow_template(
+        user_text="augment my footage and fan out 4 scenario variants",
+        intent="create_data_factory_workflow",
+    )
+    assert selection["template"] == "physical-ai-data-factory"
+
+
+def test_data_factory_draft_from_intent_and_text_is_runnable() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    draft = generate_workflow_draft(
+        user_text="build a paidf workflow: augment the robot clips and fan out 4 scenarios on 4 gpus",
+        intent="create_data_factory_workflow",
+        tool_refs=frozenset(TOOL_CATALOG.keys()),
+    )
+    assert draft["template"] == "physical-ai-data-factory"
+    assert draft["runnable"] is True
+    data = yaml.safe_load(draft["yaml"])
+    assert data["config"]["n_augmentations"] == "4"
+    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO6000:4"
 
 
 def test_infra_backend_intent_and_reply() -> None:

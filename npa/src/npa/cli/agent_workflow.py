@@ -23,6 +23,7 @@ _TEMPLATES = (
     "byof",
     "gpu-cross-region",
     "rl-policy-success",
+    "physical-ai-data-factory",
 )
 
 
@@ -76,6 +77,18 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "policy_training": "rl-policy-success",
     "rl-training": "rl-policy-success",
     "rl_training": "rl-policy-success",
+    "paidf": "physical-ai-data-factory",
+    "data-factory": "physical-ai-data-factory",
+    "data_factory": "physical-ai-data-factory",
+    "datafactory": "physical-ai-data-factory",
+    "physical-ai-data-factory": "physical-ai-data-factory",
+    "physical_ai_data_factory": "physical-ai-data-factory",
+    "video-augmentation": "physical-ai-data-factory",
+    "video_augmentation": "physical-ai-data-factory",
+    "augment-multiply": "physical-ai-data-factory",
+    "augment_multiply": "physical-ai-data-factory",
+    "multiply": "physical-ai-data-factory",
+    "fanout-augment": "physical-ai-data-factory",
 }
 
 _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
@@ -84,6 +97,7 @@ _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
     "create_gate_workflow": "token-factory-gate",
     "create_loop_gate_workflow": "loop-gate",
     "create_rl_policy_workflow": "rl-policy-success",
+    "create_data_factory_workflow": "physical-ai-data-factory",
 }
 
 _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -135,6 +149,22 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "reinforcement learning",
         "train policy",
         "simulation policy",
+    ),
+    "physical-ai-data-factory": (
+        "paidf",
+        "data factory",
+        "physical ai data factory",
+        "video augmentation",
+        "video data augmentation",
+        "augment",
+        "fan out",
+        "fan-out",
+        "fanout",
+        "multiply",
+        "scenario variant",
+        "scenario variants",
+        "cosmos transfer",
+        "amplify",
     ),
     "two-step": ("two-step", "2-step", "simple", "minimal"),
 }
@@ -1102,6 +1132,369 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 }
             ),
         },
+        "physical-ai-data-factory": _data_factory_spec(),
+    }
+
+
+def _data_factory_spec() -> dict[str, Any]:
+    """Physical AI Data Factory blueprint (annotate -> augment+multiply -> grade
+    loop -> re-label -> curate -> visualize -> finalize).
+
+    Chat requests parameterize what to augment (``augment_subject``, surfaced as
+    the input-conditioning prompt hint) and how many scenario variants to fan out
+    (``n_augmentations``). The augment stage runs one real Cosmos Transfer 2.5
+    inference per sampled combo and fans them across the GPU pod's devices, so an
+    N-augmentation config on an ``RTXPRO6000:G`` pod amplifies N scenarios across
+    G GPUs.
+    """
+    return {
+        "name": "physical-ai-data-factory",
+        "description": (
+            "Physical AI Data Factory (NVIDIA blueprint on Nebius + SkyPilot, no OSMO): "
+            "annotate (Token Factory VLM) -> Cosmos Transfer 2.5 augment & MULTIPLY "
+            "(one GPU inference per sampled scenario, fanned across the pod's GPUs) -> "
+            "VLM evaluate/validate gate loop -> re-label -> FiftyOne curation -> Rerun "
+            "visualize -> finalize. Pure composition of existing workbench tools."
+        ),
+        "config_runtime": OrderedDict(
+            {
+                "prefix": "physical-ai-data-factory/{{run.id}}",
+                # What to augment: a free-form hint surfaced as the augment prompt /
+                # input-conditioning subject (the run's real input clips are the base).
+                "augment_subject": "the input robot clips",
+                # Fan-out: N sampled appearance combos -> N scenario variants.
+                "n_augmentations": "4",
+                # Concurrency of the multiply fan-out (one variant per GPU); align
+                # with the gpu resource accelerator count for full utilization.
+                "variant_parallelism": "4",
+                "refinement_iterations": "2",
+                "grade_threshold": "0.5",
+                "default_decision": "promote_checkpoint",
+                "caption_model": "Qwen/Qwen2.5-VL-72B-Instruct",
+                "vlm_backend": "api",
+                "max_images": "8",
+                "max_tokens": "512",
+            }
+        ),
+        "config_uri": OrderedDict(
+            {
+                "input_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
+                "images_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
+                "configs_uri": "s3://{{config.bucket}}/{{config.prefix}}/configs/",
+                "captions_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_original/",
+                "trigger_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
+                "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
+                "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
+                "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/",
+                "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",
+                "augmented_frames_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
+                "labeled_augmented_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/",
+                "lance_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
+                "curation_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json",
+                "run_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
+                "rrd_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd",
+                "finalize_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json",
+            }
+        ),
+        "resources": OrderedDict(
+            {
+                "gpu": OrderedDict(
+                    {
+                        "cloud": "kubernetes",
+                        "accelerators": "RTXPRO6000:4",
+                        "cpus": 16,
+                        "memory": "80Gi",
+                    }
+                ),
+                "cpu": OrderedDict({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}),
+            }
+        ),
+        "initial": "generate-configs",
+        "states": OrderedDict(
+            {
+                "generate-configs": OrderedDict(
+                    {
+                        "description": (
+                            "Stage 1 - Config Generation. Sample n_augmentations appearance "
+                            "combos and write the per-run config manifest that drives the "
+                            "multiply fan-out."
+                        ),
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "shell": (
+                                    "python3 -c \"from npa.workflows.data_factory_stages import "
+                                    "generate_configs; generate_configs('{{config.configs_uri}}', "
+                                    "'{{config.n_augmentations}}', '{{run.id}}')\""
+                                )
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.configs_uri}}manifest.json",
+                                    "schema": "npa.data_factory.configs.v1",
+                                }
+                            )
+                        ],
+                        "next": "annotate-original",
+                    }
+                ),
+                "annotate-original": OrderedDict(
+                    {
+                        "description": (
+                            "Stage 2a - Understand & Annotate. Dense-caption the source frames "
+                            "with a hosted Token Factory VLM (zero-GPU)."
+                        ),
+                        "needs": ["generate-configs"],
+                        "toolRef": "workbench.token_factory.caption",
+                        "resources": "cpu",
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.images_uri}}",
+                                    "schema": "npa.data_factory.frames.v1",
+                                }
+                            )
+                        ],
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.captions_uri}}captions.json",
+                                    "schema": "npa.token_factory.captions.v1",
+                                }
+                            )
+                        ],
+                        "next": "grade",
+                    }
+                ),
+                "augment": OrderedDict(
+                    {
+                        "description": (
+                            "Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE GPU "
+                            "inference per sampled combo (config.n_augmentations) and fans them "
+                            "across the pod's GPUs (config.variant_parallelism), so N combos -> "
+                            "N scenario variants amplifying config.augment_subject. Member of the "
+                            "grade refinement loop, so loop_back genuinely re-renders."
+                        ),
+                        "needs": ["annotate-original"],
+                        "toolRef": "workbench.cosmos2.transfer_execute",
+                        "resources": "gpu",
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.trigger_uri}}",
+                                    "schema": "npa.data_factory.frames.v1",
+                                }
+                            )
+                        ],
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.augment_uri}}manifest.json",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            )
+                        ],
+                    }
+                ),
+                "grade": OrderedDict(
+                    {
+                        "description": (
+                            "Augment & Evaluate refinement loop: augment (GPU multiply) -> "
+                            "attribute-verify (VLM) -> quality-gate. Loops back to RE-AUGMENT on "
+                            "failure, up to refinement_iterations, and breaks on promote."
+                        ),
+                        "needs": ["annotate-original"],
+                        "loop": OrderedDict(
+                            {
+                                "max": "{{config.refinement_iterations}}",
+                                "until": "promote_checkpoint",
+                            }
+                        ),
+                        "sequence": ["augment", "attribute-verify", "quality-gate"],
+                        "next": "annotate-augmented",
+                    }
+                ),
+                "attribute-verify": OrderedDict(
+                    {
+                        "description": (
+                            "VLM-based attribute verification of the augmented clips "
+                            "(Token Factory, --backend api)."
+                        ),
+                        "toolRef": "workbench.vlm_eval.run",
+                        "resources": "cpu",
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.rollouts_uri}}",
+                                    "schema": "npa.sim2real.augment.v1",
+                                }
+                            )
+                        ],
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.scores_uri}}vlm_eval_stub.json",
+                                    "schema": "npa.workbench.vlm_eval.report.v1",
+                                }
+                            )
+                        ],
+                    }
+                ),
+                "quality-gate": OrderedDict(
+                    {
+                        "description": (
+                            "Read the VLM attribute score and write a promote_checkpoint / "
+                            "loop_back decision that drives the grade loop."
+                        ),
+                        "writesDecision": True,
+                        "needs": ["attribute-verify"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "shell": (
+                                    "python3 -c \"from npa.workflows.data_factory_stages import "
+                                    "grade_gate; grade_gate('{{config.scores_uri}}', "
+                                    "'{{config.decision_uri}}', '{{config.grade_threshold}}')\""
+                                )
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.decision_uri}}",
+                                    "schema": "npa.sim2real.threshold_decision.v1",
+                                }
+                            )
+                        ],
+                    }
+                ),
+                "annotate-augmented": OrderedDict(
+                    {
+                        "description": (
+                            "Stage 3 - Pseudo-Label Augmented. Re-caption the promoted augmented "
+                            "clips with the same hosted VLM so the amplified set ships labeled."
+                        ),
+                        "needs": ["grade"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "shell": (
+                                    "npa workbench token-factory caption "
+                                    "--input-path \"{{config.augmented_frames_uri}}\" "
+                                    "--output-path \"{{config.labeled_augmented_uri}}\" "
+                                    "--model \"{{config.caption_model}}\" "
+                                    "--max-images \"{{config.max_images}}\" "
+                                    "--max-tokens \"{{config.max_tokens}}\" --output json"
+                                )
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.labeled_augmented_uri}}captions.json",
+                                    "schema": "npa.token_factory.captions.v1",
+                                }
+                            )
+                        ],
+                        "next": "curate",
+                    }
+                ),
+                "curate": OrderedDict(
+                    {
+                        "description": (
+                            "Stage 4 - Curation. Build a real curation report over the augmented "
+                            "+ graded set for Voxel51/FiftyOne review."
+                        ),
+                        "needs": ["annotate-augmented"],
+                        "resources": "cpu",
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.lance_uri}}",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            )
+                        ],
+                        "run": OrderedDict(
+                            {
+                                "shell": (
+                                    "python3 -c \"from npa.workflows.data_factory_stages import "
+                                    "curate; curate('{{config.augment_uri}}', "
+                                    "'{{config.curation_report_uri}}')\""
+                                )
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.curation_report_uri}}",
+                                    "schema": "npa.fiftyone.curation.v1",
+                                }
+                            )
+                        ],
+                        "next": "visualize",
+                    }
+                ),
+                "visualize": OrderedDict(
+                    {
+                        "description": (
+                            "Build reports/sim2real.rrd from the run's input + augmented frames, "
+                            "captions, and per-stage docs for the NPA agent's embedded Rerun viewer."
+                        ),
+                        "needs": ["curate"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "shell": (
+                                    "python3 -c \"from npa.workflows.data_factory_viz import "
+                                    "build_run_rrd; print(build_run_rrd('{{config.run_root_uri}}', "
+                                    "'{{config.rrd_uri}}'))\""
+                                )
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.rrd_uri}}",
+                                    "schema": "npa.sim2real.rerun.v1",
+                                }
+                            )
+                        ],
+                        "next": "finalize",
+                    }
+                ),
+                "finalize": OrderedDict(
+                    {
+                        "description": (
+                            "Aggregate the run's stage artifacts into a final augmented-and-graded "
+                            "dataset report."
+                        ),
+                        "needs": ["visualize"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "shell": (
+                                    "python3 -c \"from npa.workflows.data_factory_stages import "
+                                    "finalize; finalize('{{config.run_root_uri}}', "
+                                    "'{{config.finalize_report_uri}}')\""
+                                )
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.finalize_report_uri}}",
+                                    "schema": "npa.sim2real.e2e_report.v1",
+                                }
+                            )
+                        ],
+                        "terminal": True,
+                    }
+                ),
+            }
+        ),
     }
 
 
@@ -1140,6 +1533,16 @@ def choose_workflow_template(
         scores["byof"] += 10
     if "outer loop" in text and "inner loop" in text:
         scores["vlm-rl-loop"] += 5
+    data_factory_explicit = any(
+        token in text
+        for token in ("paidf", "data factory", "physical ai data factory", "video data augmentation")
+    )
+    if data_factory_explicit:
+        scores["physical-ai-data-factory"] += 10
+    if ("augment" in text or "cosmos transfer" in text) and any(
+        token in text for token in ("fan out", "fan-out", "fanout", "multiply", "scenario", "variant", "amplify")
+    ):
+        scores["physical-ai-data-factory"] += 6
     if "gpu" in text and ("region" in text or "project" in text):
         scores["gpu-cross-region"] += 5
     if "rl" in text and ("policy" in text or "training" in text or "isaac" in text):
@@ -1161,14 +1564,122 @@ def choose_workflow_template(
     return {"template": selected, "scores": scores}
 
 
-def _build_spec(template: str, *, bucket: str, name: str | None) -> OrderedDict[str, Any]:
+_DATA_FACTORY_COUNT_RE = re.compile(
+    r"(\d+)\s*(?:different\s+|distinct\s+)?"
+    r"(?:scenario\s*(?:variant)?s?|variant|variants|augmentation|augmentations|"
+    r"combos?|renders?|versions?|scenes?)",
+    re.IGNORECASE,
+)
+_DATA_FACTORY_FANOUT_RE = re.compile(
+    r"(?:fan[\s-]?out|multiply|amplify|fanout)\D{0,20}(\d+)"
+    r"|(\d+)[\s-]*(?:way|x)\s*(?:fan[\s-]?out|multiply)",
+    re.IGNORECASE,
+)
+_DATA_FACTORY_GPU_RE = re.compile(
+    r"(\d+)\s*(?:x\s*)?gpus?"
+    r"|(?:at\s*least|min(?:imum)?|up\s*to)\s*(\d+)\s*(?:x\s*)?gpus?"
+    r"|gpus?\D{0,12}(\d+)",
+    re.IGNORECASE,
+)
+_DATA_FACTORY_SUBJECT_RE = re.compile(
+    r"augment(?:ing|ed)?\s+(?:my\s+|the\s+|our\s+|these\s+|this\s+)?(.+?)"
+    r"(?:\s+(?:and|to|so|then|,|;|\.|with)\b|$)",
+    re.IGNORECASE,
+)
+
+
+def _first_int(match: re.Match[str] | None) -> int | None:
+    if not match:
+        return None
+    for group in match.groups():
+        if group:
+            try:
+                return int(group)
+            except ValueError:
+                continue
+    return None
+
+
+def extract_data_factory_params(user_text: str) -> dict[str, Any]:
+    """Parse a chat request into Physical AI Data Factory knobs.
+
+    Recognizes the fan-out count ("fan out 4 scenarios", "6 variants",
+    "multiply by 8"), a GPU count ("use at least 4 GPUs"), and a free-form
+    augmentation subject ("augment my warehouse robot clips ..."). Missing
+    values are simply omitted so the template defaults apply.
+    """
+    text = str(user_text or "").strip()
+    params: dict[str, Any] = {}
+    if not text:
+        return params
+
+    count = _first_int(_DATA_FACTORY_FANOUT_RE.search(text))
+    if count is None:
+        count = _first_int(_DATA_FACTORY_COUNT_RE.search(text))
+    gpus = _first_int(_DATA_FACTORY_GPU_RE.search(text))
+
+    if count is not None and count > 0:
+        params["n_augmentations"] = min(count, 64)
+    if gpus is not None and gpus > 0:
+        params["gpu_count"] = min(gpus, 8)
+
+    subject_match = _DATA_FACTORY_SUBJECT_RE.search(text)
+    if subject_match:
+        subject = subject_match.group(1).strip(" .,\"'`")
+        # Drop trailing fan-out/scenario phrasing that leaked into the subject.
+        subject = re.sub(
+            r"\s+(?:and\s+)?(?:fan[\s-]?out|multiply|amplify).*$", "", subject, flags=re.IGNORECASE
+        ).strip(" .,\"'`")
+        if subject and len(subject) <= 120:
+            params["augment_subject"] = subject
+    return params
+
+
+_DATA_FACTORY_DEFAULT_GPUS = 4
+
+
+def _data_factory_gpu_count(config: OrderedDict[str, Any], params: dict[str, Any]) -> int:
+    """Resolve the GPU accelerator count for a paidf run (>=1, <=8)."""
+    gpus = params.get("gpu_count")
+    if gpus:
+        return max(1, min(int(gpus), 8))
+    return _DATA_FACTORY_DEFAULT_GPUS
+
+
+def _apply_data_factory_params(config: OrderedDict[str, Any], params: dict[str, Any]) -> None:
+    """Overlay parsed chat knobs onto a paidf config (in place).
+
+    Keeps ``variant_parallelism`` <= the GPU accelerator count so the fan-out
+    never pins a variant to a GPU the pod does not have.
+    """
+    n_aug = params.get("n_augmentations")
+    subject = params.get("augment_subject")
+    if n_aug:
+        config["n_augmentations"] = str(int(n_aug))
+    if subject:
+        config["augment_subject"] = str(subject)
+    resolved_variants = int(str(config.get("n_augmentations") or "1"))
+    gpu_count = _data_factory_gpu_count(config, params)
+    config["variant_parallelism"] = str(max(1, min(resolved_variants, gpu_count)))
+
+
+def _build_spec(
+    template: str,
+    *,
+    bucket: str,
+    name: str | None,
+    params: dict[str, Any] | None = None,
+) -> OrderedDict[str, Any]:
     catalog = _workflow_specs()
-    spec = catalog[_normalize_template(template)]
+    normalized = _normalize_template(template)
+    spec = catalog[normalized]
     metadata_name = str(name or spec["name"])
     description = _FoldedStr(str(spec["description"]))
     config = OrderedDict({"bucket": str(bucket)})
     config.update(spec["config_runtime"])
     config.update(spec["config_uri"])
+    if normalized == "physical-ai-data-factory" and params:
+        _apply_data_factory_params(config, params)
     states = OrderedDict()
     for state_name, state_spec in spec["states"].items():
         state_payload: OrderedDict[str, Any] = OrderedDict()
@@ -1191,7 +1702,13 @@ def _build_spec(template: str, *, bucket: str, name: str | None) -> OrderedDict[
     root["kind"] = "Workflow"
     root["metadata"] = OrderedDict({"name": metadata_name, "description": description})
     root["config"] = config
-    root["resources"] = spec["resources"]
+    resources = spec["resources"]
+    if normalized == "physical-ai-data-factory" and params:
+        gpu_count = _data_factory_gpu_count(config, params)
+        gpu_res = resources.get("gpu")
+        if isinstance(gpu_res, dict) and gpu_count != _DATA_FACTORY_DEFAULT_GPUS:
+            gpu_res["accelerators"] = f"RTXPRO6000:{gpu_count}"
+    root["resources"] = resources
     root["initial"] = spec["initial"]
     root["states"] = states
     return root
@@ -1248,7 +1765,12 @@ def generate_workflow_draft(
     else:
         selection = choose_workflow_template(user_text=user_text, intent=intent, capabilities=capabilities)
         selected_template = str(selection["template"])
-    spec = _build_spec(selected_template, bucket=bucket, name=name or None)
+    params = (
+        extract_data_factory_params(user_text)
+        if selected_template == "physical-ai-data-factory"
+        else None
+    )
+    spec = _build_spec(selected_template, bucket=bucket, name=name or None, params=params)
     yaml_text = _render_spec_yaml(spec)
     validation = validate_workflow_yaml_text(yaml_text, tool_refs=tool_refs)
     plan: dict[str, Any]
@@ -1343,6 +1865,23 @@ def generate_rl_policy_training_yaml(
     return _render_spec_yaml(_build_spec("rl-policy-success", bucket=bucket, name=name))
 
 
+def generate_data_factory_yaml(
+    *,
+    bucket: str = "example-bucket",
+    name: str = "physical-ai-data-factory",
+    user_text: str = "",
+) -> str:
+    """Render Physical AI Data Factory (paidf) workflow YAML.
+
+    ``user_text`` (optional) parameterizes the fan-out count, GPU count, and
+    augmentation subject from a natural-language chat request.
+    """
+    params = extract_data_factory_params(user_text) if user_text else None
+    return _render_spec_yaml(
+        _build_spec("physical-ai-data-factory", bucket=bucket, name=name, params=params)
+    )
+
+
 def validate_workflow_yaml_text(
     yaml_text: str,
     *,
@@ -1399,6 +1938,10 @@ def format_workflow_chat_reply(
         "byof": "Generic BYOF workflow (OSS repo → Ubuntu/Isaac base image → workload on Kubernetes)",
         "gpu-cross-region": "Tenant-scoped GPU workflow across two project/region targets",
         "rl-policy-success": "Simulation RL policy training with success gate and publish/fail outcomes",
+        "physical-ai-data-factory": (
+            "Physical AI Data Factory: annotate → Cosmos Transfer augment & multiply "
+            "(fan out scenarios across GPUs) → VLM grade loop → curate → Rerun visualize"
+        ),
     }
     t = str(template or "two-step").strip().lower()
     desc = _desc_map.get(t, "2-step Sim2Real pipeline")
