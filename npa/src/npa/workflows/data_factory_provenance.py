@@ -74,6 +74,7 @@ def build_run_provenance(
         if stage not in present:
             continue
         entry = dict(base)
+        entry["stage_key"] = stage
         entry["artifact_count"] = counts.get(stage, 0)
         if stage == "cosmos_augmented":
             man = _read(_augment_manifest_key(keys, run_id))

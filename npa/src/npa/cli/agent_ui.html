@@ -192,6 +192,52 @@
         max-height: calc(100dvh - 140px);
         overflow: auto;
       }
+      .artifact-provenance:empty { display: none; }
+      .artifact-provenance {
+        margin-top: 8px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+      .artifact-provenance .prov-head {
+        font-weight: 600;
+        color: #334155;
+        margin-bottom: 6px;
+      }
+      .artifact-provenance .prov-banner {
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin-bottom: 6px;
+        line-height: 1.35;
+      }
+      .artifact-provenance .prov-ok {
+        background: #ecfdf5;
+        border: 1px solid #6ee7b7;
+        color: #065f46;
+      }
+      .artifact-provenance .prov-warn {
+        background: #fffbeb;
+        border: 1px solid #fcd34d;
+        color: #92400e;
+      }
+      .artifact-provenance .prov-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        align-items: baseline;
+        padding: 5px 6px;
+        border-top: 1px solid var(--border);
+      }
+      .artifact-provenance .prov-row:first-of-type { border-top: 0; }
+      .artifact-provenance .prov-clickable { cursor: pointer; border-radius: 6px; }
+      .artifact-provenance .prov-clickable:hover { background: #f1f5f9; }
+      .artifact-provenance .prov-stage { font-weight: 600; color: #0f172a; }
+      .artifact-provenance .prov-count { color: #2563eb; }
+      .artifact-provenance .prov-comp { color: #475569; }
+      .artifact-provenance .prov-runtime { color: #64748b; font-style: italic; }
+      .artifact-provenance .prov-detail { flex-basis: 100%; color: #64748b; }
       .artifact-list {
         margin-top: 8px;
         min-height: 140px;
@@ -1429,6 +1475,7 @@
                 <button id="workflowStatus" class="btn" type="button">Workflow status</button>
               </div>
               <div id="artifactDiscoverStatus" class="hint" style="margin-top:8px;">No runs discovered yet.</div>
+              <div id="artifactProvenance" class="artifact-provenance" aria-live="polite"></div>
               <div id="artifactList" class="artifact-list" aria-live="polite"></div>
             </div>
             <div class="subsection">
@@ -4385,11 +4432,16 @@
         if (!select) return;
         const current = String(select.value || "").trim();
         const wrapper = runStageWrapper(artifacts, runId);
-        const stages = Array.from(new Set(
-          (Array.isArray(artifacts) ? artifacts : []).map((item) => deriveArtifactStage(item.key, runId, wrapper))
-        )).sort();
-        select.innerHTML = '<option value="">All stages</option>' +
-          stages.map((s) => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join("");
+        const counts = new Map();
+        for (const item of Array.isArray(artifacts) ? artifacts : []) {
+          const stage = deriveArtifactStage(item.key, runId, wrapper);
+          counts.set(stage, (counts.get(stage) || 0) + 1);
+        }
+        const stages = Array.from(counts.keys()).sort();
+        const total = (Array.isArray(artifacts) ? artifacts : []).length;
+        select.innerHTML = '<option value="">All stages (' + total + ')</option>' +
+          stages.map((s) => '<option value="' + escapeHtml(s) + '">' +
+            escapeHtml(s) + " (" + counts.get(s) + ")" + '</option>').join("");
         // Preserve the previous selection if it still exists for this run.
         select.value = stages.includes(current) ? current : "";
       }
@@ -4593,8 +4645,12 @@
         }
         return true;
       }
-      async function loadArtifactsForSelectedRun() {
-        const runId = selectedRunIdFromUi();
+      async function loadArtifactsForSelectedRun(explicitRunId) {
+        // explicitRunId is optional; guard against event objects passed by
+        // click handlers (bindClick calls fn(event)).
+        const runId = (typeof explicitRunId === "string" && explicitRunId.trim())
+          ? explicitRunId.trim()
+          : selectedRunIdFromUi();
         if (!runId) throw new Error("Select a run or enter a run_id first");
         syncRunChooserFields(runId);
         // No path prefix: the server locates the run by id across the whole run root.
@@ -4603,6 +4659,8 @@
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         if (!artifacts.length) {
+          const prov = document.getElementById("artifactProvenance");
+          if (prov) prov.innerHTML = "";
           list.innerHTML =
             "<p>No S3 artifacts found for <code>" + escapeHtml(runId) + "</code>.</p>" +
             "<p>This run may predate S3 upload support, may belong to a destroyed VM, or may have used a different artifact prefix.</p>" +
@@ -4611,6 +4669,7 @@
         }
         renderArtifactDerivedRunDetails(runId, artifacts);
         populateArtifactStageFilter(artifacts, runId);
+        renderArtifactProvenance(runId, artifacts).catch(() => false);
         const preferred = data && data.preferred ? data.preferred : null;
         const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred, runId);
         if (!displayArtifacts.length) {
@@ -4755,6 +4814,98 @@
             ],
           },
         });
+      }
+      function selectArtifactStage(stageKey, runId) {
+        const select = document.getElementById("artifactStageFilter");
+        if (!select) return;
+        const want = String(stageKey || "");
+        const match = Array.from(select.options).find((opt) => opt.value === want);
+        if (!match) return;
+        select.value = want;
+        // Reload the SAME run's artifacts (explicit id: paste-loaded runs are not
+        // in the dropdown, so re-deriving from the UI could pick the wrong run).
+        loadArtifactsForSelectedRun(String(runId || "").trim()).catch(() => false);
+      }
+      async function renderArtifactProvenance(runId, artifacts) {
+        // Honest, per-stage provenance for the loaded run: which pipeline stages
+        // produced artifacts, how many, the producing component/model, and — for
+        // the Augment stage — whether the pixels came from the REAL Cosmos
+        // Transfer 2.5 GPU model or a CPU appearance stand-in. Grounded in the
+        // run's real artifacts/manifests via /api/artifacts/provenance.
+        const host = document.getElementById("artifactProvenance");
+        if (!host) return false;
+        const list = Array.isArray(artifacts) ? artifacts : [];
+        const stagesPresent = new Set(
+          list.map((it) => deriveArtifactStage((it && it.key) || "", runId, runStageWrapper(list, runId)))
+        );
+        let prov = null;
+        try {
+          prov = await apiJson("/api/artifacts/provenance/" + encodeURIComponent(runId));
+        } catch (_err) {
+          prov = null;
+        }
+        const components = (prov && Array.isArray(prov.components)) ? prov.components : [];
+        // Honesty banner: real Cosmos GPU augment vs CPU stand-in vs no augment.
+        // Only meaningful for Data Factory runs — detect them by their
+        // pipeline-specific stages (exclude "reports", shared with sim2real).
+        const DF_STAGES = ["input", "configs", "labeled_original", "cosmos_augmented", "grade", "labeled_augmented", "curation"];
+        const isDataFactory = DF_STAGES.some((s) => stagesPresent.has(s));
+        let banner = "";
+        const augment = components.find((c) => String(c && c.stage || "") === "Augment");
+        const augEngine = augment ? String(augment.engine || "") : "";
+        const augDetail = augment ? String(augment.detail || "") : "";
+        if (!isDataFactory) {
+          banner = "";
+        } else if (!stagesPresent.has("cosmos_augmented")) {
+          banner =
+            '<div class="prov-banner prov-warn">This run has <strong>no augmented output</strong>' +
+            " — only raw pipeline inputs are present. The Cosmos Transfer augment stage has not" +
+            " produced results, so any video shown here is the <strong>source input</strong>, not a" +
+            " Data Factory result.</div>";
+        } else if (augEngine === "cosmos_transfer_2.5_gpu") {
+          banner =
+            '<div class="prov-banner prov-ok">Augment is a <strong>real Cosmos Transfer 2.5</strong>' +
+            " render on GPU" + (augDetail ? " — " + escapeHtml(augDetail) : "") + ".</div>";
+        } else if (augEngine) {
+          banner =
+            '<div class="prov-banner prov-warn">Augment used a <strong>CPU appearance stand-in</strong>' +
+            " (not the real Cosmos Transfer 2.5 GPU model)" + (augDetail ? " — " + escapeHtml(augDetail) : "") +
+            ". This is a placeholder visual, not a production augmentation.</div>";
+        }
+        if (!components.length && !banner) {
+          host.innerHTML = "";
+          return false;
+        }
+        const rows = components.map((c) => {
+          const stageName = escapeHtml(String(c.stage || ""));
+          const stageKey = String(c.stage_key || "");
+          const count = Number(c.artifact_count || 0);
+          const comp = escapeHtml(String(c.component || ""));
+          const model = c.model ? " · " + escapeHtml(String(c.model)) : "";
+          const runtime = c.runtime ? escapeHtml(String(c.runtime)) : "";
+          const detail = c.detail ? '<div class="prov-detail">' + escapeHtml(String(c.detail)) + "</div>" : "";
+          const clickable = stageKey && stagesPresent.has(stageKey);
+          const attrs = clickable
+            ? ' role="button" tabindex="0" data-stage="' + escapeHtml(stageKey) + '" title="Show only this stage\u2019s artifacts"'
+            : "";
+          return '<div class="prov-row' + (clickable ? " prov-clickable" : "") + '"' + attrs + ">" +
+            '<span class="prov-stage">' + stageName + "</span>" +
+            '<span class="prov-count">' + count + " artifact" + (count === 1 ? "" : "s") + "</span>" +
+            '<span class="prov-comp">' + comp + model + "</span>" +
+            (runtime ? '<span class="prov-runtime">' + runtime + "</span>" : "") +
+            detail + "</div>";
+        }).join("");
+        host.innerHTML =
+          '<div class="prov-head">Pipeline stages (click a stage to browse its artifacts)</div>' +
+          banner + rows;
+        for (const row of host.querySelectorAll(".prov-clickable")) {
+          const go = () => selectArtifactStage(row.getAttribute("data-stage"), runId);
+          row.addEventListener("click", go);
+          row.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); go(); }
+          });
+        }
+        return true;
       }
       function updateRenderedDataSummary(simViz) {
         const node = document.getElementById("renderedDataSummary");

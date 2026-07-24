@@ -1,5 +1,7 @@
 import {
   COMPLEX_WORKFLOW_YAML,
+  DF_INPUT_ONLY_RUN_ID,
+  DF_MOCK_RUN_ID,
   FIELD_IDS,
   GENERIC_WORKFLOW_YAML,
   NON_STOCK_RUN_ID,
@@ -384,6 +386,52 @@ describe("NPA agent UI with mocked APIs", () => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values).to.include("mock-run");
     });
+  });
+
+  it("shows per-stage provenance with an honest augment engine and click-to-filter", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    // Load a data-factory run whose augment is a REAL Cosmos Transfer 2.5 GPU render.
+    // Enter in the paste box loads the typed run and lists its artifacts.
+    cy.get("#runIdInput").clear({ force: true }).type(`${DF_MOCK_RUN_ID}{enter}`, { force: true });
+    cy.wait("@loadRun");
+    cy.wait("@dfArtifactList");
+    cy.wait("@artifactProvenance");
+
+    // The per-stage panel lists each pipeline stage with its producing component.
+    cy.get("#artifactProvenance").should("contain.text", "Pipeline stages");
+    cy.get("#artifactProvenance .prov-row").its("length").should("be.gte", 4);
+    cy.get("#artifactProvenance").should("contain.text", "Augment");
+    cy.get("#artifactProvenance").should("contain.text", "Cosmos Transfer 2.5");
+    // Honesty banner: this run's augment is real GPU, so it must say so (green).
+    cy.get("#artifactProvenance .prov-ok").should("contain.text", "real Cosmos Transfer 2.5");
+    cy.get("#artifactProvenance .prov-warn").should("not.exist");
+
+    // The Stage filter carries per-stage counts.
+    cy.get("#artifactStageFilter option").then(($opts) => {
+      const labels = [...$opts].map((o) => o.textContent || "");
+      expect(labels.some((t) => /cosmos_augmented \(\d+\)/.test(t)), "cosmos_augmented has a count").to.eq(true);
+      expect(labels.some((t) => /All stages \(\d+\)/.test(t)), "all-stages total").to.eq(true);
+    });
+
+    // Clicking the Augment stage row scopes the artifact list to that stage.
+    cy.get('#artifactProvenance .prov-clickable[data-stage="cosmos_augmented"]').click();
+    cy.wait("@dfArtifactList");
+    cy.get("#artifactStageFilter").should("have.value", "cosmos_augmented");
+    cy.get("#artifactList").should("contain.text", "cosmos_augmented/aug0/augmented_video.mp4");
+    cy.get("#artifactList").should("not.contain.text", "/input/video_0.mp4");
+  });
+
+  it("warns when a data-factory run has only raw input and no augmented output", () => {
+    cy.get("#tabRerun").click();
+    // A DF run with only input/ + configs/ (augment never produced output) must
+    // be flagged so a raw input clip is not mistaken for a Data Factory result.
+    cy.get("#runIdInput").clear({ force: true }).type(`${DF_INPUT_ONLY_RUN_ID}{enter}`, { force: true });
+    cy.wait("@loadRun");
+    cy.wait("@dfInputOnlyArtifactList");
+    cy.wait("@artifactProvenance");
+    cy.get("#artifactProvenance .prov-warn").should("contain.text", "no augmented output");
+    cy.get("#artifactProvenance .prov-ok").should("not.exist");
   });
 
   it("filters artifacts by workflow stage and tags timeline rows by stage", () => {
