@@ -392,14 +392,29 @@ def list_all_runs(
     if not categories:
         # Flat layout: run_ids sit directly under the root.
         return list_runs(bucket, prefix=base_prefix, limit=limit, contains=contains, s3=s3)
-    best: dict[str, RunSummary] = {}
-    total = 0
-    for category in categories:
+    # Each category's run listing is an independent, I/O-bound S3 pagination, so
+    # scanning them concurrently turns the whole discovery from O(sum of categories)
+    # sequential round-trips into ~O(slowest category) wall time. This is the main
+    # latency lever for the default (no-prefix) run list, which previously took
+    # several seconds while every category was walked one after another. boto3
+    # clients are safe to share across threads for API calls.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _runs_for_category(category: str) -> list[RunSummary]:
         try:
-            page = list_runs(bucket, prefix=category, limit=limit, contains=contains, s3=s3)
+            return list_runs(bucket, prefix=category, limit=limit, contains=contains, s3=s3).runs
         except ArtifactDiscoveryError:
-            continue
-        for run in page.runs:
+            return []
+
+    best: dict[str, RunSummary] = {}
+    max_workers = min(len(categories), 16)
+    if max_workers <= 1:
+        results = [_runs_for_category(categories[0])] if categories else []
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_runs_for_category, categories))
+    for category_runs in results:
+        for run in category_runs:
             current = best.get(run.run_id)
             if current is None or run.last_modified > current.last_modified:
                 best[run.run_id] = run
