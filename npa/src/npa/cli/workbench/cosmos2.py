@@ -33,13 +33,25 @@ def transfer_cmd(
     execute: bool = typer.Option(
         False,
         "--execute",
-        help="Run the real Cosmos-Transfer2.5 model (requires the transfer image/GPU).",
+        help=(
+            "Force the real Cosmos-Transfer2.5 model (requires the transfer image/GPU). "
+            "Note: when that runtime is already present on the host the real model runs "
+            "even without --execute; --execute only makes its absence a hard error "
+            "instead of falling back to reference augmentation."
+        ),
     ),
     spec: str = typer.Option(
         "", "--spec", help="controlnet_spec path (relative to the transfer repo) for --execute."
     ),
 ) -> None:
-    """Build the Cosmos2 transfer stage manifest (or run the real model with --execute)."""
+    """Build the Cosmos2 transfer stage manifest, then produce real output.
+
+    Mode is chosen by runtime availability, not just the flag: if the
+    Cosmos-Transfer2.5 runtime is present (or ``--execute`` is passed) the real
+    world-transfer model runs and publishes a video; otherwise a genuine
+    reference augmentation writes real augmented image frames. Inspect
+    ``output_kind`` in the manifest ("video" vs "frames") to disambiguate.
+    """
 
     payload = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(
@@ -75,9 +87,14 @@ def transfer_cmd(
             output_video = StorageClient.from_environment().upload_file(
                 transfer["video_path"], output_uri
             )
+        # The model path emits a video, not image frames. Expose it as
+        # augmented_video_uri (matching the sim2real engine convention) and mark
+        # output_kind so downstream stages don't treat this URI as a frame dir.
         payload["status"] = "executed"
         payload["mode"] = "cosmos_transfer2.5"
+        payload["output_kind"] = "video"
         payload["output_video"] = output_video
+        payload["augmented_video_uri"] = output_video
         payload["augmented_frames_uri"] = output_uri
         payload["video_bytes"] = transfer["video_bytes"]
         payload["control_spec"] = transfer["spec"]
@@ -87,6 +104,7 @@ def transfer_cmd(
         augment = reference_augment_frames(input_uri, output_uri, run_id=run_id)
         payload["status"] = "executed_reference"
         payload["mode"] = "reference_augment"
+        payload["output_kind"] = "frames"
         payload["augmented_frames_uri"] = augment["augmented_frames_uri"]
         payload["frame_count"] = augment["frame_count"]
 

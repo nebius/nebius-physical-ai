@@ -249,6 +249,9 @@ def reference_augment_frames(
                         dest = src_dir / item.relative_to(local_src)
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(item, dest)
+            elif local_src.is_file():
+                # A single local image file is a valid source too.
+                shutil.copy2(local_src, src_dir / local_src.name)
 
         sources = _collect_source_images(src_dir, max_inputs)
         if not sources:

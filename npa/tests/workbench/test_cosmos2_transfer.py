@@ -57,6 +57,21 @@ def test_reference_augment_actually_transforms_pixels(tmp_path: Path) -> None:
     assert original != augmented, "reference augmentation must change pixels, not copy"
 
 
+def test_reference_augment_accepts_single_local_file(tmp_path: Path) -> None:
+    src_file = tmp_path / "solo.png"
+    out = tmp_path / "augment"
+    _write_png(src_file, (77, 88, 99))
+
+    result = reference_augment_frames(
+        str(src_file), str(out), run_id="unit", variants_per_frame=2
+    )
+
+    # A single local image file is a valid source, not a "no source images" error.
+    assert result["source_frame_count"] == 1
+    assert result["frame_count"] == 2
+    assert len(list(out.glob("frame-*.png"))) == 2
+
+
 def test_reference_augment_without_sources_raises(tmp_path: Path) -> None:
     src = tmp_path / "empty"
     src.mkdir()
@@ -93,5 +108,6 @@ def test_cosmos2_transfer_cli_default_emits_real_frames(tmp_path: Path) -> None:
     # Not a descriptor stub: it ran a real reference augmentation with frames.
     assert payload["status"] == "executed_reference"
     assert payload["mode"] == "reference_augment"
+    assert payload["output_kind"] == "frames"
     assert payload["frame_count"] >= 1
     assert list(out.glob("frame-*.png"))
