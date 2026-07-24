@@ -357,3 +357,46 @@ def test_list_all_runs_contains_search_across_roots() -> None:
     ]
     page = list_all_runs("bucket", base_prefix="checkpoints", limit=3, contains="rtxpro-staged", s3=_PrefixAwareS3(layout))
     assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
+
+
+def test_list_runs_cached_serves_fresh_then_refreshes_when_stale(monkeypatch) -> None:
+    """Fresh hits avoid re-walking S3; a stale entry is refreshed (here inline)."""
+    import npa.workflows.artifacts as A
+
+    A._run_list_cache_clear()
+    calls = {"n": 0}
+
+    def fake_all(bucket, **kwargs):  # noqa: ANN001
+        calls["n"] += 1
+        run = A.RunSummary(
+            run_id=f"run-{calls['n']}", last_modified="2026-07-24T00:00:00+00:00",
+            artifact_count=1, has_viewable=True,
+        )
+        return A.RunListPage(runs=[run], truncated=False, total_runs=1, limit=kwargs.get("limit", 50))
+
+    monkeypatch.setattr(A, "list_all_runs", fake_all)
+
+    # Cold miss -> computes once.
+    p1 = A.list_runs_cached("bucket", all_categories=True, base_prefix="checkpoints", ttl=1000, s3=object())
+    assert calls["n"] == 1 and p1.runs[0].run_id == "run-1"
+    # Fresh hit -> no recompute, same page.
+    p2 = A.list_runs_cached("bucket", all_categories=True, base_prefix="checkpoints", ttl=1000, s3=object())
+    assert calls["n"] == 1 and p2.runs[0].run_id == "run-1"
+    # Stale (ttl=0) -> inline refresh recomputes and returns fresh.
+    p3 = A.list_runs_cached(
+        "bucket", all_categories=True, base_prefix="checkpoints", ttl=0, s3=object(), refresh_sync=True
+    )
+    assert calls["n"] == 2 and p3.runs[0].run_id == "run-2"
+    A._run_list_cache_clear()
+
+
+def test_list_runs_cached_prefix_path_matches_list_runs() -> None:
+    """The prefix (single-category) cache path returns the same runs as list_runs."""
+    import npa.workflows.artifacts as A
+
+    A._run_list_cache_clear()
+    s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
+    direct = list_runs("bucket", prefix="checkpoints/sim2real-b", limit=50, s3=s3)
+    cached = A.list_runs_cached("bucket", prefix="checkpoints/sim2real-b", limit=50, s3=s3, ttl=1000)
+    assert [r.run_id for r in cached.runs] == [r.run_id for r in direct.runs]
+    A._run_list_cache_clear()

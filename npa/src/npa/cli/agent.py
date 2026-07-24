@@ -6510,22 +6510,35 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         query = str(q or "").strip()
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
-            page = list_runs(settings["bucket"], prefix=effective_prefix, limit=limit, contains=query, s3=s3)
+            # Cached (TTL + stale-while-revalidate): the run list is polled on every
+            # page load; walking a category's objects each time made the UI show
+            # "no runs" for seconds. The cache serves a warm result instantly and
+            # refreshes in the background, so only the first load pays the S3 walk.
+            page = list_runs_cached(
+                settings["bucket"],
+                prefix=effective_prefix,
+                base_prefix=settings.get("prefix", ""),
+                limit=limit,
+                contains=query,
+                s3=s3,
+            )
             return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
         # No user prefix: discover runs generically across ALL bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
         # (e.g. scenario-gen-smoke/..., physical-ai-data-factory/...). list_all_runs
         # enumerates category folders under both roots and merges them, so every
-        # workflow's runs show without hardcoding any workflow path.
+        # workflow's runs show without hardcoding any workflow path. Cached the same
+        # way (the no-prefix walk is the slowest and the default UI view).
         base = settings.get("prefix", "")
-        page = list_all_runs(
+        page = list_runs_cached(
             settings["bucket"],
             base_prefix=base,
             limit=limit,
             exclude=_discovery_exclude_roots(),
             contains=query,
             s3=s3,
+            all_categories=True,
         )
         return {{"ok": True, "bucket": settings["bucket"], "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
     except HTTPException:

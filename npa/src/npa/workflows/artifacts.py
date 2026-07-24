@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import mimetypes
 from pathlib import Path
-from typing import Any
+import threading
+import time
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from botocore.config import Config as BotoConfig
@@ -424,6 +426,118 @@ def list_all_runs(
     if len(runs) > limit:
         runs = runs[:limit]
     return RunListPage(runs=runs, truncated=truncated, total_runs=total, limit=limit)
+
+
+# --- Run-list cache (TTL + stale-while-revalidate) ----------------------------
+# Discovering the full run list walks every object under every category
+# (O(objects in bucket)); with many workflows and frame-heavy runs (e.g. .ppm
+# rollouts) that costs several seconds even parallelized, because wall time is
+# floored by the single slowest category. The default agent run-list view is
+# polled on every page load, so an uncached call means the UI shows "no runs"
+# for seconds each time. This cache serves a warm result instantly and refreshes
+# in the background once stale, so only the very first (cold) load pays the walk;
+# new runs surface within one TTL. Results are exact — this only reuses recent
+# work, it does not approximate counts or ordering.
+DEFAULT_RUN_LIST_TTL = 30.0
+_RUN_LIST_CACHE: "dict[tuple, tuple[float, RunListPage]]" = {}
+_RUN_LIST_INFLIGHT: "set[tuple]" = set()
+_RUN_LIST_LOCK = threading.Lock()
+
+
+def _run_list_cache_clear() -> None:
+    """Drop all cached run-list pages (test/maintenance helper)."""
+    with _RUN_LIST_LOCK:
+        _RUN_LIST_CACHE.clear()
+        _RUN_LIST_INFLIGHT.clear()
+
+
+def _schedule_run_list_refresh(
+    key: tuple, compute: "Callable[[], RunListPage]", *, sync: bool = False
+) -> "threading.Thread | None":
+    """Refresh a stale cache entry. Runs in a daemon thread unless ``sync``."""
+
+    def _run() -> None:
+        try:
+            page = compute()
+        except Exception:  # noqa: BLE001 - background refresh must never raise
+            page = None
+        finally:
+            with _RUN_LIST_LOCK:
+                if page is not None:
+                    _RUN_LIST_CACHE[key] = (time.monotonic(), page)
+                _RUN_LIST_INFLIGHT.discard(key)
+
+    with _RUN_LIST_LOCK:
+        if key in _RUN_LIST_INFLIGHT:
+            return None
+        _RUN_LIST_INFLIGHT.add(key)
+    if sync:
+        _run()
+        return None
+    thread = threading.Thread(target=_run, name="npa-runlist-refresh", daemon=True)
+    thread.start()
+    return thread
+
+
+def list_runs_cached(
+    bucket: str,
+    *,
+    prefix: str = "",
+    base_prefix: str = "",
+    limit: int = 50,
+    exclude: "set[str] | None" = None,
+    contains: str = "",
+    s3=None,
+    all_categories: bool = False,
+    ttl: float = DEFAULT_RUN_LIST_TTL,
+    refresh_sync: bool = False,
+) -> RunListPage:
+    """TTL + stale-while-revalidate wrapper over :func:`list_runs` /
+    :func:`list_all_runs`.
+
+    - Fresh cache hit (age < ``ttl``): returned immediately, no S3 calls.
+    - Stale cache hit: the cached page is returned immediately AND a single
+      background refresh is scheduled (``refresh_sync`` forces it inline, for
+      tests) so the next caller sees fresh data.
+    - Cold miss: computed synchronously, cached, returned.
+
+    ``all_categories=True`` discovers across every category (no user prefix);
+    otherwise it lists a single ``prefix``.
+    """
+    key = (
+        bucket,
+        base_prefix,
+        prefix,
+        int(limit),
+        tuple(sorted(exclude or ())),
+        str(contains or ""),
+        bool(all_categories),
+    )
+
+    def _compute() -> RunListPage:
+        if all_categories:
+            return list_all_runs(
+                bucket, base_prefix=base_prefix, limit=limit, exclude=exclude, contains=contains, s3=s3
+            )
+        return list_runs(bucket, prefix=prefix, limit=limit, contains=contains, s3=s3)
+
+    now = time.monotonic()
+    with _RUN_LIST_LOCK:
+        entry = _RUN_LIST_CACHE.get(key)
+    if entry is not None:
+        ts, page = entry
+        if now - ts < ttl:
+            return page
+        _schedule_run_list_refresh(key, _compute, sync=refresh_sync)
+        if refresh_sync:
+            with _RUN_LIST_LOCK:
+                entry = _RUN_LIST_CACHE.get(key)
+            return entry[1] if entry else page
+        return page
+    page = _compute()
+    with _RUN_LIST_LOCK:
+        _RUN_LIST_CACHE[key] = (time.monotonic(), page)
+    return page
 
 
 def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -> "list[Artifact]":
