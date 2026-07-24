@@ -705,7 +705,13 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     cy.get("#runIdSelect option").then(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
-      expect(values.length, "all runs render without search").to.eq(bigList.length);
+      // Far more than the historical 100-run cap render without any search
+      // (the picker also unions the sim-viz "known" runs, so allow >=).
+      expect(values.length, "all runs render without search").to.be.at.least(bigList.length);
+      const valueSet = new Set(values);
+      for (const run of bigList) {
+        expect(valueSet.has(run.run_id), `${run.run_id} present without search`).to.eq(true);
+      }
       // The oldest run (would fall off a 100-run page) is present by default.
       expect(values, "oldest run shows without typing").to.include("bulk-run-149");
     });
