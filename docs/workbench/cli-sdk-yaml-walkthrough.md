@@ -243,7 +243,7 @@ Notes that generalize to other pipelines:
 For the full pipeline pattern, label-map injection, resources, and S3 path
 conventions, see [../workbench-yaml-guide.md](../workbench-yaml-guide.md) and
 the reference file
-`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
+`npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`.
 
 ## Same Work, Three Clients
 

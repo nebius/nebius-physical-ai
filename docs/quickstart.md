@@ -473,7 +473,7 @@ sky launch -y --down -c vlm-eval vlm-eval-benchmark.sky.yaml \
 ```
 
 For maintained, checked-in workflow YAMLs (including a self-hosted GPU VLM
-variant), see `npa/workflows/workbench/skypilot/` and
+variant), see `npa/src/npa/workflows/skypilot/` and
 [the workflows guide](workbench-yaml-guide.md).
 
 ## 6. Developing and testing npa
@@ -545,7 +545,7 @@ This same serverless job is available three coherent ways:
   itself currently exposes `check`/`fetch`). See the worked SDK example in
   [docs/sdk/cosmos-serverless.md](sdk/cosmos-serverless.md).
 - **Raw `sky` (GPU-cluster alternative):** the checked-in, parameterizable
-  SkyPilot YAMLs under `npa/workflows/workbench/skypilot/` (for example
+  SkyPilot YAMLs under `npa/src/npa/workflows/skypilot/` (for example
   `cosmos3-text-to-image-inference.yaml`) run Cosmos on a GPU *cluster* with
   plain `sky launch`, using `--env`/`--gpu-type` overrides and a BYO `image_id`.
   This is a different runtime from Serverless AI Jobs (it provisions a cluster

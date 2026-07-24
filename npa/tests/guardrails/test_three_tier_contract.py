@@ -22,7 +22,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="train_cmd",
         sdk_module="npa.sdk.workbench.sonic",
         sdk_attr="train",
-        yaml_path=Path("npa/workflows/workbench/skypilot/sonic-train-standalone.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml"),
         params=(
             ParameterContract("checkpoint", "checkpoint", "SONIC_CHECKPOINT", "--checkpoint"),
             ParameterContract("data_path", "data_path", "SONIC_DATA_PATH", "--data-path"),
@@ -43,7 +43,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="export_cmd",
         sdk_module="npa.sdk.workbench.sonic",
         sdk_attr="export_onnx",
-        yaml_path=Path("npa/workflows/workbench/skypilot/sonic-export.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/sonic-export.yaml"),
         params=(
             ParameterContract("checkpoint", "checkpoint", "SONIC_CHECKPOINT", "--checkpoint"),
             ParameterContract("output_path", "output", "SONIC_OUTPUT", "--output"),
@@ -64,7 +64,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.retargeting",
         sdk_attr="run",
-        yaml_path=Path("npa/workflows/workbench/skypilot/retargeting.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/retargeting.yaml"),
         params=(
             ParameterContract("input_path", "input_path", "INPUT_MOTION_URI", "--input-path"),
             ParameterContract("output_path", "output_path", "RETARGETED_MOTION_URI", "--output-path"),
@@ -89,7 +89,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.vlm_eval",
         sdk_attr="run",
-        yaml_path=Path("npa/workflows/workbench/skypilot/vlm-eval.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/vlm-eval.yaml"),
         params=(
             ParameterContract("input_path", "input_path", "EVAL_INPUT_URI", "--input-path"),
             ParameterContract("output_path", "output_path", "VLM_EVAL_OUTPUT_URI", "--output-path"),
@@ -108,7 +108,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="transfer_cmd",
         sdk_module="npa.sdk.workbench.cosmos2",
         sdk_attr="transfer",
-        yaml_path=Path("npa/workflows/workbench/skypilot/cosmos2-transfer.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/cosmos2-transfer.yaml"),
         params=(
             ParameterContract("input_uri", "input_uri", "NPA_INPUT_URI", "--input-uri"),
             ParameterContract("output_uri", "output_uri", "NPA_OUTPUT_URI", "--output-uri"),
@@ -124,7 +124,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="reason_cmd",
         sdk_module="npa.sdk.workbench.cosmos3",
         sdk_attr="reason",
-        yaml_path=Path("npa/workflows/workbench/skypilot/cosmos3-reason.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/cosmos3-reason.yaml"),
         params=(
             ParameterContract("input_uri", "input_uri", "NPA_INPUT_URI", "--input-uri"),
             ParameterContract("output_uri", "output_uri", "NPA_OUTPUT_URI", "--output-uri"),
@@ -140,7 +140,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="train_cmd",
         sdk_module="npa.sdk.workbench.detection_training",
         sdk_attr="train",
-        yaml_path=Path("npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml"),
         params=(
             ParameterContract("view", "view", "VIEW_NAME", "--view"),
             ParameterContract("output_uri", "output_uri", "TRAIN_OUTPUT_URI", "--output-uri"),
@@ -156,7 +156,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="eval_cmd",
         sdk_module="npa.sdk.workbench.detection_training",
         sdk_attr="eval",
-        yaml_path=Path("npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml"),
         params=(
             ParameterContract("eval_view", "eval_view", "VIEW_NAME", "--eval-view"),
             ParameterContract("output_uri", "output_uri", "EVAL_OUTPUT_URI", "--output-uri"),
@@ -169,7 +169,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="run_once",
-        yaml_path=Path("npa/workflows/workbench/skypilot/sim-to-real-trigger.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/sim-to-real-trigger.yaml"),
         params=(
             ParameterContract("s3_endpoint", "s3_endpoint", "NPA_TRIGGER_S3_ENDPOINT", "--s3-endpoint"),
             ParameterContract("s3_bucket", "s3_bucket", "NPA_TRIGGER_S3_BUCKET", "--s3-bucket"),
@@ -213,7 +213,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="watch_cmd",
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="watch",
-        yaml_path=Path("npa/workflows/workbench/skypilot/sim-to-real-trigger.yaml"),
+        yaml_path=Path("npa/src/npa/workflows/skypilot/sim-to-real-trigger.yaml"),
         params=(
             ParameterContract("s3_endpoint", "s3_endpoint", "NPA_TRIGGER_S3_ENDPOINT", "--s3-endpoint"),
             ParameterContract("s3_bucket", "s3_bucket", "NPA_TRIGGER_S3_BUCKET", "--s3-bucket"),
@@ -286,7 +286,7 @@ def test_contract_catches_deliberately_broken_yaml_fixture(tmp_path: Path) -> No
 
 
 def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
-    path = REPO_ROOT / "npa/workflows/workbench/skypilot/sonic-train-standalone.yaml"
+    path = REPO_ROOT / "npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml"
     text = path.read_text(encoding="utf-8")
     docs = load_yaml_documents(path)
     task = docs[1]

@@ -45,7 +45,7 @@ Full sequence: `docs/assets/hackathon/isaac-franka-lift-cube/frame_00.png` …
 ```
 
 SkyPilot YAML:
-[`npa/workflows/workbench/skypilot/isaac-franka-capture-reason.yaml`](../../npa/workflows/workbench/skypilot/isaac-franka-capture-reason.yaml)
+[`npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml`](../../npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml)
 
 ---
 
@@ -149,7 +149,7 @@ sky jobs launch \
   --secret NEBIUS_TOKEN_FACTORY_KEY \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/skypilot/isaac-franka-capture-reason.yaml
+  npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml
 ```
 
 **Stage 1** (`isaac-franka-capture`): L40S + `npa-isaac-lab` image → PNGs in
@@ -162,7 +162,7 @@ Or use the workflow submit wrapper:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/isaac-franka-capture-reason.yaml \
+  npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml \
   --run-id hackathon-franka-001 \
   --var SCENE_URI=s3://YOUR_BUCKET/hackathon/hackathon-franka-001/isaac-franka/scene/ \
   --var PLAN_URI=s3://YOUR_BUCKET/hackathon/hackathon-franka-001/isaac-franka/reasoning/

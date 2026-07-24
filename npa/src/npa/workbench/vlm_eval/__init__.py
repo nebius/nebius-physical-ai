@@ -385,6 +385,13 @@ def evaluate_vlm(
         )
 
     effective_model = model or DEFAULT_MODEL
+    if backend == "api" and effective_model == DEFAULT_MODEL:
+        # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
+        # Factory API does not serve it (requests 404); use the vision model
+        # Token Factory actually serves unless the caller overrode --model.
+        from npa.clients.token_factory import DEFAULT_VISION_MODEL
+
+        effective_model = DEFAULT_VISION_MODEL
     effective_rubric = _load_rubric(rubric=rubric, rubric_path=rubric_path)
     if score is not None:
         _validate_score_override(score)

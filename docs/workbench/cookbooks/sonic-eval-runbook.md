@@ -7,7 +7,7 @@ policy checkpoint -> npa workbench sonic export -> npa workbench sonic eval
 ```
 
 The SkyPilot blueprint is
-`npa/workflows/workbench/skypilot/sonic-export-eval.yaml`.
+`npa/src/npa/workflows/skypilot/sonic-export-eval.yaml`.
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ the workflow:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/sonic-export-eval.yaml \
+  npa/src/npa/workflows/skypilot/sonic-export-eval.yaml \
   --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ) \
   --registry "${NPA_REGISTRY}" \
   --gpu-target l40s \

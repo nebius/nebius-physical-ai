@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: sonic-eval
   description: Evaluate an exported SONIC ONNX locomotion policy.
-  skypilotTwin: npa/workflows/workbench/skypilot/sonic-eval.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/sonic-eval.yaml
 
 config:
   bucket: example-bucket

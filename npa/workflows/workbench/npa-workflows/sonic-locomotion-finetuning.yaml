@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: sonic-locomotion-finetuning
   description: Retarget motion, train SONIC, then score with MJLab.
-  skypilotTwin: npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml
 
 config:
   bucket: example-bucket
@@ -19,6 +19,7 @@ config:
 
   motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/"
   retargeted_uri: "s3://{{config.bucket}}/{{config.prefix}}/retargeted/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
   mjlab_uri: "s3://{{config.bucket}}/{{config.prefix}}/mjlab/"
 
 resources:

@@ -13,11 +13,13 @@ import boto3
 import pytest
 from botocore.exceptions import ProfileNotFound
 
+from npa.orchestration.skypilot.capacity import is_capacity_error
+
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
-RAW_SKY_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
+RAW_SKY_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-pipeline.yaml"
 DEFAULT_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 GPU_CHAIN = ("H100:1", "H200:1", "A100:1")
 
@@ -45,7 +47,7 @@ def test_raw_sky_sim_to_real_pipeline_writes_run_scoped_s3_artifacts(tmp_path: P
     evidence_dir = Path(os.environ.get("NPA_E2E_SIM_TO_REAL_EVIDENCE_DIR", str(tmp_path / "evidence")))
     evidence_dir.mkdir(parents=True, exist_ok=True)
     workdir = _copy_clean_workdir(tmp_path / "workdir")
-    yaml_path = workdir / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
+    yaml_path = workdir / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-pipeline.yaml"
     assert yaml_path.exists()
 
     attempts: list[dict[str, Any]] = []
@@ -95,13 +97,25 @@ def test_raw_sky_sim_to_real_pipeline_writes_run_scoped_s3_artifacts(tmp_path: P
                 attempts.append(attempt)
                 _write_evidence(evidence_dir, run_id=run_id, bucket=bucket, endpoint=endpoint, attempts=attempts)
                 return
-            attempt["status"] = "failed"
+            # Retry the next GPU tier only on a capacity shortfall (NER); fail
+            # fast on any other error so genuine bugs are not masked by cycling
+            # through every accelerator.
+            combined_output = f"{result.stdout}\n{result.stderr}"
+            attempt["status"] = "capacity_skipped" if is_capacity_error(combined_output) else "failed"
         finally:
             _sky_down_and_poll(sky_bin, cluster, evidence_dir=evidence_dir)
         attempts.append(attempt)
+        if attempt["status"] == "failed":
+            _write_evidence(evidence_dir, run_id=run_id, bucket=bucket, endpoint=endpoint, attempts=attempts)
+            pytest.fail(
+                f"raw SkyPilot sim-to-real launch failed on GPU {gpu} with a "
+                f"non-capacity error; evidence={evidence_dir}"
+            )
 
     _write_evidence(evidence_dir, run_id=run_id, bucket=bucket, endpoint=endpoint, attempts=attempts)
-    pytest.fail(f"raw SkyPilot sim-to-real launch failed on all GPU tiers; evidence={evidence_dir}")
+    pytest.fail(
+        f"raw SkyPilot sim-to-real launch found no capacity on any GPU tier; evidence={evidence_dir}"
+    )
 
 
 def _require_live_mode() -> None:

@@ -19,12 +19,12 @@ from npa.clients.project_credentials import storage_env_for_project
 pytestmark = pytest.mark.e2e
 
 ROOT = Path(__file__).resolve().parents[3]
-SIM_TO_REAL_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-loop.yaml"
+SIM_TO_REAL_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-loop.yaml"
 SONIC_YAML = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-locomotion-finetuning.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-locomotion-finetuning.yaml"
 )
-RETARGETING_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "retargeting.yaml"
-MJLAB_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "mjlab-eval.yaml"
+RETARGETING_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "retargeting.yaml"
+MJLAB_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "mjlab-eval.yaml"
 
 
 @pytest.fixture(autouse=True)

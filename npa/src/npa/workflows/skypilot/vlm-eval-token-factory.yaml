@@ -1,7 +1,7 @@
 # What:   Score a rollout with vlm-eval against Nebius Token Factory (zero-GPU).
 # Guide:  docs/workbench/token-factory.md
 # Runner: npa workbench vlm-eval run --backend api
-# Index:  npa/workflows/workbench/skypilot/README.md
+# Index:  npa/src/npa/workflows/skypilot/README.md
 #
 # Uses the vlm-eval `api` backend, which natively defaults to Token Factory
 # (https://api.tokenfactory.nebius.com/v1/) and reads NEBIUS_TOKEN_FACTORY_KEY. No GPU and

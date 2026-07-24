@@ -2,7 +2,7 @@
 #
 # Declarative: npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
 # Guide:       docs/workbench/npa-workflow-guide.md
-# Index:       npa/workflows/workbench/skypilot/README.md
+# Index:       npa/src/npa/workflows/skypilot/README.md
 #
 name: vlm-eval
 execution: serial

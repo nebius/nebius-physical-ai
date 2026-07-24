@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_container_verify.py"
-YAML_PATH = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "byof-container-smoke-rtxpro.yaml"
+YAML_PATH = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "byof-container-smoke-rtxpro.yaml"
 
 
 def _load_module():

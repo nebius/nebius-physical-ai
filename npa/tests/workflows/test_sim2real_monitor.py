@@ -437,4 +437,4 @@ def test_is_sim2real_runbook() -> None:
     root = Path(__file__).resolve().parents[2]
     runbook = root / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
     assert is_sim2real_runbook(runbook)
-    assert not is_sim2real_runbook(root / "workflows" / "workbench" / "skypilot" / "vlm-eval.yaml")
+    assert not is_sim2real_runbook(root / "src" / "npa" / "workflows" / "skypilot" / "vlm-eval.yaml")

@@ -1,7 +1,7 @@
 # What:   Train a policy on a Nebius k8s GPU, then triage the run with Token Factory.
 # Guide:  docs/workbench/cookbooks/tokenfactory-compute-combos.md
 # Runner: npa workbench workflow submit (two-stage serial pipeline)
-# Index:  npa/workflows/workbench/skypilot/README.md
+# Index:  npa/src/npa/workflows/skypilot/README.md
 #
 # Declarative YAML form of the train-triage combo (the imperative form is the
 # runner npa/scripts/run_tokenfactory_train_triage.py, which uses a serverless

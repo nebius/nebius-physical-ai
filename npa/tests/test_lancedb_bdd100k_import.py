@@ -93,6 +93,20 @@ def test_bdd100k_empty_source_path_raises_clear_error() -> None:
         import_bdd100k(source="", synthetic=None, write=False)
 
 
+def test_bdd100k_synthetic_zero_falls_back_to_source() -> None:
+    # ``--synthetic 0`` means "no synthetic rows -> read the real source" so a
+    # pipeline can pass a single ``--synthetic {{config.synthetic_rows}}`` arg and
+    # toggle synthetic-smoke vs real ingest purely by config. With no source that
+    # must surface the same "source is required" error as synthetic=None.
+    with pytest.raises(BDD100KSourceError, match="source is required"):
+        import_bdd100k(source="", synthetic=0, write=False)
+
+
+def test_bdd100k_synthetic_negative_raises_clear_error() -> None:
+    with pytest.raises(BDD100KValidationError, match="non-negative"):
+        import_bdd100k(synthetic=-1, table="bdd_neg", write=False)
+
+
 def test_bdd100k_invalid_split_raises_clear_error() -> None:
     with pytest.raises(BDD100KValidationError, match="invalid split"):
         import_bdd100k(synthetic=1, splits=["dev"], write=False)

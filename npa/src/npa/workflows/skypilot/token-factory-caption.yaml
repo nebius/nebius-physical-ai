@@ -1,7 +1,7 @@
 # What:   Caption a folder of images with Nebius Token Factory (zero-GPU).
 # Guide:  docs/workbench/token-factory.md
 # Runner: npa workbench token-factory caption
-# Index:  npa/workflows/workbench/skypilot/README.md
+# Index:  npa/src/npa/workflows/skypilot/README.md
 #
 # Inference is hosted by Token Factory over its OpenAI-compatible API, so this
 # job runs on CPU only. Provide the API key as a SkyPilot secret at launch:

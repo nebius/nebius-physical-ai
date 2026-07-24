@@ -5,6 +5,12 @@ description: Use when working on NPA reference SkyPilot YAMLs, runner scripts, c
 
 # Workbench Reference Workflows
 
+> The supported, customer-facing catalog is the `npa.workflow` spec set under
+> `npa/workflows/workbench/npa-workflows/`. The raw SkyPilot task YAMLs below are
+> internal runtime templates relocated to `npa/src/npa/workflows/skypilot/`; they
+> back the `run_*.py` wrappers and SkyPilot-only capabilities, and must not be
+> re-added to the shown `npa/workflows/workbench/` catalog (guardrail-enforced).
+
 ## When To Use
 
 Use this skill for repository workflow YAMLs, runner scripts, cookbooks,
@@ -13,7 +19,7 @@ artifact contracts, and customer-adaptable pipeline implementations.
 ## Procedure
 
 1. Start from the checked-in SkyPilot YAML under
-   `npa/workflows/workbench/skypilot/`.
+   `npa/src/npa/workflows/skypilot/`.
 2. Keep the runner thin. Python runners should materialize config, call the
    workflow submission helper, and report artifacts; they should not duplicate
    YAML orchestration logic.

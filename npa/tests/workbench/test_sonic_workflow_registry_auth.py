@@ -11,8 +11,9 @@ ROOT = Path(__file__).resolve().parents[3]
 SONIC_TRAIN_STANDALONE_YAML = (
     ROOT
     / "npa"
+    / "src"
+    / "npa"
     / "workflows"
-    / "workbench"
     / "skypilot"
     / "sonic-train-standalone.yaml"
 )

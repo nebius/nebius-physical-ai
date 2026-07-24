@@ -299,7 +299,7 @@ Use these references:
 - `npa/src/npa/clients/storage.py`
 - `npa/src/npa/serverless_common/output.py`
 - `docs/workbench-yaml-guide.md`
-- `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`
+- `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`
 
 The public handoff flags are:
 
@@ -333,17 +333,24 @@ or `NEBIUS_S3_ENDPOINT`. See `docs/workbench/getting-started.md`,
 
 Backing services are encapsulated. A pipeline stage should receive an S3 URI,
 call a tool endpoint, and write the next S3 URI. The BDD100K pipeline in
-`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` is the worked example.
+`npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml` is the worked example.
 ## Workflow YAML Conventions
-Add a SkyPilot YAML only when a tool needs a repeatable pipeline or reference
-workflow. Do not add Argo workflows.
+The supported, customer-facing workflow catalog is the declarative
+`npa.workflow` spec set under `npa/workflows/workbench/npa-workflows/`; author
+new customer-facing workflows there. Raw SkyPilot task templates are internal
+runtime resources under `npa/src/npa/workflows/skypilot/` (they must not be
+re-added to the shown `npa/workflows/workbench/` catalog — a guardrail enforces
+this). Add or edit a raw SkyPilot template only when a runner needs a
+SkyPilot-only capability the `npa.workflow` engine cannot express (parallel
+sweeps, burst, the trigger watch-loop, the legacy H100 sim-to-real pipeline).
+Do not add Argo workflows.
 
 References:
 
 - `docs/workbench-yaml-guide.md`
-- `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`
-- `npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`
-- `npa/workflows/workbench/skypilot/isaac-lab-rl-sweep.yaml`
+- `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`
+- `npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml`
+- `npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml`
 - `npa/scripts/run_bdd100k_pipeline.py`
 - `npa/scripts/run_isaac_lab_rl.py`
 
@@ -361,10 +368,10 @@ Current YAML rules:
 
 SkyPilot 0.12.2 does not support self-referencing interpolation inside the same
 `envs` block. The BDD100K label-map block in `docs/workbench-yaml-guide.md` and
-`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` is the current pattern.
+`npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml` is the current pattern.
 
 Training workflows must run headless. Isaac Lab shows the required `--headless`
-flag in `npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`.
+flag in `npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml`.
 
 Use `image_id` overrides for customer containers when the tool contract is
 preserved. Isaac Lab documents this pattern in `docs/workbench-yaml-guide.md`
@@ -376,7 +383,7 @@ Current verified routing:
 
 - H100 is the default choice for general training, CLIP embedding, and
   detection-training workflow stages. The BDD100K workflow requests H100 in
-  `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
+  `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`.
 - H200 is used by several serving or training defaults, including LeRobot and
   Cosmos serverless paths in their CLI files.
 - L40S or RTX Pro 6000 is required for Isaac Lab simulation paths that need RT
@@ -644,8 +651,8 @@ For the clean HTTP service, CLI, and SDK pattern, read
 `npa/src/npa/sdk/workbench/detection_training.py`.
 
 For workflow composition, read `docs/workbench-yaml-guide.md`,
-`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`,
-`npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`,
+`npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`,
+`npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml`,
 `npa/tests/workflows/test_bdd100k_pipeline.py`, and
 `npa/tests/workflows/test_isaac_lab_rl.py`. For deeper rationale, read
 `docs/architecture/contributor-context.md` and

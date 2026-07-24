@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: retargeting
   description: Retarget source motion into a SONIC embodiment schema.
-  skypilotTwin: npa/workflows/workbench/skypilot/retargeting.yaml
+  skypilotTwin: npa/src/npa/workflows/skypilot/retargeting.yaml
 
 config:
   bucket: example-bucket

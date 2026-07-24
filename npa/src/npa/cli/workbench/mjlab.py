@@ -22,7 +22,7 @@ app = typer.Typer(
 )
 console = Console(stderr=True)
 
-WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/mjlab-eval.yaml")
+WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/mjlab-eval.yaml")
 
 
 class OutputFormat(str, Enum):

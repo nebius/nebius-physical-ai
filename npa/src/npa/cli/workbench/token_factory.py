@@ -45,10 +45,10 @@ app = typer.Typer(
 )
 console = Console(stderr=True)
 
-CAPTION_WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/token-factory-caption.yaml")
-GENERATE_WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/token-factory-generate.yaml")
-REASON_WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/token-factory-cosmos-reason.yaml")
-VLM_EVAL_WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/vlm-eval-token-factory.yaml")
+CAPTION_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/token-factory-caption.yaml")
+GENERATE_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/token-factory-generate.yaml")
+REASON_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/token-factory-cosmos-reason.yaml")
+VLM_EVAL_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/vlm-eval-token-factory.yaml")
 
 
 class OutputFormat(str, Enum):

@@ -10,7 +10,7 @@ Cosmos2 transfer workflow contracts.
 Options
 --help  Show this message and exit.
 Commands
-transfer  Build the Cosmos2 transfer stage manifest (or run the real model with --execute).
+transfer  Build the Cosmos2 transfer stage manifest, then produce real output.
 ```
 
 ## Options
@@ -23,7 +23,7 @@ transfer  Build the Cosmos2 transfer stage manifest (or run the real model with 
 
 | Command | Description |
 | --- | --- |
-| `transfer` | Build the Cosmos2 transfer stage manifest (or run the real model with --execute). |
+| `transfer` | Build the Cosmos2 transfer stage manifest, then produce real output. |
 
 ## Examples
 

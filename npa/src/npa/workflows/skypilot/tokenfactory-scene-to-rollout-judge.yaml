@@ -2,7 +2,7 @@
 #         the rollout against the reasoner's plan with Token Factory.
 # Guide:  docs/workbench/cookbooks/tokenfactory-compute-combos.md
 # Runner: npa workbench workflow submit (three-stage serial pipeline)
-# Index:  npa/workflows/workbench/skypilot/README.md
+# Index:  npa/src/npa/workflows/skypilot/README.md
 #
 # A "combo" workflow that exercises all three layers in one pipeline:
 #   Stage 1 (CPU, zero-GPU): token-factory `reason` extracts a plan of action

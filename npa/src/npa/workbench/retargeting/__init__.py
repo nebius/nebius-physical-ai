@@ -158,19 +158,22 @@ def run_retargeting(
     with tempfile.TemporaryDirectory(prefix="npa-retargeting-") as tmp:
         work_dir = Path(tmp)
         local_input = _stage_input(input_path, work_dir / "input", storage_client)
+        if normalized_format == "auto":
+            normalized_format = _detect_source_format(local_input)
+        effective_individual = _effective_individual(normalized_format, individual)
         local_output = _local_output_target(
             output_path=output_path,
             work_dir=work_dir,
             source_format=normalized_format,
             input_path=local_input,
-            individual=individual,
+            individual=effective_individual,
         )
-        upstream_root = _resolve_upstream_root(sonic_home, work_dir)
 
         if normalized_format == "motion-lib":
             _copy_motion_lib(local_input, local_output)
             command: list[str] = ["copy-motion-lib", str(local_input), str(local_output)]
         else:
+            upstream_root = _resolve_upstream_root(sonic_home, work_dir)
             command = _run_upstream_preprocess(
                 upstream_root=upstream_root,
                 source_format=normalized_format,
@@ -178,7 +181,7 @@ def run_retargeting(
                 output_path=local_output,
                 frame_rate=frame_rate,
                 source_frame_rate=source_frame_rate,
-                individual=individual,
+                individual=effective_individual,
                 num_workers=num_workers,
             )
 
@@ -203,7 +206,7 @@ def run_retargeting(
             frame_rate=frame_rate,
             source_frame_rate=source_frame_rate,
             max_frames=max_frames,
-            individual=individual,
+            individual=effective_individual,
             num_workers=num_workers,
             motion_count=motion_count,
             output_files=output_files,
@@ -390,8 +393,9 @@ def _local_output_target(
     input_path: Path,
     individual: bool,
 ) -> Path:
+    combined = _combined_pkl_output(source_format, individual, input_path.is_file())
     if output_path.startswith("s3://"):
-        if source_format in {"deploy-pkl", "teleop-pkl"} or input_path.is_file():
+        if combined:
             return work_dir / "output" / "motion_lib.pkl"
         return work_dir / "output"
 
@@ -400,9 +404,129 @@ def _local_output_target(
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
     path.mkdir(parents=True, exist_ok=True)
-    if source_format in {"deploy-pkl", "teleop-pkl"} or input_path.is_file():
+    if combined:
         return path / "motion_lib.pkl"
     return path
+
+
+def _combined_pkl_output(source_format: str, individual: bool, input_is_file: bool) -> bool:
+    """Return True when the converter should emit a single combined motion-lib PKL.
+
+    Upstream SONIC's ``--individual`` mode is Bones-SEED-only (it feeds every CSV
+    through ``load_bones_csv``). SOMA CSV directories, deploy/teleop PKLs, and
+    single-file inputs must run in the converter's combined mode, which writes one
+    PKL at ``--output``. BVH extraction produces a directory of SOMA skeletons.
+    """
+
+    if source_format == "bvh":
+        return False
+    if input_is_file:
+        return True
+    if source_format == "motion-lib":
+        # A directory motion-lib copy preserves the upstream PKL layout/names.
+        return False
+    if source_format in {"deploy-pkl", "teleop-pkl", "soma-csv"}:
+        return True
+    if source_format == "bones-seed-csv":
+        return not individual
+    return not individual
+
+
+def _effective_individual(source_format: str, individual: bool) -> bool:
+    """Resolve the individual flag against what the upstream converter supports.
+
+    The upstream converter only honors ``--individual`` for Bones-SEED flat CSVs.
+    For every other format (SOMA CSV dirs, deploy/teleop PKLs, BVH) it must run in
+    combined mode, so we ignore the requested ``individual`` value there.
+    """
+
+    if source_format == "bones-seed-csv":
+        return individual
+    return False
+
+
+def _detect_source_format(local_input: Path) -> str:
+    """Auto-detect the upstream converter input mode from staged local data.
+
+    Mirrors the input modes of ``convert_soma_csv_to_motion_lib.py``: SOMA CSV
+    directories (``joint_pos.csv``/``body_pos.csv``/``body_quat.csv``), flat
+    Bones-SEED CSVs, deploy/teleop PKLs, and already-retargeted motion-lib PKLs.
+    """
+
+    if local_input.is_file():
+        if local_input.suffix == ".pkl":
+            return _detect_pkl_format(local_input)
+        raise RetargetingError(
+            "Could not auto-detect --source-format for file "
+            f"{local_input.name!r}; pass --source-format explicitly."
+        )
+
+    if not local_input.is_dir():
+        raise RetargetingError(f"staged input path is neither a file nor a directory: {local_input}")
+
+    if _has_soma_csv_layout(local_input):
+        return "soma-csv"
+    if _has_bones_seed_csv(local_input):
+        return "bones-seed-csv"
+
+    pkls = sorted(local_input.rglob("*.pkl"))
+    if pkls:
+        return _detect_pkl_format(pkls[0])
+
+    raise RetargetingError(
+        "Could not auto-detect --source-format under "
+        f"{local_input}; expected SOMA CSV directories (joint_pos.csv), flat "
+        "Bones-SEED CSVs, or a deploy/motion-lib PKL. Pass --source-format explicitly."
+    )
+
+
+def _has_soma_csv_layout(root: Path) -> bool:
+    if (root / "joint_pos.csv").is_file():
+        return True
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and (child / "joint_pos.csv").is_file():
+            return True
+    return False
+
+
+def _has_bones_seed_csv(root: Path) -> bool:
+    candidates: list[Path] = sorted(root.glob("*.csv"))
+    for child in sorted(root.iterdir()):
+        if child.is_dir():
+            candidates.extend(sorted(child.glob("*.csv")))
+    for csv_path in candidates:
+        if _looks_like_bones_seed_header(csv_path):
+            return True
+    return False
+
+
+def _looks_like_bones_seed_header(csv_path: Path) -> bool:
+    try:
+        with csv_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            header = handle.readline()
+    except OSError:
+        return False
+    columns = {col.strip() for col in header.split(",")}
+    if "root_translateX" in columns:
+        return True
+    return any(col.endswith("_dof") for col in columns)
+
+
+def _detect_pkl_format(pkl_path: Path) -> str:
+    try:
+        data = _load_joblib(pkl_path)
+    except Exception:  # noqa: BLE001 - fall back to deploy converter on load error
+        return "deploy-pkl"
+    if isinstance(data, dict):
+        for entry in data.values():
+            if isinstance(entry, dict):
+                keys = set(entry)
+                if ROBOT_MOTION_FIELDS <= keys:
+                    return "motion-lib"
+                if {"joint_pos", "body_pos_w", "body_quat_w"} <= keys:
+                    return "deploy-pkl"
+            break
+    return "deploy-pkl"
 
 
 def _publish_output(
@@ -484,6 +608,28 @@ def _resolve_upstream_root(explicit_home: str, work_dir: Path) -> Path:
     return target
 
 
+def _ensure_converter_deps() -> None:
+    """Ensure the upstream SONIC motion-lib converter's deps are importable.
+
+    ``convert_soma_csv_to_motion_lib.py`` imports joblib, pandas and scipy. When
+    retargeting runs in a lean base image (no dedicated workbench image), install
+    them on demand -- the same runtime-provisioning pattern as the upstream repo
+    fetch -- so the CPU converter works without pulling the retargeting image.
+    """
+
+    missing = []
+    for module in ("joblib", "pandas", "scipy"):
+        try:
+            __import__(module)
+        except ImportError:
+            missing.append(module)
+    if missing:
+        _run_checked(
+            [_python_executable(), "-m", "pip", "install", "-q", *missing],
+            cwd=Path.cwd(),
+        )
+
+
 def _run_upstream_preprocess(
     *,
     upstream_root: Path,
@@ -500,6 +646,8 @@ def _run_upstream_preprocess(
     if not script.exists():
         raise RetargetingError(f"Upstream SONIC script not found: {script}")
 
+    _ensure_converter_deps()
+
     command = [
         _python_executable(),
         str(script),
@@ -515,7 +663,7 @@ def _run_upstream_preprocess(
     else:
         if source_frame_rate:
             command.extend(["--fps_source", str(source_frame_rate)])
-        if individual and input_path.is_dir() and source_format not in {"deploy-pkl", "teleop-pkl"}:
+        if individual and input_path.is_dir() and source_format == "bones-seed-csv":
             command.extend(["--individual", "--num_workers", str(num_workers)])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -551,7 +699,7 @@ def _planned_command(
         command.extend(["--num_workers", str(num_workers)])
     elif source_frame_rate:
         command.extend(["--fps_source", str(source_frame_rate)])
-    if individual and source_format not in {"bvh", "deploy-pkl", "teleop-pkl"}:
+    if individual and source_format == "bones-seed-csv":
         command.extend(["--individual", "--num_workers", str(num_workers)])
     return command
 

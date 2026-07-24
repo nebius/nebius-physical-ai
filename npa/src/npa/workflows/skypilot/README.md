@@ -1,21 +1,32 @@
-# Raw SkyPilot Workbench YAMLs
+# Internal SkyPilot task templates
 
-Declarative authoring specs (`apiVersion: npa.workflow/v0.0.1`) live in
-[`../npa-workflows/`](../npa-workflows/README.md). Prefer those for readable
-stage graphs; use this directory for SkyPilot execution and GPU task details.
+**This directory is not the supported workflow catalog.** The supported,
+customer-facing specs are the declarative `npa.workflow` YAMLs
+(`apiVersion: npa.workflow/v0.0.1`) under
+`npa/workflows/workbench/npa-workflows/`. Author and submit those; SkyPilot is
+only the execution engine.
+
+These files are internal, package-owned runtime resources: raw SkyPilot task
+YAMLs that the `npa/scripts/run_*.py` wrappers and `npa.workflow` engine render
+and launch. They were relocated here (out of `npa/workflows/workbench/`) so the
+shown catalog is exclusively `npa.workflow` specs, while SkyPilot-only
+capabilities that the engine cannot yet express (parallel sweeps, burst submit,
+the trigger watch-loop, and the legacy H100 sim-to-real pipeline/loop) keep a
+runnable home.
 
 **Preferred submit path:** `npa workbench workflow submit <npa.workflow.yaml>`
-plans the state graph, renders a serial SkyPilot multi-doc YAML, and submits
-it. Raw YAMLs in this directory remain the production runtime reference and
-the home for SkyPilot-only exceptions (parallel sweeps, burst, Sim2Real
-runbook siblings, global config). See the twin matrix in
-[`../npa-workflows/README.md`](../npa-workflows/README.md).
+plans the state graph, renders a serial SkyPilot multi-doc YAML, and submits it.
+Use the raw YAMLs here only to inspect or operate the underlying SkyPilot task
+directly.
 
-This directory contains standalone SkyPilot task YAMLs for Workbench
-reference paths. The supported first path is the Python wrapper or `npa`
-CLI for each workflow because wrappers inject secrets, validate image
-overrides, and clean up owned clusters. Use these raw YAMLs when you need to
-inspect or operate the underlying SkyPilot task directly.
+**BYOF resource profiles** (the GPU solution-smoke task and the RTX PRO
+`imagePullSecrets` global config) that the declarative BYOF specs and the BYOF
+runner depend on live under `npa/src/npa/workflows/byof/profiles/`, alongside
+this directory.
+
+The supported first path is the Python wrapper or `npa` CLI for each workflow
+because wrappers inject secrets, validate image overrides, and clean up owned
+clusters.
 
 ## Run Pattern
 
@@ -95,8 +106,6 @@ All examples assume SkyPilot 0.12.2.
 | `isaac-lab-cosmos-sdg-burst-smoke.yaml` | Single-task burst smoke: Isaac Lab Cartpole headless training plus a Cosmos SDG transfer-contract manifest. | Nebius `L40S:1` via `npa burst submit-yaml`. | Uses `NPA_OUTPUT_URI` as the run root and emits a Cosmos SDG manifest with Isaac output, assets, and scene-spec URIs. | None. | Required for Isaac Sim/Isaac Lab image entitlement; `npa burst submit-yaml` injects SkyPilot Docker login secrets for private Nebius registry images. |
 | `byof-datagen-rtxpro-smoke.yaml` | LeIsaac/BYOF scripted datagen smoke on RTX PRO: runs `scripts/datagen/state_machine/generate.py` with parallel sim envs (no teleop). | Kubernetes `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`, `cpus: 4+`, `memory: 16+`. | Writes `dataset.hdf5` and `npa_byof_summary.json` to `S3_OUTPUT_PREFIX`. | None. | Requires a BYOF image with LeIsaac cloned under `/opt/byof`; Isaac Sim/Isaac Lab base image entitlement for rebuilds. |
 | `byof-container-smoke-rtxpro.yaml` | BYOF container-verify / solution-smoke CPU path: asserts `/opt/byof` clone + metadata, optionally runs `BYOF_SMOKE_COMMAND`, and requires `BYOF_SMOKE_ARTIFACT_NAME` when set. | Kubernetes `cpus: 2+`, `memory: 4+`. | Writes `npa_byof_summary.json`, repo listing, optional smoke logs, and optional solution smoke artifact to `S3_OUTPUT_PREFIX`. | None. | Uses BYOF image built with `--base-profile ubuntu`, explicit `--base-image`, or any OSS repo. |
-| `byof-solution-smoke-rtxpro-gpu.yaml` | BYOF solution-smoke GPU path for capability checks that require CUDA/EGL/Vulkan, such as ManiSkill or RoboCasa env creation. | Kubernetes `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`, `cpus: 4+`, `memory: 16+`. | Writes `npa_byof_summary.json`, repo listing, `nvidia_smi.txt`, smoke logs, and the named solution smoke artifact to `S3_OUTPUT_PREFIX`. | None. | Uses BYOF image built with `--base-profile ubuntu` or explicit GPU-capable `--base-image`. |
-| `skypilot-kubernetes-rtxpro.yaml` | SkyPilot **global config** (not a launch task): sets `imagePullSecrets` for Nebius registry on RTX PRO mk8s. Pass with `sky launch --config ...`. | Kubernetes context with `agent-sa` pull secret in `default`. | None. | None. | Registry pull secret must exist in the target namespace. |
 | `isaac-franka-capture-reason.yaml` | Isaac Lab Franka frame capture on L40S, then Token Factory Cosmos3 reasoner over PNGs. | Kubernetes `L40S:1` + CPU reason stage. | Writes scene PNGs to `SCENE_URI`; reasoning JSON to `PLAN_URI`. | None. | Isaac stage: NGC entitlement for `npa-isaac-lab`; reason stage: `NEBIUS_TOKEN_FACTORY_KEY`. |
 | `mjlab-eval.yaml` | Evaluates a SONIC checkpoint through the MJLab evaluation helper. | Kubernetes `H100:1`. | Reads `EVAL_INPUT_URI` and `SONIC_CHECKPOINT_URI`; writes `MJLAB_OUTPUT_URI`. | None. | Image-specific only; required if the selected image depends on NGC content. |
 | `retargeting.yaml` | Retargets a source motion to the configured SONIC embodiment. | Kubernetes CPU. | Reads `INPUT_MOTION_URI` and optional `RETARGET_MAP_URI`; writes `RETARGETED_MOTION_URI`. | None. | Image-specific only; required if the selected image depends on NGC content. |
@@ -134,10 +143,10 @@ sky launch -y --infra kubernetes/<context-name> -c cosmos3-reason /tmp/cosmos3-r
 sky launch -y --infra kubernetes/<context-name> -c cosmos3-t2i /tmp/cosmos3-text-to-image-inference.yaml
 sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-sweep /tmp/isaac-lab-rl-sweep.yaml
 sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-train /tmp/isaac-lab-rl-train.yaml
-sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro /tmp/isaac-lab-rl-train-rtxpro.yaml
-sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro-smoke /tmp/isaac-lab-rl-train-rtxpro-smoke.yaml
+sky launch -y --config npa/src/npa/workflows/byof/profiles/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro /tmp/isaac-lab-rl-train-rtxpro.yaml
+sky launch -y --config npa/src/npa/workflows/byof/profiles/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro-smoke /tmp/isaac-lab-rl-train-rtxpro-smoke.yaml
 npa burst submit-yaml /tmp/isaac-lab-cosmos-sdg-burst-smoke.yaml --name <run-id>
-sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c byof-datagen-rtxpro-smoke /tmp/byof-datagen-rtxpro-smoke.yaml
+sky launch -y --config npa/src/npa/workflows/byof/profiles/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c byof-datagen-rtxpro-smoke /tmp/byof-datagen-rtxpro-smoke.yaml
 sky launch -y --infra kubernetes/<context-name> -c mjlab-eval /tmp/mjlab-eval.yaml
 sky launch -y --infra kubernetes/<context-name> -c retargeting /tmp/retargeting.yaml
 sky launch -y --infra kubernetes/<context-name> -c sim-to-real-loop /tmp/sim-to-real-loop.yaml

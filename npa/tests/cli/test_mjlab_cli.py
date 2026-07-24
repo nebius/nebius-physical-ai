@@ -89,4 +89,4 @@ def test_mjlab_workflow_path() -> None:
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["workflow"] == "npa/workflows/workbench/skypilot/mjlab-eval.yaml"
+    assert payload["workflow"] == "npa/src/npa/workflows/skypilot/mjlab-eval.yaml"

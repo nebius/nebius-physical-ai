@@ -14,7 +14,7 @@ envs:
   NPA_TRIGGER_POLL_INTERVAL: "60"
   NPA_TRIGGER_MAX_POLLS: "0"
   NPA_TRIGGER_MAX_LAUNCHES: "0"
-  NPA_TRIGGER_PIPELINE_YAML: "npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml"
+  NPA_TRIGGER_PIPELINE_YAML: "npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml"
   NPA_TRIGGER_PIPELINE_BUCKET: "example-bucket"
   NPA_TRIGGER_PIPELINE_S3_PREFIX: "sim-to-real/{run_id}"
   NPA_TRIGGER_PIPELINE_INPUT_DATA_URI: "s3://example-bucket/datasets/lerobot-pusht/"

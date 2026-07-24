@@ -2,7 +2,7 @@
 #
 # Render concrete values before submitting with:
 #
-#   npa burst submit-yaml npa/workflows/workbench/skypilot/isaac-lab-cosmos-sdg-burst-smoke.yaml \
+#   npa burst submit-yaml npa/src/npa/workflows/skypilot/isaac-lab-cosmos-sdg-burst-smoke.yaml \
 #     --name <run-id> \
 #     --var NPA_RUN_ID=<run-id> \
 #     --var ISAAC_LAB_IMAGE=<registry>/npa-isaac-lab:2.3.2.post1 \
