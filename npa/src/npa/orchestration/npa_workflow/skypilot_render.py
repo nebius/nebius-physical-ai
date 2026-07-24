@@ -87,11 +87,21 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
     nodes (including GPU nodes with spare CPU).
     """
 
+    import os as _os
+
+    # Cluster-specific GPU product override: SkyPilot k8s matches on the node's
+    # advertised accelerator name, which varies by cluster (e.g. RTXPRO6000 vs
+    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). Let operators override the spec's
+    # accelerators at submit time without editing the committed blueprint.
+    accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
+
     out: dict[str, Any] = {}
     for key in ("cloud", "accelerators", "cpus", "memory", "use_spot", "region"):
         if key not in resources or resources[key] in (None, ""):
             continue
         value = resources[key]
+        if key == "accelerators" and accel_override:
+            value = accel_override
         if key == "memory" and isinstance(value, str):
             stripped = value.strip()
             if stripped.lower().endswith("gi"):

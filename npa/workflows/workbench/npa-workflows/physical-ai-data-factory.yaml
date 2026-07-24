@@ -88,6 +88,9 @@ config:
 resources:
   gpu:
     cloud: kubernetes
+    # Canonical SkyPilot name. Clusters that advertise a different product name
+    # (e.g. RTXPRO-6000-BLACKWELL-SERVER-EDITION) can override at submit time with
+    # NPA_WORKFLOW_GPU_ACCELERATOR=<name>:1 (see skypilot_render.normalize_resources).
     accelerators: RTXPRO6000:1
     cpus: 4
     memory: 16Gi
