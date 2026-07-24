@@ -131,10 +131,54 @@ npa/.venv/bin/python -m pytest npa/tests/cli/test_agent_routing.py \
 - Preserve the chat contract: grounded-first, then a cheap LLM fallback. Do not
   regress the agent into a chat-only (always-LLM) design.
 
+## Agentic surface (fallthrough beyond grounded)
+
+Everything below runs **only after** the grounded intent router misses; the
+zero-token path stays the default. Design doc:
+`docs/architecture/agent-competitive-plan.md`.
+
+- **Bounded tool-calling loop** — `npa/src/npa/cli/agent_actions.py`
+  (`run_action_loop`): classify → plan → call → observe → decide → stop with a
+  hard `max_steps` guard, an explicit `TOOL_ALLOWLIST`, and a confirmation-gate
+  contract. GPU/destructive tools need a token **bound to the action digest**
+  (`action_digest`); tokens are single-use. Route: `POST /api/agent/act`.
+- **Autonomous Sim2Real drive** — `npa/src/npa/cli/agent_sim2real_loop.py`
+  (`drive_sim2real_loop`): launch→status→gate→diagnose→adjust→re-run, mirroring
+  the engine `promote_checkpoint`/`loop_back` gate. Every launch is
+  confirmation-gated; stages complete only when live status confirms the run
+  (no fabrication); stops on insufficient signal / no-adjustment to avoid
+  runaway GPU. Route: `POST /api/agent/sim2real/drive`; chat intent
+  `drive_sim2real` returns grounded guidance.
+- **Semantic fallthrough** — `npa/src/npa/cli/agent_semantic_router.py`
+  (`classify_intent_semantic`): keyword + cache (0 tokens) then one cheap
+  structured call to map regex-missed paraphrases to a known intent/action.
+  Wired into the `/chat` fallthrough; degrades to `none` on failure. Parity
+  intents still match in `match_chat_intent` and never reach it.
+- **Quantitative viewer eval + memory** — `agent_visual_feedback.py`
+  (`extract_quantitative_signals`, `compare_rollouts`) and the shipped package
+  `npa/src/npa/agent_backend/memory.py` (`RunMemory`, storage-injected, no
+  hardcoded bucket). Routes: `GET/POST /api/agent/memory/*`.
+- **Task-eval harness** — `npa/tests/agent_eval/` (mocked, 0 tokens): scenarios
+  + scorecard (`success_rate`/`avg_steps`/`avg_tokens`); live variant gated on
+  `NPA_AGENT_CHAT_LIVE=1`.
+
+**Shipped vs embedded (Phase G):** new logic still uses the embed mechanism by
+default; `agent_backend/` is the shipped-package migration target (uploaded to
+`/opt/npa-agent/agent_backend/`, imported via `sys.path`). `agent_memory` is the
+migrated pilot; `cli/agent_memory.py` is a re-export shim. Rendered-backend
+compile check: `npa/tests/cli/test_agent_backend_render.py`.
+
 ## Source Layout
 
 - CLI + bootstrap + embedded backend: `npa/src/npa/cli/agent.py`
 - Grounded intent router (testable): `npa/src/npa/cli/agent_chat.py`
 - Cost-tier routing (testable): `npa/src/npa/cli/agent_routing.py`
+- Agentic tool loop / sim2real drive / semantic router:
+  `npa/src/npa/cli/agent_actions.py`, `agent_sim2real_loop.py`,
+  `agent_semantic_router.py`
+- Shipped backend package: `npa/src/npa/agent_backend/` (memory pilot)
 - Token Factory client: `npa/src/npa/clients/token_factory.py`
-- Routing tests: `npa/tests/cli/test_agent_routing.py`
+- Routing tests: `npa/tests/cli/test_agent_routing.py`; agentic tests:
+  `test_agent_actions.py`, `test_agent_sim2real_loop.py`,
+  `test_agent_semantic_router.py`, `test_agent_memory.py`,
+  `test_agent_backend_render.py`; eval harness: `npa/tests/agent_eval/`
