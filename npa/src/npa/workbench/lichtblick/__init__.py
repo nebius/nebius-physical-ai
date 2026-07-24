@@ -7,10 +7,11 @@ viewer (MPL-2.0). This module is the single source of truth for the
 
 What it does that is tangible:
 
-- ``build_mcap_from_frames`` turns a sequence of robot camera frames (the
-  ``rollouts/.../camera`` and ``augment/frames`` artifacts the Sim2Real pipeline
-  writes to S3) into a real MCAP of ``foxglove.CompressedImage`` messages that a
-  Foxglove-compatible viewer can play back.
+- ``build_mcap_from_frames`` turns a sequence of PNG/JPEG robot camera frames
+  (e.g. the Sim2Real ``augment/frames`` artifacts, or any PNG/JPEG rollout camera
+  export) into a real MCAP of ``foxglove.CompressedImage`` messages that a
+  Foxglove-compatible viewer can play back. Raw ``.ppm`` rollout frames are not
+  browser-decodable as CompressedImage and are skipped (convert to PNG first).
 - ``stage_input_to_mcap`` stages an artifact from S3 (or local): either an
   existing ``.mcap`` (downloaded as-is) or a camera-frames prefix (downloaded and
   packed into an MCAP via the exporter).
@@ -167,10 +168,40 @@ def _split_s3(uri: str) -> tuple[str, str]:
 
 
 def _default_s3_client() -> Any:
+    """Build an S3 client honoring npa-managed config/credentials.
+
+    Resolves endpoint + HMAC keys via ``resolve_project_storage`` (i.e.
+    ``~/.npa/config.yaml`` + ``~/.npa/credentials.yaml``), matching how the other
+    viewers/workflows reach object storage, then falls back to boto3's ambient
+    credential chain. Unit tests inject a fake client, so this path is not
+    exercised against real infra.
+    """
+
+    import logging
+
     import boto3
 
-    endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-    return boto3.client("s3", endpoint_url=endpoint)
+    endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or ""
+    access_key = ""
+    secret_key = ""
+    try:
+        from npa.clients.config import resolve_project_storage
+
+        storage = resolve_project_storage()
+        endpoint = endpoint or (storage.endpoint_url or "")
+        access_key = storage.aws_access_key_id or ""
+        secret_key = storage.aws_secret_access_key or ""
+    except Exception:
+        # Best-effort: fall back to boto3's ambient credential chain / env.
+        logging.getLogger(__name__).debug("npa storage config unavailable", exc_info=True)
+
+    kwargs: dict[str, Any] = {}
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    if access_key and secret_key:
+        kwargs["aws_access_key_id"] = access_key
+        kwargs["aws_secret_access_key"] = secret_key
+    return boto3.client("s3", **kwargs)
 
 
 def _list_frame_keys(prefix_uri: str, *, s3_client: Any) -> list[tuple[str, str]]:
@@ -324,9 +355,13 @@ def build_launch_plan(
     resolved_image = _resolve_image(image, registry=registry, tag=tag)
     served_artifact_path = f"{SERVED_DATA_DIR}/{name}"
 
-    served_url = f"http://{resolved_host}:{port}/data/{name}"
+    # A wildcard bind (0.0.0.0/::) is not a navigable browser host, so the deep
+    # link uses a loopback connect host while the container still binds the
+    # wildcard for reachability.
+    connect_host = "127.0.0.1" if resolved_host in ("0.0.0.0", "::", "*") else resolved_host
+    served_url = f"http://{connect_host}:{port}/data/{name}"
     viewer_url = (
-        f"http://{resolved_host}:{port}/?ds=remote-file"
+        f"http://{connect_host}:{port}/?ds=remote-file"
         f"&ds.url={quote(served_url, safe='')}"
     )
     docker_command = (

@@ -108,11 +108,12 @@ def test_serve_plans_viewer_for_s3_mcap() -> None:
     assert "ds=remote-file" in payload["viewer_url"]
     # The deep link targets the app root `/` with the data source as a query
     # string (never a client-routed sub-path), so caddy file-server needs no SPA
-    # fallback: `GET /` always serves index.html.
-    assert payload["viewer_url"].startswith("http://0.0.0.0:8080/?")
+    # fallback: `GET /` always serves index.html. A wildcard bind (0.0.0.0) is
+    # rewritten to a navigable loopback connect host in the URL.
+    assert payload["viewer_url"].startswith("http://127.0.0.1:8080/?")
     # The co-served artifact URL shares the viewer origin -> no CORS / no
     # mixed-content / no signed URL needed for the browser to fetch the MCAP.
-    assert "ds.url=http%3A%2F%2F0.0.0.0%3A8080%2Fdata%2Frecording.mcap" in payload["viewer_url"]
+    assert "ds.url=http%3A%2F%2F127.0.0.1%3A8080%2Fdata%2Frecording.mcap" in payload["viewer_url"]
 
 
 def test_serve_rejects_unsupported_artifact() -> None:
@@ -147,10 +148,15 @@ def test_build_launch_plan_local_path() -> None:
 
 def test_launch_viewer_uses_injected_runner() -> None:
     plan = build_launch_plan(input_path="s3://b/k/x.mcap", image="npa-lichtblick:test")
+    # Wildcard bind stays 0.0.0.0 for the container port mapping...
+    assert plan.host == "0.0.0.0"
+    # ...but the browser deep link uses a navigable loopback host.
+    assert plan.viewer_url.startswith("http://127.0.0.1:8080/?")
     captured: list[list[str]] = []
     result = launch_viewer(plan, local_artifact="/tmp/x.mcap", runner=captured.append)
     assert result.status == "launched"
     assert captured, "runner was not invoked"
+    assert "0.0.0.0:8080:8080" in captured[0]
     argv = captured[0]
     assert argv[0] == "docker"
     assert "/tmp/x.mcap:/srv/data/x.mcap:ro" in argv
