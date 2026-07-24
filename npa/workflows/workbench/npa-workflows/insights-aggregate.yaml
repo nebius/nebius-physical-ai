@@ -1,0 +1,57 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# CPU-only insights aggregation pipeline.
+#
+# Non-invasively ingests an existing run prefix into the append-only lineage +
+# metrics store, then rolls up a dashboard JSON + self-contained static HTML.
+# Aggregation needs no GPU and no rendering path (headless). Runnable via
+# `npa workbench workflow run-spec`.
+
+metadata:
+  name: insights-aggregate
+  description: >
+    CPU-only aggregation: insights ingest-run over an existing run prefix ->
+    dashboard rollup + static HTML, using the append-only JSONL store (no
+    LanceDB required).
+
+config:
+  bucket: example-bucket
+  prefix: "insights-aggregate/{{run.id}}"
+
+  workflow_name: adversarial-scenario-hardening
+
+  run_prefix_uri: "s3://{{config.bucket}}/runs/{{run.id}}/"
+  insights_store_uri: "s3://{{config.bucket}}/{{config.prefix}}/store/"
+  dashboard_uri: "s3://{{config.bucket}}/{{config.prefix}}/dashboard/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+
+initial: aggregate
+
+states:
+  aggregate:
+    description: Non-invasively ingest the run prefix into the insights store.
+    toolRef: workbench.insights.ingest_run
+    resources: cpu
+    outputs:
+      - uri: "{{config.insights_store_uri}}records.jsonl"
+        schema: npa.insights.metric_record.v1
+    next: dashboard
+
+  dashboard:
+    description: Roll up the store into a dashboard JSON + static HTML report.
+    needs: [aggregate]
+    toolRef: workbench.insights.dashboard
+    resources: cpu
+    inputs:
+      - uri: "{{config.insights_store_uri}}records.jsonl"
+        schema: npa.insights.metric_record.v1
+    outputs:
+      - uri: "{{config.dashboard_uri}}dashboard.html"
+        schema: npa.insights.dashboard.v1
+    terminal: true

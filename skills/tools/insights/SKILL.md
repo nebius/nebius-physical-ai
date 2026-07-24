@@ -83,11 +83,15 @@ drop it.
 CPU-only. Aggregation, query, comparison, lineage, and dashboard need no GPU and
 no rendering path (headless).
 
-## SkyPilot + workflow
+## Workflows
 
-- SkyPilot (CPU, headless, `cloud: kubernetes`):
-  `npa/src/npa/workflows/skypilot/insights-aggregate.yaml`
-- Declarative pipeline (hardening stages -> ingest-run -> dashboard):
+SkyPilot stays the execution engine, but the shown catalog is npa.workflow-only
+(no raw SkyPilot task YAMLs). All insights pipelines are declarative
+`npa.workflow/v0.0.1` specs, CPU-only and `cloud: kubernetes`:
+
+- Aggregate a run (ingest-run -> dashboard):
+  `npa/workflows/workbench/npa-workflows/insights-aggregate.yaml`
+- Hardening with insights (hardening stages -> ingest-run -> dashboard):
   `npa/workflows/workbench/npa-workflows/hardening-with-insights.yaml`
 - CPU-only smoke (ingest fixture -> compare -> dashboard):
   `npa/workflows/workbench/npa-workflows/insights-smoke.yaml`

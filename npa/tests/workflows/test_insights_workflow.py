@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 
 ROOT = Path(__file__).resolve().parents[3]
-HARDENING = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "hardening-with-insights.yaml"
-SMOKE = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "insights-smoke.yaml"
-SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "insights-aggregate.yaml"
+NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+HARDENING = NPA_WORKFLOWS / "hardening-with-insights.yaml"
+SMOKE = NPA_WORKFLOWS / "insights-smoke.yaml"
+AGGREGATE = NPA_WORKFLOWS / "insights-aggregate.yaml"
 
 
 def test_hardening_with_insights_validates_and_appends_insights_stages() -> None:
@@ -62,13 +61,13 @@ def test_new_insights_toolrefs_render() -> None:
     assert "--output-path" in ingest_argv
 
 
-def test_skypilot_yaml_is_cpu_and_headless() -> None:
-    docs = [doc for doc in yaml.safe_load_all(SKYPILOT.read_text()) if doc is not None]
-    assert docs[0]["name"] == "insights-aggregate"
-    assert docs[0]["execution"] == "serial"
-    task = docs[1]
-    assert task["resources"]["cloud"] == "kubernetes"
-    assert "accelerators" not in task["resources"]
-    assert task["envs"]["HEADLESS"] == "1"
-    assert "npa workbench insights ingest-run" in task["run"]
-    assert "npa workbench insights dashboard" in task["run"]
+def test_insights_aggregate_spec_validates_and_is_cpu_only() -> None:
+    spec = load_spec(AGGREGATE)
+    validate_spec(spec)
+    assert spec.name == "insights-aggregate"
+    states = [step.state for step in build_plan(spec, run_id="t").steps]
+    assert states == ["aggregate", "dashboard"]
+    for state in spec.states.values():
+        assert state.resources == "cpu"
+    assert spec.states["aggregate"].tool_ref == "workbench.insights.ingest_run"
+    assert spec.states["dashboard"].tool_ref == "workbench.insights.dashboard"
