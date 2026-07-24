@@ -20,8 +20,10 @@ config:
   prefix: "insights-smoke/{{run.id}}"
 
   workflow_name: insights-smoke
-  base_run: fixture-run
-  candidate_run: fixture-run
+  # ingest-run tags every extracted metric with --workflow-run {{run.id}}, so the
+  # self-check comparison uses that same run id (base == candidate => unchanged).
+  base_run: "{{run.id}}"
+  candidate_run: "{{run.id}}"
 
   run_prefix_uri: "s3://{{config.bucket}}/insights-fixtures/run/"
   insights_store_uri: "s3://{{config.bucket}}/{{config.prefix}}/store/"
