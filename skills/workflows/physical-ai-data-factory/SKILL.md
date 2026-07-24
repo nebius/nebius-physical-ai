@@ -48,15 +48,27 @@ frames to `augment_uri`, which the grade / re-label / visualize stages consume.
 appearance combos (weather / time-of-day / road-condition); the `augment`
 toolRef passes `--configs-uri` so the first sampled combo is recorded as the
 clip's `metadata.json` `variables` (which drives the Rerun label and proves the
-config manifest is consumed, not decorative). Cosmos Transfer 2.5 itself still
-runs a **fixed control spec** (bundled `robot_depth_spec.json`), so the geometry
-of the re-render is not yet conditioned on the sampled weather/time text, and a
-single `--execute` emits **one** variant. Full config-driven appearance
-conditioning and N-variant "multiply" (one inference per sampled combo) are
-tracked follow-ups — do not describe the current blueprint as generating N
-condition-specific variants. The single-variant limitation is also surfaced in
-the machine-readable artifacts (`multiply` in the curation report, `multiply_mode`
-in the finalize report), so the outputs are honest on their own, not only in docs.
+config manifest is consumed, not decorative). A single `--execute` emits **one**
+variant. N-variant "multiply" (one inference per sampled combo) is a tracked
+follow-up — do not describe the current blueprint as generating N
+condition-specific variants. The single-variant limitation is surfaced in the
+machine-readable artifacts (`multiply` in the curation report, `multiply_mode` in
+the finalize report), so the outputs are honest on their own, not only in docs.
+
+**Input conditioning (real augmentation of the caller's clip).** By default the
+augment renders the bundled, self-contained control example (`robot_depth_spec.json`),
+which keeps the golden eval hermetic but is NOT an augmentation of the run's own
+input. To make the output a genuine transform of the run's real footage, opt in:
+set `NPA_COSMOS_CONDITION_ON_INPUT=1` at submit (or pass `--condition-on-input` /
+`--input-video <path|s3://>` to `npa workbench cosmos2 transfer`). The augment then
+downloads the first clip under `--input-uri` (the run's `input/`), builds a
+controlnet spec with `video_path` = that clip and an **`edge`** (or `vis`) control
+computed on-the-fly, and the sampled appearance prompt drives the new look — so the
+output preserves the input's structure/motion with a new appearance. `edge`/`vis`
+need no precomputed control asset; `depth`/`seg` would need one, so input-only
+conditioning falls back to `edge`. Conditioned runs record `mode:
+cosmos_transfer2.5_gpu` + `input_conditioned: true` + `conditioned_input` in the
+augment `metadata.json` / `manifest.json`, which the agent's provenance panel surfaces.
 
 **Naming caveat:** the `attribute-verify` stage runs the REAL `vlm_eval` tool
 with `--backend api`; its output file is `vlm_eval_stub.json`, a LEGACY filename
