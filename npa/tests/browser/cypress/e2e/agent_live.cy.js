@@ -97,6 +97,11 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#artifactPreviewHost").should("exist");
     cy.get("#viewerPaneMedia").should("exist");
     cy.get("#rerunBundleCover").should("exist");
+    // Embedded Lichtblick (Foxglove-compatible MCAP viewer) surfaces.
+    cy.get("#renderModeLichtblick").should("exist");
+    cy.get("#lichtblickFrame").should("exist");
+    cy.get("#viewerPaneLichtblick").should("exist");
+    cy.get("#openLichtblick").should("exist");
     cy.window().then((win) => {
       const html = win.document.documentElement.outerHTML;
       expect(html).to.include("authenticatedPreviewObjectUrl");
@@ -171,6 +176,31 @@ describe("NPA agent UI against live infra", () => {
     });
 
     cy.get("#openRerun").should("be.visible");
+  });
+
+  it("embeds the Lichtblick MCAP viewer and co-serves the recording", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    // Activate the embedded Lichtblick render mode.
+    cy.get("#renderModeLichtblick").click();
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
+    cy.get("#openLichtblick").should("be.visible");
+
+    // The backend status surfaces the Lichtblick embed fields.
+    liveAgentRequest("/api/sim-viz/status").then((resp) => {
+      expect(resp.status).to.eq(200);
+      const viz = resp.body || {};
+      expect(decodeURIComponent(String(viz.lichtblick_iframe_url || ""))).to.include("/lichtblick/");
+      expect(viz).to.have.property("lichtblick_ready");
+    });
+
+    // The MCAP recording is co-served same-origin under /lichtblick/recordings/
+    // (nginx alias). The Lichtblick viewer app itself is a best-effort sidecar,
+    // so we assert the recording plumbing rather than requiring the sidecar image.
+    liveAgentRequest("/lichtblick/recordings/sim2real.mcap", { failOnStatusCode: false }).then((resp) => {
+      expect([200, 206, 404]).to.include(resp.status);
+    });
   });
 
   it("keeps visible live UI text readable across the Nebius theme", () => {

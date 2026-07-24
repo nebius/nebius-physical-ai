@@ -86,6 +86,24 @@ function startMockServer(port) {
       res.end(Buffer.alloc(128, 1));
       return;
     }
+    if (url.pathname === "/lichtblick/" || url.pathname === "/lichtblick") {
+      const fixturePath = path.join(__dirname, "cypress/fixtures/mock_lichtblick.html");
+      const mockHtml = fs.readFileSync(fixturePath, "utf8");
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(mockHtml);
+      return;
+    }
+    if (url.pathname === "/lichtblick/recordings/sim2real.mcap") {
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "accept-ranges": "bytes",
+      });
+      res.end(Buffer.alloc(256, 2));
+      return;
+    }
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end(`not found: ${url.pathname}`);
   });
