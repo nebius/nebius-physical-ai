@@ -597,6 +597,78 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("contain.text", "mock-run");
   });
 
+  it("surfaces an old run beyond the newest page via server-side (q=) search", () => {
+    // Reproduces the real-world "run doesn't show" case: the run is older than
+    // the newest page the default listing returns, so it only appears when the
+    // client asks the SERVER to search by name/ID (?q=). The default page must
+    // NOT contain it; the ?q= page must. Both the Rerun-tab and Stages-tab run
+    // pickers must render the option once the server search returns it.
+    const OLD_RUN_ID = "rtxpro-staged-2x2-20260613t011356z";
+    const FRAGMENT = "rtxpro-staged";
+    const oldRun = {
+      run_id: OLD_RUN_ID,
+      has_viewable: true,
+      artifact_count: 141,
+      last_modified: "2026-06-13T01:13:56Z",
+    };
+    const newestPage = [
+      {
+        run_id: NON_STOCK_RUN_ID,
+        has_viewable: true,
+        artifact_count: 5,
+        last_modified: "2026-07-11T18:00:00Z",
+      },
+      {
+        run_id: "mock-run",
+        has_viewable: true,
+        artifact_count: 1,
+        last_modified: "2026-07-07T03:33:00Z",
+      },
+    ];
+    // Registered inside the test so it takes precedence over the default
+    // "@artifactRuns" intercept for every subsequent /api/artifacts/runs call.
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const q = String((req.query && req.query.q) || "").trim().toLowerCase();
+      const matchesOld = q && OLD_RUN_ID.toLowerCase().includes(q);
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: matchesOld ? [oldRun] : newestPage,
+          total_runs: 328,
+          truncated: true,
+          query: q,
+        },
+      });
+    }).as("artifactRunsPaged");
+
+    // Rerun tab: the default listing omits the old run…
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRunsPaged");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values, "default page omits the old run").to.not.include(OLD_RUN_ID);
+    });
+    // …but typing a fragment triggers a debounced server search that finds it.
+    cy.get("#artifactPrefix").clear().type(FRAGMENT, { delay: 0 });
+    cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
+    });
+
+    // Stages tab: same server-search path must populate the stages picker.
+    cy.get("#tabMain").click();
+    cy.get("#stagesRunInput").clear().type(FRAGMENT, { delay: 0 });
+    cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
+    cy.get("#stagesRunSelect option").then(($opts) => {
+      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      expect(values, "server search surfaces the old run in the Stages picker").to.include(OLD_RUN_ID);
+    });
+  });
+
   it("rejects uniform gray / blank canvases in frameLooksBlank", () => {
     cy.window().then((win) => {
       const api = win.__NPA_AGENT_TEST__;
