@@ -152,6 +152,21 @@ npa workbench workflow submit \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
+## Visuals in Rerun
+
+`scenario-gen generate` writes a Rerun recording at `{output-path}/scenarios.rrd`
+alongside the JSON manifest (severity/diversity/failure series over a `rank`
+timeline, severity bar chart, severity-vs-diversity scatter, perturbation
+heatmap). View it with npa:
+
+```bash
+npa rerun host s3://<bucket>/scenario-gen-smoke/<run-id>/adversarial/scenarios.rrd
+# -> prints an app.rerun.io URL; or open the .rrd in the Rerun viewer
+```
+
+Disable emission with `--no-visualize`. `rerun-sdk` is optional — if absent,
+generation still succeeds and `viz_uri` is empty.
+
 ## Isolated dev-VM sessions (shared VM safety)
 
 The dev/operator VM is shared by many concurrent agents. Do NOT `git checkout`

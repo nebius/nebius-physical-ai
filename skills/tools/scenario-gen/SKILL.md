@@ -55,6 +55,17 @@ The adversary backend is pluggable (`adversary_backend`). The default is a
 deterministic, dependency-light heuristic (not RL) so the tool runs and tests
 without a GPU; a live run swaps in the Isaac Lab RL backend.
 
+## Visualization (Rerun)
+
+`generate` also emits a Rerun recording at `{output_uri}/scenarios.rrd`
+(disable with `--no-visualize`), visualizing the mined set: severity/diversity/
+failure time-series over a `rank` timeline, a severity bar chart, a
+severity-vs-diversity scatter, and a scenario×perturbation-axis heatmap tensor.
+`rerun-sdk` is imported lazily; if it is absent, generation still succeeds and
+`viz_uri` is empty. View it with `npa rerun host <viz_uri>` (prints an
+app.rerun.io URL) or open the `.rrd` in the Rerun viewer; the NPA agent
+classifies `.rrd` as a rerun artifact.
+
 ## GPU routing
 
 Route the adversary training to **RTX PRO 6000** or **L40S** (RT-core capable
