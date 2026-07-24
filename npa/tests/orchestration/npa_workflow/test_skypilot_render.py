@@ -87,6 +87,46 @@ def test_nebius_cloud_render_injects_docker_secrets(monkeypatch: pytest.MonkeyPa
     assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "test-token"
 
 
+def _nebius_gpu_spec():
+    path = NPA_SPECS / "vlm-eval-single.yaml"
+    spec = load_spec(path)
+    for profile in spec.resources.values():
+        if isinstance(profile, dict):
+            profile["cloud"] = "nebius"
+    return spec, build_plan(spec, run_id="demo")
+
+
+def test_render_errors_on_registry_credentials_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Image pinned to us-central1 but Docker creds authenticate to eu-north1 →
+    # a 403 ErrImagePull for EVERY stage image. Must fail fast at render, not stall.
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
+    spec, plan = _nebius_gpu_spec()
+    with pytest.raises(NpaWorkflowRenderError, match="registry mismatch"):
+        render_skypilot_yaml(
+            spec,
+            plan,
+            run_id="demo",
+            options=SkypilotRenderOptions(registry="cr.us-central1.nebius.cloud/reg"),
+        )
+
+
+def test_render_ok_when_registry_matches_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
+    spec, plan = _nebius_gpu_spec()
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
+
+
 def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.vlm_eval.run") == "cosmos"
     assert tool_image_key("workbench.token_factory.caption") is None

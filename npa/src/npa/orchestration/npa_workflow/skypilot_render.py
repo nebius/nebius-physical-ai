@@ -477,6 +477,23 @@ def _inject_nebius_registry_docker_secrets(
         return
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
+    # Registry/credentials consistency guard (applies to EVERY stage image, not
+    # just Cosmos): SkyPilot logs into the image's registry host using
+    # SKYPILOT_DOCKER_PASSWORD. If that password authenticates to a DIFFERENT
+    # registry (SKYPILOT_DOCKER_SERVER), the pull is a 403 ErrImagePull that stalls
+    # provisioning. Fail fast with an actionable message at submit time. Only
+    # enforced when actually materializing creds (real submit), never plan-only.
+    if materialize:
+        creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
+        if creds_server and creds_server != server:
+            raise NpaWorkflowRenderError(
+                f"registry mismatch: task image is in {server!r} but the Docker "
+                f"credentials (SKYPILOT_DOCKER_SERVER) authenticate to {creds_server!r}. "
+                "Pinning images from a registry your credentials cannot pull causes a "
+                "403 ErrImagePull for every image. Pass --registry pointing at the "
+                f"credentials' registry {creds_server!r} (e.g. the primary workbench "
+                f"registry), or set SKYPILOT_DOCKER_* for {server!r}."
+            )
     username = (
         os.environ.get("SKYPILOT_DOCKER_USERNAME")
         or os.environ.get("NPA_REGISTRY_USERNAME")
