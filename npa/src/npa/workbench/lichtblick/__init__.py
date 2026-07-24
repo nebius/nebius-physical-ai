@@ -157,7 +157,7 @@ def build_mcap_from_frames(
 
     import json
 
-    from mcap.writer import Writer
+    from mcap.writer import CompressionType, Writer
 
     if not frame_paths:
         raise LichtblickError("no camera frames found to export to MCAP.")
@@ -167,7 +167,9 @@ def build_mcap_from_frames(
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
     with open(output_path, "wb") as handle:
-        writer = Writer(handle)
+        # Uncompressed chunks: valid MCAP that needs no lz4/zstandard C-extension,
+        # so the exporter works in minimal environments.
+        writer = Writer(handle, compression=CompressionType.NONE)
         writer.start(profile="", library="npa-lichtblick")
         schema_id = writer.register_schema(
             name="foxglove.CompressedImage",

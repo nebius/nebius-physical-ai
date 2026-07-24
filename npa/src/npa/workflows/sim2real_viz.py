@@ -1012,7 +1012,7 @@ def emit_sim2real_mcap(
     Rerun. Reuses ``npa.workbench.lichtblick`` for the CompressedImage encoding.
     """
 
-    writer_cls = _import_mcap()
+    writer_cls, compression_none = _import_mcap()
     local_dir = Path(local_dir)
     output_mcap = (
         Path(output_mcap) if output_mcap is not None else local_dir / "reports" / "sim2real.mcap"
@@ -1030,7 +1030,9 @@ def emit_sim2real_mcap(
     from npa.workbench.lichtblick import encode_frame_to_compressed_bytes
 
     with open(output_mcap, "wb") as handle:
-        writer = writer_cls(handle)
+        # Uncompressed chunks: valid MCAP that needs no lz4/zstandard C-extension,
+        # so the finalize stage works in minimal in-pod environments.
+        writer = writer_cls(handle, compression=compression_none)
         writer.start(profile="", library="npa-sim2real")
         emitter = _McapEmitter(writer)
 
@@ -1230,14 +1232,14 @@ def _emit_mcap_heldout_scores(
         stamp_ns += heldout_period_ns
 
 
-def _import_mcap() -> Any:
+def _import_mcap() -> tuple[Any, Any]:
     try:
-        from mcap.writer import Writer
+        from mcap.writer import CompressionType, Writer
     except ImportError as exc:  # pragma: no cover
         raise McapUnavailableError(
             "mcap is not installed; skipping Sim2Real MCAP visualization"
         ) from exc
-    return Writer
+    return Writer, CompressionType.NONE
 
 
 def _import_rerun() -> tuple[Any, Any]:
