@@ -39,7 +39,7 @@ K8s jobs (`s2r-*`).
 | 11 | `stage_11_outer_loop` | `run_single_outer_iteration` → `threshold_decision` | `outer_loop/decision.json` |
 | 12 | `stage_12_external_validation_stub` | `run_finalize` | `stage_12_external_validation/external_stub.json` |
 | 13 | `stage_13_retrigger` | `run_finalize` | `stage_13_retrigger/retrigger.json` |
-| 14 | `stage_14_rerun_viz` | `run_finalize` → `_run_sim2real_viz_stage` | `reports/sim2real.rrd` |
+| 14 | `stage_14_rerun_viz` | `run_finalize` → `_run_sim2real_viz_stage` | `reports/sim2real.rrd` (+ `reports/sim2real.mcap`) |
 
 ## Phase Boundaries
 
@@ -47,8 +47,9 @@ K8s jobs (`s2r-*`).
 - **Outer iteration (7–11):** `run_single_outer_iteration` — one inner loop (7–9),
   held-out eval (10), threshold decision (11). Repeats for `outer_iterations`.
 - **Finalize (12–14 + report):** `run_finalize` — external-validation stub,
-  loop-of-loops retrigger record, local Rerun `.rrd`, `sim2real-report.json`,
-  optional S3 upload.
+  loop-of-loops retrigger record, local Rerun `.rrd` plus a Lichtblick/Foxglove
+  `.mcap` of the same rollout data (`NPA_SIM2REAL_MCAP`, default on when rerun is
+  on), `sim2real-report.json`, optional S3 upload.
 
 Stages 4–6 share one component name in monitor: `stage_04_06_env_gen_split_tokens`.
 

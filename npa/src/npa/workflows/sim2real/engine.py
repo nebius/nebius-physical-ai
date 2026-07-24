@@ -694,6 +694,12 @@ def _run_sim2real_viz_stage(
         )
     except RerunUnavailableError as exc:
         info = {"status": "skipped", "reason": str(exc), "source": "reference"}
+        info["mcap"] = _emit_sim2real_mcap_artifact(
+            config,
+            local_dir=local_dir,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+        )
         return (
             ComponentRecord(
                 "stage_14_rerun_viz",
@@ -705,6 +711,19 @@ def _run_sim2real_viz_stage(
             info,
         )
     info = {"source": "reference", **result.to_dict()}
+    mcap_info = _emit_sim2real_mcap_artifact(
+        config,
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+    )
+    info["mcap"] = mcap_info
+    artifacts = {"rrd": str(rrd_path)}
+    if mcap_info.get("status") == "written" and mcap_info.get("output_mcap_path"):
+        artifacts["mcap"] = str(mcap_info["output_mcap_path"])
+    mcap_note = ""
+    if mcap_info.get("status") == "written":
+        mcap_note = f" Also wrote a Lichtblick/Foxglove MCAP with {mcap_info.get('message_count', 0)} message(s)."
     return (
         ComponentRecord(
             "stage_14_rerun_viz",
@@ -714,11 +733,35 @@ def _run_sim2real_viz_stage(
                 f"{result.frame_count} policy camera frame(s), "
                 f"{result.heldout_frame_count} held-out sim frame(s), and "
                 f"{result.heldout_env_count} held-out env score(s); camera streams, "
-                "VLM critiques, RL signal, and held-out scores are logged."
+                "VLM critiques, RL signal, and held-out scores are logged." + mcap_note
             ),
-            {"rrd": str(rrd_path)},
+            artifacts,
         ),
         info,
+    )
+
+
+def _emit_sim2real_mcap_artifact(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Emit ``reports/sim2real.mcap`` alongside the ``.rrd`` (best-effort).
+
+    Gated behind ``NPA_SIM2REAL_MCAP`` (default on when rerun viz is on). Degrades
+    gracefully (skip + reason) when ``mcap`` is unavailable, mirroring the ``.rrd``
+    path, so a missing writer never fails the finalize stage.
+    """
+
+    from npa.workflows.sim2real_viz import emit_sim2real_mcap_if_enabled
+
+    return emit_sim2real_mcap_if_enabled(
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
 
 

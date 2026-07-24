@@ -51,9 +51,19 @@ pipeline):
 - **MCAP export** (`--from-frames`): `build_mcap_from_frames` turns the Sim2Real
   pipeline's `rollouts/.../camera` and `augment/frames` image artifacts into a
   real MCAP of `foxglove.CompressedImage` messages at a chosen `--fps`, so the
-  robot camera stream plays on a timeline. Verified end-to-end: 32 Cosmos-Transfer2.5
+  robot camera stream plays on a timeline. PNG/JPEG frames are packed byte-for-byte;
+  raw `.ppm` rollout dumps (and other PIL-readable formats) are transcoded to PNG
+  first (via `encode_frame_to_compressed_bytes`), so genuine rollout cameras render
+  instead of being silently skipped. Verified end-to-end: 32 Cosmos-Transfer2.5
   augment frames → a 9.5 MB MCAP → rendered in a headless browser on topic
   `/sim2real/augment/camera` (200 + 206 range fetches, 0 console errors).
+- **Native Sim2Real MCAP** (finalize stage): the Sim2Real viz/finalize stage
+  (`sim2real_viz.emit_sim2real_mcap`, gated by `NPA_SIM2REAL_MCAP`, default on when
+  rerun is on) natively emits `reports/sim2real.mcap` alongside `reports/sim2real.rrd`
+  from the same rollout data — camera frames as `foxglove.CompressedImage`, VLM
+  critiques as `foxglove.Log`, and reward/advantage/score signals as numeric samples
+  a Plot panel can chart. Open it with
+  `npa workbench lichtblick serve --input-path s3://bucket/sim2real-b/<run-id>/reports/sim2real.mcap --execute`.
 - **Staging + launch** (`--execute`): `serve_viewer` stages the artifact from S3
   (`stage_input_to_mcap`) and runs the `npa-lichtblick` container so the log is
   live at the returned URL. Without `--execute` it prints the plan (infra-free).

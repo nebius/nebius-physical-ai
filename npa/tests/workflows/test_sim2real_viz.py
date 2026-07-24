@@ -221,6 +221,79 @@ def test_emit_raises_when_no_content(monkeypatch, tmp_path: Path) -> None:
         )
 
 
+def test_emit_mcap_roundtrip_camera_signal_critique(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    out = tmp_path / "reports" / "sim2real.mcap"
+    result = viz_module.emit_sim2real_mcap(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=out,
+    )
+
+    assert result.status == "written"
+    assert out.is_file() and out.stat().st_size > 0
+    # 2 rollouts x 3 frames of raw .ppm camera dumps, all transcoded to PNG.
+    assert result.camera_message_count == 6
+    assert result.scalar_message_count > 0
+    assert result.log_message_count > 0
+
+    with open(out, "rb") as fh:
+        reader = make_reader(fh)
+        summary = reader.get_summary()
+        topics = {channel.topic for channel in summary.channels.values()}
+        schema_names = {schema.name for schema in summary.schemas.values()}
+        first_camera = next(
+            json.loads(message.data)
+            for _schema, channel, message in reader.iter_messages()
+            if channel.topic.endswith("/camera")
+        )
+
+    assert any(topic.endswith("/camera") for topic in topics)
+    assert "/signal/reward" in topics
+    assert "/signal/advantage" in topics
+    assert "/signal/reward_trend" in topics
+    assert "/heldout/scores" in topics
+    assert "/heldout/success_rate" in topics
+    assert any(topic.endswith("/critique") for topic in topics)
+    assert "foxglove.CompressedImage" in schema_names
+    assert "foxglove.Log" in schema_names
+    assert "npa.sim2real.Scalar" in schema_names
+    # Raw .ppm rollout frames are transcoded to browser-decodable PNG.
+    assert first_camera["format"] == "png"
+
+
+def test_emit_mcap_raises_when_mcap_unavailable(monkeypatch, tmp_path: Path) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+
+    def _raise() -> Any:
+        raise viz_module.McapUnavailableError("mcap is not installed")
+
+    monkeypatch.setattr(viz_module, "_import_mcap", _raise)
+
+    with pytest.raises(viz_module.McapUnavailableError):
+        viz_module.emit_sim2real_mcap(
+            local_dir=tmp_path,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+            output_mcap=tmp_path / "reports" / "sim2real.mcap",
+        )
+
+
+def test_emit_mcap_raises_when_no_content(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    with pytest.raises(Sim2RealVizError):
+        viz_module.emit_sim2real_mcap(
+            local_dir=tmp_path,
+            inner_evidence={"iterations": [], "reward_trend": []},
+            heldout_report={"per_env": []},
+            output_mcap=tmp_path / "reports" / "empty.mcap",
+        )
+
+
 def _write_test_png(path: Path, *, red: int, green: int, blue: int) -> None:
     import struct
     import zlib
