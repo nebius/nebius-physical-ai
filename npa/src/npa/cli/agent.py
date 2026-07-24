@@ -1699,9 +1699,15 @@ def _nginx_agent_site_body(
     alias /opt/npa-agent/recordings/;
     default_type application/octet-stream;
     add_header Cache-Control "no-cache" always;
-    add_header Accept-Ranges bytes always;
+    # nginx's static module already emits `Accept-Ranges: bytes`; do NOT add it again
+    # (a duplicate makes the browser join it to "bytes, bytes", which fails Lichtblick's
+    # `headers.get("accept-ranges") === "bytes"` range-support check).
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Range" always;
+    # Lichtblick/Foxglove stream MCAP via HTTP Range and require Accept-Ranges to be a
+    # readable (CORS-exposed) response header, else "Support for HTTP Range request" fails.
+    add_header Access-Control-Expose-Headers "Accept-Ranges, Content-Length, Content-Range" always;
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
   }}
   location /lichtblick/ {{
