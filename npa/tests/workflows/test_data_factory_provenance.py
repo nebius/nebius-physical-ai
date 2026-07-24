@@ -59,6 +59,28 @@ def test_provenance_distinguishes_cpu_standin_from_gpu() -> None:
     assert aug.get("engine") == "cpu_appearance_transform_stand_in"
 
 
+def test_provenance_detects_standin_from_per_clip_metadata() -> None:
+    # Some runs record the augment mode only in a per-clip metadata.json (no
+    # run-level manifest.json). The engine must still be classified as a stand-in
+    # so the UI can flag it honestly instead of showing an unknown engine.
+    keys = [
+        f"{PFX}/cosmos_augmented/video_0_aug0/augmented_video.mp4",
+        f"{PFX}/cosmos_augmented/video_0_aug0/metadata.json",
+    ]
+
+    def read_per_clip(key: str):
+        if key.endswith("video_0_aug0/metadata.json"):
+            return {"mode": "cpu_appearance_transform_stand_in"}
+        return {}
+
+    prov = build_run_provenance(keys, run_id=RUN, read_json=read_per_clip)
+    aug = next(c for c in prov["components"] if c["stage"] == "Augment")
+    assert aug.get("engine") == "cpu_appearance_transform_stand_in"
+    assert "stand-in" in aug["detail"].lower()
+    origin = build_run_origin(keys, run_id=RUN, read_json=read_per_clip)
+    assert origin["augment"]["engine"] == "cpu_appearance_transform_stand_in"
+
+
 def test_provenance_only_reports_present_stages() -> None:
     # A run with only augment artifacts must not claim curation/reports happened.
     keys = [f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png"]

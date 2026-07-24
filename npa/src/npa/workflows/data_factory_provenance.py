@@ -77,8 +77,7 @@ def build_run_provenance(
         entry["stage_key"] = stage
         entry["artifact_count"] = counts.get(stage, 0)
         if stage == "cosmos_augmented":
-            man = _read(_augment_manifest_key(keys, run_id))
-            mode = str(man.get("mode") or "")
+            mode = _augment_mode(keys, run_id, _read)
             if mode == "cosmos_transfer2.5_gpu":
                 entry["engine"] = "cosmos_transfer_2.5_gpu"
                 entry["detail"] = "real Cosmos Transfer 2.5 diffusion on GPU"
@@ -189,8 +188,7 @@ def build_run_origin(
     # Augment engine/model (real GPU Cosmos Transfer vs CPU stand-in).
     augment: dict[str, str] | None = None
     if any(_stage_of(k, run_id) == "cosmos_augmented" for k in keys):
-        man = _read(_augment_manifest_key(keys, run_id))
-        mode = str(man.get("mode") or "")
+        mode = _augment_mode(keys, run_id, _read)
         if mode == "cosmos_transfer2.5_gpu":
             augment = {
                 "engine": "cosmos_transfer_2.5_gpu",
@@ -328,6 +326,29 @@ def _augment_manifest_key(keys: list[str], run_id: str) -> str:
     for key in keys:
         if _stage_of(key, run_id) == "cosmos_augmented" and key.endswith("/manifest.json"):
             return key
+    return ""
+
+
+def _augment_mode(keys: list[str], run_id: str, read: Callable[[str], dict]) -> str:
+    """Resolve the augment engine mode, grounded in the run's real artifacts.
+
+    Prefers the run-level ``cosmos_augmented/manifest.json`` ``mode`` (written by
+    the GPU publish path). Some runs only record the mode in a per-clip
+    ``cosmos_augmented/<clip>/metadata.json`` (e.g. CPU stand-in outputs with no
+    run-level manifest), so fall back to the first per-clip metadata that carries
+    a mode — otherwise the augment engine would look unknown and the honesty
+    banner could not distinguish a stand-in from a real Cosmos render.
+    """
+    man_key = _augment_manifest_key(keys, run_id)
+    if man_key:
+        mode = str((read(man_key) or {}).get("mode") or "")
+        if mode:
+            return mode
+    for key in keys:
+        if _stage_of(key, run_id) == "cosmos_augmented" and key.endswith("/metadata.json"):
+            mode = str((read(key) or {}).get("mode") or "")
+            if mode:
+                return mode
     return ""
 
 
