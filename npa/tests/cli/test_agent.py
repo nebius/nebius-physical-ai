@@ -740,7 +740,11 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "const runFilter = runFilterValue().toLowerCase();" in source
     assert 'runFilterInput.addEventListener("input"' in source
     # Discovery is generic (no ?prefix= path); the old prefix-path helper is gone.
-    assert 'apiJson("/api/artifacts/runs?limit=100")' in source
+    assert '"/api/artifacts/runs?limit=100"' in source
+    # Typing in the box also triggers a SERVER-side search so runs beyond the
+    # newest page (by name/ID) are findable, not just client-side filtering.
+    assert "&q=" in source
+    assert "refreshArtifactRuns(value)" in source
     assert "discoverFromPrefix" not in source
     assert "artifactPrefixValue" not in source
 
@@ -813,8 +817,8 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     assert 'id="rerunFrame"' in source
     assert 'id="panelRerun"' in source
     assert 'id="runIdSelect"' in source
-    # Prefix-scoped discovery feeds the discovered-runs set.
-    assert "discoveredArtifactRuns = Array.isArray(data.runs)" in source
+    # Generic discovery feeds the discovered-runs set (server-search unions in).
+    assert "discoveredArtifactRuns = runs;" in source
     # The run selector is a UNION of known + discovered runs (does not clobber).
     assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
     assert "fillRunSelectOptionsRich(document.getElementById(\"runIdSelect\")" in source

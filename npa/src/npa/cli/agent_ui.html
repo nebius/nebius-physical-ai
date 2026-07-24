@@ -2029,14 +2029,26 @@
         // No path/category is ever required to find a run.
         const runFilterInput = document.getElementById("artifactPrefix");
         if (runFilterInput) {
+          let runSearchTimer = null;
           runFilterInput.addEventListener("input", () => {
+            // Immediate client-side filter of what's already loaded…
             applyMergedRunSelectors(activeRunId);
+            // …plus a debounced server-side search so runs older than the newest
+            // page (beyond the fetch limit) are surfaced by name/ID too.
+            const value = runFilterValue();
+            if (runSearchTimer) clearTimeout(runSearchTimer);
+            if (!value) return;
+            runSearchTimer = setTimeout(async () => {
+              try {
+                await refreshArtifactRuns(value);
+              } catch (_err) { /* keep the client-side view on search failure */ }
+            }, 350);
           });
           runFilterInput.addEventListener("keydown", async (event) => {
             if (event.key !== "Enter") return;
             event.preventDefault();
             try {
-              await refreshArtifactRuns();
+              await refreshArtifactRuns(runFilterValue());
             } catch (err) {
               showToast("Discover runs failed: " + String((err && err.message) || err), "error");
             }
@@ -4536,11 +4548,22 @@
         syncRunChooserFields(chosen);
         return merged;
       }
-      async function refreshArtifactRuns() {
-        // Always discover ALL runs generically (server finds runs by id across
-        // the whole run root); the name/ID box only filters the list client-side.
-        const data = await apiJson("/api/artifacts/runs?limit=100");
-        discoveredArtifactRuns = Array.isArray(data.runs) ? data.runs : [];
+      async function refreshArtifactRuns(query) {
+        // Discover runs generically across the whole bucket. When a search query
+        // is given, ask the SERVER to search ALL runs by name/ID (not just the
+        // newest page) so old runs beyond the default limit are still findable,
+        // and union the matches into the discovered list.
+        const q = String(query || "").trim();
+        const url = "/api/artifacts/runs?limit=100" + (q ? "&q=" + encodeURIComponent(q) : "");
+        const data = await apiJson(url);
+        const runs = Array.isArray(data.runs) ? data.runs : [];
+        if (q) {
+          const byId = new Map((discoveredArtifactRuns || []).map((r) => [String((r && r.run_id) || ""), r]));
+          for (const r of runs) byId.set(String((r && r.run_id) || ""), r);
+          discoveredArtifactRuns = [...byId.values()];
+        } else {
+          discoveredArtifactRuns = runs;
+        }
         // API already returns latest-first; keep that order when merging.
         const merged = applyMergedRunSelectors(activeRunId);
         const status = document.getElementById("artifactDiscoverStatus");

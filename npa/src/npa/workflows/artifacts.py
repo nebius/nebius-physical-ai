@@ -231,6 +231,7 @@ def list_runs(
     *,
     prefix: str = "",
     limit: int = 50,
+    contains: str = "",
     s3=None,
 ) -> RunListPage:
     if limit <= 0:
@@ -276,6 +277,11 @@ def list_runs(
         )
         for run_id, payload in summary.items()
     ]
+    # Substring search (case-insensitive) applied BEFORE truncation so a matching
+    # run is found even when it is far older than the newest `limit` runs.
+    needle = str(contains or "").strip().lower()
+    if needle:
+        runs = [item for item in runs if needle in item.run_id.lower()]
     runs.sort(key=lambda item: (item.last_modified, item.run_id), reverse=True)
     total = len(runs)
     truncated = total > limit
@@ -367,6 +373,7 @@ def list_all_runs(
     base_prefix: str = "",
     limit: int = 50,
     exclude: "set[str] | None" = None,
+    contains: str = "",
     s3=None,
 ) -> RunListPage:
     """Discover runs across every category in the bucket generically.
@@ -384,12 +391,12 @@ def list_all_runs(
     categories = discovery_categories(bucket, base_prefix=base_prefix, exclude=exclude, s3=s3)
     if not categories:
         # Flat layout: run_ids sit directly under the root.
-        return list_runs(bucket, prefix=base_prefix, limit=limit, s3=s3)
+        return list_runs(bucket, prefix=base_prefix, limit=limit, contains=contains, s3=s3)
     best: dict[str, RunSummary] = {}
     total = 0
     for category in categories:
         try:
-            page = list_runs(bucket, prefix=category, limit=limit, s3=s3)
+            page = list_runs(bucket, prefix=category, limit=limit, contains=contains, s3=s3)
         except ArtifactDiscoveryError:
             continue
         for run in page.runs:

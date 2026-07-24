@@ -64,7 +64,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072302"
+AGENT_UI_VERSION = "2026072401"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -5566,13 +5566,17 @@ def sim_viz_recordings():
 
 
 @app.get("/artifacts/runs")
-def artifacts_runs(prefix: str = "", limit: int = 50):
+def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
+    # q: case-insensitive substring search over run ids, applied across ALL runs
+    # (every bucket root) before the limit — so old runs beyond the newest `limit`
+    # are still findable by name from the "Find run" box.
     try:
         s3, settings = _agent_s3_client()
+        query = str(q or "").strip()
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
-            page = list_runs(settings["bucket"], prefix=effective_prefix, limit=limit, s3=s3)
-            return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
+            page = list_runs(settings["bucket"], prefix=effective_prefix, limit=limit, contains=query, s3=s3)
+            return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
         # No user prefix: discover runs generically across ALL bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
@@ -5585,9 +5589,10 @@ def artifacts_runs(prefix: str = "", limit: int = 50):
             base_prefix=base,
             limit=limit,
             exclude=_discovery_exclude_roots(),
+            contains=query,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "prefix": base, "base_prefix": base, **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:

@@ -336,3 +336,24 @@ def test_ppm_and_netpbm_are_images_and_need_transcode() -> None:
     for name in ("frame.png", "a.jpg", "b.webp"):
         assert needs_image_transcode(name) is False
     assert render_hint_for_object(key="run/frame.png") == "image"
+
+
+def test_list_runs_contains_search_survives_limit() -> None:
+    # An old run beyond the newest `limit` must still be found by substring search.
+    keys = [(f"cat/run-new-{i:03d}/reports/r.json", f"2026-07-{(i%27)+1:02d}T00:00:00+00:00") for i in range(30)]
+    keys.append(("cat/rtxpro-staged-2x2-old/actions/train/camera-000.ppm", "2026-06-13T01:13:56+00:00"))
+    s3 = _PrefixAwareS3(keys)
+    # Without search, limit=5 returns only the 5 newest → the old run is cut off.
+    page = list_runs("bucket", prefix="cat", limit=5, s3=s3)
+    assert "rtxpro-staged-2x2-old" not in [r.run_id for r in page.runs]
+    # With substring search, the old run is found despite the small limit.
+    page = list_runs("bucket", prefix="cat", limit=5, contains="rtxpro-staged-2x2", s3=s3)
+    assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
+
+
+def test_list_all_runs_contains_search_across_roots() -> None:
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("sim2real-b/rtxpro-staged-2x2-old/actions/train/camera-000.ppm", "2026-06-13T01:13:56+00:00"),
+    ]
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=3, contains="rtxpro-staged", s3=_PrefixAwareS3(layout))
+    assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
