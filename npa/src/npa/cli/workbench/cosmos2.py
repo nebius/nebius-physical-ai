@@ -148,6 +148,14 @@ def transfer_cmd(
         local_input = ""
         if input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT"):
             local_input = _materialize_input_clip(input_video or input_uri)
+        # Env fallbacks let a submit tune conditioning without changing the toolRef argv.
+        control = (os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control)
+        _cw = os.environ.get("NPA_COSMOS_CONTROL_WEIGHT", "").strip()
+        _g = os.environ.get("NPA_COSMOS_GUIDANCE", "").strip()
+        if _cw:
+            control_weight = float(_cw)
+        if _g:
+            guidance = float(_g)
         transfer = run_cosmos_transfer(
             run_id=run_id,
             spec=spec or None,

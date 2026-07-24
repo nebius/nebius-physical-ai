@@ -376,6 +376,20 @@ def build_skypilot_task_doc(
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
         envs["NPA_TASK_IMAGE"] = image.removeprefix("docker:")
+    # Opt-in passthrough: when set at submit, propagate Cosmos input-conditioning
+    # knobs to stage pods so the augment conditions on the run's real input clip
+    # (edge control) instead of the bundled example. Unset by default → no change.
+    import os as _os_cond
+
+    for _cond_var in (
+        "NPA_COSMOS_CONDITION_ON_INPUT",
+        "NPA_COSMOS_CONTROL",
+        "NPA_COSMOS_CONTROL_WEIGHT",
+        "NPA_COSMOS_GUIDANCE",
+    ):
+        _cond_val = str(_os_cond.environ.get(_cond_var) or "").strip()
+        if _cond_val:
+            envs[_cond_var] = _cond_val
 
     doc: dict[str, Any] = {
         "name": scheduler_task["name"],
