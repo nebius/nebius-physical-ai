@@ -206,3 +206,91 @@ def test_materialize_input_clip_local_path(tmp_path: Path) -> None:
     assert _materialize_input_clip(str(clip)) == str(clip)
     assert _materialize_input_clip("") == ""
     assert _materialize_input_clip(str(tmp_path / "missing.mp4")) == ""
+
+
+def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
+    from npa.cli.workbench import cosmos2
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+    assert cosmos2._detect_gpu_count() == 4
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    # Falls back to nvidia-smi (absent in CI) -> at least 1.
+    assert cosmos2._detect_gpu_count() >= 1
+
+
+def test_variant_parallelism_env_override_and_cap(monkeypatch) -> None:
+    from npa.cli.workbench import cosmos2
+
+    monkeypatch.setenv("NPA_COSMOS_VARIANT_PARALLELISM", "4")
+    # Capped at the number of variants so we never spawn idle workers.
+    assert cosmos2._variant_parallelism(2) == 2
+    assert cosmos2._variant_parallelism(8) == 4
+    monkeypatch.delenv("NPA_COSMOS_VARIANT_PARALLELISM", raising=False)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+    assert cosmos2._variant_parallelism(6) == 4
+    assert cosmos2._variant_parallelism(1) == 1
+
+
+def test_run_cosmos_transfer_pins_gpu_and_unique_spec(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "repo"
+    (repo / "examples").mkdir(parents=True)
+    # A default spec the prompt override copies from.
+    spec_path = repo / "spec.json"
+    spec_path.write_text(json.dumps({"prompt": "orig", "video_path": "x"}), encoding="utf-8")
+    _fake_env(monkeypatch, repo)
+
+    seen_env: dict[str, str] = {}
+
+    def fake_run(cmd, *args, **kwargs):  # noqa: ANN001
+        cwd = Path(kwargs["cwd"])
+        out = cmd[cmd.index("-o") + 1]
+        outdir = cwd / out
+        outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / "result.mp4").write_bytes(b"y" * 200_001)
+        seen_env["CUDA_VISIBLE_DEVICES"] = kwargs["env"].get("CUDA_VISIBLE_DEVICES", "")
+        return None
+
+    monkeypatch.setattr(tx.subprocess, "run", fake_run)
+
+    res = tx.run_cosmos_transfer(
+        run_id="run1-v2",
+        spec="spec.json",
+        prompt="a red cloth",
+        cuda_visible_devices="2",
+        variant_tag="run1-v2",
+    )
+    assert seen_env["CUDA_VISIBLE_DEVICES"] == "2"
+    # Variant-tagged patched spec keeps concurrent siblings from clobbering.
+    assert "run1-v2" in res["spec"]
+    assert Path(res["video_path"]).exists()
+
+
+def test_write_run_manifest_records_variant_parallelism(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(tx, "extract_frames", lambda vp, dest, max_frames=8: [])
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            return uri
+
+    storage = FakeStorage()
+    clips = []
+    for i in range(4):
+        video = tmp_path / f"out{i}.mp4"
+        video.write_bytes(b"x" * 200_000)
+        clips.append(
+            tx.publish_transfer_clip(
+                {"video_path": str(video), "video_bytes": 200_000, "spec": f"spec{i}"},
+                "s3://bkt/run1/cosmos_augmented/",
+                run_id="run1",
+                clip_name=f"aug-run1-{i}",
+                variables={"prompt": f"scene {i}"},
+                storage_client=storage,
+            )
+        )
+    manifest = tx.write_run_manifest(
+        clips, "s3://bkt/run1/cosmos_augmented/", run_id="run1",
+        storage_client=storage, variant_parallelism=4,
+    )
+    assert manifest["variant_count"] == 4
+    assert manifest["variant_parallelism"] == 4
+    assert manifest["multiply_mode"] == "multi-variant"

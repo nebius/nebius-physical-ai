@@ -53,6 +53,46 @@ def _env_truthy(name: str) -> bool:
     return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _detect_gpu_count() -> int:
+    """Best-effort count of GPUs visible to this process (>=1).
+
+    Prefers an explicit ``CUDA_VISIBLE_DEVICES`` list, then ``nvidia-smi -L``.
+    Used to auto-parallelize the multiply fan-out (one variant per GPU) so a
+    workflow that requests ``RTXPRO6000:4`` actually drives all four GPUs.
+    """
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if cvd:
+        ids = [x for x in cvd.split(",") if x.strip() != ""]
+        return max(1, len(ids))
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["nvidia-smi", "-L"], capture_output=True, text=True, check=True
+        ).stdout
+        n = len([ln for ln in out.splitlines() if ln.strip().startswith("GPU ")])
+        return max(1, n)
+    except Exception:  # noqa: BLE001 - detection is advisory; default to 1
+        return 1
+
+
+def _variant_parallelism(num_variants: int) -> int:
+    """Resolve how many variant inferences to run concurrently (>=1).
+
+    ``NPA_COSMOS_VARIANT_PARALLELISM`` overrides; otherwise auto-detect the GPU
+    count. Capped at the number of variants so we never spawn idle workers.
+    """
+    override = os.environ.get("NPA_COSMOS_VARIANT_PARALLELISM", "").strip()
+    if override:
+        try:
+            requested = int(override)
+        except ValueError:
+            requested = 1
+    else:
+        requested = _detect_gpu_count()
+    return max(1, min(requested, max(1, int(num_variants))))
+
+
 def _materialize_input_clip(src: str) -> str:
     """Resolve a local path or ``s3://`` URI to a local video file to condition on.
 
@@ -211,10 +251,15 @@ def transfer_cmd(
             combos = _all_augmentations(configs_uri) if configs_uri else []
             if not combos:
                 combos = [{}]
-            clips: list[dict] = []
-            for i, combo in enumerate(combos):
+
+            parallelism = _variant_parallelism(len(combos))
+
+            def _render_variant(i: int, combo: dict) -> dict:
                 variant_run = f"{run_id}-v{i}" if run_id else f"v{i}"
-                transfer = run_cosmos_transfer(
+                # Pin each concurrent variant to a distinct GPU so an N-GPU pod
+                # runs N diffusions at once (sequential when parallelism == 1).
+                device = str(i % parallelism) if parallelism > 1 else None
+                return run_cosmos_transfer(
                     run_id=variant_run,
                     spec=spec or None,
                     prompt=str(combo.get("prompt") or "") or None,
@@ -222,18 +267,42 @@ def transfer_cmd(
                     control=control,
                     control_weight=control_weight,
                     guidance=guidance,
+                    cuda_visible_devices=device,
+                    variant_tag=variant_run,
                 )
+
+            # Fan the GPU-bound diffusions out across the pod's GPUs, then publish
+            # sequentially in combo order (publish/S3 upload stays single-threaded).
+            transfers: list[dict] = [dict() for _ in combos]
+            if parallelism > 1 and len(combos) > 1:
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor(max_workers=parallelism) as pool:
+                    futures = {
+                        pool.submit(_render_variant, i, combo): i
+                        for i, combo in enumerate(combos)
+                    }
+                    for future in futures:
+                        transfers[futures[future]] = future.result()
+            else:
+                for i, combo in enumerate(combos):
+                    transfers[i] = _render_variant(i, combo)
+
+            clips: list[dict] = []
+            for i, combo in enumerate(combos):
                 clip_name = f"aug-{run_id}-{i}" if run_id else f"aug{i}"
                 clips.append(
                     publish_transfer_clip(
-                        transfer,
+                        transfers[i],
                         output_uri,
                         run_id=run_id,
                         clip_name=clip_name,
                         variables=combo,
                     )
                 )
-            manifest = write_run_manifest(clips, output_uri, run_id=run_id)
+            manifest = write_run_manifest(
+                clips, output_uri, run_id=run_id, variant_parallelism=parallelism
+            )
             payload["status"] = "executed"
             payload["output_kind"] = "video"
             payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
@@ -242,6 +311,7 @@ def transfer_cmd(
             payload["frame_count"] = manifest["frame_count"]
             payload["variant_count"] = manifest["variant_count"]
             payload["multiply_mode"] = manifest["multiply_mode"]
+            payload["variant_parallelism"] = manifest["variant_parallelism"]
             payload["clips"] = manifest["clips"]
             payload["augmentation_variables"] = combos[0]
             payload["prompt"] = str((combos[0] or {}).get("prompt") or "")

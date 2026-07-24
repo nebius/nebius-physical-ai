@@ -128,13 +128,15 @@ def ensure_env(repo: Path) -> Path:
     return py
 
 
-def _spec_with_prompt(repo: Path, spec: str, prompt: str) -> str:
+def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:
     """Write a copy of ``spec`` with its text prompt overridden; return its path.
 
     Cosmos controlnet specs carry the text prompt that steers appearance. Patching
     it lets the sampled appearance combo actually condition the diffusion (same
     control video / motion, new look) instead of being a decorative label. The
     copy sits next to the original so relative control-asset paths still resolve.
+    ``tag`` makes the patched filename unique per variant so concurrent multiply
+    fan-out (one inference per GPU) never clobbers a sibling's spec.
     Best-effort: on any failure we fall back to the original spec.
     """
     import json as _json
@@ -145,7 +147,9 @@ def _spec_with_prompt(repo: Path, spec: str, prompt: str) -> str:
         if not isinstance(data, dict):
             return spec
         data["prompt"] = prompt
-        patched = spec_path.with_name("_npa_prompted_" + spec_path.name)
+        safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(tag or ""))
+        prefix = f"_npa_prompted_{safe}_" if safe else "_npa_prompted_"
+        patched = spec_path.with_name(prefix + spec_path.name)
         patched.write_text(_json.dumps(data, indent=2), encoding="utf-8")
         return str(patched.relative_to(repo))
     except Exception:  # noqa: BLE001 - prompt override is best-effort
@@ -163,6 +167,8 @@ def run_cosmos_transfer(
     control: str = DEFAULT_INPUT_CONTROL,
     control_weight: float = 1.0,
     guidance: float = 3.0,
+    cuda_visible_devices: str | None = None,
+    variant_tag: str = "",
 ) -> dict[str, Any]:
     """Run a real Cosmos-Transfer2.5 inference; return the generated video + metadata.
 
@@ -181,6 +187,7 @@ def run_cosmos_transfer(
 
     repo = cosmos_transfer_repo()
     py = ensure_env(repo)
+    tag = str(variant_tag or run_id or "input")
     conditioned_control = ""
     if input_video:
         spec, conditioned_control = _spec_for_input_video(
@@ -190,13 +197,13 @@ def run_cosmos_transfer(
             control=control,
             control_weight=control_weight,
             guidance=guidance,
-            name=run_id or "input",
+            name=tag,
         )
     else:
         spec = spec or os.environ.get("COSMOS_TRANSFER_SPEC", DEFAULT_SPEC)
         prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
         if prompt:
-            spec = _spec_with_prompt(repo, spec, prompt)
+            spec = _spec_with_prompt(repo, spec, prompt, tag=tag)
     out = out_subdir or f"outputs/{run_id or 'transfer'}"
     out_abs = repo / out
     if out_abs.exists():
@@ -205,6 +212,8 @@ def run_cosmos_transfer(
     env = dict(os.environ)
     env["HF_HOME"] = hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
+    if cuda_visible_devices is not None and str(cuda_visible_devices).strip() != "":
+        env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices).strip()
     subprocess.run(
         [str(py), "examples/inference.py", "-i", spec, "-o", out],
         cwd=repo,
@@ -367,11 +376,14 @@ def write_run_manifest(
     *,
     run_id: str = "",
     storage_client: Any = None,
+    variant_parallelism: int = 1,
 ) -> dict[str, Any]:
     """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
     produced by the (possibly multi-variant) augment stage; return the manifest.
 
     ``clips`` are the descriptors returned by :func:`publish_transfer_clip`.
+    ``variant_parallelism`` records how many GPUs the fan-out ran across (1 ==
+    sequential) so provenance can surface the multi-GPU amplification.
     """
 
     if not output_uri.startswith("s3://"):
@@ -395,6 +407,7 @@ def write_run_manifest(
         # "multiply": one Cosmos Transfer 2.5 inference per sampled appearance
         # combo. >1 clips means the run genuinely amplified across scenarios.
         "multiply_mode": "multi-variant" if len(clips) > 1 else "single-variant",
+        "variant_parallelism": max(1, int(variant_parallelism or 1)),
         "augmented_video_uri": first.get("augmented_video_uri", ""),
         "augmented_videos": [c.get("augmented_video_uri", "") for c in clips],
         "frame_count": sum(int(c.get("frame_count", 0) or 0) for c in clips),
