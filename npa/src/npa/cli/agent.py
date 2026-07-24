@@ -209,6 +209,17 @@ def _embedded_agent_actions_source() -> str:
     return raw
 
 
+def _embedded_agent_recordings_source() -> str:
+    """Return agent_recordings.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_recordings.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
 def _embedded_agent_sim2real_loop_source() -> str:
     """Return agent_sim2real_loop.py source embedded into the remote agent backend."""
     import re
@@ -244,6 +255,7 @@ def _shipped_agent_backend_module_source(name: str) -> str:
 
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
+_AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
 _AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
 # Phase G: shipped (uploaded + imported) rather than embedded.
@@ -1802,6 +1814,7 @@ def _bootstrap_agent_stack(
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
     agent_actions_source = _embedded_agent_actions_source()
+    agent_recordings_source = _embedded_agent_recordings_source()
     agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
     agent_semantic_router_source = _embedded_agent_semantic_router_source()
     agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
@@ -3148,18 +3161,38 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     if not isinstance(latest, dict):
         latest = {{}}
     run_id = str(current.get("run_id") or latest.get("run_id") or "").strip()
-    if not run_id.startswith("sim2real-"):
+    if not run_id or run_id == "franka-demo":
         return None
-    candidates = [RECORDINGS_DIR / f"{{run_id}}.rrd", RECORDING_PATH, RRD_PATH]
-    source = next((item for item in candidates if item.is_file() and item.stat().st_size > 65536), None)
+    # Reattach the run's OWN recording by content (run-specific entities), not by
+    # a fragile size threshold — the stock demo is ~68KB and would pass a size
+    # check. Recognize any run id (agent-run-*, sim2real-*, …) and fall back to
+    # the run's local reports/ recording when the run-scoped copy is missing.
+    def _has_run_entities(item):
+        try:
+            return item.is_file() and recording_has_run_entities(item.read_bytes())
+        except Exception:
+            return False
+
+    run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
+    candidates = [
+        run_rec,
+        Path("/opt/npa-agent/runs") / run_id / "reports" / "sim2real.rrd",
+    ]
+    source = next((item for item in candidates if _has_run_entities(item)), None)
     if source is None:
         return None
-    if source != RECORDING_PATH:
-        _publish_rrd_recording(source)
-    if source != RRD_PATH and RECORDING_PATH.is_file():
+    # Ensure a run-scoped copy exists, then publish it as the active recording.
+    if source != run_rec:
+        try:
+            RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, run_rec)
+        except Exception:
+            pass
+    _publish_rrd_recording(run_rec if run_rec.is_file() else source)
+    if RECORDING_PATH.is_file():
         RRD_PATH.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(RECORDING_PATH, RRD_PATH)
-    _restart_rerun_serve(force=False)
+    _restart_rerun_serve(force=True)
     selection = _stock_franka_selection()
     state["selection"] = selection
     cam = (camera or "workspace").strip() or "workspace"
@@ -3558,6 +3591,8 @@ def _chat_with_resilience(
 {_AGENT_CHAT_EMBED}
 
 {_AGENT_ACTIONS_EMBED}
+
+{_AGENT_RECORDINGS_EMBED}
 
 {_AGENT_SIM2REAL_LOOP_EMBED}
 
@@ -4094,14 +4129,36 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
             details["result"] = "completed_missing_report"
             _append_run_log(details, "Runner completed but report file was not found.", level="warn")
         if rrd_path.is_file():
-            _publish_rrd_recording(rrd_path)
+            # Save a run-scoped copy so the run's recording is stable and cannot
+            # be clobbered by a later franka-demo load / bootstrap.
+            run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
             try:
-                shutil.copy2(rrd_path, RRD_PATH)
+                RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(rrd_path, run_rec)
             except Exception:
                 pass
-            _restart_rerun_serve(force=True)
-            _wait_rerun_web_viewer_healthy()
-            _append_run_log(details, f"Published Rerun recording: {{rrd_path}}")
+            # Only serve/claim the recording as run data when it actually holds
+            # run-specific entities — never let the stock franka demo masquerade.
+            try:
+                _run_specific = recording_has_run_entities(rrd_path.read_bytes())
+            except Exception:
+                _run_specific = False
+            if _run_specific:
+                _publish_rrd_recording(rrd_path)
+                try:
+                    shutil.copy2(rrd_path, RRD_PATH)
+                except Exception:
+                    pass
+                _restart_rerun_serve(force=True)
+                _wait_rerun_web_viewer_healthy()
+                _append_run_log(details, f"Published run-specific Rerun recording: {{run_rec}}")
+            else:
+                _append_run_log(
+                    details,
+                    "Run .rrd has no run-specific entities; not marking Rerun ready "
+                    "(refusing to serve the stock demo as run data).",
+                    level="warn",
+                )
         uploaded = []
         try:
             uploaded = _upload_output_tree()
@@ -4120,19 +4177,31 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
     if rrd_path.is_file():
+        try:
+            _run_specific = recording_has_run_entities(rrd_path.read_bytes())
+        except Exception:
+            _run_specific = False
+        run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
+        recording_uri = f"file://{{run_rec}}" if run_rec.is_file() else ""
+        # rerun_ready / rrd_uri only when the recording is genuinely run-specific.
         sim_viz.update(
             {{
                 "run_id": run_id,
                 "stage": "completed",
-                "rrd_uri": f"file://{{RECORDING_PATH}}",
+                "rrd_uri": recording_uri if _run_specific else "",
+                "recording_uri": recording_uri,
                 "rrd_updated_at": _now_iso(),
-                "rerun_ready": RECORDING_PATH.is_file() and _rerun_web_viewer_healthy(),
-                "rerun_iframe_url": _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")),
+                "rerun_ready": bool(_run_specific and RECORDING_PATH.is_file() and _rerun_web_viewer_healthy()),
+                "rerun_iframe_url": (
+                    _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")) if _run_specific else ""
+                ),
                 "camera": str(sim_viz.get("camera") or "workspace"),
             }}
         )
     else:
-        sim_viz.update({{"run_id": run_id, "stage": "completed", "rrd_updated_at": _now_iso()}})
+        sim_viz.update(
+            {{"run_id": run_id, "stage": "completed", "rrd_updated_at": _now_iso(), "rerun_ready": False}}
+        )
     state["sim_viz"] = sim_viz
     _record_sim_viz_run(state, sim_viz)
     _save_state(state)
@@ -5859,9 +5928,28 @@ def tool(tool_ref: str):
         return {{"ok": False, "error": "unknown toolRef", "tool_ref": tool_ref}}
     return {{"ok": True, "tool_ref": tool_ref, **payload}}
 
+def _served_recording_is_run_specific() -> bool:
+    try:
+        return RECORDING_PATH.is_file() and recording_has_run_entities(RECORDING_PATH.read_bytes())
+    except Exception:
+        return False
+
 @app.get("/sim-viz/status")
 def sim_viz_status(run_id: str = ""):
     state = _load_state()
+    # Self-heal: if the active run is a real run but the served recording is the
+    # stock demo (clobbered by a later franka load / bootstrap), reattach the
+    # run's own recording so we never serve/claim the demo as run data.
+    _sv = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
+    _active_run = str(_sv.get("run_id") or "").strip()
+    _target_run = str(run_id or "").strip() or _active_run
+    if _target_run and _target_run != "franka-demo" and not _served_recording_is_run_specific():
+        _cam = str(_sv.get("camera") or "workspace") or "workspace"
+        try:
+            if _wire_active_sim2real_recording(state, camera=_cam) is not None:
+                state = _load_state()
+        except Exception:
+            pass
     payload = _sim_viz_for_run(state, run_id=run_id)
     requested_run = str(run_id or "").strip()
     # Prefer the live sim_viz snapshot when it matches — history can lag behind
@@ -5896,6 +5984,12 @@ def sim_viz_status(run_id: str = ""):
     # Read-only: do not _record/_save here. Concurrent GET status polls were
     # racing load-run and wiping artifact_render from sim_viz_runs.
     payload_run = str(payload.get("run_id") or "").strip()
+    # Honest gate: a real run must not report rerun_ready / a run rrd_uri unless
+    # the served recording actually holds run-specific entities (never the demo).
+    if payload_run and payload_run != "franka-demo" and not _served_recording_is_run_specific():
+        payload["rerun_ready"] = False
+        payload["rrd_uri"] = ""
+        payload["recording_status"] = "run_recording_unavailable"
     run_has_specific_rrd = bool(str(payload.get("rrd_uri") or "").strip())
     live_url = str(payload.get("live_grpc_url") or "").strip()
     may_use_default_recording = payload_run in {"", "franka-demo"} and not requested_run
@@ -7123,6 +7217,7 @@ sudo systemctl restart npa-agent-backend
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
         .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
+        .replace(_AGENT_RECORDINGS_EMBED, agent_recordings_source)
         .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
         .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
         .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)

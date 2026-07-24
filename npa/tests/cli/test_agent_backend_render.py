@@ -81,6 +81,9 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     # Phase B: agent_actions is embedded and the /agent/act route is wired.
     assert "def run_action_loop" in body
     assert "TOOL_ALLOWLIST" in body
+    # Recording identity guard embedded + used to gate rerun_ready (no stock demo).
+    assert "def recording_has_run_entities" in body
+    assert "def _served_recording_is_run_specific" in body
     assert '@app.post("/agent/act")' in body
     # Phase C: sim2real drive orchestration embedded + route wired.
     assert "def drive_sim2real_loop" in body
