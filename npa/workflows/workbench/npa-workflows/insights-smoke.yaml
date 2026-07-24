@@ -1,0 +1,75 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# CPU-only, GPU-free live smoke for the insights tool.
+#
+# Ingests a fixture run prefix (manifests/reports other tools already produced)
+# into the append-only store, compares the ingested run against itself as a
+# sanity check, then emits a dashboard rollup + static HTML. Runnable via
+# `npa workbench workflow run-spec`. See docs/workbench/cookbooks.
+
+metadata:
+  name: insights-smoke
+  description: >
+    CPU-only live smoke: insights ingest-run over a fixture run prefix ->
+    compare -> dashboard, writing a comparison + dashboard artifact to S3 with
+    no GPU and the JSONL store fallback (no LanceDB required).
+
+config:
+  bucket: example-bucket
+  prefix: "insights-smoke/{{run.id}}"
+
+  workflow_name: insights-smoke
+  # ingest-run tags every extracted metric with --workflow-run {{run.id}}, so the
+  # self-check comparison uses that same run id (base == candidate => unchanged).
+  base_run: "{{run.id}}"
+  candidate_run: "{{run.id}}"
+
+  run_prefix_uri: "s3://{{config.bucket}}/insights-fixtures/run/"
+  insights_store_uri: "s3://{{config.bucket}}/{{config.prefix}}/store/"
+  comparison_uri: "s3://{{config.bucket}}/{{config.prefix}}/comparison/"
+  dashboard_uri: "s3://{{config.bucket}}/{{config.prefix}}/dashboard/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+
+initial: ingest
+
+states:
+  ingest:
+    description: Non-invasively ingest the fixture run prefix into the store.
+    toolRef: workbench.insights.ingest_run
+    resources: cpu
+    outputs:
+      - uri: "{{config.insights_store_uri}}records.jsonl"
+        schema: npa.insights.metric_record.v1
+    next: compare
+
+  compare:
+    description: Compare the ingested run against itself as a sanity check.
+    needs: [ingest]
+    toolRef: workbench.insights.compare
+    resources: cpu
+    inputs:
+      - uri: "{{config.insights_store_uri}}records.jsonl"
+        schema: npa.insights.metric_record.v1
+    outputs:
+      - uri: "{{config.comparison_uri}}comparison.json"
+        schema: npa.insights.comparison.v1
+    next: dashboard
+
+  dashboard:
+    description: Roll up the store into a dashboard JSON + static HTML report.
+    needs: [compare]
+    toolRef: workbench.insights.dashboard
+    resources: cpu
+    inputs:
+      - uri: "{{config.insights_store_uri}}records.jsonl"
+        schema: npa.insights.metric_record.v1
+    outputs:
+      - uri: "{{config.dashboard_uri}}dashboard.html"
+        schema: npa.insights.dashboard.v1
+    terminal: true
