@@ -120,8 +120,6 @@ def test_build_run_rrd_logs_pipeline_docs(tmp_path: Path, monkeypatch) -> None:
     pytest.importorskip("rerun")
     import json
 
-    import npa.workflows.data_factory_viz as viz
-
     run = tmp_path / "run"
     _write_png(run / "input" / "video_0_frame_01.png", (10, 20, 30))
     aug = run / "cosmos_augmented" / "aug-0"
