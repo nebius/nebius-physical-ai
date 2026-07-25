@@ -20,25 +20,26 @@ config:
   # deadsnakes PPA (python3.11) supports Ubuntu 22.04 (jammy); JAX CUDA-12 wheels
   # bundle their own CUDA runtime, so a plain Ubuntu base is sufficient.
   base_image: "ubuntu:22.04"
-  # Open Dreamer requires Python 3.11 and a CUDA 12 JAX build. Install a system
-  # python3.11 so the uv-created virtualenv points at a world-readable
-  # interpreter (uv-managed interpreters land under /root and are unreadable by
-  # the non-root runtime user), then `uv sync` the CUDA-12 JAX dependency set.
+  # Open Dreamer requires Python 3.11 and a CUDA 12 JAX build. Use a uv-managed
+  # Python 3.11 installed to a world-readable location (default uv dirs live
+  # under /root, which the non-root runtime user cannot read), create the venv
+  # from it, then `uv sync` the CUDA-12 JAX dependency set. Everything the
+  # runtime `ubuntu` user must execute (interpreter + venv) is chmod a+rX.
   build_command: >
     export DEBIAN_FRONTEND=noninteractive &&
     apt-get update &&
     apt-get install -y --no-install-recommends
-    curl git ca-certificates build-essential software-properties-common &&
-    add-apt-repository -y ppa:deadsnakes/ppa &&
-    apt-get update &&
-    apt-get install -y --no-install-recommends
-    python3.11 python3.11-venv python3.11-dev &&
+    curl git ca-certificates build-essential &&
+    export UV_PYTHON_INSTALL_DIR=/opt/uv/python &&
+    export UV_CACHE_DIR=/opt/uv/cache &&
+    mkdir -p /opt/uv/python &&
     curl -LsSf https://astral.sh/uv/install.sh | sh &&
     export PATH="/root/.local/bin:$PATH" &&
     cd /opt/byof &&
-    uv venv --python /usr/bin/python3.11 /opt/byof/.venv &&
+    uv python install 3.11 &&
+    uv venv --python 3.11 /opt/byof/.venv &&
     (uv sync --frozen || uv sync) &&
-    chmod -R a+rX /opt/byof/.venv &&
+    chmod -R a+rX /opt/byof/.venv /opt/uv/python &&
     /opt/byof/.venv/bin/python -c "import jax, flax, dreamer; print('jax', jax.__version__)"
   workload: solution-smoke
   smoke_command: |
