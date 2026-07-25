@@ -42,11 +42,13 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
-| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-2gpu-20260725T012136Z` (jax 0.10.1, 2×RTX PRO 6000 Blackwell `[cuda:0, cuda:1]`, mesh `{data:2, model:1}`) |
-| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0; checkpoint at `logs/od_tok_smoke/checkpoints`) |
-| Open Dreamer | `coinrun_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` batch `[8,16,64,64,3]` sharded across 2 devices) |
-| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0; checkpoint at `logs/od_dyn_smoke/checkpoints`) |
-| Open Dreamer | `world_model_rerun_visualization` | **accepted** | `byof-open-dreamer-2gpu-20260725T021934Z` (real 400-step tokenizer train on coherent video; 510 KB `.rrd` = 24 obs frames + 4 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
+| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-2gpu-20260725T162359Z` (jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
+| Open Dreamer | `coinrun_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` batch `[32,16,64,64,3]` sharded across 2 devices) |
+| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 6000 steps, `mae_p_max=0.1`; reconstruction legibly tracks the agent — see `gt_decoded`) |
+| Open Dreamer | `dreamer4_latent_tokenization` | **accepted** | Same run (256 real latent records `[64,64,16]` + `latent_stats` encoded by the trained tokenizer) |
+| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 6000 steps on the real latents) |
+| Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; the dream reproduces the agent through the context and the first predicted frames, then degrades over the 24-frame horizon at this bounded dynamics budget) |
+| Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (2.0 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 6 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
 
 ## Native Capabilities Per Container
 
@@ -107,11 +109,18 @@ vs ground truth), not just an under-trained tokenizer recon.
 | --- | --- | --- |
 | `jax_two_gpu_data_parallel_mesh` | accepted hard gate (live) | `dreamer.parallel.build_parallel("data")` `{data:2, model:1}` over 2 `jax.devices()` |
 | `coinrun_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` CoinRun path + device sharding (2 devices) |
-| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer trained to legibility (lower MAE masking), data-parallel across the mesh |
-| `dreamer4_latent_tokenization` | candidate (pending live) | Encode the SAME procedural videos with the trained tokenizer into real latent ArrayRecords + `latent_stats` (replaces random latents) |
-| `dreamer4_dynamics_train_two_gpu` | candidate (pending live) | `scripts/train_dynamics.py` action-conditioned latent dynamics trained on the real encoded latents (core world-model loop) |
-| `dreamer4_action_conditioned_dream_rollout` | candidate (pending live) | `dreamer.sampler.sample_video` rolls out predicted future frames from context + future actions; reports dream PSNR |
-| `world_model_rerun_visualization` | candidate (pending live) | Rerun `.rrd` with synchronized `world/observation` (GT) + `world/dream` (predicted) + `world/gt_decoded` (tokenizer ceiling) + `world/tokenizer_reconstruction` streams, loaded into the agent viewer |
+| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer trained to legibility (6000 steps, `mae_p_max=0.1`), data-parallel across the mesh |
+| `dreamer4_latent_tokenization` | accepted (live) | Encode the SAME procedural videos with the trained tokenizer into real latent ArrayRecords + `latent_stats` (replaces random latents) |
+| `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics trained on the real encoded latents (core world-model loop) |
+| `dreamer4_action_conditioned_dream_rollout` | accepted (live) | `dreamer.sampler.sample_video` rolls out predicted future frames from context + future actions; reports dream PSNR |
+| `world_model_rerun_visualization` | accepted (live) | Rerun `.rrd` with synchronized `world/observation` (GT) + `world/dream` (predicted) + `world/gt_decoded` (tokenizer ceiling) + `world/tokenizer_reconstruction` streams, loaded into the agent viewer |
+
+Dream fidelity note: the tokenizer reconstruction (`gt_decoded`) is legible and the
+dream reproduces the agent through the context and the first predicted frames.
+Sustaining a crisp object across the full autoregressive horizon scales with the
+dynamics training budget (upstream trains ~200k steps); at the bounded smoke
+budget (6000 steps) the dreamed object degrades over the horizon. Increasing
+`OD_DYN_STEPS` (and GPU budget) is the documented path to a fully sustained dream.
 
 Procedural smoke data is an **action-conditioned** sprite-navigation environment
 (the per-frame action selects the agent's velocity, so future frames are truly

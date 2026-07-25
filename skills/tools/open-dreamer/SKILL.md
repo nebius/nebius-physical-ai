@@ -162,6 +162,13 @@ npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py 
 - The smoke ships a tiny CPU profile (`OD_MODE=cpu`, `OD_NUM_WORKERS=0`) that
   runs the whole chain on one CPU device in ~2 min for offline validation; the
   container uses the full 2-GPU profile by default.
+- Dream fidelity scales with the dynamics budget. The tokenizer reconstruction
+  (`gt_decoded`) is legible and the dream reproduces the agent through the
+  context and the first predicted frames; sustaining a crisp object across the
+  whole horizon needs far more dynamics steps than the bounded smoke default
+  (`OD_DYN_STEPS`, upstream trains ~200k). Raise `OD_DYN_STEPS` + GPU budget for
+  a fully sustained dream. Keep the moving object dominant so the tokenizer
+  reconstructs it under full-frame MSE.
 - Batch size `B` must be divisible by the number of devices (mesh `data` axis)
   and by `jax.process_count()`.
 - Full CoinRun generation needs `procgen`+`gym3` (no Python 3.11 wheels); the
