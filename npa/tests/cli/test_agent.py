@@ -765,6 +765,15 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "async function loadVoxelDataset(" in source
     assert "/api/fiftyone/dataset/" in source
     assert 'id="voxelGrid"' in source
+    # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
+    # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
+    # blank when active. Assert panelRerun is fully closed before panelVoxel opens.
+    _rr = source.index('id="panelRerun"')
+    _vx = source.index('id="panelVoxel"')
+    _between = source[_rr:_vx]
+    assert _between.count("<div") == _between.count("</div>"), (
+        "#panelVoxel appears nested inside #panelRerun (div-balance off)"
+    )
     # Loading/viewing an artifact must NOT post a chat message anymore.
     assert 'Loaded artifact `" + String(simViz.artifact_key' not in source
     assert 'Select a run or enter a run_id first' in source
