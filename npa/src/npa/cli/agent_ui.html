@@ -5318,25 +5318,27 @@
           const caption = String((s && s.caption) || "");
           const group = String((s && s.group) || "");
           const label = String((s && s.label) || (s && s.id) || ("sample " + i));
-          const thumbKey = String((s && s.thumbnail_key) || "");
-          const viewKey = String((s && s.video_key) || thumbKey);
+          // Prefer bucket-qualified s3:// URIs so thumbnails/view/download resolve
+          // the correct bucket (runs may live in any accessible bucket).
+          const thumbUri = String((s && s.thumbnail_uri) || "");
+          const viewUri = String((s && s.video_uri) || thumbUri);
           return (
             '<div class="voxel-card" data-group="' + escapeHtml(group) + '">' +
-            '<div class="voxel-thumb" data-thumb-key="' + escapeHtml(thumbKey) + '"><span class="hint">…</span></div>' +
+            '<div class="voxel-thumb" data-thumb-uri="' + escapeHtml(thumbUri) + '"><span class="hint">…</span></div>' +
             '<div class="voxel-meta">' +
             '<div class="voxel-title"><strong>' + escapeHtml(label) + '</strong><span class="pill">' + escapeHtml(group) + "</span></div>" +
             (tagHtml ? '<div class="voxel-tags">' + tagHtml + "</div>" : "") +
             (caption ? '<div class="voxel-caption">' + escapeHtml(caption) + "</div>" : "") +
             '<div class="btn-row" style="margin:6px 0 0;">' +
-            '<button class="btn" type="button" data-vx-action="view" data-key="' + escapeHtml(viewKey) + '">View</button>' +
-            '<button class="btn" type="button" data-vx-action="download" data-key="' + escapeHtml(thumbKey) + '" data-name="' + escapeHtml(label) + '">Download</button>' +
+            '<button class="btn" type="button" data-vx-action="view" data-s3-uri="' + escapeHtml(viewUri) + '">View</button>' +
+            '<button class="btn" type="button" data-vx-action="download" data-s3-uri="' + escapeHtml(thumbUri) + '" data-name="' + escapeHtml(label) + '">Download</button>' +
             "</div></div></div>"
           );
         }).join("");
-        for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-key]")) {
-          const key = String(node.getAttribute("data-thumb-key") || "").trim();
-          if (!key) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
-          const url = "/api/artifacts/download?key=" + encodeURIComponent(key);
+        for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-uri]")) {
+          const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
+          if (!uri) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
+          const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri);
           authenticatedPreviewObjectUrl(url, null).then((src) => {
             node.innerHTML = '<img alt="sample" src="' + src + '" />';
           }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
@@ -5344,13 +5346,13 @@
         grid.querySelectorAll("button[data-vx-action='view']").forEach((btn) => {
           btn.addEventListener("click", (e) => {
             e.preventDefault();
-            loadArtifact({ run_id: voxelDatasetRun, key: String(btn.getAttribute("data-key") || "").trim() });
+            loadArtifact({ run_id: voxelDatasetRun, s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim() });
           });
         });
         grid.querySelectorAll("button[data-vx-action='download']").forEach((btn) => {
           btn.addEventListener("click", (e) => {
             e.preventDefault();
-            downloadArtifact(voxelDatasetRun, String(btn.getAttribute("data-key") || "").trim(), "", String(btn.getAttribute("data-name") || "").trim());
+            downloadArtifact(voxelDatasetRun, "", String(btn.getAttribute("data-s3-uri") || "").trim(), String(btn.getAttribute("data-name") || "").trim());
           });
         });
       }

@@ -2892,6 +2892,21 @@ def _agent_s3_client():
     return client, settings
 
 
+def _agent_s3_buckets(s3, settings) -> list:
+    # Every bucket the agent can access — so runs are discoverable regardless of
+    # which bucket a workflow wrote to (never rely on copying runs into one
+    # bucket). Primary (configured) bucket first, then optional configured extras
+    # (NPA_AGENT_S3_BUCKETS), then everything ListBuckets returns.
+    primary = str(settings.get("bucket") or "")
+    override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
+    extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
+    try:
+        buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
+    except Exception:
+        buckets = [primary] if primary else []
+    return buckets or ([primary] if primary else [])
+
+
 def _chat_memory_tenant() -> str:
     raw = (
         os.environ.get("NEBIUS_TENANT_ID", "")
@@ -6634,16 +6649,18 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         # workflow's runs show without hardcoding any workflow path. Cached the same
         # way (the no-prefix walk is the slowest and the default UI view).
         base = settings.get("prefix", "")
-        page = list_runs_cached(
-            settings["bucket"],
+        # Discover across EVERY accessible bucket (not just the configured one), so
+        # a run is visible no matter which bucket its workflow wrote to.
+        buckets = _agent_s3_buckets(s3, settings)
+        page = list_runs_cached_multi(
+            buckets,
             base_prefix=base,
             limit=limit,
             exclude=_discovery_exclude_roots(),
             contains=query,
             s3=s3,
-            all_categories=True,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -6660,21 +6677,24 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         s3, settings = _agent_s3_client()
         effective_prefix = _artifact_discovery_prefix(settings, prefix)
         artifacts = []
+        run_bucket = settings["bucket"]
         if prefix:
             artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
-        # Generic fallback: locate the run across all category folders under the
-        # run root (no hardcoded workflow path).
+        # Generic fallback: locate the run across EVERY accessible bucket and its
+        # category folders (no hardcoded workflow path, no single-bucket assumption).
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
+            run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
                 run_id=normalized_run,
                 s3=s3,
             )
+            if not run_bucket:
+                run_bucket = settings["bucket"]
         preferred = select_preferred_artifact(artifacts)
         return {{
             "ok": True,
-            "bucket": settings["bucket"],
+            "bucket": run_bucket,
             "prefix": effective_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
@@ -6700,14 +6720,17 @@ def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
     try:
         s3, settings = _agent_s3_client()
         artifacts = []
+        run_bucket = settings["bucket"]
         if prefix:
             artifacts = list_artifacts(
                 settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
             )
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
+            run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
             )
+            if not run_bucket:
+                run_bucket = settings["bucket"]
         wanted = str(stage_key or "").strip()
         stage_arts = [
             a for a in artifacts
@@ -6727,7 +6750,7 @@ def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
                 continue
             rel = k.split("/" + normalized_run + "/", 1)[-1]
             try:
-                body = s3.get_object(Bucket=settings["bucket"], Key=k)["Body"].read()
+                body = s3.get_object(Bucket=run_bucket, Key=k)["Body"].read()
                 info[rel] = json.loads(body)
             except Exception:
                 continue
@@ -6759,15 +6782,17 @@ def fiftyone_dataset(run_id: str, prefix: str = ""):
     try:
         s3, settings = _agent_s3_client()
         artifacts = []
+        bucket = settings["bucket"]
         if prefix:
             artifacts = list_artifacts(
                 settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
             )
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
+            bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
             )
-        bucket = settings["bucket"]
+            if not bucket:
+                bucket = settings["bucket"]
 
         def _read_json(key: str):
             if not key:
@@ -6779,8 +6804,8 @@ def fiftyone_dataset(run_id: str, prefix: str = ""):
                 return None
 
         keys = [str(a.key or "") for a in artifacts]
-        dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json)
-        return {{"ok": True, "run_id": normalized_run, **dataset}}
+        dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json, bucket=bucket)
+        return {{"ok": True, "run_id": normalized_run, "bucket": bucket, **dataset}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -6850,24 +6875,39 @@ def artifact_file(filename: str):
 
 
 @app.get("/artifacts/download")
-def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = ""):
+def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket: str = ""):
     # Direct download of ANY run artifact (every object is downloadable, not just
     # the viewer-loadable ones). Streams the S3 object back with an attachment
     # Content-Disposition so the browser saves it under its real filename. Unlike
-    # /sim-viz/load-artifact this does not mutate viewer state.
+    # /sim-viz/load-artifact this does not mutate viewer state. Bucket resolves
+    # from s3_uri (preferred, bucket-qualified) > explicit bucket param > the
+    # run's bucket (resolved across all accessible buckets) > primary.
     requested_uri = str(s3_uri or "").strip()
     requested_key = str(key or "").strip()
+    requested_bucket = str(bucket or "").strip()
     if not requested_uri and not requested_key:
         raise HTTPException(status_code=400, detail="Provide s3_uri or key")
     try:
         s3, settings = _agent_s3_client()
         if requested_uri:
-            bucket, obj_key = parse_s3_uri(requested_uri)
+            obj_bucket, obj_key = parse_s3_uri(requested_uri)
             uri = requested_uri
         else:
             obj_key = _safe_artifact_key(requested_key)
-            bucket = settings["bucket"]
-            uri = f"s3://{{bucket}}/{{obj_key}}"
+            obj_bucket = requested_bucket or settings["bucket"]
+            if not requested_bucket and str(run_id or "").strip():
+                try:
+                    rb, _arts = find_run_artifacts_across_buckets(
+                        _agent_s3_buckets(s3, settings),
+                        base_prefix=settings.get("prefix", ""),
+                        run_id=validate_run_id(run_id),
+                        s3=s3,
+                    )
+                    if rb:
+                        obj_bucket = rb
+                except Exception:
+                    pass
+            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
         local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
         download_s3_uri(uri, local_path, s3=s3)
         leaf = Path(obj_key).name or "artifact.bin"
@@ -6900,7 +6940,20 @@ def sim_viz_load_artifact(payload: dict | None = None):
         else:
             run_id = validate_run_id(requested_run)
             key = _safe_artifact_key(requested_key)
+            # Resolve the run's bucket across all accessible buckets so a run in a
+            # non-primary bucket still loads (no copy required).
             bucket = settings["bucket"]
+            try:
+                rb, _arts = find_run_artifacts_across_buckets(
+                    _agent_s3_buckets(s3, settings),
+                    base_prefix=settings.get("prefix", ""),
+                    run_id=run_id,
+                    s3=s3,
+                )
+                if rb:
+                    bucket = rb
+            except Exception:
+                pass
             s3_uri = f"s3://{{bucket}}/{{key}}"
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name

@@ -458,3 +458,82 @@ def test_list_runs_cached_prefix_path_matches_list_runs() -> None:
     cached = A.list_runs_cached("bucket", prefix="checkpoints/sim2real-b", limit=50, s3=s3, ttl=1000)
     assert [r.run_id for r in cached.runs] == [r.run_id for r in direct.runs]
     A._run_list_cache_clear()
+
+
+# --- Multi-bucket discovery ---------------------------------------------------
+
+
+def test_list_accessible_buckets_primary_first_deduped() -> None:
+    import npa.workflows.artifacts as A
+
+    class _S3:
+        def list_buckets(self):
+            return {"Buckets": [{"Name": "b2"}, {"Name": "primary"}, {"Name": "b3"}]}
+
+    got = A.list_accessible_buckets(_S3(), primary="primary", extra=["b2"])
+    assert got[0] == "primary"
+    assert got.count("primary") == 1 and got.count("b2") == 1
+    assert set(got) == {"primary", "b2", "b3"}
+
+
+def test_list_accessible_buckets_survives_no_listbuckets_permission() -> None:
+    import npa.workflows.artifacts as A
+
+    class _S3:
+        def list_buckets(self):
+            raise A.BotoCoreError()
+
+    got = A.list_accessible_buckets(_S3(), primary="primary", extra=["x"])
+    assert got == ["primary", "x"]  # falls back to primary/extras only
+
+
+def test_find_run_artifacts_across_buckets_returns_first_match(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    scanned: list[str] = []
+
+    def fake_find(bucket, *, base_prefix, run_id, s3):
+        scanned.append(bucket)
+        if bucket == "b2":
+            return [A.Artifact(run_id, f"byof/{run_id}/x.json", f"s3://b2/byof/{run_id}/x.json", 1, "t", "json", False)]
+        return []
+
+    monkeypatch.setattr(A, "find_run_artifacts", fake_find)
+    bkt, arts = A.find_run_artifacts_across_buckets(["b1", "b2", "b3"], base_prefix="", run_id="run-x", s3=object())
+    assert bkt == "b2" and len(arts) == 1
+    assert arts[0].s3_uri == "s3://b2/byof/run-x/x.json"
+    assert scanned == ["b1", "b2"]  # stops at first match
+
+
+def test_list_all_runs_across_buckets_merges_and_tags(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    def fake_all(bucket, *, base_prefix, limit, exclude, contains, s3):
+        return A.RunListPage(
+            runs=[A.RunSummary(f"run-{bucket}", "2026-06-30T00:00:00+00:00", 1, True)],
+            truncated=False,
+            total_runs=1,
+            limit=limit,
+        )
+
+    monkeypatch.setattr(A, "list_all_runs", fake_all)
+    page = A.list_all_runs_across_buckets(["b1", "b2"], base_prefix="", limit=50, exclude=None, contains="", s3=object())
+    tagged = {(r.bucket, r.run_id) for r in page.runs}
+    assert ("b1", "run-b1") in tagged and ("b2", "run-b2") in tagged
+    assert page.total_runs == 2
+
+
+def test_build_fiftyone_dataset_emits_bucket_qualified_uris() -> None:
+    run = "paidf-demo"
+    base = f"checkpoints/physical-ai-data-factory/{run}"
+    keys = [
+        f"{base}/cosmos_augmented/aug-{run}-0/augmented_video.mp4",
+        f"{base}/cosmos_augmented/aug-{run}-0/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json",
+    ]
+    payloads = {f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {"variables": {"cloth_color": "green"}}}
+    ds = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k), bucket="lerobot-d87cf691")
+    aug = [s for s in ds["samples"] if s["group"] == "augmented"][0]
+    assert aug["thumbnail_uri"].startswith("s3://lerobot-d87cf691/")
+    assert aug["thumbnail_uri"].endswith("frame-00000.png")
+    assert aug["video_uri"].endswith("augmented_video.mp4")

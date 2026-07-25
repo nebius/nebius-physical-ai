@@ -485,6 +485,12 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "#panelVoxel.is-inactive { display: none; }" in source
     # Voxel51 auto-loads the latest run so the tab always shows content.
     assert '/api/artifacts/runs?limit=1' in source
+    # Multi-bucket discovery: the agent searches every accessible bucket (never
+    # relies on copying a run into one bucket).
+    assert "def _agent_s3_buckets(" in source
+    assert "list_accessible_buckets" in source
+    assert "list_runs_cached_multi" in source
+    assert "find_run_artifacts_across_buckets" in source
     # Modern refresh + iOS/desktop friendliness (cascade override layer):
     assert "Modern refresh (2026)" in source
     assert "-webkit-font-smoothing: antialiased" in source

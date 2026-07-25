@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
 import mimetypes
 from pathlib import Path
@@ -100,6 +100,7 @@ class RunSummary:
     last_modified: str
     artifact_count: int
     has_viewable: bool
+    bucket: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +108,7 @@ class RunSummary:
             "last_modified": self.last_modified,
             "artifact_count": self.artifact_count,
             "has_viewable": self.has_viewable,
+            "bucket": self.bucket,
         }
 
 
@@ -428,6 +430,178 @@ def list_all_runs(
     return RunListPage(runs=runs, truncated=truncated, total_runs=total, limit=limit)
 
 
+# --- Multi-bucket discovery ---------------------------------------------------
+# The agent may have access to several buckets (different workflows/projects write
+# to different buckets). Discovery must span every bucket the credentials can see
+# so no run is invisible just because it landed in another bucket — never rely on
+# copying runs into one bucket.
+
+
+def list_accessible_buckets(
+    s3,
+    *,
+    primary: str = "",
+    extra: "list[str] | tuple[str, ...] | None" = None,
+    exclude: "set[str] | None" = None,
+) -> list[str]:
+    """Return the bucket names the agent should search, primary-first.
+
+    Order: the configured primary bucket, any explicitly-configured extras, then
+    every bucket ``ListBuckets`` returns (best-effort — on failure just the
+    primary/extras). ``exclude`` drops names that must never be scanned.
+    """
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    excluded = {str(x).strip() for x in (exclude or set()) if str(x).strip()}
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        value = str(name or "").strip()
+        if value and value not in seen and value not in excluded:
+            seen.add(value)
+            ordered.append(value)
+
+    _add(primary)
+    for name in extra or ():
+        _add(name)
+    try:
+        resp = s3.list_buckets()
+        for entry in resp.get("Buckets", []) or []:
+            _add(str(entry.get("Name") or ""))
+    except (ClientError, BotoCoreError):
+        pass  # No ListBuckets permission — fall back to primary/extras.
+    return ordered
+
+
+def list_all_runs_across_buckets(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    base_prefix: str = "",
+    limit: int = 50,
+    exclude: "set[str] | None" = None,
+    contains: str = "",
+    s3=None,
+) -> RunListPage:
+    """Discover runs across every accessible bucket, latest-first.
+
+    Each bucket is scanned with :func:`list_all_runs` (concurrently), every run
+    tagged with its bucket, then merged and de-duped by ``(bucket, run_id)``.
+    """
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    bucket_list = [str(b).strip() for b in buckets if str(b).strip()]
+    if not bucket_list:
+        return RunListPage(runs=[], truncated=False, total_runs=0, limit=limit)
+
+    def _runs_for_bucket(bucket: str) -> "tuple[str, list[RunSummary], int]":
+        try:
+            page = list_all_runs(
+                bucket, base_prefix=base_prefix, limit=limit, exclude=exclude, contains=contains, s3=s3
+            )
+        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            return bucket, [], 0
+        tagged = [dataclass_replace(run, bucket=bucket) for run in page.runs]
+        return bucket, tagged, page.total_runs
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    max_workers = min(len(bucket_list), 8)
+    if max_workers <= 1:
+        results = [_runs_for_bucket(bucket_list[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_runs_for_bucket, bucket_list))
+
+    merged: dict[tuple, RunSummary] = {}
+    total = 0
+    for _bucket, runs, bucket_total in results:
+        total += int(bucket_total or 0)
+        for run in runs:
+            merged[(run.bucket, run.run_id)] = run
+    ordered = sorted(merged.values(), key=lambda item: (item.last_modified, item.run_id), reverse=True)
+    truncated = len(ordered) > limit
+    if len(ordered) > limit:
+        ordered = ordered[:limit]
+    return RunListPage(runs=ordered, truncated=truncated, total_runs=total, limit=limit)
+
+
+def list_runs_cached_multi(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    base_prefix: str = "",
+    limit: int = 50,
+    exclude: "set[str] | None" = None,
+    contains: str = "",
+    s3=None,
+    ttl: float = DEFAULT_RUN_LIST_TTL,
+    refresh_sync: bool = False,
+) -> RunListPage:
+    """TTL + stale-while-revalidate wrapper over :func:`list_all_runs_across_buckets`."""
+    bucket_list = tuple(str(b).strip() for b in buckets if str(b).strip())
+    key = (
+        "__multi__",
+        bucket_list,
+        base_prefix,
+        int(limit),
+        tuple(sorted(exclude or ())),
+        str(contains or ""),
+    )
+
+    def _compute() -> RunListPage:
+        return list_all_runs_across_buckets(
+            list(bucket_list), base_prefix=base_prefix, limit=limit, exclude=exclude, contains=contains, s3=s3
+        )
+
+    now = time.monotonic()
+    with _RUN_LIST_LOCK:
+        entry = _RUN_LIST_CACHE.get(key)
+    if entry is not None:
+        ts, page = entry
+        if now - ts < ttl:
+            return page
+        _schedule_run_list_refresh(key, _compute, sync=refresh_sync)
+        if refresh_sync:
+            with _RUN_LIST_LOCK:
+                entry = _RUN_LIST_CACHE.get(key)
+            return entry[1] if entry else page
+        return page
+    page = _compute()
+    with _RUN_LIST_LOCK:
+        _RUN_LIST_CACHE[key] = (time.monotonic(), page)
+    return page
+
+
+def find_run_artifacts_across_buckets(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    base_prefix: str = "",
+    run_id: str,
+    s3=None,
+) -> "tuple[str, list[Artifact]]":
+    """Locate a run in the first accessible bucket that contains it.
+
+    Returns ``(bucket, artifacts)``; ``("", [])`` when no bucket has the run.
+    Artifacts carry bucket-qualified ``s3_uri`` so downstream reads/downloads
+    resolve the correct bucket without a copy.
+    """
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    for bucket in buckets:
+        name = str(bucket).strip()
+        if not name:
+            continue
+        try:
+            artifacts = find_run_artifacts(name, base_prefix=base_prefix, run_id=run_id, s3=s3)
+        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            continue
+        if artifacts:
+            return name, artifacts
+    return "", []
+
+
 # --- Run-list cache (TTL + stale-while-revalidate) ----------------------------
 # Discovering the full run list walks every object under every category
 # (O(objects in bucket)); with many workflows and frame-heavy runs (e.g. .ppm
@@ -690,6 +864,7 @@ def build_fiftyone_dataset(
     *,
     run_id: str,
     read_json: Any,
+    bucket: str = "",
 ) -> dict[str, Any]:
     """Assemble a FiftyOne/Voxel51-style sample dataset for a data-factory run.
 
@@ -738,6 +913,12 @@ def build_fiftyone_dataset(
             return str(cap_items[idx].get("caption") or "")
         return ""
 
+    bkt = str(bucket or "").strip()
+
+    def _uri(key: str) -> str:
+        k = str(key or "")
+        return f"s3://{bkt}/{k}" if (bkt and k) else ""
+
     samples: list[dict[str, Any]] = []
     tag_keys: set[str] = set()
     for idx, clip in enumerate(sorted(by_clip)):
@@ -757,7 +938,9 @@ def build_fiftyone_dataset(
                 "id": clip,
                 "label": clip,
                 "thumbnail_key": thumbnail,
+                "thumbnail_uri": _uri(thumbnail),
                 "video_key": entry["video"],
+                "video_uri": _uri(entry["video"]),
                 "tags": tags,
                 "prompt": str(variables.get("prompt") or ""),
                 "caption": _caption_for(clip, idx),
@@ -771,7 +954,9 @@ def build_fiftyone_dataset(
                 "id": name,
                 "label": name,
                 "thumbnail_key": key,
+                "thumbnail_uri": _uri(key),
                 "video_key": "",
+                "video_uri": "",
                 "tags": {},
                 "prompt": "",
                 "caption": "",
