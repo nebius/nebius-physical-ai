@@ -94,7 +94,7 @@ def _cluster_ids(sample_ids: list[str], duplicate_pairs: list[tuple[str, str]]) 
 
 def uniqueness_summary(uniqueness: dict[str, float]) -> dict[str, Any]:
     """Min / max / mean / count summary of per-sample uniqueness scores."""
-    vals = [float(v) for v in uniqueness.values()]
+    vals = [float(v) for v in uniqueness.values() if _is_finite(v)]
     if not vals:
         return {"count": 0, "min": 0.0, "max": 0.0, "mean": 0.0}
     return {
@@ -178,6 +178,7 @@ def merge_curation_into_report(
     visualization: list[dict[str, Any]] | None,
     fields: list[str],
     warn: str = "",
+    uniqueness_method: str = "fiftyone-brain",
 ) -> dict[str, Any]:
     """Merge FiftyOne Brain results into the base (v1) curation report.
 
@@ -203,6 +204,7 @@ def merge_curation_into_report(
         "fields": sorted(fields),
         "brain": {
             "uniqueness": uniqueness_summary(uniqueness),
+            "uniqueness_method": uniqueness_method,
             "near_duplicate_clusters": selection.get("near_duplicate_clusters", []),
             "near_duplicate_count": selection.get("near_duplicate_count", 0),
             "visualization_method": "pca" if visualization else "",
@@ -258,6 +260,41 @@ def _image_embedding(path: str) -> list[float]:
             hist.append(counts / total)
         hist_vec = np.concatenate(hist)
     return np.concatenate([spatial, hist_vec]).astype(np.float64).tolist()
+
+
+def _is_finite(value: Any) -> bool:
+    import math
+
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _embedding_novelty(order: list[str], emb: Any) -> dict[str, float]:
+    """Deterministic per-sample novelty = normalized mean cosine distance to peers.
+
+    Used as a robust fallback when FiftyOne's ``compute_uniqueness`` returns NaN or
+    a degenerate (all-equal) result -- common for very small sample sets. Keeps the
+    curation report meaningful (and JSON-valid, since NaN is not legal JSON).
+    """
+    import numpy as np
+
+    n = int(getattr(emb, "shape", [0])[0]) if emb is not None else 0
+    if n == 0:
+        return {}
+    if n == 1:
+        return {order[0]: 1.0}
+    norm = emb / (np.linalg.norm(emb, axis=1, keepdims=True) + 1e-12)
+    sim = norm @ norm.T
+    np.fill_diagonal(sim, np.nan)
+    dist = 1.0 - np.nanmean(sim, axis=1)
+    lo, hi = float(np.min(dist)), float(np.max(dist))
+    if hi - lo < 1e-12:
+        vals = [0.5] * n
+    else:
+        vals = ((dist - lo) / (hi - lo)).tolist()
+    return {order[i]: round(float(vals[i]), 6) for i in range(n)}
 
 
 def _augmented_representatives(keys: list[str], augment_prefix: str) -> dict[str, dict[str, Any]]:
@@ -354,10 +391,22 @@ def run_curation(
 
         emb = np.asarray(embeddings, dtype=np.float64)
 
+        uniqueness_method = "fiftyone-brain"
         fob.compute_uniqueness(dataset, embeddings=emb, uniqueness_field="uniqueness")
         uniqueness: dict[str, float] = {}
         for sample in dataset:
-            uniqueness[str(sample["clip_id"])] = float(sample["uniqueness"] or 0.0)
+            raw = sample["uniqueness"]
+            uniqueness[str(sample["clip_id"])] = float(raw) if _is_finite(raw) else float("nan")
+        # FiftyOne's uniqueness can be NaN / degenerate for tiny sample sets. Fall
+        # back to a deterministic embedding-based novelty so the report stays
+        # meaningful and JSON-valid (NaN is not legal JSON).
+        finite = [v for v in uniqueness.values() if _is_finite(v)]
+        distinct = {round(v, 9) for v in finite}
+        if len(finite) != len(uniqueness) or (len(uniqueness) > 1 and len(distinct) <= 1):
+            uniqueness = _embedding_novelty(order, emb)
+            uniqueness_method = "embedding-fallback"
+        else:
+            uniqueness = {k: round(float(v), 6) for k, v in uniqueness.items()}
 
         duplicate_pairs: list[tuple[str, str]] = []
         try:
@@ -404,6 +453,7 @@ def run_curation(
             visualization=visualization,
             fields=sorted(fields),
             warn=warn,
+            uniqueness_method=uniqueness_method,
         )
     finally:
         try:

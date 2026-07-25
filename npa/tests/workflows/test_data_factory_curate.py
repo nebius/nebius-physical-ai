@@ -65,6 +65,32 @@ def test_uniqueness_summary_empty_and_populated() -> None:
     assert summ["mean"] == 0.5
 
 
+def test_uniqueness_summary_ignores_non_finite() -> None:
+    summ = dfc.uniqueness_summary({"a": 0.4, "b": float("nan"), "c": 0.6})
+    assert summ["count"] == 2
+    assert summ["min"] == 0.4
+    assert summ["max"] == 0.6
+    assert summ["mean"] == 0.5
+
+
+def test_merge_records_uniqueness_method() -> None:
+    selection = dfc.select_curated(["a"], {"a": 0.5}, [])
+    report = dfc.merge_curation_into_report(
+        {"schema": "npa.fiftyone.curation.v1"},
+        engine=dfc.CURATION_ENGINE_FIFTYONE,
+        fiftyone_version="1.15.0",
+        embedding_kind="rgb16-hist8",
+        dedup_threshold=0.1,
+        uniqueness={"a": 0.5},
+        selection=selection,
+        visualization=None,
+        fields=[],
+        uniqueness_method="embedding-fallback",
+    )
+    assert report["fiftyone"]["brain"]["uniqueness_method"] == "embedding-fallback"
+    assert report["fiftyone"]["brain"]["visualization_method"] == ""
+
+
 def test_merge_curation_into_report_preserves_v1_and_adds_block() -> None:
     base = {
         "schema": "npa.fiftyone.curation.v1",
