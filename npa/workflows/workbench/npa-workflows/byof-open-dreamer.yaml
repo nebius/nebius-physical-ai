@@ -17,8 +17,8 @@ config:
   # Pin to the reviewed commit ("Correct Bibtex") so the smoke is reproducible.
   repo_ref: "2b10640"
   base_profile: ubuntu
-  # deadsnakes PPA (python3.11) supports Ubuntu 22.04 (jammy); JAX CUDA-12 wheels
-  # bundle their own CUDA runtime, so a plain Ubuntu base is sufficient.
+  # Plain Ubuntu base: uv provisions Python 3.11 and JAX CUDA-12 wheels bundle
+  # their own CUDA runtime, so no CUDA devel base image is required.
   base_image: "ubuntu:22.04"
   # Open Dreamer requires Python 3.11 and a CUDA 12 JAX build. Use a uv-managed
   # Python 3.11 installed to a world-readable location (default uv dirs live
