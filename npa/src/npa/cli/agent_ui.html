@@ -1014,6 +1014,31 @@
       .stage-status.not_run { background: #f8fafc; color: #4b6476; border: 1px solid var(--border); }
       .stage-label { font-weight: 700; color: var(--text); }
       .stage-summary { color: var(--muted); margin-top: 2px; line-height: 1.35; }
+      .stage-item.is-selected { background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb; }
+      .stage-detail:empty { display: none; }
+      .stage-detail {
+        margin: 8px 0 0 0;
+        padding: 10px 12px;
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 8px;
+        background: #f8fafc;
+        font-size: 13px;
+      }
+      .stage-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+      .stage-detail-desc { color: #334155; line-height: 1.4; margin: 4px 0 8px; }
+      .stage-detail-info { margin: 6px 0; }
+      .stage-detail-info details { margin: 4px 0; }
+      .stage-detail-info summary { cursor: pointer; }
+      .stage-detail-info pre {
+        max-height: 220px; overflow: auto; background: #0f172a; color: #dbeafe;
+        border-radius: 6px; padding: 8px; font-size: 12px; margin: 4px 0 0;
+      }
+      .stage-detail-artifacts { margin-top: 6px; }
+      .stage-detail-row {
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        padding: 4px 0; border-top: 1px solid var(--border, #e2e8f0);
+      }
+      .stage-detail-row code { color: #0f172a; }
       .run-log {
         margin: 8px 0 0 0;
         max-height: 180px;
@@ -1410,6 +1435,7 @@
           <div id="runDetails" class="run-details">
             <div id="runSummary" class="run-summary"></div>
             <div id="stageList" class="stage-list" aria-label="Workflow stages"></div>
+            <div id="stageDetail" class="stage-detail" aria-live="polite" data-testid="stage-detail"></div>
             <pre id="runLog" class="run-log">No run selected.</pre>
           </div>
         </section>
@@ -5220,6 +5246,84 @@
         };
         return labels[statusClass] || String(statusClass || "Pending");
       }
+      async function showStageDetail(runId, stageKey, stageLabel) {
+        const host = document.getElementById("stageDetail");
+        const rid = String(runId || activeRunId || "").trim();
+        const label = String(stageLabel || stageKey || "stage").trim();
+        if (host) host.innerHTML = '<p class="hint">Describing <strong>' + escapeHtml(label) + '</strong>…</p>';
+        let data = null;
+        try {
+          data = await loadJson(
+            "/api/artifacts/stage/" + encodeURIComponent(rid) +
+            "?stage_key=" + encodeURIComponent(String(stageKey || ""))
+          );
+        } catch (err) {
+          if (host) host.innerHTML = '<p class="preview-error">Stage inspect failed: ' +
+            escapeHtml(String((err && err.message) || err)) + "</p>";
+          return;
+        }
+        const description = String((data && data.description) || "");
+        const artifacts = Array.isArray(data && data.artifacts) ? data.artifacts : [];
+        const info = (data && data.info && typeof data.info === "object") ? data.info : {};
+        // 1) Agent describes the stage (also echoed into chat).
+        if (description) {
+          appendChat("assistant", "**" + label + " stage** — " + description);
+        }
+        // 2) Inline the stage's info/config JSON.
+        const infoKeys = Object.keys(info);
+        const infoHtml = infoKeys.length
+          ? '<div class="stage-detail-info"><strong>Info / config</strong>' + infoKeys.map((k) =>
+              '<details><summary><code>' + escapeHtml(k) + '</code></summary><pre>' +
+              escapeHtml(JSON.stringify(info[k], null, 2)) + "</pre></details>"
+            ).join("") + "</div>"
+          : "";
+        // 3) List the stage's artifacts with View + Download.
+        const artHtml = artifacts.length
+          ? '<div class="stage-detail-artifacts"><strong>' + String(artifacts.length) +
+            " artifact(s)</strong>" + artifacts.map((item) => {
+              const key = String(item.key || "");
+              const render = String(item.render || "download");
+              const s3uri = String(item.s3_uri || "");
+              const base = key.split("/").pop() || key;
+              const actionLabel = render === "rerun" ? "View in Rerun" : (render === "video" ? "Play" : "Load");
+              return '<div class="stage-detail-row"><code title="' + escapeHtml(key) + '">' +
+                escapeHtml(base) + '</code> <span class="pill">' + escapeHtml(render) + "</span>" +
+                ' <button class="btn" type="button" data-sd-action="load" data-run-id="' + escapeHtml(rid) +
+                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '">' + actionLabel + "</button>" +
+                ' <button class="btn" type="button" data-sd-action="download" data-run-id="' + escapeHtml(rid) +
+                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                '" data-name="' + escapeHtml(base) + '">Download</button></div>';
+            }).join("") + "</div>"
+          : '<p class="hint">No artifacts found for this stage.</p>';
+        if (host) {
+          host.innerHTML =
+            '<div class="stage-detail-head"><strong>' + escapeHtml(label) + "</strong>" +
+            ' <span class="pill">' + escapeHtml(String(stageKey || "")) + "</span></div>" +
+            '<p class="stage-detail-desc">' + escapeHtml(description) + "</p>" +
+            infoHtml + artHtml;
+          host.querySelectorAll("button[data-sd-action='load']").forEach((btn) => {
+            btn.addEventListener("click", (event) => {
+              event.preventDefault();
+              loadArtifact({
+                run_id: String(btn.getAttribute("data-run-id") || "").trim(),
+                key: String(btn.getAttribute("data-key") || "").trim(),
+                s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
+              });
+            });
+          });
+          host.querySelectorAll("button[data-sd-action='download']").forEach((btn) => {
+            btn.addEventListener("click", (event) => {
+              event.preventDefault();
+              downloadArtifact(
+                String(btn.getAttribute("data-run-id") || "").trim(),
+                String(btn.getAttribute("data-key") || "").trim(),
+                String(btn.getAttribute("data-s3-uri") || "").trim(),
+                String(btn.getAttribute("data-name") || "").trim()
+              );
+            });
+          });
+        }
+      }
       function renderRunDetails(details) {
         const run = (details && details.run) || details || {};
         const summary = document.getElementById("runSummary");
@@ -5260,7 +5364,8 @@
             const active = idx === activeIdx ? " is-active" : "";
             const stageKey = String(stage.stage_key || "");
             const clickable = stageKey
-              ? ' data-stage-key="' + escapeHtml(stageKey) + '" style="cursor:pointer;" title="View this stage artifacts"'
+              ? ' data-stage-key="' + escapeHtml(stageKey) + '" data-stage-label="' + escapeHtml(label) +
+                '" style="cursor:pointer;" title="Describe this stage and inspect its artifacts"'
               : "";
             return (
               '<div class="stage-item' + active + '"' + clickable + '>' +
@@ -5275,6 +5380,9 @@
           for (const node of stagesHost.querySelectorAll(".stage-item[data-stage-key]")) {
             node.addEventListener("click", async () => {
               const stageKey = String(node.getAttribute("data-stage-key") || "").trim();
+              const stageLabel = String(node.getAttribute("data-stage-label") || stageKey).trim();
+              for (const sib of stagesHost.querySelectorAll(".stage-item")) sib.classList.remove("is-selected");
+              node.classList.add("is-selected");
               const select = document.getElementById("artifactStageFilter");
               if (select) {
                 if (![...select.options].some((o) => o.value === stageKey)) {
@@ -5285,14 +5393,14 @@
                 }
                 select.value = stageKey;
               }
+              // Agent describes the stage + lets you inspect its artifacts/info/configs.
+              await showStageDetail(runId, stageKey, stageLabel);
               try {
                 await loadArtifactsForSelectedRun();
               } catch (err) {
                 const list = document.getElementById("artifactList");
                 if (list) list.textContent = "Load stage artifacts failed: " + String((err && err.message) || err);
               }
-              const list = document.getElementById("artifactList");
-              if (list && list.scrollIntoView) list.scrollIntoView({ behavior: "smooth", block: "start" });
             });
           }
         }

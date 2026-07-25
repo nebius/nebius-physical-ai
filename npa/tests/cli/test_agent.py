@@ -719,6 +719,12 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "data-action=\"download-artifact\"" in source or "data-action='download-artifact'" in source
     assert "async function downloadArtifact(" in source
     assert "/api/artifacts/download?" in source
+    # Clicking a stage describes it and inlines its artifacts/info/configs.
+    assert '@app.get("/artifacts/stage/{{run_id:path}}")' in source
+    assert "async function showStageDetail(" in source
+    assert '/api/artifacts/stage/' in source
+    assert 'id="stageDetail"' in source
+    assert "data-stage-label=" in source
     assert 'Select a run or enter a run_id first' in source
     assert 'No S3 artifacts found for <code>' in source
     assert "Runs &amp; artifacts" in source or "Runs & artifacts" in source

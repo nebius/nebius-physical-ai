@@ -3113,6 +3113,107 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
+def _artifact_stage_key(key: str, run_id: str) -> str:
+    # Derive a run-relative stage key from an object key, mirroring the UI's
+    # client-side derivation so stage selection is consistent both ways.
+    scoped = str(key or "")
+    marker = "/" + str(run_id) + "/"
+    idx = scoped.find(marker)
+    if idx >= 0:
+        scoped = scoped[idx + len(marker):]
+    elif run_id and scoped.startswith(str(run_id) + "/"):
+        scoped = scoped[len(str(run_id)) + 1:]
+    parts = [p for p in scoped.split("/") if p]
+    first = parts[0] if parts else "artifacts"
+    if first == "reports":
+        return "reports"
+    if first == "eval" and len(parts) > 1:
+        return "eval/" + parts[1]
+    if first in ("actions", "vlm_eval", "training_signal", "envs") and len(parts) > 1:
+        return first + "/" + parts[1]
+    return first
+
+
+_STAGE_DESCRIPTIONS = {{
+    "input": (
+        "Input — the run's source clip(s) and frames that the pipeline augments "
+        "(the base footage the augment stage conditions on)."
+    ),
+    "configs": (
+        "Config Generation — samples appearance-only scenario combos "
+        "(lighting/background/surface/color) into manifest.json. Each combo drives "
+        "one Cosmos Transfer inference, so N combos become N scenario variants in "
+        "the multiply fan-out."
+    ),
+    "labeled_original": (
+        "Understand & Annotate — Token Factory VLM dense captions of the SOURCE "
+        "frames (captions.json). These are descriptive labels, NOT the quality "
+        "gate (see the grade stage for the attribute-verify / hallucination check)."
+    ),
+    "cosmos_augmented": (
+        "Augment & Multiply — real Cosmos Transfer 2.5 GPU output: one augmented "
+        "variant per sampled scenario, each under aug-<clip>/ with "
+        "augmented_video.mp4 + frames + metadata.json (the sampled appearance). "
+        "manifest.json records variant_count / multiply_mode / variant_parallelism."
+    ),
+    "grade": (
+        "Evaluate & Validate — the VLM attribute-verification / hallucination check "
+        "(vlm_eval_stub.json: score / threshold / model) plus the quality-gate "
+        "decision.json (promote_checkpoint vs loop_back). This IS the eval, not a "
+        "caption."
+    ),
+    "labeled_augmented": (
+        "Pseudo-Label Augmented — Token Factory VLM captions of the AUGMENTED clips "
+        "(captions.json) so the amplified dataset ships fully labeled."
+    ),
+    "curation": (
+        "Curation — a real dataset report over the augmented + graded set "
+        "(clip/frame counts, per-clip coverage, multiply mode) for FiftyOne / "
+        "Voxel51 review."
+    ),
+    "reports": (
+        "Visualize & Finalize — the embedded Rerun recording (sim2real.rrd) and the "
+        "aggregate final report (final.json) summarizing the whole run."
+    ),
+    "eval/heldout": "Held-out evaluation — simulation eval report for the trained checkpoint.",
+    "actions/train": "Policy rollouts — action rollouts collected on the training envs.",
+    "vlm_eval/train": "VLM eval — VLM scoring of the training rollouts.",
+    "outer_loop": "Decision / outer loop — the promote_checkpoint vs loop_back gate decision.",
+}}
+
+
+_STAGE_LABELS = {{
+    "input": "Input",
+    "configs": "Configs",
+    "labeled_original": "Labeled original",
+    "cosmos_augmented": "Cosmos augmented",
+    "grade": "Grade",
+    "labeled_augmented": "Labeled augmented",
+    "curation": "Curation",
+    "reports": "Reports / visualization",
+    "eval/heldout": "Held-out eval",
+    "actions/train": "Policy rollouts",
+    "vlm_eval/train": "VLM eval",
+    "outer_loop": "Decision / outer loop",
+}}
+
+
+def _stage_label(stage_key: str) -> str:
+    key = str(stage_key or "").strip()
+    if key in _STAGE_LABELS:
+        return _STAGE_LABELS[key]
+    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
+    return cleaned[:1].upper() + cleaned[1:]
+
+
+def _stage_description(stage_key: str, label: str, count: int) -> str:
+    key = str(stage_key or "").strip()
+    desc = _STAGE_DESCRIPTIONS.get(key)
+    if desc:
+        return desc
+    return f"{{label}} — {{count}} artifact(s) discovered under `{{key or 'run'}}`."
+
+
 def _is_sim2real_pipeline_recording(key: str) -> bool:
     return str(key or "").endswith("/reports/sim2real.rrd")
 
@@ -6580,6 +6681,65 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
             "count": len(artifacts),
             "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
+        }}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
+@app.get("/artifacts/stage/{{run_id:path}}")
+def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
+    # Describe one pipeline stage and return its artifacts + inlined info/config
+    # JSON so an operator can click a stage and manually inspect it (grounded in
+    # the run's real S3 objects, no LLM call).
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = []
+        if prefix:
+            artifacts = list_artifacts(
+                settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
+            )
+        if not artifacts:
+            artifacts = find_run_artifacts(
+                settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
+            )
+        wanted = str(stage_key or "").strip()
+        stage_arts = [
+            a for a in artifacts
+            if not wanted or _artifact_stage_key(str(a.key or ""), normalized_run) == wanted
+        ]
+        label = _stage_label(wanted)
+        description = _stage_description(wanted, label, len(stage_arts))
+        # Inline small JSON artifacts (configs, grade, decision, reports, manifest)
+        # so the stage's info/config is inspectable without a second round-trip.
+        info: dict[str, Any] = {{}}
+        for a in stage_arts:
+            k = str(a.key or "")
+            leaf = Path(k).name
+            if not leaf.endswith(".json"):
+                continue
+            if int(getattr(a, "size", 0) or 0) > 65536 or len(info) >= 8:
+                continue
+            rel = k.split("/" + normalized_run + "/", 1)[-1]
+            try:
+                body = s3.get_object(Bucket=settings["bucket"], Key=k)["Body"].read()
+                info[rel] = json.loads(body)
+            except Exception:
+                continue
+        return {{
+            "ok": True,
+            "run_id": normalized_run,
+            "stage_key": wanted,
+            "label": label,
+            "description": description,
+            "count": len(stage_arts),
+            "artifacts": [item.to_dict() for item in stage_arts],
+            "info": info,
         }}
     except HTTPException:
         raise
