@@ -1266,18 +1266,18 @@
         width: 100%;
         justify-content: center;
       }
-      body.mobile-agent .workflow-panel,
-      body.mobile-agent .stages-panel,
-      body.mobile-agent .layout-rerun {
-        display: none;
-      }
-      body.mobile-agent.mobile-show-panels .workflow-panel,
-      body.mobile-agent.mobile-show-panels .stages-panel {
-        display: block;
-      }
-      body.mobile-agent.mobile-show-panels .layout-rerun {
-        display: grid;
-      }
+      /* Tabbed mobile: each tab shows its own content. The Stages panel (run
+         selection + pipeline) shows on the Main tab and the viewer + runs/artifacts
+         rail (.layout-rerun) shows on the Rerun tab, so mobile users can pick runs
+         and see artifacts. Only the desktop-oriented YAML authoring panel stays
+         collapsed by default; the "Panels" toggle reveals it. */
+      body.mobile-agent .workflow-panel { display: none; }
+      body.mobile-agent.mobile-show-panels .workflow-panel { display: block; }
+      body.mobile-agent .layout-rerun { grid-template-columns: 1fr; }
+      body.mobile-agent .rerun-rail { max-height: none; }
+      /* On the Main tab, don't let the chat panel eat the whole screen — leave the
+         Stages / run-selection panel reachable right below the fold. */
+      body.mobile-agent #panelChat .chat-panel { min-height: 52dvh; }
       body.mobile-agent .main-tabs {
         padding: 8px 10px 0;
         gap: 6px;

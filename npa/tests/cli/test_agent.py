@@ -471,6 +471,13 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source
     assert "safe-area-inset-bottom" in source
+    # Mobile tabs must show their own content: the viewer (layout-rerun) on the
+    # Rerun tab and run selection (Stages) on the Main tab — not hidden behind a
+    # global "Panels" toggle. Only the desktop YAML panel stays collapsed.
+    assert "body.mobile-agent .layout-rerun { grid-template-columns: 1fr; }" in source
+    assert "body.mobile-agent .workflow-panel { display: none; }" in source
+    assert "body.mobile-agent #panelChat .chat-panel" in source
+    assert "body.mobile-agent.mobile-show-panels .layout-rerun" not in source
     # Modern refresh + iOS/desktop friendliness (cascade override layer):
     assert "Modern refresh (2026)" in source
     assert "-webkit-font-smoothing: antialiased" in source
