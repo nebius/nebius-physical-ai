@@ -127,10 +127,14 @@ config:
         vx, vy = vels[action_class % len(vels)]
         cr, cg, cb = colors[action_class % len(colors)]
         video = np.zeros((T, H, W, C), dtype=np.uint8)
-        # Faint static gradient background.
-        gy = np.linspace(10, 45, H, dtype=np.uint8)[:, None]
-        gx = np.linspace(10, 45, W, dtype=np.uint8)[None, :]
-        bg = np.stack([gy + gx, gy, gx + gy], axis=-1).astype(np.uint8)
+        # Faint static gradient background (broadcast each channel to H x W).
+        gy = np.linspace(10, 45, H, dtype=np.float32)[:, None]
+        gx = np.linspace(10, 45, W, dtype=np.float32)[None, :]
+        bg = np.clip(np.stack([
+            np.broadcast_to(gy + gx, (H, W)),
+            np.broadcast_to(gy, (H, W)),
+            np.broadcast_to(gx, (H, W)),
+        ], axis=-1), 0, 255).astype(np.uint8)
         y, x = int(rng.integers(10, H - 20)), int(rng.integers(10, W - 20))
         s = 12
         for t in range(T):

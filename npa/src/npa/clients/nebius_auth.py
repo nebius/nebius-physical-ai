@@ -40,6 +40,20 @@ class NebiusTokenError(RuntimeError):
     """Raised when a fresh Nebius IAM token cannot be obtained."""
 
 
+def strip_ambient_token_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a copy of ``env`` with ambient Nebius token vars removed.
+
+    A stale/ambient ``NEBIUS_IAM_TOKEN`` poisons *any* nebius-authenticated
+    subprocess, not just token minting: ``kubectl`` and ``sky`` use the nebius
+    exec-credential plugin, which prefers the env token and fails with
+    "Invalid token" when it is stale. Run those subprocesses with this cleaned
+    env so the plugin re-authenticates via the configured profile / SA metadata.
+    """
+
+    source = os.environ if env is None else env
+    return {k: v for k, v in source.items() if k not in AMBIENT_TOKEN_ENVS}
+
+
 def nebius_profile(env: dict[str, str] | None = None) -> str:
     """Return the configured Nebius CLI profile name, or ``""`` when unset."""
 
@@ -77,7 +91,7 @@ def mint_nebius_iam_token(
     base_env = dict(os.environ if env is None else env)
     # Strip ambient tokens so the CLI performs a real profile-scoped exchange
     # instead of echoing (or refusing to use) the inherited token.
-    exchange_env = {k: v for k, v in base_env.items() if k not in AMBIENT_TOKEN_ENVS}
+    exchange_env = strip_ambient_token_env(base_env)
 
     resolved_profile = (profile if profile is not None else nebius_profile(base_env)).strip()
     cmd = [nebius_cli]

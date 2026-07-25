@@ -56,6 +56,16 @@ def test_falls_back_to_ambient_token_when_cli_fails(monkeypatch: pytest.MonkeyPa
     assert mint_nebius_iam_token() == "ambient-fallback-token"
 
 
+def test_strip_ambient_token_env_removes_token_vars() -> None:
+    cleaned = nebius_auth.strip_ambient_token_env(
+        {"NEBIUS_IAM_TOKEN": "x", "NEBIUS_IAM_TOKEN_FILE": "/f", "KUBECONFIG": "/k", "PATH": "/bin"}
+    )
+    assert "NEBIUS_IAM_TOKEN" not in cleaned
+    assert "NEBIUS_IAM_TOKEN_FILE" not in cleaned
+    assert cleaned["KUBECONFIG"] == "/k"
+    assert cleaned["PATH"] == "/bin"
+
+
 def test_raises_when_no_token_available(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
     monkeypatch.delenv("NEBIUS_IAM_TOKEN_FILE", raising=False)

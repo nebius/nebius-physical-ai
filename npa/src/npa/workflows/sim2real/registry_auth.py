@@ -8,7 +8,7 @@ import os
 import subprocess
 from typing import Any
 
-from npa.clients.nebius_auth import mint_nebius_iam_token
+from npa.clients.nebius_auth import mint_nebius_iam_token, strip_ambient_token_env
 
 
 def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
@@ -78,7 +78,10 @@ def ensure_nebius_registry_pull_secret(
     if k8s_context:
         cmd.extend(["--context", k8s_context])
     cmd.extend(["-n", namespace, "apply", "-f", "-"])
-    env = dict(os.environ)
+    # Strip any ambient/stale NEBIUS_IAM_TOKEN so kubectl's nebius exec-credential
+    # plugin re-authenticates via the configured profile instead of failing with
+    # "Invalid token" (otherwise the pull-secret apply silently no-ops).
+    env = strip_ambient_token_env(os.environ)
     if kubeconfig:
         env["KUBECONFIG"] = kubeconfig
     proc = subprocess.run(

@@ -43,8 +43,10 @@ def test_ensure_nebius_registry_pull_secret_applies_secret(
 
     def fake_run(cmd, **kwargs):
         captured["input"] = kwargs.get("input", "")
+        captured["env"] = kwargs.get("env")
         return MagicMock(returncode=0, stdout="", stderr="")
 
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-ambient-token")
     monkeypatch.setattr("npa.workflows.sim2real.registry_auth.subprocess.run", fake_run)
     ensure_nebius_registry_pull_secret(
         registry_server="cr.eu-north1.nebius.cloud",
@@ -52,6 +54,9 @@ def test_ensure_nebius_registry_pull_secret_applies_secret(
     )
     payload = json.loads(captured["input"])
     assert payload["metadata"]["name"] == "npa-nebius-registry"
+    # kubectl must not inherit the stale ambient token (else it 'Invalid token's).
+    kubectl_env = captured["env"] or {}
+    assert "NEBIUS_IAM_TOKEN" not in kubectl_env
 
 
 def test_refresh_registry_pull_secret_helper_forwards_k8s_context(
