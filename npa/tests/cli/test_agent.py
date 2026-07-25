@@ -514,13 +514,14 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
         "chatActionS3",
         "chatActionCosmos",
         "chatActionWatch",
-        "loadFrankaRerun",
         "openRerun",
-        "applySelection",
-        "submitWorkflow",
         "workflowStatus",
     ):
         assert f'bindClick("{control_id}"' in source
+    # The Selection / Scene-mode section was removed (viewer just shows run
+    # artifacts now); its controls must no longer be wired or present.
+    for removed_id in ("loadFrankaRerun", "applySelection", "submitWorkflow"):
+        assert f'bindClick("{removed_id}"' not in source
     assert 'id="chatForm"' in source
     assert "chatForm.addEventListener(\"submit\"" in source
     assert "await apiJson(\"/api/chat\"" in source
@@ -598,8 +599,13 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "_generate_franka_demo_rrd" in source
     assert "_log_franka_robot_geometry" in source
     assert "robot/franka/links" in source
-    assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
+    # Selection / Scene-mode section removed from the viewer tab.
+    assert 'id="sceneMode"' not in source
+    assert 'id="robotPreset">' not in source
+    assert "Apply stock selection" not in source
+    assert "Load active Sim2Real in Rerun" not in source
+    assert '<label class="pill"><input id="propCube"' not in source
     assert "class=\"panel rerun-panel rerun-stage\"" in source or 'class="panel rerun-panel rerun-stage"' in source
     assert ".layout-rerun {{" in source or ".layout-rerun {" in source
     assert "cameras-panel" not in source
@@ -949,7 +955,6 @@ def test_bootstrap_system_prompt_no_localhost() -> None:
 
     source = _agent_ui_bundle()
     assert "Never suggest localhost" in source
-    assert "Load active Sim2Real in Rerun" in source
     assert "/api/sim-viz/load-franka-demo" in source
     assert "localhost:8080" not in source.split("_agent_system_prompt")[1].split("return")[0]
 

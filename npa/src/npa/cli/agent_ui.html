@@ -1669,51 +1669,6 @@
               <div id="artifactProvenance" class="artifact-provenance" aria-live="polite"></div>
               <div id="artifactList" class="artifact-list" aria-live="polite"></div>
             </div>
-            <div class="subsection">
-              <h4>Selection</h4>
-              <div class="field-row">
-                <div class="field">
-                  <label for="sceneMode">Scene mode</label>
-                  <select id="sceneMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="byo_mesh">byo_mesh</option>
-                    <option value="scene_spec">scene_spec</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="robotPreset">Robot preset</label>
-                  <select id="robotPreset">
-                    <option value="franka" selected>stock_franka</option>
-                    <option value="ur5e">preset:ur5e</option>
-                  </select>
-                </div>
-              </div>
-              <div class="field-row" style="margin-top:8px;">
-                <div class="field">
-                  <label for="cameraMode">Camera mode</label>
-                  <select id="cameraMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="custom">custom</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="simBackend">Sim backend</label>
-                  <select id="simBackend">
-                    <option value="isaac" selected>isaac</option>
-                    <option value="genesis">genesis</option>
-                  </select>
-                </div>
-              </div>
-              <div class="pill-list" style="margin-top:8px;">
-                <label class="pill"><input id="propCube" type="checkbox" checked> cube</label>
-              </div>
-              <div id="assetsSummary" class="hint" style="margin-top:8px;"></div>
-              <div class="btn-row" style="margin-top:8px;">
-                <button id="applySelection" class="btn" type="button">Apply stock selection</button>
-                <button id="loadFrankaRerun" class="btn" type="button">Load active Sim2Real in Rerun</button>
-                <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
-              </div>
-            </div>
             <select id="cameraSelect" hidden aria-hidden="true">
               <option value="workspace" selected>workspace</option>
             </select>
@@ -2204,14 +2159,11 @@
         bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
         bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
-        bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
         bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
         bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
-        bindClick("applySelection", applySelection, "Apply stock selection");
-        bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
         bindClick("workflowStatus", showWorkflowStatus, "Workflow status");
         bindClick("loadRunData", loadRunData, "Load run data");
         const chatInput = document.getElementById("chatInput");
@@ -5388,17 +5340,22 @@
             hideArtifactPreview();
           }
           if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {
-            showRerunPlaceholder("Waiting for .rrd data. Click Load Franka in Rerun or submit Sim2Real.");
+            showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
           } else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {
-            showRerunPlaceholder("Rerun is ready. Click Reload Rerun data or Load Franka in Rerun.");
+            showRerunPlaceholder("Select a run and load its artifacts to view them here.");
           }
+          // The Selection controls were removed; only sync them if still present.
           const robotPreset = document.getElementById("robotPreset");
-          if (assets.selection && assets.selection.robot_preset) {
+          if (robotPreset && assets.selection && assets.selection.robot_preset) {
             robotPreset.value = String(assets.selection.robot_preset);
           }
-          document.getElementById("simBackend").value = String((assets.selection && assets.selection.sim_backend) || "isaac");
+          const simBackendEl = document.getElementById("simBackend");
+          if (simBackendEl) {
+            simBackendEl.value = String((assets.selection && assets.selection.sim_backend) || "isaac");
+          }
           const props = Array.isArray(assets.selection && assets.selection.props) ? assets.selection.props.map(String) : [];
-          document.getElementById("propCube").checked = props.includes("cube");
+          const propCubeEl = document.getElementById("propCube");
+          if (propCubeEl) propCubeEl.checked = props.includes("cube");
           const select = document.getElementById("cameraSelect");
           if (select) {
             const activeName = String(simViz.camera || select.value || "workspace");
@@ -5459,7 +5416,9 @@
         const backend = String(selection.sim_backend || "isaac");
         const props = Array.isArray(selection.props) ? selection.props : [];
         const propsText = props.length ? props.join(", ") : "none";
-        document.getElementById("assetsSummary").innerHTML =
+        const assetsSummaryEl = document.getElementById("assetsSummary");
+        if (!assetsSummaryEl) return;  // Selection panel removed — nothing to render.
+        assetsSummaryEl.innerHTML =
           "<div><span class='pill'>scene: " + escapeHtml(scene) + "</span></div>" +
           "<div style='margin-top:6px;'><span class='pill'>robot: " + escapeHtml(robot) + "</span></div>" +
           "<div style='margin-top:6px;'><span class='pill'>cameras: " + escapeHtml(cameras) + "</span></div>" +
@@ -5468,17 +5427,25 @@
           "<div style='margin-top:6px;'>resolved scene URI: <code>" + escapeHtml(String(resolved.scene_spec_uri || scene)) + "</code></div>";
       }
       function selectionPayloadFromUi() {
-        const robotPreset = String(document.getElementById("robotPreset").value || "franka");
-        const sceneMode = String(document.getElementById("sceneMode").value || "stock");
-        const cameraMode = String(document.getElementById("cameraMode").value || "stock");
-        const backend = String(document.getElementById("simBackend").value || "isaac");
+        // The Selection / Scene-mode controls were removed (the viewer just shows
+        // run artifacts now). Fall back to stock defaults so any remaining callers
+        // keep working without those DOM elements.
+        const val = (id, dflt) => {
+          const el = document.getElementById(id);
+          return String((el && el.value) || dflt);
+        };
+        const robotPreset = val("robotPreset", "franka");
+        const sceneMode = val("sceneMode", "stock");
+        const cameraMode = val("cameraMode", "stock");
+        const backend = val("simBackend", "isaac");
+        const cubeEl = document.getElementById("propCube");
         return {
           scene_spec_uri: sceneMode === "stock" ? "stock://scene/default" : "",
           robot_spec_uri: robotPreset === "franka" ? "stock://robot/franka" : "",
           cameras_uri: cameraMode === "stock" ? "stock://cameras/default" : "",
           robot_preset: robotPreset,
           sim_backend: backend,
-          props: document.getElementById("propCube").checked ? ["cube"] : []
+          props: (cubeEl && cubeEl.checked) ? ["cube"] : []
         };
       }
       function fillRunSelectOptions(select, runs, current) {
@@ -5919,10 +5886,11 @@
           setStatus("Waiting for run recording…");
           return "pending-run";
         }
-        setStatus("Loading Franka demo...");
-        showToast("Loading stock Franka in Rerun", "info");
-        await loadFrankaDemo();
-        return "demo";
+        // No active run: just show run artifacts, not the stock Franka/cube demo.
+        // (The demo is still reachable on demand via chat "load franka".)
+        showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
+        setStatus("Ready");
+        return "placeholder";
       }
       async function bootPage() {
         rerunBootInProgress = true;
@@ -5959,7 +5927,10 @@
             await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
             const mountMode = await ensureFrankaRerunLoaded();
             const iframe = document.getElementById("rerunFrame");
-            if (!safeHideRerunBundleCover(iframe)) {
+            if (mountMode === "placeholder") {
+              // Nothing mounted (viewer just shows artifacts) — drop the cover now.
+              hideRerunBundleCover();
+            } else if (!safeHideRerunBundleCover(iframe)) {
               // Background uncover waits for non-blank canvas — never flash Rerun splash.
               showRerunBundleCover("Opening viewer…", "Almost ready…");
               scheduleRerunBundleUncover(iframe).catch(() => {
@@ -5980,7 +5951,7 @@
           if (document.body.classList.contains("mobile-agent")) {
             setStatus("Ready");
           } else {
-            showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
+            showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
             showToast(String(err && err.message ? err.message : err), "error");
             setStatus("Ready");
           }
