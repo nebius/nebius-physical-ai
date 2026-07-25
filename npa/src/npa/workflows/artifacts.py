@@ -536,10 +536,13 @@ def list_runs_cached_multi(
     exclude: "set[str] | None" = None,
     contains: str = "",
     s3=None,
-    ttl: float = DEFAULT_RUN_LIST_TTL,
+    ttl: "float | None" = None,
     refresh_sync: bool = False,
 ) -> RunListPage:
     """TTL + stale-while-revalidate wrapper over :func:`list_all_runs_across_buckets`."""
+    # DEFAULT_RUN_LIST_TTL is defined below this block; resolve at call time.
+    if ttl is None:
+        ttl = DEFAULT_RUN_LIST_TTL
     bucket_list = tuple(str(b).strip() for b in buckets if str(b).strip())
     key = (
         "__multi__",
