@@ -134,6 +134,20 @@ npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)
   plus a run-level `cosmos_augmented/manifest.json`.   `curate` counts clip
   subdirs (not top-level files) and `build_run_rrd` reads each clip's
   `metadata.json` for its Rerun label. Producer and consumers share this shape;
+- **Real FiftyOne curation (Voxel51):** the `curate` stage runs *real* FiftyOne
+  Brain curation over the augmented variants when FiftyOne is importable (i.e. the
+  stage runs in the `npa-fiftyone` image): `data_factory_stages.curate` delegates
+  to `data_factory_curate.run_curation`, which builds a `fiftyone.Dataset`,
+  computes a GPU-free per-variant embedding (downsampled RGB + color histogram),
+  and runs `compute_uniqueness` + `compute_similarity().find_duplicates()` +
+  `compute_visualization(method="pca")`. The report gains `curation_engine:
+  fiftyone-brain`, per-variant `uniqueness`, near-duplicate clusters, and a
+  kept/dropped `selection` (schema stays `npa.fiftyone.curation.v1` — new fields
+  are additive). Outside the image (unit tests, dev-VM worktree python) it
+  degrades to the report-only counts path (`curation_engine: report-only`). Run it
+  standalone with `npa workbench fiftyone curate-augmented --augment-uri ...
+  --report-uri ...`. The agent's Voxel51 tab surfaces uniqueness + kept/dropped
+  per card and curation stats in the summary (`build_fiftyone_dataset`).
   `test_publish_transfer_layout_interoperates_with_curate_and_viz` guards it. The
   augment stage "multiplies": it runs one inference per sampled combo and emits
   one clip dir per variant (`publish_transfer_clip` per clip + a single

@@ -1404,8 +1404,10 @@ def _data_factory_spec() -> dict[str, Any]:
                 "curate": OrderedDict(
                     {
                         "description": (
-                            "Stage 4 - Curation. Build a real curation report over the augmented "
-                            "+ graded set for Voxel51/FiftyOne review."
+                            "Stage 4 - Curation (Voxel51 / FiftyOne). Run real FiftyOne Brain "
+                            "curation over the augmented + graded variants (uniqueness + "
+                            "near-duplicate detection + keep/drop) when run in the npa-fiftyone "
+                            "image, else degrade to the report-only counts path."
                         ),
                         "needs": ["annotate-augmented"],
                         "resources": "cpu",

@@ -88,6 +88,55 @@ def check_query_dataset(state: SmokeState) -> CheckResult:
         return CheckResult("query sample dataset", False, _format_exception(exc))
 
 
+def check_brain_curation(state: SmokeState) -> CheckResult:
+    """Validate real FiftyOne Brain curation with precomputed embeddings.
+
+    This is the exact pattern the Physical AI Data Factory ``curate`` stage uses:
+    per-sample embeddings drive ``compute_uniqueness`` + ``compute_similarity``
+    (near-duplicate detection) + ``compute_visualization`` (2D), all GPU-free. It
+    guards that this image ships the deps (fiftyone-brain, scikit-learn, numpy)
+    needed to actually curate, not just view.
+    """
+    if state.dataset is None:
+        return CheckResult("brain curation (uniqueness/similarity/visualization)", False, "no dataset")
+    try:
+        import fiftyone.brain as fob
+        import numpy as np
+
+        dataset = state.dataset
+        n = len(dataset)
+        rng = np.random.default_rng(0)
+        # Distinct embeddings so uniqueness/duplicates are well defined; make two
+        # rows near-identical to exercise near-duplicate detection.
+        emb = rng.normal(size=(n, 16)).astype(np.float64)
+        if n >= 2:
+            emb[1] = emb[0] + 1e-6
+        fob.compute_uniqueness(dataset, embeddings=emb, uniqueness_field="uniqueness")
+        got_uniqueness = all(s["uniqueness"] is not None for s in dataset)
+
+        sim = fob.compute_similarity(dataset, embeddings=emb, backend="sklearn", brain_key="smoke_sim")
+        sim.find_duplicates(thresh=0.1)
+        n_dupes = len(getattr(sim, "neighbors_map", {}) or {})
+
+        viz = fob.compute_visualization(dataset, embeddings=emb, method="pca", brain_key="smoke_viz")
+        points = getattr(viz, "points", None)
+        got_points = points is not None and len(points) == n
+
+        if not (got_uniqueness and got_points):
+            return CheckResult(
+                "brain curation (uniqueness/similarity/visualization)",
+                False,
+                f"uniqueness={got_uniqueness}; points={got_points}; dupe_groups={n_dupes}",
+            )
+        return CheckResult(
+            "brain curation (uniqueness/similarity/visualization)",
+            True,
+            f"uniqueness+similarity+visualization ok; dupe_groups={n_dupes}",
+        )
+    except Exception as exc:
+        return CheckResult("brain curation (uniqueness/similarity/visualization)", False, _format_exception(exc))
+
+
 def check_launch_app(state: SmokeState) -> CheckResult:
     if state.dataset is None:
         return CheckResult("launch and stop app server", False, "skipped because dataset creation failed")
@@ -159,6 +208,7 @@ def main() -> int:
         check_fiftyone_version,
         check_create_dataset,
         check_query_dataset,
+        check_brain_curation,
         check_launch_app,
     ]
     results = []

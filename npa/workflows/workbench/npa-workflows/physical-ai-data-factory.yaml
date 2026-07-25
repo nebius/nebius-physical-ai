@@ -229,8 +229,13 @@ states:
 
   curate:
     description: >
-      Stage 4 - Curation. Build a real curation report over the augmented + graded
-      set (clip/frame counts, per-clip coverage, dedup) for Voxel51/FiftyOne review.
+      Stage 4 - Curation (Voxel51 / FiftyOne). Run REAL FiftyOne Brain curation
+      over the augmented + graded scenario variants: build a fiftyone.Dataset,
+      compute per-variant uniqueness, detect near-duplicates, and record which
+      variants are kept vs dropped, plus clip/frame counts and per-clip coverage.
+      When FiftyOne is available (the curate stage runs in the npa-fiftyone image)
+      the report's curation_engine is "fiftyone-brain"; otherwise it degrades to
+      the report-only counts path so the pipeline never regresses.
     needs: [annotate-augmented]
     resources: cpu
     inputs:
