@@ -238,6 +238,50 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 Follow-up: full / debug `train.py` once data is staged.
 
+### Open Dreamer (`byof-open-dreamer.yaml`)
+
+Pinned: `next-state/open-dreamer` `2b10640` · base `ubuntu` + system `python3.11`
++ `uv sync` (CUDA-12 JAX/Flax). This is a **world-model** solution (a JAX/Flax
+Dreamer 4 pipeline) and the reference example for the multi-GPU BYOF path: its
+accepted capability requires a genuine **>=2 GPU** device mesh, so it uses the
+`byof-solution-smoke-rtxpro-2gpu.yaml` resource profile
+(`RTXPRO-6000-BLACKWELL-SERVER-EDITION:2`) instead of the single-GPU profile.
+
+Hard-gate capabilities (both must pass):
+
+- `jax_two_gpu_data_parallel_mesh` (`dreamer.parallel.build_parallel("data")`
+  builds a `{data: 2, model: 1}` mesh over `jax.devices()`; fails on <2 GPUs)
+- `dreamer4_tokenizer_train_two_gpu` (real `scripts/train_tokenizer.py`
+  entrypoint trains the causal video tokenizer sharded across the mesh on
+  synthetic CoinRun ArrayRecord shards)
+
+Also exercised in the same smoke:
+
+- `coinrun_video_dataloader` (real `dreamer.data.build_iterator` + device
+  sharding on synthetic CoinRun data)
+- `dreamer4_dynamics_train_two_gpu` (attempted action-conditioned latent
+  dynamics step via `scripts/train_dynamics.py`; the core Dreamer world-model
+  loop — may remain deferred at tiny smoke sizes)
+
+Synthetic data note: CoinRun records are written as raw `pickle` bytes (the
+format `ProcessEpisodeAndSlice`/`EpisodeLengthFilter` read), not through
+`ShardWriter` (which serializes msgpack). Latent records use
+`serialize_msgpack_record` with the minecraft `latent` action layout (27 binary
+/ 121 categorical) required by `train_dynamics.py`.
+
+Follow-up: full CoinRun/procgen data generation, offline tokenization
+(`scripts/tokenize_minecraft_dataset.py`), and FVD evaluation
+(`scripts/eval_fvd.py`) once a real ArrayRecord dataset is staged.
+
+### Multi-GPU solutions
+
+When a solution's accepted capability is only meaningful across multiple GPUs
+(distributed / sharded / model-parallel training, multi-GPU inference), request
+`>=2` accelerators through a dedicated resource profile
+(`byof-solution-smoke-rtxpro-2gpu.yaml`) and make a "device mesh sees N GPUs"
+check a hard gate so a single-GPU scheduling fallback cannot masquerade as a
+passing multi-GPU run. Open Dreamer is the reference example.
+
 ## Capability Discovery Procedure
 
 1. **Read upstream docs first.**

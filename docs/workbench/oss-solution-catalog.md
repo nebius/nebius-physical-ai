@@ -21,6 +21,7 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `policy_config_materialization` | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
+| Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 
 ## Live capability results
 
@@ -41,6 +42,10 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
+| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **pending** | 2-GPU live run in progress on `npa-rtxpro-mk8s` |
+| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **pending** | 2-GPU live run in progress (`scripts/train_tokenizer.py`) |
+| Open Dreamer | `coinrun_video_dataloader` | **pending** | 2-GPU live run in progress (`dreamer.data.build_iterator`) |
+| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **pending (attempted)** | 2-GPU live run in progress (`scripts/train_dynamics.py`) |
 
 ## Native Capabilities Per Container
 
@@ -85,6 +90,26 @@ unique and must be tested with its own upstream-named capabilities.
 | `rlds_config_generator_contract` | accepted hard gate (live) | `droid_runs_language_conditioned_rlds` module contract |
 | `droid_100_download` | accepted (live) | HTTPS metadata pull of `droid_100/1.0.0/dataset_info.json` |
 | `droid_100_config_gen` | accepted (live) | Documented `EXP_NAMES` debug subset wiring |
+
+### Open Dreamer (world model, 2-GPU minimum)
+
+JAX/Flax Dreamer 4 world-model training pipeline. This is the reference
+multi-GPU BYOF candidate: its accepted capability requires a real `>=2` GPU
+device mesh, so it uses `byof-solution-smoke-rtxpro-2gpu.yaml`
+(`RTXPRO-6000-BLACKWELL-SERVER-EDITION:2`), not the single-GPU profile.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `jax_two_gpu_data_parallel_mesh` | pending hard gate (live) | `dreamer.parallel.build_parallel("data")` `{data:2, model:1}` over `jax.devices()` |
+| `dreamer4_tokenizer_train_two_gpu` | pending hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer, data-parallel across the mesh |
+| `coinrun_video_dataloader` | pending (live) | `dreamer.data.build_iterator` CoinRun path + device sharding |
+| `dreamer4_dynamics_train_two_gpu` | attempted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics step |
+
+Synthetic smoke data: CoinRun records are raw `pickle` (the format the reader
+expects), latents use `serialize_msgpack_record` with the 27-binary / 121-camera
+`latent` action layout `train_dynamics.py` asserts. Deferred follow-ups: real
+CoinRun/procgen data, offline tokenization (`tokenize_minecraft_dataset.py`),
+and FVD evaluation (`eval_fvd.py`).
 
 ## First-class Workbench tools (not BYOF)
 

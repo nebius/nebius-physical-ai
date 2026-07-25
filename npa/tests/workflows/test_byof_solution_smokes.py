@@ -69,6 +69,17 @@ ACCEPTED_CAPABILITIES = {
             "droid_100_config_gen",
         ],
     },
+    "open-dreamer": {
+        "capability_name": "dreamer4_tokenizer_train_two_gpu",
+        "smoke_artifact_name": "open_dreamer_world_model_2gpu.json",
+        "spec": "byof-open-dreamer.yaml",
+        "must_exercise": [
+            "jax_two_gpu_data_parallel_mesh",
+            "coinrun_video_dataloader",
+            "dreamer4_tokenizer_train_two_gpu",
+            "dreamer4_dynamics_train_two_gpu",  # attempted; may remain deferred
+        ],
+    },
 }
 
 
