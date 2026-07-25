@@ -43,7 +43,7 @@ config:
     uv python install 3.11 &&
     uv venv --python 3.11 /opt/byof/.venv &&
     (uv sync --frozen || uv sync) &&
-    (uv pip install --python /opt/byof/.venv/bin/python rerun-sdk || true) &&
+    (uv pip install --python /opt/byof/.venv/bin/python "rerun-sdk==0.31.4" || true) &&
     chmod -R a+rX /opt/byof/.venv /opt/uv/python &&
     /opt/byof/.venv/bin/python -c "import jax, flax, dreamer; print('jax', jax.__version__)"
   workload: solution-smoke
@@ -53,8 +53,9 @@ config:
     export TOKENIZERS_PARALLELISM=false
     export HYDRA_FULL_ERROR=1
     VENV=/opt/byof/.venv/bin/python
-    # rerun-sdk is baked in at build time; --user install is a reuse fallback.
-    "$VENV" -c "import rerun" 2>/dev/null || "$VENV" -m pip install --user --quiet rerun-sdk || true
+    # rerun-sdk==0.31.4 (matches the NPA agent Rerun viewer) is baked in at build
+    # time; the --user install is a best-effort fallback for reused images.
+    "$VENV" -c "import rerun" 2>/dev/null || "$VENV" -m pip install --user --quiet "rerun-sdk==0.31.4" || true
     cat > /tmp/open_dreamer_smoke.py <<'PYEOF'
     import json
     import os
@@ -391,6 +392,13 @@ config:
         import imageio.v2 as imageio
         import rerun as rr
 
+        def set_seq(timeline, value):
+            # Version-robust timeline API across rerun-sdk releases.
+            if hasattr(rr, "set_time_sequence"):
+                rr.set_time_sequence(timeline, value)
+            else:
+                rr.set_time(timeline, sequence=value)
+
         rrd_path = OUT / "open_dreamer_world_model.rrd"
         rr.init("open-dreamer-world-model", spawn=False)
         rr.save(str(rrd_path))
@@ -398,7 +406,7 @@ config:
         # Ground-truth procedural video (what the world model observes).
         sample_video, _, _ = render_episode(action_class=2, seed=0)
         for t in range(sample_video.shape[0]):
-            rr.set_time_sequence("frame", t)
+            set_seq("frame", t)
             rr.log("world/observation", rr.Image(sample_video[t]))
 
         # Tokenizer reconstruction grids over training (original | masked |
@@ -411,7 +419,7 @@ config:
             except ValueError:
                 step = logged
             img = imageio.imread(png)
-            rr.set_time_sequence("train_step", step)
+            set_seq("train_step", step)
             rr.log("world/tokenizer_reconstruction", rr.Image(img))
             logged += 1
         rr.log("world/legend", rr.TextDocument(
