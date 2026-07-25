@@ -998,7 +998,11 @@ def build_fiftyone_dataset(
         "curation_engine": str(curation.get("curation_engine") or "") if isinstance(curation, dict) else "",
         "curated_kept": curation.get("curated_kept") if isinstance(curation, dict) else None,
         "curated_dropped": curation.get("curated_dropped") if isinstance(curation, dict) else None,
-        "near_duplicate_count": fo_brain.get("near_duplicate_count") or fo_selection.get("near_duplicate_count"),
+        "near_duplicate_count": (
+            fo_brain.get("near_duplicate_count")
+            if fo_brain.get("near_duplicate_count") is not None
+            else fo_selection.get("near_duplicate_count")
+        ),
         "uniqueness": fo_brain.get("uniqueness", {}),
     }
     return {"fields": sorted(tag_keys), "summary": summary, "samples": samples}
