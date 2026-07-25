@@ -259,9 +259,15 @@ Also exercised in the same smoke:
 
 - `coinrun_video_dataloader` (real `dreamer.data.build_iterator` + device
   sharding on synthetic CoinRun data)
-- `dreamer4_dynamics_train_two_gpu` (attempted action-conditioned latent
-  dynamics step via `scripts/train_dynamics.py`; the core Dreamer world-model
-  loop — may remain deferred at tiny smoke sizes)
+- `dreamer4_dynamics_train_two_gpu` (action-conditioned latent dynamics step via
+  `scripts/train_dynamics.py`; the core Dreamer world-model loop)
+- `world_model_rerun_visualization` (emits an `.rrd` — ground-truth video +
+  tokenizer reconstruction over training — loadable in the NPA agent Rerun
+  viewer)
+
+The run trains the tokenizer for real (hundreds of steps) on procedurally-
+generated **coherent** video, so it is a real GPU run with viewable
+visualizations, not an import-only smoke.
 
 Synthetic data note: CoinRun records are written as raw `pickle` bytes (the
 format `ProcessEpisodeAndSlice`/`EpisodeLengthFilter` read), not through

@@ -104,6 +104,7 @@ device mesh, so it uses `byof-solution-smoke-rtxpro-2gpu.yaml`
 | `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer, data-parallel across the mesh |
 | `coinrun_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` CoinRun path + device sharding (2 devices) |
 | `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics step |
+| `world_model_rerun_visualization` | pending (live) | Rerun `.rrd` (ground-truth video + tokenizer reconstruction over training) loadable in the agent viewer |
 
 Synthetic smoke data: CoinRun records are raw `pickle` (the format the reader
 expects), latents use `serialize_msgpack_record` with the 27-binary / 121-camera

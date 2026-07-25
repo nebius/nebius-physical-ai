@@ -61,9 +61,30 @@ Also exercised:
 
 - `coinrun_video_dataloader` — real `dreamer.data.build_iterator` CoinRun path
   with device sharding.
-- `dreamer4_dynamics_train_two_gpu` — attempted `scripts/train_dynamics.py`
-  action-conditioned latent dynamics step (the core Dreamer world-model loop);
-  may defer at tiny smoke sizes.
+- `dreamer4_dynamics_train_two_gpu` — `scripts/train_dynamics.py`
+  action-conditioned latent dynamics step (the core Dreamer world-model loop).
+- `world_model_rerun_visualization` — emits an `open_dreamer_world_model.rrd`
+  Rerun recording (ground-truth video + tokenizer reconstruction grids over
+  training steps) that can be loaded into the NPA agent's Rerun viewer.
+
+The run trains the tokenizer for real (hundreds of steps, `visualize_every` on)
+on **procedurally-generated coherent** video (a moving sprite on a gradient, in
+the CoinRun record format) so reconstructions are meaningful and viewable — not
+noise. This is a real GPU run, not an import-only smoke.
+
+### View / share the visualization in the agent Rerun
+
+The `.rrd` is uploaded to the run's S3 output prefix. Load it into a live NPA
+agent's Rerun viewer:
+
+```bash
+curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -X POST https://<agent-ip>/api/sim-viz/load-artifact \
+  -H 'content-type: application/json' \
+  -d '{"s3_uri": "s3://<bucket>/byof/<run-id>/open_dreamer_world_model.rrd"}'
+```
+
+Then open `https://<agent-ip>/rerun/` (see `skills/tools/npa-agent/SKILL.md`).
+The agent also discovers it via the artifact browser (`what can I view?`).
 
 ## Synthetic Data Contract (no external dataset needed)
 
@@ -123,6 +144,9 @@ npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py 
   download.
 - Batch size `B` must be divisible by the number of devices (mesh `data` axis)
   and by `jax.process_count()`.
-- Full CoinRun generation needs `procgen`+`gym3`; the smoke synthesizes
-  correctly-formatted records instead. Offline tokenization and FVD need a real
-  staged dataset and remain deferred follow-ups.
+- Full CoinRun generation needs `procgen`+`gym3` (no Python 3.11 wheels); the
+  run synthesizes correctly-formatted **coherent procedural** records instead.
+  Offline tokenization and FVD need a real staged dataset and remain deferred
+  follow-ups.
+- `rerun-sdk` is installed at build time (and a `pip install --user` fallback at
+  run time for reused images) so the `.rrd` visualization can be produced.

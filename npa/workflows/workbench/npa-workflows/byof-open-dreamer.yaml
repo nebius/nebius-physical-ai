@@ -5,16 +5,19 @@ metadata:
   description: >
     Registry-candidate BYOF workflow for Open Dreamer (next-state/open-dreamer),
     a JAX/Flax implementation of the Dreamer 4 world-model training pipeline.
-    Runs a real end-to-end 2-GPU (minimum) smoke inside the pushed registry
-    image: builds a JAX data-parallel device mesh across >=2 GPUs, exercises the
-    real CoinRun video dataloader on synthetic ArrayRecord shards, trains the
-    causal video tokenizer through the documented `scripts/train_tokenizer.py`
-    entrypoint sharded across the mesh, and attempts an action-conditioned
-    latent dynamics training step (`scripts/train_dynamics.py`).
+    Runs a real end-to-end 2-GPU (minimum) world-model run inside the pushed
+    registry image: builds a JAX data-parallel device mesh across >=2 GPUs,
+    exercises the real CoinRun-format video dataloader on procedurally-generated
+    (coherent, viewable) ArrayRecord shards, trains the causal video tokenizer
+    for real through the documented `scripts/train_tokenizer.py` entrypoint
+    sharded across the mesh (with reconstruction visualization enabled), trains
+    an action-conditioned latent dynamics step (`scripts/train_dynamics.py`),
+    and emits a Rerun `.rrd` (ground-truth video + reconstruction-over-training)
+    that can be loaded into the NPA agent's Rerun viewer.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/next-state/open-dreamer.git"
-  # Pin to the reviewed commit ("Correct Bibtex") so the smoke is reproducible.
+  # Pin to the reviewed commit ("Correct Bibtex") so the run is reproducible.
   repo_ref: "2b10640"
   base_profile: ubuntu
   # Plain Ubuntu base: uv provisions Python 3.11 and JAX CUDA-12 wheels bundle
@@ -23,8 +26,9 @@ config:
   # Open Dreamer requires Python 3.11 and a CUDA 12 JAX build. Use a uv-managed
   # Python 3.11 installed to a world-readable location (default uv dirs live
   # under /root, which the non-root runtime user cannot read), create the venv
-  # from it, then `uv sync` the CUDA-12 JAX dependency set. Everything the
-  # runtime `ubuntu` user must execute (interpreter + venv) is chmod a+rX.
+  # from it, then `uv sync` the CUDA-12 JAX dependency set. rerun-sdk is added
+  # for the visualization artifact. Everything the runtime `ubuntu` user must
+  # execute (interpreter + venv) is chmod a+rX.
   build_command: >
     export DEBIAN_FRONTEND=noninteractive &&
     apt-get update &&
@@ -39,6 +43,7 @@ config:
     uv python install 3.11 &&
     uv venv --python 3.11 /opt/byof/.venv &&
     (uv sync --frozen || uv sync) &&
+    (uv pip install --python /opt/byof/.venv/bin/python rerun-sdk || true) &&
     chmod -R a+rX /opt/byof/.venv /opt/uv/python &&
     /opt/byof/.venv/bin/python -c "import jax, flax, dreamer; print('jax', jax.__version__)"
   workload: solution-smoke
@@ -48,6 +53,8 @@ config:
     export TOKENIZERS_PARALLELISM=false
     export HYDRA_FULL_ERROR=1
     VENV=/opt/byof/.venv/bin/python
+    # rerun-sdk is baked in at build time; --user install is a reuse fallback.
+    "$VENV" -c "import rerun" 2>/dev/null || "$VENV" -m pip install --user --quiet rerun-sdk || true
     cat > /tmp/open_dreamer_smoke.py <<'PYEOF'
     import json
     import os
@@ -63,11 +70,13 @@ config:
     PY = "/opt/byof/.venv/bin/python"
     DATA_DIR = REPO / "datasets" / "coinrun_smoke" / "train"
     LATENT_DIR = REPO / "datasets" / "latent_smoke"
+    T, H, W, C = 24, 64, 64, 3
 
     results = {
         "solution": "open-dreamer",
         "capability": "dreamer4_tokenizer_train_two_gpu",
         "upstream": "https://github.com/next-state/open-dreamer",
+        "data": "procedural (moving sprite, CoinRun record format)",
         "capabilities_exercised": [],
         "deferred": [],
     }
@@ -75,7 +84,6 @@ config:
     def run_isolated(name, argv, timeout=2400, extra_env=None):
         env = os.environ.copy()
         env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-        env["JAX_PLATFORMS"] = env.get("JAX_PLATFORMS", "")
         if extra_env:
             env.update(extra_env)
         try:
@@ -109,9 +117,54 @@ config:
                     continue
         return {}
 
+    def render_episode(action_class, seed):
+        # Coherent, viewable frames: a bright sprite bounces on a dark gradient;
+        # motion direction + color are chosen by the (constant) action class, so
+        # the tokenizer reconstructs real structure rather than noise.
+        rng = np.random.default_rng(seed)
+        vels = [(2, 1), (1, 2), (-2, 1), (1, -2), (-2, -1), (-1, -2), (2, -1), (-1, 2)]
+        colors = [(255, 90, 90), (90, 255, 90), (110, 140, 255), (255, 220, 80)]
+        vx, vy = vels[action_class % len(vels)]
+        cr, cg, cb = colors[action_class % len(colors)]
+        video = np.zeros((T, H, W, C), dtype=np.uint8)
+        # Faint static gradient background.
+        gy = np.linspace(10, 45, H, dtype=np.uint8)[:, None]
+        gx = np.linspace(10, 45, W, dtype=np.uint8)[None, :]
+        bg = np.stack([gy + gx, gy, gx + gy], axis=-1).astype(np.uint8)
+        y, x = int(rng.integers(10, H - 20)), int(rng.integers(10, W - 20))
+        s = 12
+        for t in range(T):
+            frame = bg.copy()
+            y0, x0 = max(0, y), max(0, x)
+            y1, x1 = min(H, y + s), min(W, x + s)
+            frame[y0:y1, x0:x1] = (cr, cg, cb)
+            video[t] = frame
+            y += vy; x += vx
+            if y < 0 or y + s >= H: vy = -vy; y += vy
+            if x < 0 or x + s >= W: vx = -vx; x += vx
+        actions = np.full((T,), action_class % 16, dtype=np.int64)
+        rewards = np.zeros((T,), dtype=np.float32)
+        rewards[T // 2] = 1.0
+        return video, actions, rewards
+
+    def generate_procedural_shards():
+        from array_record.python.array_record_module import ArrayRecordWriter
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        shard = DATA_DIR / "shard-00000.array_record"
+        if shard.exists():
+            shard.unlink()
+        writer = ArrayRecordWriter(str(shard), "group_size:1")
+        n = 64
+        for i in range(n):
+            video, actions, rewards = render_episode(action_class=i % 8, seed=i)
+            record = {"raw_video": video.tobytes(), "sequence_length": T,
+                      "actions": actions, "rewards": rewards}
+            writer.write(pickle.dumps(record))
+        writer.close()
+        return {"shard": str(shard), "records": n, "frames": T, "hwc": [H, W, C]}
+
     # ------------------------------------------------------------------
     # Capability 1 (hard gate): JAX data-parallel mesh across >= 2 GPUs.
-    # Uses the repo's own dreamer.parallel.build_parallel("data").
     # ------------------------------------------------------------------
     mesh_script = textwrap.dedent('''
         import json, jax
@@ -145,38 +198,17 @@ config:
                                     "blocker": mesh_entry.get("error") or mesh_entry["stderr_tail"][-600:]})
 
     # ------------------------------------------------------------------
-    # Synthetic CoinRun ArrayRecord shard (pickle format the reader expects).
+    # Procedural CoinRun-format shards (raw pickle, the format the reader expects).
     # ------------------------------------------------------------------
-    def generate_coinrun_shards():
-        from array_record.python.array_record_module import ArrayRecordWriter
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        shard = DATA_DIR / "shard-00000.array_record"
-        if shard.exists():
-            shard.unlink()
-        writer = ArrayRecordWriter(str(shard), "group_size:1")
-        T, H, W, C = 24, 64, 64, 3
-        rng = np.random.default_rng(0)
-        n = 32
-        for _ in range(n):
-            video = rng.integers(0, 256, size=(T, H, W, C), dtype=np.uint8)
-            actions = rng.integers(0, 16, size=(T,), dtype=np.int64)
-            rewards = (rng.random(T) > 0.85).astype(np.float32)
-            record = {"raw_video": video.tobytes(), "sequence_length": T,
-                      "actions": actions, "rewards": rewards}
-            writer.write(pickle.dumps(record))
-        writer.close()
-        return {"shard": str(shard), "records": n, "frames": T, "hwc": [H, W, C]}
-
     data_meta = {}
     try:
-        data_meta = generate_coinrun_shards()
+        data_meta = generate_procedural_shards()
     except Exception as exc:  # noqa: BLE001
         results["deferred"].append({"capability": "coinrun_synth_dataset", "blocker": f"{type(exc).__name__}: {exc}"})
     results["coinrun_dataset"] = data_meta
 
     # ------------------------------------------------------------------
     # Capability 2: real CoinRun video dataloader on the 2-GPU mesh.
-    # Exercises dreamer.data.build_iterator + device sharding.
     # ------------------------------------------------------------------
     if data_meta:
         loader_script = textwrap.dedent(f'''
@@ -186,7 +218,7 @@ config:
             from dreamer.parallel import build_parallel
             mesh, sharding, rules = build_parallel("data")
             with jax.set_mesh(mesh):
-                dl = DataloaderConfig(B=8, short_T=16, long_T=16, num_workers=2,
+                dl = DataloaderConfig(B=16, short_T=16, long_T=16, num_workers=2,
                                       prefetch_buffer_size=2, device_prefetch_buffer_size=1, dtype="bfloat16")
                 cfg = DatasetConfig(name="coinrun", dataloader_cfg=dl, H=64, W=64, C=3, patch_size=8,
                                     array_record_path="{DATA_DIR}", num_binary_actions=0,
@@ -212,30 +244,32 @@ config:
                                         "blocker": loader_entry.get("error") or loader_entry["stderr_tail"][-600:]})
 
     # ------------------------------------------------------------------
-    # Capability 3 (hard gate): train the causal video tokenizer end to end
-    # through the documented scripts/train_tokenizer.py entrypoint, sharded
-    # data-parallel across the >=2 GPU mesh, on synthetic CoinRun data.
+    # Capability 3 (hard gate): real tokenizer training via the documented
+    # scripts/train_tokenizer.py entrypoint, sharded data-parallel across the
+    # >=2 GPU mesh, with reconstruction visualization enabled (writes vis PNGs).
     # ------------------------------------------------------------------
-    TOK_RUN = "od_tok_smoke"
-    tok_ckpt = REPO / "logs" / TOK_RUN / "checkpoints"
+    TOK_RUN = "od_tok_run"
+    tok_dir = REPO / "logs" / TOK_RUN
+    tok_ckpt = tok_dir / "checkpoints"
+    tok_vis = tok_dir / "viz"
     if data_meta:
         tok_overrides = [
             "dataset=coinrun",
             f"dataset.array_record_path={DATA_DIR}",
-            "dataset.dataloader_cfg.B=8",
+            "dataset.dataloader_cfg.B=16",
             "dataset.dataloader_cfg.short_T=16",
             "dataset.dataloader_cfg.long_T=16",
             "dataset.dataloader_cfg.num_workers=2",
             "dataset.dataloader_cfg.prefetch_buffer_size=2",
-            "tokenizer.encoder.depth=2",
-            "tokenizer.encoder.n_latents=32",
-            "tokenizer.decoder.depth=2",
-            "max_steps=4",
+            "tokenizer.encoder.depth=4",
+            "tokenizer.encoder.n_latents=64",
+            "tokenizer.decoder.depth=4",
+            "max_steps=400",
             "lpips_weight=0",
-            "visualize_every=0",
+            "visualize_every=100",
             "tokenizer_loss_type=mse",
-            "logger.log_every=1",
-            "ckpt.save_interval_steps=2",
+            "logger.log_every=25",
+            "ckpt.save_interval_steps=200",
             "ckpt.max_to_keep=1",
             f"run_name={TOK_RUN}",
         ]
@@ -245,12 +279,15 @@ config:
             timeout=2400,
         )
         tok_ok = bool(tok_entry["ok"] and tok_ckpt.exists() and any(tok_ckpt.iterdir()))
+        vis_pngs = sorted(tok_vis.glob("step_*.png")) if tok_vis.exists() else []
         (OUT / "open_dreamer_tokenizer_train.json").write_text(json.dumps(
             {"solution": "open-dreamer", "capability": "dreamer4_tokenizer_train_two_gpu",
-             "ok": tok_ok, "checkpoint_dir": str(tok_ckpt), "returncode": tok_entry.get("returncode"),
+             "ok": tok_ok, "checkpoint_dir": str(tok_ckpt), "vis_frames": len(vis_pngs),
+             "returncode": tok_entry.get("returncode"),
              "stdout_tail": tok_entry.get("stdout_tail", ""), "stderr_tail": tok_entry.get("stderr_tail", "")},
             indent=2))
         results["tokenizer_train_probe"] = tok_entry
+        results["tokenizer_vis_frames"] = len(vis_pngs)
         if tok_ok:
             results["capabilities_exercised"].append("dreamer4_tokenizer_train_two_gpu")
         else:
@@ -260,11 +297,12 @@ config:
         tok_ok = False
 
     # ------------------------------------------------------------------
-    # Capability 4 (attempted): action-conditioned latent dynamics training
-    # step via scripts/train_dynamics.py, reusing the tokenizer checkpoint and
-    # synthetic latent ArrayRecords. This is the core Dreamer world-model loop.
+    # Capability 4: action-conditioned latent dynamics training step via
+    # scripts/train_dynamics.py (core Dreamer world-model loop), reusing the
+    # tokenizer checkpoint and synthetic latent ArrayRecords.
     # ------------------------------------------------------------------
     if tok_ok:
+        latent_ok_data = False
         try:
             from array_record.python.array_record_module import ArrayRecordWriter
             import sys
@@ -275,7 +313,7 @@ config:
             if lshard.exists():
                 lshard.unlink()
             lw = ArrayRecordWriter(str(lshard), "group_size:1")
-            T, n_latents, d_bottleneck = 24, 32, 16
+            n_latents, d_bottleneck = 64, 16
             rng = np.random.default_rng(1)
             for _ in range(24):
                 latents = rng.standard_normal((T, n_latents, d_bottleneck)).astype(np.float32)
@@ -288,12 +326,11 @@ config:
             lw.close()
             latent_ok_data = True
         except Exception as exc:  # noqa: BLE001
-            latent_ok_data = False
             results["deferred"].append({"capability": "dreamer4_dynamics_train_two_gpu",
                                         "blocker": f"latent_gen: {type(exc).__name__}: {exc}"})
 
         if latent_ok_data:
-            DYN_RUN = "od_dyn_smoke"
+            DYN_RUN = "od_dyn_run"
             dyn_ckpt = REPO / "logs" / DYN_RUN / "checkpoints"
             dyn_overrides = [
                 "dataset=minecraft_vpt_latent",
@@ -311,14 +348,14 @@ config:
                 "dynamics.n_register=4",
                 "dynamics.k_max=8",
                 "dynamics.context_length=16",
-                "max_steps=2",
+                "max_steps=4",
                 "bootstrap_start=100",
                 "image_fraction=0.0",
                 "ot.enabled=false",
                 "loss_weighting=none",
                 "write_video_every=0",
                 "logger.log_every=1",
-                "ckpt.save_interval_steps=1",
+                "ckpt.save_interval_steps=2",
                 "ckpt.max_to_keep=1",
                 f"run_name={DYN_RUN}",
             ]
@@ -339,6 +376,59 @@ config:
             else:
                 results["deferred"].append({"capability": "dreamer4_dynamics_train_two_gpu",
                                             "blocker": dyn_entry.get("error") or dyn_entry["stderr_tail"][-800:]})
+
+    # ------------------------------------------------------------------
+    # Capability 5: build a Rerun .rrd visualization (shareable, viewable in the
+    # NPA agent Rerun viewer): ground-truth video + tokenizer reconstruction
+    # grids over training steps. Non-gating; deferred if rerun is unavailable.
+    # ------------------------------------------------------------------
+    rrd_info = {"solution": "open-dreamer", "capability": "world_model_rerun_visualization", "ok": False}
+    try:
+        import imageio.v2 as imageio
+        import rerun as rr
+
+        rrd_path = OUT / "open_dreamer_world_model.rrd"
+        rr.init("open-dreamer-world-model", spawn=False)
+        rr.save(str(rrd_path))
+
+        # Ground-truth procedural video (what the world model observes).
+        sample_video, _, _ = render_episode(action_class=2, seed=0)
+        for t in range(sample_video.shape[0]):
+            rr.set_time_sequence("frame", t)
+            rr.log("world/observation", rr.Image(sample_video[t]))
+
+        # Tokenizer reconstruction grids over training (original | masked |
+        # online | recon | ema-mixed | ema), one image per checkpointed step.
+        vis_pngs = sorted((REPO / "logs" / TOK_RUN / "viz").glob("step_*.png"))
+        logged = 0
+        for png in vis_pngs:
+            try:
+                step = int(png.stem.split("_")[-1])
+            except ValueError:
+                step = logged
+            img = imageio.imread(png)
+            rr.set_time_sequence("train_step", step)
+            rr.log("world/tokenizer_reconstruction", rr.Image(img))
+            logged += 1
+        rr.log("world/legend", rr.TextDocument(
+            "Open Dreamer (Dreamer 4) world model — 2-GPU run.\n"
+            "world/observation: ground-truth procedural video.\n"
+            "world/tokenizer_reconstruction grid columns: "
+            "original | masked | online(mixed) | online | ema(mixed) | ema."))
+        rr.flush(blocking=True) if hasattr(rr, "flush") else None
+
+        size = rrd_path.stat().st_size if rrd_path.exists() else 0
+        rrd_info.update({"ok": size > 0, "rrd": str(rrd_path), "bytes": size,
+                         "recon_frames": logged, "obs_frames": int(sample_video.shape[0])})
+        if rrd_info["ok"]:
+            results["capabilities_exercised"].append("world_model_rerun_visualization")
+        else:
+            results["deferred"].append({"capability": "world_model_rerun_visualization", "blocker": "empty rrd"})
+    except Exception as exc:  # noqa: BLE001
+        rrd_info["error"] = f"{type(exc).__name__}: {exc}"
+        results["deferred"].append({"capability": "world_model_rerun_visualization", "blocker": rrd_info["error"]})
+    results["rerun_visualization"] = rrd_info
+    (OUT / "open_dreamer_rerun_visualization.json").write_text(json.dumps(rrd_info, indent=2))
 
     # ------------------------------------------------------------------
     # Aggregate + hard gates.
@@ -375,10 +465,10 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Build/push Open Dreamer and run the real 2-GPU world-model smoke
-      (data-parallel mesh, CoinRun dataloader, tokenizer training, and an
-      attempted latent-dynamics step) from the registry image in live
-      Kubernetes.
+      Build/push Open Dreamer and run the real 2-GPU world-model run
+      (data-parallel mesh, CoinRun-format dataloader, tokenizer training with
+      reconstruction visualization, a latent-dynamics step, and a Rerun `.rrd`
+      artifact) from the registry image in live Kubernetes.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

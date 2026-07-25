@@ -77,7 +77,8 @@ ACCEPTED_CAPABILITIES = {
             "jax_two_gpu_data_parallel_mesh",
             "coinrun_video_dataloader",
             "dreamer4_tokenizer_train_two_gpu",
-            "dreamer4_dynamics_train_two_gpu",  # attempted; may remain deferred
+            "dreamer4_dynamics_train_two_gpu",
+            "world_model_rerun_visualization",  # Rerun .rrd artifact
         ],
     },
 }
