@@ -6747,6 +6747,46 @@ def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
+@app.get("/fiftyone/dataset/{{run_id:path}}")
+def fiftyone_dataset(run_id: str, prefix: str = ""):
+    # FiftyOne / Voxel51 view of a data-factory run: augmented scenario variants
+    # (thumbnail + appearance tags + caption + video) and input frames as samples,
+    # summarized with grade + curation. Grounded in the run's real S3 artifacts.
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = []
+        if prefix:
+            artifacts = list_artifacts(
+                settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
+            )
+        if not artifacts:
+            artifacts = find_run_artifacts(
+                settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
+            )
+        bucket = settings["bucket"]
+
+        def _read_json(key: str):
+            if not key:
+                return None
+            try:
+                body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                return json.loads(body)
+            except Exception:
+                return None
+
+        keys = [str(a.key or "") for a in artifacts]
+        dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json)
+        return {{"ok": True, "run_id": normalized_run, **dataset}}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
 @app.get("/artifacts/provenance/{{run_id:path}}")
 def artifacts_run_provenance(run_id: str, prefix: str = ""):
     # Where a run's data came from in the pipeline + which components produced it,

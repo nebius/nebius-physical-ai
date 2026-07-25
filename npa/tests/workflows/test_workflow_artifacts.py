@@ -9,6 +9,7 @@ from npa.workflows.artifacts import (
     Artifact,
     ArtifactDiscoveryError,
     artifact_media_type,
+    build_fiftyone_dataset,
     download_s3_uri,
     find_run_artifacts,
     list_all_runs,
@@ -18,6 +19,63 @@ from npa.workflows.artifacts import (
     render_hint_for_object,
     select_preferred_artifact,
 )
+
+
+def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
+    run = "paidf-demo"
+    base = f"checkpoints/physical-ai-data-factory/{run}"
+    keys = [
+        f"{base}/input/video_0_frame_01.png",
+        f"{base}/input/video_0_frame_02.png",
+        f"{base}/cosmos_augmented/manifest.json",
+        f"{base}/cosmos_augmented/aug-{run}-0/augmented_video.mp4",
+        f"{base}/cosmos_augmented/aug-{run}-0/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json",
+        f"{base}/cosmos_augmented/aug-{run}-1/augmented_video.mp4",
+        f"{base}/cosmos_augmented/aug-{run}-1/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json",
+        f"{base}/labeled_augmented/captions.json",
+        f"{base}/grade/vlm_eval_stub.json",
+        f"{base}/grade/decision.json",
+        f"{base}/curation/report.json",
+    ]
+    payloads = {
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {
+            "variables": {"cloth_color": "green", "lighting": "warm lamp light", "prompt": "a green cloth"}
+        },
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {
+            "variables": {"cloth_color": "blue", "lighting": "cool overhead light", "prompt": "a blue cloth"}
+        },
+        f"{base}/labeled_augmented/captions.json": {
+            "captions": [
+                {"image": f"aug-{run}-0/frame-00000.png", "caption": "green cloth on a countertop"},
+                {"image": f"aug-{run}-1/frame-00000.png", "caption": "blue cloth on a sofa"},
+            ]
+        },
+        f"{base}/grade/vlm_eval_stub.json": {"score": 0.0, "model": "Qwen/Qwen2.5-VL-72B-Instruct"},
+        f"{base}/grade/decision.json": {"decision": "loop_back"},
+        f"{base}/curation/report.json": {"multiply": {"mode": "multi-variant", "variant_count": 2}},
+    }
+
+    dataset = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k))
+
+    summary = dataset["summary"]
+    assert summary["augmented_count"] == 2
+    assert summary["variant_count"] == 2
+    assert summary["multiply_mode"] == "multi-variant"
+    assert summary["grade_score"] == 0.0
+    assert summary["grade_decision"] == "loop_back"
+    assert summary["input_count"] == 2
+    assert set(dataset["fields"]) == {"cloth_color", "lighting"}
+
+    aug = [s for s in dataset["samples"] if s["group"] == "augmented"]
+    inp = [s for s in dataset["samples"] if s["group"] == "input"]
+    assert len(aug) == 2 and len(inp) == 2
+    first = aug[0]
+    assert first["thumbnail_key"].endswith("frame-00000.png")
+    assert first["video_key"].endswith("augmented_video.mp4")
+    assert "prompt" not in first["tags"]  # prompt is surfaced separately, not a tag
+    assert first["caption"] == "green cloth on a countertop"
 
 
 class _FakePaginator:

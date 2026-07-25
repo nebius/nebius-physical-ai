@@ -1039,6 +1039,47 @@
         padding: 4px 0; border-top: 1px solid var(--border, #e2e8f0);
       }
       .stage-detail-row code { color: #0f172a; }
+      .voxel-panel { min-height: calc(100dvh - 170px); }
+      .voxel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+      .voxel-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+      .voxel-fields { font-size: 12px; color: var(--muted); margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      .voxel-fields:empty { display: none; }
+      .voxel-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      }
+      .voxel-card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius, 12px);
+        background: var(--surface);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: var(--shadow-sm, 0 1px 3px rgba(13,42,61,0.08));
+        transition: box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease);
+      }
+      .voxel-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+      .voxel-card[data-group="input"] { opacity: 0.96; }
+      .voxel-thumb {
+        aspect-ratio: 4 / 3;
+        background: #0f172a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .voxel-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .voxel-meta { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+      .voxel-title { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+      .voxel-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+      .voxel-tag {
+        font-size: 11px; background: var(--surface-soft); border: 1px solid var(--border);
+        border-radius: 999px; padding: 2px 8px; color: var(--text);
+      }
+      .voxel-tag em { color: var(--muted); font-style: normal; font-weight: 700; letter-spacing: 0.04em; }
+      .voxel-caption { font-size: 12px; color: var(--muted); line-height: 1.4; }
+      @media (max-width: 640px) { .voxel-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
       .run-log {
         margin: 8px 0 0 0;
         max-height: 180px;
@@ -1454,6 +1495,7 @@
       <nav class="main-tabs" role="tablist" aria-label="Workbench views">
         <button id="tabMain" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="main">Main</button>
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
+        <button id="tabVoxel" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelVoxel" data-tab="voxel51">Voxel51</button>
       </nav>
       <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
         <span class="chat-fab-icon" aria-hidden="true">
@@ -1721,6 +1763,29 @@
             </div>
           </section>
         </div>
+        <div id="panelVoxel" class="tab-panel is-inactive" role="tabpanel" aria-labelledby="tabVoxel" aria-hidden="true">
+          <section class="panel voxel-panel">
+            <div class="voxel-head">
+              <div>
+                <h3>Voxel51 dataset</h3>
+                <p class="hint">FiftyOne-style view of this run's components — input frames and each augmented scenario variant with its appearance tags, caption, and grade.</p>
+              </div>
+              <div class="btn-row" style="margin:0;">
+                <button id="voxelRefresh" class="btn" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="field-row" style="grid-template-columns: 1fr auto; align-items:end;">
+              <div class="field">
+                <label for="voxelRunInput">Run</label>
+                <input id="voxelRunInput" type="search" placeholder="active run (or paste a run ID)" autocomplete="off" />
+              </div>
+              <button id="voxelLoadRun" class="btn btn-primary" type="button">Load dataset</button>
+            </div>
+            <div id="voxelSummary" class="voxel-summary" aria-live="polite"></div>
+            <div id="voxelFields" class="voxel-fields"></div>
+            <div id="voxelGrid" class="voxel-grid" aria-live="polite"></div>
+          </section>
+        </div>
         </div>
       </main>
     </div>
@@ -1928,29 +1993,26 @@
       }
       async function activateMainTab(name, options) {
         const opts = options || {};
-        const tab = String(name || "main").trim() === "rerun" ? "rerun" : "main";
+        const raw = String(name || "main").trim();
+        const tab = (raw === "rerun" || raw === "voxel51") ? raw : "main";
         const switching = activeMainTab !== tab;
         activeMainTab = tab;
-        const chatPanel = document.getElementById("panelChat");
-        const rerunPanel = document.getElementById("panelRerun");
-        const tabMain = document.getElementById("tabMain");
-        const tabRerun = document.getElementById("tabRerun");
-        // Keep both panels mounted (opacity toggle only). display:none / visibility:hidden
-        // would unload or defer the Rerun wasm viewer bundle on every Main↔Rerun switch.
-        if (chatPanel) {
-          chatPanel.classList.toggle("is-active", tab === "main");
-          chatPanel.classList.toggle("is-inactive", tab !== "main");
-          chatPanel.setAttribute("aria-hidden", tab === "main" ? "false" : "true");
-          chatPanel.hidden = false;
+        // Keep all panels mounted (opacity toggle only). display:none / visibility:hidden
+        // would unload or defer the Rerun wasm viewer bundle on every tab switch.
+        const panelIds = { main: "panelChat", rerun: "panelRerun", voxel51: "panelVoxel" };
+        const tabIds = { main: "tabMain", rerun: "tabRerun", voxel51: "tabVoxel" };
+        for (const key of Object.keys(panelIds)) {
+          const panel = document.getElementById(panelIds[key]);
+          if (panel) {
+            const on = key === tab;
+            panel.classList.toggle("is-active", on);
+            panel.classList.toggle("is-inactive", !on);
+            panel.setAttribute("aria-hidden", on ? "false" : "true");
+            panel.hidden = false;
+          }
+          const tabBtn = document.getElementById(tabIds[key]);
+          if (tabBtn) tabBtn.setAttribute("aria-selected", key === tab ? "true" : "false");
         }
-        if (rerunPanel) {
-          rerunPanel.classList.toggle("is-active", tab === "rerun");
-          rerunPanel.classList.toggle("is-inactive", tab !== "rerun");
-          rerunPanel.setAttribute("aria-hidden", tab === "rerun" ? "false" : "true");
-          rerunPanel.hidden = false;
-        }
-        if (tabMain) tabMain.setAttribute("aria-selected", tab === "main" ? "true" : "false");
-        if (tabRerun) tabRerun.setAttribute("aria-selected", tab === "rerun" ? "true" : "false");
         document.body.classList.toggle("viewer-focus", tab === "rerun");
         if (tab !== "rerun") {
           setChatDrawerOpen(false);
@@ -1965,6 +2027,13 @@
           }
         } else if (tab === "rerun" && switching && rerunIframeLoaded) {
           setStatus("Rerun ready");
+        }
+        if (tab === "voxel51" && switching) {
+          try {
+            await loadVoxelDataset();
+          } catch (err) {
+            console.warn("voxel dataset load failed", err);
+          }
         }
       }
       function setStatus(text) {
@@ -2034,11 +2103,37 @@
             // Clicking a main tab always switches tabs. The chat collapsible only
             // opens via the chat button (chatDrawerToggle), never by clicking the
             // Main tab — so returning to Main never pops the drawer out.
+            if (next === "voxel51") {
+              const vin = document.getElementById("voxelRunInput");
+              if (vin && !vin.value && activeRunId) vin.value = activeRunId;
+            }
             activateMainTab(next).catch((err) => {
               console.warn("tab switch failed", err);
             });
           });
         });
+        const voxelRefreshBtn = document.getElementById("voxelRefresh");
+        if (voxelRefreshBtn) {
+          voxelRefreshBtn.addEventListener("click", () => {
+            loadVoxelDataset().catch((err) => showToast("Voxel51 refresh failed: " + String(err), "error"));
+          });
+        }
+        const voxelLoadRunBtn = document.getElementById("voxelLoadRun");
+        if (voxelLoadRunBtn) {
+          voxelLoadRunBtn.addEventListener("click", () => {
+            const vin = document.getElementById("voxelRunInput");
+            loadVoxelDataset(vin ? vin.value : "").catch((err) => showToast("Voxel51 load failed: " + String(err), "error"));
+          });
+        }
+        const voxelRunInputEl = document.getElementById("voxelRunInput");
+        if (voxelRunInputEl) {
+          voxelRunInputEl.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              loadVoxelDataset(voxelRunInputEl.value).catch((err) => showToast("Voxel51 load failed: " + String(err), "error"));
+            }
+          });
+        }
         const chatDrawerToggle = document.getElementById("chatDrawerToggle");
         if (chatDrawerToggle) {
           chatDrawerToggle.addEventListener("click", () => {
@@ -4886,7 +4981,6 @@
           });
         });
         if (preferred && String(preferred.render || "") === "rerun") {
-          appendChat("assistant", "Auto-loading preferred Rerun recording for `" + runId + "`.");
           await loadArtifact({
             run_id: runId,
             key: String(preferred.key || "").trim(),
@@ -5150,12 +5244,98 @@
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
           await showArtifactPreview(simViz, render);
         }
-        appendChat(
-          "assistant",
-          "Loaded artifact `" + String(simViz.artifact_key || body.key || "") + "` with render `" + render + "`."
-        );
+        // Loading/viewing an artifact must not spam the chat log; the viewer +
+        // rendered-data summary already reflect the loaded artifact.
         await refresh();
         return true;
+      }
+      let voxelDatasetRun = "";
+      async function loadVoxelDataset(runIdArg) {
+        const grid = document.getElementById("voxelGrid");
+        const summaryHost = document.getElementById("voxelSummary");
+        const fieldsHost = document.getElementById("voxelFields");
+        const input = document.getElementById("voxelRunInput");
+        const runId = String(runIdArg || (input && input.value) || activeRunId || "").trim();
+        if (input && !input.value && runId) input.value = runId;
+        if (!runId) {
+          if (summaryHost) summaryHost.innerHTML = "";
+          if (fieldsHost) fieldsHost.innerHTML = "";
+          if (grid) grid.innerHTML = '<p class="hint">Load a run (from Stages or Rerun) or paste a run ID above, then Load dataset.</p>';
+          return;
+        }
+        if (grid) grid.innerHTML = '<p class="hint">Loading dataset for <code>' + escapeHtml(runId) + '</code>…</p>';
+        let data = null;
+        try {
+          data = await loadJson("/api/fiftyone/dataset/" + encodeURIComponent(runId));
+        } catch (err) {
+          if (grid) grid.innerHTML = '<p class="preview-error">Dataset load failed: ' + escapeHtml(String((err && err.message) || err)) + "</p>";
+          return;
+        }
+        voxelDatasetRun = runId;
+        const summary = (data && data.summary) || {};
+        const fields = Array.isArray(data && data.fields) ? data.fields : [];
+        const samples = Array.isArray(data && data.samples) ? data.samples : [];
+        if (summaryHost) {
+          const grade = (summary.grade_score === null || summary.grade_score === undefined) ? "n/a" : String(summary.grade_score);
+          summaryHost.innerHTML =
+            '<span class="pill">run <strong>' + escapeHtml(runId) + "</strong></span>" +
+            '<span class="pill">variants <strong>' + escapeHtml(String(summary.variant_count || summary.augmented_count || 0)) + "</strong></span>" +
+            '<span class="pill">multiply <strong>' + escapeHtml(String(summary.multiply_mode || "-")) + "</strong></span>" +
+            '<span class="pill">grade <strong>' + escapeHtml(grade) + "</strong></span>" +
+            '<span class="pill">decision <strong>' + escapeHtml(String(summary.grade_decision || "-")) + "</strong></span>" +
+            '<span class="pill">input frames <strong>' + escapeHtml(String(summary.input_count || 0)) + "</strong></span>";
+        }
+        if (fieldsHost) {
+          fieldsHost.innerHTML = fields.length
+            ? "<strong>Fields:</strong> " + fields.map((f) => '<span class="pill">' + escapeHtml(String(f)) + "</span>").join(" ")
+            : "";
+        }
+        if (!grid) return;
+        if (!samples.length) {
+          grid.innerHTML = '<p class="hint">No samples found for this run.</p>';
+          return;
+        }
+        grid.innerHTML = samples.map((s, i) => {
+          const tags = (s && s.tags && typeof s.tags === "object") ? s.tags : {};
+          const tagHtml = Object.keys(tags).map((k) => '<span class="voxel-tag"><em>' + escapeHtml(k) + "</em> " + escapeHtml(String(tags[k])) + "</span>").join("");
+          const caption = String((s && s.caption) || "");
+          const group = String((s && s.group) || "");
+          const label = String((s && s.label) || (s && s.id) || ("sample " + i));
+          const thumbKey = String((s && s.thumbnail_key) || "");
+          const viewKey = String((s && s.video_key) || thumbKey);
+          return (
+            '<div class="voxel-card" data-group="' + escapeHtml(group) + '">' +
+            '<div class="voxel-thumb" data-thumb-key="' + escapeHtml(thumbKey) + '"><span class="hint">…</span></div>' +
+            '<div class="voxel-meta">' +
+            '<div class="voxel-title"><strong>' + escapeHtml(label) + '</strong><span class="pill">' + escapeHtml(group) + "</span></div>" +
+            (tagHtml ? '<div class="voxel-tags">' + tagHtml + "</div>" : "") +
+            (caption ? '<div class="voxel-caption">' + escapeHtml(caption) + "</div>" : "") +
+            '<div class="btn-row" style="margin:6px 0 0;">' +
+            '<button class="btn" type="button" data-vx-action="view" data-key="' + escapeHtml(viewKey) + '">View</button>' +
+            '<button class="btn" type="button" data-vx-action="download" data-key="' + escapeHtml(thumbKey) + '" data-name="' + escapeHtml(label) + '">Download</button>' +
+            "</div></div></div>"
+          );
+        }).join("");
+        for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-key]")) {
+          const key = String(node.getAttribute("data-thumb-key") || "").trim();
+          if (!key) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
+          const url = "/api/artifacts/download?key=" + encodeURIComponent(key);
+          authenticatedPreviewObjectUrl(url, null).then((src) => {
+            node.innerHTML = '<img alt="sample" src="' + src + '" />';
+          }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
+        }
+        grid.querySelectorAll("button[data-vx-action='view']").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            loadArtifact({ run_id: voxelDatasetRun, key: String(btn.getAttribute("data-key") || "").trim() });
+          });
+        });
+        grid.querySelectorAll("button[data-vx-action='download']").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            downloadArtifact(voxelDatasetRun, String(btn.getAttribute("data-key") || "").trim(), "", String(btn.getAttribute("data-name") || "").trim());
+          });
+        });
       }
       async function refresh() {
         try {
@@ -5388,11 +5568,9 @@
         const description = String((data && data.description) || "");
         const artifacts = Array.isArray(data && data.artifacts) ? data.artifacts : [];
         const info = (data && data.info && typeof data.info === "object") ? data.info : {};
-        // 1) Agent describes the stage (also echoed into chat).
-        if (description) {
-          appendChat("assistant", "**" + label + " stage** — " + description);
-        }
-        // 2) Inline the stage's info/config JSON.
+        // The agent describes the stage inline in the stage-detail panel below —
+        // no chat message (stage/artifact inspection must not spam the chat log).
+        // Inline the stage's info/config JSON.
         const infoKeys = Object.keys(info);
         const infoHtml = infoKeys.length
           ? '<div class="stage-detail-info"><strong>Info / config</strong>' + infoKeys.map((k) =>

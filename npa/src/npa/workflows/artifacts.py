@@ -672,3 +672,122 @@ def _to_iso8601(value: Any) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat()
+
+
+def _run_relative_key(key: str, run_id: str) -> str:
+    """Return an object key relative to its run root (drops the run prefix)."""
+    k = str(key or "")
+    marker = "/" + str(run_id) + "/"
+    if marker in k:
+        return k.split(marker, 1)[1]
+    if run_id and k.startswith(str(run_id) + "/"):
+        return k[len(str(run_id)) + 1 :]
+    return k
+
+
+def build_fiftyone_dataset(
+    keys: list[str],
+    *,
+    run_id: str,
+    read_json: Any,
+) -> dict[str, Any]:
+    """Assemble a FiftyOne/Voxel51-style sample dataset for a data-factory run.
+
+    Pure logic (no I/O of its own): ``keys`` are the run's object keys and
+    ``read_json(key)`` returns parsed JSON (or ``None``). Groups the augmented
+    scenario variants (thumbnail + appearance-variable tags + augmented caption +
+    video) and the original input frames, then summarizes the grade + curation so
+    the agent's Voxel51 tab can render "the relevant components of this workflow"
+    as a sample grid. Mirrors the ``build_run_provenance`` callback pattern so it
+    unit-tests without S3.
+    """
+    by_clip: dict[str, dict[str, Any]] = {}
+    input_frames: list[str] = []
+    json_rel: dict[str, str] = {}
+    for key in keys:
+        rel = _run_relative_key(key, run_id)
+        low = rel.lower()
+        if low.endswith(".json"):
+            json_rel[rel] = key
+        if rel.startswith("cosmos_augmented/"):
+            parts = rel.split("/")
+            if len(parts) >= 3:
+                clip = parts[1]
+                fname = parts[-1]
+                entry = by_clip.setdefault(clip, {"frames": [], "video": "", "meta": ""})
+                if low.endswith(".png"):
+                    entry["frames"].append(key)
+                elif low.endswith(".mp4"):
+                    entry["video"] = key
+                elif fname == "metadata.json":
+                    entry["meta"] = key
+        elif rel.startswith("input/") and low.endswith(".png"):
+            input_frames.append(key)
+
+    grade = read_json(json_rel.get("grade/vlm_eval_stub.json", "")) or {}
+    decision = read_json(json_rel.get("grade/decision.json", "")) or {}
+    curation = read_json(json_rel.get("curation/report.json", "")) or {}
+    aug_caps = read_json(json_rel.get("labeled_augmented/captions.json", "")) or {}
+    cap_items = aug_caps.get("captions", []) if isinstance(aug_caps, dict) else []
+
+    def _caption_for(clip: str, idx: int) -> str:
+        for item in cap_items:
+            if isinstance(item, dict) and clip and clip in str(item.get("image") or ""):
+                return str(item.get("caption") or "")
+        if 0 <= idx < len(cap_items) and isinstance(cap_items[idx], dict):
+            return str(cap_items[idx].get("caption") or "")
+        return ""
+
+    samples: list[dict[str, Any]] = []
+    tag_keys: set[str] = set()
+    for idx, clip in enumerate(sorted(by_clip)):
+        entry = by_clip[clip]
+        variables: dict[str, Any] = {}
+        if entry["meta"]:
+            meta = read_json(entry["meta"]) or {}
+            if isinstance(meta, dict) and isinstance(meta.get("variables"), dict):
+                variables = meta["variables"]
+        tags = {str(k): v for k, v in variables.items() if k != "prompt"}
+        for tk in tags:
+            tag_keys.add(tk)
+        thumbnail = sorted(entry["frames"])[0] if entry["frames"] else ""
+        samples.append(
+            {
+                "group": "augmented",
+                "id": clip,
+                "label": clip,
+                "thumbnail_key": thumbnail,
+                "video_key": entry["video"],
+                "tags": tags,
+                "prompt": str(variables.get("prompt") or ""),
+                "caption": _caption_for(clip, idx),
+            }
+        )
+    for key in sorted(input_frames)[:12]:
+        name = key.rsplit("/", 1)[-1]
+        samples.append(
+            {
+                "group": "input",
+                "id": name,
+                "label": name,
+                "thumbnail_key": key,
+                "video_key": "",
+                "tags": {},
+                "prompt": "",
+                "caption": "",
+            }
+        )
+
+    multiply = curation.get("multiply", {}) if isinstance(curation, dict) else {}
+    if not isinstance(multiply, dict):
+        multiply = {}
+    variant_count = multiply.get("variant_count") or curation.get("variant_count") or len(by_clip)
+    summary = {
+        "augmented_count": len(by_clip),
+        "input_count": len(input_frames),
+        "variant_count": int(variant_count or 0),
+        "multiply_mode": str(multiply.get("mode") or curation.get("multiply_mode") or ""),
+        "grade_score": grade.get("score") if isinstance(grade, dict) else None,
+        "grade_decision": str(decision.get("decision") or "") if isinstance(decision, dict) else "",
+    }
+    return {"fields": sorted(tag_keys), "summary": summary, "samples": samples}

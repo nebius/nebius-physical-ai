@@ -736,6 +736,17 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '/api/artifacts/stage/' in source
     assert 'id="stageDetail"' in source
     assert "data-stage-label=" in source
+    # Voxel51 / FiftyOne dataset tab.
+    assert '@app.get("/fiftyone/dataset/{{run_id:path}}")' in source
+    assert "build_fiftyone_dataset" in source
+    assert 'id="tabVoxel"' in source
+    assert 'id="panelVoxel"' in source
+    assert 'data-tab="voxel51"' in source
+    assert "async function loadVoxelDataset(" in source
+    assert "/api/fiftyone/dataset/" in source
+    assert 'id="voxelGrid"' in source
+    # Loading/viewing an artifact must NOT post a chat message anymore.
+    assert 'Loaded artifact `" + String(simViz.artifact_key' not in source
     assert 'Select a run or enter a run_id first' in source
     assert 'No S3 artifacts found for <code>' in source
     assert "Runs &amp; artifacts" in source or "Runs & artifacts" in source
