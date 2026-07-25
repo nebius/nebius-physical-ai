@@ -41,6 +41,11 @@ def launch(
 curate = make_cli_wrapper(
     "npa.cli.fiftyone", "curate_cmd", "Curate and export a LeRobotDataset with FiftyOne."
 )
+curate_augmented = make_cli_wrapper(
+    "npa.cli.fiftyone",
+    "curate_augmented_cmd",
+    "Run real FiftyOne Brain curation over a Physical AI Data Factory augmented set.",
+)
 eval = make_cli_wrapper(
     "npa.cli.fiftyone", "eval_cmd", "Evaluate checkpoint outputs with FiftyOne."
 )
@@ -63,6 +68,7 @@ __all__ = [
     "deploy",
     "launch",
     "curate",
+    "curate_augmented",
     "eval",
     "load_dataset",
     "restart",
