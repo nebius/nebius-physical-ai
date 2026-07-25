@@ -916,6 +916,13 @@ def build_fiftyone_dataset(
             return str(cap_items[idx].get("caption") or "")
         return ""
 
+    # Real FiftyOne Brain curation (when the curate stage ran inside the
+    # npa-fiftyone image): per-clip uniqueness + keep/drop decisions.
+    fo_curation = curation.get("fiftyone", {}) if isinstance(curation, dict) else {}
+    if not isinstance(fo_curation, dict):
+        fo_curation = {}
+    fo_samples = fo_curation.get("samples", {}) if isinstance(fo_curation.get("samples"), dict) else {}
+
     bkt = str(bucket or "").strip()
 
     def _uri(key: str) -> str:
@@ -935,6 +942,10 @@ def build_fiftyone_dataset(
         for tk in tags:
             tag_keys.add(tk)
         thumbnail = sorted(entry["frames"])[0] if entry["frames"] else ""
+        fo_sample = fo_samples.get(clip, {}) if isinstance(fo_samples.get(clip), dict) else {}
+        curation_flags = []
+        if fo_sample.get("redundant"):
+            curation_flags.append("redundant")
         samples.append(
             {
                 "group": "augmented",
@@ -947,6 +958,9 @@ def build_fiftyone_dataset(
                 "tags": tags,
                 "prompt": str(variables.get("prompt") or ""),
                 "caption": _caption_for(clip, idx),
+                "uniqueness": fo_sample.get("uniqueness"),
+                "curated": fo_sample.get("kept") if "kept" in fo_sample else None,
+                "curation_flags": curation_flags,
             }
         )
     for key in sorted(input_frames)[:12]:
@@ -970,6 +984,8 @@ def build_fiftyone_dataset(
     if not isinstance(multiply, dict):
         multiply = {}
     variant_count = multiply.get("variant_count") or curation.get("variant_count") or len(by_clip)
+    fo_brain = fo_curation.get("brain", {}) if isinstance(fo_curation.get("brain"), dict) else {}
+    fo_selection = fo_curation.get("selection", {}) if isinstance(fo_curation.get("selection"), dict) else {}
     summary = {
         "augmented_count": len(by_clip),
         "input_count": len(input_frames),
@@ -977,5 +993,12 @@ def build_fiftyone_dataset(
         "multiply_mode": str(multiply.get("mode") or curation.get("multiply_mode") or ""),
         "grade_score": grade.get("score") if isinstance(grade, dict) else None,
         "grade_decision": str(decision.get("decision") or "") if isinstance(decision, dict) else "",
+        # Real FiftyOne curation surface (empty when the curate stage ran
+        # report-only, i.e. outside the npa-fiftyone image).
+        "curation_engine": str(curation.get("curation_engine") or "") if isinstance(curation, dict) else "",
+        "curated_kept": curation.get("curated_kept") if isinstance(curation, dict) else None,
+        "curated_dropped": curation.get("curated_dropped") if isinstance(curation, dict) else None,
+        "near_duplicate_count": fo_brain.get("near_duplicate_count") or fo_selection.get("near_duplicate_count"),
+        "uniqueness": fo_brain.get("uniqueness", {}),
     }
     return {"fields": sorted(tag_keys), "summary": summary, "samples": samples}

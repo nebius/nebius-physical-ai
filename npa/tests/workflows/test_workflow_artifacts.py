@@ -76,6 +76,61 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
     assert first["video_key"].endswith("augmented_video.mp4")
     assert "prompt" not in first["tags"]  # prompt is surfaced separately, not a tag
     assert first["caption"] == "green cloth on a countertop"
+    # Report-only curation (no fiftyone block) -> empty curation surface.
+    assert summary["curation_engine"] == ""
+    assert first["uniqueness"] is None
+    assert first["curated"] is None
+
+
+def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
+    run = "paidf-fo"
+    base = f"checkpoints/physical-ai-data-factory/{run}"
+    keys = [
+        f"{base}/cosmos_augmented/aug-{run}-0/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json",
+        f"{base}/cosmos_augmented/aug-{run}-1/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json",
+        f"{base}/curation/report.json",
+    ]
+    payloads = {
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {"variables": {"cloth_color": "green"}},
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {"variables": {"cloth_color": "blue"}},
+        f"{base}/curation/report.json": {
+            "multiply": {"mode": "multi-variant", "variant_count": 2},
+            "curation_engine": "fiftyone-brain",
+            "curated_kept": 1,
+            "curated_dropped": 1,
+            "fiftyone": {
+                "brain": {
+                    "uniqueness": {"count": 2, "mean": 0.55, "min": 0.2, "max": 0.9},
+                    "near_duplicate_count": 1,
+                },
+                "selection": {"near_duplicate_count": 1},
+                "samples": {
+                    f"aug-{run}-0": {"uniqueness": 0.9, "kept": True, "redundant": False},
+                    f"aug-{run}-1": {"uniqueness": 0.2, "kept": False, "redundant": True},
+                },
+            },
+        },
+    }
+
+    dataset = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k))
+    summary = dataset["summary"]
+    assert summary["curation_engine"] == "fiftyone-brain"
+    assert summary["curated_kept"] == 1
+    assert summary["curated_dropped"] == 1
+    assert summary["near_duplicate_count"] == 1
+    assert summary["uniqueness"]["mean"] == 0.55
+
+    aug = sorted(
+        (s for s in dataset["samples"] if s["group"] == "augmented"), key=lambda s: s["id"]
+    )
+    assert aug[0]["uniqueness"] == 0.9
+    assert aug[0]["curated"] is True
+    assert aug[0]["curation_flags"] == []
+    assert aug[1]["uniqueness"] == 0.2
+    assert aug[1]["curated"] is False
+    assert aug[1]["curation_flags"] == ["redundant"]
 
 
 class _FakePaginator:

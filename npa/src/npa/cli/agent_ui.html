@@ -5300,7 +5300,11 @@
             '<span class="pill">multiply <strong>' + escapeHtml(String(summary.multiply_mode || "-")) + "</strong></span>" +
             '<span class="pill">grade <strong>' + escapeHtml(grade) + "</strong></span>" +
             '<span class="pill">decision <strong>' + escapeHtml(String(summary.grade_decision || "-")) + "</strong></span>" +
-            '<span class="pill">input frames <strong>' + escapeHtml(String(summary.input_count || 0)) + "</strong></span>";
+            '<span class="pill">input frames <strong>' + escapeHtml(String(summary.input_count || 0)) + "</strong></span>" +
+            (summary.curation_engine ? '<span class="pill">curation <strong>' + escapeHtml(String(summary.curation_engine)) + "</strong></span>" : "") +
+            ((summary.curated_kept !== null && summary.curated_kept !== undefined) ? '<span class="pill">kept <strong>' + escapeHtml(String(summary.curated_kept)) + "</strong></span>" : "") +
+            (summary.near_duplicate_count ? '<span class="pill">near-dupes <strong>' + escapeHtml(String(summary.near_duplicate_count)) + "</strong></span>" : "") +
+            ((summary.uniqueness && (summary.uniqueness.mean !== null && summary.uniqueness.mean !== undefined)) ? '<span class="pill">uniqueness μ <strong>' + escapeHtml(String(summary.uniqueness.mean)) + "</strong></span>" : "");
         }
         if (fieldsHost) {
           fieldsHost.innerHTML = fields.length
@@ -5322,11 +5326,21 @@
           // the correct bucket (runs may live in any accessible bucket).
           const thumbUri = String((s && s.thumbnail_uri) || "");
           const viewUri = String((s && s.video_uri) || thumbUri);
+          const hasUniq = s && s.uniqueness !== null && s.uniqueness !== undefined;
+          const flags = Array.isArray(s && s.curation_flags) ? s.curation_flags : [];
+          let curBadge = "";
+          if (hasUniq) {
+            curBadge += '<span class="voxel-tag" title="FiftyOne Brain uniqueness"><em>uniq</em> ' + escapeHtml(Number(s.uniqueness).toFixed(3)) + "</span>";
+            if (s.curated === true) curBadge += '<span class="voxel-tag" title="kept by FiftyOne curation"><em>kept</em></span>';
+            else if (s.curated === false) curBadge += '<span class="voxel-tag" title="dropped as near-duplicate"><em>dropped</em></span>';
+            if (flags.includes("redundant")) curBadge += '<span class="voxel-tag" title="low-uniqueness, flagged for review"><em>redundant</em></span>';
+          }
           return (
             '<div class="voxel-card" data-group="' + escapeHtml(group) + '">' +
             '<div class="voxel-thumb" data-thumb-uri="' + escapeHtml(thumbUri) + '"><span class="hint">…</span></div>' +
             '<div class="voxel-meta">' +
             '<div class="voxel-title"><strong>' + escapeHtml(label) + '</strong><span class="pill">' + escapeHtml(group) + "</span></div>" +
+            (curBadge ? '<div class="voxel-tags">' + curBadge + "</div>" : "") +
             (tagHtml ? '<div class="voxel-tags">' + tagHtml + "</div>" : "") +
             (caption ? '<div class="voxel-caption">' + escapeHtml(caption) + "</div>" : "") +
             '<div class="btn-row" style="margin:6px 0 0;">' +
