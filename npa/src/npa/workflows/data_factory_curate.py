@@ -27,7 +27,10 @@ report-only path -- so the pipeline never regresses when the image is absent.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
+
+_log = logging.getLogger(__name__)
 
 CURATION_ENGINE_FIFTYONE = "fiftyone-brain"
 CURATION_ENGINE_REPORT_ONLY = "report-only"
@@ -458,5 +461,5 @@ def run_curation(
     finally:
         try:
             dataset.delete()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
+            _log.debug("failed to delete curation dataset: %s", exc)
