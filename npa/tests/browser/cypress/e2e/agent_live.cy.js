@@ -167,10 +167,10 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.get("#artifactDiscoverStatus", { timeout: 30000 }).should("contain.text", "Runs discovered");
 
-    cy.get("#loadFrankaRerun").click();
+    cy.get("#loadRerunViewer").click({ force: true });
     cy.get("#statusBar", { timeout: 120000 }).should(($bar) => {
       const text = $bar.text();
-      expect(text).to.match(/done|Ready|SUCCESS|Rerun/i);
+      expect(text).to.match(/done|Ready|SUCCESS|Rerun|Reload/i);
     });
 
     cy.get("#openRerun").should("be.visible");

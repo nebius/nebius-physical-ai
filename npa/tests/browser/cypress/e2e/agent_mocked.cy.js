@@ -176,7 +176,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "plan");
   });
 
-  it("covers Sim2Real selection, Stages panel, Rerun buttons, and run-data loading", () => {
+  it("covers Stages panel, Rerun buttons, and run-data loading", () => {
     cy.window().then((win) => {
       cy.stub(win, "open").as("windowOpen");
     });
@@ -184,35 +184,19 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
 
-    cy.get("#robotPreset").select("ur5e");
-    cy.wait("@setSelection");
-    cy.get("#robotPreset").should("have.value", "franka");
-
-    cy.get("#simBackend").select("genesis");
-    cy.get("#propCube").uncheck();
-    cy.get("#applySelection").click();
-    cy.wait("@setSelection");
-    cy.get("#assetsSummary").should("contain.text", "stock://scene/default");
-
-    cy.get("#loadFrankaRerun").click();
-    cy.wait("@loadFranka");
-    cy.get("#tabMain").click();
-    cy.get("#chatLog").should("contain.text", "Loaded stock Franka");
+    // The Selection / Scene-mode section was removed — the viewer just shows run
+    // artifacts now, so no robot/scene/cube controls or Franka/Submit buttons.
+    cy.get("#sceneMode").should("not.exist");
+    cy.get("#applySelection").should("not.exist");
+    cy.get("#loadFrankaRerun").should("not.exist");
+    cy.get("#submitWorkflow").should("not.exist");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
 
-    cy.get("#tabRerun").click();
     cy.get("#loadRerunViewer").click({ force: true });
     cy.get("#statusBar").should(($bar) => {
-      expect($bar.text()).to.match(/Rerun|Reload/);
+      expect($bar.text()).to.match(/Rerun|Reload|Ready/);
     });
 
-    cy.get("#submitWorkflow").click();
-    cy.wait("@submitSim2Real");
-    cy.get("#tabMain").click();
-    cy.get("#chatLog").should("contain.text", "Submitted Sim2Real run");
-    cy.get("#runSummary").should("contain.text", "submitted-run");
-
-    cy.get("#tabRerun").click();
     cy.get("#workflowStatus").click();
     cy.wait("@workflowStatus");
     cy.get("#tabMain").click();
@@ -533,8 +517,7 @@ describe("NPA agent UI with mocked APIs", () => {
     // Repeated remounts / reloads must not leave the Caching overlay visible.
     cy.get("#loadRerunViewer").click({ force: true });
     cy.get("#rerunBundleCover", { timeout: 15000 }).should("have.attr", "hidden");
-    cy.get("#loadFrankaRerun").click({ force: true });
-    cy.wait("@loadFranka");
+    cy.get("#loadRerunViewer").click({ force: true });
     cy.get("#rerunBundleCover", { timeout: 15000 }).should("have.attr", "hidden");
     cy.get("#statusBar").should(($el) => {
       expect($el.text()).not.to.match(/Caching Rerun assets/i);

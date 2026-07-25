@@ -18,10 +18,7 @@ UI_BUTTON_IDS = (
     "chatActionCosmos",
     "chatActionWatch",
     "newChatSession",
-    "loadFrankaRerun",
     "openRerun",
-    "applySelection",
-    "submitWorkflow",
     "workflowStatus",
 )
 
