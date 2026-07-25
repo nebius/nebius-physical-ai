@@ -42,10 +42,10 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
-| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **pending** | 2-GPU live run in progress on `npa-rtxpro-mk8s` |
-| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **pending** | 2-GPU live run in progress (`scripts/train_tokenizer.py`) |
-| Open Dreamer | `coinrun_video_dataloader` | **pending** | 2-GPU live run in progress (`dreamer.data.build_iterator`) |
-| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **pending (attempted)** | 2-GPU live run in progress (`scripts/train_dynamics.py`) |
+| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-2gpu-20260725T012136Z` (jax 0.10.1, 2×RTX PRO 6000 Blackwell `[cuda:0, cuda:1]`, mesh `{data:2, model:1}`) |
+| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0; checkpoint at `logs/od_tok_smoke/checkpoints`) |
+| Open Dreamer | `coinrun_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` batch `[8,16,64,64,3]` sharded across 2 devices) |
+| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0; checkpoint at `logs/od_dyn_smoke/checkpoints`) |
 
 ## Native Capabilities Per Container
 
@@ -100,10 +100,10 @@ device mesh, so it uses `byof-solution-smoke-rtxpro-2gpu.yaml`
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `jax_two_gpu_data_parallel_mesh` | pending hard gate (live) | `dreamer.parallel.build_parallel("data")` `{data:2, model:1}` over `jax.devices()` |
-| `dreamer4_tokenizer_train_two_gpu` | pending hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer, data-parallel across the mesh |
-| `coinrun_video_dataloader` | pending (live) | `dreamer.data.build_iterator` CoinRun path + device sharding |
-| `dreamer4_dynamics_train_two_gpu` | attempted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics step |
+| `jax_two_gpu_data_parallel_mesh` | accepted hard gate (live) | `dreamer.parallel.build_parallel("data")` `{data:2, model:1}` over 2 `jax.devices()` |
+| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer, data-parallel across the mesh |
+| `coinrun_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` CoinRun path + device sharding (2 devices) |
+| `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics step |
 
 Synthetic smoke data: CoinRun records are raw `pickle` (the format the reader
 expects), latents use `serialize_msgpack_record` with the 27-binary / 121-camera
