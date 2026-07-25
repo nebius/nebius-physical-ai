@@ -478,6 +478,13 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "body.mobile-agent .workflow-panel { display: none; }" in source
     assert "body.mobile-agent #panelChat .chat-panel" in source
     assert "body.mobile-agent.mobile-show-panels .layout-rerun" not in source
+    # Mobile: don't mount the unsupported Rerun wasm viewer — route to Voxel51.
+    assert "function isMobileLayout()" in source
+    assert "function showMobileRerunNotice(" in source
+    assert "3D Rerun viewer needs a desktop browser" in source
+    assert "#panelVoxel.is-inactive { display: none; }" in source
+    # Voxel51 auto-loads the latest run so the tab always shows content.
+    assert '/api/artifacts/runs?limit=1' in source
     # Modern refresh + iOS/desktop friendliness (cascade override layer):
     assert "Modern refresh (2026)" in source
     assert "-webkit-font-smoothing: antialiased" in source

@@ -142,6 +142,9 @@
         min-height: 560px;
         height: calc(100dvh - 220px);
       }
+      /* The Voxel51 panel has no wasm/drawer to keep alive, so fully remove it
+         when inactive (avoids any absolute-overlay layout quirks on mobile). */
+      #panelVoxel.is-inactive { display: none; }
       .layout { display: grid; gap: 14px; }
       .layout-rerun {
         grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
@@ -1764,6 +1767,9 @@
       function applyMobileLayout() {
         if (!detectMobileLayout()) return;
         document.body.classList.add("mobile-agent");
+      }
+      function isMobileLayout() {
+        return document.body.classList.contains("mobile-agent");
       }
       let mobileAuthTokenCache = "";
       function mobileAuthHeader() {
@@ -3927,6 +3933,37 @@
         if (placeholder) placeholder.hidden = true;
         if (iframe) iframe.hidden = false;
       }
+      function showMobileRerunNotice(runId) {
+        // Rerun's wasm 3D viewer is not supported in mobile browsers. Instead of
+        // showing its "not supported" screen, guide to the Voxel51 tab (frames,
+        // augmented variants, captions, grade) and the artifact list.
+        const placeholder = document.getElementById("rerunPlaceholder");
+        const iframe = document.getElementById("rerunFrame");
+        if (iframe) { iframe.hidden = true; iframe.removeAttribute("src"); }
+        rerunIframeLoaded = false;
+        mountedRerunRunKey = "";
+        if (placeholder) {
+          placeholder.hidden = false;
+          placeholder.innerHTML =
+            '<p><strong>3D Rerun viewer needs a desktop browser.</strong></p>' +
+            '<p class="hint">On mobile, view this run\'s input frames, augmented scenario ' +
+            'variants, captions and grade in the <strong>Voxel51</strong> tab — or open an ' +
+            'individual image/video from the Runs &amp; artifacts list above.</p>' +
+            '<div class="btn-row" style="justify-content:center;margin-top:10px;">' +
+            '<button class="btn btn-primary" type="button" id="rerunToVoxel">Open Voxel51</button>' +
+            '</div>';
+          const toVoxel = document.getElementById("rerunToVoxel");
+          if (toVoxel) {
+            toVoxel.addEventListener("click", () => {
+              const vin = document.getElementById("voxelRunInput");
+              const rid = String(runId || activeRunId || "").trim();
+              if (vin && rid) vin.value = rid;
+              activateMainTab("voxel51").catch((err) => console.warn("voxel open failed", err));
+            });
+          }
+        }
+        setStatus("Ready");
+      }
       function hideArtifactPreview() {
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return;
@@ -4369,6 +4406,11 @@
         }
       }
       async function loadRerunViewer(camera) {
+        // Mobile can't run the Rerun wasm viewer — show the notice + Voxel51 route.
+        if (isMobileLayout()) {
+          showMobileRerunNotice(activeRunId);
+          return false;
+        }
         const cam = String(camera || selectedCamera());
         let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
         const render = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
@@ -4932,12 +4974,14 @@
             );
           });
         });
-        if (preferred && String(preferred.render || "") === "rerun") {
+        if (preferred && String(preferred.render || "") === "rerun" && !isMobileLayout()) {
           await loadArtifact({
             run_id: runId,
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
           });
+          renderArtifactDerivedRunDetails(runId, artifacts);
+        } else {
           renderArtifactDerivedRunDetails(runId, artifacts);
         }
         return true;
@@ -5182,6 +5226,16 @@
         const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
         if (loadedRunId) activeRunId = loadedRunId;
         updateRenderedDataSummary(simViz);
+        // Mobile: the 3D Rerun wasm viewer isn't supported — open the run's data in
+        // the Voxel51 tab instead of mounting the (unsupported) viewer.
+        if (render === "rerun" && isMobileLayout()) {
+          const vin = document.getElementById("voxelRunInput");
+          if (vin && loadedRunId) vin.value = loadedRunId;
+          await activateMainTab("voxel51");
+          await loadVoxelDataset(loadedRunId);
+          await refresh();
+          return true;
+        }
         await activateMainTab("rerun", { skipEnsure: true });
         if (render === "rerun") {
           setRenderMode("rerun");
@@ -5207,12 +5261,23 @@
         const summaryHost = document.getElementById("voxelSummary");
         const fieldsHost = document.getElementById("voxelFields");
         const input = document.getElementById("voxelRunInput");
-        const runId = String(runIdArg || (input && input.value) || activeRunId || "").trim();
-        if (input && !input.value && runId) input.value = runId;
+        let runId = String(runIdArg || (input && input.value) || activeRunId || "").trim();
+        // No run chosen yet: auto-pick the most recent discovered run so the tab
+        // always shows content instead of an empty prompt.
+        if (!runId) {
+          if (grid) grid.innerHTML = '<p class="hint">Finding the latest run…</p>';
+          try {
+            const runsData = await loadJson("/api/artifacts/runs?limit=1");
+            const runs = (runsData && (runsData.runs || runsData.run_ids)) || [];
+            const first = runs[0];
+            runId = String((first && (first.run_id || first)) || "").trim();
+          } catch (_err) { /* fall through to the prompt below */ }
+        }
+        if (input && runId) input.value = runId;
         if (!runId) {
           if (summaryHost) summaryHost.innerHTML = "";
           if (fieldsHost) fieldsHost.innerHTML = "";
-          if (grid) grid.innerHTML = '<p class="hint">Load a run (from Stages or Rerun) or paste a run ID above, then Load dataset.</p>';
+          if (grid) grid.innerHTML = '<p class="hint">No runs discovered yet. Paste a run ID above and tap Load dataset.</p>';
           return;
         }
         if (grid) grid.innerHTML = '<p class="hint">Loading dataset for <code>' + escapeHtml(runId) + '</code>…</p>';
@@ -5862,6 +5927,12 @@
         }
       }
       async function ensureFrankaRerunLoaded() {
+        // Mobile browsers can't run the Rerun wasm 3D viewer — never mount it;
+        // show a notice that points to the Voxel51 data view instead.
+        if (isMobileLayout()) {
+          showMobileRerunNotice(activeRunId);
+          return "mobile";
+        }
         const simViz = await loadJson("/api/sim-viz/status");
         const artifactRender = String((simViz && simViz.artifact_render) || "");
         const runId = String((simViz && (simViz.active_run_id || simViz.run_id)) || "").trim();
