@@ -59,6 +59,12 @@ variants were kept vs dropped. Outside the image (no FiftyOne) it degrades to a
 report-only counts path. The container functional smoke
 (`docker/workbench/fiftyone/smoke_functional.py`) exercises this Brain path.
 
+The `npa-fiftyone` image bundles `mongod` (the prebuilt `fiftyone_db` wheel ships
+no mongod for trixie) into `fiftyone/db/bin/` so FiftyOne launches its own
+metadata DB with no external MongoDB — required for any Brain method. To run
+curation against an *un-rebuilt* image, supply an external DB instead
+(`-e FIFTYONE_DATABASE_URI=mongodb://<host>:27017`).
+
 ## Data Patterns
 
 FiftyOne Brain uses `fob.compute_visualization` for CLIP UMAP embeddings. Brain

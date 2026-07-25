@@ -8,6 +8,13 @@ ARG DATASETS_VERSION=4.8.5
 ARG HUGGINGFACE_HUB_VERSION=1.14.0
 ARG PYARROW_VERSION=24.0.0
 ARG PILLOW_VERSION=12.2.0
+# MongoDB server for FiftyOne's metadata DB. The prebuilt fiftyone_db wheel does
+# NOT ship a mongod binary for this platform (trixie), so real curation
+# (compute_uniqueness / compute_similarity / compute_visualization, which all need
+# the DB) fails with "Could not find `mongod`". We bundle the generic Ubuntu 22.04
+# mongod build into fiftyone_db's bin dir so FiftyOne launches its own DB with no
+# external MongoDB required.
+ARG MONGODB_VERSION=7.0.14
 
 LABEL npa.tool="fiftyone" \
       npa.version="${FIFTYONE_VERSION}"
@@ -34,6 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxext6 \
       libxrender1 \
       procps \
+    && (apt-get install -y --no-install-recommends libcurl4t64 \
+        || apt-get install -y --no-install-recommends libcurl4) \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
@@ -64,6 +73,19 @@ RUN python -m venv "${FIFTYONE_VENV}" \
 
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_env.py /opt/npa/docker/workbench/fiftyone/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_functional.py /opt/npa/docker/workbench/fiftyone/smoke_functional.py
+
+# Bundle mongod so FiftyOne can launch its own metadata DB (needed for real
+# curation: compute_uniqueness / compute_similarity / compute_visualization).
+RUN set -eux; \
+    cd /tmp; \
+    curl -sSL -o mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz"; \
+    tar xzf mongodb.tgz; \
+    DBBIN="$(python -c 'import os, fiftyone.db as d; print(os.path.join(os.path.dirname(d.__file__), "bin"))')"; \
+    mkdir -p "$DBBIN"; \
+    cp "mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}/bin/mongod" "$DBBIN/mongod"; \
+    chmod +x "$DBBIN/mongod"; \
+    rm -rf /tmp/mongodb.tgz "/tmp/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}"; \
+    "$DBBIN/mongod" --version | head -n 1
 
 RUN python -m py_compile /opt/npa/docker/workbench/fiftyone/smoke_env.py /opt/npa/docker/workbench/fiftyone/smoke_functional.py \
     && python - <<'PY'
