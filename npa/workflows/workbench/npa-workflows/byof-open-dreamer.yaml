@@ -91,37 +91,42 @@ config:
 
 
     def _background(seed):
-        rng = np.random.default_rng(seed + 7919)
-        gy = np.linspace(12, 60, H, dtype=np.float32)[:, None]
-        gx = np.linspace(12, 60, W, dtype=np.float32)[None, :]
+        # Smooth, low-contrast gradient so the reconstruction loss is dominated by
+        # the large moving agent (small high-frequency clutter would otherwise
+        # capture the full-frame MSE and the salient object would be ignored).
+        gy = np.linspace(18, 46, H, dtype=np.float32)[:, None]
+        gx = np.linspace(24, 52, W, dtype=np.float32)[None, :]
         bg = np.clip(np.stack([
-            np.broadcast_to(gy + 0.5 * gx, (H, W)),
-            np.broadcast_to(gy, (H, W)),
-            np.broadcast_to(gx, (H, W)),
+            np.broadcast_to(0.5 * gy + 0.5 * gx, (H, W)),
+            np.broadcast_to(0.7 * gy, (H, W)),
+            np.broadcast_to(0.8 * gx, (H, W)),
         ], axis=-1), 0, 255).astype(np.uint8)
-        for _ in range(4):  # darker structural rectangles for texture + occlusion
-            y0 = int(rng.integers(0, H - 12)); x0 = int(rng.integers(0, W - 12))
-            hh = int(rng.integers(6, 14)); ww = int(rng.integers(6, 14))
-            bg[y0:y0 + hh, x0:x0 + ww] = (bg[y0:y0 + hh, x0:x0 + ww] * 0.45).astype(np.uint8)
         return bg
 
 
     def render_episode(seed):
-        """Return (video uint8 (T,H,W,C), move_ids int32(T,), binary int32(T,27))."""
+        """Return (video uint8 (T,H,W,C), move_ids int32(T,), binary int32(T,27)).
+
+        A large, high-contrast agent square moves under action control on a smooth
+        gradient, with one small distractor for mild richness/occlusion. The agent
+        dominates the frame so the tokenizer reconstructs it (legible) and the
+        dynamics can dream its action-conditioned motion.
+        """
         rng = np.random.default_rng(seed)
         bg = _background(seed)
         video = np.zeros((T, H, W, C), dtype=np.uint8)
         move_ids = np.zeros((T,), dtype=np.int32)
         binary = np.zeros((T, 27), dtype=np.int32)
-        s = 10  # agent size
-        ay, ax = int(rng.integers(12, H - 22)), int(rng.integers(12, W - 22))
-        dy0, dx0 = int(rng.integers(6, H - 16)), int(rng.integers(6, W - 16))
+        s = 20            # agent size (large -> dominant in the MSE)
+        step_px = 4       # pixels moved per frame
+        ay, ax = int(rng.integers(6, H - s - 6)), int(rng.integers(6, W - s - 6))
+        dy0, dx0 = int(rng.integers(4, H - 10)), int(rng.integers(4, W - 10))
         move = int(rng.integers(0, NUM_MOVES))
         hold = 0
         for t in range(T):
             if hold <= 0:
                 move = int(rng.integers(0, NUM_MOVES))
-                hold = int(rng.integers(3, 7))
+                hold = int(rng.integers(4, 8))
             hold -= 1
             vx, vy = MOVES[move]
             move_ids[t] = move
@@ -131,12 +136,14 @@ config:
             if vx > 0: binary[t, _KEY_RIGHT] = 1
 
             frame = bg.copy()
-            dsy = int(dy0 + 8 * np.sin(0.4 * t)); dsx = int(dx0 + 10 * np.cos(0.3 * t))
-            dsy = max(0, min(H - 8, dsy)); dsx = max(0, min(W - 8, dsx))
-            frame[dsy:dsy + 8, dsx:dsx + 8] = (80, 200, 200)
-            ay = max(0, min(H - s, ay + 3 * vy))
-            ax = max(0, min(W - s, ax + 3 * vx))
-            frame[ay:ay + s, ax:ax + s] = (255, 120, 90)
+            # Small distractor on an action-independent path (mild occlusion).
+            dsy = int(dy0 + 6 * np.sin(0.4 * t)); dsx = int(dx0 + 8 * np.cos(0.3 * t))
+            dsy = max(0, min(H - 6, dsy)); dsx = max(0, min(W - 6, dsx))
+            frame[dsy:dsy + 6, dsx:dsx + 6] = (60, 170, 180)
+            # Large bright agent moved by the action.
+            ay = max(0, min(H - s, ay + step_px * vy))
+            ax = max(0, min(W - s, ax + step_px * vx))
+            frame[ay:ay + s, ax:ax + s] = (255, 150, 40)
             video[t] = frame
         return video, move_ids, binary
     PYEOF
@@ -171,10 +178,10 @@ config:
     TOK_DBOT = 16
     TOK_ENC_DEPTH = int(os.environ.get("OD_TOK_ENC_DEPTH", "1" if CPU else "6"))
     TOK_DEC_DEPTH = int(os.environ.get("OD_TOK_DEC_DEPTH", "1" if CPU else "4"))
-    TOK_STEPS = int(os.environ.get("OD_TOK_STEPS", "2" if CPU else "3000"))
+    TOK_STEPS = int(os.environ.get("OD_TOK_STEPS", "2" if CPU else "6000"))
     TOK_B = int(os.environ.get("OD_TOK_B", "2" if CPU else "32"))
     TOK_T = int(os.environ.get("OD_TOK_T", "8" if CPU else "16"))
-    TOK_MAE_PMAX = os.environ.get("OD_TOK_MAE_PMAX", "0.3")
+    TOK_MAE_PMAX = os.environ.get("OD_TOK_MAE_PMAX", "0.1")
     TOK_VIS_EVERY = int(os.environ.get("OD_TOK_VIS_EVERY", "1" if CPU else "500"))
 
     DYN_PACK = int(os.environ.get("OD_DYN_PACK", "2"))
