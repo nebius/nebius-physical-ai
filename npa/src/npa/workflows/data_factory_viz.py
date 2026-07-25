@@ -258,6 +258,22 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     return docs
 
 
+_CAPTION_HEADERS = {
+    "labeled_original": (
+        "## Original-frame captions — Token Factory VLM\n\n"
+        "_Descriptive per-frame labels of the SOURCE clip. This is captioning, "
+        "not the quality gate — see `pipeline/3_grade` for the attribute-verify / "
+        "hallucination check (score + promote/loop_back decision)._\n\n"
+    ),
+    "labeled_augmented": (
+        "## Augmented-clip captions — Token Factory VLM\n\n"
+        "_Descriptive per-frame labels of the Cosmos Transfer 2.5 OUTPUT. This is "
+        "captioning, not the quality gate — see `pipeline/3_grade` for the "
+        "attribute-verify / hallucination check (score + promote/loop_back decision)._\n\n"
+    ),
+}
+
+
 def _load_captions(local: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     for name in ("labeled_original", "labeled_augmented"):
@@ -273,7 +289,9 @@ def _load_captions(local: Path) -> dict[str, str]:
             f"- {c.get('image')}: {c.get('caption')}" for c in items[:12] if isinstance(c, dict)
         )
         if body:
-            out[name] = body
+            # Prefix a self-identifying header so a caption panel is never confused
+            # with the VLM eval / hallucination grade panel in the Rerun grid.
+            out[name] = _CAPTION_HEADERS.get(name, "") + body
     return out
 
 

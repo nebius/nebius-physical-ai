@@ -143,6 +143,35 @@ def test_build_run_rrd_logs_pipeline_docs(tmp_path: Path, monkeypatch) -> None:
     assert "pipeline/3_grade" in logged_entities
 
 
+def test_captions_carry_self_identifying_header(tmp_path: Path) -> None:
+    """Caption docs must announce they are Token Factory captioning (not the VLM
+    eval / hallucination gate) so the two are not confused in the Rerun grid."""
+    import json
+
+    from npa.workflows.data_factory_viz import _load_captions
+
+    run = tmp_path / "run"
+    (run / "labeled_original").mkdir(parents=True)
+    (run / "labeled_original" / "captions.json").write_text(
+        json.dumps({"captions": [{"image": "frame_01.png", "caption": "a robot arm folds cloth"}]})
+    )
+    (run / "labeled_augmented").mkdir(parents=True)
+    (run / "labeled_augmented" / "captions.json").write_text(
+        json.dumps({"captions": [{"image": "frame_01.png", "caption": "a blue cloth under warm light"}]})
+    )
+
+    caps = _load_captions(run)
+    assert "Original-frame captions" in caps["labeled_original"]
+    assert "Augmented-clip captions" in caps["labeled_augmented"]
+    # Each caption panel points at the grade panel and says it is NOT the gate.
+    for body in caps.values():
+        assert "pipeline/3_grade" in body
+        assert "not the quality gate" in body
+        assert "Token Factory VLM" in body
+    # The actual caption text is still present.
+    assert "a robot arm folds cloth" in caps["labeled_original"]
+
+
 def test_build_run_rrd_requires_rrd_output(tmp_path: Path) -> None:
     with pytest.raises(DataFactoryVizError):
         build_run_rrd(str(tmp_path), str(tmp_path / "out.json"))
