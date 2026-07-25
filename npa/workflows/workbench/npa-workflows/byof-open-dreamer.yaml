@@ -188,15 +188,19 @@ config:
     DYN_DEPTH = int(os.environ.get("OD_DYN_DEPTH", "1" if CPU else "6"))
     DYN_NREG = int(os.environ.get("OD_DYN_NREG", "2" if CPU else "8"))
     DYN_KMAX = int(os.environ.get("OD_DYN_KMAX", "4" if CPU else "32"))
-    DYN_STEPS = int(os.environ.get("OD_DYN_STEPS", "2" if CPU else "2000"))
+    DYN_STEPS = int(os.environ.get("OD_DYN_STEPS", "2" if CPU else "6000"))
     DYN_B = int(os.environ.get("OD_DYN_B", "2" if CPU else "16"))
     DYN_SHORT_T = int(os.environ.get("OD_DYN_SHORT_T", "8" if CPU else "16"))
     DYN_LONG_T = int(os.environ.get("OD_DYN_LONG_T", "8" if CPU else "64"))
-    DYN_BOOT_START = int(os.environ.get("OD_DYN_BOOT_START", "1" if CPU else "500"))
+    # Keep most steps as pure flow-matching (bootstrap/shortcut late) so the
+    # diffusion rollout used for the dream has a well-trained base model.
+    DYN_BOOT_START = int(os.environ.get("OD_DYN_BOOT_START", "1" if CPU else "5000"))
 
     ROLL_CTX = int(os.environ.get("OD_ROLL_CTX", "2" if CPU else "8"))
-    ROLL_HORIZON = int(os.environ.get("OD_ROLL_HORIZON", "4" if CPU else "40"))
-    ROLL_DENOISE = int(os.environ.get("OD_ROLL_DENOISE", "2" if CPU else "8"))
+    # Shorter horizon (more context) limits autoregressive drift so the dream stays
+    # legible; more denoise steps raise per-step fidelity.
+    ROLL_HORIZON = int(os.environ.get("OD_ROLL_HORIZON", "4" if CPU else "24"))
+    ROLL_DENOISE = int(os.environ.get("OD_ROLL_DENOISE", "2" if CPU else "16"))
 
     DATA_DIR = REPO / "datasets" / "sprite_nav" / "train"
     LATENT_DIR = REPO / "datasets" / "sprite_nav_latent"
