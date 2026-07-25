@@ -15,6 +15,11 @@ DEFAULT_PORT = 8793
 DEFAULT_TOKEN_ENV = "INSIGHTS_TOKEN"
 DEFAULT_QUERY_LIMIT = 100
 
+# Metric name used for the per-run accelerator (GPU) count extracted from a run
+# manifest's resource profile, plus the label key carrying the accelerator spec.
+GPU_METRIC_NAME = "gpus"
+ACCELERATORS_LABEL = "accelerators"
+
 # Append-only store layout under a configurable prefix on S3 (JSONL fallback).
 RECORDS_OBJECT = "records.jsonl"
 EDGES_OBJECT = "edges.jsonl"
@@ -241,6 +246,7 @@ class QueryRequest(BaseModel):
     dataset_version: str = ""
     model_version: str = ""
     metric_name: str = ""
+    accelerator: str = ""
     time_start: str = ""
     time_end: str = ""
     threshold_metric: str = ""

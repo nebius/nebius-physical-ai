@@ -233,6 +233,97 @@ def test_ingest_run_empty_prefix_raises(tmp_path: Path) -> None:
         ingest_run(IngestRunRequest(input_uri=str(tmp_path / "empty"), output_uri=str(tmp_path / "store")))
 
 
+def _write_run_manifest(run_dir: Path, *, accelerators: str, run_id: str = "gpu-run") -> None:
+    (run_dir / "npa-workflow").mkdir(parents=True, exist_ok=True)
+    (run_dir / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "scenario-gen",
+                "run_id": run_id,
+                "api_version": "npa.workflow/v0.0.1",
+                "status": "succeeded",
+                "steps": [
+                    {"state": "control", "iteration": 0, "status": "ok", "resources_profile": {"cpus": 4}},
+                    {
+                        "state": "generate",
+                        "iteration": 0,
+                        "status": "ok",
+                        "resources_profile": {"accelerators": accelerators, "cpus": 16},
+                    },
+                ],
+            }
+        )
+    )
+
+
+def test_ingest_run_extracts_gpu_count_from_run_manifest(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    _write_run_manifest(run, accelerators="RTXPRO6000:4", run_id="insights-4gpu-viz")
+    store = str(tmp_path / "store")
+    response = ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf"))
+    assert "npa.workflow.run.v1" in {a.schema_id for a in response.ingested}
+    gpus = [r for r in read_records(store) if r["metric_name"] == "gpus"]
+    assert len(gpus) == 1
+    # Peak accelerator count across steps; the CPU-only step contributes nothing.
+    assert gpus[0]["value"] == 4.0
+    assert gpus[0]["run_id"] == "insights-4gpu-viz"
+    assert gpus[0]["labels"]["accelerators"] == "RTXPRO6000"
+
+
+def test_ingest_run_skips_cpu_only_run_manifest(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    (run / "npa-workflow").mkdir(parents=True)
+    (run / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "insights-aggregate",
+                "run_id": "cpu-run",
+                "api_version": "npa.workflow/v0.0.1",
+                "steps": [{"state": "aggregate", "iteration": 0, "status": "ok", "resources_profile": {"cpus": 2}}],
+            }
+        )
+    )
+    # No accelerator anywhere -> no fabricated gpus metric, and no known schema to
+    # ingest, so the run raises rather than inventing a value.
+    with pytest.raises(InsightsStoreError):
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+
+
+def test_query_filters_by_accelerator_label(tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    _write_run_manifest(a, accelerators="RTXPRO6000:4", run_id="run-4gpu")
+    _write_run_manifest(b, accelerators="H100:1", run_id="run-h100")
+    store = str(tmp_path / "store")
+    ingest_run(IngestRunRequest(input_uri=str(a), output_uri=store))
+    ingest_run(IngestRunRequest(input_uri=str(b), output_uri=store))
+
+    only_rtx = query_metrics(QueryRequest(input_uri=store, accelerator="RTXPRO6000"))
+    assert {r["run_id"] for r in only_rtx.records} == {"run-4gpu"}
+
+    # Numeric "which runs use >=4 GPUs" via the existing threshold predicate.
+    four_plus = query_metrics(
+        QueryRequest(
+            input_uri=store,
+            metric_name="gpus",
+            threshold_metric="gpus",
+            threshold_op="ge",
+            threshold_value=4,
+        )
+    )
+    assert {r["run_id"] for r in four_plus.records} == {"run-4gpu"}
+
+
+def test_parse_accelerators_variants() -> None:
+    from npa.workbench.insights.store import _parse_accelerators
+
+    assert _parse_accelerators("RTXPRO6000:4") == ("RTXPRO6000", 4)
+    assert _parse_accelerators("H100") == ("H100", 1)
+    assert _parse_accelerators("") == ("", 0)
+
+
 def test_ingest_run_skips_unknown_schema(tmp_path: Path) -> None:
     run = tmp_path / "run"
     run.mkdir()

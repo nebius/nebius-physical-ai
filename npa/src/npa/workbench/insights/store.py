@@ -13,7 +13,9 @@ from typing import Any
 
 from .integrations import index_metrics_in_lancedb
 from .schemas import (
+    ACCELERATORS_LABEL,
     EDGES_OBJECT,
+    GPU_METRIC_NAME,
     METRIC_RECORD_SCHEMA,
     RECORDS_OBJECT,
     IngestedArtifact,
@@ -36,6 +38,9 @@ from .storage import (
 DATASET_MANIFEST_SCHEMA = "npa.dataset.manifest.v1"
 DATASET_VALIDATION_SCHEMA = "npa.dataset.validation_report.v1"
 SCENARIO_ADVERSARIAL_SCHEMA = "npa.scenario_gen.adversarial_set.v1"
+# The durable npa.workflow run manifest tags its schema under ``schema_version``
+# (not ``schema``); it carries per-step resource profiles we mine for GPU counts.
+WORKFLOW_RUN_SCHEMA = "npa.workflow.run.v1"
 
 
 class InsightsStoreError(RuntimeError):
@@ -242,6 +247,14 @@ def _extract(
 ) -> tuple[list[MetricRecord], list[LineageEdge], str | None]:
     """Route a discovered artifact to the matching extractor."""
     schema_id = str(payload.get("schema", ""))
+    schema_version = str(payload.get("schema_version", ""))
+    if schema_version == WORKFLOW_RUN_SCHEMA:
+        # Only counts as ingested when accelerator info is actually present; a
+        # CPU-only run manifest yields no metric and is skipped.
+        records = _extract_run_manifest(payload, source_uri, workflow, workflow_run)
+        if not records:
+            return [], [], None
+        return records, [], WORKFLOW_RUN_SCHEMA
     if schema_id == DATASET_MANIFEST_SCHEMA:
         return (*_extract_dataset_manifest(payload, source_uri, workflow, workflow_run), schema_id)
     if schema_id == DATASET_VALIDATION_SCHEMA:
@@ -344,6 +357,69 @@ def _extract_adversarial_set(
         for input_uri in input_uris
     ]
     return metrics, edges
+
+
+def _parse_accelerators(spec: str) -> tuple[str, int]:
+    """Parse a SkyPilot-style accelerator spec (``TYPE:COUNT``) into (type, count).
+
+    ``"RTXPRO6000:4"`` -> ``("RTXPRO6000", 4)``; a bare ``"H100"`` implies one
+    device; empty/unparseable specs yield ``("", 0)`` so nothing is emitted.
+    """
+    text = str(spec or "").strip()
+    if not text:
+        return "", 0
+    if ":" in text:
+        acc_type, _, count_raw = text.partition(":")
+        try:
+            count = int(float(count_raw.strip()))
+        except (TypeError, ValueError):
+            count = 1 if acc_type.strip() else 0
+        return acc_type.strip(), max(count, 0)
+    return text, 1
+
+
+def _extract_run_manifest(
+    payload: dict[str, Any], source_uri: str, workflow: str, workflow_run: str
+) -> list[MetricRecord]:
+    """Extract per-run GPU count from an ``npa.workflow.run.v1`` manifest.
+
+    Reads each step's ``resources_profile.accelerators`` (already produced by the
+    workflow interpreter/planner) and records the peak accelerator count for the
+    run. Non-invasive and value-honest: emits nothing when no step declares an
+    accelerator, so CPU-only runs are never labeled with a fabricated GPU count.
+    """
+    run_id = str(payload.get("run_id") or workflow_run or "unknown")
+    resolved_workflow = workflow or str(payload.get("workflow") or "")
+    steps = payload.get("steps") or []
+    max_gpus = 0
+    accel_types: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        profile = step.get("resources_profile")
+        accel = str(profile.get("accelerators", "")) if isinstance(profile, dict) else ""
+        acc_type, count = _parse_accelerators(accel)
+        if count <= 0:
+            continue
+        max_gpus = max(max_gpus, count)
+        if acc_type and acc_type not in accel_types:
+            accel_types.append(acc_type)
+    if max_gpus <= 0:
+        return []
+    labels = {ACCELERATORS_LABEL: ",".join(accel_types)} if accel_types else {}
+    return [
+        _metric(
+            run_id=run_id,
+            workflow=resolved_workflow,
+            tool="workflow",
+            stage="run",
+            name=GPU_METRIC_NAME,
+            value=float(max_gpus),
+            unit="gpus",
+            labels=labels,
+            artifact_uri=source_uri,
+        )
+    ]
 
 
 def _extract_decision(

@@ -46,6 +46,7 @@ def _facets(request: QueryRequest) -> dict[str, Any]:
         "dataset_version": request.dataset_version,
         "model_version": request.model_version,
         "metric_name": request.metric_name,
+        "accelerator": request.accelerator,
         "time_start": request.time_start,
         "time_end": request.time_end,
         "threshold_metric": request.threshold_metric,
@@ -66,6 +67,10 @@ def _matches(record: dict[str, Any], request: QueryRequest) -> bool:
     if request.stage and record.get("stage") != request.stage:
         return False
     if request.metric_name and record.get("metric_name") != request.metric_name:
+        return False
+    if request.accelerator and request.accelerator.lower() not in str(
+        labels.get("accelerators", "")
+    ).lower():
         return False
     if request.dataset_version and request.dataset_version not in (
         lineage.get("dataset_version", ""),
