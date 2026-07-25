@@ -1317,6 +1317,129 @@
         resize: vertical;
         background: #fafbff;
       }
+
+      /* ===== Modern refresh (2026): refined tokens, touch targets, iOS safe-areas =====
+         Cascade override layer — enhances look/feel without changing markup or the
+         brand tokens above. Softer elevation, smoother interactions, larger touch
+         targets, accessible focus rings, and iOS notch/home-indicator safe-areas. */
+      :root {
+        --radius-sm: 8px;
+        --radius: 12px;
+        --radius-lg: 16px;
+        --ease: cubic-bezier(0.4, 0, 0.2, 1);
+        --shadow-sm: 0 1px 2px rgba(13, 42, 61, 0.06), 0 1px 3px rgba(13, 42, 61, 0.08);
+        --shadow: 0 6px 18px rgba(13, 42, 61, 0.10);
+        --shadow-lg: 0 18px 40px rgba(13, 42, 61, 0.18);
+        --focus-ring: 0 0 0 3px rgba(23, 64, 93, 0.30);
+      }
+      * { -webkit-tap-highlight-color: transparent; }
+      body {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+      }
+      /* Momentum scrolling + refined scrollbars on scroll surfaces */
+      .chat-log, .artifact-list, .rerun-rail, .run-log, .stage-detail,
+      .stage-detail-info pre, .workflow-panel textarea, .chat-input textarea {
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+      }
+      .chat-log::-webkit-scrollbar, .artifact-list::-webkit-scrollbar,
+      .rerun-rail::-webkit-scrollbar, .run-log::-webkit-scrollbar,
+      .stage-detail::-webkit-scrollbar { width: 10px; height: 10px; }
+      .chat-log::-webkit-scrollbar-thumb, .artifact-list::-webkit-scrollbar-thumb,
+      .rerun-rail::-webkit-scrollbar-thumb, .run-log::-webkit-scrollbar-thumb,
+      .stage-detail::-webkit-scrollbar-thumb {
+        background: rgba(23, 64, 93, 0.22);
+        border-radius: 999px;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+      }
+      .chat-log::-webkit-scrollbar-thumb:hover,
+      .artifact-list::-webkit-scrollbar-thumb:hover { background: rgba(23, 64, 93, 0.4); background-clip: padding-box; }
+
+      /* Accessible keyboard focus ring */
+      a:focus-visible, button:focus-visible, .btn:focus-visible, .quick-pill:focus-visible,
+      .main-tab:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+        outline: none;
+        box-shadow: var(--focus-ring);
+      }
+
+      /* Panels: softer, layered elevation with a gentle hover lift */
+      .panel { border-radius: var(--radius-lg); transition: box-shadow 180ms var(--ease), transform 180ms var(--ease); }
+      .panel:hover { box-shadow: var(--shadow-lg); }
+      .subsection { border-radius: var(--radius); }
+
+      /* Buttons: comfortable targets + micro-interactions */
+      .btn {
+        min-height: 40px;
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        font-weight: 700;
+        transition: background 140ms var(--ease), border-color 140ms var(--ease),
+          transform 90ms var(--ease), box-shadow 140ms var(--ease);
+      }
+      .btn:hover { box-shadow: var(--shadow-sm); }
+      .btn:active { transform: translateY(1px) scale(0.99); }
+      .btn-primary { box-shadow: 0 4px 12px rgba(215, 248, 47, 0.35); }
+      .btn-primary:hover { box-shadow: 0 6px 16px rgba(215, 248, 47, 0.45); }
+
+      /* Pills + tabs: smooth state changes */
+      .quick-pill { transition: background 140ms var(--ease), transform 90ms var(--ease), box-shadow 140ms var(--ease); }
+      .quick-pill:active { transform: translateY(1px); }
+      .main-tab { transition: background 140ms var(--ease), color 140ms var(--ease); }
+
+      /* Inputs: consistent radius, comfortable height, clear focus */
+      .field select, .field input, .chat-input textarea, .workflow-panel textarea,
+      .stages-run-picker select, .stages-run-picker input {
+        transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+      }
+      .field select, .field input { min-height: 44px; border-radius: 10px; font-size: 14px; }
+      .field select:focus, .field input:focus,
+      .stages-run-picker select:focus, .stages-run-picker input:focus {
+        border-color: var(--sidebar-2); box-shadow: var(--focus-ring); outline: none;
+      }
+
+      /* Chat bubbles + cards: subtle depth and hover affordance */
+      .bubble { box-shadow: var(--shadow-sm); }
+      .artifact-card { transition: background 140ms var(--ease); }
+      .artifact-card:hover { background: var(--surface-soft); }
+      .stage-item { transition: background 120ms var(--ease); }
+      .stage-item[data-stage-key]:hover { background: var(--surface-soft); }
+
+      /* Long keys/paths wrap instead of causing horizontal scroll */
+      code, .artifact-card-path, .stage-detail-row code { overflow-wrap: anywhere; word-break: break-word; }
+
+      /* Toasts: elevated + rounded */
+      .toast { box-shadow: var(--shadow-lg); border-radius: var(--radius); }
+
+      /* iOS notch: pad the top bar under the status bar (brand underline preserved) */
+      .topbar { padding-top: max(18px, env(safe-area-inset-top)); }
+
+      /* Respect reduced-motion preferences */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.001ms !important;
+          transition-duration: 0.001ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+
+      /* Small screens: bigger tap targets, iOS-safe 16px inputs (no focus zoom),
+         and gutters that respect the home-indicator / rounded-corner safe-areas. */
+      @media (max-width: 640px) {
+        .btn, .quick-pill, .main-tab { min-height: 44px; }
+        .field select, .field input, .chat-input textarea, .workflow-panel textarea,
+        #workflowYaml, input, select, textarea { font-size: 16px; }
+        .panel { border-radius: var(--radius); }
+        .page {
+          padding-left: max(12px, env(safe-area-inset-left));
+          padding-right: max(12px, env(safe-area-inset-right));
+        }
+      }
+      body.mobile-agent .btn, body.mobile-agent .quick-pill { min-height: 44px; }
+      body.mobile-agent .field select, body.mobile-agent .field input,
+      body.mobile-agent .chat-input textarea, body.mobile-agent #workflowYaml,
+      body.mobile-agent input, body.mobile-agent select, body.mobile-agent textarea { font-size: 16px; }
     </style>
   </head>
   <body>

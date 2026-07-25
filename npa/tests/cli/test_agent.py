@@ -471,6 +471,17 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source
     assert "safe-area-inset-bottom" in source
+    # Modern refresh + iOS/desktop friendliness (cascade override layer):
+    assert "Modern refresh (2026)" in source
+    assert "-webkit-font-smoothing: antialiased" in source
+    assert "env(safe-area-inset-top)" in source  # iOS notch handling on the top bar
+    assert "prefers-reduced-motion" in source
+    assert "focus-visible" in source
+    # iOS: >=16px inputs on small screens so focusing a field never triggers zoom.
+    assert "font-size: 16px;" in source
+    # Brand tokens are preserved by the refresh layer.
+    assert "--brand: #e5ff4f;" in source
+    assert "border-bottom: 4px solid var(--brand)" in source
 
 
 def test_watch_intent_uses_live_sim_viz_status() -> None:
