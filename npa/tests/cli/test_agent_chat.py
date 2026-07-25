@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from npa.cli import agent as agent_module
+from npa.cli import agent_actions
 from npa.cli.agent_chat import (
     build_grounded_reply,
     format_sim2real_status,
     match_chat_intent,
 )
+
+
+def _planner(script):
+    """A deterministic model_call yielding scripted planner decisions (0 tokens)."""
+    calls = {"n": 0}
+
+    def _call(messages, *, tier="cheap"):
+        obj = script[min(calls["n"], len(script) - 1)]
+        calls["n"] += 1
+        return {"choices": [{"message": {"content": json.dumps(obj)}}], "usage": {"total_tokens": 0}}
+
+    return _call
 
 
 def test_match_sim2real_status_intent() -> None:
@@ -275,3 +291,49 @@ def test_mk8s_provision_grounded_reply_points_to_agent_api() -> None:
     assert "POST /api/infra/mk8s/provision" in reply
     assert "npa provision-if-absent" in reply
     assert "dry_run" in reply
+
+
+def test_chat_action_mode_drives_readonly_loop_over_insights() -> None:
+    # A read-only "action" turn now returns a real loop result (steps/tools_used
+    # trace + grounded final), not the old "POST /api/agent/act" boilerplate.
+    planner = _planner(
+        [
+            {"tool": "insights_compare", "args": {"base_run": "r1", "candidate_run": "r2"}},
+            {"final": "Run `r2` regressed on **collision_rate** vs `r1`."},
+        ]
+    )
+    tools = {"insights_compare": lambda args: {"regressed": ["collision_rate"], "improved": []}}
+    result = agent_actions.run_chat_action_loop(
+        "which runs regressed on collision rate", tools=tools, model_call=planner
+    )
+    assert result["mode"] == agent_actions.CHAT_ACTION_MODE
+    assert result["grounded"] is False
+    assert result["tools_used"] == ["insights_compare"]
+    assert result["steps"], "chat action turn must return a step trace"
+    assert result["needs_confirmation"] is False
+    assert "collision_rate" in result["reply"]
+
+
+def test_chat_action_mode_gpu_turn_still_needs_confirmation() -> None:
+    launched = {"n": 0}
+
+    def _submit(args):  # pragma: no cover - a chat turn must never auto-launch GPU
+        launched["n"] += 1
+        return {"run_id": "x"}
+
+    planner = _planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    result = agent_actions.run_chat_action_loop(
+        "launch a big sim2real run", tools={"sim2real_submit": _submit}, model_call=planner
+    )
+    assert launched["n"] == 0
+    assert result["needs_confirmation"] is True
+    assert result["proposed_action"]["tool"] == "sim2real_submit"
+
+
+def test_embedded_chat_action_branch_drives_loop_not_boilerplate() -> None:
+    # Guard the /chat action branch wiring in the embedded backend f-string:
+    # it must drive the bounded loop, not describe the POST /api/agent/act recipe.
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "Use `POST /api/agent/act` with a JSON body carrying your goal" not in source
+    assert "run_chat_action_loop(" in source
+    assert '"insights_query": _tool_insights_query' in source

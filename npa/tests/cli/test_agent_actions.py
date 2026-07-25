@@ -232,3 +232,101 @@ def test_extract_json_object_handles_fenced_and_embedded():
     assert A._extract_json_object('```json\n{"a": 1}\n```') == {"a": 1}
     assert A._extract_json_object('prefix {"tool": "x"} suffix') == {"tool": "x"}
     assert A._extract_json_object("not json") is None
+
+
+def test_allowlist_contains_readonly_insights_tools():
+    for name in ("insights_query", "insights_compare", "insights_lineage", "insights_dashboard"):
+        assert A.is_allowed(name)
+        # Insights tools observe recorded metrics — read-only, no confirmation gate.
+        assert not A.requires_confirmation(name)
+
+
+def test_loop_uses_insights_query_to_answer_gpu_question():
+    captured = {"args": None}
+
+    def _insights_query(args):
+        captured["args"] = args
+        return {
+            "backend": "jsonl",
+            "count": 1,
+            "records": [{"run_id": "insights-4gpu-viz", "metric_name": "gpus", "value": 4.0}],
+        }
+
+    planner = _scripted_planner(
+        [
+            {
+                "thought": "filter runs by gpu count",
+                "tool": "insights_query",
+                "args": {"metric_name": "gpus", "threshold_metric": "gpus", "threshold_op": "ge", "threshold_value": 4},
+            },
+            {"thought": "answer", "final": "Runs using >=4 GPUs: `insights-4gpu-viz`."},
+        ]
+    )
+    result = A.run_action_loop(
+        "which runs use 4 gpus", tools={"insights_query": _insights_query}, model_call=planner
+    )
+    assert result["ok"] is True
+    assert result["tools_used"] == ["insights_query"]
+    assert captured["args"]["threshold_value"] == 4
+    assert "insights-4gpu-viz" in result["reply"]
+
+
+def test_loop_uses_insights_compare_to_answer_regression_question():
+    def _insights_compare(args):
+        assert args["base_run"] == "r1"
+        assert args["candidate_run"] == "r2"
+        return {
+            "base_run": "r1",
+            "candidate_run": "r2",
+            "regressed": ["collision_rate"],
+            "improved": [],
+        }
+
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_compare", "args": {"base_run": "r1", "candidate_run": "r2"}},
+            {"final": "Run `r2` regressed on **collision_rate** vs `r1`."},
+        ]
+    )
+    result = A.run_action_loop(
+        "which runs regressed on collision rate",
+        tools={"insights_compare": _insights_compare},
+        model_call=planner,
+    )
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert "insights_compare" in result["tools_used"]
+    assert "collision_rate" in result["reply"]
+
+
+def test_run_chat_action_loop_shapes_readonly_result():
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {"metric_name": "gpus"}},
+            {"final": "grounded answer"},
+        ]
+    )
+    tools = {"insights_query": lambda args: {"count": 1, "records": [{"run_id": "r1"}]}}
+    result = A.run_chat_action_loop("which runs use gpus", tools=tools, model_call=planner)
+    assert result["mode"] == A.CHAT_ACTION_MODE
+    assert result["grounded"] is False
+    assert result["tools_used"] == ["insights_query"]
+    assert result["steps"], "chat action result must carry a step trace"
+    assert result["needs_confirmation"] is False
+    assert result["reply"] == "grounded answer"
+
+
+def test_run_chat_action_loop_gpu_tool_needs_confirmation_without_token():
+    submitted = {"count": 0}
+
+    def _submit(args):  # pragma: no cover - must never run from a chat turn
+        submitted["count"] += 1
+        return {"run_id": "x"}
+
+    planner = _scripted_planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    result = A.run_chat_action_loop(
+        "launch a sim2real run", tools={"sim2real_submit": _submit}, model_call=planner
+    )
+    assert submitted["count"] == 0
+    assert result["needs_confirmation"] is True
+    assert result["stopped_reason"] == A.STOP_NEEDS_CONFIRMATION
+    assert result["proposed_action"]["tool"] == "sim2real_submit"

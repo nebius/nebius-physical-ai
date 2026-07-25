@@ -2756,6 +2756,27 @@ def _join_agent_s3_prefix(base_prefix: str, suffix: str = "") -> str:
     return "/".join(part.strip("/") for part in (base_prefix, suffix) if str(part or "").strip().strip("/"))
 
 
+def _agent_insights_settings() -> dict[str, str]:
+    # Resolve the insights backbone endpoint + append-only store URI from
+    # config/env only (never hardcode endpoint, token, bucket, or store URI). A
+    # configured NPA_INSIGHTS_ENDPOINT selects service mode; otherwise the tools
+    # read the store directly. When no explicit store URI is set we derive one
+    # from the agent's own S3 settings so a co-located store works out of the box.
+    endpoint = str(os.environ.get("NPA_INSIGHTS_ENDPOINT", "")).strip().rstrip("/")
+    store_uri = str(os.environ.get("NPA_INSIGHTS_STORE_URI", "")).strip()
+    if not store_uri:
+        s3 = _agent_s3_settings()
+        bucket = str(s3.get("bucket") or "").strip()
+        if bucket:
+            prefix = _join_agent_s3_prefix(str(s3.get("prefix") or ""), "insights/store")
+            store_uri = f"s3://{{bucket}}/{{prefix}}"
+    return {{
+        "endpoint": endpoint,
+        "store_uri": store_uri,
+        "token_env": str(os.environ.get("NPA_INSIGHTS_TOKEN_ENV", "INSIGHTS_TOKEN")).strip() or "INSIGHTS_TOKEN",
+    }}
+
+
 def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") -> str:
     requested = str(user_prefix or "").strip().strip("/")
     base = str(settings.get("prefix") or "").strip().strip("/")
@@ -4995,16 +5016,69 @@ def chat(payload: dict):
         if mapped:
             sem_reply = build_grounded_reply(mapped, _load_state(), TOOL_REFS)
         elif sem_mode == "action":
-            # The turn needs a multi-step tool loop; point at the confirmation-gated
-            # action endpoint instead of auto-spending GPU from a chat turn.
-            sem_reply = (
-                "**This looks like a multi-step task.** I can run it as a bounded, "
-                "confirmation-gated tool loop.\\n"
-                "- Use `POST /api/agent/act` with a JSON body carrying your goal.\\n"
-                "- Read-only tools run automatically; GPU/state-changing tools return a "
-                "confirmation token you re-send to execute.\\n"
-                "- The full step trace (`steps`, `tools_used`) comes back in the response."
+            # The turn needs a multi-step tool loop. Drive it inline (the grounded
+            # regex + semantic-intent tiers already missed, so this is a genuine
+            # fallthrough) so the agent actually *uses* its read-only tools —
+            # including the insights backbone — instead of describing an endpoint.
+            def _action_model_call(messages, tier="cheap"):
+                data, _provider, _model = _chat_with_resilience(
+                    messages=messages, tier=tier, interactive=True
+                )
+                return data
+
+            action_result = run_chat_action_loop(
+                last_user,
+                tools=_agent_act_tools(),
+                model_call=_action_model_call,
+                tier=classify_tier(last_user),
+                live_context=format_live_context_block(_load_state()),
             )
+            # Preserve the safety contract: a state-changing tool proposed from a
+            # chat turn never auto-runs — it stops here and we mint a gate token
+            # bound to the exact action digest (same as POST /api/agent/act).
+            if action_result.get("needs_confirmation"):
+                proposed = action_result.get("proposed_action") if isinstance(action_result.get("proposed_action"), dict) else {{}}
+                digest = str(proposed.get("digest") or action_digest({{k: v for k, v in proposed.items() if k != "digest"}}))
+                action_result["confirm_token"] = _issue_agent_confirm_token(proposed, digest)
+            action_reply = str(action_result.get("reply") or "").strip()
+            history = [*merged_history, {{"role": "assistant", "content": action_reply}}][-80:]
+            session.update(
+                {{
+                    "id": session_id,
+                    "title": str(session.get("title") or _chat_session_title(history)),
+                    "chat_history": history,
+                }}
+            )
+            state = _load_state()
+            session = _save_chat_session(state, session, active=True)
+            _save_state(state)
+            response = {{
+                "ok": bool(action_result.get("ok")),
+                "model": model,
+                "reply": action_reply,
+                "reasoning": None,
+                "grounded": False,
+                "tier": "semantic-action",
+                "mode": action_result.get("mode"),
+                "usage": action_result.get("usage") or {{"total_tokens": semantic_tokens}},
+                "steps": action_result.get("steps") or [],
+                "tools_used": action_result.get("tools_used") or [],
+                "stopped_reason": action_result.get("stopped_reason"),
+                "needs_confirmation": bool(action_result.get("needs_confirmation")),
+                "proposed_action": action_result.get("proposed_action"),
+                "semantic_mode": sem_mode,
+                "apis_used": ["agent/act"],
+                "session_id": session["id"],
+                "session": {{
+                    "id": session["id"],
+                    "title": session["title"],
+                    "memory_uri": session.get("memory_uri", ""),
+                    "message_count": len(session.get("chat_history", [])),
+                }},
+            }}
+            if action_result.get("confirm_token"):
+                response["confirm_token"] = action_result["confirm_token"]
+            return response
         if sem_reply:
             grounded_zero = semantic_tokens == 0
             history = [*merged_history, {{"role": "assistant", "content": sem_reply}}][-80:]
@@ -5286,6 +5360,120 @@ def _agent_act_tools():
         )
         return {{"ok": bool(plan.get("ok")), "plan": plan}}
 
+    def _insights_store_and_mode():
+        settings = _agent_insights_settings()
+        endpoint = str(settings.get("endpoint") or "")
+        store_uri = str(settings.get("store_uri") or "")
+        token_env = str(settings.get("token_env") or "INSIGHTS_TOKEN")
+        return endpoint, store_uri, token_env
+
+    def _tool_insights_query(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        try:
+            raw_value = args.get("threshold_value")
+            threshold_value = float(raw_value) if raw_value not in (None, "") else None
+        except (TypeError, ValueError):
+            threshold_value = None
+        try:
+            limit = int(args.get("limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.query(
+            input_uri=store_uri,
+            workflow=str(args.get("workflow") or ""),
+            run_id=str(args.get("run_id") or ""),
+            tool=str(args.get("tool") or ""),
+            stage=str(args.get("stage") or ""),
+            metric_name=str(args.get("metric_name") or ""),
+            accelerator=str(args.get("accelerator") or ""),
+            threshold_metric=str(args.get("threshold_metric") or ""),
+            threshold_op=str(args.get("threshold_op") or ""),
+            threshold_value=threshold_value,
+            limit=limit,
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
+    def _tool_insights_compare(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        base_run = str(args.get("base_run") or "").strip()
+        candidate_run = str(args.get("candidate_run") or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        if not base_run or not candidate_run:
+            return {{"error": "base_run and candidate_run are required"}}
+        metric_names = args.get("metric_names")
+        if isinstance(metric_names, str):
+            metric_names = [m.strip() for m in metric_names.split(",") if m.strip()]
+        elif isinstance(metric_names, (list, tuple)):
+            metric_names = [str(m).strip() for m in metric_names if str(m).strip()]
+        else:
+            metric_names = []
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.compare(
+            input_uri=store_uri,
+            base_run=base_run,
+            candidate_run=candidate_run,
+            metric_names=metric_names,
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
+    def _tool_insights_lineage(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        uri = str(args.get("uri") or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        if not uri:
+            return {{"error": "uri is required"}}
+        try:
+            depth = int(args.get("depth") if args.get("depth") is not None else -1)
+        except (TypeError, ValueError):
+            depth = -1
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.lineage(
+            input_uri=store_uri,
+            uri=uri,
+            version=str(args.get("version") or ""),
+            direction=str(args.get("direction") or "both"),
+            depth=depth,
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
+    def _tool_insights_dashboard(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.dashboard(
+            input_uri=store_uri,
+            workflow=str(args.get("workflow") or ""),
+            group_by=str(args.get("group_by") or "metric_name"),
+            latest_run=str(args.get("latest_run") or ""),
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
     def _tool_submit(args):
         return _act_response_to_dict(submit_sim2real({{"run_id": str(args.get("run_id") or "")}}))
 
@@ -5309,6 +5497,10 @@ def _agent_act_tools():
         "workflow_validate_spec": _tool_validate,
         "workflow_plan_spec": _tool_plan,
         "retrieval_search": _tool_retrieval_search,
+        "insights_query": _tool_insights_query,
+        "insights_compare": _tool_insights_compare,
+        "insights_lineage": _tool_insights_lineage,
+        "insights_dashboard": _tool_insights_dashboard,
         "sim2real_submit": _tool_submit,
     }}
 

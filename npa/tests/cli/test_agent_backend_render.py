@@ -112,6 +112,14 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     assert "def _record_agent_trace" in body
     # Grounded-first is preserved: /chat still exists and is separate.
     assert '@app.post("/chat")' in body
+    # Insights backbone wiring: read-only tools embedded in the allowlist +
+    # executors, and the /chat action branch drives the loop (no boilerplate).
+    assert '"insights_query": _tool_insights_query' in body
+    assert '"insights_compare": _tool_insights_compare' in body
+    assert "def _agent_insights_settings" in body
+    assert "def run_chat_action_loop" in body
+    assert "run_chat_action_loop(" in body
+    assert "Use `POST /api/agent/act` with a JSON body carrying your goal" not in body
 
 
 def test_rendered_backend_ships_retrieval_and_trace_modules(monkeypatch) -> None:
