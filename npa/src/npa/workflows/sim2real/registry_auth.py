@@ -8,31 +8,18 @@ import os
 import subprocess
 from typing import Any
 
+from npa.clients.nebius_auth import mint_nebius_iam_token
+
 
 def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
-    """Return a short-lived IAM token for ``cr.*.nebius.cloud`` pulls."""
+    """Return a short-lived IAM token for ``cr.*.nebius.cloud`` pulls.
 
-    try:
-        result = subprocess.run(
-            [nebius_cli, "iam", "get-access-token"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(
-            "Could not mint Nebius registry token with `nebius iam get-access-token`"
-        ) from exc
-    token = result.stdout.strip()
-    if result.returncode != 0 or not token:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise RuntimeError(
-            "Could not mint Nebius registry token with `nebius iam get-access-token`: "
-            + detail
-        )
-    return token
+    Thin wrapper around the canonical :func:`npa.clients.nebius_auth.mint_nebius_iam_token`
+    so registry-pull refreshes work even when an ambient ``NEBIUS_IAM_TOKEN`` is
+    exported. Any workflow needing a token should use that helper directly.
+    """
+
+    return mint_nebius_iam_token(nebius_cli=nebius_cli)
 
 
 def _registry_server_from_image(image: str) -> str:

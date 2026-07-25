@@ -17,8 +17,9 @@ from npa.workflows.sim2real.registry_auth import (
 
 
 def test_mint_nebius_registry_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Token minting is delegated to the canonical npa.clients.nebius_auth helper.
     monkeypatch.setattr(
-        "npa.workflows.sim2real.registry_auth.subprocess.run",
+        "npa.clients.nebius_auth.subprocess.run",
         lambda *args, **kwargs: MagicMock(returncode=0, stdout="token-abc\n", stderr=""),
     )
     assert mint_nebius_registry_token() == "token-abc"

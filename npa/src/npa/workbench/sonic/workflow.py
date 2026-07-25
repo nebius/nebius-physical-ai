@@ -12,6 +12,7 @@ from typing import Any, Sequence
 
 import yaml
 
+from npa.clients.nebius_auth import NebiusTokenError, mint_nebius_iam_token
 from npa.cluster.config import DEFAULT_REGION, SUPPORTED_REGIONS
 from npa.deploy.images import container_image_for_tool, sonic_image_entry
 from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
@@ -537,27 +538,9 @@ def _first_env(names: Sequence[str]) -> str:
 def _mint_nebius_registry_token() -> str:
     cli = os.environ.get("NEBIUS_CLI", "nebius")
     try:
-        result = subprocess.run(
-            [cli, "iam", "get-access-token"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ValueError(
-            "Could not mint Nebius registry token with `nebius iam get-access-token`"
-        ) from exc
-
-    token = result.stdout.strip()
-    if result.returncode != 0 or not token:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise ValueError(
-            "Could not mint Nebius registry token with `nebius iam get-access-token`: "
-            + detail
-        )
-    return token
+        return mint_nebius_iam_token(nebius_cli=cli)
+    except NebiusTokenError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _registry_server_for_images(*images: str) -> str:
