@@ -54,23 +54,33 @@ Hard gates (both must pass for registry admission):
 - `jax_two_gpu_data_parallel_mesh` — `build_parallel("data")` yields
   `{data: 2, model: 1}` over `>=2` `jax.devices()`. Fails on a single GPU.
 - `dreamer4_tokenizer_train_two_gpu` — real `scripts/train_tokenizer.py` trains
-  the causal video tokenizer sharded data-parallel across the mesh on synthetic
-  CoinRun ArrayRecord shards (tiny model, 4 steps, `lpips_weight=0`).
+  the causal video tokenizer sharded data-parallel across the mesh to
+  **legibility** (lower `mae_p_max`, more steps, `lpips_weight=0`).
 
-Also exercised:
+Also exercised (the full Dreamer 4 loop, headlined by the dream rollout):
 
 - `coinrun_video_dataloader` — real `dreamer.data.build_iterator` CoinRun path
   with device sharding.
+- `dreamer4_latent_tokenization` — encode the SAME procedural videos with the
+  trained tokenizer into **real** latent ArrayRecords + `latent_stats` (mean/std
+  overrides), attaching 27-binary / 121-categorical actions derived from the
+  known agent motion. This replaces random latents so dynamics can learn.
 - `dreamer4_dynamics_train_two_gpu` — `scripts/train_dynamics.py`
-  action-conditioned latent dynamics step (the core Dreamer world-model loop).
-- `world_model_rerun_visualization` — emits an `open_dreamer_world_model.rrd`
-  Rerun recording (ground-truth video + tokenizer reconstruction grids over
-  training steps) that can be loaded into the NPA agent's Rerun viewer.
+  action-conditioned latent dynamics trained on those real latents (the core
+  Dreamer world-model loop).
+- `dreamer4_action_conditioned_dream_rollout` — `dreamer.sampler.sample_video`
+  gives the dynamics model context frames + future actions and dreams the
+  future; reports dream PSNR against the ground truth.
+- `world_model_rerun_visualization` — emits `open_dreamer_world_model.rrd` with
+  synchronized `world/observation` (GT), `world/dream` (predicted),
+  `world/gt_decoded` (tokenizer ceiling), and `world/tokenizer_reconstruction`
+  streams, loadable into the NPA agent's Rerun viewer.
 
-The run trains the tokenizer for real (hundreds of steps, `visualize_every` on)
-on **procedurally-generated coherent** video (a moving sprite on a gradient, in
-the CoinRun record format) so reconstructions are meaningful and viewable — not
-noise. This is a real GPU run, not an import-only smoke.
+The data is an **action-conditioned sprite-navigation** environment: the
+per-frame action selects the agent's velocity, so future frames are genuinely
+determined by future actions (a distractor sprite + textured background add
+occlusion/richness). This is a real, multi-stage GPU run — not an import-only
+or under-trained smoke.
 
 ### View / share the visualization in the agent Rerun
 
@@ -140,13 +150,23 @@ npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py 
   fail at run time.
 - Use `/opt/byof/.venv/bin/python` directly at run time, not `uv run` — the venv
   is root-owned from build and `uv run` would try to re-sync/write it.
-- Set `lpips_weight=0` for the tokenizer smoke to avoid a Hugging Face LPIPS
-  download.
+- `jaxlpips` is a hard import in `scripts/train_tokenizer.py`, so it must be in
+  the image (it is, via `uv sync`), but keep `lpips_weight=0` so no Hugging Face
+  LPIPS weights are downloaded at runtime. Tokenizer legibility then comes from
+  a lower `mae_p_max` (~0.3) plus more steps, not LPIPS.
+- Dynamics asserts `num_binary_actions==27` and `categorical_action_dim==121`,
+  so every latent record (training and rollout) must carry that action layout —
+  derive it from the known agent motion, don't feed CoinRun's 16-way action.
+- `packing_factor` must divide the tokenizer `n_latents`; the dream `horizon` +
+  context must be `<=` the episode length `T`.
+- The smoke ships a tiny CPU profile (`OD_MODE=cpu`, `OD_NUM_WORKERS=0`) that
+  runs the whole chain on one CPU device in ~2 min for offline validation; the
+  container uses the full 2-GPU profile by default.
 - Batch size `B` must be divisible by the number of devices (mesh `data` axis)
   and by `jax.process_count()`.
 - Full CoinRun generation needs `procgen`+`gym3` (no Python 3.11 wheels); the
-  run synthesizes correctly-formatted **coherent procedural** records instead.
-  Offline tokenization and FVD need a real staged dataset and remain deferred
-  follow-ups.
+  run synthesizes correctly-formatted **coherent, action-conditioned** records
+  instead. Real Minecraft/VPT data, LPIPS finetuning, and FVD/I3D scoring
+  (`eval_fvd.py`) remain follow-ups.
 - `rerun-sdk` is installed at build time (and a `pip install --user` fallback at
   run time for reused images) so the `.rrd` visualization can be produced.

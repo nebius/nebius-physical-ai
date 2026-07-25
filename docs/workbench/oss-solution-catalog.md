@@ -99,19 +99,29 @@ multi-GPU BYOF candidate: its accepted capability requires a real `>=2` GPU
 device mesh, so it uses `byof-solution-smoke-rtxpro-2gpu.yaml`
 (`RTXPRO-6000-BLACKWELL-SERVER-EDITION:2`), not the single-GPU profile.
 
+The smoke is the full Dreamer 4 loop end to end, headlined by an
+action-conditioned **dream rollout** (context frames -> predicted future frames
+vs ground truth), not just an under-trained tokenizer recon.
+
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `jax_two_gpu_data_parallel_mesh` | accepted hard gate (live) | `dreamer.parallel.build_parallel("data")` `{data:2, model:1}` over 2 `jax.devices()` |
-| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer, data-parallel across the mesh |
 | `coinrun_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` CoinRun path + device sharding (2 devices) |
-| `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics step |
-| `world_model_rerun_visualization` | accepted (live) | Rerun `.rrd` (ground-truth video + tokenizer reconstruction over training) loaded into the agent viewer |
+| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer trained to legibility (lower MAE masking), data-parallel across the mesh |
+| `dreamer4_latent_tokenization` | candidate (pending live) | Encode the SAME procedural videos with the trained tokenizer into real latent ArrayRecords + `latent_stats` (replaces random latents) |
+| `dreamer4_dynamics_train_two_gpu` | candidate (pending live) | `scripts/train_dynamics.py` action-conditioned latent dynamics trained on the real encoded latents (core world-model loop) |
+| `dreamer4_action_conditioned_dream_rollout` | candidate (pending live) | `dreamer.sampler.sample_video` rolls out predicted future frames from context + future actions; reports dream PSNR |
+| `world_model_rerun_visualization` | candidate (pending live) | Rerun `.rrd` with synchronized `world/observation` (GT) + `world/dream` (predicted) + `world/gt_decoded` (tokenizer ceiling) + `world/tokenizer_reconstruction` streams, loaded into the agent viewer |
 
-Synthetic smoke data: CoinRun records are raw `pickle` (the format the reader
-expects), latents use `serialize_msgpack_record` with the 27-binary / 121-camera
-`latent` action layout `train_dynamics.py` asserts. Deferred follow-ups: real
-CoinRun/procgen data, offline tokenization (`tokenize_minecraft_dataset.py`),
-and FVD evaluation (`eval_fvd.py`).
+Procedural smoke data is an **action-conditioned** sprite-navigation environment
+(the per-frame action selects the agent's velocity, so future frames are truly
+determined by future actions, with a distractor sprite + textured background for
+occlusion/richness). CoinRun records are raw `pickle` (the format the reader
+expects); latents use `serialize_msgpack_record` with the 27-binary / 121-camera
+`latent` action layout `train_dynamics.py` asserts, derived from the known agent
+motion. LPIPS is left off (self-contained run, no HF download) so tokenizer
+legibility comes from lower `mae_p_max` + more steps; real Minecraft/VPT data,
+LPIPS finetuning, and FVD/I3D scoring (`eval_fvd.py`) remain follow-ups.
 
 ## First-class Workbench tools (not BYOF)
 
