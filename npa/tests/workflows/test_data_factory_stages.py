@@ -134,6 +134,9 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     assert report["status"] == "curated"
     # Single-variant limitation surfaced in the machine-readable report.
     assert report["multiply"]["mode"] == "single-variant"
+    # FiftyOne is not installed in the unit-test env, so curate degrades to the
+    # report-only path (real Brain curation only runs inside the npa-fiftyone image).
+    assert report["curation_engine"] == "report-only"
 
 
 def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -> None:

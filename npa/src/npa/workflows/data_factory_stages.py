@@ -99,6 +99,20 @@ def _upload_json(payload: dict[str, Any], uri: str) -> str:
     return uri
 
 
+def _download_key(bucket: str, key: str, dest: str) -> str:
+    """Download a single S3 object (bucket/key) into ``dest`` and return the path."""
+    return _storage().download_path(f"s3://{bucket}/{key}", dest)
+
+
+def _read_json_key(bucket: str, key: str) -> dict[str, Any] | None:
+    if not key:
+        return None
+    try:
+        return _download_json(f"s3://{bucket}/{key}")
+    except Exception:  # noqa: BLE001 - best-effort metadata read
+        return None
+
+
 def _download_json(uri: str) -> dict[str, Any]:
     if not uri.startswith("s3://"):
         return json.loads(Path(uri).read_text())
@@ -185,8 +199,20 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
     return decision
 
 
-def curate(augment_uri: str, report_uri: str) -> dict[str, Any]:
-    """Build a real curation report over the augmented set."""
+def curate(
+    augment_uri: str,
+    report_uri: str,
+    dedup_threshold: float | str = "",
+) -> dict[str, Any]:
+    """Curate the augmented set and write a real curation report.
+
+    When FiftyOne is importable (i.e. this stage runs inside the ``npa-fiftyone``
+    workbench image) this runs *real* FiftyOne Brain curation over the augmented
+    scenario variants -- ``compute_uniqueness`` + near-duplicate similarity +
+    a 2D visualization -- and records which variants were kept vs dropped. When
+    FiftyOne is absent (unit tests, the dev-VM worktree python) it degrades to the
+    report-only counts path so the pipeline never regresses.
+    """
     keys = _list_keys(augment_uri)
     videos = [k for k in keys if k.endswith(".mp4")]
     frames = [k for k in keys if k.endswith(".png")]
@@ -219,9 +245,52 @@ def curate(augment_uri: str, report_uri: str) -> dict[str, Any]:
         },
         "status": "curated",
     }
+
+    report = _enrich_with_fiftyone_curation(report, augment_uri, keys, dedup_threshold)
+
     report["written_uri"] = _upload_json(report, report_uri)
     print(json.dumps(report))
     return report
+
+
+def _enrich_with_fiftyone_curation(
+    report: dict[str, Any],
+    augment_uri: str,
+    keys: list[str],
+    dedup_threshold: float | str,
+) -> dict[str, Any]:
+    """Run real FiftyOne Brain curation over the augmented set when available.
+
+    Falls back to the report-only counts path (tagging ``curation_engine``) when
+    FiftyOne is not importable or curation fails, so the stage always produces a
+    valid report.
+    """
+    from npa.workflows import data_factory_curate as dfc
+
+    try:
+        thresh = float(dedup_threshold)
+    except (TypeError, ValueError):
+        thresh = dfc.DEFAULT_DEDUP_THRESHOLD
+
+    bucket, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
+    try:
+        with tempfile.TemporaryDirectory(prefix="npa-df-curate-") as tmp:
+            return dfc.run_curation(
+                keys=keys,
+                augment_prefix=aug_prefix,
+                base_report=report,
+                download_key=lambda key, dest: _download_key(bucket, key, dest),
+                read_json=lambda key: _read_json_key(bucket, key),
+                workdir=tmp,
+                dedup_threshold=thresh,
+            )
+    except dfc.FiftyoneUnavailable:
+        report["curation_engine"] = dfc.CURATION_ENGINE_REPORT_ONLY
+        return report
+    except Exception as exc:  # noqa: BLE001 - never fail the stage on curation errors
+        report["curation_engine"] = dfc.CURATION_ENGINE_REPORT_ONLY
+        report["curation_warn"] = f"fiftyone curation failed: {exc}"[:300]
+        return report
 
 
 def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
