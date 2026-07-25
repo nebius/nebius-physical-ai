@@ -91,6 +91,11 @@ resources:
     # Canonical SkyPilot name. Clusters that advertise a different product name
     # (e.g. RTXPRO-6000-BLACKWELL-SERVER-EDITION) can override at submit time with
     # NPA_WORKFLOW_GPU_ACCELERATOR=<name>:1 (see skypilot_render.normalize_resources).
+    #
+    # MULTI-GPU FAN-OUT: request N GPUs (e.g. RTXPRO6000:4) and the augment stage
+    # fans the N scenario-variant diffusions across them, one variant per GPU
+    # (auto-detected, or set NPA_COSMOS_VARIANT_PARALLELISM). N variants then run
+    # in ~one variant's wall-clock instead of N x. Keep :1 for a single-GPU run.
     accelerators: RTXPRO6000:1
     cpus: 4
     memory: 16Gi

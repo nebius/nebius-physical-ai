@@ -51,10 +51,33 @@ the augment stage runs **one real Cosmos Transfer 2.5 inference per sampled comb
 own per-clip dir under `cosmos_augmented/<clip>/` with its own `metadata.json`
 `variables` (which drives that clip's Rerun label). So an N-augmentation config
 yields **N scenario variants**, not one image. The fan-out is surfaced in the
-machine-readable artifacts: `variant_count` / `multiply_mode` in the augment
-run-level `manifest.json`, `multiply` (mode + `variant_count`) in the curation
-report, and `multiply_mode` / `variant_count` in the finalize report. (A config
-with a single combo still emits one variant — `multiply_mode: single-variant`.)
+machine-readable artifacts: `variant_count` / `multiply_mode` / `variant_parallelism`
+in the augment run-level `manifest.json`, `multiply` (mode + `variant_count`) in the
+curation report, and `multiply_mode` / `variant_count` in the finalize report. (A
+config with a single combo still emits one variant — `multiply_mode: single-variant`.)
+
+**Multi-GPU fan-out (use ≥4 GPUs).** The multiply loop fans the N GPU-bound
+diffusions **across the augment pod's GPUs**, one variant per GPU (pinned via
+`CUDA_VISIBLE_DEVICES`), then publishes sequentially in combo order. Concurrency =
+`NPA_COSMOS_VARIANT_PARALLELISM` if set, else the auto-detected visible-GPU count,
+capped at the variant count (so it is safe on 1 GPU and never pins a variant to a
+GPU the pod lacks). Request the GPUs in the spec: `resources.gpu.accelerators:
+RTXPRO6000:4` runs 4 variants at once (~one variant's wall-clock instead of 4×).
+Verified live: a 4-variant run on `RTXPRO6000:4` drove all 4 GPUs to 100%
+(4 distinct compute PIDs) and finished in ~14 min end-to-end; the manifest recorded
+`variant_parallelism: 4`.
+
+**Authoring from chat (agent).** The NPA chat agent can WRITE this blueprint. Ask
+it e.g. *"write me a paidf workflow: augment my robot clips and fan out 4 scenarios
+on at least 4 RTX 6000 PRO GPUs"* — the deterministic router classifies
+`create_data_factory_workflow`, `agent_workflow.choose_workflow_template` selects the
+`physical-ai-data-factory` template, and `extract_data_factory_params` parses the
+fan-out count → `config.n_augmentations`, the GPU count → `resources.gpu.accelerators`
++ `config.variant_parallelism` (capped to the GPU count), and the free-form
+augmentation subject → `config.augment_subject`. The generated YAML is validated +
+planned before it is returned (chat only emits runnable specs). `generate_data_factory_yaml(user_text=...)`
+is the direct entry point; `generate_workflow_draft(intent="create_data_factory_workflow", user_text=...)`
+is the chat path.
 
 **Input conditioning (real augmentation of the caller's clip).** By default the
 augment renders the bundled, self-contained control example (`robot_depth_spec.json`),
