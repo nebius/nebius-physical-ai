@@ -6649,6 +6649,39 @@ def artifact_file(filename: str):
     return FileResponse(str(target), media_type=artifact_media_type(safe_name))
 
 
+@app.get("/artifacts/download")
+def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = ""):
+    # Direct download of ANY run artifact (every object is downloadable, not just
+    # the viewer-loadable ones). Streams the S3 object back with an attachment
+    # Content-Disposition so the browser saves it under its real filename. Unlike
+    # /sim-viz/load-artifact this does not mutate viewer state.
+    requested_uri = str(s3_uri or "").strip()
+    requested_key = str(key or "").strip()
+    if not requested_uri and not requested_key:
+        raise HTTPException(status_code=400, detail="Provide s3_uri or key")
+    try:
+        s3, settings = _agent_s3_client()
+        if requested_uri:
+            bucket, obj_key = parse_s3_uri(requested_uri)
+            uri = requested_uri
+        else:
+            obj_key = _safe_artifact_key(requested_key)
+            bucket = settings["bucket"]
+            uri = f"s3://{{bucket}}/{{obj_key}}"
+        local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
+        download_s3_uri(uri, local_path, s3=s3)
+        leaf = Path(obj_key).name or "artifact.bin"
+        return FileResponse(
+            str(local_path),
+            media_type=artifact_media_type(leaf),
+            filename=leaf,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
 @app.post("/sim-viz/load-artifact")
 def sim_viz_load_artifact(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}

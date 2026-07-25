@@ -713,6 +713,12 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
+    # Every artifact must be directly downloadable: streaming download endpoint
+    # + a per-artifact Download button wired to it.
+    assert '@app.get("/artifacts/download")' in source
+    assert "data-action=\"download-artifact\"" in source or "data-action='download-artifact'" in source
+    assert "async function downloadArtifact(" in source
+    assert "/api/artifacts/download?" in source
     assert 'Select a run or enter a run_id first' in source
     assert 'No S3 artifacts found for <code>' in source
     assert "Runs &amp; artifacts" in source or "Runs & artifacts" in source

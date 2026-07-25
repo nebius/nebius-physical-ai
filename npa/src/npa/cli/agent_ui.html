@@ -4707,7 +4707,10 @@
             '<div class="artifact-card-path"><code>' + escapeHtml(key) + '</code></div>' +
             '<div style="margin-top:6px;"><button class="btn' + primary + '" type="button" data-action="load-artifact" data-run-id="' +
             escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
-            '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button></div>' +
+            '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button>' +
+            ' <button class="btn" type="button" data-action="download-artifact" data-run-id="' +
+            escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+            '" data-name="' + escapeHtml(basename) + '">Download</button></div>' +
             '</div>'
           );
         }).join("");
@@ -4720,6 +4723,17 @@
               s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
             };
             await loadArtifact(payload);
+          });
+        });
+        list.querySelectorAll("button[data-action='download-artifact']").forEach((btn) => {
+          btn.addEventListener("click", (event) => {
+            event.preventDefault();
+            downloadArtifact(
+              String(btn.getAttribute("data-run-id") || "").trim(),
+              String(btn.getAttribute("data-key") || "").trim(),
+              String(btn.getAttribute("data-s3-uri") || "").trim(),
+              String(btn.getAttribute("data-name") || "").trim()
+            );
           });
         });
         if (preferred && String(preferred.render || "") === "rerun") {
@@ -4923,6 +4937,37 @@
             (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
         } else {
           node.textContent = "Rendering: no run artifact loaded yet.";
+        }
+      }
+      async function downloadArtifact(runId, key, s3uri, name) {
+        // Every artifact is directly downloadable: stream it from S3 through the
+        // agent and save it under its real filename, independent of render type
+        // and without mutating the viewer state.
+        const params = new URLSearchParams();
+        if (s3uri) {
+          params.set("s3_uri", s3uri);
+        } else {
+          if (runId) params.set("run_id", runId);
+          params.set("key", key);
+        }
+        const fallbackName = (String(key || "").split("/").pop()) || "artifact.bin";
+        const saveName = String(name || fallbackName).trim() || fallbackName;
+        const url = "/api/artifacts/download?" + params.toString();
+        try {
+          showToast("Downloading " + saveName + "…", "info");
+          const resp = await fetchWithTimeout(url, { credentials: "include" }, 180000);
+          if (!resp.ok) throw new Error("download failed (" + String(resp.status) + ")");
+          const blob = await resp.blob();
+          const objUrl = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = objUrl;
+          anchor.download = saveName;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (_err) { /* ignore */ } }, 10000);
+        } catch (err) {
+          showToast("Download failed: " + String((err && err.message) || err), "error");
         }
       }
       async function loadArtifact(payload) {
