@@ -46,6 +46,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0; checkpoint at `logs/od_tok_smoke/checkpoints`) |
 | Open Dreamer | `coinrun_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` batch `[8,16,64,64,3]` sharded across 2 devices) |
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0; checkpoint at `logs/od_dyn_smoke/checkpoints`) |
+| Open Dreamer | `world_model_rerun_visualization` | **accepted** | `byof-open-dreamer-2gpu-20260725T021934Z` (real 400-step tokenizer train on coherent video; 510 KB `.rrd` = 24 obs frames + 4 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
 
 ## Native Capabilities Per Container
 
@@ -104,7 +105,7 @@ device mesh, so it uses `byof-solution-smoke-rtxpro-2gpu.yaml`
 | `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer, data-parallel across the mesh |
 | `coinrun_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` CoinRun path + device sharding (2 devices) |
 | `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics step |
-| `world_model_rerun_visualization` | pending (live) | Rerun `.rrd` (ground-truth video + tokenizer reconstruction over training) loadable in the agent viewer |
+| `world_model_rerun_visualization` | accepted (live) | Rerun `.rrd` (ground-truth video + tokenizer reconstruction over training) loaded into the agent viewer |
 
 Synthetic smoke data: CoinRun records are raw `pickle` (the format the reader
 expects), latents use `serialize_msgpack_record` with the 27-binary / 121-camera
