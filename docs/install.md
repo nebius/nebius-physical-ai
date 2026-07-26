@@ -1,6 +1,6 @@
 # Installing npa on every platform
 
-`npa` runs on **macOS**, **Linux**, and **Windows**, and works with
+`npa` targets **macOS**, **Linux**, and **Windows via WSL2**, and works with
 **Python 3.10+**. It is not published to PyPI, so you always install it editable
 from a clone of this repository.
 
@@ -11,16 +11,14 @@ little more.
 
 ## Platform support at a glance
 
-| Platform | Install + offline quickstart | Cloud (S3 / SkyPilot / Kubernetes) |
-| --- | --- | --- |
-| macOS (Intel / Apple Silicon) | native | native |
-| Linux (Debian/Ubuntu, ...) | native | native |
-| Windows | native (PowerShell / cmd) | use **WSL2 Ubuntu** |
+| Platform | Supported |
+| --- | --- |
+| macOS (Intel / Apple Silicon) | native |
+| Linux (Debian/Ubuntu, ...) | native |
+| Windows | via **WSL2 Ubuntu** |
 
-Native Windows is fine for installing `npa` and running the offline paths
-(`npa --version`, the vlm-eval stub benchmark, `npa workbench workflow
-validate-spec`). Cloud workflows that shell out to S3, SkyPilot, and Kubernetes
-tooling assume a POSIX environment — run those from **WSL2 Ubuntu**.
+`npa` runs cloud workloads (S3, SkyPilot, Kubernetes) that assume a POSIX
+environment, so on Windows do all `npa` work from **WSL2 Ubuntu**.
 
 ## 1. Get Python 3.10+
 
@@ -47,8 +45,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-On native **Windows** PowerShell, activate with `.venv\Scripts\Activate.ps1`
-(or `.venv\Scripts\activate.bat` in cmd) instead of `source .venv/bin/activate`.
+On Windows, do this inside **WSL2 Ubuntu** (see [§6](#6-windows-via-wsl2)).
 
 ## 3. Install npa (editable, from the clone)
 
@@ -67,8 +64,8 @@ npa --version
 Prefer [`uv`](https://docs.astral.sh/uv/)? It can install Python and create the
 env in one go: `uv venv .venv && source .venv/bin/activate && uv pip install -e npa`.
 
-The base install is lightweight — it carries only what the offline paths need.
-Add extras when a workload requires them:
+The base install is the core CLI, with no GPU or database wheels. Add extras
+when a workload requires them:
 
 ```bash
 pip install -e "npa[full]"      # everything below except the GPU extras
@@ -85,10 +82,10 @@ pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
 Activate the venv in every new shell (`source .venv/bin/activate`), or call the
 interpreter directly with `./.venv/bin/npa` without activating.
 
-## 4. Nebius CLI (cloud steps only)
+## 4. Nebius CLI (required)
 
-The offline quickstart needs no cloud tooling. For managed workbench deploys and
-`npa configure`, install the Nebius AI Cloud CLI:
+`npa` runs on Nebius, so the Nebius AI Cloud CLI is part of the standard setup —
+`npa configure` and every managed workbench deploy use it. Install it:
 
 ```bash
 # macOS / Linux (and inside WSL2)
@@ -110,10 +107,10 @@ details.
   [Kubernetes docs](https://kubernetes.io/docs/tasks/tools/) and `terraform`
   from [HashiCorp's apt repo](https://developer.hashicorp.com/terraform/install#linux).
 
-## 6. Windows via WSL2 (for cloud workflows)
+## 6. Windows via WSL2
 
-Native Windows covers install and the offline quickstart. For S3 / SkyPilot /
-Kubernetes workflows, use WSL2 Ubuntu. In PowerShell (admin), install WSL once:
+On Windows, run all `npa` work from WSL2 Ubuntu. In PowerShell (admin), install
+WSL once:
 
 ```powershell
 wsl --install -d Ubuntu

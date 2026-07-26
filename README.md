@@ -10,7 +10,7 @@ observability, and cluster orchestration.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Platforms: macOS · Linux · Windows](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](docs/install.md)
+[![Platforms: macOS · Linux · WSL2](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL2-lightgrey.svg)](docs/install.md)
 [![Test](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml/badge.svg)](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -41,24 +41,23 @@ RTX6000).
 | --------------------------------- | ------------------------------------------------------------------------------------- |
 | **What you can do**               | Curate datasets · train and evaluate policies · render synthetic data · run sim-to-real loops · serve models |
 | **Who it's for**                  | Robotics teams, physical-AI researchers, and partners shipping on Nebius              |
-| **Where it runs**                 | Nebius S3, managed Kubernetes, GPU clusters; local for stubs and unit tests           |
+| **Where it runs**                 | Nebius S3, managed Kubernetes, and GPU clusters                                        |
 | **How you extend it**             | Declarative `npa.workflow/v0.0.1` YAML specs and reusable Workbench tool refs         |
 
 ---
 
 ## Pick your path
 
-Three onboarding routes, in ascending order of setup effort. Every one starts
-with the same install.
+Two onboarding routes, in ascending order of setup effort. Both start with the
+same install and a Nebius account.
 
 | Route                                              | Time         | Needs                                    | You end up with                                          |
 | -------------------------------------------------- | ------------ | ---------------------------------------- | -------------------------------------------------------- |
-| **A. [60-second try-it](#a-60-second-try-it)**     | ~60 s        | Python 3.10+                             | A scored VLM benchmark report — no cloud, no GPU, no key |
-| **B. [First workload on Nebius](#b-first-workload-on-nebius)** | ~15 min | Nebius account · `nebius` CLI            | A configured project running managed Workbench tools     |
-| **C. [Self-hosted `npa agent`](#c-self-hosted-npa-agent)** | ~20 min | Authenticated `nebius` profile · Terraform · SSH key pair · Token Factory key · writable S3 creds | A browser-based chat workbench VM with embedded Rerun    |
+| **A. [First workload on Nebius](#a-first-workload-on-nebius)** | ~15 min | Nebius account · `nebius` CLI            | A configured project running managed Workbench tools     |
+| **B. [Self-hosted `npa agent`](#b-self-hosted-npa-agent)** | ~20 min | Authenticated `nebius` profile · Terraform · SSH key pair · Token Factory key · writable S3 creds | A browser-based chat workbench VM with embedded Rerun    |
 
-All three share the same one-time install. `npa` works with **Python 3.10+** and
-installs editable from the clone (it is not on PyPI):
+Both routes share the same one-time install. `npa` works with **Python 3.10+**
+and installs editable from the clone (it is not on PyPI):
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
@@ -70,91 +69,20 @@ pip install -e npa
 
 Verify: `npa --version`.
 
-> The base install is deliberately lightweight — it covers the offline paths
-> (Route A) with no GPU or database wheels. Before running cloud workloads
-> (Routes B and C), add the remaining workbench dependencies with
+> The base install is the core CLI, with no GPU or database wheels. Before
+> running cloud workloads, add the remaining workbench dependencies with
 > `pip install -e "npa[full]"`.
 
-> **Windows:** native works for install and the offline try-it (Route A); S3,
-> SkyPilot, and Kubernetes workflows (Routes B–C) need **WSL2 Ubuntu**. Full
-> per-platform steps (venv/uv, Nebius CLI, WSL2): [docs/install.md](docs/install.md).
+> **Windows:** use **WSL2 Ubuntu**. Full per-platform steps (venv, Nebius CLI,
+> WSL2): [docs/install.md](docs/install.md).
 
 ---
 
-### A. 60-second try-it
-
-Score a shipped sample rollout set with the offline stub backend — no
-credentials of any kind. Run these from the repository root; the `--dataset`
-and spec paths are relative to it:
-
-```bash
-npa workbench vlm-eval benchmark \
-  --dataset npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json \
-  --output /tmp/vlm-eval-benchmark.json \
-  --backend stub \
-  --thresholds 0.5,0.8,0.9 \
-  --rubrics default,strict \
-  --models Qwen/Qwen2-VL-7B-Instruct \
-  --format json
-```
-
-You should see a ranked report with `accuracy: 1.0`.
-
-Want to see the **declarative authoring layer** without any cloud either?
-`npa.workflow/v0.0.1` is the customer-facing spec for chaining Workbench
-tools; validate and plan a real one offline:
-
-```bash
-npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
-npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml --run-id demo
-```
-
-The spec is 33 lines and looks like this — every Workbench tool has a
-`toolRef` you can chain, loop, or gate on:
-
-```yaml
-apiVersion: npa.workflow/v0.0.1
-kind: Workflow
-metadata:
-  name: vlm-eval-single
-config:
-  bucket: example-bucket
-  prefix: "runs/{{run.id}}/vlm-eval"
-  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
-  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
-resources:
-  gpu:
-    cloud: kubernetes
-    accelerators: H100:1
-initial: score-rollouts
-states:
-  score-rollouts:
-    toolRef: workbench.vlm_eval.run
-    resources: gpu
-    outputs:
-      - uri: "{{config.scores_uri}}report.json"
-    terminal: true
-```
-
-Author, validate, plan, and submit guide:
-[docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md).
-Workbench workflows: [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/).
-Composable `toolRef` steps: [`npa.workflow` tool catalog](docs/workbench/npa-workflow-tool-catalog.md).
-
-> **Submit the same YAML to the cluster.** After configure, launch with
-> `npa workbench workflow submit <npa.workflow.yaml> --run-id demo`. Use
-> `--plan-only` to inspect the plan without launching. See
-> [Author and submit workflows](#author-and-submit-workflows) below.
-
----
-
-### B. First workload on Nebius
+### A. First workload on Nebius
 
 1. [Sign up](https://docs.nebius.com/signup-billing/sign-up) and create a
    [tenant and project](https://docs.nebius.com/iam/manage-projects).
-2. Install the Nebius CLI (only needed for cloud steps):
+2. Install the Nebius CLI:
 
    ```bash
    curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
@@ -182,7 +110,7 @@ the cheapest way to try large models against your own data.
 
 ---
 
-### C. Self-hosted `npa agent`
+### B. Self-hosted `npa agent`
 
 `npa agent` is a self-hosted **browser workbench VM**: HTTPS UI with
 basic-auth login, grounded chat over Nebius Token Factory
@@ -242,13 +170,11 @@ and the active operational backlog in [FIXME.md](FIXME.md).
 
 ## Learn by doing — pick a robot
 
-Short copy-paste walkthroughs. Start with the no-GPU guide, then pick any
-robot or simulator. Full index:
+Short copy-paste walkthroughs — pick any robot or simulator. Full index:
 [docs/workbench/guides/README.md](docs/workbench/guides/README.md).
 
 | Guide                                                                                             | Robot                | Sim / engine     | Public dataset                     |
 | ------------------------------------------------------------------------------------------------- | -------------------- | ---------------- | ---------------------------------- |
-| [Score a robot in 60 seconds (no GPU)](docs/workbench/guides/score-a-robot-no-gpu.md)             | any                  | offline          | shipped sample rollouts            |
 | [Pick-and-place with a Franka arm](docs/workbench/guides/franka-pick-and-place-genesis.md)        | Franka Emika Panda   | Genesis          | DROID (Franka)                     |
 | [Teach a robot to push a T](docs/workbench/guides/pusht-sim-to-real.md)                           | sim pusher           | sim-to-real loop | `lerobot/pusht`                    |
 | [Train a Reachy 2 humanoid policy](docs/workbench/guides/reachy2-lerobot-policy.md)               | Reachy 2             | LeRobot          | Pollen Robotics / LeRobot Hub      |
@@ -265,7 +191,7 @@ benchmarks): [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/READM
 Workbench is the main product surface. Every tool lives under `npa workbench`
 (there is no `solutions` CLI namespace). Highlights:
 
-- **`vlm-eval`** scores rollouts with stub, API, or self-hosted vLLM backends —
+- **`vlm-eval`** scores rollouts with API or self-hosted vLLM backends —
   see [`vlm-eval-single.yaml`](npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml).
 - **`token-factory`** wraps Nebius Token Factory for zero-GPU inference,
   captioning, and reasoning against your own frames.
@@ -306,10 +232,10 @@ Full CLI reference: [docs/cli/README.md](docs/cli/README.md).
 
 Author pipelines as declarative `npa.workflow/v0.0.1` specs — a state graph of
 Workbench `toolRef` steps with S3 handoffs, gates, and loops. The same YAML is
-what you validate offline and submit to the cluster.
+what you validate, plan, and submit to the cluster.
 
 ```bash
-# Offline
+# Validate and plan (no submit)
 npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
 npa workbench workflow plan-spec     npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml --run-id demo
 

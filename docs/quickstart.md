@@ -23,14 +23,17 @@ the package overview in [npa/README.md](../npa/README.md).
 
 ## 2. Prerequisites
 
+`npa` runs cloud workloads on Nebius, so a Nebius account and the `nebius` CLI
+are required.
+
 - Python 3.10 or newer. The package metadata requires `>=3.10`.
 - Git, `python3 -m venv`, and `pip`.
-- **macOS**, **Linux**, or **Windows**. Native Windows works for install and the
-  offline quickstart; S3 / SkyPilot / Kubernetes workflows require **WSL2 Ubuntu**
-  (see [docs/install.md](install.md)).
-- A Nebius AI Cloud account with billing enabled. Start with the Nebius signup
-  guide: <https://docs.nebius.com/signup-billing/sign-up>.
-- The Nebius AI Cloud CLI binary on `PATH`. Install it from
+- **macOS**, **Linux**, or **Windows via WSL2** (Ubuntu). `npa` cloud workflows
+  (S3 / SkyPilot / Kubernetes) assume a POSIX environment — on Windows run
+  everything from WSL2 (see [docs/install.md](install.md)).
+- **Required:** a Nebius AI Cloud account with billing enabled. Start with the
+  Nebius signup guide: <https://docs.nebius.com/signup-billing/sign-up>.
+- **Required:** the Nebius AI Cloud CLI binary on `PATH`. Install it from
   <https://docs.nebius.com/cli/install>; `npa configure` creates or reuses a
   local profile for you (no manual `nebius profile create` step).
 - Terraform on `PATH` for later managed `deploy` and `--destroy` commands.
@@ -76,10 +79,8 @@ without requiring Nebius, Hugging Face, NGC, Kubernetes, or S3 credentials.
 <details>
 <summary>Platform notes</summary>
 
-- **Windows:** run inside **WSL2 Ubuntu** for cloud (S3 / SkyPilot / Kubernetes)
-  workflows; native Windows works for install and the offline quickstart. On
-  PowerShell activate with `.venv\Scripts\Activate.ps1` instead of
-  `source .venv/bin/activate`.
+- **Windows:** use **WSL2 Ubuntu**. `npa` cloud workflows (S3 / SkyPilot /
+  Kubernetes) assume a POSIX environment; run everything from WSL2.
 - **Debian/Ubuntu:** install the venv module first —
   `sudo apt-get install -y python3-venv`.
 - **Need Python 3.10+, or a faster installer?** [`uv`](https://docs.astral.sh/uv/)
@@ -95,8 +96,8 @@ Full per-platform steps — Nebius CLI, WSL2 setup, operator tools:
 If you prefer not to activate the venv, call its interpreter directly with
 `./.venv/bin/npa`. The rest of this guide assumes the venv is activated.
 
-The base install is lightweight: it carries only what the offline paths need.
-Optional extras are available when you need them:
+The base install is the core CLI, with no GPU or database wheels. Add extras
+when a workload requires them:
 
 ```bash
 pip install -e "npa[full]"      # everything below except the GPU extras
@@ -111,8 +112,8 @@ pip install -e "npa[dev]"       # tests, lint (pytest, ruff); see Section 6
 ```
 
 Before running cloud workloads (Sections 5+), install `npa[full]` so every
-workbench tool has its dependencies. Cloud steps also need the Nebius CLI —
-see [docs/install.md § Nebius CLI](install.md#4-nebius-cli-cloud-steps-only).
+workbench tool has its dependencies. You also need the Nebius CLI —
+see [docs/install.md § Nebius CLI](install.md#4-nebius-cli-required).
 
 ## 4. Configure credentials
 
@@ -343,112 +344,63 @@ S3 bucket and access key); use `npa configure --show` for a read-only view of
 the file layout, or `npa configure --no-provision` to enter existing S3
 credentials by hand.
 
-### 5a. Your first real result (offline)
+### 5a. Your first result: zero-GPU inference (Nebius Token Factory)
 
-You can produce a real eval result with no cloud, GPU, or credentials. The
-`vlm-eval benchmark` command scores a shipped, labeled rollout set with the
-offline `stub` backend. Run it from the repository root — the `--dataset` path
-is relative to it (or pass an absolute path):
+The cheapest way to get a real result on Nebius is
+[Token Factory](https://tokenfactory.nebius.com/) hosted inference —
+OpenAI-compatible, zero-GPU, and it needs only a `NEBIUS_TOKEN_FACTORY_KEY`
+(no cluster, registry, or S3). Add the key with `npa configure` (or
+`export NEBIUS_TOKEN_FACTORY_KEY=v1...`), then confirm it authenticates:
 
 ```bash
-npa workbench vlm-eval benchmark \
-  --dataset npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json \
-  --output /tmp/vlm-eval-benchmark.json \
-  --backend stub \
-  --thresholds 0.5,0.8,0.9 \
-  --rubrics default,strict \
-  --models Qwen/Qwen2-VL-7B-Instruct \
-  --format json
+npa workbench token-factory verify
 ```
 
-Gate: the report ranks configurations and reports `accuracy: 1.0` over four
-labeled rollouts, and writes `/tmp/vlm-eval-benchmark.json`.
+Generate a completion against a hosted model — write a prompt and run:
 
-### 5b. The same eval, three coherent ways
+```bash
+printf 'Explain sim-to-real transfer in one sentence.\n' > /tmp/prompts.txt
+npa workbench token-factory generate \
+  --input-path /tmp/prompts.txt \
+  --output-path /tmp/tf-generations.jsonl \
+  --output json
+```
 
-Every Workbench capability is usable as a `npa` CLI command, a Python SDK call,
-and a parameterizable SkyPilot YAML you can run with raw `sky`. The three stay
-coherent; pick whichever fits your workflow.
+Gate: `verify` reports `authenticated: true` with a non-zero model count, and
+`generate` writes `/tmp/tf-generations.jsonl` with a completion for the prompt.
+
+More Token Factory capabilities (image captioning, physical-scene reasoning) and
+the checked-in SkyPilot templates:
+[docs/workbench/token-factory.md](workbench/token-factory.md).
+
+### 5b. The same capability, three coherent ways
+
+Every Workbench capability is usable as an `npa` CLI command, a Python SDK call,
+and a parameterizable SkyPilot YAML. The three stay coherent; pick whichever
+fits your workflow.
 
 **CLI** (shown above):
 
 ```bash
-npa workbench vlm-eval benchmark --dataset <benchmark.json> --backend stub --format json
+npa workbench token-factory generate --input-path /tmp/prompts.txt \
+  --output-path /tmp/tf-generations.jsonl --output json
 ```
 
 **Python SDK:**
 
 ```python
-from npa.sdk.workbench import vlm_eval
-from npa.workbench.vlm_eval import DEFAULT_MODEL, DEFAULT_SAMPLE_BENCHMARK_PATH
+from npa.workbench.token_factory import generate_text
 
-report = vlm_eval.benchmark(
-    dataset=str(DEFAULT_SAMPLE_BENCHMARK_PATH),
-    backend="stub",
-    thresholds=[0.5, 0.8, 0.9],
-    rubrics=["default", "strict"],
-    models=[DEFAULT_MODEL],
+result = generate_text(
+    input_path="/tmp/prompts.txt",
+    output_path="/tmp/tf-generations.jsonl",
 )
-print(report.best_config.metrics.accuracy)  # 1.0
+print(result.generations[0].completion)
 ```
 
-**Standalone SkyPilot YAML (raw `sky`, BYO S3 endpoint + image).** Save this at
-the repo root as `vlm-eval-benchmark.sky.yaml` and run it with plain `sky
-launch` — no `npa` CLI or SDK orchestrating it. `workdir: .` uploads your
-cloned checkout so the job installs `npa` from the synced source (there is no
-public PyPI/registry dependency). Run as-is to score the in-repo fixture with
-the offline `stub` backend, or override the `--env` values to use your own
-image and object storage:
-
-```yaml
-name: vlm-eval-benchmark
-# Upload the cloned repo so the job can `pip install -e ./npa` without needing
-# npa on PyPI or a prebuilt image. Launch this file from the repo root.
-workdir: .
-resources:
-  cloud: kubernetes
-  cpus: 4
-  # Generic CPU Python image; npa installs from the synced workdir in `setup`.
-  # SkyPilot does not expand env vars in `image_id`, so bring your own image by
-  # overriding it at launch:
-  #   sky launch ... --image-id docker:cr.<region>.nebius.cloud/<registry-id>/<image>:<tag>
-  image_id: docker:python:3.11-slim
-envs:
-  # Defaults read the in-repo fixture (uploaded via workdir) and write a local
-  # report — no object storage required. Point these at s3:// URIs plus an
-  # endpoint to bring your own storage.
-  BENCHMARK_URI: "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json"
-  OUTPUT_URI: "vlm-eval-benchmark-report.json"
-  AWS_ENDPOINT_URL: ""
-  VLM_BACKEND: "stub"
-setup: |
-  set -euo pipefail
-  pip install --upgrade pip
-  pip install -e ./npa
-run: |
-  set -euo pipefail
-  npa workbench vlm-eval benchmark \
-    --dataset "${BENCHMARK_URI}" \
-    --output "${OUTPUT_URI}" \
-    --backend "${VLM_BACKEND}" \
-    --format json
-```
-
-```bash
-# Run from the repo root. As written it scores the in-repo fixture with the
-# offline stub backend and tears the cluster down when done (--down). Override
-# any value at launch; nothing is hardcoded to a specific account. Use
-# --image-id for a BYO image and matching s3:// URIs for BYO storage.
-sky launch -y --down -c vlm-eval vlm-eval-benchmark.sky.yaml \
-  --image-id docker:cr.<your-region>.nebius.cloud/<your-registry-id>/<image>:<tag> \
-  --env BENCHMARK_URI=s3://<your-bucket>/vlm-eval/benchmark.json \
-  --env OUTPUT_URI=s3://<your-bucket>/vlm-eval/benchmark-report.json \
-  --env AWS_ENDPOINT_URL=https://storage.<your-region>.nebius.cloud
-```
-
-For maintained, checked-in workflow YAMLs (including a self-hosted GPU VLM
-variant), see `npa/src/npa/workflows/skypilot/` and
-[the workflows guide](workbench-yaml-guide.md).
+**SkyPilot:** the checked-in, parameterizable templates run the same tools on the
+cluster — see `npa/src/npa/workflows/skypilot/` (for example
+`token-factory-generate.yaml`) and [the workflows guide](workbench-yaml-guide.md).
 
 ## 6. Developing and testing npa
 
@@ -474,7 +426,7 @@ conventions (branch → PR → squash, one approval, never self-approve).
 
 ## 7. Flagship GPU workload: NVIDIA Cosmos
 
-Once the offline loop above works, the headline Workbench workload is **NVIDIA
+With your project configured (Section 4), the headline GPU workload is **NVIDIA
 Cosmos** — a world-foundation model for synthetic data and world generation.
 Cosmos is the recommended first GPU workload because it runs across **multiple
 NVIDIA GPU platforms** (for example `gpu-h100-sxm`, `gpu-h200-sxm`,
@@ -628,9 +580,9 @@ managing AI Jobs on the project, or switch to a profile whose principal has it
 
 `credentials.yaml` is missing or tokens are not loading
 
-Offline commands tolerate a missing credentials file, but token-dependent
-commands will behave as if no token exists. Create the file under your home
-directory and secure it:
+Commands that need no tokens tolerate a missing credentials file, but
+token-dependent commands will behave as if no token exists. Create the file
+under your home directory and secure it:
 
 ```bash
 mkdir -p ~/.npa
