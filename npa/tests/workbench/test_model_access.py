@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from npa.workbench.model_access import (
     WORKBENCH_ASSETS,
+    access_note,
     all_capabilities,
     assets_for,
     check_hf_asset,
@@ -149,3 +150,63 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
         capabilities=["groot"],
     )
     assert has_failure(results) is True
+
+
+def test_check_workbench_access_gated_only_skips_public() -> None:
+    results = check_workbench_access(
+        hf_token="hf_x", ngc_key="nvapi-x", hf_validator=None, gated_only=True
+    )
+    repos = {r.name for r in results if r.name != "ngc"}
+    public = {a.repo for a in WORKBENCH_ASSETS if not a.gated}
+    assert repos.isdisjoint(public)
+    assert "nvidia/GR00T-N1.7-3B" in repos
+
+
+def test_access_note_all_ok_is_one_positive_line() -> None:
+    results = check_workbench_access(
+        hf_token="hf_x",
+        ngc_key="nvapi-x",
+        hf_validator=lambda t, r: _HFResult(ok=True),
+        gated_only=True,
+    )
+    note = access_note(results)
+    assert "\n" not in note
+    assert note.startswith("[NOTE]")
+    assert "can access all checked workbench models" in note
+
+
+def test_access_note_lists_hf_failures_on_one_line() -> None:
+    denied = {"nvidia/GR00T-N1.7-3B"}
+
+    def _validator(token, repo):
+        return _HFResult(ok=repo not in denied, status_code=403 if repo in denied else 200)
+
+    results = check_workbench_access(
+        hf_token="hf_x", ngc_key="nvapi-x", hf_validator=_validator, gated_only=True
+    )
+    note = access_note(results)
+    assert "\n" not in note
+    assert "HF has no access to:" in note
+    assert "nvidia/GR00T-N1.7-3B" in note
+    assert "huggingface.co" in note
+
+
+def test_access_note_ngc_missing_lists_nvidia_models() -> None:
+    results = check_workbench_access(
+        hf_token="hf_x",
+        ngc_key="",
+        hf_validator=lambda t, r: _HFResult(ok=True),
+        gated_only=True,
+    )
+    note = access_note(results)
+    assert "NGC has no access to:" in note
+    assert "nvidia/" in note
+
+
+def test_access_note_counts_unverified() -> None:
+    # No token + gated => WARN (unverified) for each gated model, NGC present.
+    results = check_workbench_access(
+        hf_token="", ngc_key="nvapi-x", hf_validator=None, gated_only=True
+    )
+    note = access_note(results)
+    assert "unverified" in note

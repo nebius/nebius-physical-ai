@@ -234,7 +234,9 @@ that order, no defaults shown), your region and container registry (defaults are
 discovered from the project), guides you to reuse an existing bucket or create a
 default `npa-bucket` (standard storage, size limit in GB), and asks for a local
 **project alias** (default = region; used later as `-p <alias>`). It then
-writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`:
+writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`, and prints a one-line
+`[NOTE]` summarizing which gated workbench models your HF and NGC tokens can (or
+cannot) access — see [§4e](#4e-accept-and-verify-gated-model-access):
 
 ```bash
 npa configure

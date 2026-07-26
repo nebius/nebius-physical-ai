@@ -15,6 +15,24 @@ from npa.clients.serverless import NotEnoughResourcesError
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _stub_hf_model_access(monkeypatch):
+    """Keep `npa configure`'s model-access NOTE off the real Hugging Face API.
+
+    `configure` runs a live HF access check for the gated workbench models after
+    collecting tokens. Default every probe to "accessible" so unrelated tests
+    stay hermetic; individual tests override this to exercise the NOTE.
+    """
+
+    from npa.clients import huggingface
+    from npa.clients.huggingface import HFAccessResult
+
+    def _ok(token, repo, *, timeout=10.0):
+        return HFAccessResult(repo=repo, ok=True, status_code=200)
+
+    monkeypatch.setattr(huggingface, "validate_hf_access", _ok)
+
+
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
@@ -254,6 +272,110 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
     assert sizes == [0]
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["bucket"].startswith("s3://npa-bucket-")
+
+
+def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key: str):
+    """Drive a successful reuse-existing-bucket `npa configure` and return output.
+
+    Uses the reuse path (bucket_exists=True) so there are no storage-class/size
+    prompts; answers are: project, tenant, region, registry, bucket-name(reuse),
+    HF, AI Cloud, Token Factory, NGC, alias.
+    """
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+
+    def fake_bootstrap(project_id, tenant_id, region, *, bucket_name=None,
+                       bucket_max_size_bytes=0, bucket_storage_class="standard",
+                       on_status=None):
+        return {
+            "nebius_api_key": "AKIA",
+            "nebius_secret_key": "secret",
+            "s3_bucket": bucket_name,
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        }
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
+
+    answers = "\n".join(
+        ["project-1", "tenant-1", "", "", "", hf_token, "", "", ngc_key, ""]
+    ) + "\n"
+    return runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+
+def _note_line(output: str) -> str:
+    lines = [line for line in output.splitlines() if line.startswith("[NOTE]")]
+    assert lines, f"expected a [NOTE] line in output:\n{output}"
+    assert len(lines) == 1, f"expected exactly one [NOTE] line, got: {lines}"
+    return lines[0]
+
+
+def test_configure_prints_model_access_note_all_ok(monkeypatch, tmp_path) -> None:
+    # Autouse fixture makes every HF probe succeed; NGC key is well-formed.
+    result = _run_reuse_bucket_configure(
+        monkeypatch, tmp_path, hf_token="hf_good", ngc_key="nvapi-good"
+    )
+    assert result.exit_code == 0, result.output
+    note = _note_line(result.output)
+    assert note == "[NOTE] HF and NGC tokens can access all checked workbench models."
+
+
+def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> None:
+    from npa.clients import huggingface
+    from npa.clients.huggingface import HFAccessResult
+
+    denied = "nvidia/GR00T-N1.7-3B"
+
+    def _deny_one(token, repo, *, timeout=10.0):
+        if repo == denied:
+            return HFAccessResult(repo=repo, ok=False, status_code=403, error="no access")
+        return HFAccessResult(repo=repo, ok=True, status_code=200)
+
+    monkeypatch.setattr(huggingface, "validate_hf_access", _deny_one)
+
+    result = _run_reuse_bucket_configure(
+        monkeypatch, tmp_path, hf_token="hf_partial", ngc_key="nvapi-good"
+    )
+    assert result.exit_code == 0, result.output
+    note = _note_line(result.output)
+    assert "HF has no access to:" in note
+    assert denied in note
+    assert "huggingface.co" in note
+
+
+def test_configure_note_lists_ngc_blocked_when_key_missing(monkeypatch, tmp_path) -> None:
+    # HF probes all succeed (autouse); NGC key omitted -> NVIDIA pulls blocked.
+    result = _run_reuse_bucket_configure(
+        monkeypatch, tmp_path, hf_token="hf_good", ngc_key=""
+    )
+    assert result.exit_code == 0, result.output
+    note = _note_line(result.output)
+    assert "NGC has no access to:" in note
+    assert "nvidia/GR00T-N1.7-3B" in note
+
+
+def test_configure_note_never_breaks_on_probe_error(monkeypatch, tmp_path) -> None:
+    from npa.clients import huggingface
+
+    def _boom(token, repo, *, timeout=10.0):
+        raise RuntimeError("network exploded")
+
+    monkeypatch.setattr(huggingface, "validate_hf_access", _boom)
+
+    result = _run_reuse_bucket_configure(
+        monkeypatch, tmp_path, hf_token="hf_good", ngc_key="nvapi-good"
+    )
+    assert result.exit_code == 0, result.output
+    note = _note_line(result.output)
+    assert "Skipped model-access check" in note
 
 
 def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path) -> None:

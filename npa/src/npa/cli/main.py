@@ -561,7 +561,37 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             "Skipped ~/.npa/config.yaml: provide a Nebius project id to write a "
             "project profile."
         )
+
+    typer.echo(_model_access_note(hf_token, ngc_api_key))
     typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
+
+
+def _model_access_note(hf_token: str, ngc_key: str) -> str:
+    """Return a one-line ``[NOTE]`` on which gated workbench models the tokens can access.
+
+    Runs a live Hugging Face access check for each license-gated model the
+    workbench uses and a presence/format check for the NGC key, then summarizes
+    the models without access on a single line. Any failure here is swallowed so
+    a preflight note can never break `npa configure`.
+    """
+
+    try:
+        from npa.clients import huggingface
+        from npa.workbench.model_access import access_note, check_workbench_access
+
+        # Bound each HF probe so a slow/unreachable network cannot stall setup.
+        def _validator(token: str, repo: str):
+            return huggingface.validate_hf_access(token, repo, timeout=5.0)
+
+        results = check_workbench_access(
+            hf_token=hf_token,
+            ngc_key=ngc_key,
+            hf_validator=_validator,
+            gated_only=True,
+        )
+        return access_note(results)
+    except Exception:  # noqa: BLE001 - a preflight note must never break configure
+        return "[NOTE] Skipped model-access check (verify later with `npa workbench health access`)."
 
 
 def _store_token_factory_key(api_key: str) -> None:

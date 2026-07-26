@@ -216,12 +216,15 @@ def check_workbench_access(
     ngc_key: str,
     hf_validator: Callable[[str, str], Any] | None = None,
     capabilities: Iterable[str] | None = None,
+    gated_only: bool = False,
 ) -> list[CheckResult]:
     """Return access checks for every gated asset the capabilities require.
 
     The NGC key check comes first, then one result per Hugging Face asset in
     catalog order. When *hf_validator* is ``None`` the HF checks report presence
-    only (offline mode).
+    only (offline mode). Pass ``gated_only=True`` to check just the license-gated
+    repos (skips always-public repos) — useful to keep an interactive preflight
+    fast.
     """
 
     selected = list(capabilities) if capabilities is not None else None
@@ -231,8 +234,47 @@ def check_workbench_access(
     for asset in assets_for(selected):
         if asset.provider != HF:
             continue
+        if gated_only and not asset.gated:
+            continue
         results.append(check_hf_asset(asset, hf_token, hf_validator))
     return results
+
+
+def access_note(results: list[CheckResult]) -> str:
+    """Return a one-line ``[NOTE]`` naming the models HF/NGC cannot access.
+
+    HF entries with a definitive rejection (401/403) are listed as "no access";
+    entries that could not be reached are counted as "unverified". NGC access is
+    a key presence/format check (there is no offline NGC probe), so a missing or
+    malformed key lists the NVIDIA models its absence blocks.
+    """
+
+    hf_no = [r.name for r in results if r.name != "ngc" and r.status == FAIL]
+    hf_unverified = [r.name for r in results if r.name != "ngc" and r.status == WARN]
+    ngc = next((r for r in results if r.name == "ngc"), None)
+    ngc_ok = ngc is None or ngc.status == PASS
+
+    if not hf_no and ngc_ok and not hf_unverified:
+        return "[NOTE] HF and NGC tokens can access all checked workbench models."
+
+    parts: list[str] = []
+    if hf_no:
+        parts.append("HF has no access to: " + ", ".join(hf_no))
+    if not ngc_ok:
+        ngc_models = [
+            r.name for r in results if r.name != "ngc" and r.name.startswith("nvidia/")
+        ]
+        if ngc_models:
+            parts.append("NGC has no access to: " + ", ".join(ngc_models))
+        else:
+            parts.append("NGC key not set (blocks GR00T/Cosmos NVIDIA pulls)")
+    if hf_unverified:
+        parts.append(f"{len(hf_unverified)} model(s) unverified")
+
+    note = "[NOTE] " + "; ".join(parts) + "."
+    if hf_no:
+        note += " Accept gated licenses at https://huggingface.co/<model>."
+    return note
 
 
 __all__ = [
@@ -241,6 +283,7 @@ __all__ = [
     "NGC",
     "NGC_CAPABILITIES",
     "WORKBENCH_ASSETS",
+    "access_note",
     "all_capabilities",
     "assets_for",
     "check_hf_asset",
