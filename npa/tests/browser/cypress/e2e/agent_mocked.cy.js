@@ -406,6 +406,32 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("not.contain.text", "/input/video_0.mp4");
   });
 
+  it("shows source-frame images inline when the Source frames stage is clicked", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#runIdInput").clear({ force: true }).type(`${DF_MOCK_RUN_ID}{enter}`, { force: true });
+    cy.wait("@loadRun");
+    cy.wait("@dfArtifactList");
+    cy.wait("@artifactProvenance");
+
+    // Click the "Source frames" (input) pipeline stage.
+    cy.get('#artifactProvenance .prov-clickable[data-stage="input"]').should("contain.text", "Source frames").click();
+    cy.wait("@dfArtifactList");
+
+    // The artifact list scopes to the input stage and shows the source frames...
+    cy.get("#artifactStageFilter").should("have.value", "input");
+    cy.get("#artifactList").should("contain.text", "input/frame_00.png");
+    cy.get("#artifactList").should("contain.text", "input/frame_01.png");
+    cy.get("#artifactList").should("not.contain.text", "cosmos_augmented/");
+
+    // ...as actual inline image thumbnails (not just filenames): each image card
+    // renders an <img> lazy-loaded through the authenticated download proxy.
+    cy.wait("@artifactDownload");
+    cy.get("#artifactList .artifact-card[data-render='image'] .artifact-thumb img")
+      .its("length")
+      .should("be.gte", 2);
+  });
+
   it("warns when a data-factory run has only raw input and no augmented output", () => {
     cy.get("#tabRerun").click();
     // A DF run with only input/ + configs/ (augment never produced output) must

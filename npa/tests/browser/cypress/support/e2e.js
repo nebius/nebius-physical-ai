@@ -224,6 +224,8 @@ const NON_STOCK_ARTIFACTS = [
 const DF_MOCK_RUN_ID = "paidf-mock-gpu-run";
 const DF_MOCK_ARTIFACTS = [
   { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/video_0.mp4`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/video_0.mp4`, render: "video", size: 4096 },
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/frame_00.png`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/frame_00.png`, render: "image", size: 2048 },
+  { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/frame_01.png`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/frame_01.png`, render: "image", size: 2048 },
   { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/configs/manifest.json`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/configs/manifest.json`, render: "json", size: 512 },
   { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/augmented_video.mp4`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/augmented_video.mp4`, render: "video", size: 8192 },
   { key: `checkpoints/physical-ai-data-factory/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/metadata.json`, s3_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/metadata.json`, render: "json", size: 256 },
@@ -235,7 +237,7 @@ const DF_MOCK_PROVENANCE = {
   run_id: DF_MOCK_RUN_ID,
   components: [
     { stage: "Config generation", stage_key: "configs", component: "Appearance-variable sampler", runtime: "CPU", artifact_count: 1 },
-    { stage: "Source frames", stage_key: "input", component: "Uploaded source clips", runtime: "input", artifact_count: 1 },
+    { stage: "Source frames", stage_key: "input", component: "Uploaded source clips", runtime: "input", artifact_count: 3 },
     { stage: "Augment", stage_key: "cosmos_augmented", component: "Cosmos Transfer 2.5", runtime: "GPU (Nebius K8s)", artifact_count: 2, engine: "cosmos_transfer_2.5_gpu", detail: "real Cosmos Transfer 2.5 diffusion on GPU", model: "nvidia/Cosmos-Transfer2.5-2B" },
     { stage: "Curation", stage_key: "curation", component: "FiftyOne-style curation report", runtime: "CPU", artifact_count: 1 },
     { stage: "Visualize + finalize", stage_key: "reports", component: "Rerun recording + aggregate report", runtime: "CPU", artifact_count: 1 },
@@ -574,6 +576,17 @@ function installAgentApiMocks() {
     headers: { "content-type": "image/png" },
     body: "",
   }).as("artifactPreview");
+  // Inline thumbnails (stage inspector, Voxel51, artifact browser) fetch object
+  // bytes through the authenticated download proxy.
+  cy.intercept("GET", "/api/artifacts/download*", (req) => {
+    const url = new URL(req.url);
+    const uri = url.searchParams.get("s3_uri") || "";
+    if (uri.match(/\.(png|jpe?g|gif|webp)$/i)) {
+      req.reply({ statusCode: 200, headers: { "content-type": "image/png" }, body: "mock-image-bytes" });
+      return;
+    }
+    req.reply({ statusCode: 200, headers: { "content-type": "application/octet-stream" }, body: "mock-bytes" });
+  }).as("artifactDownload");
   cy.intercept("GET", "/api/artifacts/file/*", (req) => {
     const decoded = decodeURIComponent(req.url.split("/").pop() || "");
     if (decoded.includes("sim2real-report.json")) {
@@ -657,7 +670,7 @@ function installAgentApiMocks() {
     prefix: "physical-ai-data-factory",
     count: DF_MOCK_ARTIFACTS.length,
     artifacts: DF_MOCK_ARTIFACTS,
-    preferred: DF_MOCK_ARTIFACTS[2],
+    preferred: DF_MOCK_ARTIFACTS.find((a) => a.key.includes("augmented_video.mp4")) || DF_MOCK_ARTIFACTS[0],
   })).as("dfArtifactList");
   cy.intercept("GET", `/api/artifacts/run/${DF_INPUT_ONLY_RUN_ID}*`, json({
     run_id: DF_INPUT_ONLY_RUN_ID,
