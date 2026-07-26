@@ -23,13 +23,17 @@ the package overview in [npa/README.md](../npa/README.md).
 
 ## 2. Prerequisites
 
+`npa` runs cloud workloads on Nebius, so a Nebius account and the `nebius` CLI
+are required.
+
 - Python 3.10 or newer. The package metadata requires `>=3.10`.
 - Git, `python3 -m venv`, and `pip`.
-- **macOS**, **Linux**, or **Windows via WSL2** (Ubuntu). Native Windows shells
-  (PowerShell, cmd) are not supported for `npa` workflows — use WSL2.
-- A Nebius AI Cloud account with billing enabled. Start with the Nebius signup
-  guide: <https://docs.nebius.com/signup-billing/sign-up>.
-- The Nebius AI Cloud CLI binary on `PATH`. Install it from
+- **macOS**, **Linux**, or **Windows via WSL2** (Ubuntu). `npa` cloud workflows
+  (S3 / SkyPilot / Kubernetes) assume a POSIX environment — on Windows run
+  everything from WSL2 (see [docs/install.md](install.md)).
+- **Required:** a Nebius AI Cloud account with billing enabled. Start with the
+  Nebius signup guide: <https://docs.nebius.com/signup-billing/sign-up>.
+- **Required:** the Nebius AI Cloud CLI binary on `PATH`. Install it from
   <https://docs.nebius.com/cli/install>; `npa configure` creates or reuses a
   local profile for you (no manual `nebius profile create` step).
 - Terraform on `PATH` for later managed `deploy` and `--destroy` commands.
@@ -54,120 +58,46 @@ nebius profile list
 terraform version
 ```
 
-### Fast install by platform
-
-Copy-paste once per machine. All paths install the Nebius CLI, clone NPA, create
-a venv, and verify `npa`. Then set up credentials in Section 4 with
-`npa configure`, which creates or reuses your Nebius CLI profile for you (no
-manual `nebius profile create` step). Run `npa configure` only after you have a
-Nebius project and tenant id ready (Section 4a).
-
-| Platform | Shell | Nebius CLI |
-| --- | --- | --- |
-| macOS (Intel or Apple Silicon) | Terminal / zsh | Official install script (see below) |
-| Linux (Debian/Ubuntu) | bash | `curl …/cli/install.sh \| bash` |
-| Windows | **WSL2 Ubuntu** only | same curl one-liner inside WSL |
-
-**macOS**
-
-```bash
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc to persist
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e npa
-npa --version
-```
-
-Then continue with credential setup in Section 4 (`npa configure`).
-
-Optional operator tools: `brew install python@3.12 jq`, plus `kubectl` and
-`terraform` from their official installers (Terraform is no longer in
-Homebrew core: `brew install hashicorp/tap/terraform`).
-
-**Linux (Debian/Ubuntu)**
-
-```bash
-sudo apt-get update
-sudo apt-get install -y git python3 python3-venv python3-pip curl
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.bashrc to persist
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e npa
-npa --version
-```
-
-Then continue with credential setup in Section 4 (`npa configure`).
-
-Optional operator tools: `sudo apt-get install -y jq`. `kubectl` and
-`terraform` are **not** in the stock Ubuntu apt repositories — install
-`kubectl` from the [Kubernetes docs](https://kubernetes.io/docs/tasks/tools/)
-and `terraform` from
-[HashiCorp's apt repo](https://developer.hashicorp.com/terraform/install#linux).
-
-**Windows (WSL2)**
-
-In PowerShell (admin), install WSL once:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
-Restart if prompted, open **Ubuntu** from the Start menu, then run the **Linux**
-block above inside WSL. Keep the repo under your Linux home (for example
-`~/nebius-physical-ai`), not under `/mnt/c/…`, for faster I/O and fewer path
-issues.
-
-**Windows (native)** — not supported. Use WSL2 Ubuntu; do not run `npa` from
-PowerShell or Git Bash for cluster/S3 workflows.
-
-After install, activate the venv in every new shell:
-
-```bash
-cd nebius-physical-ai
-source .venv/bin/activate
-```
-
 ## 3. Install npa
 
-Clone the repository and install the Python package into a fresh virtual
-environment. The venv can live anywhere (for example `.venv` in the repo, or
-`~/.venvs/npa`); activating it puts `npa` on your `PATH`:
+`npa` works with **Python 3.10+**. It installs editable from a clone (it is not
+on PyPI):
 
 ```bash
-git clone <REPO_URL> nebius-physical-ai
+git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
-
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
 pip install -e npa
 ```
 
-If you prefer not to activate the venv, call its interpreter directly
-(`./.venv/bin/python -m pip install -e npa`) and use `./.venv/bin/npa` instead
-of `npa`. The rest of this guide assumes the venv is activated.
+Verify: `npa --version`.
 
-Verify the install:
+`npa --version` prints `npa <version>`, and `npa --help` prints the command tree
+without requiring Nebius, Hugging Face, NGC, Kubernetes, or S3 credentials.
 
-```bash
-npa --version
-npa --help
-```
+<details>
+<summary>Platform notes</summary>
 
-Gate: `npa --version` prints `npa <version>`, and `npa --help` prints the
-command tree without requiring Nebius, Hugging Face, NGC, Kubernetes, or S3
-credentials.
+- **Windows:** use **WSL2 Ubuntu**. `npa` cloud workflows (S3 / SkyPilot /
+  Kubernetes) assume a POSIX environment; run everything from WSL2.
+- **Debian/Ubuntu:** install the venv module first —
+  `sudo apt-get install -y python3-venv`.
+- **Need Python 3.10+, or a faster installer?** [`uv`](https://docs.astral.sh/uv/)
+  can install Python and create the env:
+  `uv venv .venv && source .venv/bin/activate && uv pip install -e npa`.
+- **Out of scope (needs extra steps):** Alpine/musl, brand-new Python before
+  wheels exist, and air-gapped machines.
 
-The base install is lightweight: it carries only what the offline paths need.
-Optional extras are available when you need them:
+Full per-platform steps — Nebius CLI, WSL2 setup, operator tools:
+[docs/install.md](install.md).
+</details>
+
+If you prefer not to activate the venv, call its interpreter directly with
+`./.venv/bin/npa`. The rest of this guide assumes the venv is activated.
+
+The base install is the core CLI, with no GPU or database wheels. Add extras
+when a workload requires them:
 
 ```bash
 pip install -e "npa[full]"      # everything below except the GPU extras
@@ -182,7 +112,8 @@ pip install -e "npa[dev]"       # tests, lint (pytest, ruff); see Section 6
 ```
 
 Before running cloud workloads (Sections 5+), install `npa[full]` so every
-workbench tool has its dependencies.
+workbench tool has its dependencies. You also need the Nebius CLI —
+see [docs/install.md § Nebius CLI](install.md#4-nebius-cli-required).
 
 ## 4. Configure credentials
 
@@ -220,21 +151,33 @@ long-lived `NEBIUS_TOKEN` in `~/.npa/credentials.yaml`.
 
 Before running `npa configure`, sign up for Nebius AI Cloud, note your tenant
 id, and create a project in the target region. An Object Storage bucket is
-optional — `npa configure` creates a default `npa-bucket` with **standard**
-storage and a size cap when you press Enter at the bucket prompt (you can choose
-`enhanced` storage or a custom size for new buckets). To reuse your own bucket,
-create one first; see the README **Nebius AI Cloud account** section,
+optional — `npa configure` creates a default bucket named `npa-bucket-<hash>`
+(a short hash of your tenant and project ids, e.g. `npa-bucket-1a2b3c4d`) with
+**standard** storage and a size cap when you press Enter at the bucket prompt
+(you can choose `enhanced` storage or a custom size for new buckets). To reuse
+your own bucket, create one first; see the README **Nebius AI Cloud account**
+section,
 [Creating a tenant](https://docs.nebius.com/iam/create-tenants),
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
-Nebius CLI profile first, then prompts for your project id and tenant id (in
-that order, no defaults shown), your region and container registry (defaults are
-discovered from the project), guides you to reuse an existing bucket or create a
-default `npa-bucket` (standard storage, size limit in GB), and asks for a local
-**project alias** (default = region; used later as `-p <alias>`). It then
-writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`:
+Nebius CLI profile first, then prompts for your project id and tenant id, your
+region and container registry (defaults are discovered from the project), guides
+you to reuse an existing bucket or create a default `npa-bucket-<hash>` bucket
+(standard storage, size limit in GB), and asks for a local **project alias**
+(default = region; used later as `-p <alias>`).
+
+`npa configure` is idempotent: re-run it any time to update keys or properties.
+On a re-run every prompt is pre-filled with the value already saved in
+`~/.npa/config.yaml` / `~/.npa/credentials.yaml`, so pressing Enter through the
+flow keeps your current setup unchanged, and typing a new value updates just
+that field. When object storage is already configured it defaults to keeping the
+existing bucket and S3 key (so a re-run does not mint a new access key); decline
+that prompt to re-provision. It then
+writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`, and prints a one-line
+`[NOTE]` summarizing which gated workbench models your HF and NGC tokens can (or
+cannot) access — see [§4e](#4e-accept-and-verify-gated-model-access):
 
 ```bash
 npa configure
@@ -269,6 +212,8 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 | Need | `credentials.yaml` key | Environment override | Required when |
 |---|---|---|---|
 | Hugging Face token | `tokens.HF_TOKEN` | `HF_TOKEN` | Downloading gated Hugging Face models, datasets, or weights |
+| Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Zero-GPU hosted inference (Token Factory / OpenAI-compatible) paths |
+| Nebius AI Cloud key | `tokens.NEBIUS_AI_CLOUD_KEY` | `NEBIUS_AI_CLOUD_KEY` | Calling Nebius AI Cloud APIs |
 | NGC API key | `ngc.api_key` | `NGC_API_KEY` | Using NGC-backed GR00T model references |
 | NGC organization | `ngc.org` | `NGC_ORG` | Your NGC key is organization-scoped |
 | NGC team | `ngc.team` | `NGC_TEAM` | Your NGC key is team-scoped |
@@ -353,6 +298,36 @@ npa demo stage --source-project project-a --target-project project-b \
   --target-bucket s3://customer-bucket/demo-artifacts/ --allow-host-creds
 ```
 
+### 4e. Accept and verify gated model access
+
+Several workbench capabilities (GR00T, Cosmos, sim2real) pull **gated** models
+from Hugging Face and NVIDIA NGC. Hugging Face gated models require you to accept
+the license once per model — click **"Agree and access repository"** on each
+model page while signed in. There is no API that accepts these licenses for you.
+
+Once your `HF_TOKEN` and `NGC_API_KEY` are set, verify access to every gated
+model the workbench needs (the command prints the exact page to accept for any
+model you have not yet unlocked):
+
+```bash
+npa workbench health access
+# or pass keys explicitly / persist them:
+npa workbench health access --hf-token hf_xxx --ngc-key nvapi-xxx --set-credentials
+# scope to one capability, or run offline (presence-only):
+npa workbench health access --capability groot
+```
+
+A convenience wrapper is also available:
+
+```bash
+HF_TOKEN=hf_xxx NGC_API_KEY=nvapi-xxx scripts/accept-model-access.sh
+```
+
+The report is PASS/WARN/FAIL per model; it exits non-zero if a required gated
+model is still inaccessible, so it fits a CI or cold-start preflight. For the
+broader credential preflight (HF/NGC/S3/Token Factory presence and
+reachability), use `npa workbench health preflight`.
+
 ## 5. First platform checks
 
 These commands should not provision cloud resources:
@@ -369,112 +344,63 @@ S3 bucket and access key); use `npa configure --show` for a read-only view of
 the file layout, or `npa configure --no-provision` to enter existing S3
 credentials by hand.
 
-### 5a. Your first real result (offline)
+### 5a. Your first result: zero-GPU inference (Nebius Token Factory)
 
-You can produce a real eval result with no cloud, GPU, or credentials. The
-`vlm-eval benchmark` command scores a shipped, labeled rollout set with the
-offline `stub` backend. Run it from the repository root — the `--dataset` path
-is relative to it (or pass an absolute path):
+The cheapest way to get a real result on Nebius is
+[Token Factory](https://tokenfactory.nebius.com/) hosted inference —
+OpenAI-compatible, zero-GPU, and it needs only a `NEBIUS_TOKEN_FACTORY_KEY`
+(no cluster, registry, or S3). Add the key with `npa configure` (or
+`export NEBIUS_TOKEN_FACTORY_KEY=v1...`), then confirm it authenticates:
 
 ```bash
-npa workbench vlm-eval benchmark \
-  --dataset npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json \
-  --output /tmp/vlm-eval-benchmark.json \
-  --backend stub \
-  --thresholds 0.5,0.8,0.9 \
-  --rubrics default,strict \
-  --models Qwen/Qwen2-VL-7B-Instruct \
-  --format json
+npa workbench token-factory verify
 ```
 
-Gate: the report ranks configurations and reports `accuracy: 1.0` over four
-labeled rollouts, and writes `/tmp/vlm-eval-benchmark.json`.
+Generate a completion against a hosted model — write a prompt and run:
 
-### 5b. The same eval, three coherent ways
+```bash
+printf 'Explain sim-to-real transfer in one sentence.\n' > /tmp/prompts.txt
+npa workbench token-factory generate \
+  --input-path /tmp/prompts.txt \
+  --output-path /tmp/tf-generations.jsonl \
+  --output json
+```
 
-Every Workbench capability is usable as a `npa` CLI command, a Python SDK call,
-and a parameterizable SkyPilot YAML you can run with raw `sky`. The three stay
-coherent; pick whichever fits your workflow.
+Gate: `verify` reports `authenticated: true` with a non-zero model count, and
+`generate` writes `/tmp/tf-generations.jsonl` with a completion for the prompt.
+
+More Token Factory capabilities (image captioning, physical-scene reasoning) and
+the checked-in SkyPilot templates:
+[docs/workbench/token-factory.md](workbench/token-factory.md).
+
+### 5b. The same capability, three coherent ways
+
+Every Workbench capability is usable as an `npa` CLI command, a Python SDK call,
+and a parameterizable SkyPilot YAML. The three stay coherent; pick whichever
+fits your workflow.
 
 **CLI** (shown above):
 
 ```bash
-npa workbench vlm-eval benchmark --dataset <benchmark.json> --backend stub --format json
+npa workbench token-factory generate --input-path /tmp/prompts.txt \
+  --output-path /tmp/tf-generations.jsonl --output json
 ```
 
 **Python SDK:**
 
 ```python
-from npa.sdk.workbench import vlm_eval
-from npa.workbench.vlm_eval import DEFAULT_MODEL, DEFAULT_SAMPLE_BENCHMARK_PATH
+from npa.workbench.token_factory import generate_text
 
-report = vlm_eval.benchmark(
-    dataset=str(DEFAULT_SAMPLE_BENCHMARK_PATH),
-    backend="stub",
-    thresholds=[0.5, 0.8, 0.9],
-    rubrics=["default", "strict"],
-    models=[DEFAULT_MODEL],
+result = generate_text(
+    input_path="/tmp/prompts.txt",
+    output_path="/tmp/tf-generations.jsonl",
 )
-print(report.best_config.metrics.accuracy)  # 1.0
+print(result.generations[0].completion)
 ```
 
-**Standalone SkyPilot YAML (raw `sky`, BYO S3 endpoint + image).** Save this at
-the repo root as `vlm-eval-benchmark.sky.yaml` and run it with plain `sky
-launch` — no `npa` CLI or SDK orchestrating it. `workdir: .` uploads your
-cloned checkout so the job installs `npa` from the synced source (there is no
-public PyPI/registry dependency). Run as-is to score the in-repo fixture with
-the offline `stub` backend, or override the `--env` values to use your own
-image and object storage:
-
-```yaml
-name: vlm-eval-benchmark
-# Upload the cloned repo so the job can `pip install -e ./npa` without needing
-# npa on PyPI or a prebuilt image. Launch this file from the repo root.
-workdir: .
-resources:
-  cloud: kubernetes
-  cpus: 4
-  # Generic CPU Python image; npa installs from the synced workdir in `setup`.
-  # SkyPilot does not expand env vars in `image_id`, so bring your own image by
-  # overriding it at launch:
-  #   sky launch ... --image-id docker:cr.<region>.nebius.cloud/<registry-id>/<image>:<tag>
-  image_id: docker:python:3.11-slim
-envs:
-  # Defaults read the in-repo fixture (uploaded via workdir) and write a local
-  # report — no object storage required. Point these at s3:// URIs plus an
-  # endpoint to bring your own storage.
-  BENCHMARK_URI: "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json"
-  OUTPUT_URI: "vlm-eval-benchmark-report.json"
-  AWS_ENDPOINT_URL: ""
-  VLM_BACKEND: "stub"
-setup: |
-  set -euo pipefail
-  pip install --upgrade pip
-  pip install -e ./npa
-run: |
-  set -euo pipefail
-  npa workbench vlm-eval benchmark \
-    --dataset "${BENCHMARK_URI}" \
-    --output "${OUTPUT_URI}" \
-    --backend "${VLM_BACKEND}" \
-    --format json
-```
-
-```bash
-# Run from the repo root. As written it scores the in-repo fixture with the
-# offline stub backend and tears the cluster down when done (--down). Override
-# any value at launch; nothing is hardcoded to a specific account. Use
-# --image-id for a BYO image and matching s3:// URIs for BYO storage.
-sky launch -y --down -c vlm-eval vlm-eval-benchmark.sky.yaml \
-  --image-id docker:cr.<your-region>.nebius.cloud/<your-registry-id>/<image>:<tag> \
-  --env BENCHMARK_URI=s3://<your-bucket>/vlm-eval/benchmark.json \
-  --env OUTPUT_URI=s3://<your-bucket>/vlm-eval/benchmark-report.json \
-  --env AWS_ENDPOINT_URL=https://storage.<your-region>.nebius.cloud
-```
-
-For maintained, checked-in workflow YAMLs (including a self-hosted GPU VLM
-variant), see `npa/src/npa/workflows/skypilot/` and
-[the workflows guide](workbench-yaml-guide.md).
+**SkyPilot:** the checked-in, parameterizable templates run the same tools on the
+cluster — see `npa/src/npa/workflows/skypilot/` (for example
+`token-factory-generate.yaml`) and [the workflows guide](workbench-yaml-guide.md).
 
 ## 6. Developing and testing npa
 
@@ -500,7 +426,7 @@ conventions (branch → PR → squash, one approval, never self-approve).
 
 ## 7. Flagship GPU workload: NVIDIA Cosmos
 
-Once the offline loop above works, the headline Workbench workload is **NVIDIA
+With your project configured (Section 4), the headline GPU workload is **NVIDIA
 Cosmos** — a world-foundation model for synthetic data and world generation.
 Cosmos is the recommended first GPU workload because it runs across **multiple
 NVIDIA GPU platforms** (for example `gpu-h100-sxm`, `gpu-h200-sxm`,
@@ -558,10 +484,21 @@ and [the workflows guide](workbench-yaml-guide.md) for routing, backend
 selection, and known limits. Isaac Lab is the simulation counterpart but is
 RT-core-only (L40S / RTX Pro 6000); see its guide before choosing GPU type.
 
-## 8. Where to next
+## 8. Do more with npa
 
-- [Workbench Getting Started](workbench/getting-started.md): Kubernetes,
-  SkyPilot, registry, S3, and first workload setup.
+With install → `npa configure` → a first cloud result done, build outward:
+
+- **Run workbench workloads** — NVIDIA Cosmos (Section 7), vlm-eval, sim2real,
+  and more. See [Workbench Getting Started](workbench/getting-started.md) for
+  Kubernetes, SkyPilot, registry, and S3 setup, and the
+  [robot guides](workbench/guides/README.md).
+- **Deploy the self-hosted agent** — `npa agent` is a browser workbench VM. It
+  builds on the setup above and additionally needs Terraform, an SSH key pair, a
+  Token Factory key, and writable S3. Operator docs:
+  [skills/tools/npa-agent/SKILL.md](../skills/tools/npa-agent/SKILL.md).
+
+Reference:
+
 - [CLI and package overview](../npa/README.md): package-level command and
   development notes.
 - [Repository overview](../README.md): project map and current workbench list.
@@ -654,9 +591,9 @@ managing AI Jobs on the project, or switch to a profile whose principal has it
 
 `credentials.yaml` is missing or tokens are not loading
 
-Offline commands tolerate a missing credentials file, but token-dependent
-commands will behave as if no token exists. Create the file under your home
-directory and secure it:
+Commands that need no tokens tolerate a missing credentials file, but
+token-dependent commands will behave as if no token exists. Create the file
+under your home directory and secure it:
 
 ```bash
 mkdir -p ~/.npa

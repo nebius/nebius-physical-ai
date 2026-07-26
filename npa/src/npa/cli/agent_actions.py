@@ -119,6 +119,60 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             params=("query", "k"),
         ),
         ToolSpec(
+            "insights_query",
+            read_only=True,
+            summary=(
+                "Query recorded run metrics by facet. Call with NO args first to list "
+                "all records and discover run_ids/metric_names. For GPU counts set "
+                "metric_name='gpus' with threshold_metric='gpus', threshold_op='ge', "
+                "threshold_value=N; filter an accelerator type with accelerator='RTXPRO6000'."
+            ),
+            params=(
+                "run_id",
+                "workflow",
+                "tool",
+                "stage",
+                "metric_name",
+                "accelerator",
+                "threshold_metric",
+                "threshold_op",
+                "threshold_value",
+                "limit",
+            ),
+        ),
+        ToolSpec(
+            "insights_compare",
+            read_only=True,
+            summary=(
+                "Compare recorded metrics between two runs; flags improved/regressed. Use "
+                "for 'which run regressed on <metric>' — set base_run and candidate_run to "
+                "run_ids (discover them first via insights_query with no args)."
+            ),
+            params=("base_run", "candidate_run", "metric_names"),
+        ),
+        ToolSpec(
+            "insights_lineage",
+            read_only=True,
+            summary="Traverse the provenance graph (ancestors/descendants) of an artifact URI.",
+            params=("uri", "version", "direction", "depth"),
+        ),
+        ToolSpec(
+            "insights_dashboard",
+            read_only=True,
+            summary="Roll up recorded metrics into a grouped dashboard summary.",
+            params=("workflow", "group_by", "latest_run"),
+        ),
+        ToolSpec(
+            "workflow_author",
+            read_only=True,
+            summary=(
+                "Author a runnable npa.workflow/v0.0.1 YAML from a goal by composing real "
+                "toolRefs from the live catalog, then self-validate + plan (returns yaml only "
+                "when runnable). Use for 'write/generate an N-step npa yaml that uses <tool>'."
+            ),
+            params=("goal", "steps"),
+        ),
+        ToolSpec(
             "sim2real_submit",
             read_only=False,
             requires_confirmation=True,
@@ -507,4 +561,105 @@ def run_action_loop(
         "proposed_action": proposed_action,
         "tokens": total_tokens,
         "tier": tier,
+    }
+
+
+# Common ways a planner (or operator) spells a threshold operator, mapped to the
+# canonical insights QueryRequest tokens. Keeps the read-only insights_query tool
+# robust to LLM arg drift (e.g. ">=", "at least") instead of failing validation.
+_THRESHOLD_OP_ALIASES: dict[str, str] = {
+    ">": "gt",
+    ">=": "ge",
+    "=>": "ge",
+    "<": "lt",
+    "<=": "le",
+    "=<": "le",
+    "==": "eq",
+    "=": "eq",
+    "gt": "gt",
+    "ge": "ge",
+    "gte": "ge",
+    "lt": "lt",
+    "le": "le",
+    "lte": "le",
+    "eq": "eq",
+    "greater": "gt",
+    "greater_than": "gt",
+    "at_least": "ge",
+    "min": "ge",
+    "less": "lt",
+    "less_than": "lt",
+    "at_most": "le",
+    "max": "le",
+    "equal": "eq",
+    "equals": "eq",
+}
+
+_DASHBOARD_GROUP_BY = ("metric_name", "tool", "stage", "workflow")
+
+
+def normalize_threshold_op(op: str) -> str:
+    """Map a loose threshold operator spelling to a canonical token (or "")."""
+    return _THRESHOLD_OP_ALIASES.get(str(op or "").strip().lower(), "")
+
+
+def normalize_group_by(value: str) -> str:
+    """Clamp a dashboard group_by to an allowed facet (default metric_name)."""
+    resolved = str(value or "").strip().lower()
+    return resolved if resolved in _DASHBOARD_GROUP_BY else "metric_name"
+
+
+CHAT_ACTION_MODE = "chat-action"
+
+
+def run_chat_action_loop(
+    goal: str,
+    *,
+    tools: Mapping[str, Callable[[dict[str, Any]], Any]],
+    model_call: Callable[..., Any],
+    allowlist: Mapping[str, ToolSpec] | None = None,
+    tier: str = "cheap",
+    confirm_token: str = "",
+    session_token: str = "",
+    confirm_digest: str = "",
+    max_steps: int = DEFAULT_MAX_STEPS,
+    live_context: str = "",
+) -> dict[str, Any]:
+    """Drive the bounded tool loop for a ``/chat`` "action" turn and shape the reply.
+
+    This is the fallthrough that lets a chat turn actually *use* read-only tools
+    (e.g. the insights backbone) instead of describing an endpoint to call.
+    Read-only tools execute inside the loop; a state-changing tool
+    (``requires_confirmation``) never auto-runs from a chat turn — with no
+    confirmation token the loop stops at ``needs_confirmation`` and the caller
+    issues a gate token, preserving the existing safety contract.
+
+    Returns a JSON-serializable chat-response fragment carrying the loop's
+    ``reply`` plus a compact ``steps``/``tools_used`` trace. All side effects
+    (model + tool calls) are injected, so it unit-tests with zero tokens/infra.
+    """
+    result = run_action_loop(
+        goal,
+        tools=tools,
+        model_call=model_call,
+        confirm_token=confirm_token,
+        session_token=session_token,
+        confirm_digest=confirm_digest,
+        tier=tier,
+        max_steps=max_steps,
+        allowlist=allowlist,
+        live_context=live_context,
+    )
+    return {
+        "ok": bool(result.get("ok")),
+        "reply": str(result.get("reply") or "").strip(),
+        "grounded": False,
+        "mode": CHAT_ACTION_MODE,
+        "tier": result.get("tier", tier),
+        "steps": result.get("steps", []),
+        "tools_used": result.get("tools_used", []),
+        "stopped_reason": result.get("stopped_reason"),
+        "needs_confirmation": bool(result.get("needs_confirmation")),
+        "proposed_action": result.get("proposed_action"),
+        "usage": {"total_tokens": int(result.get("tokens") or 0)},
     }

@@ -256,6 +256,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "golden-eval",
         "groot",
         "health",
+        "insights",
         "isaac-lab",
         "lancedb",
         "lerobot",

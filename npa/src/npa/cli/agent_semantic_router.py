@@ -111,6 +111,34 @@ _KEYWORD_HINTS: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
 ]
 
 
+# Deterministic signals that a regex-missed turn is a metrics/lineage question
+# best answered by the bounded tool loop over the insights backbone (record ->
+# metrics + lineage store). Matching here routes to MODE_ACTION at 0 tokens so
+# the /chat action branch actually *uses* insights instead of parroting a recipe.
+_INSIGHTS_ACTION_PATTERNS: tuple[str, ...] = (
+    r"\bregress(?:ed|ion|ions|ing)?\b",
+    r"\bcollision[ _-]?rate\b",
+    r"\bcompare\b.{0,60}\b(?:runs?|gpus?|metrics?|between|vs\.?|versus|accuracy|collision|success|severity)\b",
+    # "which runs …" only routes to insights when a metric/resource/superlative
+    # qualifier is nearby — "which runs are still active?" is NOT an insights query.
+    r"\bwhich runs?\b.{0,40}\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|"
+    r"failure[ _-]?rate|collision(?:[ _-]?rate)?|severity|delta|regress\w*|compare|used|"
+    r"most|fewest|highest|lowest|best|worst)\b",
+    r"\bhow many (?:gpus?|accelerators?)\b",
+    r"\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|failure[ _-]?rate|severity|delta)\b.{0,40}\bruns?\b",
+    r"\bruns?\b.{0,40}\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|failure[ _-]?rate|severity|delta)\b",
+    r"\blineage\b",
+    r"\bruns?\b.{0,20}\bby\b.{0,20}\bcounts?\b",
+    r"\b(?:more|greater|less|fewer|at\s+least|at\s+most|over|under)\b.{0,20}\d+.{0,20}\b(?:gpus?|accelerators?)\b",
+    r"\b(?:improved|better|worse|degrad(?:ed|ation))\b.{0,40}\bruns?\b",
+)
+
+
+def _insights_action_signal(lowered: str) -> bool:
+    """True when the turn clearly asks a metrics/lineage question over runs."""
+    return any(re.search(pattern, lowered) for pattern in _INSIGHTS_ACTION_PATTERNS)
+
+
 def _normalize(text: str) -> str:
     lowered = str(text or "").lower().replace("\n", " ")
     lowered = re.sub(r"\s+", " ", lowered).strip()
@@ -222,6 +250,19 @@ def classify_intent_semantic(
     lowered = _normalize(user_text)
     if not lowered:
         return _none_result()
+
+    # Deterministic insights/metrics questions route straight to the tool loop
+    # (0 tokens) so the agent queries/compares real run metrics rather than
+    # falling through to a generic LLM explanation — checked BEFORE the keyword
+    # hints so a run-listing hint never intercepts a metric/resource query.
+    if _insights_action_signal(lowered):
+        return {
+            "intent": None,
+            "mode": MODE_ACTION,
+            "confidence": 0.7,
+            "tokens": 0,
+            "source": SOURCE_KEYWORD,
+        }
 
     keyword = _keyword_intent(lowered, known)
     if keyword:

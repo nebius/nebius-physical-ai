@@ -25,6 +25,7 @@ detection-training  Train Faster R-CNN detectors from LanceDB materialized views
 scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable
 Isaac Lab RL backend; deterministic default).
 dataset  Dataset-of-record: ingest, validate, curate, and query production sensor data.
+insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
 vlm-eval  VLM evaluation for sim-to-real pipeline gating.
 token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
@@ -57,6 +58,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable |
 | `dataset` | Dataset-of-record: ingest, validate, curate, and query production sensor data. |
+| `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
 | `vlm-eval` | VLM evaluation for sim-to-real pipeline gating. |
 | `token-factory` | Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible). |
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |

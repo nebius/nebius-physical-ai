@@ -42,6 +42,52 @@ def test_keyword_shortcircuit_costs_zero_tokens():
     assert calls["n"] == 0
 
 
+def test_insights_metric_questions_route_to_action_zero_tokens():
+    calls = {"n": 0}
+
+    def _model(messages, *, tier="cheap"):  # pragma: no cover - must not be called
+        calls["n"] += 1
+        return _completion({"intent": "none"})
+
+    for turn in (
+        "which runs regressed on collision rate",
+        "which runs used 4 gpus",
+        "compare the metrics between the last two runs",
+        "how many gpus did each run use",
+        "show the lineage of the hardened policy",
+    ):
+        result = S.classify_intent_semantic(turn, known_intents=KNOWN, model_call=_model)
+        assert result["mode"] == S.MODE_ACTION, turn
+        assert result["tokens"] == 0, turn
+        assert result["source"] == S.SOURCE_KEYWORD, turn
+    assert calls["n"] == 0
+
+
+def test_insights_signal_does_not_hijack_open_questions():
+    # An open question with no run/metric signal must not be forced to action.
+    def _model(messages, *, tier="cheap"):
+        return _completion({"intent": "none", "confidence": 0.9})
+
+    result = S.classify_intent_semantic(
+        "what is reinforcement learning", known_intents=KNOWN, model_call=_model
+    )
+    assert result["mode"] == S.MODE_NONE
+
+
+def test_insights_signal_does_not_overroute_non_metric_which_runs():
+    # F3: "which runs …" without a metric/resource qualifier is NOT an insights
+    # query (e.g. status/liveness) and must not burn planner tokens.
+    def _model(messages, *, tier="cheap"):
+        return _completion({"intent": "none", "confidence": 0.9})
+
+    for turn in ("which runs are still active", "which runs are queued right now"):
+        result = S.classify_intent_semantic(turn, known_intents=KNOWN, model_call=_model)
+        assert result["mode"] != S.MODE_ACTION, turn
+    # …but a metric/resource qualifier still routes to the insights loop.
+    assert not S._insights_action_signal("which runs are still active")
+    assert S._insights_action_signal("which runs used the most gpus")
+
+
 def test_paraphrase_routes_via_model_when_keyword_misses():
     def _model(messages, *, tier="cheap"):
         return _completion({"intent": "sonic_capabilities", "confidence": 0.8}, tokens=9)

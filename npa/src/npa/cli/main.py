@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import sys
 import traceback
 from importlib.metadata import version as package_version
-from typing import Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import typer
 
@@ -28,6 +29,8 @@ from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
 from npa.clients.serverless import ServerlessClientError
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="npa",
@@ -313,6 +316,16 @@ def _prompt_new_bucket_settings(
     return storage_class, max_size_bytes
 
 
+def _bucket_name_from_uri(bucket: str) -> str:
+    """Extract the bare bucket name from an ``s3://bucket/prefix`` URI."""
+    value = (bucket or "").strip()
+    if not value:
+        return ""
+    if "://" in value:
+        value = value.split("://", 1)[1]
+    return value.strip("/").split("/", 1)[0]
+
+
 def _provision_object_storage(
     nebius_client,
     ask: Callable[..., str],
@@ -320,6 +333,7 @@ def _provision_object_storage(
     project_id: str,
     tenant_id: str,
     region: str,
+    existing_bucket: str = "",
 ) -> dict[str, str] | None:
     """Auto-create the S3 bucket + access key for the project."""
     if not (project_id and tenant_id):
@@ -329,7 +343,7 @@ def _provision_object_storage(
         "\nObject storage: enter an existing bucket name to reuse it, "
         "or press Enter to have npa create a default npa-bucket for this project."
     )
-    bucket_name = ask("Object-storage bucket name")
+    bucket_name = ask("Object-storage bucket name", default=existing_bucket)
     if not bucket_name:
         bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
         typer.echo("  No bucket name provided; npa will create a default bucket.")
@@ -390,12 +404,20 @@ def _provision_object_storage(
 def _run_interactive_configure(*, provision: bool = True) -> None:
     """Prompt for credentials/config and write the NPA dotfiles."""
 
-    from npa.clients.config import CONFIG_PATH, write_config
+    from npa.clients.config import (
+        CONFIG_PATH,
+        default_project_name,
+        list_projects,
+        write_config,
+    )
     from npa.clients.credentials import load_credentials, write_credentials_file
     from npa.clients import nebius as nebius_client
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
-    typer.echo("Interactive npa setup. Press Enter to skip any optional field.\n")
+    typer.echo(
+        "Interactive npa setup. Existing values are shown as defaults — press "
+        "Enter to keep them, or type a new value to update.\n"
+    )
     profile_ready = _ensure_nebius_profile()
     typer.echo("")
 
@@ -427,25 +449,62 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
 
     existing_credentials = load_credentials(environ={})
 
-    project_id = ask("Nebius project id")
-    tenant_id = ask("Nebius tenant id")
-    registry_default = (
+    # Re-running configure should be idempotent: default every prompt to the
+    # values already saved so pressing Enter keeps the current setup, while
+    # typing a new value updates it. Config is deep-merged on write.
+    existing_projects = list_projects()
+    existing_default_alias = default_project_name()
+    existing_stanza = existing_projects.get(existing_default_alias, {}) or {}
+
+    project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
+    tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
+    existing_registry = str(existing_stanza.get("container_registry", ""))
+    # Only hit Nebius for registry discovery when we don't already have one saved
+    # (an idempotent re-run should not make an avoidable CLI call).
+    registry_default = existing_registry or (
         nebius_client.discover_container_registry(project_id)
         or DEFAULT_CONTAINER_REGISTRY
     )
-    region_default = _region_from_registry_host(registry_default) or DEFAULT_REGION
+    region_default = (
+        str(existing_stanza.get("region", ""))
+        or _region_from_registry_host(registry_default)
+        or DEFAULT_REGION
+    )
     region = ask("Region", default=region_default)
     registry = ask("Container registry", default=registry_default)
 
     storage: dict[str, str] | None = None
+    existing_has_storage = bool(
+        existing_credentials.s3_access_key_id
+        and existing_credentials.s3_secret_access_key
+        and existing_credentials.s3_bucket
+    )
     if provision and project_id and tenant_id:
-        storage = _provision_object_storage(
-            nebius_client,
-            ask,
-            project_id=project_id,
-            tenant_id=tenant_id,
-            region=region,
-        )
+        if existing_has_storage:
+            # Reuse already-provisioned storage by default so a re-run does not
+            # mint a fresh S3 access key each time.
+            keep = ask(
+                f"Keep existing object storage ({existing_credentials.s3_bucket})? [Y/n]",
+                default="Y",
+            )
+            if keep.lower() in ("", "y", "yes"):
+                storage = {
+                    "aws_access_key_id": existing_credentials.s3_access_key_id,
+                    "aws_secret_access_key": existing_credentials.s3_secret_access_key,
+                    "endpoint_url": existing_credentials.s3_endpoint
+                    or _endpoint_for_region(region),
+                    "bucket": existing_credentials.s3_bucket,
+                }
+                typer.echo("  Keeping existing object-storage credentials.")
+        if storage is None:
+            storage = _provision_object_storage(
+                nebius_client,
+                ask,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                region=region,
+                existing_bucket=_bucket_name_from_uri(existing_credentials.s3_bucket),
+            )
         if storage is None:
             typer.echo(
                 "\nFalling back to manual object-storage entry. "
@@ -536,9 +595,14 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     }
     wrote_config = False
     if project_id or tenant_id:
-        # Local name for later `-p <alias>` flags. Default to the region so a
-        # first-time configure without an explicit choice still resolves.
-        alias_default = region or "default"
+        # Local name for later `-p <alias>` flags. Prefer the existing default
+        # alias so a re-run updates the same project stanza; otherwise default to
+        # the region so a first-time configure still resolves.
+        alias_default = (
+            existing_default_alias
+            if existing_default_alias and existing_default_alias != "default"
+            else (region or "default")
+        )
         alias = (
             ask(
                 "Project alias (local name for -p)",
@@ -561,7 +625,94 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             "Skipped ~/.npa/config.yaml: provide a Nebius project id to write a "
             "project profile."
         )
+
+    typer.echo(_model_access_note(hf_token, ngc_api_key))
     typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
+
+
+def _probe_hf_repos_parallel(
+    validator: Callable[..., Any],
+    token: str,
+    repos: Iterable[str],
+    *,
+    per_probe_timeout: float = 2.0,
+    total_budget: float = 5.0,
+) -> dict[str, Any]:
+    """Probe HF access for *repos* concurrently within a wall-clock budget.
+
+    Returns ``{repo: result}``. Repos that do not finish inside ``total_budget``
+    (or whose probe raises) are omitted, so the caller treats them as unverified
+    rather than stalling the primary onboarding command.
+    """
+
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
+    from concurrent.futures import as_completed
+
+    repo_list = list(repos)
+    results: dict[str, Any] = {}
+    if not repo_list:
+        return results
+    pool = ThreadPoolExecutor(max_workers=min(8, len(repo_list)))
+    try:
+        futures = {
+            pool.submit(validator, token, repo, timeout=per_probe_timeout): repo
+            for repo in repo_list
+        }
+        try:
+            for fut in as_completed(futures, timeout=total_budget):
+                repo = futures[fut]
+                try:
+                    results[repo] = fut.result()
+                except Exception:  # noqa: BLE001 - a failed probe -> unverified
+                    logger.debug("HF access probe failed for %s", repo, exc_info=True)
+        except FuturesTimeout:
+            # Budget exceeded: keep whatever finished; the rest stay unverified.
+            logger.debug("HF access probe budget of %.1fs exceeded", total_budget)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    return results
+
+
+def _model_access_note(hf_token: str, ngc_key: str) -> str:
+    """Return a one-line ``[NOTE]`` on which gated workbench models the tokens can access.
+
+    Runs a live Hugging Face access check for each license-gated model the
+    workbench uses and a presence/format check for the NGC key, then summarizes
+    the models without access on a single line. HF probes run in parallel under a
+    total wall-clock budget, and any failure is swallowed, so a preflight note
+    can never stall or break `npa configure`.
+    """
+
+    try:
+        from npa.clients import huggingface
+        from npa.clients.huggingface import HFAccessResult
+        from npa.workbench.model_access import (
+            access_note,
+            check_workbench_access,
+            gated_hf_repos,
+        )
+
+        cache: dict[str, Any] = {}
+        if hf_token:
+            cache = _probe_hf_repos_parallel(
+                huggingface.validate_hf_access, hf_token, gated_hf_repos()
+            )
+
+        def _validator(token: str, repo: str):
+            return cache.get(repo) or HFAccessResult(
+                repo=repo, ok=False, error="not verified (timed out)"
+            )
+
+        results = check_workbench_access(
+            hf_token=hf_token,
+            ngc_key=ngc_key,
+            hf_validator=_validator if hf_token else None,
+            gated_only=True,
+        )
+        return access_note(results)
+    except Exception:  # noqa: BLE001 - a preflight note must never break configure
+        return "[NOTE] Skipped model-access check (verify later with `npa workbench health access`)."
 
 
 def _store_token_factory_key(api_key: str) -> None:
