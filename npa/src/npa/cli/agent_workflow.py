@@ -1364,8 +1364,9 @@ def _build_authored_spec(
     *,
     bucket: str,
     name: str,
+    matched: set[str] | frozenset[str] | None = None,
 ) -> OrderedDict[str, Any]:
-    from npa.orchestration.npa_workflow.catalog import argv_for_tool
+    matched_set = set(matched or ())
 
     config: OrderedDict[str, Any] = OrderedDict()
     config["bucket"] = str(bucket)
@@ -1382,19 +1383,21 @@ def _build_authored_spec(
             entry_desc = _describe_tool_ref(ref)
         except Exception:  # noqa: BLE001
             entry_desc = f"Run {ref}."
+        # Steps that did not match a goal keyword are padding to reach the
+        # requested step count — flag them so the operator replaces them rather
+        # than mistaking an arbitrary catalog tool for an intended step.
+        if matched_set and ref not in matched_set:
+            entry_desc = f"[placeholder — no goal match; replace with the intended tool] {entry_desc}"
         state: OrderedDict[str, Any] = OrderedDict()
         state["description"] = _FoldedStr(entry_desc)
         if idx > 0:
             state["needs"] = [state_names[idx - 1]]
         state["toolRef"] = ref
-        state["resources"] = "gpu"
         if idx < len(selected) - 1:
             state["next"] = state_names[idx + 1]
         else:
             state["terminal"] = True
         states[state_name] = state
-        # Keep argv_for_tool referenced so the import is exercised at build time.
-        _ = argv_for_tool(ref)
 
     root: OrderedDict[str, Any] = OrderedDict()
     root["apiVersion"] = API_VERSION
@@ -1403,9 +1406,6 @@ def _build_authored_spec(
         {"name": str(name), "description": _FoldedStr(f"Authored {len(selected)}-state npa.workflow composed from the live tool catalog.")}
     )
     root["config"] = config
-    root["resources"] = OrderedDict(
-        {"gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"})}
-    )
     root["initial"] = state_names[0]
     root["states"] = states
     return root
@@ -1462,11 +1462,15 @@ def author_workflow_from_goal(
     resolved_name = str(name or "").strip() or "authored-workflow"
     config_keys = _config_tokens_for(selected)
 
+    matched_set = set(matched)
+    padded = [ref for ref in selected if ref not in matched_set]
     validation: dict[str, Any] = {"ok": False}
     plan: dict[str, Any] = {"ok": False}
     yaml_text = ""
     for _attempt in range(max(1, int(max_repairs) + 1)):
-        spec = _build_authored_spec(selected, config_keys, bucket=bucket, name=resolved_name)
+        spec = _build_authored_spec(
+            selected, config_keys, bucket=bucket, name=resolved_name, matched=matched_set
+        )
         yaml_text = _render_spec_yaml(spec)
         validation = validate_workflow_yaml_text(yaml_text, tool_refs=catalog)
         if validation.get("ok"):
@@ -1492,6 +1496,7 @@ def author_workflow_from_goal(
         "plan": plan,
         "tool_refs": selected,
         "matched_tool_refs": matched,
+        "padded_tool_refs": padded,
         "states": validation.get("states") or [],
     }
 

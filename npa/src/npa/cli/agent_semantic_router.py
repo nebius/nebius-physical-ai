@@ -119,7 +119,11 @@ _INSIGHTS_ACTION_PATTERNS: tuple[str, ...] = (
     r"\bregress(?:ed|ion|ions|ing)?\b",
     r"\bcollision[ _-]?rate\b",
     r"\bcompare\b.{0,60}\b(?:runs?|gpus?|metrics?|between|vs\.?|versus|accuracy|collision|success|severity)\b",
-    r"\bwhich runs?\b",
+    # "which runs …" only routes to insights when a metric/resource/superlative
+    # qualifier is nearby — "which runs are still active?" is NOT an insights query.
+    r"\bwhich runs?\b.{0,40}\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|"
+    r"failure[ _-]?rate|collision(?:[ _-]?rate)?|severity|delta|regress\w*|compare|used|"
+    r"most|fewest|highest|lowest|best|worst)\b",
     r"\bhow many (?:gpus?|accelerators?)\b",
     r"\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|failure[ _-]?rate|severity|delta)\b.{0,40}\bruns?\b",
     r"\bruns?\b.{0,40}\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|failure[ _-]?rate|severity|delta)\b",

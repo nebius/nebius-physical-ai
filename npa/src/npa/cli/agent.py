@@ -5038,16 +5038,29 @@ def chat(payload: dict):
                 )
                 return data
 
+            # Confirmation symmetry with POST /api/agent/act: a follow-up chat
+            # turn that carries the minted confirm_token can actually execute the
+            # gated action. Only consume the pending gate when a token is present
+            # so an unrelated turn never burns it.
+            chat_confirm_token = str(payload.get("confirm_token") or "").strip()
+            if chat_confirm_token:
+                chat_session_token, chat_confirm_digest, _chat_pending = _consume_agent_confirm_token()
+            else:
+                chat_session_token, chat_confirm_digest = "", ""
             action_result = run_chat_action_loop(
                 last_user,
                 tools=_agent_act_tools(),
                 model_call=_action_model_call,
                 tier=classify_tier(last_user),
+                confirm_token=chat_confirm_token,
+                session_token=chat_session_token,
+                confirm_digest=chat_confirm_digest,
                 live_context=format_live_context_block(_load_state()),
             )
             # Preserve the safety contract: a state-changing tool proposed from a
-            # chat turn never auto-runs — it stops here and we mint a gate token
-            # bound to the exact action digest (same as POST /api/agent/act).
+            # chat turn never auto-runs without a token — it stops here and we mint
+            # a gate token bound to the exact action digest (same as /api/agent/act);
+            # the operator re-sends it (with the goal) to execute.
             if action_result.get("needs_confirmation"):
                 proposed = action_result.get("proposed_action") if isinstance(action_result.get("proposed_action"), dict) else {{}}
                 digest = str(proposed.get("digest") or action_digest({{k: v for k, v in proposed.items() if k != "digest"}}))
@@ -5072,7 +5085,8 @@ def chat(payload: dict):
                 "grounded": False,
                 "tier": "semantic-action",
                 "mode": action_result.get("mode"),
-                "usage": action_result.get("usage") or {{"total_tokens": semantic_tokens}},
+                # Include the tokens spent reaching MODE_ACTION, not just the loop's.
+                "usage": {{"total_tokens": int((action_result.get("usage") or {{}}).get("total_tokens", 0)) + semantic_tokens}},
                 "steps": action_result.get("steps") or [],
                 "tools_used": action_result.get("tools_used") or [],
                 "stopped_reason": action_result.get("stopped_reason"),
@@ -5500,6 +5514,7 @@ def _agent_act_tools():
             "runnable": bool(result.get("runnable")),
             "yaml": str(result.get("yaml") or "") if result.get("runnable") else "",
             "tool_refs": result.get("tool_refs") or [],
+            "padded_tool_refs": result.get("padded_tool_refs") or [],
             "states": result.get("states") or [],
             "validation": result.get("validation") or {{}},
             "error": result.get("error") or (None if result.get("runnable") else "authored spec did not pass validate+plan"),

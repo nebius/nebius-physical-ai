@@ -74,6 +74,20 @@ def test_insights_signal_does_not_hijack_open_questions():
     assert result["mode"] == S.MODE_NONE
 
 
+def test_insights_signal_does_not_overroute_non_metric_which_runs():
+    # F3: "which runs …" without a metric/resource qualifier is NOT an insights
+    # query (e.g. status/liveness) and must not burn planner tokens.
+    def _model(messages, *, tier="cheap"):
+        return _completion({"intent": "none", "confidence": 0.9})
+
+    for turn in ("which runs are still active", "which runs are queued right now"):
+        result = S.classify_intent_semantic(turn, known_intents=KNOWN, model_call=_model)
+        assert result["mode"] != S.MODE_ACTION, turn
+    # …but a metric/resource qualifier still routes to the insights loop.
+    assert not S._insights_action_signal("which runs are still active")
+    assert S._insights_action_signal("which runs used the most gpus")
+
+
 def test_paraphrase_routes_via_model_when_keyword_misses():
     def _model(messages, *, tier="cheap"):
         return _completion({"intent": "sonic_capabilities", "confidence": 0.8}, tokens=9)

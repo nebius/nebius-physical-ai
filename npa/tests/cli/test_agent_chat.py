@@ -386,6 +386,23 @@ def test_author_workflow_from_goal_composes_cosmos_from_live_catalog() -> None:
     assert result["tool_refs"] and all(ref in TOOL_CATALOG for ref in result["tool_refs"])
     assert any("cosmos" in ref for ref in result["tool_refs"])
     assert "npa.workflow/v0.0.1" in result["yaml"]
+    # Two cosmos tools match a 2-step cosmos goal, so no padding.
+    assert result["padded_tool_refs"] == []
+
+
+def test_author_workflow_flags_padded_placeholder_states() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    # More requested steps than goal-matched tools -> the extra state is padded
+    # from the catalog and flagged as a placeholder for the operator to replace.
+    result = author_workflow_from_goal(
+        "write me a 3 step npa yaml that uses cosmos", tool_refs=frozenset(TOOL_CATALOG)
+    )
+    assert len(result["tool_refs"]) == 3
+    assert result["padded_tool_refs"], "extra state should be flagged as padding"
+    if result["runnable"]:
+        assert "placeholder" in result["yaml"].lower()
 
 
 def test_embedded_chat_action_branch_drives_loop_not_boilerplate() -> None:

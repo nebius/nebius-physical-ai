@@ -392,6 +392,35 @@ def test_normalize_group_by_clamps_to_allowed_facets():
     assert A.normalize_group_by("") == "metric_name"
 
 
+def test_run_chat_action_loop_executes_gated_tool_with_matching_token():
+    # F1: a chat turn carrying the minted confirm token (bound to the action
+    # digest) executes the gated tool — confirmation symmetry with /api/agent/act.
+    submitted = {"n": 0}
+
+    def _submit(args):
+        submitted["n"] += 1
+        return {"run_id": args.get("run_id"), "submit_mode": "agent-local"}
+
+    digest = A.action_digest({"tool": "sim2real_submit", "args": {"run_id": "x"}})
+    planner = _scripted_planner(
+        [
+            {"tool": "sim2real_submit", "args": {"run_id": "x"}},
+            {"final": "submitted run x"},
+        ]
+    )
+    result = A.run_chat_action_loop(
+        "launch a sim2real run",
+        tools={"sim2real_submit": _submit},
+        model_call=planner,
+        confirm_token="tok",
+        session_token="tok",
+        confirm_digest=digest,
+    )
+    assert submitted["n"] == 1
+    assert result["needs_confirmation"] is False
+    assert "sim2real_submit" in result["tools_used"]
+
+
 def test_run_chat_action_loop_gpu_tool_needs_confirmation_without_token():
     submitted = {"count": 0}
 
