@@ -14,7 +14,7 @@ from typing import Optional
 
 import typer
 
-from npa.clients.credentials import load_credentials
+from npa.clients.credentials import load_credentials, write_credentials_file
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.kube import run_kubectl
 from npa.clients.storage import StorageClient
@@ -37,6 +37,10 @@ from npa.workflows.sim2real_health import (
     run_preflight,
 )
 from npa.workflows.sim2real_loop import build_config_from_env
+from npa.workbench.model_access import (
+    all_capabilities,
+    check_workbench_access,
+)
 
 app = typer.Typer(
     name="health",
@@ -151,6 +155,96 @@ def preflight_command(
         )
 
     results = run_credential_preflight(credentials, probes=probes, checks=selected)
+    _emit_results(results, output_json=output_json)
+
+    if has_failure(results) and not warn_only:
+        raise typer.Exit(code=1)
+
+
+@app.command("access")
+def access_command(
+    hf_token: str = typer.Option(
+        "",
+        "--hf-token",
+        help="Hugging Face token (default: ~/.npa/credentials.yaml or HF_TOKEN).",
+    ),
+    ngc_key: str = typer.Option(
+        "",
+        "--ngc-key",
+        help="NVIDIA NGC API key (default: ~/.npa/credentials.yaml or NGC_API_KEY).",
+    ),
+    capability: str = typer.Option(
+        "all",
+        "--capability",
+        help=(
+            "Comma-separated capabilities to check, or 'all'. "
+            f"Choices: all, {', '.join(all_capabilities())}."
+        ),
+    ),
+    offline: bool = typer.Option(
+        False,
+        "--offline",
+        help="Skip live Hugging Face probes; only check that a token is present.",
+    ),
+    set_credentials: bool = typer.Option(
+        False,
+        "--set-credentials",
+        help="Persist the provided --hf-token / --ngc-key to ~/.npa/credentials.yaml.",
+    ),
+    warn_only: bool = typer.Option(
+        False, "--warn-only", help="Exit 0 even when an access check fails."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+) -> None:
+    """Check HF + NGC access to every gated model the workbench capabilities need.
+
+    Given a Hugging Face token and an NGC API key, this reports whether the token
+    already has access to each gated model and prints the exact 'Agree and access
+    repository' URL for anything still gated. Hugging Face gated licenses must be
+    accepted interactively on the model page — there is no API to accept them for
+    you — so this command automates the check and the guidance, not the click.
+
+    Pass ``--set-credentials`` to also persist the provided keys to
+    ~/.npa/credentials.yaml. Exits non-zero on any FAIL unless ``--warn-only``.
+    """
+
+    credentials = load_credentials()
+    resolved_hf = hf_token or getattr(credentials, "hf_token", "") or ""
+    resolved_ngc = ngc_key or getattr(credentials, "ngc_api_key", "") or ""
+
+    if set_credentials:
+        payload: dict[str, object] = {}
+        if hf_token:
+            payload["tokens"] = {"HF_TOKEN": hf_token}
+        if ngc_key:
+            payload["ngc"] = {"api_key": ngc_key}
+        if payload:
+            path = write_credentials_file(payload)
+            typer.echo(f"Persisted provided keys to {path} (chmod 600).\n")
+        else:
+            typer.echo(
+                "--set-credentials was passed but no --hf-token/--ngc-key given; "
+                "nothing persisted.\n"
+            )
+
+    if capability.strip().lower() in {"all", ""}:
+        selected: list[str] | None = None
+    else:
+        selected = [item.strip() for item in capability.split(",") if item.strip()]
+        known = set(all_capabilities())
+        unknown = [item for item in selected if item not in known]
+        if unknown:
+            raise typer.BadParameter(
+                f"unknown capability(ies): {', '.join(unknown)}. "
+                f"Choices: all, {', '.join(all_capabilities())}."
+            )
+
+    results = check_workbench_access(
+        hf_token=resolved_hf,
+        ngc_key=resolved_ngc,
+        hf_validator=None if offline else validate_hf_access,
+        capabilities=selected,
+    )
     _emit_results(results, output_json=output_json)
 
     if has_failure(results) and not warn_only:

@@ -11,6 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 preflight  Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job.
+access  Check HF + NGC access to every gated model the workbench capabilities need.
 ```
 
 ## Options
@@ -24,6 +25,7 @@ preflight  Validate HF, NGC, S3, and Token Factory credentials before a deploy o
 | Command | Description |
 | --- | --- |
 | `preflight` | Validate HF, NGC, S3, and Token Factory credentials before a deploy or GPU job. |
+| `access` | Check HF + NGC access to every gated model the workbench capabilities need. |
 
 ## Examples
 

@@ -229,3 +229,119 @@ def test_preflight_warn_only_suppresses_exit(monkeypatch) -> None:
         app, ["workbench", "health", "preflight", "--checks", "s3", "--warn-only"]
     )
     assert result.exit_code == 0
+
+
+class _HFOK:
+    def __init__(self, ok=True, status_code=None, error=""):
+        self.ok = ok
+        self.status_code = status_code
+        self.error = error
+
+
+def test_access_registered_and_help() -> None:
+    result = runner.invoke(app, ["workbench", "health", "access", "--help"])
+    assert result.exit_code == 0
+    assert "--hf-token" in result.output
+    assert "--ngc-key" in result.output
+
+
+def test_access_offline_reports_gated_models(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EmptyCreds())
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "access", "--offline", "--hf-token", "hf_x", "--ngc-key", "nvapi-x"],
+    )
+    assert result.exit_code == 0
+    assert "nvidia/GR00T-N1.7-3B" in result.output
+    assert "ngc" in result.output
+
+
+def test_access_fails_on_gated_denial(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_access",
+        lambda token, repo: _HFOK(ok=False, status_code=403, error="no access"),
+    )
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "access", "--hf-token", "hf_x", "--ngc-key", "nvapi-x", "--capability", "groot"],
+    )
+    assert result.exit_code == 1
+    assert "FAIL" in result.output
+    assert "Agree and access repository" in result.output
+
+
+def test_access_warn_only_suppresses_exit(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "validate_hf_access",
+        lambda token, repo: _HFOK(ok=False, status_code=403, error="no access"),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "health", "access",
+            "--hf-token", "hf_x", "--ngc-key", "nvapi-x",
+            "--capability", "groot", "--warn-only",
+        ],
+    )
+    assert result.exit_code == 0
+
+
+def test_access_pass_when_validator_ok(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module, "validate_hf_access", lambda token, repo: _HFOK(ok=True)
+    )
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "access", "--hf-token", "hf_x", "--ngc-key", "nvapi-x", "--json"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert "ngc" in {c["name"] for c in payload["checks"]}
+
+
+def test_access_rejects_unknown_capability(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EmptyCreds())
+    result = runner.invoke(
+        app, ["workbench", "health", "access", "--offline", "--capability", "bogus"]
+    )
+    assert result.exit_code != 0
+    assert "unknown capability" in result.output.lower()
+
+
+def test_access_set_credentials_persists(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _EmptyCreds())
+    captured: dict = {}
+
+    def _fake_write(data, *, path=None):
+        captured.update(data)
+        return "/tmp/fake-credentials.yaml"
+
+    monkeypatch.setattr(health_module, "write_credentials_file", _fake_write)
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "health", "access", "--offline",
+            "--hf-token", "hf_new", "--ngc-key", "nvapi-new", "--set-credentials",
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["tokens"]["HF_TOKEN"] == "hf_new"
+    assert captured["ngc"]["api_key"] == "nvapi-new"

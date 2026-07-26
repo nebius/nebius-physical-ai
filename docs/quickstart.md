@@ -353,6 +353,36 @@ npa demo stage --source-project project-a --target-project project-b \
   --target-bucket s3://customer-bucket/demo-artifacts/ --allow-host-creds
 ```
 
+### 4e. Accept and verify gated model access
+
+Several workbench capabilities (GR00T, Cosmos, sim2real) pull **gated** models
+from Hugging Face and NVIDIA NGC. Hugging Face gated models require you to accept
+the license once per model — click **"Agree and access repository"** on each
+model page while signed in. There is no API that accepts these licenses for you.
+
+Once your `HF_TOKEN` and `NGC_API_KEY` are set, verify access to every gated
+model the workbench needs (the command prints the exact page to accept for any
+model you have not yet unlocked):
+
+```bash
+npa workbench health access
+# or pass keys explicitly / persist them:
+npa workbench health access --hf-token hf_xxx --ngc-key nvapi-xxx --set-credentials
+# scope to one capability, or run offline (presence-only):
+npa workbench health access --capability groot
+```
+
+A convenience wrapper is also available:
+
+```bash
+HF_TOKEN=hf_xxx NGC_API_KEY=nvapi-xxx scripts/accept-model-access.sh
+```
+
+The report is PASS/WARN/FAIL per model; it exits non-zero if a required gated
+model is still inaccessible, so it fits a CI or cold-start preflight. For the
+broader credential preflight (HF/NGC/S3/Token Factory presence and
+reachability), use `npa workbench health preflight`.
+
 ## 5. First platform checks
 
 These commands should not provision cloud resources:
