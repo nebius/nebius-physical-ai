@@ -304,7 +304,8 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
         # stage. We prepend "/" to k so the run-id also matches when it is the
         # leading segment of the (bucket-relative) key; if the run id is absent
         # we fall back to the whole key.
-        after_run = k.split(marker, 1)[-1] if marker in f"/{k}" else k
+        prefixed = f"/{k}"
+        after_run = prefixed.split(marker, 1)[-1] if marker in prefixed else k
         stage = after_run.split("/", 1)[0] if "/" in after_run else after_run
         stages[stage] = stages.get(stage, 0) + 1
     # Count augmented scenario variants (per-clip subdirs under cosmos_augmented/,

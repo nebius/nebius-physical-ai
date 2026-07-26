@@ -214,12 +214,23 @@ def run_cosmos_transfer(
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
     if cuda_visible_devices is not None and str(cuda_visible_devices).strip() != "":
         env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices).strip()
-    subprocess.run(
-        [str(py), "examples/inference.py", "-i", spec, "-o", out],
-        cwd=repo,
-        env=env,
-        check=True,
-    )
+    # Only the specs WE synthesized this call are ephemeral; never delete a
+    # bundled/example or caller-supplied spec. Per-variant tags keep siblings
+    # from clobbering each other, so removing exactly our file is fan-out safe.
+    temp_spec = repo / spec if Path(spec).name.startswith(("_npa_input_spec_", "_npa_prompted_")) else None
+    try:
+        subprocess.run(
+            [str(py), "examples/inference.py", "-i", spec, "-o", out],
+            cwd=repo,
+            env=env,
+            check=True,
+        )
+    finally:
+        if temp_spec is not None:
+            try:
+                temp_spec.unlink()
+            except OSError:
+                pass
 
     videos = [
         f

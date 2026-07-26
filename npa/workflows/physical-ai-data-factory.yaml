@@ -110,8 +110,8 @@ states:
   generate-configs:
     description: >
       Stage 1 - Config Generation. Sample appearance-only augmentation variable
-      combinations (weather / time_of_day / road_condition) and write a per-run
-      config manifest that drives the augment stage.
+      combinations (lighting / background / cloth_color / surface) and write a
+      per-run config manifest that drives the augment stage.
     resources: cpu
     run:
       shell: >
@@ -142,8 +142,15 @@ states:
       Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE inference per
       sampled appearance combo (config.n_augmentations), so N combos -> N scenario
       variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
-      Appearance-only: lighting, weather, surface -- never scene geometry. This is
-      a member of the `grade`
+      Appearance-only: lighting, background, cloth_color, surface -- never scene
+      geometry.
+      By DEFAULT each variant re-renders the bundled Cosmos example under the
+      sampled prompt (appearance study, no source clip required). To augment the
+      run's OWN uploaded input/ footage instead -- preserving its geometry/motion
+      while only the appearance changes -- submit with
+      NPA_COSMOS_CONDITION_ON_INPUT=1 (or add --condition-on-input to the toolRef);
+      the edge/vis control is then computed on-the-fly from the input clip.
+      This is a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.
     needs: [annotate-original]

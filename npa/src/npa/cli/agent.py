@@ -7136,6 +7136,11 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
         s3, settings = _agent_s3_client()
         if requested_uri:
             obj_bucket, obj_key = parse_s3_uri(requested_uri)
+            # Restrict caller-supplied URIs to the agent's accessible bucket set
+            # (the same buckets discovery serves from) so this cannot be used to
+            # exfiltrate arbitrary objects the agent's S3 creds happen to read.
+            if obj_bucket not in _agent_s3_buckets(s3, settings):
+                raise HTTPException(status_code=403, detail="bucket not in the accessible set")
             uri = requested_uri
         else:
             obj_key = _safe_artifact_key(requested_key)
@@ -7179,6 +7184,10 @@ def sim_viz_load_artifact(payload: dict | None = None):
         s3, settings = _agent_s3_client()
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
+            # Same accessible-bucket allow-list as /artifacts/download: never load
+            # an arbitrary object outside the buckets the agent already serves.
+            if bucket not in _agent_s3_buckets(s3, settings):
+                raise HTTPException(status_code=403, detail="bucket not in the accessible set")
             run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri

@@ -528,6 +528,29 @@ def list_all_runs_across_buckets(
     return RunListPage(runs=ordered, truncated=truncated, total_runs=total, limit=limit)
 
 
+def _s3_cache_identity(s3) -> str:
+    """Best-effort stable identity for an S3 client so the process-global run
+    cache never cross-serves pages across distinct credential/endpoint scopes.
+
+    Uses only the public endpoint plus the access-key id (guarded); mock clients
+    in unit tests yield a stable empty identity, so cache behavior is unchanged.
+    """
+    if s3 is None:
+        return ""
+    endpoint = ""
+    access_key = ""
+    try:
+        endpoint = str(getattr(getattr(s3, "meta", None), "endpoint_url", "") or "")
+    except Exception:  # noqa: BLE001
+        endpoint = ""
+    try:
+        creds = s3._request_signer._credentials  # boto3 internal; best-effort only
+        access_key = str(getattr(creds, "access_key", "") or "")
+    except Exception:  # noqa: BLE001
+        access_key = ""
+    return f"{endpoint}|{access_key}"
+
+
 def list_runs_cached_multi(
     buckets: "list[str] | tuple[str, ...]",
     *,
@@ -546,6 +569,7 @@ def list_runs_cached_multi(
     bucket_list = tuple(str(b).strip() for b in buckets if str(b).strip())
     key = (
         "__multi__",
+        _s3_cache_identity(s3),
         bucket_list,
         base_prefix,
         int(limit),
@@ -683,6 +707,7 @@ def list_runs_cached(
     """
     key = (
         bucket,
+        _s3_cache_identity(s3),
         base_prefix,
         prefix,
         int(limit),
@@ -905,7 +930,18 @@ def build_fiftyone_dataset(
         elif rel.startswith("input/") and low.endswith(".mp4"):
             input_videos.append(key)
 
-    grade = read_json(json_rel.get("grade/vlm_eval_stub.json", "")) or {}
+    # Resolve the grade report by the vlm_eval tool's own RESULT_FILENAME so this
+    # stays in sync if the tool renames it, instead of hardcoding a magic string
+    # (mirrors data_factory_stages.grade_gate). Fall back to the non-stub name.
+    try:
+        from npa.workbench.vlm_eval import RESULT_FILENAME as _VLM_RESULT_FILENAME
+    except Exception:  # noqa: BLE001
+        _VLM_RESULT_FILENAME = "vlm_eval_stub.json"
+    grade = {}
+    for _grade_name in (_VLM_RESULT_FILENAME, "vlm_eval.json"):
+        grade = read_json(json_rel.get(f"grade/{_grade_name}", "")) or {}
+        if grade:
+            break
     decision = read_json(json_rel.get("grade/decision.json", "")) or {}
     curation = read_json(json_rel.get("curation/report.json", "")) or {}
     aug_caps = read_json(json_rel.get("labeled_augmented/captions.json", "")) or {}

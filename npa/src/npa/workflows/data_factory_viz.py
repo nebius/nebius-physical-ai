@@ -272,7 +272,11 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     # Evaluate & Validate — the hallucination / attribute-verification grade.
     grade_dir = local / "grade"
     grade_docs: list[str] = []
-    for name in ("vlm_eval_stub.json", "vlm_eval.json"):
+    try:
+        from npa.workbench.vlm_eval import RESULT_FILENAME as _vlm_result_filename
+    except Exception:  # noqa: BLE001
+        _vlm_result_filename = "vlm_eval_stub.json"
+    for name in (_vlm_result_filename, "vlm_eval.json"):
         ev = _read_json(grade_dir / name)
         if isinstance(ev, dict):
             grade_docs.append(_json_block("Attribute verification / hallucination check (VLM)", ev))
