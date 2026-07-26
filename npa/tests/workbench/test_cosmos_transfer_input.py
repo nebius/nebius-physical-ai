@@ -73,7 +73,10 @@ def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) ->
     assert Path(res["video_path"]).exists()
     # A conditioned spec was written that points at the input clip, not DEFAULT_SPEC.
     assert res["spec"] != tx.DEFAULT_SPEC
-    spec = json.loads((repo / res["spec"]).read_text())
+    # The synthesized controlnet spec is ephemeral (removed after inference to
+    # avoid accumulating in the repo dir); its content is returned for inspection.
+    assert not (repo / res["spec"]).exists()
+    spec = res["spec_json"]
     assert spec["video_path"] == str(clip.resolve())
     assert "edge" in spec
     assert spec["prompt"] == "foggy morning"

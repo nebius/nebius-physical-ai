@@ -217,7 +217,17 @@ def run_cosmos_transfer(
     # Only the specs WE synthesized this call are ephemeral; never delete a
     # bundled/example or caller-supplied spec. Per-variant tags keep siblings
     # from clobbering each other, so removing exactly our file is fan-out safe.
+    # Capture its content first so callers can still inspect the effective spec
+    # after the file is gone (nothing depends on the ephemeral file persisting).
     temp_spec = repo / spec if Path(spec).name.startswith(("_npa_input_spec_", "_npa_prompted_")) else None
+    spec_json: dict[str, Any] | None = None
+    if temp_spec is not None:
+        try:
+            import json as _json
+
+            spec_json = _json.loads(temp_spec.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            spec_json = None
     try:
         subprocess.run(
             [str(py), "examples/inference.py", "-i", spec, "-o", out],
@@ -254,6 +264,7 @@ def run_cosmos_transfer(
         "control_path": control_videos[0] if control_videos else "",
         "out_dir": str(out_abs),
         "spec": spec,
+        "spec_json": spec_json,
         "repo": str(repo),
         "input_conditioned": bool(input_video),
         "input_video": str(input_video or ""),
