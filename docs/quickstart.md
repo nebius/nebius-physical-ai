@@ -484,10 +484,21 @@ and [the workflows guide](workbench-yaml-guide.md) for routing, backend
 selection, and known limits. Isaac Lab is the simulation counterpart but is
 RT-core-only (L40S / RTX Pro 6000); see its guide before choosing GPU type.
 
-## 8. Where to next
+## 8. Do more with npa
 
-- [Workbench Getting Started](workbench/getting-started.md): Kubernetes,
-  SkyPilot, registry, S3, and first workload setup.
+With install → `npa configure` → a first cloud result done, build outward:
+
+- **Run workbench workloads** — NVIDIA Cosmos (Section 7), vlm-eval, sim2real,
+  and more. See [Workbench Getting Started](workbench/getting-started.md) for
+  Kubernetes, SkyPilot, registry, and S3 setup, and the
+  [robot guides](workbench/guides/README.md).
+- **Deploy the self-hosted agent** — `npa agent` is a browser workbench VM. It
+  builds on the setup above and additionally needs Terraform, an SSH key pair, a
+  Token Factory key, and writable S3. Operator docs:
+  [skills/tools/npa-agent/SKILL.md](../skills/tools/npa-agent/SKILL.md).
+
+Reference:
+
 - [CLI and package overview](../npa/README.md): package-level command and
   development notes.
 - [Repository overview](../README.md): project map and current workbench list.

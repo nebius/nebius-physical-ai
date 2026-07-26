@@ -46,18 +46,15 @@ RTX6000).
 
 ---
 
-## Pick your path
+## Setup
 
-Two onboarding routes, in ascending order of setup effort. Both start with the
-same install and a Nebius account.
+Three steps take you from a clone to a real result on Nebius: install `npa`,
+configure Nebius, then run your first cloud workload.
 
-| Route                                              | Time         | Needs                                    | You end up with                                          |
-| -------------------------------------------------- | ------------ | ---------------------------------------- | -------------------------------------------------------- |
-| **A. [First workload on Nebius](#a-first-workload-on-nebius)** | ~15 min | Nebius account · `nebius` CLI            | A configured project running managed Workbench tools     |
-| **B. [Self-hosted `npa agent`](#b-self-hosted-npa-agent)** | ~20 min | Authenticated `nebius` profile · Terraform · SSH key pair · Token Factory key · writable S3 creds | A browser-based chat workbench VM with embedded Rerun    |
+### 1. Install npa
 
-Both routes share the same one-time install. `npa` works with **Python 3.10+**
-and installs editable from the clone (it is not on PyPI):
+`npa` works with **Python 3.10+** and installs editable from the clone (it is
+not on PyPI):
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
@@ -76,41 +73,50 @@ Verify: `npa --version`.
 > **Windows:** use **WSL2 Ubuntu**. Full per-platform steps (venv, Nebius CLI,
 > WSL2): [docs/install.md](docs/install.md).
 
----
+### 2. Configure Nebius
 
-### A. First workload on Nebius
+[Sign up](https://docs.nebius.com/signup-billing/sign-up) and create a
+[tenant and project](https://docs.nebius.com/iam/manage-projects), install the
+Nebius CLI, then run `npa configure` — it creates or reuses your Nebius CLI
+profile and writes `~/.npa/credentials.yaml` + `~/.npa/config.yaml`:
 
-1. [Sign up](https://docs.nebius.com/signup-billing/sign-up) and create a
-   [tenant and project](https://docs.nebius.com/iam/manage-projects).
-2. Install the Nebius CLI:
+```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc
+npa configure
+```
 
-   ```bash
-   curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-   export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc
-   ```
-
-3. Interactive setup — creates or reuses your Nebius CLI profile and prompts
-   for project, tenant, region, container registry, bucket, and optional API
-   keys (in that order):
-
-   ```bash
-   npa configure --interactive
-   ```
-
-Now you're ready for [docs/workbench/getting-started.md](docs/workbench/getting-started.md).
 Full account/credential detail: [docs/quickstart.md](docs/quickstart.md).
 
-**Zero-GPU inference:** [Nebius Token Factory](https://tokenfactory.nebius.com/)
-needs only a `NEBIUS_TOKEN_FACTORY_KEY` — see
-[docs/workbench/token-factory.md](docs/workbench/token-factory.md). This is
-the cheapest way to try large models against your own data.
+### 3. Your first cloud result
 
-**Flagship GPU workload:** NVIDIA Cosmos (`npa workbench cosmos deploy/infer`)
-— see [docs/quickstart.md § Cosmos](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos).
+[Nebius Token Factory](https://tokenfactory.nebius.com/) zero-GPU inference is
+the cheapest way to get a real result — it needs only a
+`NEBIUS_TOKEN_FACTORY_KEY` (add it during `npa configure`), no cluster or GPU:
+
+```bash
+npa workbench token-factory verify        # confirm the key authenticates
+printf 'Explain sim-to-real transfer in one sentence.\n' > /tmp/prompts.txt
+npa workbench token-factory generate \
+  --input-path /tmp/prompts.txt --output-path /tmp/tf-generations.jsonl --output json
+```
+
+See [docs/workbench/token-factory.md](docs/workbench/token-factory.md).
 
 ---
 
-### B. Self-hosted `npa agent`
+## Do more with npa
+
+- **Run workbench workloads** — NVIDIA Cosmos, vlm-eval, sim2real, and more.
+  Start with the [robot guides](docs/workbench/guides/README.md) and
+  [Workbench Getting Started](docs/workbench/getting-started.md); the flagship
+  GPU workload is
+  [NVIDIA Cosmos](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos).
+- **Deploy the self-hosted agent** — `npa agent` is a browser workbench VM. It
+  builds on the setup above and additionally needs **Terraform**, an **SSH key
+  pair**, a **Token Factory key**, and **writable S3** (~20 min).
+
+### Deploy the self-hosted `npa` agent
 
 `npa agent` is a self-hosted **browser workbench VM**: HTTPS UI with
 basic-auth login, grounded chat over Nebius Token Factory
