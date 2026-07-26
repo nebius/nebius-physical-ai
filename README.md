@@ -10,7 +10,7 @@ observability, and cluster orchestration.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Platforms: macOS · Linux · WSL2](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL2-lightgrey.svg)](docs/quickstart.md#fast-install-by-platform)
+[![Platforms: macOS · Linux · Windows](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](docs/install.md)
 [![Test](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml/badge.svg)](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -57,24 +57,27 @@ with the same install.
 | **B. [First workload on Nebius](#b-first-workload-on-nebius)** | ~15 min | Nebius account · `nebius` CLI            | A configured project running managed Workbench tools     |
 | **C. [Self-hosted `npa agent`](#c-self-hosted-npa-agent)** | ~20 min | Authenticated `nebius` profile · Terraform · SSH key pair · Token Factory key · writable S3 creds | A browser-based chat workbench VM with embedded Rerun    |
 
-All three share the same one-time install:
+All three share the same one-time install. `npa` works with **Python 3.10+** and
+installs editable from the clone (it is not on PyPI):
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
-python3 -m venv .venv && source .venv/bin/activate
-pip install --upgrade pip && pip install -e npa
-npa --version
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e npa
 ```
+
+Verify: `npa --version`.
 
 > The base install is deliberately lightweight — it covers the offline paths
 > (Route A) with no GPU or database wheels. Before running cloud workloads
 > (Routes B and C), add the remaining workbench dependencies with
 > `pip install -e "npa[full]"`.
 
-> **Windows:** use **WSL2 Ubuntu**. Native PowerShell / `cmd` are not
-> supported. Platform-specific install blocks:
-> [docs/quickstart.md § Fast install](docs/quickstart.md#fast-install-by-platform).
+> **Windows:** native works for install and the offline try-it (Route A); S3,
+> SkyPilot, and Kubernetes workflows (Routes B–C) need **WSL2 Ubuntu**. Full
+> per-platform steps (venv/uv, Nebius CLI, WSL2): [docs/install.md](docs/install.md).
 
 ---
 

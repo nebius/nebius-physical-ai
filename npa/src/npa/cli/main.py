@@ -635,8 +635,8 @@ def _probe_hf_repos_parallel(
     token: str,
     repos: Iterable[str],
     *,
-    per_probe_timeout: float = 3.0,
-    total_budget: float = 8.0,
+    per_probe_timeout: float = 2.0,
+    total_budget: float = 5.0,
 ) -> dict[str, Any]:
     """Probe HF access for *repos* concurrently within a wall-clock budget.
 

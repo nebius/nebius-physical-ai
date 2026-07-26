@@ -2,8 +2,8 @@
 
 > Prerequisites: complete docs/quickstart.md first
 > ([open quickstart](../quickstart.md), including
-> [Fast install by platform](../quickstart.md#fast-install-by-platform) for
-> macOS, Linux, or WSL2).
+> [Install npa](../quickstart.md#3-install-npa); full per-platform steps for
+> macOS, Linux, and Windows are in [docs/install.md](../install.md)).
 
 This guide assumes `npa` is already installed, the Nebius CLI is authenticated,
 and user-level credentials are already configured in

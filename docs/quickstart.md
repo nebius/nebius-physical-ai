@@ -25,8 +25,9 @@ the package overview in [npa/README.md](../npa/README.md).
 
 - Python 3.10 or newer. The package metadata requires `>=3.10`.
 - Git, `python3 -m venv`, and `pip`.
-- **macOS**, **Linux**, or **Windows via WSL2** (Ubuntu). Native Windows shells
-  (PowerShell, cmd) are not supported for `npa` workflows — use WSL2.
+- **macOS**, **Linux**, or **Windows**. Native Windows works for install and the
+  offline quickstart; S3 / SkyPilot / Kubernetes workflows require **WSL2 Ubuntu**
+  (see [docs/install.md](install.md)).
 - A Nebius AI Cloud account with billing enabled. Start with the Nebius signup
   guide: <https://docs.nebius.com/signup-billing/sign-up>.
 - The Nebius AI Cloud CLI binary on `PATH`. Install it from
@@ -54,117 +55,45 @@ nebius profile list
 terraform version
 ```
 
-### Fast install by platform
-
-Copy-paste once per machine. All paths install the Nebius CLI, clone NPA, create
-a venv, and verify `npa`. Then set up credentials in Section 4 with
-`npa configure`, which creates or reuses your Nebius CLI profile for you (no
-manual `nebius profile create` step). Run `npa configure` only after you have a
-Nebius project and tenant id ready (Section 4a).
-
-| Platform | Shell | Nebius CLI |
-| --- | --- | --- |
-| macOS (Intel or Apple Silicon) | Terminal / zsh | Official install script (see below) |
-| Linux (Debian/Ubuntu) | bash | `curl …/cli/install.sh \| bash` |
-| Windows | **WSL2 Ubuntu** only | same curl one-liner inside WSL |
-
-**macOS**
-
-```bash
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc to persist
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e npa
-npa --version
-```
-
-Then continue with credential setup in Section 4 (`npa configure`).
-
-Optional operator tools: `brew install python@3.12 jq`, plus `kubectl` and
-`terraform` from their official installers (Terraform is no longer in
-Homebrew core: `brew install hashicorp/tap/terraform`).
-
-**Linux (Debian/Ubuntu)**
-
-```bash
-sudo apt-get update
-sudo apt-get install -y git python3 python3-venv python3-pip curl
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.bashrc to persist
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e npa
-npa --version
-```
-
-Then continue with credential setup in Section 4 (`npa configure`).
-
-Optional operator tools: `sudo apt-get install -y jq`. `kubectl` and
-`terraform` are **not** in the stock Ubuntu apt repositories — install
-`kubectl` from the [Kubernetes docs](https://kubernetes.io/docs/tasks/tools/)
-and `terraform` from
-[HashiCorp's apt repo](https://developer.hashicorp.com/terraform/install#linux).
-
-**Windows (WSL2)**
-
-In PowerShell (admin), install WSL once:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
-Restart if prompted, open **Ubuntu** from the Start menu, then run the **Linux**
-block above inside WSL. Keep the repo under your Linux home (for example
-`~/nebius-physical-ai`), not under `/mnt/c/…`, for faster I/O and fewer path
-issues.
-
-**Windows (native)** — not supported. Use WSL2 Ubuntu; do not run `npa` from
-PowerShell or Git Bash for cluster/S3 workflows.
-
-After install, activate the venv in every new shell:
-
-```bash
-cd nebius-physical-ai
-source .venv/bin/activate
-```
-
 ## 3. Install npa
 
-Clone the repository and install the Python package into a fresh virtual
-environment. The venv can live anywhere (for example `.venv` in the repo, or
-`~/.venvs/npa`); activating it puts `npa` on your `PATH`:
+`npa` works with **Python 3.10+**. It installs editable from a clone (it is not
+on PyPI):
 
 ```bash
-git clone <REPO_URL> nebius-physical-ai
+git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
-
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
 pip install -e npa
 ```
 
-If you prefer not to activate the venv, call its interpreter directly
-(`./.venv/bin/python -m pip install -e npa`) and use `./.venv/bin/npa` instead
-of `npa`. The rest of this guide assumes the venv is activated.
+Verify: `npa --version`.
 
-Verify the install:
+`npa --version` prints `npa <version>`, and `npa --help` prints the command tree
+without requiring Nebius, Hugging Face, NGC, Kubernetes, or S3 credentials.
 
-```bash
-npa --version
-npa --help
-```
+<details>
+<summary>Platform notes</summary>
 
-Gate: `npa --version` prints `npa <version>`, and `npa --help` prints the
-command tree without requiring Nebius, Hugging Face, NGC, Kubernetes, or S3
-credentials.
+- **Windows:** run inside **WSL2 Ubuntu** for cloud (S3 / SkyPilot / Kubernetes)
+  workflows; native Windows works for install and the offline quickstart. On
+  PowerShell activate with `.venv\Scripts\Activate.ps1` instead of
+  `source .venv/bin/activate`.
+- **Debian/Ubuntu:** install the venv module first —
+  `sudo apt-get install -y python3-venv`.
+- **Need Python 3.10+, or a faster installer?** [`uv`](https://docs.astral.sh/uv/)
+  can install Python and create the env:
+  `uv venv .venv && source .venv/bin/activate && uv pip install -e npa`.
+- **Out of scope (needs extra steps):** Alpine/musl, brand-new Python before
+  wheels exist, and air-gapped machines.
+
+Full per-platform steps — Nebius CLI, WSL2 setup, operator tools:
+[docs/install.md](install.md).
+</details>
+
+If you prefer not to activate the venv, call its interpreter directly with
+`./.venv/bin/npa`. The rest of this guide assumes the venv is activated.
 
 The base install is lightweight: it carries only what the offline paths need.
 Optional extras are available when you need them:
@@ -182,7 +111,8 @@ pip install -e "npa[dev]"       # tests, lint (pytest, ruff); see Section 6
 ```
 
 Before running cloud workloads (Sections 5+), install `npa[full]` so every
-workbench tool has its dependencies.
+workbench tool has its dependencies. Cloud steps also need the Nebius CLI —
+see [docs/install.md § Nebius CLI](install.md#4-nebius-cli-cloud-steps-only).
 
 ## 4. Configure credentials
 
@@ -224,8 +154,8 @@ optional — `npa configure` creates a default bucket named `npa-bucket-<hash>`
 (a short hash of your tenant and project ids, e.g. `npa-bucket-1a2b3c4d`) with
 **standard** storage and a size cap when you press Enter at the bucket prompt
 (you can choose `enhanced` storage or a custom size for new buckets). To reuse
-your own bucket,
-create one first; see the README **Nebius AI Cloud account** section,
+your own bucket, create one first; see the README **Nebius AI Cloud account**
+section,
 [Creating a tenant](https://docs.nebius.com/iam/create-tenants),
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
