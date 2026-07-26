@@ -12,9 +12,9 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.orchestration.npa_workflow import API_VERSION, API_VERSION_BETA
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
+from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 SKYPILOT_SPECS = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 RUNNER = CliRunner()
 
@@ -33,7 +33,7 @@ def _skypilot_yaml_paths() -> list[Path]:
 
 
 def _npa_yaml_paths() -> list[Path]:
-    return sorted(NPA_SPECS.glob("*.yaml"))
+    return iter_npa_workflow_specs()
 
 
 @pytest.mark.parametrize("path", _skypilot_yaml_paths(), ids=lambda p: p.name)

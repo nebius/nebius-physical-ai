@@ -7,15 +7,15 @@ real command/module call, or if the augment stage isn't the real Cosmos execute.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import typer
 import yaml
 
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-BLUEPRINT = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "physical-ai-data-factory.yaml"
+BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
+assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
 
 # toolRefs that only echo or write a contract/manifest — never advertise as real.
 KNOWN_STUB_TOOLREFS = {

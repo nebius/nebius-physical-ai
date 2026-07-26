@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 from npa.orchestration.npa_workflow.detect import detect_submit_format
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -29,9 +30,11 @@ def test_skypilot_catalog_dir_is_not_reintroduced() -> None:
 
 
 def test_no_raw_skypilot_task_yaml_in_shown_catalog() -> None:
+    # Covers the catalog directory plus any promoted top-level blueprint spec
+    # (e.g. npa/workflows/physical-ai-data-factory.yaml).
     offenders = [
         str(path.relative_to(REPO_ROOT))
-        for path in sorted(NPA_WORKFLOWS.glob("*.yaml"))
+        for path in iter_npa_workflow_specs()
         if detect_submit_format(path) == "skypilot"
     ]
     assert not offenders, (
@@ -41,6 +44,6 @@ def test_no_raw_skypilot_task_yaml_in_shown_catalog() -> None:
 
 
 def test_shown_catalog_has_npa_workflow_specs() -> None:
-    specs = sorted(NPA_WORKFLOWS.glob("*.yaml"))
+    specs = iter_npa_workflow_specs()
     assert specs, "expected npa.workflow specs under the shown catalog"
     assert all(detect_submit_format(path) == "npa.workflow" for path in specs)

@@ -39,6 +39,16 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 `NEBIUS_TOKEN_FACTORY_KEY`. Matrix source of truth:
 `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`.
 
+## Flagship blueprint
+
+The **NVIDIA Physical AI Data Factory** blueprint (annotate → Cosmos augment →
+evaluate/validate gate → re-label → FiftyOne curate → Rerun visualize; no OSMO)
+is promoted to the top of the workflow tree for prominence:
+[`npa/workflows/physical-ai-data-factory.yaml`](../../physical-ai-data-factory.yaml).
+It is still an `npa.workflow/v0.0.1` spec and is discovered alongside the specs
+below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide:
+`docs/workbench/guides/physical-ai-data-factory-deploy.md`.
+
 ## Spec catalog
 
 | Spec | Notes |
@@ -53,7 +63,6 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 | `bdd100k-pipeline.yaml` | 11-stage AV pipeline |
 | `av-night-scene-hardening.yaml` | AV night-scene hardening from diagram |
 | `cosmos-synth-fanout-curation.yaml` | Cosmos synth fan-out + curation |
-| `physical-ai-data-factory.yaml` | NVIDIA Physical AI Data Factory blueprint (no OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label → FiftyOne curate |
 | `mjlab-eval.yaml` | MJLab locomotion eval |
 | `retargeting.yaml` | Motion retargeting |
 | `sonic-train.yaml` | SONIC train |

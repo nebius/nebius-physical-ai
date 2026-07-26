@@ -75,7 +75,7 @@ plumbing.
 | Skill | Capability | Upstream | License | Lands when |
 | --- | --- | --- | --- | --- |
 | `defect-image-generation` | AOI defect SDG (usd2roi, image-edit, AnomalyGen; PCBA/metal/glass; Day 0/Day 1) | `physical-ai-defect-image-generation` | CC-BY-4.0 AND Apache-2.0 | A validated SkyPilot defect-SDG pipeline + image-edit model serving on Nebius exists |
-| `video-data-augmentation` | Cosmos-Transfer augmentation + VLM auto-labeling | `physical-ai-video-data-augmentation` | CC-BY-4.0 AND Apache-2.0 | **Partially landed:** `npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` (SkyPilot, no OSMO) implements annotate → augment → evaluate → re-label → curate → visualize; remaining work is real arbitrary-input Cosmos Transfer 2.5 output-to-S3 wiring |
+| `video-data-augmentation` | Cosmos-Transfer augmentation + VLM auto-labeling | `physical-ai-video-data-augmentation` | CC-BY-4.0 AND Apache-2.0 | **Partially landed:** `npa/workflows/physical-ai-data-factory.yaml` (SkyPilot, no OSMO) implements annotate → augment → evaluate → re-label → curate → visualize; remaining work is real arbitrary-input Cosmos Transfer 2.5 output-to-S3 wiring |
 | `infrastructure-resilient-scaling` | SDG infra setup/scaling/recovery | `physical-ai-infrastructure-setup-and-resilient-scaling` | Apache-2.0 | Captured as Nebius-K8s + SkyPilot provisioning/runbooks; overlaps `nebius-infra` + `skypilot-workflows` |
 
 ## Deep-Read Findings (2026-07): usefulness + how used for the pipeline
