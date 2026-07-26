@@ -59,28 +59,29 @@ Hard gates (both must pass for registry admission):
 
 Also exercised (the full Dreamer 4 loop, headlined by the dream rollout):
 
-- `coinrun_video_dataloader` — real `dreamer.data.build_iterator` CoinRun path
-  with device sharding.
-- `dreamer4_latent_tokenization` — encode the SAME procedural videos with the
-  trained tokenizer into **real** latent ArrayRecords + `latent_stats` (mean/std
-  overrides), attaching 27-binary / 121-categorical actions derived from the
-  known agent motion. This replaces random latents so dynamics can learn.
+- `minecraft_vpt_video_dataloader` — real `dreamer.data.build_iterator`
+  `minecraft_vpt` MP4 path (decord decode + VPT action parse) with device
+  sharding.
+- `dreamer4_latent_tokenization` — `scripts/tokenize_minecraft_dataset.py`
+  encodes the episodes with the trained tokenizer into **real** latent
+  ArrayRecords + `latent_stats` (mean/std overrides), carrying the real
+  27-binary / 121-categorical VPT actions.
 - `dreamer4_dynamics_train_two_gpu` — `scripts/train_dynamics.py`
-  action-conditioned latent dynamics trained on those real latents (the core
-  Dreamer world-model loop).
+  action-conditioned latent dynamics trained on those Minecraft latents (the
+  core Dreamer world-model loop).
 - `dreamer4_action_conditioned_dream_rollout` — `dreamer.sampler.sample_video`
-  gives the dynamics model context frames + future actions and dreams the
-  future; reports dream PSNR against the ground truth.
+  gives the dynamics model context frames + future actions and dreams future
+  gameplay; reports dream PSNR against the ground truth.
 - `world_model_rerun_visualization` — emits `open_dreamer_world_model.rrd` with
   synchronized `world/observation` (GT), `world/dream` (predicted),
   `world/gt_decoded` (tokenizer ceiling), and `world/tokenizer_reconstruction`
   streams, loadable into the NPA agent's Rerun viewer.
 
-The data is an **action-conditioned sprite-navigation** environment: the
-per-frame action selects the agent's velocity, so future frames are genuinely
-determined by future actions (a distractor sprite + textured background add
-occlusion/richness). This is a real, multi-stage GPU run — not an import-only
-or under-trained smoke.
+The data is a **real Minecraft/VPT** contractor-gameplay subset (OpenAI VPT
+`.mp4` + `.jsonl`), center-cropped and resized to 128x128, staged as
+`minecraft_vpt` ArrayRecords to the run bucket under
+`datasets/minecraft_vpt_128_64/` and pulled at run time. This is a real,
+multi-stage GPU run on real gameplay — not an import-only or synthetic smoke.
 
 ### View / share the visualization in the agent Rerun
 
@@ -96,19 +97,25 @@ curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -X POST https://<agent-ip>/api/sim-viz
 Then open `https://<agent-ip>/rerun/` (see `skills/tools/npa-agent/SKILL.md`).
 The agent also discovers it via the artifact browser (`what can I view?`).
 
-## Synthetic Data Contract (no external dataset needed)
+## Data Contract (real Minecraft/VPT)
 
-- **CoinRun** records are written as raw `pickle` bytes — the format
-  `EpisodeLengthFilter(format_hint="coinrun")` and `ProcessEpisodeAndSlice`
-  read. Do **not** use `ShardWriter` here: it serializes msgpack, which the
-  CoinRun reader path does not decode. Each record:
-  `{"raw_video": uint8(T,64,64,3).tobytes(), "sequence_length": T,
-  "actions": int(T,), "rewards": float(T,)}`.
-- **Latent** records use `dreamer.data.serialization.serialize_msgpack_record`
-  with `{"latents": float32(T, n_latents, d_bottleneck), "actions": {"binary":
-  int32(T,27), "categorical": int32(T,), "continuous": None}}`. The 27-binary /
-  121-categorical action layout is asserted by `train_dynamics.py`
-  (`NUM_BINARY_ACTIONS`, `NUM_CAMERA_CLASSES`).
+- The smoke trains on a real **Minecraft/VPT** subset. Stage it once (dev VM has
+  egress): read a VPT index (`.../snapshots/all_8xx_Jun_29.json`, etc.), download
+  each `{basedir}{relpath}.mp4` + `.jsonl`, center-crop to square, resize to
+  128x128, slice fixed-length clips, and write **minecraft_vpt** records —
+  pickled `{"video": mp4_bytes, "video_shape": (T,128,128,3), "actions": [VPT
+  action dicts], "source": relpath}` — as `shard-*.array_record`. Upload to the
+  run bucket under `datasets/minecraft_vpt_128_64/`; the smoke derives the
+  bucket from `S3_OUTPUT_PREFIX` and pulls it at run time (system `python3` has
+  boto3; the uv venv does not, so download in the bash prelude).
+- `ProcessMinecraftEpisodeAndSlice` decodes the MP4 with **decord** and
+  `parse_action_dicts` turns the VPT dicts into the 27-binary / 121-categorical
+  action layout `train_dynamics.py` asserts (`NUM_BINARY_ACTIONS`,
+  `NUM_CAMERA_CLASSES`). `tokenize_minecraft_dataset.py` writes the **latent**
+  records (`serialize_msgpack_record`, `{"latents": float32(T, n_latents,
+  d_bottleneck), "actions": {...}}`) + `metadata/latent_stats.npz`.
+- Override `dataset.H=128 dataset.W=128 dataset.padding_H=[0,0]
+  dataset.padding_W=[0,0] dataset.patch_size=16` for the 128x128 subset.
 
 ## Run It
 
@@ -144,36 +151,29 @@ npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py 
 
 ## Gotchas
 
-- Install a **system** `python3.11` (deadsnakes) and `uv venv --python
-  /usr/bin/python3.11`. A uv-managed interpreter lives under `/root` and is not
-  readable by the non-root runtime `ubuntu` user, so `.venv/bin/python` would
-  fail at run time.
-- Use `/opt/byof/.venv/bin/python` directly at run time, not `uv run` — the venv
-  is root-owned from build and `uv run` would try to re-sync/write it.
-- `jaxlpips` is a hard import in `scripts/train_tokenizer.py`, so it must be in
-  the image (it is, via `uv sync`), but keep `lpips_weight=0` so no Hugging Face
-  LPIPS weights are downloaded at runtime. Tokenizer legibility then comes from
-  a lower `mae_p_max` (~0.3) plus more steps, not LPIPS.
-- Dynamics asserts `num_binary_actions==27` and `categorical_action_dim==121`,
-  so every latent record (training and rollout) must carry that action layout —
-  derive it from the known agent motion, don't feed CoinRun's 16-way action.
-- `packing_factor` must divide the tokenizer `n_latents`; the dream `horizon` +
-  context must be `<=` the episode length `T`.
-- The smoke ships a tiny CPU profile (`OD_MODE=cpu`, `OD_NUM_WORKERS=0`) that
-  runs the whole chain on one CPU device in ~2 min for offline validation; the
-  container uses the full 2-GPU profile by default.
-- Dream fidelity scales with the dynamics budget. The tokenizer reconstruction
-  (`gt_decoded`) is legible and the dream reproduces the agent through the
-  context and the first predicted frames; sustaining a crisp object across the
-  whole horizon needs far more dynamics steps than the bounded smoke default
-  (`OD_DYN_STEPS`, upstream trains ~200k). Raise `OD_DYN_STEPS` + GPU budget for
-  a fully sustained dream. Keep the moving object dominant so the tokenizer
-  reconstructs it under full-frame MSE.
+- Use a **uv-managed** Python 3.11 installed to a world-readable dir
+  (`UV_PYTHON_INSTALL_DIR=/opt/uv/python`), create the venv there, and
+  `chmod -R a+rX` it — the default uv dir under `/root` is unreadable by the
+  non-root runtime `ubuntu` user. Use `/opt/byof/.venv/bin/python` directly at
+  run time, not `uv run` (it would try to re-sync/write the root-owned venv).
+- `decord` (MP4 decode) and `imageio[ffmpeg]` are in the image via `uv sync`;
+  `jaxlpips` is a hard import in `scripts/train_tokenizer.py` (present via
+  `uv sync`) but keep `lpips_weight=0` so no Hugging Face LPIPS weights download
+  at run time. `boto3` is only in the system `python3` (profile setup), not the
+  uv venv, so pull the dataset in the bash prelude, not the venv driver.
+- Dynamics asserts `num_binary_actions==27` and `categorical_action_dim==121`;
+  the `minecraft_vpt` path satisfies this via `parse_action_dicts` on the VPT
+  action dicts. Keep the dream rollout context `<=` `dynamics.context_length`
+  (trim frames to `min(T, context_length)`) or the KV cache overflows at
+  prefill. `packing_factor` must divide the tokenizer `n_latents`.
+- The smoke ships a tiny CPU profile (`OD_MODE=cpu`, `OD_NUM_WORKERS=0`,
+  `OD_LOCAL_DATASET=<dir>`) that runs the whole chain on one CPU device for
+  offline validation against a small local `minecraft_vpt` sample; the container
+  uses the full 2-GPU profile and the S3-staged dataset by default.
+- Dream fidelity scales with the tokenizer/dynamics budget
+  (`OD_TOK_STEPS`/`OD_DYN_STEPS`; upstream trains ~200k). FVD/I3D scoring
+  (`eval_fvd.py`, needs I3D weights) remains a follow-up.
 - Batch size `B` must be divisible by the number of devices (mesh `data` axis)
   and by `jax.process_count()`.
-- Full CoinRun generation needs `procgen`+`gym3` (no Python 3.11 wheels); the
-  run synthesizes correctly-formatted **coherent, action-conditioned** records
-  instead. Real Minecraft/VPT data, LPIPS finetuning, and FVD/I3D scoring
-  (`eval_fvd.py`) remain follow-ups.
-- `rerun-sdk` is installed at build time (and a `pip install --user` fallback at
-  run time for reused images) so the `.rrd` visualization can be produced.
+- `rerun-sdk==0.31.4` (matches the agent viewer) is installed at build time so
+  the `.rrd` visualization can be produced and loaded live.

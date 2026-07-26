@@ -75,9 +75,9 @@ ACCEPTED_CAPABILITIES = {
         "spec": "byof-open-dreamer.yaml",
         "must_exercise": [
             "jax_two_gpu_data_parallel_mesh",
-            "coinrun_video_dataloader",
+            "minecraft_vpt_video_dataloader",  # real Minecraft/VPT gameplay
             "dreamer4_tokenizer_train_two_gpu",
-            "dreamer4_latent_tokenization",  # encode videos -> real latents + stats
+            "dreamer4_latent_tokenization",  # tokenize_minecraft_dataset.py -> latents + stats
             "dreamer4_dynamics_train_two_gpu",
             "dreamer4_action_conditioned_dream_rollout",  # the headline dream
             "world_model_rerun_visualization",  # 3-stream Rerun .rrd artifact

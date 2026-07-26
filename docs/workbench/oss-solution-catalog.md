@@ -101,36 +101,28 @@ multi-GPU BYOF candidate: its accepted capability requires a real `>=2` GPU
 device mesh, so it uses `byof-solution-smoke-rtxpro-2gpu.yaml`
 (`RTXPRO-6000-BLACKWELL-SERVER-EDITION:2`), not the single-GPU profile.
 
-The smoke is the full Dreamer 4 loop end to end, headlined by an
-action-conditioned **dream rollout** (context frames -> predicted future frames
-vs ground truth), not just an under-trained tokenizer recon.
+The smoke is the full Dreamer 4 loop end to end on a **real Minecraft/VPT**
+gameplay subset (128x128), headlined by an action-conditioned **dream rollout**
+(context frames -> predicted future frames vs ground truth).
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `jax_two_gpu_data_parallel_mesh` | accepted hard gate (live) | `dreamer.parallel.build_parallel("data")` `{data:2, model:1}` over 2 `jax.devices()` |
-| `coinrun_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` CoinRun path + device sharding (2 devices) |
-| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer trained to legibility (6000 steps, `mae_p_max=0.1`), data-parallel across the mesh |
-| `dreamer4_latent_tokenization` | accepted (live) | Encode the SAME procedural videos with the trained tokenizer into real latent ArrayRecords + `latent_stats` (replaces random latents) |
-| `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics trained on the real encoded latents (core world-model loop) |
-| `dreamer4_action_conditioned_dream_rollout` | accepted (live) | `dreamer.sampler.sample_video` rolls out predicted future frames from context + future actions; reports dream PSNR |
+| `minecraft_vpt_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` minecraft_vpt MP4 path (decord decode + VPT action parse) + device sharding (2 devices) |
+| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer trained on real Minecraft frames, data-parallel across the mesh |
+| `dreamer4_latent_tokenization` | accepted (live) | `scripts/tokenize_minecraft_dataset.py` encodes the episodes into latent ArrayRecords + `latent_stats` with real 27-binary/121-categorical VPT actions |
+| `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics trained on the real Minecraft latents (core world-model loop) |
+| `dreamer4_action_conditioned_dream_rollout` | accepted (live) | `dreamer.sampler.sample_video` rolls out predicted future gameplay frames from context + future actions; reports dream PSNR |
 | `world_model_rerun_visualization` | accepted (live) | Rerun `.rrd` with synchronized `world/observation` (GT) + `world/dream` (predicted) + `world/gt_decoded` (tokenizer ceiling) + `world/tokenizer_reconstruction` streams, loaded into the agent viewer |
 
-Dream fidelity note: the tokenizer reconstruction (`gt_decoded`) is legible and the
-dream reproduces the agent through the context and the first predicted frames.
-Sustaining a crisp object across the full autoregressive horizon scales with the
-dynamics training budget (upstream trains ~200k steps); at the bounded smoke
-budget (6000 steps) the dreamed object degrades over the horizon. Increasing
-`OD_DYN_STEPS` (and GPU budget) is the documented path to a fully sustained dream.
-
-Procedural smoke data is an **action-conditioned** sprite-navigation environment
-(the per-frame action selects the agent's velocity, so future frames are truly
-determined by future actions, with a distractor sprite + textured background for
-occlusion/richness). CoinRun records are raw `pickle` (the format the reader
-expects); latents use `serialize_msgpack_record` with the 27-binary / 121-camera
-`latent` action layout `train_dynamics.py` asserts, derived from the known agent
-motion. LPIPS is left off (self-contained run, no HF download) so tokenizer
-legibility comes from lower `mae_p_max` + more steps; real Minecraft/VPT data,
-LPIPS finetuning, and FVD/I3D scoring (`eval_fvd.py`) remain follow-ups.
+Data: a real **Minecraft/VPT** contractor-gameplay subset (OpenAI VPT `.mp4` +
+`.jsonl`), center-cropped and resized to 128x128, staged as `minecraft_vpt`
+ArrayRecords (pickled `{video: mp4_bytes, video_shape, actions: [VPT dicts],
+source}`) to the run bucket under `datasets/minecraft_vpt_128_64/` and pulled at
+run time. Actions parse to the real 27-binary / 121-categorical VPT layout that
+`train_dynamics.py` asserts. Dream fidelity scales with the tokenizer/dynamics
+training budget (`OD_TOK_STEPS`/`OD_DYN_STEPS`; upstream trains ~200k). LPIPS is
+left off (no HF download); FVD/I3D scoring (`eval_fvd.py`) remains a follow-up.
 
 ## First-class Workbench tools (not BYOF)
 
