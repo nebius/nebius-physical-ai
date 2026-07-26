@@ -118,14 +118,14 @@ _KEYWORD_HINTS: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
 _INSIGHTS_ACTION_PATTERNS: tuple[str, ...] = (
     r"\bregress(?:ed|ion|ions|ing)?\b",
     r"\bcollision[ _-]?rate\b",
-    r"\bcompare\b.{0,40}\bruns?\b",
+    r"\bcompare\b.{0,60}\b(?:runs?|gpus?|metrics?|between|vs\.?|versus|accuracy|collision|success|severity)\b",
     r"\bwhich runs?\b",
-    r"\bhow many gpus?\b",
-    r"\bgpus?\b.{0,40}\bruns?\b",
-    r"\bruns?\b.{0,40}\bgpus?\b",
+    r"\bhow many (?:gpus?|accelerators?)\b",
+    r"\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|failure[ _-]?rate|severity|delta)\b.{0,40}\bruns?\b",
+    r"\bruns?\b.{0,40}\b(?:gpus?|accelerators?|vram|metrics?|accuracy|success[ _-]?rate|failure[ _-]?rate|severity|delta)\b",
     r"\blineage\b",
-    r"\b(?:metrics?|accuracy|success[ _-]?rate|severity)\b.{0,40}\bruns?\b",
-    r"\bruns?\b.{0,40}\b(?:metrics?|accuracy|success[ _-]?rate|severity)\b",
+    r"\bruns?\b.{0,20}\bby\b.{0,20}\bcounts?\b",
+    r"\b(?:more|greater|less|fewer|at\s+least|at\s+most|over|under)\b.{0,20}\d+.{0,20}\b(?:gpus?|accelerators?)\b",
     r"\b(?:improved|better|worse|degrad(?:ed|ation))\b.{0,40}\bruns?\b",
 )
 
@@ -247,24 +247,25 @@ def classify_intent_semantic(
     if not lowered:
         return _none_result()
 
+    # Deterministic insights/metrics questions route straight to the tool loop
+    # (0 tokens) so the agent queries/compares real run metrics rather than
+    # falling through to a generic LLM explanation — checked BEFORE the keyword
+    # hints so a run-listing hint never intercepts a metric/resource query.
+    if _insights_action_signal(lowered):
+        return {
+            "intent": None,
+            "mode": MODE_ACTION,
+            "confidence": 0.7,
+            "tokens": 0,
+            "source": SOURCE_KEYWORD,
+        }
+
     keyword = _keyword_intent(lowered, known)
     if keyword:
         return {
             "intent": keyword,
             "mode": MODE_INTENT,
             "confidence": 0.6,
-            "tokens": 0,
-            "source": SOURCE_KEYWORD,
-        }
-
-    # Deterministic insights/metrics questions route straight to the tool loop
-    # (0 tokens) so the agent queries/compares real run metrics rather than
-    # falling through to a generic LLM explanation of how to do it.
-    if _insights_action_signal(lowered):
-        return {
-            "intent": None,
-            "mode": MODE_ACTION,
-            "confidence": 0.7,
             "tokens": 0,
             "source": SOURCE_KEYWORD,
         }

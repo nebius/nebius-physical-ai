@@ -593,14 +593,39 @@ def _success_gated_watch_request(lowered: str) -> bool:
     return has_rerun_surface and has_success_gate
 
 
+# Metric / resource / comparison qualifiers that turn a "runs" question into an
+# insights metrics-store query rather than a grounded run-history listing. When
+# one of these appears on a run-listing / artifact turn, ``match_chat_intent``
+# falls through (returns None) so the insights tool loop answers from real
+# ingested data. This only inspects the QUERY text — never any run id or value.
+METRIC_RESOURCE_QUALIFIER_RE = re.compile(
+    r"\b(?:gpus?|accelerators?|vram|metrics?|regress(?:ed|ion|ions)?|compare|comparison|"
+    r"delta|deltas|success[ _-]?rate|collision(?:[ _-]?rate)?|failure[ _-]?rate|"
+    r"throughput|latency|severity)\b"
+    r"|\bby\b.{0,20}\bcounts?\b"
+    r"|\b(?:more|greater|less|fewer|at\s+least|at\s+most|over|under)\b.{0,20}\d+.{0,20}\b(?:gpus?|steps?)\b",
+    re.IGNORECASE,
+)
+
+# Grounded intents that only enumerate run/recording history; a metric/resource
+# qualifier means the operator wants insights, not this history listing.
+_RUN_LISTING_INTENTS = frozenset({"find_artifacts", "list_recordings"})
+
+
+def has_metric_resource_qualifier(text: str) -> bool:
+    """True when the turn carries a metric/resource/comparison qualifier."""
+    return bool(METRIC_RESOURCE_QUALIFIER_RE.search(str(text or "")))
+
+
 def match_chat_intent(user_text: str) -> str | None:
     text = str(user_text or "").strip()
     if not text:
         return None
     lowered = _normalize_intent_text(text)
+    metric_qualified = has_metric_resource_qualifier(lowered)
     if re.search(r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster|deploy\s+slurm|slurm\s+deploy)\b", text, re.IGNORECASE):
         return "soperator"
-    if _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(text) or _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(lowered):
+    if (_NON_STOCK_ARTIFACT_DISCOVERY_RE.search(text) or _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(lowered)) and not metric_qualified:
         return "find_artifacts"
     if _success_gated_watch_request(lowered):
         return "watch_sim"
@@ -620,6 +645,10 @@ def match_chat_intent(user_text: str) -> str | None:
         return "watch_sim"
     for intent, pattern in _INTENT_RULES:
         if pattern.search(text) or pattern.search(lowered):
+            # A metric/resource/comparison qualifier means a run-listing turn is
+            # really an insights query — fall through so the tool loop answers it.
+            if intent in _RUN_LISTING_INTENTS and metric_qualified:
+                continue
             return intent
     return None
 
