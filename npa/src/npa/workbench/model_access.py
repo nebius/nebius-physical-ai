@@ -39,14 +39,22 @@ class GatedAsset:
     note: str = ""
 
 
-# Curated from the tool default-model constants. Keep in sync with:
+# This tuple is the single source of truth for the models the access check
+# covers. To support or remove a workbench HF/NGC model, edit this list only —
+# `npa configure`'s model-access NOTE, `npa workbench health access`, and
+# `gated_hf_repos()` / `check_workbench_access()` all derive from it, so no other
+# file needs to change.
+#
+# The entries mirror the tool default-model constants in:
 #   - npa/src/npa/cli/groot/__init__.py         DEFAULT_MODEL, COSMOS_REASON_MODEL
 #   - npa/src/npa/cli/cosmos/__init__.py        DEFAULT_MODEL
 #   - npa/src/npa/workflows/sim2real/constants.py
 #   - npa/src/npa/clients/token_factory.py
 #   - npa/src/npa/workbench/vlm_eval/__init__.py
-# `gated=True` marks repos that require accepting the license on Hugging Face
-# before the token can download them.
+# `tests/workbench/test_model_access.py` imports those real constants and asserts
+# each still appears here, so a default-model change fails CI until this list is
+# updated. `gated=True` marks repos that require accepting the license on Hugging
+# Face before the token can download them.
 WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset("nvidia/GR00T-N1.7-3B", HF, ("groot",), True),
     GatedAsset("nvidia/Cosmos-Reason2-2B", HF, ("groot", "sim2real"), True),

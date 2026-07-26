@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from npa.workbench.model_access import (
     WORKBENCH_ASSETS,
     access_note,
@@ -224,3 +226,49 @@ def test_access_note_counts_unverified() -> None:
     )
     note = access_note(results)
     assert "unverified" in note
+
+
+# --- Drift guards: the catalog must stay in sync with the real tool defaults ---
+# If a tool changes its default model constant, one of these fails until
+# WORKBENCH_ASSETS is updated, so the access check never silently goes stale.
+
+def _catalog_repos() -> set[str]:
+    return {asset.repo for asset in WORKBENCH_ASSETS}
+
+
+def test_catalog_covers_light_default_constants() -> None:
+    tf = pytest.importorskip("npa.clients.token_factory")
+    constants = pytest.importorskip("npa.workflows.sim2real.constants")
+    repos = _catalog_repos()
+    expected = {
+        tf.DEFAULT_TEXT_MODEL,
+        tf.DEFAULT_VISION_MODEL,
+        constants.DEFAULT_REASON2_MODEL,
+        constants.DEFAULT_REASON3_MODEL,
+        constants.DEFAULT_REFERENCE_VLM_MODEL,
+        constants.DEFAULT_LEROBOT_DATASET_ID,
+    }
+    missing = expected - repos
+    assert not missing, f"WORKBENCH_ASSETS is missing tool default models: {sorted(missing)}"
+
+
+def test_catalog_covers_groot_and_cosmos_cli_defaults() -> None:
+    groot = pytest.importorskip("npa.cli.groot")
+    cosmos = pytest.importorskip("npa.cli.cosmos")
+    repos = _catalog_repos()
+    for const in (groot.DEFAULT_MODEL, groot.COSMOS_REASON_MODEL, cosmos.DEFAULT_MODEL):
+        assert const in repos, f"{const} missing from WORKBENCH_ASSETS"
+
+
+def test_catalog_covers_vlm_eval_default_model() -> None:
+    vlm_eval = pytest.importorskip("npa.workbench.vlm_eval")
+    assert vlm_eval.DEFAULT_MODEL in _catalog_repos()
+
+
+def test_gated_nvidia_defaults_are_marked_gated() -> None:
+    # nvidia/* and meta-llama/* defaults are license-gated; make sure the catalog
+    # marks them so, otherwise the access check would skip their live probe.
+    gated = {a.repo for a in WORKBENCH_ASSETS if a.gated}
+    for repo in _catalog_repos():
+        if repo.startswith(("nvidia/", "meta-llama/")):
+            assert repo in gated, f"{repo} should be marked gated=True"
