@@ -330,6 +330,30 @@ def test_chat_action_mode_gpu_turn_still_needs_confirmation() -> None:
     assert result["proposed_action"]["tool"] == "sim2real_submit"
 
 
+def test_author_workflow_requests_route_to_create_workflow_not_capabilities() -> None:
+    # "write me a 2 step npa yaml that uses cosmos" must generate a workflow,
+    # not fall through to the cosmos capabilities blurb.
+    assert match_chat_intent("write me a 2 step npa yaml that uses cosmos") == "create_workflow"
+    assert match_chat_intent("generate a 3-step npa spec that uses cosmos") == "create_workflow"
+    assert match_chat_intent("build an npa yaml pipeline that uses lancedb") == "create_workflow"
+    assert match_chat_intent("draft a two step npa.workflow spec") == "create_workflow"
+    # Non-authoring cosmos questions still route to capabilities.
+    assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
+    assert match_chat_intent("what can cosmos do") == "cosmos_capabilities"
+
+
+def test_two_step_template_uses_cosmos_toolref() -> None:
+    from npa.cli.agent_workflow import generate_workflow_draft
+
+    draft = generate_workflow_draft(
+        user_text="write me a 2 step npa yaml that uses cosmos", intent="create_workflow"
+    )
+    assert draft["template"] == "two-step"
+    assert "workbench.cosmos2.transfer" in draft["yaml"]
+    # Exactly two states, as requested.
+    assert len(draft["validation"].get("states") or []) == 2
+
+
 def test_embedded_chat_action_branch_drives_loop_not_boilerplate() -> None:
     # Guard the /chat action branch wiring in the embedded backend f-string:
     # it must drive the bounded loop, not describe the POST /api/agent/act recipe.

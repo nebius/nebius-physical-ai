@@ -194,7 +194,16 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,120}\bgpu\b"
             r".{0,120}\b(?:workflow|yaml|spec)\b"
             r"|\b(?:generate|create|draft|write|show)\b.{0,80}\b(?:example|simple|minimal)?\b.{0,120}\bworkflow\b.{0,80}\b(?:yaml|spec)\b"
-            r"|\bworkflow\b.{0,80}\b(?:yaml|spec)\b.{0,80}\b(?:example|simple|minimal)\b",
+            r"|\bworkflow\b.{0,80}\b(?:yaml|spec)\b.{0,80}\b(?:example|simple|minimal)\b"
+            # Author requests that say "npa yaml/spec/pipeline" or "N-step ..." without
+            # the literal word "workflow" (e.g. "write me a 2 step npa yaml that uses cosmos").
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,60}\b(?:\d+[\s-]?step|multi[\s-]?step|single[\s-]?step)\b"
+            r".{0,60}\b(?:npa[\s.-]?)?(?:workflow|yaml|spec|pipeline)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,60}\bnpa\b.{0,20}\b(?:workflow|yaml|spec|pipeline)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,80}\b(?:workflow|yaml|spec|pipeline)\b.{0,40}\bthat uses\b",
             re.IGNORECASE,
         ),
     ),
