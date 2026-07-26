@@ -881,6 +881,7 @@ def build_fiftyone_dataset(
     """
     by_clip: dict[str, dict[str, Any]] = {}
     input_frames: list[str] = []
+    input_videos: list[str] = []
     json_rel: dict[str, str] = {}
     for key in keys:
         rel = _run_relative_key(key, run_id)
@@ -901,12 +902,26 @@ def build_fiftyone_dataset(
                     entry["meta"] = key
         elif rel.startswith("input/") and low.endswith(".png"):
             input_frames.append(key)
+        elif rel.startswith("input/") and low.endswith(".mp4"):
+            input_videos.append(key)
 
     grade = read_json(json_rel.get("grade/vlm_eval_stub.json", "")) or {}
     decision = read_json(json_rel.get("grade/decision.json", "")) or {}
     curation = read_json(json_rel.get("curation/report.json", "")) or {}
     aug_caps = read_json(json_rel.get("labeled_augmented/captions.json", "")) or {}
     cap_items = aug_caps.get("captions", []) if isinstance(aug_caps, dict) else []
+    # Captions of the SOURCE frames from the annotate-original stage, so input
+    # cards carry their VLM label too (not just the augmented variants).
+    orig_caps = read_json(json_rel.get("labeled_original/captions.json", "")) or {}
+    orig_cap_items = orig_caps.get("captions", []) if isinstance(orig_caps, dict) else []
+
+    def _orig_caption_for(name: str, idx: int) -> str:
+        for item in orig_cap_items:
+            if isinstance(item, dict) and name and name in str(item.get("image") or ""):
+                return str(item.get("caption") or "")
+        if 0 <= idx < len(orig_cap_items) and isinstance(orig_cap_items[idx], dict):
+            return str(orig_cap_items[idx].get("caption") or "")
+        return ""
 
     def _caption_for(clip: str, idx: int) -> str:
         for item in cap_items:
@@ -922,6 +937,13 @@ def build_fiftyone_dataset(
     if not isinstance(fo_curation, dict):
         fo_curation = {}
     fo_samples = fo_curation.get("samples", {}) if isinstance(fo_curation.get("samples"), dict) else {}
+    # FiftyOne Brain 2D visualization (PCA) points, keyed by clip id.
+    viz_points: dict[str, list[Any]] = {}
+    fo_viz = fo_curation.get("visualization", [])
+    if isinstance(fo_viz, list):
+        for entry in fo_viz:
+            if isinstance(entry, dict) and entry.get("id") is not None:
+                viz_points[str(entry.get("id"))] = entry.get("point") or []
 
     bkt = str(bucket or "").strip()
 
@@ -961,22 +983,42 @@ def build_fiftyone_dataset(
                 "uniqueness": fo_sample.get("uniqueness"),
                 "curated": fo_sample.get("kept") if "kept" in fo_sample else None,
                 "curation_flags": curation_flags,
+                "point": viz_points.get(clip) or None,
             }
         )
-    for key in sorted(input_frames)[:12]:
+    # Source clip video(s) from the input stage, so the "input data" includes the
+    # original footage the pipeline augments (not just the extracted frames).
+    for vkey in sorted(input_videos):
+        vname = vkey.rsplit("/", 1)[-1]
+        poster = sorted(input_frames)[0] if input_frames else ""
+        samples.append(
+            {
+                "group": "input",
+                "id": vname,
+                "label": vname,
+                "thumbnail_key": poster,
+                "thumbnail_uri": _uri(poster),
+                "video_key": vkey,
+                "video_uri": _uri(vkey),
+                "tags": {},
+                "prompt": "",
+                "caption": "",
+            }
+        )
+    for idx, key in enumerate(sorted(input_frames)[:12]):
         name = key.rsplit("/", 1)[-1]
         samples.append(
             {
                 "group": "input",
                 "id": name,
                 "label": name,
+                "caption": _orig_caption_for(name, idx),
                 "thumbnail_key": key,
                 "thumbnail_uri": _uri(key),
                 "video_key": "",
                 "video_uri": "",
                 "tags": {},
                 "prompt": "",
-                "caption": "",
             }
         )
 
@@ -1005,4 +1047,10 @@ def build_fiftyone_dataset(
         ),
         "uniqueness": fo_brain.get("uniqueness", {}),
     }
-    return {"fields": sorted(tag_keys), "summary": summary, "samples": samples}
+    visualization = fo_curation.get("visualization", []) if isinstance(fo_curation.get("visualization"), list) else []
+    return {
+        "fields": sorted(tag_keys),
+        "summary": summary,
+        "samples": samples,
+        "visualization": visualization,
+    }

@@ -133,6 +133,63 @@ def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
     assert aug[1]["curation_flags"] == ["redundant"]
 
 
+def test_build_fiftyone_dataset_surfaces_input_captions_video_and_visualization() -> None:
+    run = "paidf-more"
+    base = f"checkpoints/physical-ai-data-factory/{run}"
+    keys = [
+        f"{base}/input/video_0.mp4",
+        f"{base}/input/frame_01.png",
+        f"{base}/input/frame_02.png",
+        f"{base}/labeled_original/captions.json",
+        f"{base}/cosmos_augmented/aug-{run}-0/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json",
+        f"{base}/cosmos_augmented/aug-{run}-1/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json",
+        f"{base}/curation/report.json",
+    ]
+    payloads = {
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {"variables": {"cloth_color": "green"}},
+        f"{base}/cosmos_augmented/aug-{run}-1/metadata.json": {"variables": {"cloth_color": "blue"}},
+        f"{base}/labeled_original/captions.json": {
+            "captions": [
+                {"image": "frame_01.png", "caption": "source: robot arm, plain wall"},
+                {"image": "frame_02.png", "caption": "source: robot arm mid-fold"},
+            ]
+        },
+        f"{base}/curation/report.json": {
+            "curation_engine": "fiftyone-brain",
+            "fiftyone": {
+                "visualization": [
+                    {"id": f"aug-{run}-0", "point": [0.1, 0.2]},
+                    {"id": f"aug-{run}-1", "point": [0.9, -0.3]},
+                ],
+                "samples": {
+                    f"aug-{run}-0": {"uniqueness": 0.9, "kept": True, "redundant": False},
+                    f"aug-{run}-1": {"uniqueness": 0.2, "kept": True, "redundant": True},
+                },
+            },
+        },
+    }
+
+    dataset = build_fiftyone_dataset(keys, run_id=run, read_json=lambda k: payloads.get(k), bucket="bkt")
+
+    # Visualization surfaced at the top level.
+    assert len(dataset["visualization"]) == 2
+
+    inp = [s for s in dataset["samples"] if s["group"] == "input"]
+    # Source video is now included as an input sample (with a poster + video_uri).
+    videos = [s for s in inp if s["video_uri"]]
+    assert len(videos) == 1
+    assert videos[0]["video_uri"].endswith("video_0.mp4")
+    # Input frames carry their annotate-original captions.
+    frame1 = next(s for s in inp if s["id"] == "frame_01.png")
+    assert frame1["caption"] == "source: robot arm, plain wall"
+
+    # Augmented samples carry their PCA point.
+    aug = sorted((s for s in dataset["samples"] if s["group"] == "augmented"), key=lambda s: s["id"])
+    assert aug[0]["point"] == [0.1, 0.2]
+
+
 class _FakePaginator:
     def __init__(self, pages: list[dict]):
         self._pages = pages

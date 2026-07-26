@@ -1079,6 +1079,19 @@
       .voxel-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
       .voxel-fields { font-size: 12px; color: var(--muted); margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
       .voxel-fields:empty { display: none; }
+      .voxel-viz:empty { display: none; }
+      .voxel-viz {
+        margin: 4px 0 12px; padding: 10px 12px;
+        border: 1px solid var(--border, #e2e8f0); border-radius: 12px; background: #fbfdff;
+      }
+      .voxel-viz-title { font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px; }
+      .voxel-viz svg { width: 100%; height: 170px; display: block; }
+      .voxel-viz .dot-kept { fill: #16a34a; }
+      .voxel-viz .dot-redundant { fill: #d97706; }
+      .voxel-viz .dot-label { font-size: 9px; fill: #64748b; }
+      .voxel-viz-legend { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 12px; }
+      .voxel-viz-legend .k { color: #16a34a; font-weight: 700; }
+      .voxel-viz-legend .r { color: #d97706; font-weight: 700; }
       .voxel-grid {
         display: grid;
         gap: 12px;
@@ -1774,6 +1787,7 @@
             </div>
             <div id="voxelSummary" class="voxel-summary" aria-live="polite"></div>
             <div id="voxelFields" class="voxel-fields"></div>
+            <div id="voxelViz" class="voxel-viz" aria-live="polite"></div>
             <div id="voxelGrid" class="voxel-grid" aria-live="polite"></div>
           </section>
         </div>
@@ -5342,6 +5356,46 @@
           fieldsHost.innerHTML = fields.length
             ? "<strong>Fields:</strong> " + fields.map((f) => '<span class="pill">' + escapeHtml(String(f)) + "</span>").join(" ")
             : "";
+        }
+        // FiftyOne Brain 2D embedding (PCA) scatter of the augmented variants,
+        // coloured by keep/redundant, so the curation view isn't just a grid.
+        const vizHost = document.getElementById("voxelViz");
+        if (vizHost) {
+          const viz = Array.isArray(data && data.visualization) ? data.visualization : [];
+          const pts = viz
+            .map((v) => ({ id: String((v && v.id) || ""), p: Array.isArray(v && v.point) ? v.point : [] }))
+            .filter((v) => v.p.length >= 2 && isFinite(Number(v.p[0])) && isFinite(Number(v.p[1])));
+          if (pts.length >= 2) {
+            const flagById = {};
+            for (const s of samples) {
+              if (s && s.group === "augmented") {
+                flagById[String(s.id)] = {
+                  redundant: Array.isArray(s.curation_flags) && s.curation_flags.includes("redundant"),
+                  uniq: s.uniqueness,
+                };
+              }
+            }
+            const xs = pts.map((v) => Number(v.p[0])), ys = pts.map((v) => Number(v.p[1]));
+            const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+            const W = 300, H = 150, pad = 14;
+            const sx = (x) => (maxX - minX < 1e-9) ? W / 2 : pad + (x - minX) / (maxX - minX) * (W - 2 * pad);
+            const sy = (y) => (maxY - minY < 1e-9) ? H / 2 : H - pad - (y - minY) / (maxY - minY) * (H - 2 * pad);
+            const dots = pts.map((v) => {
+              const f = flagById[v.id] || {};
+              const cls = f.redundant ? "dot-redundant" : "dot-kept";
+              const short = v.id.length > 10 ? v.id.slice(-4) : v.id;
+              const uniqTxt = (f.uniq === null || f.uniq === undefined) ? "" : (" u=" + Number(f.uniq).toFixed(2));
+              return '<circle class="' + cls + '" cx="' + sx(Number(v.p[0])).toFixed(1) + '" cy="' + sy(Number(v.p[1])).toFixed(1) +
+                '" r="6"><title>' + escapeHtml(v.id + uniqTxt) + "</title></circle>" +
+                '<text class="dot-label" x="' + (sx(Number(v.p[0])) + 8).toFixed(1) + '" y="' + (sy(Number(v.p[1])) + 3).toFixed(1) + '">' + escapeHtml(short) + "</text>";
+            }).join("");
+            vizHost.innerHTML =
+              '<div class="voxel-viz-title">FiftyOne Brain embedding (PCA) — ' + String(pts.length) + " variants</div>" +
+              '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="PCA embedding scatter">' + dots + "</svg>" +
+              '<div class="voxel-viz-legend"><span class="k">&#9679; kept</span><span class="r">&#9679; redundant</span></div>';
+          } else {
+            vizHost.innerHTML = "";
+          }
         }
         if (!grid) return;
         if (!samples.length) {
