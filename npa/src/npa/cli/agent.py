@@ -5392,7 +5392,7 @@ def _agent_act_tools():
             metric_name=str(args.get("metric_name") or ""),
             accelerator=str(args.get("accelerator") or ""),
             threshold_metric=str(args.get("threshold_metric") or ""),
-            threshold_op=str(args.get("threshold_op") or ""),
+            threshold_op=normalize_threshold_op(args.get("threshold_op")),
             threshold_value=threshold_value,
             limit=limit,
             service=bool(endpoint),
@@ -5466,7 +5466,7 @@ def _agent_act_tools():
         response = _insights_sdk.dashboard(
             input_uri=store_uri,
             workflow=str(args.get("workflow") or ""),
-            group_by=str(args.get("group_by") or "metric_name"),
+            group_by=normalize_group_by(args.get("group_by")),
             latest_run=str(args.get("latest_run") or ""),
             service=bool(endpoint),
             endpoint=endpoint,

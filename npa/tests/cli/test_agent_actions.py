@@ -315,6 +315,25 @@ def test_run_chat_action_loop_shapes_readonly_result():
     assert result["reply"] == "grounded answer"
 
 
+def test_normalize_threshold_op_accepts_common_aliases():
+    assert A.normalize_threshold_op(">=") == "ge"
+    assert A.normalize_threshold_op(">") == "gt"
+    assert A.normalize_threshold_op("at least") == ""  # space form not aliased
+    assert A.normalize_threshold_op("at_least") == "ge"
+    assert A.normalize_threshold_op("<=") == "le"
+    assert A.normalize_threshold_op("==") == "eq"
+    assert A.normalize_threshold_op("GT") == "gt"
+    assert A.normalize_threshold_op("nonsense") == ""
+    assert A.normalize_threshold_op("") == ""
+
+
+def test_normalize_group_by_clamps_to_allowed_facets():
+    assert A.normalize_group_by("tool") == "tool"
+    assert A.normalize_group_by("STAGE") == "stage"
+    assert A.normalize_group_by("run_id") == "metric_name"  # not a valid facet
+    assert A.normalize_group_by("") == "metric_name"
+
+
 def test_run_chat_action_loop_gpu_tool_needs_confirmation_without_token():
     submitted = {"count": 0}
 

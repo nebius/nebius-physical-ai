@@ -122,8 +122,10 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             "insights_query",
             read_only=True,
             summary=(
-                "Query recorded run metrics by facet (run_id/workflow/tool/stage/"
-                "metric_name, accelerator label, or a numeric threshold)."
+                "Query recorded run metrics by facet. Call with NO args first to list "
+                "all records and discover run_ids/metric_names. For GPU counts set "
+                "metric_name='gpus' with threshold_metric='gpus', threshold_op='ge', "
+                "threshold_value=N; filter an accelerator type with accelerator='RTXPRO6000'."
             ),
             params=(
                 "run_id",
@@ -142,8 +144,9 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             "insights_compare",
             read_only=True,
             summary=(
-                "Compare recorded metrics between two runs; flags improved/regressed "
-                "(e.g. which runs regressed on collision rate)."
+                "Compare recorded metrics between two runs; flags improved/regressed. Use "
+                "for 'which run regressed on <metric>' — set base_run and candidate_run to "
+                "run_ids (discover them first via insights_query with no args)."
             ),
             params=("base_run", "candidate_run", "metric_names"),
         ),
@@ -549,6 +552,51 @@ def run_action_loop(
         "tokens": total_tokens,
         "tier": tier,
     }
+
+
+# Common ways a planner (or operator) spells a threshold operator, mapped to the
+# canonical insights QueryRequest tokens. Keeps the read-only insights_query tool
+# robust to LLM arg drift (e.g. ">=", "at least") instead of failing validation.
+_THRESHOLD_OP_ALIASES: dict[str, str] = {
+    ">": "gt",
+    ">=": "ge",
+    "=>": "ge",
+    "<": "lt",
+    "<=": "le",
+    "=<": "le",
+    "==": "eq",
+    "=": "eq",
+    "gt": "gt",
+    "ge": "ge",
+    "gte": "ge",
+    "lt": "lt",
+    "le": "le",
+    "lte": "le",
+    "eq": "eq",
+    "greater": "gt",
+    "greater_than": "gt",
+    "at_least": "ge",
+    "min": "ge",
+    "less": "lt",
+    "less_than": "lt",
+    "at_most": "le",
+    "max": "le",
+    "equal": "eq",
+    "equals": "eq",
+}
+
+_DASHBOARD_GROUP_BY = ("metric_name", "tool", "stage", "workflow")
+
+
+def normalize_threshold_op(op: str) -> str:
+    """Map a loose threshold operator spelling to a canonical token (or "")."""
+    return _THRESHOLD_OP_ALIASES.get(str(op or "").strip().lower(), "")
+
+
+def normalize_group_by(value: str) -> str:
+    """Clamp a dashboard group_by to an allowed facet (default metric_name)."""
+    resolved = str(value or "").strip().lower()
+    return resolved if resolved in _DASHBOARD_GROUP_BY else "metric_name"
 
 
 CHAT_ACTION_MODE = "chat-action"
