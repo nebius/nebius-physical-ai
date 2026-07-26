@@ -10,6 +10,7 @@ from npa.workbench.model_access import (
     check_hf_asset,
     check_ngc_key,
     check_workbench_access,
+    gated_hf_repos,
     has_failure,
     hf_model_url,
 )
@@ -152,6 +153,17 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     assert has_failure(results) is True
 
 
+def test_gated_hf_repos_returns_only_gated_hf() -> None:
+    repos = gated_hf_repos()
+    assert "nvidia/GR00T-N1.7-3B" in repos
+    public = {a.repo for a in WORKBENCH_ASSETS if not a.gated}
+    assert set(repos).isdisjoint(public)
+    # Scoped to a capability, only that capability's gated repos come back.
+    groot = gated_hf_repos(["groot"])
+    assert "nvidia/GR00T-N1.7-3B" in groot
+    assert all("groot" in a.capabilities for a in WORKBENCH_ASSETS if a.repo in groot)
+
+
 def test_check_workbench_access_gated_only_skips_public() -> None:
     results = check_workbench_access(
         hf_token="hf_x", ngc_key="nvapi-x", hf_validator=None, gated_only=True
@@ -191,7 +203,7 @@ def test_access_note_lists_hf_failures_on_one_line() -> None:
     assert "huggingface.co" in note
 
 
-def test_access_note_ngc_missing_lists_nvidia_models() -> None:
+def test_access_note_ngc_missing_names_capabilities() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="",
@@ -199,8 +211,10 @@ def test_access_note_ngc_missing_lists_nvidia_models() -> None:
         gated_only=True,
     )
     note = access_note(results)
-    assert "NGC has no access to:" in note
-    assert "nvidia/" in note
+    assert "NGC not configured" in note
+    assert "groot" in note and "cosmos" in note
+    # NGC line must not conflate HF repo IDs with NGC container access.
+    assert "nvidia/" not in note
 
 
 def test_access_note_counts_unverified() -> None:

@@ -33,4 +33,6 @@ if [ -n "${NGC_API_KEY:-}" ]; then
   args+=(--ngc-key "${NGC_API_KEY}")
 fi
 
-exec "${NPA_BIN}" workbench health access "${args[@]}" "$@"
+# Expand args safely even when empty under `set -u` (bash 3.2 on stock macOS
+# errors on a bare "${args[@]}" when the array is empty).
+exec "${NPA_BIN}" workbench health access ${args[@]+"${args[@]}"} "$@"

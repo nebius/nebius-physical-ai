@@ -98,6 +98,15 @@ def assets_for(capabilities: Iterable[str] | None) -> tuple[GatedAsset, ...]:
     )
 
 
+def gated_hf_repos(capabilities: Iterable[str] | None = None) -> tuple[str, ...]:
+    """Return the license-gated Hugging Face repos for *capabilities*."""
+    return tuple(
+        asset.repo
+        for asset in assets_for(capabilities)
+        if asset.provider == HF and asset.gated
+    )
+
+
 def _ngc_needed(capabilities: Iterable[str] | None) -> bool:
     if capabilities is None:
         return True
@@ -261,13 +270,13 @@ def access_note(results: list[CheckResult]) -> str:
     if hf_no:
         parts.append("HF has no access to: " + ", ".join(hf_no))
     if not ngc_ok:
-        ngc_models = [
-            r.name for r in results if r.name != "ngc" and r.name.startswith("nvidia/")
-        ]
-        if ngc_models:
-            parts.append("NGC has no access to: " + ", ".join(ngc_models))
-        else:
-            parts.append("NGC key not set (blocks GR00T/Cosmos NVIDIA pulls)")
+        # NGC gates NVIDIA *container/model pulls* for whole capabilities, not
+        # individual HF repos — name the affected capabilities, not repo IDs.
+        parts.append(
+            "NGC not configured (blocks NVIDIA pulls for: "
+            + ", ".join(NGC_CAPABILITIES)
+            + ")"
+        )
     if hf_unverified:
         parts.append(f"{len(hf_unverified)} model(s) unverified")
 
@@ -289,6 +298,7 @@ __all__ = [
     "check_hf_asset",
     "check_ngc_key",
     "check_workbench_access",
+    "gated_hf_repos",
     "has_failure",
     "hf_model_url",
 ]

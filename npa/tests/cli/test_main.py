@@ -358,8 +358,8 @@ def test_configure_note_lists_ngc_blocked_when_key_missing(monkeypatch, tmp_path
     )
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
-    assert "NGC has no access to:" in note
-    assert "nvidia/GR00T-N1.7-3B" in note
+    assert "NGC not configured" in note
+    assert "groot" in note and "cosmos" in note
 
 
 def test_configure_note_never_breaks_on_probe_error(monkeypatch, tmp_path) -> None:
@@ -373,9 +373,12 @@ def test_configure_note_never_breaks_on_probe_error(monkeypatch, tmp_path) -> No
     result = _run_reuse_bucket_configure(
         monkeypatch, tmp_path, hf_token="hf_good", ngc_key="nvapi-good"
     )
+    # A probe blowing up must not break configure; each affected model is simply
+    # reported as unverified on the single NOTE line.
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
-    assert "Skipped model-access check" in note
+    assert note.startswith("[NOTE]")
+    assert "unverified" in note
 
 
 def _prepopulate_config(monkeypatch, tmp_path):

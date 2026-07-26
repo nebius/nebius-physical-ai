@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import sys
 import traceback
 from importlib.metadata import version as package_version
-from typing import Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import typer
 
@@ -28,6 +29,8 @@ from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
 from npa.clients.serverless import ServerlessClientError
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="npa",
@@ -455,11 +458,13 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
 
     project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
     tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
-    discovered_registry = (
+    existing_registry = str(existing_stanza.get("container_registry", ""))
+    # Only hit Nebius for registry discovery when we don't already have one saved
+    # (an idempotent re-run should not make an avoidable CLI call).
+    registry_default = existing_registry or (
         nebius_client.discover_container_registry(project_id)
         or DEFAULT_CONTAINER_REGISTRY
     )
-    registry_default = str(existing_stanza.get("container_registry", "")) or discovered_registry
     region_default = (
         str(existing_stanza.get("region", ""))
         or _region_from_registry_host(registry_default)
@@ -625,27 +630,84 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
 
 
+def _probe_hf_repos_parallel(
+    validator: Callable[..., Any],
+    token: str,
+    repos: Iterable[str],
+    *,
+    per_probe_timeout: float = 3.0,
+    total_budget: float = 8.0,
+) -> dict[str, Any]:
+    """Probe HF access for *repos* concurrently within a wall-clock budget.
+
+    Returns ``{repo: result}``. Repos that do not finish inside ``total_budget``
+    (or whose probe raises) are omitted, so the caller treats them as unverified
+    rather than stalling the primary onboarding command.
+    """
+
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
+    from concurrent.futures import as_completed
+
+    repo_list = list(repos)
+    results: dict[str, Any] = {}
+    if not repo_list:
+        return results
+    pool = ThreadPoolExecutor(max_workers=min(8, len(repo_list)))
+    try:
+        futures = {
+            pool.submit(validator, token, repo, timeout=per_probe_timeout): repo
+            for repo in repo_list
+        }
+        try:
+            for fut in as_completed(futures, timeout=total_budget):
+                repo = futures[fut]
+                try:
+                    results[repo] = fut.result()
+                except Exception:  # noqa: BLE001 - a failed probe -> unverified
+                    logger.debug("HF access probe failed for %s", repo, exc_info=True)
+        except FuturesTimeout:
+            # Budget exceeded: keep whatever finished; the rest stay unverified.
+            logger.debug("HF access probe budget of %.1fs exceeded", total_budget)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    return results
+
+
 def _model_access_note(hf_token: str, ngc_key: str) -> str:
     """Return a one-line ``[NOTE]`` on which gated workbench models the tokens can access.
 
     Runs a live Hugging Face access check for each license-gated model the
     workbench uses and a presence/format check for the NGC key, then summarizes
-    the models without access on a single line. Any failure here is swallowed so
-    a preflight note can never break `npa configure`.
+    the models without access on a single line. HF probes run in parallel under a
+    total wall-clock budget, and any failure is swallowed, so a preflight note
+    can never stall or break `npa configure`.
     """
 
     try:
         from npa.clients import huggingface
-        from npa.workbench.model_access import access_note, check_workbench_access
+        from npa.clients.huggingface import HFAccessResult
+        from npa.workbench.model_access import (
+            access_note,
+            check_workbench_access,
+            gated_hf_repos,
+        )
 
-        # Bound each HF probe so a slow/unreachable network cannot stall setup.
+        cache: dict[str, Any] = {}
+        if hf_token:
+            cache = _probe_hf_repos_parallel(
+                huggingface.validate_hf_access, hf_token, gated_hf_repos()
+            )
+
         def _validator(token: str, repo: str):
-            return huggingface.validate_hf_access(token, repo, timeout=5.0)
+            return cache.get(repo) or HFAccessResult(
+                repo=repo, ok=False, error="not verified (timed out)"
+            )
 
         results = check_workbench_access(
             hf_token=hf_token,
             ngc_key=ngc_key,
-            hf_validator=_validator,
+            hf_validator=_validator if hf_token else None,
             gated_only=True,
         )
         return access_note(results)

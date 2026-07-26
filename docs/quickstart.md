@@ -220,9 +220,11 @@ long-lived `NEBIUS_TOKEN` in `~/.npa/credentials.yaml`.
 
 Before running `npa configure`, sign up for Nebius AI Cloud, note your tenant
 id, and create a project in the target region. An Object Storage bucket is
-optional — `npa configure` creates a default `npa-bucket` with **standard**
-storage and a size cap when you press Enter at the bucket prompt (you can choose
-`enhanced` storage or a custom size for new buckets). To reuse your own bucket,
+optional — `npa configure` creates a default bucket named `npa-bucket-<hash>`
+(a short hash of your tenant and project ids, e.g. `npa-bucket-1a2b3c4d`) with
+**standard** storage and a size cap when you press Enter at the bucket prompt
+(you can choose `enhanced` storage or a custom size for new buckets). To reuse
+your own bucket,
 create one first; see the README **Nebius AI Cloud account** section,
 [Creating a tenant](https://docs.nebius.com/iam/create-tenants),
 [Manage projects](https://docs.nebius.com/iam/manage-projects), and
@@ -231,9 +233,9 @@ create one first; see the README **Nebius AI Cloud account** section,
 Run interactive setup in a terminal. `npa configure` creates or reuses your
 Nebius CLI profile first, then prompts for your project id and tenant id, your
 region and container registry (defaults are discovered from the project), guides
-you to reuse an existing bucket or create a default `npa-bucket` (standard
-storage, size limit in GB), and asks for a local **project alias** (default =
-region; used later as `-p <alias>`).
+you to reuse an existing bucket or create a default `npa-bucket-<hash>` bucket
+(standard storage, size limit in GB), and asks for a local **project alias**
+(default = region; used later as `-p <alias>`).
 
 `npa configure` is idempotent: re-run it any time to update keys or properties.
 On a re-run every prompt is pre-filled with the value already saved in
@@ -279,6 +281,8 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 | Need | `credentials.yaml` key | Environment override | Required when |
 |---|---|---|---|
 | Hugging Face token | `tokens.HF_TOKEN` | `HF_TOKEN` | Downloading gated Hugging Face models, datasets, or weights |
+| Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Zero-GPU hosted inference (Token Factory / OpenAI-compatible) paths |
+| Nebius AI Cloud key | `tokens.NEBIUS_AI_CLOUD_KEY` | `NEBIUS_AI_CLOUD_KEY` | Calling Nebius AI Cloud APIs |
 | NGC API key | `ngc.api_key` | `NGC_API_KEY` | Using NGC-backed GR00T model references |
 | NGC organization | `ngc.org` | `NGC_ORG` | Your NGC key is organization-scoped |
 | NGC team | `ngc.team` | `NGC_TEAM` | Your NGC key is team-scoped |
