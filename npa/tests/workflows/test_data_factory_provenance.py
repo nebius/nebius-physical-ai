@@ -47,6 +47,40 @@ def test_provenance_lists_components_per_stage() -> None:
     assert "Token Factory VLM" in prov["summary"]
 
 
+def test_provenance_reflects_real_fiftyone_brain_curation() -> None:
+    def read_fo(key: str):
+        if key.endswith("cosmos_augmented/manifest.json"):
+            return {"mode": "cosmos_transfer2.5_gpu"}
+        if key.endswith("curation/report.json"):
+            return {
+                "curation_engine": "fiftyone-brain",
+                "curated_kept": 4,
+                "curated_dropped": 1,
+                "fiftyone": {"fiftyone_version": "1.15.0"},
+            }
+        return {}
+
+    prov = build_run_provenance(KEYS, run_id=RUN, read_json=read_fo)
+    cur = next(c for c in prov["components"] if c["stage"] == "Curation")
+    assert cur["component"] == "Real FiftyOne Brain curation"
+    assert cur.get("engine") == "fiftyone_brain"
+    assert "npa-fiftyone image" in cur["runtime"]
+    assert "uniqueness" in cur["detail"] and "4 kept" in cur["detail"]
+    assert cur["model"] == "fiftyone 1.15.0"
+
+
+def test_provenance_flags_report_only_curation() -> None:
+    def read_report_only(key: str):
+        if key.endswith("curation/report.json"):
+            return {"curation_engine": "report-only"}
+        return {}
+
+    prov = build_run_provenance(KEYS, run_id=RUN, read_json=read_report_only)
+    cur = next(c for c in prov["components"] if c["stage"] == "Curation")
+    assert cur.get("engine") == "report_only"
+    assert "npa-fiftyone image" in cur["detail"]
+
+
 def test_provenance_distinguishes_cpu_standin_from_gpu() -> None:
     def read_standin(key: str):
         if key.endswith("cosmos_augmented/manifest.json"):

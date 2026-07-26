@@ -97,6 +97,29 @@ def build_run_provenance(
             model = str(ev.get("model") or "")
             if model:
                 entry["model"] = model
+        elif stage == "curation":
+            rep = _read(_stage_json_key(keys, run_id, "curation", "report.json"))
+            engine = str(rep.get("curation_engine") or "")
+            if engine == "fiftyone-brain":
+                fo = rep.get("fiftyone") if isinstance(rep.get("fiftyone"), dict) else {}
+                entry["component"] = "Real FiftyOne Brain curation"
+                entry["engine"] = "fiftyone_brain"
+                entry["runtime"] = "CPU (npa-fiftyone image)"
+                kept = rep.get("curated_kept")
+                dropped = rep.get("curated_dropped")
+                bits = ["uniqueness + near-duplicate detection + PCA visualization (real FiftyOne Brain)"]
+                if kept is not None:
+                    bits.append(f"{kept} kept" + (f", {dropped} dropped" if dropped else ""))
+                entry["detail"] = "; ".join(bits)
+                version = str(fo.get("fiftyone_version") or "") if isinstance(fo, dict) else ""
+                if version:
+                    entry["model"] = f"fiftyone {version}"
+            elif engine == "report-only":
+                entry["engine"] = "report_only"
+                entry["detail"] = (
+                    "counts report (FiftyOne stand-in) — run the curate stage in the "
+                    "npa-fiftyone image for real FiftyOne Brain curation"
+                )
         components.append(entry)
 
     summary = "; ".join(
