@@ -163,6 +163,16 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             params=("workflow", "group_by", "latest_run"),
         ),
         ToolSpec(
+            "workflow_author",
+            read_only=True,
+            summary=(
+                "Author a runnable npa.workflow/v0.0.1 YAML from a goal by composing real "
+                "toolRefs from the live catalog, then self-validate + plan (returns yaml only "
+                "when runnable). Use for 'write/generate an N-step npa yaml that uses <tool>'."
+            ),
+            params=("goal", "steps"),
+        ),
+        ToolSpec(
             "sim2real_submit",
             read_only=False,
             requires_confirmation=True,

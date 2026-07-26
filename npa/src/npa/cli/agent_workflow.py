@@ -1271,6 +1271,246 @@ def generate_workflow_draft(
     }
 
 
+_CONFIG_TOKEN_RE = re.compile(r"\{\{\s*config\.([a-zA-Z0-9_.-]+)\s*\}\}")
+_STEP_COUNT_RE = re.compile(
+    r"\b(\d+)[\s-]?step\b|\b(one|two|three|four|five|six)[\s-]?step\b", re.IGNORECASE
+)
+_WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+_AUTHOR_STOPWORDS = frozenset(
+    {
+        "write", "me", "a", "an", "the", "step", "steps", "npa", "yaml", "spec",
+        "workflow", "pipeline", "that", "uses", "use", "using", "with", "and",
+        "for", "to", "of", "create", "generate", "build", "make", "draft",
+        "compose", "please", "give", "show", "new", "simple", "minimal", "example",
+    }
+)
+
+
+def _desired_step_count(goal: str, default: int = 2) -> int:
+    match = _STEP_COUNT_RE.search(str(goal or ""))
+    if not match:
+        return default
+    if match.group(1):
+        try:
+            value = int(match.group(1))
+        except (TypeError, ValueError):
+            value = default
+    else:
+        value = _WORD_NUM.get((match.group(2) or "").lower(), default)
+    return max(1, min(value, 6))
+
+
+def _author_goal_keywords(goal: str) -> list[str]:
+    words = re.findall(r"[a-zA-Z0-9_]+", str(goal or "").lower())
+    return [w for w in words if w not in _AUTHOR_STOPWORDS and len(w) > 2]
+
+
+def _select_author_tool_refs(
+    goal: str, tool_refs: frozenset[str] | set[str] | list[str] | None, n: int
+) -> tuple[list[str], list[str]]:
+    """Pick ``n`` real catalog toolRefs, preferring goal-keyword matches.
+
+    Composes only from the live catalog (never an inline copy of tool names):
+    tools are ranked by how many goal keywords appear in the toolRef string, then
+    padded deterministically from the remaining catalog so the spec has n states.
+    """
+    catalog = sorted(str(t) for t in (tool_refs or []))
+    keywords = _author_goal_keywords(goal)
+
+    def _score(ref: str) -> int:
+        low = ref.lower()
+        return sum(1 for kw in keywords if kw in low)
+
+    matched = [ref for ref in catalog if _score(ref) > 0]
+    matched.sort(key=lambda ref: (-_score(ref), ref))
+    selected = list(matched[:n])
+    if len(selected) < n:
+        for ref in catalog:
+            if ref not in selected:
+                selected.append(ref)
+                if len(selected) >= n:
+                    break
+    return selected[:n], matched
+
+
+def _author_placeholder_for(key: str) -> str:
+    low = key.lower()
+    if low == "bucket":
+        return "example-bucket"
+    if low == "prefix":
+        return "npa-workflow/{{run.id}}"
+    if low.endswith("_uri") or low.endswith("_path") or "uri" in low or low == "output_root":
+        return "s3://{{config.bucket}}/{{config.prefix}}/" + key + "/"
+    if any(tok in low for tok in ("count", "iterations", "num", "size", "timeout", "interval", "episodes", "steps")):
+        return "1"
+    return "<" + key + ">"
+
+
+def _state_name_for(tool_ref: str, index: int, taken: set[str]) -> str:
+    tail = str(tool_ref or "").split(".")[-1] or f"step{index + 1}"
+    base = re.sub(r"[^a-z0-9]+", "-", tail.lower()).strip("-") or f"step{index + 1}"
+    name = base
+    suffix = 2
+    while name in taken:
+        name = f"{base}-{suffix}"
+        suffix += 1
+    taken.add(name)
+    return name
+
+
+def _build_authored_spec(
+    selected: list[str],
+    config_keys: list[str],
+    *,
+    bucket: str,
+    name: str,
+) -> OrderedDict[str, Any]:
+    from npa.orchestration.npa_workflow.catalog import argv_for_tool
+
+    config: OrderedDict[str, Any] = OrderedDict()
+    config["bucket"] = str(bucket)
+    config["prefix"] = "npa-workflow/{{run.id}}"
+    for key in config_keys:
+        if key not in config:
+            config[key] = _author_placeholder_for(key)
+
+    taken: set[str] = set()
+    state_names = [_state_name_for(ref, idx, taken) for idx, ref in enumerate(selected)]
+    states: OrderedDict[str, Any] = OrderedDict()
+    for idx, (ref, state_name) in enumerate(zip(selected, state_names)):
+        try:
+            entry_desc = _describe_tool_ref(ref)
+        except Exception:  # noqa: BLE001
+            entry_desc = f"Run {ref}."
+        state: OrderedDict[str, Any] = OrderedDict()
+        state["description"] = _FoldedStr(entry_desc)
+        if idx > 0:
+            state["needs"] = [state_names[idx - 1]]
+        state["toolRef"] = ref
+        state["resources"] = "gpu"
+        if idx < len(selected) - 1:
+            state["next"] = state_names[idx + 1]
+        else:
+            state["terminal"] = True
+        states[state_name] = state
+        # Keep argv_for_tool referenced so the import is exercised at build time.
+        _ = argv_for_tool(ref)
+
+    root: OrderedDict[str, Any] = OrderedDict()
+    root["apiVersion"] = API_VERSION
+    root["kind"] = "Workflow"
+    root["metadata"] = OrderedDict(
+        {"name": str(name), "description": _FoldedStr(f"Authored {len(selected)}-state npa.workflow composed from the live tool catalog.")}
+    )
+    root["config"] = config
+    root["resources"] = OrderedDict(
+        {"gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"})}
+    )
+    root["initial"] = state_names[0]
+    root["states"] = states
+    return root
+
+
+def _describe_tool_ref(tool_ref: str) -> str:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    entry = TOOL_CATALOG.get(tool_ref)
+    desc = str(getattr(entry, "description", "") or "").strip() if entry else ""
+    return desc or f"Run {tool_ref}."
+
+
+def _config_tokens_for(selected: list[str]) -> list[str]:
+    from npa.orchestration.npa_workflow.catalog import argv_for_tool
+
+    keys: list[str] = []
+    for ref in selected:
+        try:
+            argv = argv_for_tool(ref)
+        except Exception:  # noqa: BLE001
+            continue
+        for token in argv:
+            for key in _CONFIG_TOKEN_RE.findall(str(token)):
+                if key not in keys:
+                    keys.append(key)
+    return keys
+
+
+def author_workflow_from_goal(
+    goal: str,
+    *,
+    tool_refs: frozenset[str] | set[str] | list[str] | None,
+    bucket: str = "example-bucket",
+    name: str = "",
+    max_repairs: int = 2,
+) -> dict[str, Any]:
+    """Author a runnable npa.workflow spec from a goal using the LIVE catalog.
+
+    Selects real toolRefs from ``tool_refs`` matching the goal, composes a
+    structural spec (no hardcoded pipeline templates or tool names), then
+    self-checks with ``validate_workflow_yaml_text`` + ``plan_workflow_yaml_text``
+    and repairs missing ``{{config.X}}`` tokens surfaced by the planner, bounded
+    by ``max_repairs``. Returns ``{ok, yaml, validation, plan, runnable, ...}``;
+    ``yaml`` is only reported runnable when validate + plan both pass.
+    """
+    catalog = frozenset(str(t) for t in (tool_refs or []))
+    if not catalog:
+        return {"ok": False, "runnable": False, "yaml": "", "error": "no toolRefs available in the live catalog", "tool_refs": []}
+    n_steps = _desired_step_count(goal)
+    selected, matched = _select_author_tool_refs(goal, catalog, n_steps)
+    if not selected:
+        return {"ok": False, "runnable": False, "yaml": "", "error": "could not select any toolRef from the catalog", "tool_refs": []}
+    resolved_name = str(name or "").strip() or "authored-workflow"
+    config_keys = _config_tokens_for(selected)
+
+    validation: dict[str, Any] = {"ok": False}
+    plan: dict[str, Any] = {"ok": False}
+    yaml_text = ""
+    for _attempt in range(max(1, int(max_repairs) + 1)):
+        spec = _build_authored_spec(selected, config_keys, bucket=bucket, name=resolved_name)
+        yaml_text = _render_spec_yaml(spec)
+        validation = validate_workflow_yaml_text(yaml_text, tool_refs=catalog)
+        if validation.get("ok"):
+            plan = plan_workflow_yaml_text(yaml_text, run_id="authored-workflow-plan", tool_refs=catalog)
+        else:
+            plan = {"ok": False, "error": str(validation.get("error") or "validation failed")}
+        if validation.get("ok") and plan.get("ok"):
+            break
+        # Repair: add any config token the planner/validator flagged as missing.
+        missing = _missing_config_tokens(validation, plan)
+        new_keys = [key for key in missing if key not in config_keys]
+        if not new_keys:
+            break
+        config_keys.extend(new_keys)
+
+    runnable = bool(validation.get("ok") and plan.get("ok"))
+    return {
+        "ok": runnable,
+        "runnable": runnable,
+        "template": "catalog-composed",
+        "yaml": yaml_text,
+        "validation": validation,
+        "plan": plan,
+        "tool_refs": selected,
+        "matched_tool_refs": matched,
+        "states": validation.get("states") or [],
+    }
+
+
+def _missing_config_tokens(*payloads: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    pattern = re.compile(r"config\.([a-zA-Z0-9_.-]+)")
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        error = str(payload.get("error") or "")
+        if "config token" not in error and "config." not in error:
+            continue
+        for key in pattern.findall(error):
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
 def generate_sim2real_two_step_yaml(
     *,
     bucket: str = "example-bucket",

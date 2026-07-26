@@ -4700,12 +4700,24 @@ def _maybe_toolground_chat_reply(
         "create_loop_gate_workflow",
         "create_rl_policy_workflow",
     }}:
-        draft = generate_workflow_draft(
-            user_text=user_text,
-            intent=intent,
-            tool_refs=frozenset(TOOL_REFS),
-            capabilities={{"tool_refs": list(TOOL_REFS)}},
-        )
+        draft = None
+        # Prefer catalog-composed authoring when the goal names a real tool
+        # (e.g. "npa yaml that uses cosmos"): compose from the LIVE catalog and
+        # self-validate/plan — no hardcoded template. Fall back to the template
+        # catalog for generic/simple requests or if composition is not runnable.
+        if intent == "create_workflow":
+            from npa.cli.agent_workflow import author_workflow_from_goal
+
+            authored = author_workflow_from_goal(user_text, tool_refs=frozenset(TOOL_REFS))
+            if authored.get("runnable") and authored.get("matched_tool_refs"):
+                draft = authored
+        if draft is None:
+            draft = generate_workflow_draft(
+                user_text=user_text,
+                intent=intent,
+                tool_refs=frozenset(TOOL_REFS),
+                capabilities={{"tool_refs": list(TOOL_REFS)}},
+            )
         yaml_text = str(draft.get("yaml") or "").strip()
         validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {{}}
         plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
@@ -5474,6 +5486,25 @@ def _agent_act_tools():
         )
         return response.model_dump(mode="json")
 
+    def _tool_workflow_author(args):
+        goal = str(args.get("goal") or args.get("description") or args.get("prompt") or "").strip()
+        if not goal:
+            return {{"error": "goal is required to author a workflow"}}
+        from npa.cli.agent_workflow import author_workflow_from_goal
+
+        result = author_workflow_from_goal(goal, tool_refs=frozenset(TOOL_REFS))
+        # Surface a compact, JSON-serializable observation; yaml is only present
+        # (and reported runnable) when validate + plan both pass on real toolRefs.
+        return {{
+            "ok": bool(result.get("ok")),
+            "runnable": bool(result.get("runnable")),
+            "yaml": str(result.get("yaml") or "") if result.get("runnable") else "",
+            "tool_refs": result.get("tool_refs") or [],
+            "states": result.get("states") or [],
+            "validation": result.get("validation") or {{}},
+            "error": result.get("error") or (None if result.get("runnable") else "authored spec did not pass validate+plan"),
+        }}
+
     def _tool_submit(args):
         return _act_response_to_dict(submit_sim2real({{"run_id": str(args.get("run_id") or "")}}))
 
@@ -5501,6 +5532,7 @@ def _agent_act_tools():
         "insights_compare": _tool_insights_compare,
         "insights_lineage": _tool_insights_lineage,
         "insights_dashboard": _tool_insights_dashboard,
+        "workflow_author": _tool_workflow_author,
         "sim2real_submit": _tool_submit,
     }}
 
