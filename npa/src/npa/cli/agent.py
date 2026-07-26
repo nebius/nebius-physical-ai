@@ -1754,6 +1754,12 @@ def _nginx_agent_site_body(
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
+    # .rrd carries msgpack + metadata that still gzips usefully; the frame
+    # payloads are now JPEG-encoded so the win is modest but the transfer is
+    # smaller and TTFB unaffected (nginx streams as it compresses).
+    gzip on;
+    gzip_types application/octet-stream;
+    gzip_min_length 1024;
   }}
   location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     auth_basic off;

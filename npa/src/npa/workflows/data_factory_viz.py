@@ -15,6 +15,7 @@ is pip-installed.
 from __future__ import annotations
 
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -25,6 +26,21 @@ if TYPE_CHECKING:
 
 APPLICATION_ID = "physical-ai-data-factory"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+# Keep the .rrd small so the browser Rerun viewer loads fast. Full-res raw-RGB
+# frames made a ~23 MB recording; downscaling + JPEG-encoding + subsampling frames
+# cuts that ~10-20x with no meaningful loss for a review viewer. All overridable.
+RRD_MAX_FRAME_DIM = _int_env("NPA_RRD_MAX_DIM", 512)
+RRD_JPEG_QUALITY = _int_env("NPA_RRD_JPEG_QUALITY", 75)
+RRD_MAX_FRAMES_PER_ENTITY = _int_env("NPA_RRD_MAX_FRAMES", 24)
 
 
 class DataFactoryVizError(RuntimeError):
@@ -49,7 +65,43 @@ def _load_rgb(path: Path):
     from PIL import Image
 
     with Image.open(path) as im:
-        return np.asarray(im.convert("RGB"))
+        rgb = im.convert("RGB")
+        # Downscale to a review-friendly max dimension so the .rrd stays small.
+        if RRD_MAX_FRAME_DIM > 0 and max(rgb.size) > RRD_MAX_FRAME_DIM:
+            rgb.thumbnail((RRD_MAX_FRAME_DIM, RRD_MAX_FRAME_DIM))
+        return np.asarray(rgb)
+
+
+def _subsample(items: list, cap: int) -> list:
+    """Evenly subsample ``items`` down to at most ``cap`` (keeps first + last)."""
+    n = len(items)
+    if cap <= 0 or n <= cap:
+        return items
+    step = n / float(cap)
+    picked = [items[min(n - 1, int(i * step))] for i in range(cap)]
+    # De-dupe while preserving order (integer stepping can repeat near the end).
+    seen: set[int] = set()
+    out = []
+    for it in picked:
+        key = id(it)
+        if key not in seen:
+            seen.add(key)
+            out.append(it)
+    return out
+
+
+def _log_frame(rr: Any, rec: Any, entity: str, arr: Any) -> None:
+    """Log a frame as a JPEG-encoded image (small) with a raw-RGB fallback."""
+    try:
+        import io
+
+        from PIL import Image as _PILImage
+
+        buf = io.BytesIO()
+        _PILImage.fromarray(arr).save(buf, format="JPEG", quality=RRD_JPEG_QUALITY)
+        rr.log(entity, rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"), recording=rec)
+    except Exception:  # noqa: BLE001 - fall back to raw image if EncodedImage/PIL unavailable
+        rr.log(entity, _image(rr, arr), recording=rec)
 
 
 def _set_frame(rr: Any, rec: Any, idx: int) -> None:
@@ -99,10 +151,10 @@ def build_run_rrd(
         rec = rr.RecordingStream(app_id, recording_id=run_id)
         logged = 0
 
-        for png in sorted((local / "input").rglob("*.png")):
+        for png in _subsample(sorted((local / "input").rglob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
             clip = "_".join(png.stem.split("_")[:2]) or "clip"
             _set_frame(rr, rec, _frame_index(png.stem))
-            rr.log(f"input/{clip}", _image(rr, _load_rgb(png)), recording=rec)
+            _log_frame(rr, rec, f"input/{clip}", _load_rgb(png))
             logged += 1
 
         aug_root = local / "cosmos_augmented"
@@ -110,9 +162,9 @@ def build_run_rrd(
             for d in sorted(p for p in aug_root.iterdir() if p.is_dir()):
                 label = _augmentation_label(d)
                 entity = f"augmented/{d.name}"
-                for png in sorted(d.glob("*.png")):
+                for png in _subsample(sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
                     _set_frame(rr, rec, _frame_index(png.stem))
-                    rr.log(entity, _image(rr, _load_rgb(png)), recording=rec)
+                    _log_frame(rr, rec, entity, _load_rgb(png))
                     logged += 1
                 if label:
                     rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
