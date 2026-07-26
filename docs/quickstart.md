@@ -229,11 +229,19 @@ create one first; see the README **Nebius AI Cloud account** section,
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
-Nebius CLI profile first, then prompts for your project id and tenant id (in
-that order, no defaults shown), your region and container registry (defaults are
-discovered from the project), guides you to reuse an existing bucket or create a
-default `npa-bucket` (standard storage, size limit in GB), and asks for a local
-**project alias** (default = region; used later as `-p <alias>`). It then
+Nebius CLI profile first, then prompts for your project id and tenant id, your
+region and container registry (defaults are discovered from the project), guides
+you to reuse an existing bucket or create a default `npa-bucket` (standard
+storage, size limit in GB), and asks for a local **project alias** (default =
+region; used later as `-p <alias>`).
+
+`npa configure` is idempotent: re-run it any time to update keys or properties.
+On a re-run every prompt is pre-filled with the value already saved in
+`~/.npa/config.yaml` / `~/.npa/credentials.yaml`, so pressing Enter through the
+flow keeps your current setup unchanged, and typing a new value updates just
+that field. When object storage is already configured it defaults to keeping the
+existing bucket and S3 key (so a re-run does not mint a new access key); decline
+that prompt to re-provision. It then
 writes `~/.npa/credentials.yaml` and `~/.npa/config.yaml`, and prints a one-line
 `[NOTE]` summarizing which gated workbench models your HF and NGC tokens can (or
 cannot) access — see [§4e](#4e-accept-and-verify-gated-model-access):

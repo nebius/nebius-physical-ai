@@ -313,6 +313,16 @@ def _prompt_new_bucket_settings(
     return storage_class, max_size_bytes
 
 
+def _bucket_name_from_uri(bucket: str) -> str:
+    """Extract the bare bucket name from an ``s3://bucket/prefix`` URI."""
+    value = (bucket or "").strip()
+    if not value:
+        return ""
+    if "://" in value:
+        value = value.split("://", 1)[1]
+    return value.strip("/").split("/", 1)[0]
+
+
 def _provision_object_storage(
     nebius_client,
     ask: Callable[..., str],
@@ -320,6 +330,7 @@ def _provision_object_storage(
     project_id: str,
     tenant_id: str,
     region: str,
+    existing_bucket: str = "",
 ) -> dict[str, str] | None:
     """Auto-create the S3 bucket + access key for the project."""
     if not (project_id and tenant_id):
@@ -329,7 +340,7 @@ def _provision_object_storage(
         "\nObject storage: enter an existing bucket name to reuse it, "
         "or press Enter to have npa create a default npa-bucket for this project."
     )
-    bucket_name = ask("Object-storage bucket name")
+    bucket_name = ask("Object-storage bucket name", default=existing_bucket)
     if not bucket_name:
         bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
         typer.echo("  No bucket name provided; npa will create a default bucket.")
@@ -390,12 +401,20 @@ def _provision_object_storage(
 def _run_interactive_configure(*, provision: bool = True) -> None:
     """Prompt for credentials/config and write the NPA dotfiles."""
 
-    from npa.clients.config import CONFIG_PATH, write_config
+    from npa.clients.config import (
+        CONFIG_PATH,
+        default_project_name,
+        list_projects,
+        write_config,
+    )
     from npa.clients.credentials import load_credentials, write_credentials_file
     from npa.clients import nebius as nebius_client
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
-    typer.echo("Interactive npa setup. Press Enter to skip any optional field.\n")
+    typer.echo(
+        "Interactive npa setup. Existing values are shown as defaults — press "
+        "Enter to keep them, or type a new value to update.\n"
+    )
     profile_ready = _ensure_nebius_profile()
     typer.echo("")
 
@@ -427,25 +446,60 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
 
     existing_credentials = load_credentials(environ={})
 
-    project_id = ask("Nebius project id")
-    tenant_id = ask("Nebius tenant id")
-    registry_default = (
+    # Re-running configure should be idempotent: default every prompt to the
+    # values already saved so pressing Enter keeps the current setup, while
+    # typing a new value updates it. Config is deep-merged on write.
+    existing_projects = list_projects()
+    existing_default_alias = default_project_name()
+    existing_stanza = existing_projects.get(existing_default_alias, {}) or {}
+
+    project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
+    tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
+    discovered_registry = (
         nebius_client.discover_container_registry(project_id)
         or DEFAULT_CONTAINER_REGISTRY
     )
-    region_default = _region_from_registry_host(registry_default) or DEFAULT_REGION
+    registry_default = str(existing_stanza.get("container_registry", "")) or discovered_registry
+    region_default = (
+        str(existing_stanza.get("region", ""))
+        or _region_from_registry_host(registry_default)
+        or DEFAULT_REGION
+    )
     region = ask("Region", default=region_default)
     registry = ask("Container registry", default=registry_default)
 
     storage: dict[str, str] | None = None
+    existing_has_storage = bool(
+        existing_credentials.s3_access_key_id
+        and existing_credentials.s3_secret_access_key
+        and existing_credentials.s3_bucket
+    )
     if provision and project_id and tenant_id:
-        storage = _provision_object_storage(
-            nebius_client,
-            ask,
-            project_id=project_id,
-            tenant_id=tenant_id,
-            region=region,
-        )
+        if existing_has_storage:
+            # Reuse already-provisioned storage by default so a re-run does not
+            # mint a fresh S3 access key each time.
+            keep = ask(
+                f"Keep existing object storage ({existing_credentials.s3_bucket})? [Y/n]",
+                default="Y",
+            )
+            if keep.lower() in ("", "y", "yes"):
+                storage = {
+                    "aws_access_key_id": existing_credentials.s3_access_key_id,
+                    "aws_secret_access_key": existing_credentials.s3_secret_access_key,
+                    "endpoint_url": existing_credentials.s3_endpoint
+                    or _endpoint_for_region(region),
+                    "bucket": existing_credentials.s3_bucket,
+                }
+                typer.echo("  Keeping existing object-storage credentials.")
+        if storage is None:
+            storage = _provision_object_storage(
+                nebius_client,
+                ask,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                region=region,
+                existing_bucket=_bucket_name_from_uri(existing_credentials.s3_bucket),
+            )
         if storage is None:
             typer.echo(
                 "\nFalling back to manual object-storage entry. "
@@ -536,9 +590,14 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     }
     wrote_config = False
     if project_id or tenant_id:
-        # Local name for later `-p <alias>` flags. Default to the region so a
-        # first-time configure without an explicit choice still resolves.
-        alias_default = region or "default"
+        # Local name for later `-p <alias>` flags. Prefer the existing default
+        # alias so a re-run updates the same project stanza; otherwise default to
+        # the region so a first-time configure still resolves.
+        alias_default = (
+            existing_default_alias
+            if existing_default_alias and existing_default_alias != "default"
+            else (region or "default")
+        )
         alias = (
             ask(
                 "Project alias (local name for -p)",
