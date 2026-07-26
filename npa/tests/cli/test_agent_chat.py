@@ -342,16 +342,50 @@ def test_author_workflow_requests_route_to_create_workflow_not_capabilities() ->
     assert match_chat_intent("what can cosmos do") == "cosmos_capabilities"
 
 
-def test_two_step_template_uses_cosmos_toolref() -> None:
-    from npa.cli.agent_workflow import generate_workflow_draft
+def test_metric_resource_queries_fall_through_to_insights() -> None:
+    # BUG #3: metric/resource/comparison qualifiers must NOT be intercepted by a
+    # grounded run-listing intent — they fall through so the insights loop runs.
+    for turn in (
+        "list runs by gpu count",
+        "how many gpus did each run use",
+        "which runs used more than 2 gpus",
+        "compare gpus between run-a and run-b",
+        "list runs by accelerator count",
+        "which runs regressed on success rate",
+    ):
+        assert match_chat_intent(turn) not in {"find_artifacts", "list_recordings"}, turn
 
-    draft = generate_workflow_draft(
-        user_text="write me a 2 step npa yaml that uses cosmos", intent="create_workflow"
+
+def test_plain_run_listing_stays_grounded_zero_tokens() -> None:
+    # No metric/resource qualifier -> still grounded run/recording history.
+    assert match_chat_intent("list recent runs") == "list_recordings"
+    assert match_chat_intent("what recordings do I have") == "list_recordings"
+    assert match_chat_intent("show me my run history") == "list_recordings"
+    assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
+
+
+def test_has_metric_resource_qualifier_helper() -> None:
+    from npa.cli.agent_chat import has_metric_resource_qualifier
+
+    assert has_metric_resource_qualifier("by gpu count")
+    assert has_metric_resource_qualifier("compare the runs")
+    assert has_metric_resource_qualifier("regressed on collision rate")
+    assert not has_metric_resource_qualifier("list recent runs")
+    assert not has_metric_resource_qualifier("what recordings do I have")
+
+
+def test_author_workflow_from_goal_composes_cosmos_from_live_catalog() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    result = author_workflow_from_goal(
+        "write me a 2 step npa yaml that uses cosmos", tool_refs=frozenset(TOOL_CATALOG)
     )
-    assert draft["template"] == "two-step"
-    assert "workbench.cosmos2.transfer" in draft["yaml"]
-    # Exactly two states, as requested.
-    assert len(draft["validation"].get("states") or []) == 2
+    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert len(result["states"]) == 2
+    assert result["tool_refs"] and all(ref in TOOL_CATALOG for ref in result["tool_refs"])
+    assert any("cosmos" in ref for ref in result["tool_refs"])
+    assert "npa.workflow/v0.0.1" in result["yaml"]
 
 
 def test_embedded_chat_action_branch_drives_loop_not_boilerplate() -> None:

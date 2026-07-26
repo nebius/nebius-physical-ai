@@ -315,6 +315,64 @@ def test_run_chat_action_loop_shapes_readonly_result():
     assert result["reply"] == "grounded answer"
 
 
+def test_allowlist_contains_workflow_author_readonly():
+    assert A.is_allowed("workflow_author")
+    assert not A.requires_confirmation("workflow_author")
+
+
+def test_loop_authors_workflow_with_repair_then_pass():
+    calls = {"n": 0}
+
+    def _author(args):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # First attempt not runnable -> planner repairs and retries.
+            return {"ok": False, "runnable": False, "yaml": "", "error": "authored spec did not pass validate+plan"}
+        return {
+            "ok": True,
+            "runnable": True,
+            "yaml": "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nstates: {}",
+            "tool_refs": ["workbench.cosmos2.transfer"],
+            "states": ["augment", "envgen"],
+        }
+
+    planner = _scripted_planner(
+        [
+            {"tool": "workflow_author", "args": {"goal": "2 step cosmos"}},
+            {"tool": "workflow_author", "args": {"goal": "2 step cosmos"}},
+            {"final": "Here is your workflow:\n```yaml\napiVersion: npa.workflow/v0.0.1\n```"},
+        ]
+    )
+    result = A.run_action_loop(
+        "write me a 2 step npa yaml that uses cosmos",
+        tools={"workflow_author": _author},
+        model_call=planner,
+    )
+    assert calls["n"] == 2
+    assert "workflow_author" in result["tools_used"]
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_loop_insights_empty_store_reports_no_fabrication():
+    def _query(args):
+        # Real (empty) store observation — never a canned example fallback.
+        return {"backend": "jsonl", "count": 0, "records": []}
+
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {"metric_name": "gpus", "threshold_op": "ge", "threshold_value": 4}},
+            {"final": "No matching runs were found in the insights store."},
+        ]
+    )
+    result = A.run_action_loop(
+        "which runs used 4 gpus", tools={"insights_query": _query}, model_call=planner
+    )
+    assert result["tools_used"] == ["insights_query"]
+    blob = json.dumps(result["steps"])
+    assert "candidate-4gpu" not in blob and "hardened-4gpu" not in blob
+    assert "no matching runs" in result["reply"].lower()
+
+
 def test_normalize_threshold_op_accepts_common_aliases():
     assert A.normalize_threshold_op(">=") == "ge"
     assert A.normalize_threshold_op(">") == "gt"

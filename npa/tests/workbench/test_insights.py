@@ -359,6 +359,13 @@ def test_query_filters_by_facet(tmp_path: Path) -> None:
     assert names == ["accuracy", "latency"]
 
 
+def test_query_empty_store_returns_empty_no_fabrication(tmp_path: Path) -> None:
+    # An empty/absent store yields an empty result — never a fabricated fallback.
+    result = query_metrics(QueryRequest(input_uri=str(tmp_path / "store"), metric_name="gpus"))
+    assert result.count == 0
+    assert result.records == []
+
+
 def test_query_threshold_predicate(tmp_path: Path) -> None:
     store = str(tmp_path / "store")
     _seed_two_runs(store)
