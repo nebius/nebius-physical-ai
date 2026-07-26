@@ -396,10 +396,17 @@ def test_author_workflow_flags_padded_placeholder_states() -> None:
 
     # More requested steps than goal-matched tools -> the extra state is padded
     # from the catalog and flagged as a placeholder for the operator to replace.
+    # Derive the step count from how many catalog tools actually match the goal
+    # keyword ("cosmos") so this stays correct as cosmos tools are added/removed
+    # (e.g. cosmos2.transfer, cosmos2.transfer_execute, cosmos3.reason).
+    cosmos_tools = [ref for ref in TOOL_CATALOG if "cosmos" in ref.lower()]
+    n_steps = min(len(cosmos_tools) + 1, 6)
+    assert n_steps > len(cosmos_tools), "need headroom for at least one padded state"
     result = author_workflow_from_goal(
-        "write me a 3 step npa yaml that uses cosmos", tool_refs=frozenset(TOOL_CATALOG)
+        f"write me a {n_steps} step npa yaml that uses cosmos",
+        tool_refs=frozenset(TOOL_CATALOG),
     )
-    assert len(result["tool_refs"]) == 3
+    assert len(result["tool_refs"]) == n_steps
     assert result["padded_tool_refs"], "extra state should be flagged as padding"
     if result["runnable"]:
         assert "placeholder" in result["yaml"].lower()
