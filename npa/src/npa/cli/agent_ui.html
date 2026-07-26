@@ -1042,6 +1042,38 @@
         padding: 4px 0; border-top: 1px solid var(--border, #e2e8f0);
       }
       .stage-detail-row code { color: #0f172a; }
+      .stage-thumbs {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
+        margin: 8px 0;
+      }
+      .stage-thumb {
+        position: relative;
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f8fafc;
+        cursor: pointer;
+        aspect-ratio: 4 / 3;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .stage-thumb:hover { box-shadow: var(--shadow); }
+      .stage-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .stage-thumb .hint { font-size: 12px; color: var(--muted); }
+      .stage-thumb-name {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        font-size: 10px; line-height: 1.3; color: #fff;
+        background: rgba(15, 23, 42, 0.62);
+        padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .stage-thumb-badge {
+        font-size: 12px; font-weight: 700; color: #0f172a;
+        background: var(--brand, #e5ff4f); border-radius: 999px; padding: 2px 10px;
+      }
+      @media (max-width: 640px) { .stage-thumbs { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); } }
       .voxel-panel { min-height: calc(100dvh - 170px); }
       .voxel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
       .voxel-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
@@ -5626,6 +5658,28 @@
               escapeHtml(JSON.stringify(info[k], null, 2)) + "</pre></details>"
             ).join("") + "</div>"
           : "";
+        // Inline thumbnails for image/video artifacts so clicking a stage SHOWS
+        // the frames (e.g. the source-frames stage shows the input images) right
+        // here, without a tab switch. Mirrors the Voxel51 grid preview pattern.
+        const mediaArts = artifacts.filter((a) => {
+          const r = String((a && a.render) || "");
+          return r === "image" || r === "video";
+        });
+        const thumbsHtml = mediaArts.length
+          ? '<div class="stage-thumbs">' + mediaArts.map((a) => {
+              const key = String(a.key || "");
+              const s3uri = String(a.s3_uri || "");
+              const render = String(a.render || "");
+              const base = key.split("/").pop() || key;
+              const isVideo = render === "video";
+              return '<div class="stage-thumb" data-run-id="' + escapeHtml(rid) +
+                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                '" data-thumb-uri="' + escapeHtml(isVideo ? "" : s3uri) +
+                '" title="' + escapeHtml(base) + '">' +
+                (isVideo ? '<span class="stage-thumb-badge">&#9654; video</span>' : '<span class="hint">&hellip;</span>') +
+                '<span class="stage-thumb-name">' + escapeHtml(base) + "</span></div>";
+            }).join("") + "</div>"
+          : "";
         // 3) List the stage's artifacts with View + Download.
         const artHtml = artifacts.length
           ? '<div class="stage-detail-artifacts"><strong>' + String(artifacts.length) +
@@ -5649,7 +5703,34 @@
             '<div class="stage-detail-head"><strong>' + escapeHtml(label) + "</strong>" +
             ' <span class="pill">' + escapeHtml(String(stageKey || "")) + "</span></div>" +
             '<p class="stage-detail-desc">' + escapeHtml(description) + "</p>" +
-            infoHtml + artHtml;
+            infoHtml + thumbsHtml + artHtml;
+          // Lazy-load each image thumbnail through the authenticated download proxy,
+          // and make every thumbnail click open the full artifact in the viewer.
+          host.querySelectorAll(".stage-thumb").forEach((node) => {
+            const thumbUri = String(node.getAttribute("data-thumb-uri") || "").trim();
+            if (thumbUri) {
+              const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(thumbUri);
+              authenticatedPreviewObjectUrl(url, null).then((src) => {
+                const ph = node.querySelector(".hint");
+                if (ph) ph.remove();
+                const img = document.createElement("img");
+                img.alt = "frame";
+                img.src = src;
+                node.insertBefore(img, node.firstChild);
+              }).catch(() => {
+                const ph = node.querySelector(".hint");
+                if (ph) ph.textContent = "no preview";
+              });
+            }
+            node.addEventListener("click", (event) => {
+              event.preventDefault();
+              loadArtifact({
+                run_id: String(node.getAttribute("data-run-id") || "").trim(),
+                key: String(node.getAttribute("data-key") || "").trim(),
+                s3_uri: String(node.getAttribute("data-s3-uri") || "").trim(),
+              }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
+            });
+          });
           host.querySelectorAll("button[data-sd-action='load']").forEach((btn) => {
             btn.addEventListener("click", (event) => {
               event.preventDefault();
