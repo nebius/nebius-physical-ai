@@ -42,13 +42,13 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
-| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-2gpu-20260725T162359Z` (jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
-| Open Dreamer | `coinrun_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` batch `[32,16,64,64,3]` sharded across 2 devices) |
-| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 6000 steps, `mae_p_max=0.1`; reconstruction legibly tracks the agent — see `gt_decoded`) |
-| Open Dreamer | `dreamer4_latent_tokenization` | **accepted** | Same run (256 real latent records `[64,64,16]` + `latent_stats` encoded by the trained tokenizer) |
-| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 6000 steps on the real latents) |
-| Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; the dream reproduces the agent through the context and the first predicted frames, then degrades over the 24-frame horizon at this bounded dynamics budget) |
-| Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (2.0 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 6 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
+| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
+| Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
+| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
+| Open Dreamer | `dreamer4_latent_tokenization` | **accepted** | Same run (`scripts/tokenize_minecraft_dataset.py`, real latents + `latent_stats`, real 27/121 VPT actions) |
+| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
+| Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
+| Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
 
 ## Native Capabilities Per Container
 
