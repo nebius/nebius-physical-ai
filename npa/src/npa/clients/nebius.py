@@ -596,14 +596,28 @@ def bucket_name_for(tenant_id: str, project_id: str) -> str:
     return f"{DEFAULT_BUCKET_BASENAME}-{suffix}"
 
 
-def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | None:
-    """Return the bucket list item for *bucket_name*, or ``None``."""
+def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
+    """Return every bucket in *project_id*.
 
+    Passes a large ``--page-size`` so existing buckets are not missed behind the
+    CLI's default pagination — mirrors the ``--page-size 1000`` pattern already
+    used for group membership. Without it, a project with many buckets returned
+    only the first page, so ``bucket_exists`` reported ``False`` for a real
+    bucket and ``npa configure`` wrongly prompted to create a new one.
+    """
     data = _run_json([
         "storage", "bucket", "list",
         "--parent-id", project_id,
+        "--page-size", "1000",
     ])
-    for item in data.get("items", []):
+    items = data.get("items", [])
+    return items if isinstance(items, list) else []
+
+
+def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | None:
+    """Return the bucket list item for *bucket_name*, or ``None``."""
+
+    for item in _list_project_buckets(project_id):
         if item.get("metadata", {}).get("name") == bucket_name:
             return item
     return None
@@ -619,13 +633,9 @@ def delete_bucket(bucket_id: str) -> None:
 
 def bucket_exists(project_id: str, bucket_name: str) -> bool:
     """Return True when *bucket_name* already exists in the project."""
-    data = _run_json([
-        "storage", "bucket", "list",
-        "--parent-id", project_id,
-    ])
     return any(
         item.get("metadata", {}).get("name") == bucket_name
-        for item in data.get("items", [])
+        for item in _list_project_buckets(project_id)
     )
 
 
