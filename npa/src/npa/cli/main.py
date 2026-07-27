@@ -352,25 +352,37 @@ def _provision_object_storage(
         "\nObject storage: enter an existing bucket name to reuse it, "
         "or press Enter to have npa create a default npa-bucket for this project."
     )
-    bucket_name = ask("Object-storage bucket name", default=existing_bucket)
+    bucket_name = ask("Object-storage bucket name", default=existing_bucket).strip()
     if not bucket_name:
         bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
         typer.echo("  No bucket name provided; npa will create a default bucket.")
 
+    # Whether the named bucket already exists: True (reuse), False (create), or
+    # None when the search itself could not run. Only prompt for new-bucket
+    # settings when we know the bucket is absent — provisioning below reuses an
+    # existing bucket and creates one only if it does not exist yet.
     try:
-        already_exists = nebius_client.bucket_exists(project_id, bucket_name)
-    except Exception:
-        already_exists = False
+        exists: bool | None = nebius_client.bucket_exists(project_id, bucket_name)
+    except Exception as exc:  # noqa: BLE001 - search is best-effort
+        exists = None
+        typer.echo(
+            f"  Could not verify whether '{bucket_name}' already exists ({exc}); "
+            "npa will reuse it if present or create it otherwise."
+        )
 
     bucket_max_size_bytes = 0
     bucket_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
-    if already_exists:
+    if exists is True:
         typer.echo(f"Reusing existing object-storage bucket '{bucket_name}'.")
-    else:
+    elif exists is False:
+        typer.echo(f"No existing bucket named '{bucket_name}' found; npa will create it.")
         bucket_storage_class, bucket_max_size_bytes = _prompt_new_bucket_settings(
             ask,
             bucket_name=bucket_name,
         )
+    # exists is None: existence unknown, so skip the create-only prompts and let
+    # provisioning get-or-create with defaults rather than risk creating a
+    # duplicate of a bucket that may already exist.
 
     try:
         typer.echo("Provisioning Nebius object storage (bucket + access key)...")

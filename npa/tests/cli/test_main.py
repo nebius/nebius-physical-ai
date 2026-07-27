@@ -619,6 +619,104 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
     assert "api_key" not in creds.get("ngc", {})
 
 
+def _bootstrap_capture(calls: list[dict]):
+    def fake_bootstrap(
+        project_id,
+        tenant_id,
+        region,
+        *,
+        bucket_name=None,
+        bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
+        on_status=None,
+    ):
+        calls.append(
+            {
+                "bucket_name": bucket_name,
+                "bucket_max_size_bytes": bucket_max_size_bytes,
+                "bucket_storage_class": bucket_storage_class,
+            }
+        )
+        return {
+            "nebius_api_key": "AKIA",
+            "nebius_secret_key": "secret",
+            "s3_bucket": bucket_name,
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        }
+
+    return fake_bootstrap
+
+
+def test_configure_typed_existing_bucket_is_reused_without_create_prompts(
+    monkeypatch, tmp_path
+) -> None:
+    """A typed name that already exists is reused; no storage-class/size prompts."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+
+    searched: list[tuple[str, str]] = []
+
+    def fake_bucket_exists(project_id, bucket_name):
+        searched.append((project_id, bucket_name))
+        return True
+
+    monkeypatch.setattr(nebius_module, "bucket_exists", fake_bucket_exists)
+    calls: list[dict] = []
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture(calls))
+
+    # proj, tenant, region, registry, bucket name, hf, ai, tf, ngc, alias.
+    # No storage-class/size answers: none should be prompted for a reused bucket.
+    answers = "\n".join(
+        ["project-1", "tenant-1", "", "", "my-existing-bucket", "hf_tok", "", "", "", ""]
+    ) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert searched == [("project-1", "my-existing-bucket")]
+    assert "Reusing existing object-storage bucket 'my-existing-bucket'" in result.output
+    assert "New bucket storage class" not in result.output
+    assert calls and calls[0]["bucket_name"] == "my-existing-bucket"
+    assert calls[0]["bucket_max_size_bytes"] == 0
+
+
+def test_configure_bucket_search_failure_skips_create_prompts(monkeypatch, tmp_path) -> None:
+    """When existence can't be verified, npa skips create prompts and get-or-creates."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+
+    def boom_exists(*_a, **_k):
+        raise nebius_module.NebiusError("nebius storage bucket list failed (exit 15)")
+
+    monkeypatch.setattr(nebius_module, "bucket_exists", boom_exists)
+    calls: list[dict] = []
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture(calls))
+
+    answers = "\n".join(
+        ["project-1", "tenant-1", "", "", "maybe-existing", "hf_tok", "", "", "", ""]
+    ) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Could not verify whether 'maybe-existing' already exists" in result.output
+    assert "New bucket storage class" not in result.output
+    # Provisioning still runs; ensure_bucket get-or-creates only if absent.
+    assert calls and calls[0]["bucket_name"] == "maybe-existing"
+    assert calls[0]["bucket_max_size_bytes"] == 0
+    assert calls[0]["bucket_storage_class"] == "standard"
+
+
 def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None:
     import yaml
 
