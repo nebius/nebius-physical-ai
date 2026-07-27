@@ -44,6 +44,19 @@ work lives).
 
 ## Resolved (recent)
 
+- 2026-07-26 - First-install `SyntaxWarning` + silent embedded-regex corruption.
+  `npa --version` (the README verify step) printed `SyntaxWarning: invalid
+  escape sequence '\s'` from `npa/src/npa/cli/agent.py`. Root cause: the
+  `_bootstrap_agent_stack` `setup_script` f-string embeds the agent backend
+  source verbatim, so single-backslash regex escapes are processed by the outer
+  f-string — `\s`/`\d` emitted a warning while `\b` silently collapsed to a
+  backspace (0x08), corrupting the deployed backend's word-boundary regexes
+  (e.g. `_maybe_stage_count_numeric_reply`, the `find_artifacts` run-id matcher,
+  and the small-sim2real chat shortcut never matched). Doubled the backslashes
+  in the six affected embedded regexes and hardened
+  `tests/cli/test_agent_backend_render.py` to compile the rendered backend with
+  `SyntaxWarning` as an error and assert no backspace byte / intact regex
+  classes. Whole-package compile scan now emits zero escape warnings.
 - 2026-07-22 - FIXME Active bookkeeping: removed seven stale `Status: Fixed`
   entries that were already covered under Resolved (Isaac Lab→LeRobot
   formatter, Isaac Lab train trajectories/`list-tasks`, GR00T BYOVM S3

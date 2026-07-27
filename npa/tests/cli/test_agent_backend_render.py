@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -73,7 +74,29 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert "__NPA_AGENT_" not in body, "an embed placeholder was not substituted"
     tree = ast.parse(body)
     assert tree is not None
-    compile(body, "backend.py", "exec")
+    # Treat SyntaxWarning as an error so an invalid escape sequence (e.g. a
+    # single-backslash regex class like ``\s``/``\d`` written into the embedded
+    # f-string) fails here instead of spamming the operator on first import.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        compile(body, "backend.py", "exec")
+
+
+def test_rendered_backend_has_no_mangled_backslash_escapes(monkeypatch) -> None:
+    """Single-backslash escapes in the embedded f-string are silently mangled.
+
+    ``\\b`` becomes a backspace (0x08) and other regex classes lose their
+    backslash when the outer ``setup_script`` f-string is evaluated. Both forms
+    corrupt regexes in the deployed backend without raising at import time, so
+    guard the rendered body directly: it must not contain a raw control byte,
+    and every regex-metacharacter class must keep its literal backslash.
+    """
+    body = _render_backend_body(monkeypatch)
+    # A mangled ``\b`` collapses to a literal backspace control byte.
+    assert "\x08" not in body, "rendered backend contains a backspace byte (mangled \\b escape)"
+    # Regexes that should reach the backend intact (single backslash preserved).
+    for needle in (r"\b(?:sim", r"\b(agent-run-", r"\b(?:run|start|submit|launch)", r"(\d+)"):
+        assert needle in body, f"expected literal regex {needle!r} in rendered backend"
 
 
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
