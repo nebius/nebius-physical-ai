@@ -377,13 +377,18 @@ def _provision_object_storage(
         return None
 
     typer.echo(
-        "\nObject storage: enter an existing bucket name to reuse it, "
-        "or press Enter to have npa create a default npa-bucket for this project."
+        "\nObject storage: enter a bucket name to reuse it (or create it if it "
+        "does not exist yet), or press Enter to use npa's default bucket for this "
+        "project. The default name is derived from your tenant + project, so it "
+        "is stable across runs and reused rather than duplicated."
     )
     bucket_name = ask("Object-storage bucket name", default=existing_bucket).strip()
     if not bucket_name:
         bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
-        typer.echo("  No bucket name provided; npa will create a default bucket.")
+        typer.echo(
+            f"  No bucket name provided; using npa's default bucket "
+            f"'{bucket_name}' (reused if it already exists)."
+        )
 
     # Whether the named bucket already exists: True (reuse), False (create), or
     # None when the search itself could not run. Only prompt for new-bucket

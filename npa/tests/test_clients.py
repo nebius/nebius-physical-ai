@@ -813,6 +813,37 @@ def test_nebius_ensure_bucket_applies_max_size_on_create(mocker) -> None:
     assert args[args.index("--default-storage-class") + 1] == "standard"
 
 
+def test_nebius_ensure_bucket_reuses_on_already_exists_conflict(mocker) -> None:
+    # Existence check missed the bucket (race / stale page), so create races an
+    # existing bucket. When it turns out to be in this project, reuse it instead
+    # of failing with a name conflict.
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=NebiusError("nebius storage bucket create failed: AlreadyExists"),
+    )
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={"metadata": {"name": "npa-bucket-abc"}},
+    )
+
+    assert nebius.ensure_bucket("project", "npa-bucket-abc") == "npa-bucket-abc"
+
+
+def test_nebius_ensure_bucket_reports_clear_conflict_when_name_taken_elsewhere(mocker) -> None:
+    # Name is globally taken but not in this project -> a real, actionable
+    # conflict rather than a raw create error.
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=NebiusError("AlreadyExists: bucket name is taken"),
+    )
+    mocker.patch("npa.clients.nebius.get_bucket_by_name", return_value=None)
+
+    with pytest.raises(NebiusError, match="already taken"):
+        nebius.ensure_bucket("project", "npa-bucket-abc")
+
+
 def test_nebius_ensure_bucket_applies_enhanced_storage_class(mocker) -> None:
     mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
     run = mocker.patch("npa.clients.nebius._run")

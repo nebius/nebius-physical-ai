@@ -332,6 +332,11 @@ def _is_not_found(message: str) -> bool:
     return "notfound" in lowered or "not found" in lowered or "resourcenotfound" in lowered
 
 
+def _is_already_exists(message: str) -> bool:
+    lowered = message.lower()
+    return "alreadyexists" in lowered or "already exists" in lowered
+
+
 def _normalize_bucket_name(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
@@ -711,7 +716,24 @@ def ensure_bucket(
     ]
     if max_size_bytes > 0:
         args += ["--max-size-bytes", str(max_size_bytes)]
-    _run(args)
+    try:
+        _run(args)
+    except NebiusError as exc:
+        # Bucket names are globally unique, so a create can race an existing
+        # bucket (e.g. a prior run, or an existence check that missed it). Never
+        # fail the flow on a name conflict: reuse the bucket when it turns out to
+        # live in this project, and only surface a clear conflict when the name
+        # is taken elsewhere and thus unusable here.
+        if not _is_already_exists(str(exc)):
+            raise
+        if get_bucket_by_name(project_id, bucket_name) is not None:
+            return bucket_name
+        raise NebiusError(
+            f"Object-storage bucket name '{bucket_name}' is already taken "
+            "(bucket names are globally unique) and is not in project "
+            f"{project_id}. Re-run `npa configure` and enter a different, "
+            "unused bucket name."
+        ) from exc
     return bucket_name
 
 
