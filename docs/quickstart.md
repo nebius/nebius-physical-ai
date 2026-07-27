@@ -342,12 +342,15 @@ S3 bucket and access key); use `npa configure --show` for a read-only view of
 the file layout, or `npa configure --no-provision` to enter existing S3
 credentials by hand.
 
-### 5a. Your first result: zero-GPU inference (Nebius Token Factory)
+### 5a. Verify the path works: zero-GPU inference (Nebius Token Factory)
 
-The cheapest way to get a real result on Nebius is
-[Token Factory](https://tokenfactory.nebius.com/) hosted inference —
-OpenAI-compatible, zero-GPU, and it needs only a `NEBIUS_TOKEN_FACTORY_KEY`
-(no cluster, registry, or S3). Add the key with `npa configure` (or
+Nebius AI Cloud — GPU clusters, managed Kubernetes, and object storage — is the
+main substrate `npa` targets; the flagship GPU workload is Cosmos (Section 7).
+Before requesting GPUs, though, you can confirm the whole NPA→Nebius path works
+with a zero-GPU smoke test: [Token Factory](https://tokenfactory.nebius.com/)
+hosted inference is OpenAI-compatible and needs only a `NEBIUS_TOKEN_FACTORY_KEY`
+(no cluster, registry, or S3), so it exercises your credentials and connectivity
+without spending GPU-hours. Add the key with `npa configure` (or
 `export NEBIUS_TOKEN_FACTORY_KEY=v1...`), then confirm it authenticates:
 
 ```bash
@@ -484,7 +487,8 @@ RT-core-only (L40S / RTX Pro 6000); see its guide before choosing GPU type.
 
 ## 8. Do more with npa
 
-With install → `npa configure` → a first cloud result done, build outward:
+With install → `npa configure` → your first GPU workload on Nebius AI Cloud
+(Section 7) done, build outward:
 
 - **Run workbench workloads** — NVIDIA Cosmos (Section 7), vlm-eval, sim2real,
   and more. See [Workbench Getting Started](workbench/getting-started.md) for

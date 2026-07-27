@@ -90,20 +90,19 @@ npa configure
 
 Full account/credential detail: [docs/quickstart.md](docs/quickstart.md).
 
-### 3. Your first cloud result
+### 3. Run your first cloud workload
 
-[Nebius Token Factory](https://tokenfactory.nebius.com/) zero-GPU inference is
-the cheapest way to get a real result — it needs only a
-`NEBIUS_TOKEN_FACTORY_KEY` (add it during `npa configure`), no cluster or GPU:
+Nebius AI Cloud — GPU clusters, managed Kubernetes, and object storage — is the
+substrate `npa` is built for. Sanity-check your credentials with
+`npa workbench health preflight`, then launch a real GPU workload: the flagship
+is [NVIDIA Cosmos](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos), or
+pick any robot/simulator from the [robot guides](docs/workbench/guides/README.md)
+to go from a public dataset to a trained-and-evaluated policy on Nebius GPUs.
 
-```bash
-npa workbench token-factory verify        # confirm the key authenticates
-printf 'Explain sim-to-real transfer in one sentence.\n' > /tmp/prompts.txt
-npa workbench token-factory generate \
-  --input-path /tmp/prompts.txt --output-path /tmp/tf-generations.jsonl --output json
-```
-
-See [docs/workbench/token-factory.md](docs/workbench/token-factory.md).
+> **Just want to confirm the NPA→Nebius path works first?**
+> [Nebius Token Factory](docs/workbench/token-factory.md) hosted inference is
+> zero-GPU and needs only a `NEBIUS_TOKEN_FACTORY_KEY` (no cluster or GPU) — a
+> cheap smoke test of your credentials, not the destination. AI Cloud GPUs are.
 
 ---
 
