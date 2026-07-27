@@ -278,7 +278,23 @@ def _resource_id_from_nebius_error(message: str, *, prefix: str) -> str:
 
 def _is_permission_denied(message: str) -> bool:
     lowered = message.lower()
-    return "permissiondenied" in lowered or "permission denied" in lowered or "no permission" in lowered
+    return (
+        "permissiondenied" in lowered
+        or "permission denied" in lowered
+        or "no permission" in lowered
+        # Nebius object storage reports authorization failures as AccessDenied.
+        or "accessdenied" in lowered
+        or "access denied" in lowered
+    )
+
+
+def is_permission_denied(message: str) -> bool:
+    """Public predicate: does *message* look like a Nebius permission/access error?
+
+    Lets callers (e.g. `npa configure`) render actionable IAM guidance instead of
+    a raw rpc dump when provisioning is blocked by missing permissions.
+    """
+    return _is_permission_denied(message)
 
 
 def _is_not_found(message: str) -> bool:

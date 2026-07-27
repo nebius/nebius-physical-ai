@@ -573,7 +573,11 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
 
     def boom(*_args, **_kwargs):
-        raise nebius_module.NebiusError("PermissionDenied")
+        # Mirror the real Nebius object-storage authorization failure.
+        raise nebius_module.NebiusError(
+            "nebius storage bucket list failed (exit 15):\n"
+            "Error: rpc error: code = PermissionDenied desc = AccessDenied: Access denied"
+        )
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", boom)
 
@@ -602,6 +606,11 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
 
     assert result.exit_code == 0, result.output
     assert "Could not auto-provision" in result.output
+    # Access-denied provisioning should surface actionable IAM guidance, not a
+    # bare rpc dump, before falling back to manual entry.
+    assert "access denied" in result.output.lower()
+    assert "editors' role" in result.output
+    assert "re-run `npa configure`" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"
     assert creds["storage"]["aws_secret_access_key"] == "manual-secret"

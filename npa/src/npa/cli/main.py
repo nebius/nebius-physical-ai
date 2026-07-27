@@ -375,7 +375,19 @@ def _provision_object_storage(
             on_status=lambda msg: typer.echo(f"  - {msg}"),
         )
     except nebius_client.NebiusError as exc:
-        typer.echo(f"  Could not auto-provision object storage: {exc}")
+        if nebius_client.is_permission_denied(str(exc)):
+            typer.echo(
+                "  Could not auto-provision object storage: access denied. Your "
+                "Nebius identity is not authorized to manage storage in this project."
+            )
+            typer.echo(
+                "  Fix: ask a project admin to grant your user (or service account) "
+                "the project 'editors' role, then re-run `npa configure`. A newly "
+                "granted role can take ~a minute to propagate, so a retry may succeed."
+            )
+            typer.echo(f"  Underlying error: {exc}")
+        else:
+            typer.echo(f"  Could not auto-provision object storage: {exc}")
         return None
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"  Could not auto-provision object storage: {exc}")

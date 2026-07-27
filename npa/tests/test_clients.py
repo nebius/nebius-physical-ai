@@ -718,6 +718,19 @@ def test_nebius_bucket_exists(mocker) -> None:
     assert nebius.bucket_exists("project", "other") is False
 
 
+def test_is_permission_denied_matches_access_denied() -> None:
+    # Object storage reports authorization failures as AccessDenied; the
+    # predicate must catch it (and the gRPC PermissionDenied code) so configure
+    # can show IAM guidance instead of a raw rpc dump.
+    assert nebius.is_permission_denied(
+        "nebius storage bucket list failed (exit 15): code = PermissionDenied "
+        "desc = AccessDenied: Access denied"
+    )
+    assert nebius.is_permission_denied("AccessDenied: Access denied")
+    assert nebius.is_permission_denied("Permission denied")
+    assert not nebius.is_permission_denied("NotFound: bucket missing")
+
+
 def test_nebius_bucket_list_requests_large_page_size(mocker) -> None:
     """Bucket existence checks must page-size past the CLI default.
 
