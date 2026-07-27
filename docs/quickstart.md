@@ -96,23 +96,21 @@ Full per-platform steps — Nebius CLI, WSL2 setup, operator tools:
 If you prefer not to activate the venv, call its interpreter directly with
 `./.venv/bin/npa`. The rest of this guide assumes the venv is activated.
 
-The base install is the core CLI, with no GPU or database wheels. Add extras
-when a workload requires them:
+The base install is fully capable: a plain `pip install -e npa` already
+includes every non-GPU workbench dependency (dataframe/reporting, LanceDB, the
+Rerun viewer, and the local eval/agent server). There is no separate
+`npa[full]` step. Only these extras are opt-in:
 
 ```bash
-pip install -e "npa[full]"      # everything below except the GPU extras
-pip install -e "npa[data]"      # pandas/scipy/matplotlib curation + reports
-pip install -e "npa[lancedb]"   # LanceDB workbench tool
-pip install -e "npa[viz]"       # Rerun viewer/recording integration
-pip install -e "npa[server]"    # FastAPI policy/eval server
-pip install -e "npa[adapter]"   # dataset conversion
-pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU)
-pip install -e "npa[groot]"     # GR00T SDK (GPU)
+pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
+pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
+pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff); see Section 6
 ```
 
-Before running cloud workloads (Sections 5+), install `npa[full]` so every
-workbench tool has its dependencies. You also need the Nebius CLI —
+The GPU wheels above are only needed to run those engines **locally** — cloud
+jobs execute them inside the Nebius images they launch. To run cloud workloads
+(Sections 5+) the base install is enough; you also need the Nebius CLI —
 see [docs/install.md § Nebius CLI](install.md#4-nebius-cli-required).
 
 ## 4. Configure credentials

@@ -26,6 +26,15 @@ a versioned heading when a release is cut.
 
 ### Repo hardening
 
+- The base `pip install -e npa` is now fully capable: the previous
+  `data`/`lancedb`/`viz`/`server` extras (dataframe/reporting, LanceDB, Rerun
+  viewer, FastAPI eval/agent server) are folded into the default install, so
+  there is no longer an `npa` vs `npa[full]` split. Only GPU/simulation wheels
+  (`npa[genesis]`, `npa[groot]`, `npa[sonic]`) and the optional agent adapters
+  (`npa[agent-eval]`, `npa[agent-trace]`) remain opt-in. The `full`, `data`,
+  `lancedb`, `viz`, and `server` extras are retained as empty no-op aliases so
+  existing `npa[full]`/`npa[server]` commands keep working. Supersedes the
+  earlier "base install is lightweight" split below.
 - Shipped SkyPilot examples and cookbooks now use the `<your-registry-id>`
   placeholder instead of the first-party registry ID; a guardrail test keeps
   concrete registry IDs out of shipped examples.

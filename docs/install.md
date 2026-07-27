@@ -64,20 +64,24 @@ npa --version
 Prefer [`uv`](https://docs.astral.sh/uv/)? It can install Python and create the
 env in one go: `uv venv .venv && source .venv/bin/activate && uv pip install -e npa`.
 
-The base install is the core CLI, with no GPU or database wheels. Add extras
-when a workload requires them:
+The base install is fully capable: a plain `pip install -e npa` already
+includes every non-GPU workbench dependency (dataframe/reporting, LanceDB, the
+Rerun viewer, and the local eval/agent server). There is no separate
+`npa[full]` step. Only these extras are opt-in:
 
 ```bash
-pip install -e "npa[full]"      # everything below except the GPU extras
-pip install -e "npa[data]"      # pandas/scipy/matplotlib curation + reports
-pip install -e "npa[lancedb]"   # LanceDB workbench tool
-pip install -e "npa[viz]"       # Rerun viewer/recording integration
-pip install -e "npa[server]"    # FastAPI policy/eval server
-pip install -e "npa[adapter]"   # dataset conversion
-pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU)
-pip install -e "npa[groot]"     # GR00T SDK (GPU)
+pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
+pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
+pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
+pip install -e "npa[agent-eval]"  # guardrails-ai output validators (optional)
+pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
 ```
+
+The GPU/simulation wheels above are only needed when you run those engines
+**locally**; cloud jobs execute them inside the Nebius images they launch. The
+`full`, `data`, `lancedb`, `viz`, and `server` extras still resolve (as no-ops
+now folded into the base install) so older `npa[full]` commands keep working.
 
 Activate the venv in every new shell (`source .venv/bin/activate`), or call the
 interpreter directly with `./.venv/bin/npa` without activating.

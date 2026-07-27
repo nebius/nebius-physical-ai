@@ -35,8 +35,10 @@ Consumers who do not want a source checkout can pin a released artifact:
 pip install "npa @ https://github.com/nebius/nebius-physical-ai/releases/download/vX.Y.Z/npa-X.Y.Z-py3-none-any.whl"
 ```
 
-The base wheel is lightweight; add extras as needed
-(`npa[full]`, `npa[data]`, `npa[lancedb]`, `npa[viz]`, `npa[server]`, ...).
+The base wheel ships the full non-GPU workbench capability set; only the GPU
+and dev extras are opt-in (`npa[genesis]`, `npa[groot]`, `npa[sonic]`,
+`npa[dev]`). The legacy `npa[full]`/`npa[data]`/`npa[lancedb]`/`npa[viz]`/
+`npa[server]` extras still resolve as no-ops for backward compatibility.
 
 ## Enabling PyPI publishing (optional, not yet enabled)
 
