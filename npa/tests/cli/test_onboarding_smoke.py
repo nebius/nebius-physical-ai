@@ -8,7 +8,10 @@ hygiene), and the advertised first real success must keep working offline.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
 
 from typer.testing import CliRunner
 
@@ -44,6 +47,48 @@ def test_setup_guidance_contains_no_raw_ip_address() -> None:
             "use a placeholder such as <your-byovm-host> instead."
         )
         assert "<your-byovm-host>" in result.output
+
+
+def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
+    """The README verify step `npa --version` must be warning-clean.
+
+    It once printed ``SyntaxWarning: invalid escape sequence '\\s'`` from an
+    embedded f-string in ``npa/src/npa/cli/agent.py`` (which `npa --version`
+    imports). Reproduce the first-run experience in a subprocess with a fresh
+    bytecode cache so every ``npa`` module compiles from source and any escape
+    warning would actually surface, then assert none originates from the
+    package. Runs the module entrypoint directly so it works without ``npa``
+    being on ``PATH``.
+    """
+    env = dict(os.environ)
+    # Fresh, isolated bytecode cache -> our modules recompile from source, so a
+    # stray invalid escape re-appears here instead of being masked by a warm
+    # ``__pycache__``. Show every SyntaxWarning rather than the default "once".
+    env["PYTHONPYCACHEPREFIX"] = str(tmp_path / "pycache")
+    env["PYTHONWARNINGS"] = "always::SyntaxWarning"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.argv = ['npa', '--version']; "
+            "from npa.cli.main import app_entry; app_entry()",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    combined = proc.stdout + proc.stderr
+    # A SyntaxWarning attributable to the shipped package (path under src/npa/);
+    # third-party dependency warnings live under site-packages and are ignored.
+    package_warnings = [
+        line
+        for line in combined.splitlines()
+        if "SyntaxWarning" in line and re.search(r"[\\/]src[\\/]npa[\\/]", line)
+    ]
+    assert not package_warnings, "npa emitted SyntaxWarning(s):\n" + "\n".join(package_warnings)
+    assert "invalid escape sequence" not in combined, combined
+    assert proc.returncode == 0, combined
+    assert "npa" in proc.stdout
 
 
 def test_quickstart_first_success_fixture_is_packaged() -> None:
