@@ -533,6 +533,33 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
     assert "live-plan-only-token" not in result.output
 
 
+def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "1")
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NPA_SPECS / "vlm-eval-single.yaml"),
+            "--run-id",
+            "env-clear-is-test-only",
+            "--plan-only",
+            "--registry",
+            "cr.example.invalid/reg",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "status: PLANNED" in result.output
+    assert "image_id: docker:cr.example.invalid/reg/npa-cosmos:" in result.output
+
+
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:

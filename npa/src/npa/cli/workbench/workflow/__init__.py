@@ -429,12 +429,6 @@ def submit_cmd(
         # ``none`` / ``default`` clears workbench image pins so tasks use the
         # SkyPilot default image (needed when registry images fail k8s apt-ssh).
         image_value = image.strip()
-        if not image_value and os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {
-            "1",
-            "true",
-            "yes",
-        }:
-            image_value = "none"
         if image_value.lower() in {"none", "default", "-"}:
             image_overrides["*"] = ""
         elif image_value:
