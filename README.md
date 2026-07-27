@@ -88,6 +88,12 @@ export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc
 npa configure
 ```
 
+`npa configure` prompts for optional model/inference tokens and links each
+one's setup guide inline. Create them step by step:
+[Hugging Face](docs/workbench/huggingface-token.md) ·
+[NVIDIA NGC](docs/workbench/ngc-api-key.md) ·
+[Nebius Token Factory](docs/workbench/token-factory-key.md).
+
 Full account/credential detail: [docs/quickstart.md](docs/quickstart.md).
 
 ### 3. Run your first cloud workload

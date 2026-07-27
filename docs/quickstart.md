@@ -223,6 +223,16 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 | Object-storage endpoint | `storage.endpoint_url` | `AWS_ENDPOINT_URL`, `NEBIUS_S3_ENDPOINT`, `NPA_STORAGE_ENDPOINT` | S3-compatible storage is not supplied by managed project config |
 | Object-storage bucket | `storage.bucket` | `NPA_CHECKPOINT_BUCKET`, `NEBIUS_S3_BUCKET` | A workflow needs a default checkpoint or artifact bucket |
 
+**How to create each token** (step-by-step, including where to click):
+
+- Hugging Face — [docs/workbench/huggingface-token.md](workbench/huggingface-token.md)
+- NVIDIA NGC — [docs/workbench/ngc-api-key.md](workbench/ngc-api-key.md)
+- Nebius Token Factory — [docs/workbench/token-factory-key.md](workbench/token-factory-key.md)
+
+`npa configure` links these inline at each prompt, normalizes pasted values
+(stripping stray quotes or a `Bearer` prefix), and warns if a Token Factory key
+does not look like a `v1.` key.
+
 When `tokens.HF_TOKEN` is loaded, `npa` forwards it to remote services as both
 `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN`.
 

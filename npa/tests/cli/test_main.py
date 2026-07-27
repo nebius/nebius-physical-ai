@@ -647,6 +647,63 @@ def _bootstrap_capture(calls: list[dict]):
     return fake_bootstrap
 
 
+def test_normalize_pasted_secret_strips_quotes_and_auth_prefixes() -> None:
+    n = cli_main._normalize_pasted_secret
+    assert n('  "hf_abc123"  ') == "hf_abc123"
+    assert n("Bearer v1.xyz") == "v1.xyz"
+    assert n("bearer v1.xyz") == "v1.xyz"
+    assert n("Authorization: Bearer nvapi-xyz") == "nvapi-xyz"
+    assert n("'v1.abc'") == "v1.abc"
+    assert n('"Bearer v1.abc"') == "v1.abc"
+    # A bare token is unchanged.
+    assert n("hf_plain") == "hf_plain"
+    assert n("") == ""
+
+
+def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(
+    monkeypatch, tmp_path
+) -> None:
+    """Pasted Bearer/quoted tokens are stored bare; a non-v1. TF key warns."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
+
+    # proj, tenant, region, registry, bucket, hf (Bearer+quoted), ai (skip),
+    # token factory (quoted, not v1.), ngc (Bearer), alias.
+    answers = "\n".join(
+        [
+            "project-1",
+            "tenant-1",
+            "",
+            "",
+            "my-bucket",
+            'Bearer "hf_abc123"',
+            "",
+            '"nebius-iam-looking-token"',
+            "Bearer nvapi-xyz",
+            "",
+        ]
+    ) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "does not look like a Token Factory key" in result.output
+    creds = yaml.safe_load(creds_path.read_text())
+    assert creds["tokens"]["HF_TOKEN"] == "hf_abc123"
+    assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "nebius-iam-looking-token"
+    assert creds["ngc"]["api_key"] == "nvapi-xyz"
+
+
 def test_configure_typed_existing_bucket_is_reused_without_create_prompts(
     monkeypatch, tmp_path
 ) -> None:

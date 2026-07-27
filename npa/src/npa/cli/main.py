@@ -91,17 +91,20 @@ tokens:
   # Get one at https://huggingface.co/settings/tokens -> "Create new token"
   # (a "Read" token is enough). For gated models (e.g. Llama, some GR00T assets),
   # also click "Agree and access repository" on each model page while signed in.
+  # Step-by-step guide: docs/workbench/huggingface-token.md
   HF_TOKEN: hf_REPLACE_ME
   # Optional: Nebius AI Cloud API key (for Nebius AI Cloud APIs).
   NEBIUS_AI_CLOUD_KEY: <paste-your-nebius-ai-cloud-api-key>
   # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
   # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
   # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
+  # Step-by-step guide: docs/workbench/token-factory-key.md
   NEBIUS_TOKEN_FACTORY_KEY: <paste-your-token-factory-api-key>  # e.g. v1.XXXXXXXX...
 ngc:
   # NVIDIA NGC API key (for GR00T / Cosmos NVIDIA container + model pulls).
   # Get one at https://org.ngc.nvidia.com/setup/api-key -> "Generate API Key"
   # (sign in / create a free NGC account first). The key starts with "nvapi-".
+  # Step-by-step guide: docs/workbench/ngc-api-key.md
   api_key: nvapi-REPLACE_ME
   # org: optional-ngc-org
   # team: optional-ngc-team
@@ -271,6 +274,31 @@ def _endpoint_for_region(region: str) -> str:
     """Return the Nebius S3-compatible storage endpoint URL for *region*."""
     reg = (region or DEFAULT_REGION).strip() or DEFAULT_REGION
     return f"https://storage.{reg}.nebius.cloud"
+
+
+def _normalize_pasted_secret(value: str) -> str:
+    """Clean a pasted credential: drop wrapping quotes and auth prefixes.
+
+    Users routinely paste a token copied from a curl example or a password
+    manager with surrounding quotes or an ``Authorization: Bearer`` prefix. Those
+    silently break auth (the stored value is not the bare token), so strip them.
+    """
+    text = (value or "").strip()
+    # Unwrap matching surrounding quotes (may wrap a "Bearer ..." string).
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    # Drop a pasted "Authorization:" header label.
+    if text.lower().startswith("authorization:"):
+        text = text.split(":", 1)[1].strip()
+    # Drop a leading auth scheme (Bearer/Token), case-insensitively.
+    for scheme in ("bearer ", "token "):
+        if text.lower().startswith(scheme):
+            text = text[len(scheme):].strip()
+            break
+    # Unwrap again in case the scheme was inside the quotes.
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    return text
 
 
 def _gb_to_bytes(value: str) -> int:
@@ -573,35 +601,58 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         }
 
     typer.echo(
-        "\nHugging Face token: create one at "
-        "https://huggingface.co/settings/tokens (a read token is enough). "
+        "\nHugging Face token: create a Read token at "
+        "https://huggingface.co/settings/tokens (it starts with 'hf_'). "
         "For gated models, also click 'Agree and access repository' on each "
-        "model page while signed in."
+        "model page while signed in. Guide: docs/workbench/huggingface-token.md."
     )
-    hf_token = ask(
-        "Hugging Face token (HF_TOKEN)",
-        default=existing_credentials.hf_token,
-        secret=True,
+    hf_token = _normalize_pasted_secret(
+        ask(
+            "Hugging Face token (HF_TOKEN)",
+            default=existing_credentials.hf_token,
+            secret=True,
+        )
     )
-    ai_cloud_api_key = ask(
-        "Nebius AI Cloud API key (NEBIUS_AI_CLOUD_KEY, optional)",
-        default=existing_credentials.ai_cloud_api_key,
-        secret=True,
+    ai_cloud_api_key = _normalize_pasted_secret(
+        ask(
+            "Nebius AI Cloud API key (NEBIUS_AI_CLOUD_KEY, optional)",
+            default=existing_credentials.ai_cloud_api_key,
+            secret=True,
+        )
     )
-    token_factory_api_key = ask(
-        "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
-        default=existing_credentials.token_factory_api_key,
-        secret=True,
+    typer.echo(
+        "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
+        "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
+        "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
+        "Guide: docs/workbench/token-factory-key.md."
     )
+    token_factory_api_key = _normalize_pasted_secret(
+        ask(
+            "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
+            default=existing_credentials.token_factory_api_key,
+            secret=True,
+        )
+    )
+    if token_factory_api_key and not token_factory_api_key.startswith("v1."):
+        typer.echo(
+            "  Warning: that does not look like a Token Factory key (they start "
+            "with 'v1.'). It is a separate credential from your Nebius IAM/CLI "
+            "token — pasting an IAM token here returns 403. Verify with "
+            "`npa workbench token-factory verify`; see "
+            "docs/workbench/token-factory-key.md."
+        )
     typer.echo(
         "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
         "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
-        "account first). The key starts with 'nvapi-'."
+        "account first). The key starts with 'nvapi-'. "
+        "Guide: docs/workbench/ngc-api-key.md."
     )
-    ngc_api_key = ask(
-        "NVIDIA NGC API key (NGC_API_KEY)",
-        default=existing_credentials.ngc_api_key,
-        secret=True,
+    ngc_api_key = _normalize_pasted_secret(
+        ask(
+            "NVIDIA NGC API key (NGC_API_KEY)",
+            default=existing_credentials.ngc_api_key,
+            secret=True,
+        )
     )
 
     credentials_payload: dict[str, object] = {

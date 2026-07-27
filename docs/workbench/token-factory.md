@@ -20,6 +20,10 @@ header. NPA reads it from the `NEBIUS_TOKEN_FACTORY_KEY` environment variable (o
 > Factory. You must mint a Token Factory key in the Token Factory console
 > (step 1 below); having `nebius` CLI access is not enough.
 
+> **Just need to create and set the key?** See the focused
+> [Token Factory key setup guide](token-factory-key.md). This page is the full
+> integration reference.
+
 ## 1. Register and get an API key
 
 Token Factory has its own console, separate from the main Nebius cloud console.
