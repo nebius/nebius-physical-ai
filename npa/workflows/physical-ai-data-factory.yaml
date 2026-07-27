@@ -121,8 +121,11 @@ resources:
     # (auto-detected, or set NPA_COSMOS_VARIANT_PARALLELISM). N variants then run
     # in ~one variant's wall-clock instead of N x. Keep :1 for a single-GPU run.
     accelerators: RTXPRO6000:1
-    cpus: 4
-    memory: 16Gi
+    # Host-side model loading/checkpoint materialization scales with the
+    # multi-GPU variant fan-out. Keep enough CPU/RAM headroom for a 4-GPU
+    # override instead of OOM-killing four concurrent Cosmos workers.
+    cpus: 16
+    memory: 128Gi
   cpu:
     cloud: kubernetes
     cpus: 4
