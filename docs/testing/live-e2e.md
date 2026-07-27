@@ -27,6 +27,13 @@ Runs stay manual and on demand. Do not install a cron entry, systemd timer,
 background process job, GitHub Actions schedule, or any other automatic trigger for
 `scripts/live-e2e.sh`.
 
+The daily dev-VM workflow (`docs/testing/dev-vm-daily.md`) is compatible with
+this rule: its scheduled path never triggers the GPU `live-gpu` tier. That tier
+is opt-in, manual `workflow_dispatch` only, and still delegates to
+`scripts/live-e2e.sh` with the teardown verification described below. Cheaper,
+self-cleaning tiers (`unit`, `e2e`, `e2e-serverless`) are what run on the daily
+schedule.
+
 ## Prerequisites
 
 Run from a SkyPilot-capable checkout after installing the normal NPA development
