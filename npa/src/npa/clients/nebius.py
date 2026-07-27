@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import warnings
 from datetime import datetime, timezone
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from urllib import request as urllib_request
@@ -103,8 +103,8 @@ def _require_nebius() -> str:
 _REUSE_IAM_TOKEN_ENV = "NPA_REUSE_IAM_TOKEN"
 
 
-def _cli_env() -> dict[str, str]:
-    """Environment for ``nebius`` CLI subprocesses.
+def nebius_cli_env(base: "Mapping[str, str] | None" = None) -> dict[str, str]:
+    """Return a sanitized environment for ``nebius`` CLI subprocesses.
 
     A stale ambient ``NEBIUS_IAM_TOKEN`` (an expired token, or one minted for a
     different tenant/project, left in the shell or a cloud-env) is used by the
@@ -113,12 +113,16 @@ def _cli_env() -> dict[str, str]:
     ``storage bucket list`` return ``AccessDenied``/``Unauthenticated`` even
     though ``nebius iam get-access-token`` works. Drop it so the CLI falls back
     to the profile — unless the caller explicitly opts into reuse via
-    ``NPA_REUSE_IAM_TOKEN`` (e.g. CI/VM injecting a short-lived token). Mirrors
-    ``npa.soperator.lifecycle._nebius_cli_env`` so every ``nebius`` invocation
-    behaves consistently. Python-level token resolution (``get_iam_token``)
-    still reads the env var directly, so token-only contexts keep working.
+    ``NPA_REUSE_IAM_TOKEN`` (e.g. CI/VM injecting a short-lived token). This is
+    the single source of truth for that behavior across the repo (mirrors
+    ``npa.soperator.lifecycle._nebius_cli_env`` and the Terraform env builders).
+    Python-level token resolution (``get_iam_token``) still reads the env var
+    directly, so token-only contexts keep working.
+
+    *base* lets callers sanitize an already-customized environment; when omitted
+    the current process environment is used.
     """
-    env = os.environ.copy()
+    env = dict(base) if base is not None else os.environ.copy()
     reuse = env.get(_REUSE_IAM_TOKEN_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
     if not reuse:
         env.pop("NEBIUS_IAM_TOKEN", None)
@@ -132,7 +136,7 @@ def _run(args: list[str], *, check: bool = True) -> str:
         [nebius] + args,
         capture_output=True,
         text=True,
-        env=_cli_env(),
+        env=nebius_cli_env(),
     )
     if check and result.returncode != 0:
         stderr = result.stderr.strip()

@@ -581,6 +581,8 @@ class ServerlessClient:
         """Mint a short-lived IAM token for Nebius Container Registry pulls."""
 
         # Use real subprocess (not self._runner) so unit-test fakes for ai.* stay isolated.
+        from npa.clients.nebius import nebius_cli_env
+
         try:
             result = subprocess.run(
                 [self._nebius_bin, "iam", "get-access-token"],
@@ -589,6 +591,9 @@ class ServerlessClient:
                 stderr=subprocess.PIPE,
                 timeout=30,
                 check=False,
+                # A stale ambient NEBIUS_IAM_TOKEN would be minted into the pull
+                # secret and 401 on image pulls; use the active profile instead.
+                env=nebius_cli_env(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ServerlessClientError(
@@ -1014,6 +1019,8 @@ class ServerlessClient:
         env: Mapping[str, str] | None = None,
         wrap_timeout: bool = True,
     ) -> subprocess.CompletedProcess[str]:
+        from npa.clients.nebius import nebius_cli_env
+
         full_args = [self._nebius_bin, *args]
         logger.debug("Running Nebius CLI: %s", shlex.join(_redact_cli_args(full_args)))
         effective_timeout = timeout or self._timeout
@@ -1023,7 +1030,9 @@ class ServerlessClient:
                 capture_output=True,
                 text=True,
                 timeout=effective_timeout,
-                env=dict(env) if env is not None else None,
+                # Always sanitize a stale NEBIUS_IAM_TOKEN so the CLI uses the
+                # active profile (whether or not a custom env was supplied).
+                env=nebius_cli_env(env),
             )
         except subprocess.TimeoutExpired as exc:
             if not wrap_timeout:

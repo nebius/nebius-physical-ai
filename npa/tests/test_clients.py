@@ -726,13 +726,23 @@ def test_cli_env_strips_stale_iam_token(monkeypatch) -> None:
     # AccessDenied on storage calls; the CLI env must drop it by default.
     monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
     monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
-    assert "NEBIUS_IAM_TOKEN" not in nebius._cli_env()
+    assert "NEBIUS_IAM_TOKEN" not in nebius.nebius_cli_env()
 
 
 def test_cli_env_keeps_token_when_reuse_opt_in(monkeypatch) -> None:
     monkeypatch.setenv("NEBIUS_IAM_TOKEN", "injected-token")
     monkeypatch.setenv("NPA_REUSE_IAM_TOKEN", "1")
-    assert nebius._cli_env()["NEBIUS_IAM_TOKEN"] == "injected-token"
+    assert nebius.nebius_cli_env()["NEBIUS_IAM_TOKEN"] == "injected-token"
+
+
+def test_cli_env_sanitizes_provided_base(monkeypatch) -> None:
+    # Callers can sanitize an already-customized environment (e.g. one that adds
+    # KUBECONFIG); the stale token is still dropped from the provided base.
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+    base = {"NEBIUS_IAM_TOKEN": "stale", "KEEP": "yes"}
+    out = nebius.nebius_cli_env(base)
+    assert "NEBIUS_IAM_TOKEN" not in out
+    assert out["KEEP"] == "yes"
 
 
 def test_run_invokes_cli_without_stale_token(monkeypatch, mocker) -> None:

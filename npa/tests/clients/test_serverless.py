@@ -714,7 +714,9 @@ def test_wait_for_running_times_out() -> None:
         client.wait_for_running("project-1", "cosmos", timeout=0, poll_interval=0)
 
 
-def test_subprocess_env_is_not_used_for_nonsecret_args() -> None:
+def test_subprocess_env_is_sanitized_and_not_used_for_nonsecret_args(monkeypatch) -> None:
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
     observed_kwargs = {}
 
     def fake_runner(args, **kwargs):
@@ -732,7 +734,13 @@ def test_subprocess_env_is_not_used_for_nonsecret_args() -> None:
 
     client.create_endpoint(spec)
 
-    assert observed_kwargs["env"] is None
+    # _run passes a sanitized env: a stale NEBIUS_IAM_TOKEN is dropped so the CLI
+    # uses the active profile, and endpoint config still travels via --env args,
+    # never injected as extra process-env keys.
+    env = observed_kwargs["env"]
+    assert isinstance(env, dict)
+    assert "NEBIUS_IAM_TOKEN" not in env
+    assert "MODEL" not in env and "preset" not in env
 
 
 def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:

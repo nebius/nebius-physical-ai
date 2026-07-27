@@ -152,6 +152,8 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
 
     if not shutil.which("nebius"):
         return False
+    from npa.clients.nebius import nebius_cli_env
+
     try:
         result = runner(
             ["nebius", "iam", "get-access-token"],
@@ -159,6 +161,10 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
             stderr=subprocess.DEVNULL,
             timeout=30,
             check=False,
+            # Sanitize a stale NEBIUS_IAM_TOKEN so readiness reflects the active
+            # profile — the same identity provisioning actually uses. Otherwise a
+            # shadowing token reports "profile ready" while provisioning fails.
+            env=nebius_cli_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -170,6 +176,8 @@ def _list_nebius_profiles(*, runner: Callable[..., object] = subprocess.run) -> 
 
     if not shutil.which("nebius"):
         return []
+    from npa.clients.nebius import nebius_cli_env
+
     try:
         result = runner(
             ["nebius", "profile", "list"],
@@ -177,6 +185,7 @@ def _list_nebius_profiles(*, runner: Callable[..., object] = subprocess.run) -> 
             text=True,
             timeout=30,
             check=False,
+            env=nebius_cli_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return []

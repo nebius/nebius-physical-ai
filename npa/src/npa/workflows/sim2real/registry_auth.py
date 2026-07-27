@@ -12,6 +12,8 @@ from typing import Any
 def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
     """Return a short-lived IAM token for ``cr.*.nebius.cloud`` pulls."""
 
+    from npa.clients.nebius import nebius_cli_env
+
     try:
         result = subprocess.run(
             [nebius_cli, "iam", "get-access-token"],
@@ -20,6 +22,9 @@ def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
             stderr=subprocess.PIPE,
             timeout=30,
             check=False,
+            # A stale ambient NEBIUS_IAM_TOKEN would be minted into the pull
+            # secret and 401 on image pulls; use the active profile instead.
+            env=nebius_cli_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(
