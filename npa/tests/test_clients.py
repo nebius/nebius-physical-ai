@@ -345,11 +345,14 @@ def test_nebius_run_invokes_cli_and_maps_errors(mocker) -> None:
     )
 
     assert nebius._run(["iam", "get-access-token"]) == "ok"
-    run.assert_called_once_with(
-        ["/usr/bin/nebius", "iam", "get-access-token"],
-        capture_output=True,
-        text=True,
-    )
+    run.assert_called_once()
+    call = run.call_args
+    assert call.args[0] == ["/usr/bin/nebius", "iam", "get-access-token"]
+    assert call.kwargs["capture_output"] is True
+    assert call.kwargs["text"] is True
+    # A sanitized env is always passed so a stale NEBIUS_IAM_TOKEN cannot shadow
+    # the active profile.
+    assert isinstance(call.kwargs["env"], dict)
 
     run.return_value = subprocess.CompletedProcess(
         args=["nebius"], returncode=1, stdout="", stderr="nope\n"
@@ -716,6 +719,35 @@ def test_nebius_bucket_exists(mocker) -> None:
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     assert nebius.bucket_exists("project", "other") is False
+
+
+def test_cli_env_strips_stale_iam_token(monkeypatch) -> None:
+    # A stale ambient NEBIUS_IAM_TOKEN shadows the active profile and causes
+    # AccessDenied on storage calls; the CLI env must drop it by default.
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+    assert "NEBIUS_IAM_TOKEN" not in nebius._cli_env()
+
+
+def test_cli_env_keeps_token_when_reuse_opt_in(monkeypatch) -> None:
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "injected-token")
+    monkeypatch.setenv("NPA_REUSE_IAM_TOKEN", "1")
+    assert nebius._cli_env()["NEBIUS_IAM_TOKEN"] == "injected-token"
+
+
+def test_run_invokes_cli_without_stale_token(monkeypatch, mocker) -> None:
+    # End-to-end: `_run` must pass a sanitized env to the nebius subprocess.
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+    mocker.patch("npa.clients.nebius._require_nebius", return_value="/usr/bin/nebius")
+    run = mocker.patch(
+        "npa.clients.nebius.subprocess.run",
+        return_value=SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+    )
+
+    assert nebius._run(["storage", "bucket", "list"]) == "ok"
+    passed_env = run.call_args.kwargs["env"]
+    assert "NEBIUS_IAM_TOKEN" not in passed_env
 
 
 def test_is_permission_denied_matches_access_denied() -> None:

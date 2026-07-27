@@ -100,6 +100,31 @@ def _require_nebius() -> str:
     return path
 
 
+_REUSE_IAM_TOKEN_ENV = "NPA_REUSE_IAM_TOKEN"
+
+
+def _cli_env() -> dict[str, str]:
+    """Environment for ``nebius`` CLI subprocesses.
+
+    A stale ambient ``NEBIUS_IAM_TOKEN`` (an expired token, or one minted for a
+    different tenant/project, left in the shell or a cloud-env) is used by the
+    CLI in preference to the active profile's auto-refreshing exec-plugin
+    credential. That shadows a perfectly good profile, so calls like
+    ``storage bucket list`` return ``AccessDenied``/``Unauthenticated`` even
+    though ``nebius iam get-access-token`` works. Drop it so the CLI falls back
+    to the profile — unless the caller explicitly opts into reuse via
+    ``NPA_REUSE_IAM_TOKEN`` (e.g. CI/VM injecting a short-lived token). Mirrors
+    ``npa.soperator.lifecycle._nebius_cli_env`` so every ``nebius`` invocation
+    behaves consistently. Python-level token resolution (``get_iam_token``)
+    still reads the env var directly, so token-only contexts keep working.
+    """
+    env = os.environ.copy()
+    reuse = env.get(_REUSE_IAM_TOKEN_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    if not reuse:
+        env.pop("NEBIUS_IAM_TOKEN", None)
+    return env
+
+
 def _run(args: list[str], *, check: bool = True) -> str:
     """Run a nebius CLI command, return stdout."""
     nebius = _require_nebius()
@@ -107,6 +132,7 @@ def _run(args: list[str], *, check: bool = True) -> str:
         [nebius] + args,
         capture_output=True,
         text=True,
+        env=_cli_env(),
     )
     if check and result.returncode != 0:
         stderr = result.stderr.strip()

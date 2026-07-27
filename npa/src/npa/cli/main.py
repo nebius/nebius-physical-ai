@@ -377,13 +377,20 @@ def _provision_object_storage(
     except nebius_client.NebiusError as exc:
         if nebius_client.is_permission_denied(str(exc)):
             typer.echo(
-                "  Could not auto-provision object storage: access denied. Your "
-                "Nebius identity is not authorized to manage storage in this project."
+                "  Could not auto-provision object storage: the Nebius storage "
+                "service denied the request (AccessDenied)."
             )
             typer.echo(
-                "  Fix: ask a project admin to grant your user (or service account) "
-                "the project 'editors' role, then re-run `npa configure`. A newly "
-                "granted role can take ~a minute to propagate, so a retry may succeed."
+                "  npa runs the CLI as your active Nebius profile (any stale "
+                "NEBIUS_IAM_TOKEN in the environment is ignored). Reproduce with:\n"
+                f"    nebius storage bucket list --parent-id {project_id}"
+            )
+            typer.echo(
+                "  If that also fails, grant your identity the project 'editors' "
+                "role (or enable object storage for it) and re-run `npa configure` "
+                "— a newly granted role can take ~a minute to propagate. If it "
+                "succeeds but npa still fails, unset NPA_REUSE_IAM_TOKEN so npa "
+                "does not reuse an injected token."
             )
             typer.echo(f"  Underlying error: {exc}")
         else:
