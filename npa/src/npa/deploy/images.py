@@ -75,7 +75,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
-    "nebius-cli": "0.12.192",
+    "nebius-cli": "0.12.227",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
 }
