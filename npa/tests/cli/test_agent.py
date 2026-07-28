@@ -13,16 +13,37 @@ import pytest
 from typer import Exit
 from typer.testing import CliRunner
 
+import typer
+
 from npa.cli.agent import (
     AGENT_MEDIA_PREVIEW_CONTRACT,
     AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT,
     AGENT_UI_VERSION,
+    _coerce_cli_list,
     _normalize_llm_models,
     app,
     build_agent_urls,
 )
 
 runner = CliRunner()
+
+
+def test_coerce_cli_list_handles_unresolved_typer_option() -> None:
+    """deploy_cmd is called programmatically; an omitted list Option leaks an
+    OptionInfo that used to crash `for item in tf_var` with
+    'OptionInfo' object is not iterable. _coerce_cli_list must neutralize it."""
+    leaked = typer.Option([], "--tf-var")  # unresolved default -> OptionInfo
+    assert type(leaked).__name__ == "OptionInfo"
+    coerced = _coerce_cli_list(leaked)
+    assert coerced == []
+    # The whole point: the result is iterable without raising.
+    assert list(coerced) == []
+
+
+def test_coerce_cli_list_passthrough_and_none() -> None:
+    assert _coerce_cli_list(None) == []
+    assert _coerce_cli_list(["a", "b"]) == ["a", "b"]
+    assert _coerce_cli_list(("a", "b")) == ["a", "b"]
 
 
 def _agent_ui_bundle() -> str:

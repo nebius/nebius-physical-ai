@@ -1185,6 +1185,27 @@ def test_nebius_profile_ready_uses_get_access_token(monkeypatch) -> None:
     assert calls == [["nebius", "iam", "get-access-token"]]
 
 
+def test_nebius_profile_ready_strips_ambient_token(monkeypatch) -> None:
+    """A stale ambient NEBIUS_IAM_TOKEN must not be inherited by the probe, so
+    the check reflects whether the profile can mint a token (matches the CLI's
+    behavior in a clean shell)."""
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN_FILE", "/tmp/stale")
+    seen_env: dict[str, str] = {}
+
+    class _Result:
+        returncode = 0
+
+    def fake_runner(cmd, **kwargs):
+        seen_env.update(kwargs.get("env") or {})
+        return _Result()
+
+    assert cli_main._nebius_profile_ready(runner=fake_runner) is True
+    assert "NEBIUS_IAM_TOKEN" not in seen_env
+    assert "NEBIUS_IAM_TOKEN_FILE" not in seen_env
+
+
 def test_nebius_profile_not_ready_without_binary(monkeypatch) -> None:
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: None)
     assert cli_main._nebius_profile_ready() is False

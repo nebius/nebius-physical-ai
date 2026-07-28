@@ -152,6 +152,14 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
 
     if not shutil.which("nebius"):
         return False
+    # Strip any ambient NEBIUS_IAM_TOKEN / NEBIUS_IAM_TOKEN_FILE so the probe
+    # reflects whether the configured *profile* can mint a token, not whether a
+    # (possibly stale) inherited token is present. A stale ambient token makes
+    # `nebius iam get-access-token` skip a real exchange, so the bare probe
+    # could report "not ready" even though the profile is fine (and the same
+    # command works when the operator runs it in a clean shell).
+    ambient_token_envs = ("NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE")
+    clean_env = {k: v for k, v in os.environ.items() if k not in ambient_token_envs}
     try:
         result = runner(
             ["nebius", "iam", "get-access-token"],
@@ -159,6 +167,7 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
             stderr=subprocess.DEVNULL,
             timeout=30,
             check=False,
+            env=clean_env,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -235,7 +244,10 @@ def _ensure_nebius_profile() -> bool:
     if existing_profiles:
         typer.echo(
             "Nebius CLI profiles exist but `nebius iam get-access-token` failed. "
-            "Try `nebius profile activate <profile>` or recreate the active profile."
+            "Run `nebius iam get-access-token` in this shell to see the error. "
+            "Common causes: no active profile (`nebius profile activate "
+            "<profile>`), or a stale ambient token — `unset NEBIUS_IAM_TOKEN "
+            "NEBIUS_IAM_TOKEN_FILE` and retry. Otherwise recreate the profile."
         )
         create_prompt = "Create a new Nebius CLI profile now?"
         create_default = False
