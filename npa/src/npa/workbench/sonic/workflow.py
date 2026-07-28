@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import os
 import re
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Sequence
