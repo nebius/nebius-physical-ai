@@ -7,6 +7,32 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Setup re-architecture: project discovery + simple agent deploy
+
+- **`npa configure` discovers projects instead of asking you to type ids.** It
+  now enumerates the Nebius projects your CLI profile can reach (via
+  `nebius iam tenant list` + `iam project list`) and lets you pick one or more
+  from a list, auto-deriving tenant id, project id, and region. New client
+  helpers: `npa.clients.nebius.list_tenants()`, `list_projects_in_tenant()`,
+  `list_accessible_projects()`.
+- **npa is multi-project.** `configure` can select several projects and writes
+  each as its own stanza under `projects:` with a chosen `default_project`;
+  switch with `-p <alias>`. Falls back to the manual tenant/project/region
+  prompts when discovery is unavailable (no CLI / not authenticated / no
+  results).
+- **Object storage is opt-in in the discovery path.** `configure` sets up the
+  Nebius connection and optional model/inference tokens; it only provisions an S3
+  bucket + access key when you ask, so first-run is lighter.
+- **New `npa agent setup`: a simple interactive deploy.** After `configure`, it
+  picks one of your configured projects (prompting when there is more than one)
+  and deploys the agent VM — no `--project-id`/`--tenant-id`/`--region` to type.
+  `npa agent fresh-setup` remains for scripted deploys.
+- **Documented the agent-VM AI Cloud credential model.** The VM authenticates to
+  Nebius AI Cloud via an **attached `npa-agent` service account** (granted the
+  tenant `editors` role); code on the VM mints short-lived IAM tokens from the
+  Nebius metadata endpoint on demand — key-less and auto-rotating. No static AI
+  Cloud key is stored on the VM.
+
 ### First-time-user cold-start fixes
 
 - **`npa --version` (and `-V`) is now ~6x faster** (~0.72s → ~0.11s). The console

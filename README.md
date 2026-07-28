@@ -125,17 +125,23 @@ basic-auth login, grounded chat over Nebius Token Factory
 embedded [Rerun](https://www.rerun.io) viewer for `.rrd` recordings, and
 draft/validate/plan/submit endpoints for `npa.workflow/v0.0.1` specs.
 
-```bash
-# Check prerequisites first (terraform, SSH key pair, Nebius auth, Token Factory
-# key) — no cloud side effects, so late failures surface before any VM is built:
-npa agent preflight
+After `npa configure`, deploy interactively — no project/tenant ids to type,
+since it reuses the projects `configure` saved:
 
-npa agent fresh-setup \
-  --project my-agent --name agent \
-  --project-id project-... --tenant-id tenant-... --region eu-north1
-npa agent status --project my-agent --name agent
-NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project my-agent --name agent
+```bash
+npa agent preflight   # cheap prereq check (terraform, SSH key, Nebius auth)
+npa agent setup       # pick a configured project → deploys the VM
+npa agent status --project <alias> --name agent
 ```
+
+`npa agent setup` picks one of your configured Nebius projects (prompting when
+you have more than one) and deploys into it. The agent VM authenticates to
+Nebius AI Cloud through an **attached `npa-agent` service account** (granted the
+tenant `editors` role) — it mints short-lived IAM tokens from the Nebius VM
+metadata endpoint on demand, so there is **no static key** stored on the VM.
+
+For scripted/non-interactive deploys, `npa agent fresh-setup --project <alias>
+--project-id ... --tenant-id ... --region ...` is still available.
 
 `fresh-setup` provisions the VM with Terraform, then `bootstrap` refreshes
 the UI/backend/nginx layer without touching infra. Operator docs:
