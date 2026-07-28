@@ -91,6 +91,35 @@ def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
     assert "npa" in proc.stdout
 
 
+def test_npa_version_fast_path_skips_heavy_imports() -> None:
+    """``npa --version`` must not import the full command tree.
+
+    The console-script entry (``npa.cli.entry:main``) answers a bare version
+    request before importing ``npa.cli.main``, which transitively pulls in heavy
+    dependencies (boto3, paramiko, rerun, numpy). Guard that this stays fast so
+    ``npa --version`` does not regress back to a multi-hundred-millisecond
+    import. Runs in a subprocess so the check sees a clean interpreter.
+    """
+    probe = (
+        "import sys; sys.argv = ['npa', '--version']; "
+        "from npa.cli.entry import main; main(); "
+        "heavy = [m for m in "
+        "('npa.cli.main', 'boto3', 'paramiko', 'rerun', 'numpy') "
+        "if m in sys.modules]; "
+        "print('HEAVY:' + ','.join(heavy))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "npa " in proc.stdout
+    assert "HEAVY:\n" in proc.stdout or proc.stdout.rstrip().endswith("HEAVY:"), (
+        "npa --version fast path imported heavy modules: " + proc.stdout
+    )
+
+
 def test_quickstart_first_success_fixture_is_packaged() -> None:
     """The fixture the quickstart points at must ship inside the package."""
     assert DEFAULT_SAMPLE_BENCHMARK_PATH.exists(), (

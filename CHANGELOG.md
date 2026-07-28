@@ -9,6 +9,15 @@ a versioned heading when a release is cut.
 
 ### First-time-user cold-start fixes
 
+- **`npa --version` (and `-V`) is now ~6x faster** (~0.72s → ~0.11s). The console
+  script now points at a lightweight entry (`npa.cli.entry:main`) that answers a
+  bare version request before importing `npa.cli.main`, which eagerly pulls in
+  the whole command tree (boto3 / paramiko / rerun / numpy …). In addition,
+  `npa/__init__.py` now imports its SDK convenience submodules lazily (PEP 562
+  `__getattr__`) instead of eagerly, so any bare `import npa` — which every CLI
+  invocation triggers — no longer pays for the full SDK surface. `import npa` and
+  `from npa import convert` still work unchanged; the historical
+  `NPA_SKIP_EAGER_IMPORTS` flag is now a no-op (imports are always lazy).
 - `npa configure --interactive` no longer exits 0 having written nothing. When it
   cannot proceed (no authenticated Nebius CLI profile for provisioning) or is
   cancelled mid-flow (EOF/Ctrl-C), it now exits **non-zero** with actionable

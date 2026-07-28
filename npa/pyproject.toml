@@ -117,7 +117,7 @@ dev = [
 ]
 
 [project.scripts]
-npa = "npa.cli.main:app_entry"
+npa = "npa.cli.entry:main"
 
 [tool.npa.supported-tools]
 # Default LeRobot pin. Additional supported tags live in
