@@ -146,8 +146,6 @@ packages = ["src/npa"]
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"
-"src/npa/fleet/terraform/main.tf.tpl" = "npa/fleet/terraform/main.tf.tpl"
-"src/npa/fleet/terraform/variables.tf" = "npa/fleet/terraform/variables.tf"
 
 [tool.ruff]
 target-version = "py310"

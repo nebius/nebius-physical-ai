@@ -24,7 +24,7 @@ from npa.fleet.spec import (
     load_spec,
     spec_from_mapping,
 )
-from npa.fleet.tfvars import render_main_tf, render_tfvars, variables_tf
+from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
 
 __all__ = [
     "API_VERSION",
@@ -35,7 +35,7 @@ __all__ = [
     "ProjectSpec",
     "load_spec",
     "spec_from_mapping",
-    "render_main_tf",
     "render_tfvars",
-    "variables_tf",
+    "provider_domain",
+    "patch_provider_domain",
 ]

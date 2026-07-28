@@ -23,7 +23,7 @@ from npa.fleet.spec import (
     ProjectSpec,
     load_spec,
 )
-from npa.fleet.tfvars import provider_domain, render_main_tf, render_tfvars
+from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
 
 runner = CliRunner()
 
@@ -166,16 +166,21 @@ def test_prefix_not_double_applied() -> None:
 def test_render_tfvars_rtx_single_gpu() -> None:
     spec = spec_from_mapping(_base_mapping())
     cluster = spec.projects[0].clusters[0]
-    tf = render_tfvars(cluster)
+    tf = render_tfvars(cluster, ssh_public_key="ssh-ed25519 AAAA me")
     assert 'cluster_name = "cluster"' in tf
-    assert "cpu_nodes_count = 1" in tf
+    assert "cpu_nodes_fixed_count = 1" in tf
     assert 'cpu_nodes_preset = "48vcpu-192gb"' in tf
-    assert "gpu_nodes_count = 1" in tf
+    assert "gpu_nodes_fixed_count_per_group = 1" in tf
+    assert "gpu_node_groups = 1" in tf
     assert 'gpu_nodes_platform = "gpu-rtx6000"' in tf
     assert 'gpu_nodes_preset = "1gpu-24vcpu-218gb"' in tf
     # Single-GPU preset must not enable GPU clustering.
     assert "enable_gpu_cluster = false" in tf
     assert "enable_filestore = true" in tf
+    # loki has no recipe default and must be emitted, plus o11y stays off.
+    assert "loki = { enabled = false" in tf
+    assert "enable_grafana           = false" in tf
+    assert 'ssh_public_key = { key = "ssh-ed25519 AAAA me" }' in tf
 
 
 def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
@@ -188,15 +193,16 @@ def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
     tf = render_tfvars(cluster)
     assert "enable_gpu_cluster = true" in tf
     assert 'infiniband_fabric = "us-central1-a"' in tf
-    assert "gpu_nodes_count = 2" in tf
+    assert "gpu_nodes_fixed_count_per_group = 2" in tf
 
 
-def test_render_main_tf_substitutes_source_and_domain() -> None:
-    main = render_main_tf(k8s_training_source="/opt/recipe/k8s-training", region="us-central1")
-    assert 'source = "/opt/recipe/k8s-training"' in main
-    assert "api.nebius.cloud:443" in main
-    assert "__K8S_TRAINING_SOURCE__" not in main
-    assert "__PROVIDER_DOMAIN__" not in main
+def test_patch_provider_domain_region_aware() -> None:
+    provider_tf = 'provider "nebius" {\n  domain = "api.eu.nebius.cloud:443"\n}\n'
+    us = patch_provider_domain(provider_tf, "us-central1")
+    assert "api.nebius.cloud:443" in us
+    assert "api.eu.nebius.cloud:443" not in us
+    eu = patch_provider_domain(provider_tf, "eu-north1")
+    assert "api.eu.nebius.cloud:443" in eu
 
 
 def test_provider_domain_eu_vs_global() -> None:

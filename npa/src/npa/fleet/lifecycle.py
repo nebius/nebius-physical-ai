@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,10 +32,11 @@ from npa.cli.cluster.terraform_lifecycle import (
     _terraform_env,
 )
 from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
-from npa.fleet.tfvars import render_main_tf, render_tfvars, variables_tf
+from npa.fleet.tfvars import patch_provider_domain, render_tfvars
 
 _SOLUTIONS_LIBRARY_REPO = "https://github.com/nebius/nebius-solutions-library.git"
 _K8S_TRAINING_SUBDIR = "k8s-training"
+_MODULES_SUBDIR = "modules"
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _FLEET_STATE = "fleet-state.json"
 
@@ -127,26 +129,52 @@ def _resolve_ssh_public_key(explicit: str) -> str:
 
 # --------------------------------------------------------------------------- #
 # k8s-training recipe source resolution
+#
+# The recipe is a *root* module that references sibling ``../modules/...`` and
+# embeds its own provider config, so it cannot be sourced as a Terraform child
+# module. We resolve the recipe *root* (the dir that contains both
+# ``k8s-training/`` and ``modules/``), copy it per cluster, and run terraform
+# inside the ``k8s-training`` copy.
 # --------------------------------------------------------------------------- #
-def _find_vendored_k8s_training() -> Path | None:
-    """Walk up from this file to find the repo-vendored k8s-training recipe."""
+def _is_recipe_root(path: Path) -> bool:
+    return (path / _K8S_TRAINING_SUBDIR / "variables.tf").exists() and (
+        path / _MODULES_SUBDIR
+    ).is_dir()
 
-    rel = Path("deploy") / "cluster" / "vendor" / "nebius-solutions-library" / _K8S_TRAINING_SUBDIR
+
+def _find_vendored_recipe_root() -> Path | None:
+    """Walk up from this file to find the repo-vendored solutions-library root."""
+
+    rel = Path("deploy") / "cluster" / "vendor" / "nebius-solutions-library"
     for base in Path(__file__).resolve().parents:
         candidate = base / rel
-        if (candidate / "variables.tf").exists():
+        if _is_recipe_root(candidate):
             return candidate
     return None
 
 
-def _resolve_k8s_training_source(
+def _coerce_recipe_root(path: Path) -> Path:
+    """Accept either a recipe root or a ``k8s-training`` dir and return the root."""
+
+    path = path.expanduser().resolve()
+    if _is_recipe_root(path):
+        return path
+    if path.name == _K8S_TRAINING_SUBDIR and _is_recipe_root(path.parent):
+        return path.parent
+    raise ValueError(
+        f"{path} is not a k8s-training recipe (need a dir containing "
+        "'k8s-training/' and 'modules/', or the 'k8s-training' dir itself)"
+    )
+
+
+def _resolve_recipe_root(
     k8s_training_dir: Path | None,
     *,
     ref: str | None,
     work_root: Path,
     on_status: Callable[[str], None] | None,
 ) -> Path:
-    """Resolve the k8s-training module dir.
+    """Resolve the solutions-library recipe root (contains k8s-training + modules).
 
     Priority: explicit dir > env override > cloned ref (latest) > repo-vendored.
     Cloning satisfies "consume the latest k8s-training changes"; the vendored
@@ -154,22 +182,15 @@ def _resolve_k8s_training_source(
     """
 
     if k8s_training_dir is not None:
-        path = k8s_training_dir.expanduser().resolve()
-        if not (path / "variables.tf").exists():
-            raise ValueError(f"{path} is not a k8s-training recipe dir (missing variables.tf)")
-        return path
+        return _coerce_recipe_root(k8s_training_dir)
 
     env_dir = os.environ.get("NPA_K8S_TRAINING_DIR", "").strip()
     if env_dir:
-        path = Path(env_dir).expanduser().resolve()
-        if not (path / "variables.tf").exists():
-            raise ValueError(f"NPA_K8S_TRAINING_DIR={path} is missing variables.tf")
-        return path
+        return _coerce_recipe_root(Path(env_dir))
 
     if ref:
         clone_dir = work_root / "nebius-solutions-library"
-        module = clone_dir / _K8S_TRAINING_SUBDIR
-        if not (module / "variables.tf").exists():
+        if not _is_recipe_root(clone_dir):
             work_root.mkdir(parents=True, exist_ok=True)
             git = _require_bin("git")
             _log(on_status, f"cloning nebius-solutions-library@{ref} for latest k8s-training")
@@ -177,15 +198,13 @@ def _resolve_k8s_training_source(
                 [git, "clone", "--depth", "1", "--branch", ref, _SOLUTIONS_LIBRARY_REPO, str(clone_dir)],
                 timeout=600,
             )
-        return module
+        return clone_dir
 
-    vendored = _find_vendored_k8s_training()
+    vendored = _find_vendored_recipe_root()
     if vendored is not None:
         return vendored
     # No vendored copy available (e.g. installed package without repo). Clone main.
-    return _resolve_k8s_training_source(
-        None, ref="main", work_root=work_root, on_status=on_status
-    )
+    return _resolve_recipe_root(None, ref="main", work_root=work_root, on_status=on_status)
 
 
 # --------------------------------------------------------------------------- #
@@ -234,6 +253,71 @@ def _create_project(
     if not project_id:
         raise ValueError(f"project create for {name!r} returned no id: {result.stdout[:200]}")
     return project_id
+
+
+def _list_subnets(nebius_bin: str, project_id: str, env: dict[str, str]) -> list[dict[str, Any]]:
+    result = _run_capture(
+        [nebius_bin, "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    try:
+        return list(json.loads(result.stdout).get("items", []))
+    except json.JSONDecodeError:
+        return []
+
+
+def ensure_subnet(
+    nebius_bin: str,
+    project_id: str,
+    *,
+    name_stem: str,
+    env: dict[str, str],
+    on_status: Callable[[str], None] | None = None,
+) -> str:
+    """Return a usable subnet id in *project_id*, creating a network+subnet if none.
+
+    The k8s-training root module requires an existing ``subnet_id`` (it does not
+    create one). Freshly created projects may have no VPC yet, so create a
+    network + subnet (inheriting the network's default IPv4 pools) when absent.
+    """
+
+    subnets = _list_subnets(nebius_bin, project_id, env)
+    if subnets:
+        sid = str(subnets[0].get("metadata", {}).get("id") or "")
+        if sid:
+            return sid
+    _log(on_status, f"no subnet in project {project_id[:12]}...; creating network + subnet")
+    net = _run_capture(
+        [
+            nebius_bin, "vpc", "network", "create",
+            "--parent-id", project_id, "--name", f"{name_stem}-net", "--format", "json",
+        ],
+        env=env,
+    )
+    try:
+        network_id = str(json.loads(net.stdout or "{}").get("metadata", {}).get("id") or "")
+    except json.JSONDecodeError:
+        network_id = ""
+    if not network_id:
+        raise ValueError(f"could not create network in project {project_id}: {net.stdout[:200]}")
+    sub = _run_capture(
+        [
+            nebius_bin, "vpc", "subnet", "create",
+            "--parent-id", project_id, "--network-id", network_id,
+            "--name", f"{name_stem}-subnet", "--format", "json",
+        ],
+        env=env,
+    )
+    try:
+        subnet_id = str(json.loads(sub.stdout or "{}").get("metadata", {}).get("id") or "")
+    except json.JSONDecodeError:
+        subnet_id = ""
+    if not subnet_id:
+        raise ValueError(f"could not create subnet in project {project_id}: {sub.stdout[:200]}")
+    return subnet_id
 
 
 def resolve_project_id(
@@ -288,14 +372,46 @@ def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
 
 
 def _prepare_install_dir(
-    install_dir: Path, *, k8s_training_source: Path, region: str, cluster: ClusterSpec
-) -> None:
+    install_dir: Path,
+    *,
+    recipe_root: Path,
+    region: str,
+    cluster: ClusterSpec,
+    ssh_public_key: str,
+) -> Path:
+    """Materialize a per-cluster copy of the recipe and return the terraform workdir.
+
+    Copies ``<recipe_root>/k8s-training`` and ``<recipe_root>/modules`` into the
+    install dir (preserving the ``../modules`` relationship), patches the recipe
+    provider domain for the region, and writes ``terraform.tfvars``. Returns the
+    ``k8s-training`` copy where terraform must run.
+    """
+
     install_dir.mkdir(parents=True, exist_ok=True)
-    (install_dir / "main.tf").write_text(
-        render_main_tf(k8s_training_source=str(k8s_training_source), region=region)
+    workdir = install_dir / _K8S_TRAINING_SUBDIR
+    modules_dst = install_dir / _MODULES_SUBDIR
+    # Refresh recipe files but preserve any existing terraform state/plugins.
+    if workdir.exists():
+        for item in workdir.iterdir():
+            if item.name.startswith("terraform.tfstate") or item.name == ".terraform":
+                continue
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink()
+    shutil.copytree(recipe_root / _K8S_TRAINING_SUBDIR, workdir, dirs_exist_ok=True)
+    if modules_dst.exists():
+        shutil.rmtree(modules_dst, ignore_errors=True)
+    shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
+
+    provider_tf = workdir / "provider.tf"
+    if provider_tf.exists():
+        provider_tf.write_text(patch_provider_domain(provider_tf.read_text(), region))
+
+    (workdir / "terraform.tfvars").write_text(
+        render_tfvars(cluster, ssh_public_key=ssh_public_key)
     )
-    (install_dir / "variables.tf").write_text(variables_tf())
-    (install_dir / "terraform.tfvars").write_text(render_tfvars(cluster))
+    return workdir
 
 
 def _cluster_tf_env(
@@ -304,13 +420,13 @@ def _cluster_tf_env(
     tenant_id: str,
     project_id: str,
     region: str,
-    ssh_public_key: str,
+    subnet_id: str,
 ) -> dict[str, str]:
     env = _terraform_env(nebius_bin)
     env["TF_VAR_tenant_id"] = tenant_id
     env["TF_VAR_parent_id"] = project_id
     env["TF_VAR_region"] = region
-    env["TF_VAR_ssh_public_key"] = ssh_public_key
+    env["TF_VAR_subnet_id"] = subnet_id
     return env
 
 
@@ -456,10 +572,10 @@ def deploy_fleet(
     work_root = (work_root or _default_work_root()).expanduser()
     fleet_root = work_root / spec.name
     fleet_root.mkdir(parents=True, exist_ok=True)
-    k8s_training_source = _resolve_k8s_training_source(
+    recipe_root = _resolve_recipe_root(
         k8s_training_dir, ref=k8s_training_ref, work_root=work_root, on_status=on_status
     )
-    _log(on_status, f"k8s-training recipe: {k8s_training_source}")
+    _log(on_status, f"k8s-training recipe root: {recipe_root}")
 
     cli_env = _nebius_cli_env()
     results: list[dict[str, Any]] = []
@@ -501,7 +617,7 @@ def deploy_fleet(
                 tenant_id=tenant_id,
                 ssh_public_key=ssh_public_key,
                 fleet_root=fleet_root,
-                k8s_training_source=k8s_training_source,
+                recipe_root=recipe_root,
                 terraform_bin=terraform_bin,
                 nebius_bin=nebius_bin,
                 timeout_minutes=timeout_minutes,
@@ -516,7 +632,7 @@ def deploy_fleet(
         "tenant_id": tenant_id,
         "region": fleet_region,
         "project_prefix": prefix,
-        "k8s_training_source": str(k8s_training_source),
+        "k8s_training_source": str(recipe_root),
         "clusters": results,
         "deployed": sum(1 for r in results if r.get("status") == "deployed"),
         "failed": sum(1 for r in results if r.get("status") == "error"),
@@ -536,7 +652,7 @@ def _deploy_one_cluster(
     tenant_id: str,
     ssh_public_key: str,
     fleet_root: Path,
-    k8s_training_source: Path,
+    recipe_root: Path,
     terraform_bin: str,
     nebius_bin: str,
     timeout_minutes: int,
@@ -547,18 +663,26 @@ def _deploy_one_cluster(
     context = _context_name(spec.name, project_key, cluster.name)
     label = f"{project_key}/{cluster.name}"
     try:
-        _prepare_install_dir(
+        subnet_id = cluster.subnet_id or ensure_subnet(
+            nebius_bin,
+            project_id,
+            name_stem=cluster.name,
+            env=_nebius_cli_env(),
+            on_status=on_status,
+        )
+        workdir = _prepare_install_dir(
             install_dir,
-            k8s_training_source=k8s_training_source,
+            recipe_root=recipe_root,
             region=region,
             cluster=cluster,
+            ssh_public_key=ssh_public_key,
         )
         env = _cluster_tf_env(
             nebius_bin,
             tenant_id=tenant_id,
             project_id=project_id,
             region=region,
-            ssh_public_key=ssh_public_key,
+            subnet_id=subnet_id,
         )
         _write_env_sidecar(
             install_dir,
@@ -566,12 +690,13 @@ def _deploy_one_cluster(
                 "tenant_id": tenant_id,
                 "project_id": project_id,
                 "region": region,
+                "subnet_id": subnet_id,
                 "cluster_name": cluster.name,
                 "context": context,
             },
         )
         _log(on_status, f"[{label}] terraform init")
-        _run_stream([terraform_bin, "init", "-input=false"], cwd=install_dir, env=env, timeout=900)
+        _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900)
         _log(
             on_status,
             f"[{label}] terraform apply (cpu={cluster.cpu_count()} gpu={cluster.gpu_count()} "
@@ -579,11 +704,11 @@ def _deploy_one_cluster(
         )
         _run_stream(
             [terraform_bin, "apply", "-auto-approve", "-input=false"],
-            cwd=install_dir,
+            cwd=workdir,
             env=env,
             timeout=timeout_minutes * 60,
         )
-        outputs = _terraform_outputs(terraform_bin, install_dir, env)
+        outputs = _terraform_outputs(terraform_bin, workdir, env)
         cluster_id = _cluster_id_from_outputs(outputs)
         kubeconfig_path = install_dir / "kubeconfig"
         if cluster_id:
@@ -653,22 +778,20 @@ def destroy_fleet(
             tenant_id = str(saved.get("tenant_id") or spec.tenant_id)
             project_id = str(saved.get("project_id") or "")
             region = str(saved.get("region") or spec.region)
-            try:
-                ssh_public_key = _resolve_ssh_public_key(spec.ssh_public_key)
-            except ValueError:
-                ssh_public_key = ""
+            subnet_id = str(saved.get("subnet_id") or "")
+            workdir = install_dir / _K8S_TRAINING_SUBDIR
             env = _cluster_tf_env(
                 nebius_bin,
                 tenant_id=tenant_id,
                 project_id=project_id,
                 region=region,
-                ssh_public_key=ssh_public_key,
+                subnet_id=subnet_id,
             )
             _log(on_status, f"[{label}] terraform destroy")
-            _run_stream([terraform_bin, "init", "-input=false"], cwd=install_dir, env=env, timeout=900)
+            _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900)
             destroy = _run_capture(
                 [terraform_bin, "destroy", "-auto-approve", "-input=false"],
-                cwd=install_dir,
+                cwd=workdir,
                 env=env,
                 timeout=timeout_minutes * 60,
                 check=False,
@@ -689,7 +812,7 @@ def destroy_fleet(
                             timeout=timeout_minutes * 60,
                         )
                 status = "destroyed-with-fallback"
-            for stale in install_dir.glob("terraform.tfstate*"):
+            for stale in workdir.glob("terraform.tfstate*"):
                 try:
                     stale.unlink()
                 except OSError:
