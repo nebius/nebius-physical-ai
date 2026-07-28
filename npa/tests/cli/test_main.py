@@ -1505,6 +1505,32 @@ def test_nebius_profile_not_ready_without_binary(monkeypatch) -> None:
     assert cli_main._nebius_profile_ready() is False
 
 
+def test_nebius_profile_ready_strips_ambient_token(monkeypatch) -> None:
+    """The readiness probe must reflect the profile, not a stale inherited token.
+
+    A stale NEBIUS_IAM_TOKEN / NEBIUS_IAM_TOKEN_FILE lets the CLI skip a real
+    token exchange, so the probe must run with both stripped from the env.
+    """
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN_FILE", "/tmp/stale-token")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+
+    captured: dict = {}
+
+    class _Result:
+        returncode = 0
+
+    def fake_runner(cmd, **kwargs):
+        captured.update(kwargs)
+        return _Result()
+
+    assert cli_main._nebius_profile_ready(runner=fake_runner) is True
+    passed_env = captured["env"]
+    assert "NEBIUS_IAM_TOKEN" not in passed_env
+    assert "NEBIUS_IAM_TOKEN_FILE" not in passed_env
+
+
 def test_app_entry_typed_error_exits_one_without_traceback(monkeypatch, capsys) -> None:
     def fail() -> None:
         raise NotEnoughResourcesError(

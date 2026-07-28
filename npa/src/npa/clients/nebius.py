@@ -111,12 +111,13 @@ def nebius_cli_env(base: "Mapping[str, str] | None" = None) -> dict[str, str]:
     CLI in preference to the active profile's auto-refreshing exec-plugin
     credential. That shadows a perfectly good profile, so calls like
     ``storage bucket list`` return ``AccessDenied``/``Unauthenticated`` even
-    though ``nebius iam get-access-token`` works. Drop it so the CLI falls back
-    to the profile — unless the caller explicitly opts into reuse via
-    ``NPA_REUSE_IAM_TOKEN`` (e.g. CI/VM injecting a short-lived token). This is
-    the single source of truth for that behavior across the repo (mirrors
+    though ``nebius iam get-access-token`` works. A stale ``NEBIUS_IAM_TOKEN_FILE``
+    shadows the profile the same way (the CLI reads the token file and skips a
+    real token exchange), so drop both. Unless the caller explicitly opts into
+    reuse via ``NPA_REUSE_IAM_TOKEN`` (e.g. CI/VM injecting a short-lived token).
+    This is the single source of truth for that behavior across the repo (mirrors
     ``npa.soperator.lifecycle._nebius_cli_env`` and the Terraform env builders).
-    Python-level token resolution (``get_iam_token``) still reads the env var
+    Python-level token resolution (``get_iam_token``) still reads the env vars
     directly, so token-only contexts keep working.
 
     *base* lets callers sanitize an already-customized environment; when omitted
@@ -126,6 +127,7 @@ def nebius_cli_env(base: "Mapping[str, str] | None" = None) -> dict[str, str]:
     reuse = env.get(_REUSE_IAM_TOKEN_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
     if not reuse:
         env.pop("NEBIUS_IAM_TOKEN", None)
+        env.pop("NEBIUS_IAM_TOKEN_FILE", None)
     return env
 
 

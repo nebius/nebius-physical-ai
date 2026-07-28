@@ -768,17 +768,24 @@ def test_nebius_bucket_exists(mocker) -> None:
 
 
 def test_cli_env_strips_stale_iam_token(monkeypatch) -> None:
-    # A stale ambient NEBIUS_IAM_TOKEN shadows the active profile and causes
-    # AccessDenied on storage calls; the CLI env must drop it by default.
+    # A stale ambient NEBIUS_IAM_TOKEN / NEBIUS_IAM_TOKEN_FILE shadows the active
+    # profile and causes AccessDenied on storage calls (or a false profile
+    # readiness); the CLI env must drop both by default.
     monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN_FILE", "/tmp/stale-token")
     monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
-    assert "NEBIUS_IAM_TOKEN" not in nebius.nebius_cli_env()
+    env = nebius.nebius_cli_env()
+    assert "NEBIUS_IAM_TOKEN" not in env
+    assert "NEBIUS_IAM_TOKEN_FILE" not in env
 
 
 def test_cli_env_keeps_token_when_reuse_opt_in(monkeypatch) -> None:
     monkeypatch.setenv("NEBIUS_IAM_TOKEN", "injected-token")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN_FILE", "/tmp/injected-token")
     monkeypatch.setenv("NPA_REUSE_IAM_TOKEN", "1")
-    assert nebius.nebius_cli_env()["NEBIUS_IAM_TOKEN"] == "injected-token"
+    env = nebius.nebius_cli_env()
+    assert env["NEBIUS_IAM_TOKEN"] == "injected-token"
+    assert env["NEBIUS_IAM_TOKEN_FILE"] == "/tmp/injected-token"
 
 
 def test_cli_env_sanitizes_provided_base(monkeypatch) -> None:

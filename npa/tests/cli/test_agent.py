@@ -2255,6 +2255,31 @@ def test_stages_tab_run_search_uses_server_search() -> None:
     assert source.count("await refreshArtifactRuns(value)") >= 2
 
 
+def test_coerce_cli_list_handles_unresolved_typer_option() -> None:
+    """An unresolved typer.Option default (OptionInfo) must coerce to [].
+
+    deploy_cmd is called programmatically (fresh-setup / `agent setup`); omitting
+    a list option leaks an OptionInfo that once crashed `for item in tf_var`.
+    """
+    import typer
+
+    from npa.cli.agent import _coerce_cli_list
+
+    unresolved = typer.Option([], "--tf-var")
+    assert type(unresolved).__name__ == "OptionInfo"  # guard the precondition
+    result = _coerce_cli_list(unresolved)
+    assert result == []
+    list(result)  # must be iterable (the original crash site)
+
+
+def test_coerce_cli_list_passthrough_and_none() -> None:
+    from npa.cli.agent import _coerce_cli_list
+
+    assert _coerce_cli_list(["a", "b"]) == ["a", "b"]
+    assert _coerce_cli_list(("x",)) == ["x"]
+    assert _coerce_cli_list(None) == []
+
+
 def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     """`npa agent setup` resolves project_id/tenant_id/region from config, no typing."""
     import yaml

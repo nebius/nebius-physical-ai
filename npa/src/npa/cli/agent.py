@@ -8211,6 +8211,28 @@ def preflight_cmd(
         raise typer.Exit(code=1)
 
 
+def _coerce_cli_list(value: Any) -> list[str]:
+    """Return a real list for a possibly-unresolved Typer option default.
+
+    ``deploy_cmd`` is a Typer command but is also invoked programmatically
+    (``fresh-setup`` and thin wrappers like ``agent setup``). When such a caller
+    omits a list-valued option, the Typer default leaks through as a
+    ``typer.models.OptionInfo``, which is not iterable — later code like
+    ``for item in tf_var`` then blew up with ``'OptionInfo' object is not
+    iterable``. Coerce anything unset / non-iterable to an empty list.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if type(value).__name__ == "OptionInfo":  # unresolved typer.Option default
+        return []
+    try:
+        return list(value)
+    except TypeError:
+        return []
+
+
 @app.command("deploy")
 def deploy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias to store config under."),
@@ -8241,6 +8263,11 @@ def deploy_cmd(
     ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
+    # deploy_cmd is also called programmatically (fresh-setup, `agent setup`
+    # wrappers). Coerce list-valued options so an unresolved Typer default
+    # (OptionInfo) can never crash `for item in tf_var` / `list(llm_models)`.
+    tf_var = _coerce_cli_list(tf_var)
+    llm_models = _coerce_cli_list(llm_models)
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
     if profile and shutil.which("nebius"):
         subprocess.run(["nebius", "profile", "activate", profile], check=False)

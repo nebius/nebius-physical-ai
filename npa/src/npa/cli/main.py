@@ -162,9 +162,11 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
             stderr=subprocess.DEVNULL,
             timeout=30,
             check=False,
-            # Sanitize a stale NEBIUS_IAM_TOKEN so readiness reflects the active
-            # profile — the same identity provisioning actually uses. Otherwise a
-            # shadowing token reports "profile ready" while provisioning fails.
+            # Sanitize a stale NEBIUS_IAM_TOKEN / NEBIUS_IAM_TOKEN_FILE so
+            # readiness reflects the active profile — the same identity
+            # provisioning actually uses. Otherwise a shadowing token lets the
+            # CLI skip a real token exchange and falsely report "profile ready"
+            # (or "not ready") regardless of whether the profile itself works.
             env=nebius_cli_env(),
         )
     except (OSError, subprocess.SubprocessError):
@@ -245,7 +247,10 @@ def _ensure_nebius_profile() -> bool:
     if existing_profiles:
         typer.echo(
             "Nebius CLI profiles exist but `nebius iam get-access-token` failed. "
-            "Try `nebius profile activate <profile>` or recreate the active profile."
+            "Run `nebius iam get-access-token` in this shell to see the error. "
+            "Common causes: no active profile (`nebius profile activate "
+            "<profile>`), or a stale ambient token — `unset NEBIUS_IAM_TOKEN "
+            "NEBIUS_IAM_TOKEN_FILE` and retry. Otherwise recreate the profile."
         )
         create_prompt = "Create a new Nebius CLI profile now?"
         create_default = False
