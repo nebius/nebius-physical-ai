@@ -173,8 +173,8 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     # accept the default project alias (region).
     answers = "\n".join(
         [
-            "project-12345",     # project id
             "tenant-abcde",      # tenant id
+            "project-12345",     # project id
             "",                  # region (default eu-north1)
             "",                  # registry (default)
             "my-bucket",         # bucket name (customer choice)
@@ -263,7 +263,7 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
 
     # proj, tenant, region, registry, bucket name (Enter = default), hf, ai cloud,
     # token factory, ngc, project alias (Enter = region default)
-    answers = "\n".join(["project-1", "tenant-1", "", "", "", "", "", "", "", ""]) + "\n"
+    answers = "\n".join(["tenant-1", "project-1", "", "", "", "", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -306,7 +306,7 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     answers = "\n".join(
-        ["project-1", "tenant-1", "", "", "", hf_token, "", "", ngc_key, ""]
+        ["tenant-1", "project-1", "", "", "", hf_token, "", "", ngc_key, ""]
     ) + "\n"
     return runner.invoke(app, ["configure", "--interactive"], input=answers)
 
@@ -482,8 +482,8 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
     # Update project id and HF token; keep everything else (incl. storage).
     answers = "\n".join(
         [
-            "project-new",  # project id (update)
             "",             # tenant id (keep)
+            "project-new",  # project id (update)
             "",             # region (keep)
             "",             # registry (keep)
             "",             # keep existing storage? -> Y
@@ -535,8 +535,8 @@ def test_configure_rerun_can_reprovision_storage_when_declined(monkeypatch, tmp_
     # existing bucket name default (bucket_exists=True -> no size prompts).
     answers = "\n".join(
         [
-            "",     # project id (keep)
             "",     # tenant id (keep)
+            "",     # project id (keep)
             "",     # region (keep)
             "",     # registry (keep)
             "n",    # keep existing storage? -> no
@@ -583,8 +583,8 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
 
     answers = "\n".join(
         [
-            "project-1",         # project id
             "tenant-1",          # tenant id
+            "project-1",         # project id
             "",                  # region (default)
             "",                  # registry (default)
             "provision-bucket",  # bucket name
@@ -678,7 +678,7 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     # proj, tenant, region, registry, bucket, skip-storage (Enter=Y),
     # hf, ai, tf, ngc, alias.
     answers = "\n".join(
-        ["project-1", "tenant-1", "", "", "npa-tle-727", "", "hf_tok", "", "", "", ""]
+        ["tenant-1", "project-1", "", "", "npa-tle-727", "", "hf_tok", "", "", "", ""]
     ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
@@ -707,8 +707,8 @@ def test_configure_warns_on_region_registry_mismatch(monkeypatch, tmp_path) -> N
     # region us-central1 while registry is cr.eu-north1... -> mismatch warning.
     answers = "\n".join(
         [
-            "project-1",
             "tenant-1",
+            "project-1",
             "us-central1",
             "cr.eu-north1.nebius.cloud/e00abc",
             "my-bucket",
@@ -760,8 +760,8 @@ def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(
     # token factory (quoted, not v1.), ngc (Bearer), alias.
     answers = "\n".join(
         [
-            "project-1",
             "tenant-1",
+            "project-1",
             "",
             "",
             "my-bucket",
@@ -808,7 +808,7 @@ def test_configure_typed_existing_bucket_is_reused_without_create_prompts(
     # proj, tenant, region, registry, bucket name, hf, ai, tf, ngc, alias.
     # No storage-class/size answers: none should be prompted for a reused bucket.
     answers = "\n".join(
-        ["project-1", "tenant-1", "", "", "my-existing-bucket", "hf_tok", "", "", "", ""]
+        ["tenant-1", "project-1", "", "", "my-existing-bucket", "hf_tok", "", "", "", ""]
     ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
@@ -839,7 +839,7 @@ def test_configure_bucket_search_failure_skips_create_prompts(monkeypatch, tmp_p
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture(calls))
 
     answers = "\n".join(
-        ["project-1", "tenant-1", "", "", "maybe-existing", "hf_tok", "", "", "", ""]
+        ["tenant-1", "project-1", "", "", "maybe-existing", "hf_tok", "", "", "", ""]
     ) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
@@ -873,8 +873,8 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
 
     answers = "\n".join(
         [
-            "project-1",         # project id
             "tenant-1",          # tenant id
+            "project-1",         # project id
             "me-central1",       # region
             "",                  # registry (default)
             "AKIAMANUAL",        # S3 access key
@@ -1033,8 +1033,8 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
     # Skip everything except HF token.
     answers = "\n".join(
         [
-            "",  # project id
             "",  # tenant id
+            "",  # project id
             "",  # region
             "",  # registry
             "",  # S3 access key id
@@ -1150,8 +1150,8 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
 
     answers = "\n".join(
         [
-            "project-from-profile",  # project id (entered explicitly)
             "tenant-from-profile",   # tenant id (entered explicitly)
+            "project-from-profile",  # project id (entered explicitly)
             "",                  # region (accept eu-west1 from registry)
             "",                  # registry (accept discovered)
             "",                  # bucket name (Enter = default)
@@ -1337,8 +1337,8 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     answers = "\n".join(
         [
             "y",                 # create Nebius profile
-            "project-12345",     # project id
             "tenant-abcde",      # tenant id
+            "project-12345",     # project id
             "",                  # region (default eu-north1)
             "",                  # registry (default)
             "",                  # bucket name (Enter = default)

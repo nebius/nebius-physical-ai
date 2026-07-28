@@ -160,7 +160,7 @@ section,
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
-Nebius CLI profile first, then prompts for your project id and tenant id, your
+Nebius CLI profile first, then prompts for your tenant id and project id, your
 region and container registry (defaults are discovered from the project), guides
 you to reuse an existing bucket or create a default `npa-bucket-<hash>` bucket
 (standard storage, size limit in GB), and asks for a local **project alias**

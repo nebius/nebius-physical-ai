@@ -529,8 +529,9 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     existing_default_alias = default_project_name()
     existing_stanza = existing_projects.get(existing_default_alias, {}) or {}
 
-    project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
+    # Tenant is the parent of the project, so ask for it first.
     tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
+    project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
     existing_registry = str(existing_stanza.get("container_registry", ""))
     # Only hit Nebius for registry discovery when we don't already have one saved
     # (an idempotent re-run should not make an avoidable CLI call).

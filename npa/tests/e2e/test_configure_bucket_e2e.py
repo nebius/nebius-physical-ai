@@ -179,8 +179,8 @@ def _interactive_configure_answers(
     """Build stdin answers for interactive configure (HF, AI Cloud, TF, NGC)."""
 
     lines = [
-        env.project_id,
         env.tenant_id,
+        env.project_id,
         env.region,
         "",  # container registry (default)
         bucket_name,
