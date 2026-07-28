@@ -1,0 +1,187 @@
+"""``npa fleet`` -- deploy fleets of Managed Kubernetes clusters.
+
+Deploys one *or many* ``k8s-training`` clusters across one *or many* projects in
+a tenant from a compact ``npa.fleet/v0.0.1`` spec. Projects may be referenced by
+id or created on demand under the tenant, and clusters may share a ``defaults``
+profile (identical) or override it (custom), freely mixed.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import typer
+
+app = typer.Typer(
+    name="fleet",
+    help="Deploy and manage fleets of Nebius Managed Kubernetes clusters across projects.",
+    no_args_is_help=True,
+)
+
+
+def _load(spec_path: Path):
+    from npa.fleet.spec import FleetSpecError, load_spec
+
+    try:
+        return load_spec(spec_path)
+    except (FleetSpecError, FileNotFoundError, OSError) as exc:
+        raise typer.BadParameter(f"Invalid fleet spec: {exc}") from exc
+
+
+def plan_cmd(
+    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to an npa.fleet/v0.0.1 spec YAML."),
+    project_prefix: str = typer.Option(
+        "", "--project-prefix", help="Override the spec's project_prefix for created projects."
+    ),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Show the resolved deployment plan without touching infrastructure."""
+
+    from npa.fleet.lifecycle import plan_fleet
+
+    spec = _load(spec_path)
+    plan = plan_fleet(spec, project_prefix=project_prefix or None)
+    if output == "json":
+        typer.echo(json.dumps(plan, indent=2))
+        return
+    typer.echo(f"Fleet '{plan['name']}': {plan['cluster_count']} cluster(s) across {plan['project_count']} project(s)")
+    typer.echo(f"  tenant: {plan['tenant_id']}  region: {plan['region']}  prefix: {plan['project_prefix']!r}")
+    for proj in plan["projects"]:
+        tag = "create" if proj["will_create"] else "existing"
+        name = proj["display_name"] or proj["project_id"]
+        typer.echo(f"  - project [{tag}] {name}")
+        for c in proj["clusters"]:
+            typer.echo(
+                f"      cluster {c['name']}: cpu={c['cpu_nodes']} ({c['cpu_preset']}) "
+                f"gpu={c['gpu_nodes']} ({c['gpu_platform']} {c['gpu_preset']}) "
+                f"gpu_cluster={c['enable_gpu_cluster']}"
+            )
+
+
+def deploy_cmd(
+    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to an npa.fleet/v0.0.1 spec YAML."),
+    project_prefix: str = typer.Option(
+        "", "--project-prefix", help="Override the spec's project_prefix for created projects."
+    ),
+    k8s_training_dir: Path | None = typer.Option(
+        None,
+        "--k8s-training-dir",
+        help="Path to a local k8s-training recipe dir. Overrides the vendored/cloned copy.",
+    ),
+    k8s_training_ref: str = typer.Option(
+        "",
+        "--k8s-training-ref",
+        help="Clone nebius-solutions-library at this git ref to consume the latest "
+        "k8s-training recipe (e.g. 'main'). Omit to use the repo-vendored copy.",
+    ),
+    create_projects: bool = typer.Option(
+        True,
+        "--create-projects/--no-create-projects",
+        help="Create missing projects under the tenant via the nebius CLI.",
+    ),
+    only_projects: str = typer.Option(
+        "",
+        "--only-projects",
+        help="Comma-separated project keys to deploy (subset of the spec).",
+    ),
+    continue_on_error: bool = typer.Option(
+        True,
+        "--continue-on-error/--fail-fast",
+        help="Continue deploying remaining clusters if one fails.",
+    ),
+    timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform apply timeout in minutes."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Deploy the fleet: resolve/create projects and apply each cluster."""
+
+    from npa.fleet.lifecycle import deploy_fleet
+
+    spec = _load(spec_path)
+    only = [p.strip() for p in only_projects.split(",") if p.strip()] or None
+    result = deploy_fleet(
+        spec,
+        k8s_training_dir=k8s_training_dir,
+        k8s_training_ref=k8s_training_ref or None,
+        project_prefix=project_prefix or None,
+        create_projects=create_projects,
+        only_projects=only,
+        continue_on_error=continue_on_error,
+        timeout_minutes=timeout,
+        on_status=lambda msg: typer.echo(f"  - {msg}"),
+    )
+    if output == "json":
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        typer.echo(
+            f"Fleet '{result['name']}' in {result['region']} (tenant {result['tenant_id']}): "
+            f"{result['deployed']} deployed, {result['failed']} failed."
+        )
+        for c in result["clusters"]:
+            if c.get("status") == "deployed":
+                typer.echo(
+                    f"  [ok]   {c['project_key']}/{c['cluster_name']} -> {c.get('cluster_id') or '(no id)'} "
+                    f"(context {c.get('kube_context')})"
+                )
+            else:
+                typer.echo(
+                    f"  [FAIL] {c.get('project_key')}/{c.get('cluster_name')}: {c.get('error', c.get('status'))}"
+                )
+    if result.get("failed"):
+        raise typer.Exit(1)
+
+
+def destroy_cmd(
+    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML used to deploy."),
+    only_projects: str = typer.Option("", "--only-projects", help="Comma-separated project keys to destroy."),
+    timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform destroy timeout in minutes."),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Destroy every cluster in the fleet (best-effort, per-target)."""
+
+    from npa.fleet.lifecycle import destroy_fleet
+
+    spec = _load(spec_path)
+    if not force and not typer.confirm(f"Destroy all clusters in fleet '{spec.name}'?"):
+        raise typer.Exit(1)
+    only = [p.strip() for p in only_projects.split(",") if p.strip()] or None
+    result = destroy_fleet(
+        spec,
+        only_projects=only,
+        timeout_minutes=timeout,
+        on_status=lambda msg: typer.echo(f"  - {msg}"),
+    )
+    if output == "json":
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        for c in result["clusters"]:
+            typer.echo(f"  {c['project_key']}/{c['cluster_name']}: {c['status']}")
+        typer.echo(f"Destroyed fleet '{result['name']}'.")
+
+
+def status_cmd(
+    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Show the last-known deployment state for the fleet."""
+
+    from npa.fleet.lifecycle import fleet_status
+
+    spec = _load(spec_path)
+    result = fleet_status(spec)
+    if output == "json":
+        typer.echo(json.dumps(result, indent=2))
+        return
+    typer.echo(f"Fleet '{result['name']}':")
+    for c in result.get("clusters", []):
+        typer.echo(
+            f"  {c.get('project_key')}/{c.get('cluster_name')}: {c.get('status')} "
+            f"{c.get('cluster_id', '')}"
+        )
+
+
+app.command("plan")(plan_cmd)
+app.command("deploy")(deploy_cmd)
+app.command("destroy")(destroy_cmd)
+app.command("status")(status_cmd)
