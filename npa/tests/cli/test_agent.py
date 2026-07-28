@@ -2350,3 +2350,59 @@ def test_agent_setup_requires_configured_projects(monkeypatch, tmp_path) -> None
     result = runner.invoke(app, ["setup"])
     assert result.exit_code != 0
     assert "npa configure" in result.output
+
+
+def test_agent_check_public_ip_quota_fails_when_exhausted(monkeypatch) -> None:
+    """Deploy aborts early with guidance when the region's public-IP quota is full."""
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (10, 10)
+    )
+
+    with pytest.raises(Exit):
+        _agent_check_public_ip_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_check_public_ip_quota_passes_with_headroom(monkeypatch) -> None:
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
+    monkeypatch.setattr(
+        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (0, 3)
+    )
+
+    # Must not raise.
+    _agent_check_public_ip_quota("project-x", "tenant-x", "uk-south1")
+
+
+def test_agent_check_public_ip_quota_noop_when_quota_unknown(monkeypatch) -> None:
+    """An unreadable quota never blocks a deploy."""
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (None, None)
+    )
+
+    # Must not raise even though the region resolved.
+    _agent_check_public_ip_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_check_public_ip_quota_noop_when_region_unresolved(monkeypatch) -> None:
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "")
+
+    def _boom(_tid, _region):  # pragma: no cover - must not be reached
+        raise AssertionError("quota lookup should be skipped when region is unknown")
+
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", _boom)
+
+    # No region and no fallback -> skip entirely.
+    _agent_check_public_ip_quota("project-x", "tenant-x", "")

@@ -1104,3 +1104,77 @@ def test_nebius_discover_container_registry_best_effort_on_error(mocker) -> None
     mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
 
     assert nebius.discover_container_registry("project") == ""
+
+
+def test_nebius_get_project_region_reads_status(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={"status": {"region": "uk-south1"}, "spec": {"region": "eu-north1"}},
+    )
+
+    assert nebius.get_project_region("project-abc") == "uk-south1"
+
+
+def test_nebius_get_project_region_falls_back_to_spec(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={"status": {}, "spec": {"region": "eu-north1"}},
+    )
+
+    assert nebius.get_project_region("project-abc") == "eu-north1"
+
+
+def test_nebius_get_project_region_best_effort_on_error(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
+
+    assert nebius.get_project_region("project-abc") == ""
+
+
+def test_nebius_get_project_region_empty_without_project() -> None:
+    assert nebius.get_project_region("") == ""
+
+
+def _public_ip_quota_items() -> dict:
+    return {
+        "items": [
+            {
+                "metadata": {"name": "vpc.ipv4-address.public.count"},
+                "spec": {"limit": "10", "region": "us-central1"},
+                "status": {"usage": "10"},
+            },
+            {
+                "metadata": {"name": "vpc.ipv4-address.public.count"},
+                "spec": {"limit": "3", "region": "uk-south1"},
+                "status": {"usage": "0"},
+            },
+            {
+                "metadata": {"name": "compute.vcpu.count"},
+                "spec": {"limit": "100", "region": "us-central1"},
+                "status": {"usage": "4"},
+            },
+        ]
+    }
+
+
+def test_nebius_public_ipv4_quota_matches_region(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", return_value=_public_ip_quota_items())
+
+    assert nebius.get_public_ipv4_quota("tenant-x", "us-central1") == (10, 10)
+    assert nebius.get_public_ipv4_quota("tenant-x", "uk-south1") == (0, 3)
+
+
+def test_nebius_public_ipv4_quota_unknown_region_is_none(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", return_value=_public_ip_quota_items())
+
+    assert nebius.get_public_ipv4_quota("tenant-x", "eu-west1") == (None, None)
+
+
+def test_nebius_public_ipv4_quota_best_effort_on_error(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
+
+    assert nebius.get_public_ipv4_quota("tenant-x", "us-central1") == (None, None)
+
+
+def test_nebius_public_ipv4_quota_requires_tenant_and_region() -> None:
+    assert nebius.get_public_ipv4_quota("", "us-central1") == (None, None)
+    assert nebius.get_public_ipv4_quota("tenant-x", "") == (None, None)
