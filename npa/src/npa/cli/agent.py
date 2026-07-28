@@ -815,14 +815,6 @@ def _resolve_deploy_llm_credentials() -> tuple[str, str]:
     return creds.token_factory_api_key, DEFAULT_LLM_MODEL
 
 
-def _resolve_operator_credentials() -> tuple[str, str]:
-    """Return Nebius AI Cloud key and Token Factory API key from operator credentials."""
-    from npa.clients.credentials import load_credentials
-
-    creds = load_credentials()
-    return creds.ai_cloud_api_key, creds.token_factory_api_key
-
-
 def _terraform_binary() -> str:
     """Return the terraform binary path/name, honoring NPA_TERRAFORM_BIN."""
     return (os.environ.get("NPA_TERRAFORM_BIN") or shutil.which("terraform") or "").strip()
@@ -1314,7 +1306,6 @@ def _write_agent_operator_profile(
     tenant_id: str,
     region: str,
     tf_api_key: str,
-    nebius_ai_key: str,
     s3_bucket: str,
     s3_prefix: str = "",
     s3_endpoint: str,
@@ -1338,8 +1329,6 @@ def _write_agent_operator_profile(
     credentials_payload: dict[str, Any] = {"tokens": {}}
     tokens = credentials_payload["tokens"]
     if isinstance(tokens, dict):
-        if nebius_ai_key.strip():
-            tokens["NEBIUS_AI_CLOUD_KEY"] = nebius_ai_key.strip()
         if tf_api_key.strip():
             tokens["NEBIUS_TOKEN_FACTORY_KEY"] = tf_api_key.strip()
     storage_payload = {
@@ -1812,7 +1801,6 @@ def _bootstrap_agent_stack(
     llm_model: str = DEFAULT_LLM_MODEL,
     llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
     tf_api_key: str = "",
-    nebius_ai_key: str = "",
     service_account_id: str = "",
     s3_bucket: str = "",
     s3_prefix: str = "",
@@ -8157,7 +8145,6 @@ sudo systemctl restart npa-agent-backend
         tenant_id=tenant_id,
         region=region,
         tf_api_key=tf_api_key,
-        nebius_ai_key=nebius_ai_key,
         s3_bucket=s3_bucket,
         s3_prefix=s3_prefix,
         s3_endpoint=s3_endpoint,
@@ -8412,7 +8399,6 @@ def deploy_cmd(
     # out of the box. An explicit --llm-models acts as a governance allowlist.
     extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
     configured_llm_models = _normalize_llm_models([configured_llm_model, *extra_llm_models])
-    nebius_ai_key, _ = _resolve_operator_credentials()
     # A missing Token Factory key is already surfaced up front (before Terraform)
     # by the deploy prerequisite check above.
     rollback_record = {
@@ -8439,7 +8425,6 @@ def deploy_cmd(
             llm_model=configured_llm_model,
             llm_models=configured_llm_models,
             tf_api_key=tf_api_key,
-            nebius_ai_key=nebius_ai_key,
             s3_bucket=str(merged_vars.get("s3_bucket", "")),
             s3_prefix=str(merged_vars.get("s3_prefix", "")),
             s3_endpoint=str(merged_vars.get("s3_endpoint", "")),
@@ -8644,7 +8629,6 @@ def bootstrap_cmd(
     # keeps any previously configured set.
     extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
     resolved_llm_models = _normalize_llm_models([resolved_llm_model, *extra_llm_models])
-    nebius_ai_key, _ = _resolve_operator_credentials()
     llm_block = record.get("llm", {}) if isinstance(record.get("llm"), dict) else {}
     if isinstance(llm_block.get("models"), list):
         resolved_llm_models = _normalize_llm_models(
@@ -8734,7 +8718,6 @@ def bootstrap_cmd(
             llm_model=resolved_llm_model,
             llm_models=resolved_llm_models,
             tf_api_key=tf_api_key,
-            nebius_ai_key=nebius_ai_key,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,

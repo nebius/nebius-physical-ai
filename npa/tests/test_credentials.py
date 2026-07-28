@@ -172,43 +172,18 @@ def test_write_credentials_file_does_not_normalize_legacy_token_factory_key(
     assert stored["storage"]["bucket"] == "s3://bucket/checkpoints/"
 
 
-def test_load_credentials_ignores_legacy_ai_cloud_alias(tmp_path: Path) -> None:
+def test_shared_credential_env_never_emits_ai_cloud_key(tmp_path: Path) -> None:
+    """The removed NEBIUS_AI_CLOUD_KEY must not leak back into the shared env."""
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "ai-legacy-file"}})
+        yaml.safe_dump({"tokens": {"NEBIUS_AI_CLOUD_KEY": "stale-ai-cloud-key"}})
     )
 
     resolved = load_credentials(path=credentials_path, environ={})
 
-    assert resolved.ai_cloud_api_key == ""
-    assert resolved.nebius_api_key == ""
+    assert not hasattr(resolved, "ai_cloud_api_key")
+    assert not hasattr(resolved, "nebius_api_key")
     assert "NEBIUS_AI_CLOUD_KEY" not in shared_credential_env(resolved)
-
-
-def test_write_credentials_file_does_not_normalize_legacy_ai_cloud_key(tmp_path: Path) -> None:
-    credentials_path = tmp_path / "credentials.yaml"
-    credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "ai-legacy-file"}})
-    )
-
-    write_credentials_file({"tokens": {"HF_TOKEN": "hf-token"}}, path=credentials_path)
-
-    stored = yaml.safe_load(credentials_path.read_text())
-    assert stored["tokens"]["NEBIUS_API_KEY"] == "ai-legacy-file"
-    assert "NEBIUS_AI_CLOUD_KEY" not in stored["tokens"]
-
-
-def test_load_credentials_reads_ai_cloud_key(tmp_path: Path) -> None:
-    credentials_path = tmp_path / "credentials.yaml"
-    credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_AI_CLOUD_KEY": "ai-cloud-key"}})
-    )
-
-    resolved = load_credentials(path=credentials_path, environ={})
-
-    assert resolved.ai_cloud_api_key == "ai-cloud-key"
-    assert resolved.nebius_api_key == "ai-cloud-key"
-    assert shared_credential_env(resolved)["NEBIUS_AI_CLOUD_KEY"] == "ai-cloud-key"
 
 
 def test_load_credentials_reads_byovm_ssh_config(tmp_path: Path) -> None:

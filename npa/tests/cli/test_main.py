@@ -169,7 +169,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     # Enter project/tenant + default region/registry; pick a custom
-    # bucket name and a custom size; then HF + AI Cloud + Token Factory + NGC;
+    # bucket name and a custom size; then HF + Token Factory + NGC;
     # accept the default project alias (region).
     answers = "\n".join(
         [
@@ -181,7 +181,6 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
             "",                  # storage class (standard default)
             "100",               # size in GB
             "hf_secret_token",   # HF token
-            "aicloud_secret",    # AI Cloud API key
             "nebius_secret_key", # Nebius Token Factory API key
             "nvapi_secret",      # NGC API key
             "",                  # project alias (default = region)
@@ -206,7 +205,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
-    assert creds["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud_secret"
+    assert "NEBIUS_AI_CLOUD_KEY" not in creds["tokens"]
     assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "nebius_secret_key"
     assert creds["ngc"]["api_key"] == "nvapi_secret"
     assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
@@ -261,9 +260,9 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # proj, tenant, region, registry, bucket name (Enter = default), hf, ai cloud,
+    # proj, tenant, region, registry, bucket name (Enter = default), hf,
     # token factory, ngc, project alias (Enter = region default)
-    answers = "\n".join(["tenant-1", "project-1", "", "", "", "", "", "", "", ""]) + "\n"
+    answers = "\n".join(["tenant-1", "project-1", "", "", "", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -279,7 +278,7 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
 
     Uses the reuse path (bucket_exists=True) so there are no storage-class/size
     prompts; answers are: project, tenant, region, registry, bucket-name(reuse),
-    HF, AI Cloud, Token Factory, NGC, alias.
+    HF, Token Factory, NGC, alias.
     """
 
     from npa.clients import config as config_module
@@ -306,7 +305,7 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     answers = "\n".join(
-        ["tenant-1", "project-1", "", "", "", hf_token, "", "", ngc_key, ""]
+        ["tenant-1", "project-1", "", "", "", hf_token, "", ngc_key, ""]
     ) + "\n"
     return runner.invoke(app, ["configure", "--interactive"], input=answers)
 
@@ -411,7 +410,6 @@ def _prepopulate_config(monkeypatch, tmp_path):
             {
                 "tokens": {
                     "HF_TOKEN": "hf_existing",
-                    "NEBIUS_AI_CLOUD_KEY": "aicloud_existing",
                     "NEBIUS_TOKEN_FACTORY_KEY": "tf_existing",
                 },
                 "ngc": {"api_key": "nvapi-existing"},
@@ -444,8 +442,8 @@ def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> No
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _must_not_provision)
 
-    # project, tenant, region, registry, keep-storage, HF, AI cloud, TF, NGC, alias
-    answers = "\n".join([""] * 10) + "\n"
+    # project, tenant, region, registry, keep-storage, HF, TF, NGC, alias
+    answers = "\n".join([""] * 9) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -460,7 +458,7 @@ def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> No
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_existing"
-    assert creds["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud_existing"
+    assert "NEBIUS_AI_CLOUD_KEY" not in creds["tokens"]
     assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf_existing"
     assert creds["ngc"]["api_key"] == "nvapi-existing"
     # Storage preserved verbatim — no new access key minted.
@@ -488,7 +486,6 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
             "",             # registry (keep)
             "",             # keep existing storage? -> Y
             "hf_new",       # HF token (update)
-            "",             # AI cloud (keep)
             "",             # token factory (keep)
             "",             # NGC (keep)
             "",             # alias (keep prod)
@@ -507,7 +504,6 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_new"
-    assert creds["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud_existing"
     assert creds["storage"]["aws_access_key_id"] == "AK_existing"
 
 
@@ -542,7 +538,6 @@ def test_configure_rerun_can_reprovision_storage_when_declined(monkeypatch, tmp_
             "n",    # keep existing storage? -> no
             "",     # bucket name (default = npa-bucket-existing)
             "",     # HF (keep)
-            "",     # AI cloud (keep)
             "",     # token factory (keep)
             "",     # NGC (keep)
             "",     # alias (keep)
@@ -596,7 +591,6 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
             "",                  # S3 endpoint (default-by-region)
             "s3://manual-bucket/",  # S3 bucket (fallback)
             "hf_tok",            # HF token
-            "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
             "",                  # project alias (default = region)
@@ -759,7 +753,7 @@ def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
 
-    # proj, tenant, region, registry, bucket, hf (Bearer+quoted), ai (skip),
+    # proj, tenant, region, registry, bucket, hf (Bearer+quoted),
     # token factory (quoted, not v1.), ngc (Bearer), alias.
     answers = "\n".join(
         [
@@ -769,7 +763,6 @@ def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(
             "",
             "my-bucket",
             'Bearer "hf_abc123"',
-            "",
             '"nebius-iam-looking-token"',
             "Bearer nvapi-xyz",
             "",
@@ -885,7 +878,6 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
             "",                  # S3 endpoint (default-by-region)
             "s3://b/",           # S3 bucket
             "",                  # HF token
-            "",                  # AI Cloud API key
             "",                  # Token Factory API key
             "",                  # NGC API key
             "lab",               # project alias (custom)
@@ -1015,7 +1007,6 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
             {
                 "tokens": {
                     "HF_TOKEN": "hf-existing",
-                    "NEBIUS_AI_CLOUD_KEY": "aicloud-existing",
                     "NEBIUS_TOKEN_FACTORY_KEY": "tf-existing",
                     "NGC_API_KEY": "ngc-existing",
                 },
@@ -1045,7 +1036,6 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
             "",  # S3 endpoint
             "",  # S3 bucket
             "hf-updated",  # HF token
-            "",  # AI Cloud API key (unchanged)
             "",  # Token Factory API key (unchanged)
             "",  # NGC API key (unchanged)
         ]
@@ -1059,7 +1049,7 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
     assert result.exit_code == 0, result.output
     stored = yaml.safe_load(creds_path.read_text())
     assert stored["tokens"]["HF_TOKEN"] == "hf-updated"
-    assert stored["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud-existing"
+    assert "NEBIUS_AI_CLOUD_KEY" not in stored["tokens"]
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-existing"
     assert stored["tokens"]["NGC_API_KEY"] == "ngc-existing"
 
@@ -1159,7 +1149,6 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
             "",                  # registry (accept discovered)
             "",                  # bucket name (Enter = default)
             "hf_from_profile",   # HF token
-            "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
             "",                  # project alias (default = region)
@@ -1382,7 +1371,6 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
             "",                  # storage class (standard default)
             "",                  # size GB (default 50)
             "hf_secret_token",   # HF token
-            "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
             "",                  # project alias (default = region)

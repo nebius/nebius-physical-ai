@@ -303,7 +303,6 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
     monkeypatch.setattr("npa.cli.agent._write_auth_secret", lambda **_kwargs: tmp_path / "auth.env")
     monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model-a"))
-    monkeypatch.setattr("npa.cli.agent._resolve_operator_credentials", lambda: ("", ""))
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
@@ -1547,7 +1546,6 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
         llm_model="nvidia/Cosmos3-Super-Reasoner",
         llm_models=["nvidia/Cosmos3-Super-Reasoner", "meta-llama/Llama-3.3-70B-Instruct"],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
 
@@ -1854,7 +1852,6 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(monkeypatch, t
     monkeypatch.setattr(
         "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner")
     )
-    monkeypatch.setattr("npa.cli.agent._resolve_operator_credentials", lambda: ("", ""))
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent._store_agent_record", lambda project, name, rec: captured.update(rec))

@@ -55,7 +55,6 @@ def _render_backend_body(monkeypatch) -> str:
         llm_model="nvidia/Cosmos3-Super-Reasoner",
         llm_models=["nvidia/Cosmos3-Super-Reasoner"],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
     setup_script = captured["setup_script"]
@@ -191,7 +190,6 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
         llm_model="nvidia/Cosmos3-Super-Reasoner",
         llm_models=["nvidia/Cosmos3-Super-Reasoner"],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
     setup_script = captured["setup_script"]
@@ -244,7 +242,6 @@ def _capture_setup_script(monkeypatch) -> str:
         llm_model="nvidia/Cosmos3-Super-Reasoner",
         llm_models=["nvidia/Cosmos3-Super-Reasoner"],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
     return captured["setup_script"]

@@ -92,11 +92,7 @@ npa configure
 one's setup guide inline. Create them step by step:
 [Hugging Face](docs/workbench/huggingface-token.md) ·
 [NVIDIA NGC](docs/workbench/ngc-api-key.md) ·
-[Nebius Token Factory](docs/workbench/token-factory-key.md) ·
-[Nebius AI Cloud key](docs/workbench/nebius-ai-cloud-key.md).
-The **Nebius AI Cloud key is genuinely optional** — AI Cloud access goes through
-the Nebius CLI profile `npa configure` sets up (a short-lived IAM access token),
-not a static key, so press Enter to skip it unless you were handed one.
+[Nebius Token Factory](docs/workbench/token-factory-key.md).
 
 Full account/credential detail: [docs/quickstart.md](docs/quickstart.md).
 

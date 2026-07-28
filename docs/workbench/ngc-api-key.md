@@ -79,5 +79,4 @@ models (see [Hugging Face token](huggingface-token.md)).
 
 - [Hugging Face token](huggingface-token.md) — GR00T / Cosmos also need HF access.
 - [Nebius Token Factory key](token-factory-key.md) — zero-GPU hosted inference.
-- [Nebius AI Cloud key](nebius-ai-cloud-key.md) — optional; usually not needed.
 - [Quickstart § credentials](../quickstart.md#4-configure-credentials)

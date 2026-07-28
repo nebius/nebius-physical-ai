@@ -82,7 +82,7 @@ when needed, then with an authenticated profile
 auto-creates an S3 bucket (and access key) when you press Enter at the bucket
 prompt, so you supply your Nebius tenant id, project id, and region plus optional
 bucket name, storage class (standard or enhanced), bucket size, Hugging Face,
-AI Cloud, Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
+Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
 user-level tokens, object storage, and BYOVM SSH defaults:
 
@@ -93,10 +93,6 @@ tokens:
   # also click "Agree and access repository" on each model page while signed in.
   # Step-by-step guide: docs/workbench/huggingface-token.md
   HF_TOKEN: hf_REPLACE_ME
-  # Optional: Nebius AI Cloud API key (for Nebius AI Cloud APIs). Usually not
-  # needed — AI Cloud auth goes through your Nebius CLI profile (IAM access
-  # token), not a static key. Step-by-step guide: docs/workbench/nebius-ai-cloud-key.md
-  NEBIUS_AI_CLOUD_KEY: <paste-your-nebius-ai-cloud-api-key>
   # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
   # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
   # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
@@ -652,20 +648,6 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         )
     )
     typer.echo(
-        "\nNebius AI Cloud API key (optional): you almost certainly don't need "
-        "this — access to Nebius AI Cloud is authenticated by your Nebius CLI "
-        "profile (a short-lived IAM access token), not a static key. Press Enter "
-        "to skip unless you were handed a Nebius AI Cloud API key for a specific "
-        "API. Guide: docs/workbench/nebius-ai-cloud-key.md."
-    )
-    ai_cloud_api_key = _normalize_pasted_secret(
-        ask(
-            "Nebius AI Cloud API key (NEBIUS_AI_CLOUD_KEY, optional)",
-            default=existing_credentials.ai_cloud_api_key,
-            secret=True,
-        )
-    )
-    typer.echo(
         "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
         "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
         "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
@@ -703,7 +685,6 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     credentials_payload: dict[str, object] = {
         "tokens": {
             "HF_TOKEN": hf_token,
-            "NEBIUS_AI_CLOUD_KEY": ai_cloud_api_key,
             "NEBIUS_TOKEN_FACTORY_KEY": token_factory_api_key,
         },
         "ngc": {"api_key": ngc_api_key},
