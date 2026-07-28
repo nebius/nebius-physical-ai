@@ -590,6 +590,7 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
             "provision-bucket",  # bucket name
             "",                  # storage class (standard default)
             "",                  # size GB (default 50)
+            "n",                 # skip object storage? -> no, enter manually
             "AKIAMANUAL",        # S3 access key (fallback)
             "manual-secret",     # S3 secret (fallback)
             "",                  # S3 endpoint (default-by-region)
@@ -645,6 +646,83 @@ def _bootstrap_capture(calls: list[dict]):
         }
 
     return fake_bootstrap
+
+
+def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
+    monkeypatch, tmp_path
+) -> None:
+    """Storage AccessDenied must not dead-end: skip storage, still write tokens."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    # Existence search + provisioning both denied.
+    monkeypatch.setattr(
+        nebius_module,
+        "bucket_exists",
+        lambda *_a, **_k: (_ for _ in ()).throw(nebius_module.NebiusError("AccessDenied")),
+    )
+
+    def boom(*_a, **_k):
+        raise nebius_module.NebiusError("AccessDenied: Access denied")
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", boom)
+
+    # proj, tenant, region, registry, bucket, skip-storage (Enter=Y),
+    # hf, ai, tf, ngc, alias.
+    answers = "\n".join(
+        ["project-1", "tenant-1", "", "", "npa-tle-727", "", "hf_tok", "", "", "", ""]
+    ) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Skip object storage for now and finish setup?" in result.output
+    assert "Skipping object storage" in result.output
+    creds = yaml.safe_load(creds_path.read_text())
+    assert creds["tokens"]["HF_TOKEN"] == "hf_tok"
+    # No storage stanza (or empty) was written.
+    assert not creds.get("storage")
+
+
+def test_configure_warns_on_region_registry_mismatch(monkeypatch, tmp_path) -> None:
+    """A region that disagrees with the registry host region is flagged."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
+
+    # region us-central1 while registry is cr.eu-north1... -> mismatch warning.
+    answers = "\n".join(
+        [
+            "project-1",
+            "tenant-1",
+            "us-central1",
+            "cr.eu-north1.nebius.cloud/e00abc",
+            "my-bucket",
+            "",  # hf
+            "",  # ai
+            "",  # tf
+            "",  # ngc
+            "",  # alias
+        ]
+    ) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "does not match your container registry region 'eu-north1'" in result.output
 
 
 def test_normalize_pasted_secret_strips_quotes_and_auth_prefixes() -> None:

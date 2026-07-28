@@ -546,12 +546,26 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     region = ask("Region", default=region_default)
     registry = ask("Container registry", default=registry_default)
 
+    # Catch a region typo: object storage, clusters, and the registry all live in
+    # one region, so a region that disagrees with the registry host usually means
+    # the wrong region was entered (and leads to a wrong S3 endpoint / resources
+    # that appear missing).
+    registry_region = _region_from_registry_host(registry)
+    if registry_region and region and registry_region != region:
+        typer.echo(
+            f"  Warning: region '{region}' does not match your container registry "
+            f"region '{registry_region}'. Your project's resources (registry, "
+            f"object storage, clusters) appear to live in '{registry_region}'. "
+            f"Use '{registry_region}' unless you deliberately run cross-region."
+        )
+
     storage: dict[str, str] | None = None
     existing_has_storage = bool(
         existing_credentials.s3_access_key_id
         and existing_credentials.s3_secret_access_key
         and existing_credentials.s3_bucket
     )
+    provisioning_failed = False
     if provision and project_id and tenant_id:
         if existing_has_storage:
             # Reuse already-provisioned storage by default so a re-run does not
@@ -578,10 +592,27 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
                 region=region,
                 existing_bucket=_bucket_name_from_uri(existing_credentials.s3_bucket),
             )
-        if storage is None:
+            provisioning_failed = storage is None
+
+    # When auto-provisioning was attempted and failed (e.g. storage AccessDenied),
+    # don't dead-end at a manual S3 prompt a first-time user can't answer. Offer
+    # to skip storage and still write tokens + project config, so non-storage
+    # workflows (Token Factory, health checks) work immediately.
+    if storage is None and provisioning_failed:
+        skip = ask(
+            "Skip object storage for now and finish setup? "
+            "(you can add it later by re-running `npa configure`) [Y/n]",
+            default="Y",
+        )
+        if skip.lower() in ("", "y", "yes"):
+            storage = {}
             typer.echo(
-                "\nFalling back to manual object-storage entry. "
-                "Provide existing S3 credentials or press Enter to skip."
+                "  Skipping object storage. Tokens and project config will still "
+                "be written; re-run `npa configure` once storage access is granted."
+            )
+        else:
+            typer.echo(
+                "Enter existing S3 credentials (or press Enter to leave blank)."
             )
     if storage is None:
         storage = {
