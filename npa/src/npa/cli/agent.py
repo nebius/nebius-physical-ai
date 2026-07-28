@@ -51,6 +51,14 @@ DEFAULT_BACKEND_PORT = 8787
 DEFAULT_RERUN_PORT = 9090
 DEFAULT_PROJECT_ALIAS = "us-central1"
 DEFAULT_AGENT_NAME = "agent"
+# The public agent VM is CPU-only (gpu_platform="cpu-d3" below). Use a
+# driverless (non-CUDA) Ubuntu image: it is the correct base for a CPU host,
+# boots faster (no GPU driver install), and — unlike the CUDA image families —
+# is published across Nebius regions. The Terraform default is a CUDA image
+# (variables.tf: ubuntu24.04-cuda12), which is absent outside a few regions and
+# makes the boot-disk create fail with "Image family ... not found" (e.g. in
+# uk-south1). Pinning a driverless family here keeps agent deploy region-portable.
+DEFAULT_AGENT_IMAGE_FAMILY = "ubuntu24.04-driverless"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
@@ -662,6 +670,7 @@ def _resolve_destroy_tf_vars(
         "workbench_type": "lerobot",
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
+        "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
         "enable_preemptible": "false",
         "nebius_api_key": state.access_key,
         "nebius_secret_key": state.secret_key,
@@ -8344,6 +8353,7 @@ def deploy_cmd(
         "workbench_type": "lerobot",
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
+        "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
         "ssh_user": ssh_user,
         "ssh_public_key_path": ssh_public_key_path,
         "enable_preemptible": "false",
