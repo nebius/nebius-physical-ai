@@ -891,6 +891,95 @@ def test_nebius_current_project_id_best_effort_on_error(mocker) -> None:
     assert nebius.current_project_id() == ""
 
 
+def test_nebius_list_tenants_parses_items(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={
+            "items": [
+                {
+                    "metadata": {"id": "tenant-a", "name": "acme"},
+                    "status": {"region": "eu-north1"},
+                }
+            ]
+        },
+    )
+
+    assert nebius.list_tenants() == [
+        {"id": "tenant-a", "name": "acme", "region": "eu-north1"}
+    ]
+
+
+def test_nebius_list_tenants_best_effort_on_error(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("no profile"))
+
+    assert nebius.list_tenants() == []
+
+
+def test_nebius_list_projects_in_tenant_skips_non_active(mocker) -> None:
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={
+            "items": [
+                {
+                    "metadata": {"id": "project-1", "name": "prod"},
+                    "status": {"region": "eu-north1", "container_state": "ACTIVE"},
+                },
+                {
+                    "metadata": {"id": "project-2", "name": "gone"},
+                    "status": {"region": "us-central1", "container_state": "DELETING"},
+                },
+            ]
+        },
+    )
+
+    result = nebius.list_projects_in_tenant("tenant-a")
+
+    assert result == [
+        {
+            "id": "project-1",
+            "name": "prod",
+            "tenant_id": "tenant-a",
+            "region": "eu-north1",
+        }
+    ]
+    assert run_json.call_args.args[0] == [
+        "iam",
+        "project",
+        "list",
+        "--parent-id",
+        "tenant-a",
+        "--all",
+    ]
+
+
+def test_nebius_list_projects_in_tenant_empty_without_tenant(mocker) -> None:
+    run_json = mocker.patch("npa.clients.nebius._run_json")
+
+    assert nebius.list_projects_in_tenant("") == []
+    run_json.assert_not_called()
+
+
+def test_nebius_list_accessible_projects_spans_tenants(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius.list_tenants",
+        return_value=[
+            {"id": "tenant-a", "name": "a", "region": "eu-north1"},
+            {"id": "tenant-b", "name": "b", "region": "us-central1"},
+        ],
+    )
+    mocker.patch(
+        "npa.clients.nebius.list_projects_in_tenant",
+        side_effect=[
+            [{"id": "project-1", "name": "p1", "tenant_id": "tenant-a", "region": "eu-north1"}],
+            [{"id": "project-2", "name": "p2", "tenant_id": "tenant-b", "region": "us-central1"}],
+        ],
+    )
+
+    result = nebius.list_accessible_projects()
+
+    assert [p["id"] for p in result] == ["project-1", "project-2"]
+
+
 def test_nebius_discover_container_registry_builds_url(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",

@@ -266,6 +266,89 @@ def current_tenant_id() -> str:
     return _config_get("tenant-id")
 
 
+# ── Tenant / project discovery ───────────────────────────────────────────
+
+
+def list_tenants() -> list[dict[str, str]]:
+    """Return tenants the active profile can see: ``[{id, name, region}]``.
+
+    Best-effort: returns ``[]`` when the CLI is missing/unauthenticated or the
+    call fails, so callers can fall back to manual entry.
+    """
+    try:
+        data = _run_json(["iam", "tenant", "list", "--all"])
+    except Exception:
+        return []
+    tenants: list[dict[str, str]] = []
+    for item in data.get("items", []):
+        metadata = item.get("metadata", {}) or {}
+        tenant_id = str(metadata.get("id", "") or "")
+        if not tenant_id:
+            continue
+        status = item.get("status", {}) or {}
+        spec = item.get("spec", {}) or {}
+        tenants.append(
+            {
+                "id": tenant_id,
+                "name": str(metadata.get("name", "") or ""),
+                "region": str(status.get("region", "") or spec.get("region", "") or ""),
+            }
+        )
+    return tenants
+
+
+def list_projects_in_tenant(tenant_id: str) -> list[dict[str, str]]:
+    """Return ACTIVE projects under *tenant_id*: ``[{id, name, tenant_id, region}]``.
+
+    Best-effort: returns ``[]`` on any failure (e.g. the profile lacks list
+    permission in this tenant) so discovery can skip it and continue.
+    """
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        return []
+    try:
+        data = _run_json(
+            ["iam", "project", "list", "--parent-id", tenant, "--all"]
+        )
+    except Exception:
+        return []
+    projects: list[dict[str, str]] = []
+    for item in data.get("items", []):
+        metadata = item.get("metadata", {}) or {}
+        project_id = str(metadata.get("id", "") or "")
+        if not project_id:
+            continue
+        status = item.get("status", {}) or {}
+        spec = item.get("spec", {}) or {}
+        # Skip suspended/deleting projects; only ACTIVE containers are usable.
+        container_state = str(status.get("container_state", "") or "")
+        if container_state and container_state != "ACTIVE":
+            continue
+        projects.append(
+            {
+                "id": project_id,
+                "name": str(metadata.get("name", "") or ""),
+                "tenant_id": tenant,
+                "region": str(status.get("region", "") or spec.get("region", "") or ""),
+            }
+        )
+    return projects
+
+
+def list_accessible_projects() -> list[dict[str, str]]:
+    """Return every ACTIVE project the active profile can reach.
+
+    Enumerates tenants via :func:`list_tenants`, then projects per tenant via
+    :func:`list_projects_in_tenant`. Best-effort and non-fatal: tenants whose
+    project list is denied are simply skipped. Each entry is
+    ``{id, name, tenant_id, region}``.
+    """
+    projects: list[dict[str, str]] = []
+    for tenant in list_tenants():
+        projects.extend(list_projects_in_tenant(tenant["id"]))
+    return projects
+
+
 def discover_container_registry(project_id: str, *, preferred_region: str = "eu-north1") -> str:
     """Best-effort container registry URL for *project_id*, or "".
 
