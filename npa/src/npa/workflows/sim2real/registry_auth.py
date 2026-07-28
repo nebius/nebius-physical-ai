@@ -17,9 +17,14 @@ def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
     Thin wrapper around the canonical :func:`npa.clients.nebius_auth.mint_nebius_iam_token`
     so registry-pull refreshes work even when an ambient ``NEBIUS_IAM_TOKEN`` is
     exported. Any workflow needing a token should use that helper directly.
+
+    Pull secrets deliberately pass ``allow_env_token=False``: falling back to the
+    ambient ``NEBIUS_IAM_TOKEN`` here could re-embed the same stale/wrong-identity
+    token into the K8s secret that this refresh exists to fix, re-introducing the
+    ``403`` / ``ErrImagePull`` failure one step later. Fail loudly instead.
     """
 
-    return mint_nebius_iam_token(nebius_cli=nebius_cli)
+    return mint_nebius_iam_token(nebius_cli=nebius_cli, allow_env_token=False)
 
 
 def _registry_server_from_image(image: str) -> str:
