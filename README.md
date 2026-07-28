@@ -66,12 +66,6 @@ pip install -e npa
 
 Verify: `npa --version`.
 
-> The base install is fully capable — a plain `pip install -e npa` includes
-> every workbench dependency (dataframe/reporting, LanceDB, Rerun viewer, and
-> the local eval/agent server), so there is no separate `npa[full]` step. Only
-> GPU/simulation wheels (`npa[genesis]`, `npa[groot]`, `npa[sonic]`) are opt-in,
-> and they run in the remote Nebius images your jobs launch — not on the client.
-
 > **Windows:** use **WSL2 Ubuntu**. Full per-platform steps (venv, Nebius CLI,
 > WSL2): [docs/install.md](docs/install.md).
 
