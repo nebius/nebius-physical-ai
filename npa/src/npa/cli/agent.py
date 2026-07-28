@@ -8216,6 +8216,34 @@ def _health(
     return response.status_code == 200, response.status_code
 
 
+def _agent_check_public_ip_quota(
+    project_id: str, tenant_id: str, fallback_region: str
+) -> None:
+    """Fail fast when the deploy region has no public-IPv4 quota headroom.
+
+    Placement follows the project's region (not ``--region``), so resolve the
+    project's real region and check the tenant's per-region
+    ``vpc.ipv4-address.public.count`` allowance. Best-effort: any unresolved
+    region or unreadable quota is a no-op so a healthy deploy is never blocked.
+    """
+    from npa.clients.nebius import get_project_region, get_public_ipv4_quota
+
+    region = (get_project_region(project_id) or (fallback_region or "").strip()).strip()
+    if not region:
+        return
+    usage, limit = get_public_ipv4_quota(tenant_id, region)
+    if usage is None or limit is None:
+        return
+    if usage >= limit:
+        _fail(
+            f"Nebius public IPv4 quota is exhausted in region {region!r} "
+            f"(in use {usage}/{limit}); the agent VM needs one public IP. "
+            "Free a public IP (e.g. `npa agent destroy` an unused agent, or delete "
+            "an idle VM/allocation), or ask a tenant admin to raise the "
+            "vpc.ipv4-address.public.count quota for this region, then re-run."
+        )
+
+
 @app.command("preflight")
 def preflight_cmd(
     ssh_public_key_path: str = typer.Option(
@@ -8331,6 +8359,13 @@ def deploy_cmd(
     if tf_key_result.status == "WARN":
         typer.echo(f"  Warning: {tf_key_result.summary}", err=True)
         typer.echo(f"           {tf_key_result.remedy}", err=True)
+
+    # Fail fast when the project's region has no public-IPv4 headroom. The agent
+    # VM needs exactly one public IP; without this check the shortfall only
+    # surfaces deep in `terraform apply` (a raw QuotaFailure) after the network,
+    # subnet and boot disk were created and must be rolled back. Best-effort: an
+    # unreadable quota never blocks the deploy.
+    _agent_check_public_ip_quota(env_project_id, env_tenant_id, env_region)
 
     from npa.clients.nebius import NebiusError, bootstrap_agent_environment, get_iam_token
 

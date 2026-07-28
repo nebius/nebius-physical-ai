@@ -351,6 +351,65 @@ def list_accessible_projects() -> list[dict[str, str]]:
     return projects
 
 
+def get_project_region(project_id: str) -> str:
+    """Best-effort region for *project_id*, or "".
+
+    A Nebius project belongs to exactly one region, and compute placement
+    follows the project (the ``--region`` flag does not move a VM to a different
+    region than its project). Resolving the real region lets callers check the
+    right per-region quota and render accurate region-dependent config. Returns
+    "" when the CLI is missing/unauthenticated or the lookup fails.
+    """
+    pid = str(project_id or "").strip()
+    if not pid:
+        return ""
+    try:
+        data = _run_json(["iam", "project", "get", "--id", pid])
+    except Exception:
+        return ""
+    status = data.get("status", {}) or {}
+    spec = data.get("spec", {}) or {}
+    return str(status.get("region", "") or spec.get("region", "") or "").strip()
+
+
+def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int | None]:
+    """Return ``(usage, limit)`` for the tenant public IPv4 quota in *region*.
+
+    Nebius meters public IPv4 addresses per (tenant, region) via the
+    ``vpc.ipv4-address.public.count`` quota allowance. Best-effort: returns
+    ``(None, None)`` when the CLI is missing/unauthenticated, the quota can't be
+    read, or no matching per-region allowance exists — so callers never block a
+    deploy on an unreadable quota.
+    """
+    tenant = str(tenant_id or "").strip()
+    reg = str(region or "").strip()
+    if not tenant or not reg:
+        return (None, None)
+    try:
+        data = _run_json(
+            ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+        )
+    except Exception:
+        return (None, None)
+
+    def _to_int(value: Any) -> int | None:
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    for item in data.get("items", []):
+        metadata = item.get("metadata", {}) or {}
+        if metadata.get("name") != "vpc.ipv4-address.public.count":
+            continue
+        spec = item.get("spec", {}) or {}
+        if str(spec.get("region", "") or "").strip() != reg:
+            continue
+        status = item.get("status", {}) or {}
+        return (_to_int(status.get("usage", "0")), _to_int(spec.get("limit")))
+    return (None, None)
+
+
 def discover_container_registry(project_id: str, *, preferred_region: str = "eu-north1") -> str:
     """Best-effort container registry URL for *project_id*, or "".
 
