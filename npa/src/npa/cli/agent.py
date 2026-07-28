@@ -3096,35 +3096,58 @@ def _get_chat_session(state: dict, session_id: str = "") -> dict:
 
 def _list_chat_sessions(state: dict) -> list[dict]:
     sessions = _local_chat_sessions(state)
-    s3, settings = _agent_s3_client_optional()
-    if s3 is not None and settings.get("bucket"):
-        prefix = _chat_memory_prefix(settings) + "/"
-        try:
-            resp = s3.list_objects_v2(Bucket=settings["bucket"], Prefix=prefix, MaxKeys=50)
-            for item in resp.get("Contents", []) or []:
-                key = str(item.get("Key") or "")
-                if not key.endswith(".json"):
-                    continue
-                session_id = _sanitize_chat_session_id(Path(key).stem)
-                remote = _load_chat_session_from_s3(session_id)
-                if remote is not None:
-                    sessions[session_id] = remote
-        except Exception:
-            pass
-    state["chat_sessions"] = sessions
     _save_state(state)
-    rows = []
+    rows: dict[str, dict] = {{}}
     for session in sessions.values():
         history = session.get("chat_history") if isinstance(session, dict) else []
-        rows.append({{
-            "id": str(session.get("id") or ""),
+        sid = str(session.get("id") or "")
+        rows[sid] = {{
+            "id": sid,
             "title": str(session.get("title") or "New chat"),
             "created_at": str(session.get("created_at") or ""),
             "updated_at": str(session.get("updated_at") or ""),
             "message_count": len(history) if isinstance(history, list) else 0,
             "memory_uri": str(session.get("memory_uri") or ""),
-        }})
-    return sorted(rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        }}
+    # Merge remote sessions from object-storage WITHOUT fetching each body.
+    # Listing keys is a single S3 round-trip; GETting every session is O(N)
+    # round-trips on the hot path (session bootstrap runs this on every load),
+    # and the chat-session prefix is shared per tenant so it grows unbounded —
+    # that made /session take ~11s with a few dozen saved sessions. Full detail
+    # for a remote session is hydrated on demand when it is opened
+    # (_get_chat_session), so the listing only needs id + last-modified; a saved
+    # session not already known locally shows a placeholder title until opened.
+    s3, settings = _agent_s3_client_optional()
+    if s3 is not None and settings.get("bucket"):
+        prefix = _chat_memory_prefix(settings) + "/"
+        try:
+            resp = s3.list_objects_v2(Bucket=settings["bucket"], Prefix=prefix, MaxKeys=200)
+            for item in resp.get("Contents", []) or []:
+                key = str(item.get("Key") or "")
+                if not key.endswith(".json"):
+                    continue
+                session_id = _sanitize_chat_session_id(Path(key).stem)
+                if session_id in rows:
+                    continue
+                last_modified = item.get("LastModified")
+                updated_at = (
+                    last_modified.isoformat()
+                    if hasattr(last_modified, "isoformat")
+                    else str(last_modified or "")
+                )
+                rows[session_id] = {{
+                    "id": session_id,
+                    "title": "Saved chat",
+                    "created_at": "",
+                    "updated_at": updated_at,
+                    "message_count": 0,
+                    "memory_uri": _chat_memory_uri(session_id, settings),
+                }}
+        except Exception:
+            pass
+    return sorted(
+        rows.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True
+    )
 
 
 def _artifact_filename(key: str) -> str:
