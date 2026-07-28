@@ -93,7 +93,9 @@ tokens:
   # also click "Agree and access repository" on each model page while signed in.
   # Step-by-step guide: docs/workbench/huggingface-token.md
   HF_TOKEN: hf_REPLACE_ME
-  # Optional: Nebius AI Cloud API key (for Nebius AI Cloud APIs).
+  # Optional: Nebius AI Cloud API key (for Nebius AI Cloud APIs). Usually not
+  # needed — AI Cloud auth goes through your Nebius CLI profile (IAM access
+  # token), not a static key. Step-by-step guide: docs/workbench/nebius-ai-cloud-key.md
   NEBIUS_AI_CLOUD_KEY: <paste-your-nebius-ai-cloud-api-key>
   # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
   # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
@@ -648,6 +650,13 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             default=existing_credentials.hf_token,
             secret=True,
         )
+    )
+    typer.echo(
+        "\nNebius AI Cloud API key (optional): you almost certainly don't need "
+        "this — access to Nebius AI Cloud is authenticated by your Nebius CLI "
+        "profile (a short-lived IAM access token), not a static key. Press Enter "
+        "to skip unless you were handed a Nebius AI Cloud API key for a specific "
+        "API. Guide: docs/workbench/nebius-ai-cloud-key.md."
     )
     ai_cloud_api_key = _normalize_pasted_secret(
         ask(

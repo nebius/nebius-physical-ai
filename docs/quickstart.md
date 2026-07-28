@@ -211,7 +211,7 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 |---|---|---|---|
 | Hugging Face token | `tokens.HF_TOKEN` | `HF_TOKEN` | Downloading gated Hugging Face models, datasets, or weights |
 | Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Zero-GPU hosted inference (Token Factory / OpenAI-compatible) paths |
-| Nebius AI Cloud key | `tokens.NEBIUS_AI_CLOUD_KEY` | `NEBIUS_AI_CLOUD_KEY` | Calling Nebius AI Cloud APIs |
+| Nebius AI Cloud key | `tokens.NEBIUS_AI_CLOUD_KEY` | `NEBIUS_AI_CLOUD_KEY` | Optional — only if you were handed a Nebius AI Cloud API key for a specific API (normal AI Cloud access uses your CLI profile) |
 | NGC API key | `ngc.api_key` | `NGC_API_KEY` | Using NGC-backed GR00T model references |
 | NGC organization | `ngc.org` | `NGC_ORG` | Your NGC key is organization-scoped |
 | NGC team | `ngc.team` | `NGC_TEAM` | Your NGC key is team-scoped |
@@ -228,6 +228,7 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 - Hugging Face — [docs/workbench/huggingface-token.md](workbench/huggingface-token.md)
 - NVIDIA NGC — [docs/workbench/ngc-api-key.md](workbench/ngc-api-key.md)
 - Nebius Token Factory — [docs/workbench/token-factory-key.md](workbench/token-factory-key.md)
+- Nebius AI Cloud key (optional) — [docs/workbench/nebius-ai-cloud-key.md](workbench/nebius-ai-cloud-key.md)
 
 `npa configure` links these inline at each prompt, normalizes pasted values
 (stripping stray quotes or a `Bearer` prefix), and warns if a Token Factory key

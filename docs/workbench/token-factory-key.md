@@ -106,5 +106,5 @@ npa workbench token-factory generate \
 ## See also
 
 - [token-factory.md](token-factory.md) — full integration reference.
-- [Hugging Face token](huggingface-token.md) · [NVIDIA NGC API key](ngc-api-key.md)
+- [Hugging Face token](huggingface-token.md) · [NVIDIA NGC API key](ngc-api-key.md) · [Nebius AI Cloud key](nebius-ai-cloud-key.md)
 - [Quickstart § verify the path works](../quickstart.md#5a-verify-the-path-works-zero-gpu-inference-nebius-token-factory)

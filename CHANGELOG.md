@@ -15,6 +15,12 @@ a versioned heading when a release is cut.
   guidance. **Behavior change:** wrappers/CI that treated a cancelled or aborted
   `npa configure` as success will now see a failure. Setup guidance and the
   interactive prompts also link where to obtain the Hugging Face and NGC keys.
+- Clarified that the **Nebius AI Cloud key (`NEBIUS_AI_CLOUD_KEY`) is optional**:
+  the `npa configure` prompt, the `--show` template, the README, and the
+  quickstart now say so and link a new step-by-step guide
+  (`docs/workbench/nebius-ai-cloud-key.md`) explaining that AI Cloud access is
+  authenticated by the Nebius CLI profile (a short-lived IAM access token), not a
+  static key.
 - Added `npa workbench health preflight`: a PASS/WARN/FAIL/SKIP check over
   Hugging Face, NVIDIA NGC, Nebius object storage (S3), and Token Factory
   credentials (`--checks`, `--offline`, `--warn-only`, `--json`). Replaces the
