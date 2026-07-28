@@ -213,14 +213,19 @@ def _find_project_id(projects: list[dict[str, Any]], name: str) -> str:
     return ""
 
 
-def _create_project(nebius_bin: str, tenant_id: str, name: str, env: dict[str, str]) -> str:
-    result = _run_capture(
-        [
-            nebius_bin, "iam", "project", "create",
-            "--parent-id", tenant_id, "--name", name, "--format", "json",
-        ],
-        env=env,
-    )
+def _create_project(
+    nebius_bin: str, tenant_id: str, name: str, env: dict[str, str], *, region: str = ""
+) -> str:
+    argv = [
+        nebius_bin, "iam", "project", "create",
+        "--parent-id", tenant_id, "--name", name,
+    ]
+    # Projects are regional in Nebius; pass the target region so the project (and
+    # its clusters) land in the intended region rather than the tenant default.
+    if region:
+        argv += ["--region", region]
+    argv += ["--format", "json"]
+    result = _run_capture(argv, env=env)
     try:
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
@@ -239,6 +244,7 @@ def resolve_project_id(
     prefix: str,
     create: bool,
     env: dict[str, str],
+    region: str = "",
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[str, bool]:
     """Return ``(project_id, created)`` for a project spec, creating if allowed."""
@@ -257,8 +263,8 @@ def resolve_project_id(
         raise ValueError(
             f"project {name!r} not found under tenant and project creation is disabled"
         )
-    _log(on_status, f"creating project {name!r} under tenant")
-    project_id = _create_project(nebius_bin, tenant_id, name, env)
+    _log(on_status, f"creating project {name!r} under tenant (region {region or 'default'})")
+    project_id = _create_project(nebius_bin, tenant_id, name, env, region=region)
     _log(on_status, f"created project {name!r} ({project_id})")
     return project_id, True
 
@@ -471,6 +477,7 @@ def deploy_fleet(
                 prefix=prefix,
                 create=create_projects,
                 env=cli_env,
+                region=region,
                 on_status=on_status,
             )
         except Exception as exc:  # noqa: BLE001 - report and continue

@@ -277,18 +277,18 @@ def test_resolve_project_id_creates_when_absent(monkeypatch) -> None:
     monkeypatch.setattr(lifecycle, "_list_projects", lambda *a, **k: [])
     created_names: list[str] = []
 
-    def fake_create(nebius_bin, tenant_id, name, env):
-        created_names.append(name)
+    def fake_create(nebius_bin, tenant_id, name, env, *, region=""):
+        created_names.append((name, region))
         return "project-new"
 
     monkeypatch.setattr(lifecycle, "_create_project", fake_create)
     project = ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])
     pid, created = lifecycle.resolve_project_id(
-        "nebius", "tenant-x", project, prefix="fleet1-test-", create=True, env={}
+        "nebius", "tenant-x", project, prefix="fleet1-test-", create=True, env={}, region="us-central1"
     )
     assert pid == "project-new"
     assert created is True
-    assert created_names == ["fleet1-test-a"]
+    assert created_names == [("fleet1-test-a", "us-central1")]
 
 
 def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
