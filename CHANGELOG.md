@@ -49,6 +49,14 @@ a versioned heading when a release is cut.
   automatically (existing default alias on re-run, otherwise the region);
   multi-project users rename in `~/.npa/config.yaml`. Discovered projects already
   used the Nebius project name as the alias.
+- **Surface (don't swallow) a denied `editors`-group grant during bootstrap.**
+  `bootstrap_environment`/`bootstrap_agent_environment` create/reuse the service
+  account and, when adding it to the tenant `editors` group is denied, now emit a
+  clear WARNING (with the SA id) instead of continuing silently. Without that
+  role the SA — including the one attached to an agent VM — can authenticate but
+  cannot manage Nebius AI Cloud resources; a tenant admin must grant it. Found
+  via live dev-VM testing of the agent SA-creation path (SA + access-key creation
+  confirmed working; only the tenant-level group grant needs admin rights).
 
 ### First-time-user cold-start fixes
 

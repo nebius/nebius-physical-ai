@@ -526,6 +526,32 @@ def test_nebius_saved_storage_credentials_prefers_configured_bucket(mocker) -> N
     assert result["s3_bucket"] == "lerobot-test0123"
 
 
+def test_nebius_bootstrap_warns_when_editors_membership_denied(mocker) -> None:
+    """Editors-group PermissionDenied must be surfaced (non-fatal), not swallowed.
+
+    Without the tenant `editors` role the SA (e.g. attached to an agent VM) can
+    authenticate but cannot manage AI Cloud resources; the operator must be told.
+    """
+    mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
+    mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa-id")
+    mocker.patch(
+        "npa.clients.nebius.ensure_editors_membership",
+        side_effect=nebius.NebiusError("rpc error: PermissionDenied desc = No permission"),
+    )
+    mocker.patch("npa.clients.nebius.ensure_bucket", return_value="bucket")
+    mocker.patch("npa.clients.nebius.ensure_access_key", return_value=("key", "secret"))
+
+    messages: list[str] = []
+    result = nebius.bootstrap_environment(
+        "project", "tenant", "eu-north1", on_status=messages.append
+    )
+
+    assert result["service_account_id"] == "sa-id"
+    warnings = [m for m in messages if "WARNING" in m and "editors" in m]
+    assert warnings, messages
+    assert "sa-id" in warnings[0]
+
+
 def test_nebius_bootstrap_reuses_saved_storage_on_access_key_permission_denied(mocker) -> None:
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
     mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa-id")

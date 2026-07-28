@@ -887,6 +887,18 @@ def bootstrap_environment(
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
             raise
+        # Non-fatal, but the operator must know: without the tenant `editors`
+        # role the service account (e.g. the one attached to an agent VM) can
+        # authenticate but is NOT authorized to manage Nebius AI Cloud resources
+        # (clusters, buckets, access keys, registries). Surface it instead of
+        # silently continuing.
+        _status(
+            "WARNING: could not add the service account to the tenant 'editors' "
+            f"group (permission denied). Service account {sa_id} may lack "
+            "permission to manage Nebius AI Cloud resources. Ask a tenant admin "
+            f"to add {sa_id} to the 'editors' group (or grant an equivalent "
+            "role), then re-run."
+        )
 
     bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
 
