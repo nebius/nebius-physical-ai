@@ -65,7 +65,10 @@ def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
     # stray invalid escape re-appears here instead of being masked by a warm
     # ``__pycache__``. Show every SyntaxWarning rather than the default "once".
     env["PYTHONPYCACHEPREFIX"] = str(tmp_path / "pycache")
-    env["PYTHONWARNINGS"] = "always::SyntaxWarning"
+    # Invalid escapes are a SyntaxWarning on >=3.12 but a DeprecationWarning on
+    # 3.10/3.11 (which CI runs and Ubuntu 22.04 ships), so surface both or the
+    # check is blind exactly where new users hit it.
+    env["PYTHONWARNINGS"] = "always::SyntaxWarning,always::DeprecationWarning"
     proc = subprocess.run(
         [
             sys.executable,
@@ -78,14 +81,16 @@ def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
         text=True,
     )
     combined = proc.stdout + proc.stderr
-    # A SyntaxWarning attributable to the shipped package (path under src/npa/);
-    # third-party dependency warnings live under site-packages and are ignored.
+    # An invalid-escape warning attributable to the shipped package (path under
+    # src/npa/); third-party dependency warnings live under site-packages and are
+    # ignored. Match both categories so the guard works on the whole 3.10+ matrix.
     package_warnings = [
         line
         for line in combined.splitlines()
-        if "SyntaxWarning" in line and re.search(r"[\\/]src[\\/]npa[\\/]", line)
+        if ("SyntaxWarning" in line or "invalid escape sequence" in line)
+        and re.search(r"[\\/]src[\\/]npa[\\/]", line)
     ]
-    assert not package_warnings, "npa emitted SyntaxWarning(s):\n" + "\n".join(package_warnings)
+    assert not package_warnings, "npa emitted invalid-escape warning(s):\n" + "\n".join(package_warnings)
     assert "invalid escape sequence" not in combined, combined
     assert proc.returncode == 0, combined
     assert "npa" in proc.stdout

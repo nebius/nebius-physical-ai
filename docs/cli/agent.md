@@ -13,6 +13,7 @@ Commands
 preflight  Check Route C prerequisites before `npa agent deploy` / `fresh-setup`.
 deploy  Provision VM + bootstrap the public NPA agent stack.
 fresh-setup  Initialize fresh project config and deploy a new agent from scratch.
+setup  Interactively deploy an agent VM into a project you already configured.
 bootstrap  Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform).
 status  Show agent status, URLs, and health checks.
 destroy  Destroy agent VM/resources and remove saved config entry.
@@ -32,6 +33,7 @@ verify-live  Exit 0 only when live infra checks and tests pass.
 | `preflight` | Check Route C prerequisites before `npa agent deploy` / `fresh-setup`. |
 | `deploy` | Provision VM + bootstrap the public NPA agent stack. |
 | `fresh-setup` | Initialize fresh project config and deploy a new agent from scratch. |
+| `setup` | Interactively deploy an agent VM into a project you already configured. |
 | `bootstrap` | Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform). |
 | `status` | Show agent status, URLs, and health checks. |
 | `destroy` | Destroy agent VM/resources and remove saved config entry. |
