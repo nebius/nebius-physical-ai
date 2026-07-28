@@ -472,6 +472,154 @@ def _provision_object_storage(
     return payload
 
 
+def _prompt_setup_tokens(
+    ask: Callable[..., str],
+    existing_credentials: Any,
+) -> tuple[str, str, str]:
+    """Prompt for the optional HF / Token Factory / NGC keys. Returns the trio."""
+    typer.echo(
+        "\nHugging Face token: create a Read token at "
+        "https://huggingface.co/settings/tokens (it starts with 'hf_'). "
+        "For gated models, also click 'Agree and access repository' on each "
+        "model page while signed in. Guide: docs/workbench/huggingface-token.md."
+    )
+    hf_token = _normalize_pasted_secret(
+        ask(
+            "Hugging Face token (HF_TOKEN)",
+            default=existing_credentials.hf_token,
+            secret=True,
+        )
+    )
+    typer.echo(
+        "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
+        "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
+        "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
+        "Guide: docs/workbench/token-factory-key.md."
+    )
+    token_factory_api_key = _normalize_pasted_secret(
+        ask(
+            "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
+            default=existing_credentials.token_factory_api_key,
+            secret=True,
+        )
+    )
+    if token_factory_api_key and not token_factory_api_key.startswith("v1."):
+        typer.echo(
+            "  Warning: that does not look like a Token Factory key (they start "
+            "with 'v1.'). It is a separate credential from your Nebius IAM/CLI "
+            "token — pasting an IAM token here returns 403. Verify with "
+            "`npa workbench token-factory verify`; see "
+            "docs/workbench/token-factory-key.md."
+        )
+    typer.echo(
+        "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
+        "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
+        "account first). The key starts with 'nvapi-'. "
+        "Guide: docs/workbench/ngc-api-key.md."
+    )
+    ngc_api_key = _normalize_pasted_secret(
+        ask(
+            "NVIDIA NGC API key (NGC_API_KEY)",
+            default=existing_credentials.ngc_api_key,
+            secret=True,
+        )
+    )
+    return hf_token, token_factory_api_key, ngc_api_key
+
+
+def _slugify_alias(name: str, project_id: str) -> str:
+    """Return a filesystem/flag-friendly local alias for a discovered project."""
+    import re as _re
+
+    slug = _re.sub(r"[^a-z0-9-]+", "-", str(name or "").strip().lower()).strip("-")
+    if slug:
+        return slug
+    tail = str(project_id or "").split("-")[-1][:8]
+    return f"project-{tail}" if tail else "default"
+
+
+def _parse_selection(raw: str, count: int) -> list[int]:
+    """Parse a 1-based index selection like ``1,3 4`` or ``all`` into 0-based ints."""
+    text = raw.strip().lower()
+    if text in ("", "all", "*"):
+        return list(range(count))
+    picked: list[int] = []
+    for token in text.replace(",", " ").split():
+        if not token.isdigit():
+            continue
+        idx = int(token) - 1
+        if 0 <= idx < count and idx not in picked:
+            picked.append(idx)
+    return picked
+
+
+def _select_discovered_projects(
+    projects: list[dict[str, str]],
+    ask: Callable[..., str],
+    nebius_client: Any,
+    *,
+    current_project_id: str = "",
+) -> tuple[list[tuple[str, dict[str, str]]], str]:
+    """Present discovered projects and return ``([(alias, stanza)...], default_alias)``.
+
+    Auto-derives tenant/project/region from each pick and best-effort discovers
+    the container registry. npa is multi-project: the user may select several.
+    """
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
+
+    typer.echo("Nebius projects accessible with your profile:\n")
+    for i, proj in enumerate(projects, start=1):
+        marker = "  *" if proj["id"] == current_project_id else "   "
+        region = proj.get("region", "") or "?"
+        typer.echo(
+            f"{marker}{i:>2}. {proj.get('name', '') or proj['id']} "
+            f"({region})  [{proj['id']}]"
+        )
+    default_pick = "all"
+    for i, proj in enumerate(projects, start=1):
+        if proj["id"] == current_project_id:
+            default_pick = str(i)
+            break
+    raw = ask(
+        "\nSelect project(s) to configure (comma-separated numbers, or 'all')",
+        default=default_pick,
+    )
+    chosen = _parse_selection(raw, len(projects)) or _parse_selection(default_pick, len(projects))
+
+    selected: list[tuple[str, dict[str, str]]] = []
+    used_aliases: set[str] = set()
+    for idx in chosen:
+        proj = projects[idx]
+        alias = _slugify_alias(proj.get("name", ""), proj["id"])
+        base_alias = alias
+        suffix = 2
+        while alias in used_aliases:
+            alias = f"{base_alias}-{suffix}"
+            suffix += 1
+        used_aliases.add(alias)
+        registry = nebius_client.discover_container_registry(proj["id"]) or DEFAULT_CONTAINER_REGISTRY
+        stanza = {
+            "project_id": proj["id"],
+            "tenant_id": proj["tenant_id"],
+            "region": proj.get("region", "") or DEFAULT_REGION,
+            "container_registry": registry,
+        }
+        selected.append((alias, stanza))
+
+    if not selected:
+        return [], ""
+    if len(selected) == 1:
+        return selected, selected[0][0]
+    aliases = [alias for alias, _ in selected]
+    default_alias = ask(
+        f"Which project is the default for bare `-p`-less commands? ({', '.join(aliases)})",
+        default=aliases[0],
+    )
+    if default_alias not in aliases:
+        default_alias = aliases[0]
+    return selected, default_alias
+
+
 def _run_interactive_configure(*, provision: bool = True) -> None:
     """Prompt for credentials/config and write the NPA dotfiles."""
 
@@ -527,37 +675,86 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     existing_default_alias = default_project_name()
     existing_stanza = existing_projects.get(existing_default_alias, {}) or {}
 
-    # Tenant is the parent of the project, so ask for it first.
-    tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
-    project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
-    existing_registry = str(existing_stanza.get("container_registry", ""))
-    # The main NPA registry (workbench images) is in eu-north1, and registries
-    # are readable cross-region, so default to eu-north1: keep a saved registry,
-    # else use the project's own eu-north1 registry if it has one, else the
-    # eu-north1 first-party default. A discovered non-eu-north1 registry is not
-    # auto-selected as the default (the operator can still type it). Only hit
-    # Nebius for discovery when nothing is saved (idempotent re-runs stay offline).
-    if existing_registry:
-        registry_default = existing_registry
-    else:
-        discovered = nebius_client.discover_container_registry(project_id)
-        if discovered and _region_from_registry_host(discovered) == DEFAULT_REGION:
-            registry_default = discovered
-        else:
-            registry_default = DEFAULT_CONTAINER_REGISTRY
-    region_default = (
-        str(existing_stanza.get("region", ""))
-        or _region_from_registry_host(registry_default)
-        or DEFAULT_REGION
+    # Prefer discovering accessible projects via the Nebius CLI so the user picks
+    # from a list instead of hand-typing tenant + project ids (and region). npa
+    # is not confined to one project: several may be selected and written. When
+    # discovery is unavailable (no CLI / not authenticated / no results) we fall
+    # back to the manual prompts below, which also covers the offline unit tests.
+    discovered_selection: list[tuple[str, dict[str, str]]] = []
+    discovered_default_alias = ""
+    discovered_projects = (
+        nebius_client.list_accessible_projects() if profile_ready else []
     )
-    region = ask("Region", default=region_default)
-    # The registry host region is only used as a sensible default guess for the
-    # region above; it is not a constraint. Container registries are readable
-    # cross-region and a project can hold registries in several regions, so we do
-    # not warn when the chosen region differs from the registry's region.
-    registry = ask("Container registry", default=registry_default)
+    if discovered_projects:
+        discovered_selection, discovered_default_alias = _select_discovered_projects(
+            discovered_projects,
+            ask,
+            nebius_client,
+            current_project_id=nebius_client.current_project_id(),
+        )
+
+    if discovered_selection:
+        default_stanza = dict(
+            next(
+                stanza
+                for alias, stanza in discovered_selection
+                if alias == discovered_default_alias
+            )
+        )
+        tenant_id = str(default_stanza.get("tenant_id", ""))
+        project_id = str(default_stanza.get("project_id", ""))
+        region = str(default_stanza.get("region", "") or DEFAULT_REGION)
+        registry = str(default_stanza.get("container_registry", ""))
+    else:
+        # Tenant is the parent of the project, so ask for it first.
+        tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
+        project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
+        existing_registry = str(existing_stanza.get("container_registry", ""))
+        # The main NPA registry (workbench images) is in eu-north1, and registries
+        # are readable cross-region, so default to eu-north1: keep a saved registry,
+        # else use the project's own eu-north1 registry if it has one, else the
+        # eu-north1 first-party default. A discovered non-eu-north1 registry is not
+        # auto-selected as the default (the operator can still type it). Only hit
+        # Nebius for discovery when nothing is saved (idempotent re-runs stay offline).
+        if existing_registry:
+            registry_default = existing_registry
+        else:
+            discovered = nebius_client.discover_container_registry(project_id)
+            if discovered and _region_from_registry_host(discovered) == DEFAULT_REGION:
+                registry_default = discovered
+            else:
+                registry_default = DEFAULT_CONTAINER_REGISTRY
+        region_default = (
+            str(existing_stanza.get("region", ""))
+            or _region_from_registry_host(registry_default)
+            or DEFAULT_REGION
+        )
+        region = ask("Region", default=region_default)
+        # The registry host region is only used as a sensible default guess for the
+        # region above; it is not a constraint. Container registries are readable
+        # cross-region and a project can hold registries in several regions, so we do
+        # not warn when the chosen region differs from the registry's region.
+        registry = ask("Container registry", default=registry_default)
 
     storage: dict[str, str] | None = None
+
+    # Object storage is opt-in: `npa configure` sets up the Nebius connection and
+    # optional model/inference tokens. Storage (an S3 bucket + access key) is only
+    # needed by workbench data workflows, so when projects were discovered we ask
+    # before provisioning instead of doing it by default.
+    if discovered_selection and provision:
+        want_storage = ask(
+            "Set up object storage (S3 bucket + access key) now? "
+            "(needed for data/checkpoint workflows; you can add it later) [y/N]",
+            default="N",
+        )
+        if want_storage.lower() not in ("y", "yes"):
+            provision = False
+            storage = {}
+            typer.echo(
+                "  Skipping object storage. Re-run `npa configure` later to add it."
+            )
+
     existing_has_storage = bool(
         existing_credentials.s3_access_key_id
         and existing_credentials.s3_secret_access_key
@@ -634,52 +831,8 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             ),
         }
 
-    typer.echo(
-        "\nHugging Face token: create a Read token at "
-        "https://huggingface.co/settings/tokens (it starts with 'hf_'). "
-        "For gated models, also click 'Agree and access repository' on each "
-        "model page while signed in. Guide: docs/workbench/huggingface-token.md."
-    )
-    hf_token = _normalize_pasted_secret(
-        ask(
-            "Hugging Face token (HF_TOKEN)",
-            default=existing_credentials.hf_token,
-            secret=True,
-        )
-    )
-    typer.echo(
-        "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
-        "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
-        "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
-        "Guide: docs/workbench/token-factory-key.md."
-    )
-    token_factory_api_key = _normalize_pasted_secret(
-        ask(
-            "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
-            default=existing_credentials.token_factory_api_key,
-            secret=True,
-        )
-    )
-    if token_factory_api_key and not token_factory_api_key.startswith("v1."):
-        typer.echo(
-            "  Warning: that does not look like a Token Factory key (they start "
-            "with 'v1.'). It is a separate credential from your Nebius IAM/CLI "
-            "token — pasting an IAM token here returns 403. Verify with "
-            "`npa workbench token-factory verify`; see "
-            "docs/workbench/token-factory-key.md."
-        )
-    typer.echo(
-        "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
-        "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
-        "account first). The key starts with 'nvapi-'. "
-        "Guide: docs/workbench/ngc-api-key.md."
-    )
-    ngc_api_key = _normalize_pasted_secret(
-        ask(
-            "NVIDIA NGC API key (NGC_API_KEY)",
-            default=existing_credentials.ngc_api_key,
-            secret=True,
-        )
+    hf_token, token_factory_api_key, ngc_api_key = _prompt_setup_tokens(
+        ask, existing_credentials
     )
 
     credentials_payload: dict[str, object] = {
@@ -700,18 +853,38 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
 
     credentials_path = write_credentials_file(credentials_payload)
 
-    project_stanza = {
-        key: value
-        for key, value in (
-            ("project_id", project_id),
-            ("tenant_id", tenant_id),
-            ("region", region),
-            ("container_registry", registry),
-        )
-        if value
-    }
     wrote_config = False
-    if project_id or tenant_id:
+    alias = ""
+    if discovered_selection:
+        # Multi-project aware: write every selected project stanza and point
+        # default_project at the chosen default. No alias prompt — the alias is
+        # derived from the Nebius project name.
+        projects_payload = {
+            sel_alias: {k: v for k, v in stanza.items() if v}
+            for sel_alias, stanza in discovered_selection
+        }
+        alias = discovered_default_alias
+        write_config(
+            {"projects": projects_payload, "default_project": alias}
+        )
+        wrote_config = True
+        if len(discovered_selection) > 1:
+            typer.echo(
+                f"\nConfigured {len(discovered_selection)} projects: "
+                f"{', '.join(a for a, _ in discovered_selection)} "
+                f"(default: {alias})."
+            )
+    elif project_id or tenant_id:
+        project_stanza = {
+            key: value
+            for key, value in (
+                ("project_id", project_id),
+                ("tenant_id", tenant_id),
+                ("region", region),
+                ("container_registry", registry),
+            )
+            if value
+        }
         # Local name for later `-p <alias>` flags. Prefer the existing default
         # alias so a re-run updates the same project stanza; otherwise default to
         # the region so a first-time configure still resolves.

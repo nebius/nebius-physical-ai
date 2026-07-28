@@ -117,6 +117,54 @@ def _stub_nebius_defaults(monkeypatch, *, project="", tenant="", registry="") ->
     )
 
 
+def test_configure_discovers_and_writes_multiple_projects(monkeypatch, tmp_path) -> None:
+    """With discoverable projects, configure picks from a list (no id typing)."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(
+        monkeypatch, project="project-prod", tenant="tenant-a", registry=""
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "list_accessible_projects",
+        lambda: [
+            {"id": "project-prod", "name": "prod", "tenant_id": "tenant-a", "region": "eu-north1"},
+            {"id": "project-dev", "name": "dev", "tenant_id": "tenant-a", "region": "us-central1"},
+        ],
+    )
+
+    def _must_not_provision(*_a, **_k):
+        raise AssertionError("storage must not provision when the user opts out")
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _must_not_provision)
+
+    # select both, default = prod, decline storage, then HF/TF/NGC (all skipped).
+    answers = "\n".join(["1,2", "prod", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["default_project"] == "prod"
+    assert set(cfg["projects"]) == {"prod", "dev"}
+    assert cfg["projects"]["prod"]["project_id"] == "project-prod"
+    assert cfg["projects"]["prod"]["tenant_id"] == "tenant-a"
+    assert cfg["projects"]["prod"]["region"] == "eu-north1"
+    assert cfg["projects"]["dev"]["project_id"] == "project-dev"
+    assert cfg["projects"]["dev"]["region"] == "us-central1"
+    # No storage stanza was written (opted out).
+    creds = yaml.safe_load(creds_path.read_text())
+    assert not creds.get("storage")
+
+
 def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None:
     import yaml
 
