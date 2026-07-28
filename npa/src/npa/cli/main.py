@@ -545,20 +545,11 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         or DEFAULT_REGION
     )
     region = ask("Region", default=region_default)
+    # The registry host region is only used as a sensible default guess for the
+    # region above; it is not a constraint. Container registries are readable
+    # cross-region and a project can hold registries in several regions, so we do
+    # not warn when the chosen region differs from the registry's region.
     registry = ask("Container registry", default=registry_default)
-
-    # Catch a region typo: object storage, clusters, and the registry all live in
-    # one region, so a region that disagrees with the registry host usually means
-    # the wrong region was entered (and leads to a wrong S3 endpoint / resources
-    # that appear missing).
-    registry_region = _region_from_registry_host(registry)
-    if registry_region and region and registry_region != region:
-        typer.echo(
-            f"  Warning: region '{region}' does not match your container registry "
-            f"region '{registry_region}'. Your project's resources (registry, "
-            f"object storage, clusters) appear to live in '{registry_region}'. "
-            f"Use '{registry_region}' unless you deliberately run cross-region."
-        )
 
     storage: dict[str, str] | None = None
     existing_has_storage = bool(

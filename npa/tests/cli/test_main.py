@@ -691,8 +691,12 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     assert not creds.get("storage")
 
 
-def test_configure_warns_on_region_registry_mismatch(monkeypatch, tmp_path) -> None:
-    """A region that disagrees with the registry host region is flagged."""
+def test_configure_allows_region_differing_from_registry_region(monkeypatch, tmp_path) -> None:
+    """Choosing a region that differs from the registry's region is fine (no warning).
+
+    Registries are readable cross-region and a project can hold registries in
+    multiple regions, so the registry region is only a default hint.
+    """
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -704,7 +708,6 @@ def test_configure_warns_on_region_registry_mismatch(monkeypatch, tmp_path) -> N
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
 
-    # region us-central1 while registry is cr.eu-north1... -> mismatch warning.
     answers = "\n".join(
         [
             "tenant-1",
@@ -722,7 +725,7 @@ def test_configure_warns_on_region_registry_mismatch(monkeypatch, tmp_path) -> N
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
-    assert "does not match your container registry region 'eu-north1'" in result.output
+    assert "does not match" not in result.output
 
 
 def test_normalize_pasted_secret_strips_quotes_and_auth_prefixes() -> None:
