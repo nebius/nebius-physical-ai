@@ -8577,6 +8577,117 @@ def fresh_setup_cmd(
     )
 
 
+@app.command("setup")
+def setup_cmd(
+    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="NPA project alias to deploy into (default: interactive pick from `npa configure`).",
+    ),
+    ssh_public_key_path: str = typer.Option(
+        "~/.ssh/id_ed25519.pub",
+        "--ssh-public-key-path",
+        help="SSH public key for the VM.",
+    ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help="Replace an existing agent with the same project/name.",
+    ),
+) -> None:
+    """Interactively deploy an agent VM into a project you already configured.
+
+    This is the simple path: run ``npa configure`` first to connect npa to Nebius
+    AI Cloud (which saves your accessible projects), then ``npa agent setup`` picks
+    one of those projects — reading tenant/project/region from ``~/.npa/config.yaml``
+    instead of re-typing ids — and deploys.
+
+    How the agent VM gets Nebius AI Cloud credentials: deploy provisions (or
+    reuses) an ``npa-agent`` service account in the project, grants it the tenant
+    ``editors`` role, and **attaches it to the VM**. Code on the VM then mints
+    short-lived IAM access tokens from the Nebius VM metadata endpoint
+    (``http://metadata.nebius.internal/v1/iam/sa/token/access_token``) on demand —
+    an auto-rotating, key-less credential. No static "AI Cloud key" is stored on
+    the VM. The same service account's access key provides S3 access.
+    """
+    from npa.clients.config import default_project_name, list_projects
+
+    projects = list_projects()
+    if not projects:
+        _fail(
+            "No Nebius projects configured. Run `npa configure` first to connect "
+            "npa to Nebius AI Cloud, then re-run `npa agent setup`."
+        )
+
+    alias = project.strip()
+    if alias and alias not in projects:
+        _fail(
+            f"Project alias {alias!r} is not configured. "
+            f"Available: {', '.join(projects)} (or run `npa configure`)."
+        )
+    if not alias:
+        aliases = list(projects)
+        if len(aliases) == 1:
+            alias = aliases[0]
+        else:
+            default_alias = default_project_name()
+            typer.echo("Configured Nebius projects:\n")
+            for i, candidate in enumerate(aliases, start=1):
+                stanza = projects[candidate] or {}
+                marker = "  *" if candidate == default_alias else "   "
+                typer.echo(
+                    f"{marker}{i:>2}. {candidate}  "
+                    f"({stanza.get('region', '?')})  [{stanza.get('project_id', '')}]"
+                )
+            default_pick = (
+                str(aliases.index(default_alias) + 1)
+                if default_alias in aliases
+                else "1"
+            )
+            raw = typer.prompt(
+                "\nDeploy the agent into which project? (number)",
+                default=default_pick,
+            )
+            choice = raw.strip()
+            idx = int(choice) - 1 if choice.isdigit() else int(default_pick) - 1
+            if not (0 <= idx < len(aliases)):
+                idx = int(default_pick) - 1
+            alias = aliases[idx]
+
+    stanza = projects.get(alias) or {}
+    project_id = str(stanza.get("project_id", "")).strip()
+    tenant_id = str(stanza.get("tenant_id", "")).strip()
+    region = str(stanza.get("region", "") or "eu-north1").strip()
+    if not project_id or not tenant_id:
+        _fail(
+            f"Project {alias!r} is missing project_id/tenant_id in "
+            "~/.npa/config.yaml. Re-run `npa configure`."
+        )
+
+    if not Path(ssh_public_key_path).expanduser().exists():
+        _fail(
+            f"SSH public key not found at {ssh_public_key_path}. Create one with "
+            "`ssh-keygen -t ed25519`, or pass --ssh-public-key-path."
+        )
+
+    typer.echo(
+        f"\nDeploying agent '{name}' into project '{alias}' "
+        f"({project_id}, {region}).\n"
+        "The VM will get an attached `npa-agent` service account for key-less "
+        "Nebius AI Cloud access.\n"
+    )
+    fresh_setup_cmd(
+        project=alias,
+        name=name,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        ssh_public_key_path=ssh_public_key_path,
+        replace=replace,
+    )
+
+
 @app.command("bootstrap")
 def bootstrap_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),

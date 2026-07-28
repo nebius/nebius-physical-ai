@@ -2158,3 +2158,75 @@ def test_stages_tab_run_search_uses_server_search() -> None:
     assert "stagesSearchTimer" in source
     # Both run-search boxes wire the debounced server search.
     assert source.count("await refreshArtifactRuns(value)") >= 2
+
+
+def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
+    """`npa agent setup` resolves project_id/tenant_id/region from config, no typing."""
+    import yaml
+
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {
+                        "project_id": "project-prod",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-north1",
+                    },
+                    "dev": {
+                        "project_id": "project-dev",
+                        "tenant_id": "tenant-a",
+                        "region": "us-central1",
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    key_file = tmp_path / "id_ed25519.pub"
+    key_file.write_text("ssh-ed25519 AAAA test\n")
+
+    captured: dict = {}
+
+    def _fake_fresh_setup(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("npa.cli.agent.fresh_setup_cmd", _fake_fresh_setup)
+
+    # Explicit --project resolves tenant/project/region from config (no typing).
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["project"] == "dev"
+    assert captured["project_id"] == "project-dev"
+    assert captured["tenant_id"] == "tenant-a"
+    assert captured["region"] == "us-central1"
+
+    # Interactive: pressing Enter accepts the default_project (prod).
+    captured.clear()
+    result = runner.invoke(
+        app,
+        ["setup", "--ssh-public-key-path", str(key_file)],
+        input="\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["project"] == "prod"
+    assert captured["project_id"] == "project-prod"
+
+
+def test_agent_setup_requires_configured_projects(monkeypatch, tmp_path) -> None:
+    """With no configured projects, `npa agent setup` points to `npa configure`."""
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "missing.yaml")
+    result = runner.invoke(app, ["setup"])
+    assert result.exit_code != 0
+    assert "npa configure" in result.output
