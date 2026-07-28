@@ -53,7 +53,22 @@ target branch to the dev VM before live tests.
      --region us-central1
    ```
    Expect **compute PermissionDenied with VM SA attachment** on some cross-project
-   profiles; npa retries apply without attached `service_account_id`.
+   profiles; npa retries apply without attached `service_account_id` and now emits
+   a loud WARNING when it does — a VM without an attached SA cannot self-mint IAM
+   tokens and needs an alternative token source (grant the deploying identity
+   `compute.admin`/equivalent, or inject a token on the VM).
+
+   **Agent VM IAM auth = attached service account (not a copied operator token).**
+   The VM authenticates to Nebius IAM using its attached `npa-agent` service
+   account: `get_iam_token()` self-mints fresh tokens from the metadata/token-file
+   sources the SA populates. npa no longer copies the operator's short-lived IAM
+   token onto the VM (no `NEBIUS_IAM_TOKEN`/`TF_VAR_iam_token` in
+   `/opt/npa-agent/nebius.env`, no `/root/.npa/nebius-token`, no `agent-bootstrap`
+   profile) — that token went stale and forced re-bootstrap. S3 access keys and
+   the service API keys (Token Factory / HF / NGC) are still staged: object
+   storage is HMAC-based and cannot use an IAM bearer token, and the product keys
+   are independent of the SA. On-VM Terraform (`npa cluster …`) mints a fresh
+   token at run time via `nebius iam get-access-token`.
 
 4. **Smoke gate (default “done” for fresh deploy).**
    ```bash

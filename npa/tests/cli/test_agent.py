@@ -119,6 +119,101 @@ def test_apply_agent_terraform_filters_runtime_only_s3_prefix(monkeypatch, tmp_p
     assert "s3_prefix" not in captured
 
 
+def test_apply_agent_terraform_retries_without_sa_and_warns(monkeypatch, tmp_path, capsys) -> None:
+    """On compute PermissionDenied with an attached SA, retry without it + warn loudly."""
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.deploy.provisioner import ProvisionerError
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.prepare_working_dir", lambda *_a, **_k: tmp_path)
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_k: None)
+
+    calls: list[dict] = []
+
+    def _apply(*, tf_dir, tf_vars):
+        calls.append(dict(tf_vars))
+        if len(calls) == 1:
+            raise ProvisionerError(
+                "Error: service compute: PermissionDenied creating instance"
+            )
+        return {"vm_ip": "203.0.113.50"}
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.apply", _apply)
+
+    result = _apply_agent_terraform(
+        project="fresh",
+        name="agent",
+        env_region="eu-north1",
+        merged_vars={
+            "s3_bucket": "agent-state",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+            "nebius_api_key": "ak",
+            "nebius_secret_key": "sk",
+            "service_account_id": "serviceaccount-abc",
+        },
+    )
+
+    assert result == {"vm_ip": "203.0.113.50"}
+    assert len(calls) == 2
+    # First attempt attached the SA; the retry dropped it.
+    assert calls[0]["service_account_id"] == "serviceaccount-abc"
+    assert calls[1]["service_account_id"] == ""
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "self-mint" in err
+
+
+def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
+    """The staged VM env must carry S3 keys but NO copied operator IAM token."""
+    import base64 as _b64
+
+    from npa.cli.agent import _write_agent_nebius_env
+
+    commands: list[str] = []
+
+    class _FakeSSH:
+        def run_or_raise(self, command: str):
+            commands.append(command)
+            return ""
+
+    _write_agent_nebius_env(
+        _FakeSSH(),
+        project_alias="prod",
+        agent_name="agent",
+        project_id="project-abc",
+        tenant_id="tenant-abc",
+        region="eu-north1",
+        service_account_id="serviceaccount-abc",
+        bucket="agent-state",
+        endpoint="https://storage.eu-north1.nebius.cloud",
+        access_key="ak-id",
+        secret_key="sk-val",
+    )
+
+    # Exactly one SSH command (write nebius.env); no second token-file/profile block.
+    assert len(commands) == 1
+    match = re.search(r"echo ([A-Za-z0-9+/=]+) \| base64 -d", commands[0])
+    assert match, commands[0]
+    staged_env = _b64.b64decode(match.group(1)).decode("utf-8")
+
+    # S3 access key stays (HMAC, not replaceable by an SA bearer token).
+    assert "AWS_ACCESS_KEY_ID=ak-id" in staged_env
+    assert "AWS_SECRET_ACCESS_KEY=sk-val" in staged_env
+    assert "NEBIUS_SERVICE_ACCOUNT_ID=serviceaccount-abc" in staged_env
+
+    # No copied operator IAM token / bootstrap profile anywhere.
+    for forbidden in (
+        "NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "TF_VAR_iam_token",
+        "NPA_REUSE_IAM_TOKEN",
+        "agent-bootstrap",
+        "nebius-token",
+    ):
+        assert forbidden not in staged_env, forbidden
+    assert all("nebius-token" not in cmd for cmd in commands)
+    assert all("agent-bootstrap" not in cmd for cmd in commands)
+
+
 def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 

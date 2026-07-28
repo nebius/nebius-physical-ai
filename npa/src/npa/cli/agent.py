@@ -551,8 +551,21 @@ def _apply_agent_terraform(
         sa_id = str(merged_vars.get("service_account_id", "")).strip()
         if sa_id and _looks_like_compute_permission_denied(str(exc)):
             typer.echo(
-                "  Compute create denied with VM service-account attachment; "
-                "retrying without attached service_account_id ..."
+                "  WARNING: compute create was denied WITH the VM service-account "
+                "attachment, so it is being retried WITHOUT it.",
+                err=True,
+            )
+            typer.echo(
+                "  WARNING: without an attached service account the agent VM "
+                "CANNOT self-mint Nebius IAM tokens (no metadata/token-file "
+                "source), so IAM-dependent actions (provisioning clusters, "
+                "buckets, access keys, registries) will fail until you provide an "
+                "alternative token source. Grant the deploying identity "
+                "'compute.admin' (or equivalent) on the project so the SA can be "
+                "attached, or inject a token on the VM via NEBIUS_IAM_TOKEN / a "
+                "token file. Re-run `npa agent setup` once the permission is "
+                "granted.",
+                err=True,
             )
             retry_vars = dict(tf_vars)
             retry_vars["service_account_id"] = ""
@@ -1394,9 +1407,16 @@ def _write_agent_nebius_env(
     endpoint: str,
     access_key: str,
     secret_key: str,
-    iam_token: str = "",
 ) -> None:
-    """Stage long-lived Nebius project credentials on the agent VM."""
+    """Stage long-lived Nebius project credentials on the agent VM.
+
+    This stages the S3 access key (HMAC — required for Nebius object storage and
+    not replaceable by an IAM bearer token) plus project identifiers. It does NOT
+    stage any IAM/management token: the VM authenticates to Nebius IAM using its
+    ATTACHED service account, which self-mints fresh tokens via the metadata /
+    token-file sources ``get_iam_token()`` reads. Copying the operator's
+    short-lived token here would go stale on the long-lived VM.
+    """
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
@@ -1411,46 +1431,13 @@ def _write_agent_nebius_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
+        "",
     ]
-    if iam_token.strip():
-        env_lines.extend(
-            [
-                "NEBIUS_PROFILE=agent-bootstrap",
-                f"NEBIUS_IAM_TOKEN={iam_token.strip()}",
-                f"NPA_NEBIUS_IAM_TOKEN={iam_token.strip()}",
-                f"TF_VAR_iam_token={iam_token.strip()}",
-                "NPA_REUSE_IAM_TOKEN=1",
-            ]
-        )
-    env_lines.append("")
     env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/nebius.env"
     )
-    if iam_token.strip():
-        ssh.run_or_raise(
-            "sudo bash -lc "
-            + shlex.quote(
-                "\n".join(
-                    [
-                        "set -euo pipefail",
-                        "set -a",
-                        ". /opt/npa-agent/nebius.env",
-                        "set +a",
-                        "mkdir -p /root/.npa",
-                        "printf '%s' \"$NEBIUS_IAM_TOKEN\" > /root/.npa/nebius-token",
-                        "chmod 600 /root/.npa/nebius-token",
-                        "NEBIUS_BIN=\"$(command -v nebius || true)\"",
-                        "if [ -z \"$NEBIUS_BIN\" ] && [ -x /usr/local/bin/nebius ]; then NEBIUS_BIN=/usr/local/bin/nebius; fi",
-                        "if [ -n \"$NEBIUS_BIN\" ]; then",
-                        "  \"$NEBIUS_BIN\" profile create --endpoint api.eu.nebius.cloud --token-file /root/.npa/nebius-token --profile agent-bootstrap --parent-id \"$NEBIUS_PROJECT_ID\" >/dev/null 2>&1 || true",
-                        "  NEBIUS_PROFILE=agent-bootstrap \"$NEBIUS_BIN\" iam get-access-token >/dev/null",
-                        "fi",
-                    ]
-                )
-            )
-        )
 
 
 def _create_agent_source_archive() -> str:
@@ -8152,13 +8139,12 @@ sudo systemctl restart npa-agent-backend
         s3_secret_key=s3_secret_key,
         service_account_id=service_account_id,
     )
-    agent_iam_token = ""
-    try:
-        from npa.clients.nebius import get_iam_token
-
-        agent_iam_token = get_iam_token()
-    except Exception:
-        agent_iam_token = ""
+    # The agent VM authenticates to Nebius IAM using its ATTACHED service account
+    # (main.tf attaches service_account_id), which self-mints fresh tokens via the
+    # metadata/token-file sources that get_iam_token() reads. We intentionally do
+    # NOT copy the operator's short-lived IAM token onto the long-lived VM — it
+    # would go stale and force re-bootstrap. S3 access keys and service API keys
+    # are still staged below (they are not replaceable by an SA bearer token).
     _write_agent_nebius_env(
         ssh,
         project_alias=project_alias,
@@ -8171,7 +8157,6 @@ sudo systemctl restart npa-agent-backend
         endpoint=s3_endpoint,
         access_key=s3_access_key,
         secret_key=s3_secret_key,
-        iam_token=agent_iam_token,
     )
     if (
         tf_api_key.strip()

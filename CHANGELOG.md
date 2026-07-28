@@ -32,6 +32,23 @@ a versioned heading when a release is cut.
   tenant `editors` role); code on the VM mints short-lived IAM tokens from the
   Nebius metadata endpoint on demand — key-less and auto-rotating. No static AI
   Cloud key is stored on the VM.
+- **Agent VM uses its attached service account for IAM, not a copied operator
+  token.** Deploy no longer stages the operator's short-lived IAM token onto the
+  long-lived agent VM (removed `NEBIUS_IAM_TOKEN` / `NPA_NEBIUS_IAM_TOKEN` /
+  `TF_VAR_iam_token` / `NPA_REUSE_IAM_TOKEN` from `/opt/npa-agent/nebius.env`, the
+  `/root/.npa/nebius-token` write, and the `agent-bootstrap` profile). The VM
+  self-mints fresh IAM tokens from the attached SA's metadata/token-file sources
+  via `get_iam_token()`, so it no longer goes stale and needs re-bootstrap. When
+  the SA can't be attached (compute PermissionDenied retry), deploy now emits a
+  loud warning that the VM can't self-mint tokens. **Unchanged on purpose:** the
+  SA's S3 access keys (Nebius object storage is HMAC-based — a bearer IAM token
+  cannot replace them) and the independent service API keys (Token Factory / HF /
+  NGC). The shared `get_iam_token()` chain is untouched, so no-agent workbench/CI
+  flows still resolve IAM via their CLI profile or injected token.
+- **`npa configure` no longer prompts for a project alias.** The alias is derived
+  automatically (existing default alias on re-run, otherwise the region);
+  multi-project users rename in `~/.npa/config.yaml`. Discovered projects already
+  used the Nebius project name as the alias.
 
 ### First-time-user cold-start fixes
 

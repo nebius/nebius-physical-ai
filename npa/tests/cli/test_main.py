@@ -928,7 +928,6 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
             "",                  # HF token
             "",                  # Token Factory API key
             "",                  # NGC API key
-            "lab",               # project alias (custom)
         ]
     ) + "\n"
 
@@ -937,15 +936,16 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
     )
 
     assert result.exit_code == 0, result.output
-    assert "project alias: lab" in result.output
-    assert "-p lab" in result.output
+    # The alias is auto-derived from the region (no alias prompt).
+    assert "project alias: me-central1" in result.output
+    assert "-p me-central1" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"
     # Endpoint default tracks the entered region.
     assert creds["storage"]["endpoint_url"] == "https://storage.me-central1.nebius.cloud"
     cfg = yaml.safe_load(config_path.read_text())
-    assert cfg["default_project"] == "lab"
-    assert cfg["projects"]["lab"]["region"] == "me-central1"
+    assert cfg["default_project"] == "me-central1"
+    assert cfg["projects"]["me-central1"]["region"] == "me-central1"
 
 
 def test_configure_interactive_skips_config_without_project(monkeypatch, tmp_path) -> None:

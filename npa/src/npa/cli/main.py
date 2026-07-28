@@ -885,20 +885,14 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             )
             if value
         }
-        # Local name for later `-p <alias>` flags. Prefer the existing default
-        # alias so a re-run updates the same project stanza; otherwise default to
-        # the region so a first-time configure still resolves.
-        alias_default = (
+        # Local name for later `-p <alias>` flags. Derived automatically (no
+        # prompt): reuse the existing default alias so a re-run updates the same
+        # stanza, otherwise use the region so a first-time configure still
+        # resolves. Multi-project users rename via ~/.npa/config.yaml.
+        alias = (
             existing_default_alias
             if existing_default_alias and existing_default_alias != "default"
             else (region or "default")
-        )
-        alias = (
-            ask(
-                "Project alias (local name for -p)",
-                default=alias_default,
-            )
-            or alias_default
         )
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True

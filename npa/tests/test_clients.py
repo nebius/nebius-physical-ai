@@ -415,6 +415,26 @@ def test_nebius_iam_token_errors_when_all_sources_missing(mocker) -> None:
         nebius.get_iam_token()
 
 
+def test_workbench_credential_resolution_is_agent_independent(mocker, tmp_path) -> None:
+    """load_credentials + get_iam_token must work with no agent and no attached SA.
+
+    A workbench/CI machine resolves IAM via its nebius CLI profile only. This
+    guards that the agent-VM refactor (attached-SA/metadata token source) never
+    became the *only* path.
+    """
+    from npa.clients.credentials import load_credentials
+
+    # No env token, no token files, no metadata: only the CLI profile answers.
+    mocker.patch("npa.clients.nebius._run", return_value="cli-profile-token")
+    mocker.patch("npa.clients.nebius._env_iam_token", return_value="")
+    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=[])
+    mocker.patch("npa.clients.nebius._metadata_iam_token", return_value="")
+
+    creds = load_credentials(path=tmp_path / "credentials.yaml", environ={})
+    assert creds is not None  # resolves fine without any agent present
+    assert nebius.get_iam_token() == "cli-profile-token"
+
+
 def test_nebius_iam_token_from_env(mocker) -> None:
     mocker.patch("npa.clients.nebius._run", return_value="")
     mocker.patch("npa.clients.nebius._env_iam_token", return_value="env-token")

@@ -68,7 +68,17 @@ workflow environment variables.
 - On Nebius VMs with an attached service account, IAM token resolution can use
   service-account token sources (`/mnt/cloud-metadata/token` and IMDS) even
   when `~/.nebius/config.yaml` is absent. Keep this as fallback behavior, not a
-  substitute for explicit operator-machine profile setup.
+  substitute for explicit operator-machine profile setup. `get_iam_token()` keeps
+  its full first-match chain — CLI profile → `NPA_NEBIUS_IAM_TOKEN`/
+  `NEBIUS_IAM_TOKEN` → token files → metadata IMDS — so workbench/`configure`/CI
+  on machines with **no** attached SA still resolve via the profile or an injected
+  token. The attached-SA/metadata path is one option, never the only one; never
+  couple workbench credential resolution to the agent.
+- The **`npa-agent` VM** relies on this attached-SA path as its intended default:
+  deploy attaches the SA (Terraform `main.tf`) and does **not** copy the
+  operator's short-lived IAM token onto the VM (it would go stale). S3 access keys
+  stay staged (object storage is HMAC-based; a bearer IAM token cannot replace
+  them).
 - Nebius IAM registry tokens expire. If Kubernetes image pulls fail with `401
   Unauthorized`, refresh the registry pull secret in the namespace that owns the
   pod.
