@@ -266,12 +266,15 @@ def current_tenant_id() -> str:
     return _config_get("tenant-id")
 
 
-def discover_container_registry(project_id: str) -> str:
+def discover_container_registry(project_id: str, *, preferred_region: str = "eu-north1") -> str:
     """Best-effort container registry URL for *project_id*, or "".
 
-    Returns ``<registry_fqdn>/<registry-id>`` for the first registry in the
-    project, matching the ``DEFAULT_CONTAINER_REGISTRY`` format. Any failure
-    resolves to "" so callers fall back to the default registry.
+    Returns ``<registry_fqdn>/<registry-id>`` (matching the
+    ``DEFAULT_CONTAINER_REGISTRY`` format). A project can hold registries in
+    several regions, and the API list order is not stable, so prefer a registry
+    in *preferred_region* (``eu-north1``, the main registry region) and fall back
+    to the first registry otherwise. Any failure resolves to "" so callers fall
+    back to the default registry.
     """
     if not project_id:
         return ""
@@ -279,11 +282,26 @@ def discover_container_registry(project_id: str) -> str:
         data = _run_json(["registry", "list", "--parent-id", project_id])
     except Exception:
         return ""
-    for item in data.get("items", []):
+
+    def _url(item: dict[str, Any]) -> str:
         fqdn = item.get("status", {}).get("registry_fqdn", "")
         registry_id = item.get("metadata", {}).get("id", "")
         if fqdn and registry_id:
             return f"{fqdn}/{registry_id.removeprefix('registry-')}"
+        return ""
+
+    items = data.get("items", [])
+    if preferred_region:
+        for item in items:
+            fqdn = item.get("status", {}).get("registry_fqdn", "")
+            if f".{preferred_region}." in fqdn:
+                url = _url(item)
+                if url:
+                    return url
+    for item in items:
+        url = _url(item)
+        if url:
+            return url
     return ""
 
 

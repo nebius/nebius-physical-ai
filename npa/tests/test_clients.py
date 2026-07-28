@@ -910,6 +910,50 @@ def test_nebius_discover_container_registry_builds_url(mocker) -> None:
     )
 
 
+def test_nebius_discover_container_registry_prefers_eu_north1(mocker) -> None:
+    # A project with registries in several regions (unstable API order) must
+    # default to the eu-north1 registry, the main region.
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={
+            "items": [
+                {
+                    "metadata": {"id": "registry-u00usc"},
+                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
+                },
+                {
+                    "metadata": {"id": "registry-e00eu"},
+                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
+                },
+            ]
+        },
+    )
+
+    assert (
+        nebius.discover_container_registry("project")
+        == "cr.eu-north1.nebius.cloud/e00eu"
+    )
+
+
+def test_nebius_discover_container_registry_falls_back_when_no_eu_north1(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={
+            "items": [
+                {
+                    "metadata": {"id": "registry-u00usc"},
+                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
+                }
+            ]
+        },
+    )
+
+    assert (
+        nebius.discover_container_registry("project")
+        == "cr.us-central1.nebius.cloud/u00usc"
+    )
+
+
 def test_nebius_discover_container_registry_empty_without_project() -> None:
     assert nebius.discover_container_registry("") == ""
 

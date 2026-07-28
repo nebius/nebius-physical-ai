@@ -533,12 +533,20 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
     project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
     existing_registry = str(existing_stanza.get("container_registry", ""))
-    # Only hit Nebius for registry discovery when we don't already have one saved
-    # (an idempotent re-run should not make an avoidable CLI call).
-    registry_default = existing_registry or (
-        nebius_client.discover_container_registry(project_id)
-        or DEFAULT_CONTAINER_REGISTRY
-    )
+    # The main NPA registry (workbench images) is in eu-north1, and registries
+    # are readable cross-region, so default to eu-north1: keep a saved registry,
+    # else use the project's own eu-north1 registry if it has one, else the
+    # eu-north1 first-party default. A discovered non-eu-north1 registry is not
+    # auto-selected as the default (the operator can still type it). Only hit
+    # Nebius for discovery when nothing is saved (idempotent re-runs stay offline).
+    if existing_registry:
+        registry_default = existing_registry
+    else:
+        discovered = nebius_client.discover_container_registry(project_id)
+        if discovered and _region_from_registry_host(discovered) == DEFAULT_REGION:
+            registry_default = discovered
+        else:
+            registry_default = DEFAULT_CONTAINER_REGISTRY
     region_default = (
         str(existing_stanza.get("region", ""))
         or _region_from_registry_host(registry_default)

@@ -1137,7 +1137,7 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
         monkeypatch,
         project="project-from-profile",
         tenant="tenant-from-profile",
-        registry="cr.eu-west1.nebius.cloud/reg-abc",
+        registry="cr.eu-north1.nebius.cloud/reg-abc",
     )
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(
@@ -1147,7 +1147,7 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
             "nebius_api_key": "AKIAEXISTING",
             "nebius_secret_key": "existing-secret",
             "s3_bucket": "existing-bucket",
-            "s3_endpoint": "https://storage.eu-west1.nebius.cloud",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
         },
     )
 
@@ -1155,7 +1155,7 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
         [
             "tenant-from-profile",   # tenant id (entered explicitly)
             "project-from-profile",  # project id (entered explicitly)
-            "",                  # region (accept eu-west1 from registry)
+            "",                  # region (accept eu-north1 from registry)
             "",                  # registry (accept discovered)
             "",                  # bucket name (Enter = default)
             "hf_from_profile",   # HF token
@@ -1170,9 +1170,43 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
     assert result.exit_code == 0, result.output
     assert "Nebius CLI profile detected" in result.output
     config = yaml.safe_load(config_path.read_text())
-    assert config["projects"]["eu-west1"]["project_id"] == "project-from-profile"
-    assert config["projects"]["eu-west1"]["tenant_id"] == "tenant-from-profile"
-    assert config["projects"]["eu-west1"]["region"] == "eu-west1"
+    assert config["projects"]["eu-north1"]["project_id"] == "project-from-profile"
+    assert config["projects"]["eu-north1"]["tenant_id"] == "tenant-from-profile"
+    assert config["projects"]["eu-north1"]["region"] == "eu-north1"
+    assert config["projects"]["eu-north1"]["container_registry"] == "cr.eu-north1.nebius.cloud/reg-abc"
+
+
+def test_configure_defaults_to_eu_north1_registry_over_other_region(monkeypatch, tmp_path) -> None:
+    """A discovered non-eu-north1 registry is not auto-selected; default stays eu-north1."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(
+        monkeypatch,
+        project="project-1",
+        tenant="tenant-1",
+        registry="cr.us-central1.nebius.cloud/u00xyz",
+    )
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
+
+    # Accept all defaults (Enter). The registry default must be eu-north1, not
+    # the discovered us-central1 registry.
+    answers = "\n".join(["tenant-1", "project-1", "", "", "", "", "", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    config = yaml.safe_load(config_path.read_text())
+    stanza = next(iter(config["projects"].values()))
+    assert stanza["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
+    assert stanza["region"] == "eu-north1"
 
 
 def test_configure_stale_profile_shows_activate_guidance(monkeypatch, tmp_path) -> None:
