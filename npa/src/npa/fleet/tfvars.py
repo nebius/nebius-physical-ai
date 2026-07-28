@@ -82,8 +82,11 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
         lines.append(f"infiniband_fabric = {_tfstr(cluster.infiniband_fabric)}")
 
     lines.append(f"enable_filestore = {'true' if cluster.enable_filestore else 'false'}")
-    if cluster.existing_filestore:
-        lines.append(f"existing_filestore = {_tfstr(cluster.existing_filestore)}")
+    # Always emit existing_filestore: the recipe's variable defaults to null, and
+    # its filesystem.tf branches on `== ""` / `!= ""`. Left null, enable_filestore
+    # would try to READ a nonexistent filesystem (data source with no id) instead
+    # of creating one. Empty string routes to the create branch.
+    lines.append(f"existing_filestore = {_tfstr(cluster.existing_filestore)}")
     lines.append(f"filestore_disk_size_gibibytes = {cluster.filestore_disk_size_gibibytes}")
     lines.append(
         "filesystem_csi = { chart_version = \"0.1.5\", namespace = \"kube-system\", "

@@ -177,6 +177,9 @@ def test_render_tfvars_rtx_single_gpu() -> None:
     # Single-GPU preset must not enable GPU clustering.
     assert "enable_gpu_cluster = false" in tf
     assert "enable_filestore = true" in tf
+    # existing_filestore must always be emitted as "" (the recipe defaults it to
+    # null and branches on == "", so an unset value would read a phantom FS).
+    assert 'existing_filestore = ""' in tf
     # loki has no recipe default and must be emitted, plus o11y stays off.
     assert "loki = { enabled = false" in tf
     assert "enable_grafana           = false" in tf
