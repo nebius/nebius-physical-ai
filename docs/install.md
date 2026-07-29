@@ -47,6 +47,12 @@ source .venv/bin/activate
 
 On Windows, do this inside **WSL2 Ubuntu** (see [§6](#6-windows-via-wsl2)).
 
+> **`.venv` vs `npa/.venv`.** Every user-facing doc uses repo-root `.venv`.
+> Contributor tooling — [`docs/testing/e2e.md`](testing/e2e.md), the agent
+> skills, and `AGENTS.md` — validates the repo with `npa/.venv/bin/python`.
+> Both work; pick one per checkout so `npa` resolves to the interpreter you
+> think it does.
+
 ## 3. Install npa (editable, from the clone)
 
 ```bash

@@ -104,6 +104,25 @@ to go from a public dataset to a trained-and-evaluated policy on Nebius GPUs.
 > zero-GPU and needs only a `NEBIUS_TOKEN_FACTORY_KEY` (no cluster or GPU) — a
 > cheap smoke test of your credentials, not the destination. AI Cloud GPUs are.
 
+### The whole path, in order
+
+Running a workflow on Nebius GPUs needs a cluster, an orchestrator, and a copy of
+`npa` the workers can install. This is every step, once, on a fresh account:
+
+```bash
+npa configure                                  # Nebius profile + ~/.npa files
+npa workbench health preflight                 # HF / NGC / S3 / Token Factory
+npa provision-if-absent --project <alias>      # bucket + GPU cluster if missing
+npa skypilot bootstrap                         # orchestrator (saves skypilot.sky_bin)
+npa workbench workflow stage-src --bucket <b>  # npa source for image-less steps
+npa workbench workflow submit <spec.yaml> --var bucket=<b> --infra k8s/<context> ...
+```
+
+`submit` verifies these up front and prints **everything** still missing in one
+list (with the command that fixes each), so you are not discovering them one
+failed run at a time. Worked example end to end:
+[Physical AI Data Factory runbook](docs/workbench/guides/physical-ai-data-factory-deploy.md).
+
 ---
 
 ## Do more with npa

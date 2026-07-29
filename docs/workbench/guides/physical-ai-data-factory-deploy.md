@@ -22,21 +22,59 @@ tool — every stage is an existing workbench tool or a real `run.shell` step.
 
 ## Quick start (copy-paste)
 
-Already installed `npa`, written `~/.npa` credentials (§2), and deployed an agent
-(§3)? Launch a **stock-Cosmos** demo run. The simplest path needs **no dataset and
-no tools** — set `seed_default_input=true` and the run seeds its own default
-frames so the mandatory caption stage has images:
+From a clone with `npa` installed (§1) and `npa configure` run (§2), this is the
+**complete** ordered path to a stock-Cosmos demo run. Every command is needed —
+skipping one is what makes a first submit fail. The run needs **no dataset**:
+`seed_default_input=true` seeds its own frames for the mandatory caption stage.
 
 ```bash
-BUCKET=<your-artifact-bucket>
+BUCKET=<your-artifact-bucket>        # the bucket `npa configure` provisioned
+PROJECT=<your-npa-project-alias>     # `npa configure --show` lists it
 RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
 
+# 1. Credentials the stages need, and a GPU cluster + bucket if absent.
+npa workbench health preflight
+npa provision-if-absent --project "$PROJECT"          # --dry-run first to preview
+
+# 2. SkyPilot is the orchestrator. bootstrap saves skypilot.sky_bin into
+#    ~/.npa/config.yaml, so new shells resolve it with no exports.
+npa skypilot bootstrap
+npa skypilot verify --cluster <your-cluster-name>     # sanity-check the kubeconfig
+
+# 3. Publish the npa package for the image-less (Token Factory / run.shell)
+#    steps. `submit --stage-src` below does this inline; run it standalone to
+#    reuse one copy across submits.
+npa workbench workflow stage-src --bucket "$BUCKET"
+export NPA_SRC_S3_URI="s3://$BUCKET/npa-src/npa/"
+
+# 4. Secrets must be exported for --secret-env to forward them.
+export NEBIUS_TOKEN_FACTORY_KEY=<your-token-factory-key>
+export AWS_ACCESS_KEY_ID=<...> AWS_SECRET_ACCESS_KEY=<...>
+
+# 5. Submit.
 npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
   --run-id "$RUN_ID" --var bucket="$BUCKET" --var seed_default_input=true \
   --assume-decision promote_checkpoint \
+  --infra k8s/<your-kube-context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
+
+Not sure what is still missing? `submit` checks first and prints everything at
+once:
+
+```text
+Error: Cannot submit physical-ai-data-factory.yaml: missing prerequisites:
+  - SkyPilot CLI is not usable (...)
+      fix: run `npa skypilot bootstrap` ...
+  - npa source for image-less steps (NPA_SRC_S3_URI is unset)
+      fix: pass --stage-src, or set NPA_SRC_S3_URI=..., or pin --image ...
+  - config.bucket is the spec placeholder 'example-bucket'
+      fix: pass --var bucket=<your-bucket>
+```
+
+Add `--plan-only` to render the SkyPilot YAML without launching, or
+`--skip-preflight` to bypass the checks.
 
 Prefer to caption **real** frames? Stage them first (needs `ffmpeg` and the S3
 keys / `AWS_ENDPOINT_URL` from §2), then submit **without** the flag:
@@ -49,8 +87,9 @@ ffmpeg -f lavfi -i testsrc=size=1280x720:rate=1 -frames:v 12 frame_%04d.png
 aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
 
 npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
-  --run-id "$RUN_ID" --var bucket="$BUCKET" \
+  --run-id "$RUN_ID" --var bucket="$BUCKET" --stage-src \
   --assume-decision promote_checkpoint \
+  --infra k8s/<your-kube-context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
@@ -61,6 +100,16 @@ overwrites frames already staged under `input/`. To transfer appearance onto
 **your** footage instead of stock material, stage a real `video_0.mp4` and add
 `NPA_COSMOS_CONDITION_ON_INPUT=1` (see §5). Everything below is the full
 explanation.
+
+### If submit fails
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `missing prerequisites: ... NPA_SRC_S3_URI is unset` | image-less steps have no `npa` to install | `npa workbench workflow stage-src --bucket <b>`, or `submit --stage-src`, or pin `--image` |
+| `missing prerequisites: ... SkyPilot CLI is not usable` | SkyPilot never bootstrapped, or only exported in a previous shell | `npa skypilot bootstrap` (persists `skypilot.sky_bin`) |
+| `missing prerequisites: ... config.bucket is the spec placeholder` | submitting against `example-bucket` | `--var bucket=<your-bucket>` |
+| `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | `sky status --all`, then `sky down sky-jobs-controller-<id>`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
+| `No images found .../input/` | the caption stage ran with an empty `input/` | stage frames, or add `--var seed_default_input=true` |
 
 ---
 
@@ -85,9 +134,9 @@ explanation.
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
 
-# A dedicated venv keeps the CLI isolated. The repo convention is npa/.venv.
-python3 -m venv npa/.venv
-source npa/.venv/bin/activate
+# A dedicated venv keeps the CLI isolated. Same path as the README.
+python3 -m venv .venv
+source .venv/bin/activate
 pip install --upgrade pip
 pip install -e npa
 
@@ -96,6 +145,10 @@ npa --version
 
 `pip install -e npa` installs the `npa` CLI/SDK in editable mode. Re-run it after
 pulling changes that touch dependencies.
+
+> Repo-root `.venv` is the path every user-facing doc uses. Contributor tooling
+> (`docs/testing/e2e.md`, the agent skills) uses `npa/.venv` for repo validation;
+> either works, but stay consistent within a checkout.
 
 ---
 
@@ -314,6 +367,7 @@ Submit with the **same** `RUN_ID` (dynamic gate → pass `--assume-decision`):
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
+  --stage-src \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
@@ -348,6 +402,7 @@ npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-4gpu-%Y%m%dt%H%M%sz)" \
   --var bucket=<your-artifact-bucket> \
   --var n_augmentations=4 \
+  --stage-src \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \

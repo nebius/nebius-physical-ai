@@ -62,11 +62,15 @@ verification is `vlm_eval`.
 ```bash
 SPEC=npa/workflows/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
-npa workbench workflow plan-spec   "$SPEC" --run-id demo --assume-decision promote_checkpoint --json
+# --var bucket= is what ties the plan to your storage; without it the spec's
+# `example-bucket` placeholder is planned (plan-spec warns when that happens).
+npa workbench workflow plan-spec "$SPEC" --run-id demo \
+  --assume-decision promote_checkpoint --var bucket=<your-bucket> --json
 # Render the serial SkyPilot YAML without launching (needs NPA_SRC_S3_URI or --image
 # for the CPU tool steps, same as the other Token Factory specs):
-NPA_SRC_S3_URI=s3://<bucket>/npa-src/ \
-  npa workbench workflow submit "$SPEC" --run-id demo --assume-decision promote_checkpoint --plan-only
+NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/npa/ \
+  npa workbench workflow submit "$SPEC" --run-id demo --var bucket=<your-bucket> \
+    --assume-decision promote_checkpoint --plan-only
 ```
 
 ## Submit (real run)
@@ -74,14 +78,26 @@ NPA_SRC_S3_URI=s3://<bucket>/npa-src/ \
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
+  --var bucket=<your-bucket> \
+  --stage-src \
   --assume-decision promote_checkpoint \
+  --infra k8s/<your-kube-context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Set `config.bucket` (via `--var bucket=<your-bucket>`) to the artifact bucket
-your NPA agent reads.
+`--var bucket=` points `config.bucket` at the artifact bucket your NPA agent
+reads; without it the run uses the spec's `example-bucket` placeholder.
+`--stage-src` publishes the local `npa` package to
+`s3://<your-bucket>/npa-src/npa/` so the CPU/Token-Factory steps (which run on
+SkyPilot's default image) can install it — equivalently, run
+`npa workbench workflow stage-src --bucket <your-bucket>` once and export
+`NPA_SRC_S3_URI`, or pin `--image`. Submit checks all of this up front and
+prints anything still missing in a single list; the
+[deploy runbook](physical-ai-data-factory-deploy.md) has the full ordered
+quickstart (`configure` → `provision-if-absent` → `skypilot bootstrap` →
+`stage-src` → submit).
 
 > **Stage input frames first (required).** Before you submit, upload **PNG/JPEG
 > frames** (8–16; only the first `config.max_images`, default 8, are captioned) to

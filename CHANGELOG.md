@@ -7,6 +7,48 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### First-run walkthrough fixes (README → agent → Physical AI Data Factory)
+
+- **`npa agent setup` no longer leaks Typer defaults into Terraform.** `setup`
+  calls `fresh-setup`, which calls `deploy`, as plain Python functions, so every
+  omitted option arrived as a `typer.models.OptionInfo` sentinel:
+  `server_port`/`ssh_user`/`extra_ingress_ports` were rendered as literal
+  `"<typer.models.OptionInfo object at 0x...>"` Terraform vars, and
+  `no_public_https` (an OptionInfo, therefore truthy) **silently disabled HTTPS**.
+  New `npa.cli._typer_defaults.resolve_typer_defaults` resolves declared defaults
+  on direct calls; a guardrail test fails when a Typer command is called as a
+  function without it.
+- **`npa configure` recovers the discovery tenant.** Profiles with only
+  `parent-id` (federation profiles, single-project profiles) silently skipped
+  project discovery. It now derives the tenant from the profile's project, then
+  from the listable tenants, and explains why when it still cannot. New
+  `nebius.get_project_tenant_id()` / `get_project_name()` / `set_profile_project()`.
+- **`npa configure` on a pipe no longer trips `GetPassWarning`**, offers to point
+  the Nebius CLI profile at the selected project, and derives the local alias
+  from the Nebius **project name** instead of the region.
+- **`credentials.yaml` accepts `token_factory: {api_key}` / `huggingface: {token}`**
+  — the shapes the Physical AI Data Factory guide documented and the loader
+  silently ignored. `tokens:` remains canonical and wins.
+- **`npa skypilot bootstrap` persists `skypilot.sky_bin`** to `~/.npa/config.yaml`
+  (`--save`, default on), so a new shell no longer fails with "SkyPilot CLI
+  executable is not configured".
+- **Stale SkyPilot jobs controllers explain themselves.** A controller cached
+  against a missing kubeconfig now reports the path plus `sky status --all`,
+  `sky down sky-jobs-controller-<id>`, `npa provision-if-absent` and
+  `--infra k8s/<context>` instead of a raw traceback.
+- **New `npa workbench workflow stage-src`** (and `submit --stage-src`) publishes
+  the local `npa` package to `s3://<bucket>/npa-src/npa/` for image-less steps —
+  previously `NPA_SRC_S3_URI` was required with no command to produce it.
+- **`submit` reports every missing prerequisite at once** (SkyPilot CLI, npa
+  source, placeholder bucket) with the fix for each; `--skip-preflight` bypasses.
+- **`plan-spec` and `run-spec` accept `--var KEY=VALUE`**; all three commands warn
+  when planning against the spec's `example-bucket` placeholder.
+- **Docs: one ordered green path** from README to a real submit, a complete
+  Physical AI Data Factory quickstart (`provision-if-absent` → `skypilot
+  bootstrap` → `stage-src` → submit) with a failure-recovery table, and a single
+  documented venv path (`.venv` for users, `npa/.venv` for repo validation),
+  guarded by tests.
+
 ### Setup re-architecture: project discovery + simple agent deploy
 
 - **`npa configure` discovers projects instead of asking you to type ids.** It

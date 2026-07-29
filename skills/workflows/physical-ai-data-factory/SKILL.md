@@ -109,13 +109,28 @@ Token Factory model.
 ```bash
 SPEC=npa/workflows/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
-npa workbench workflow plan-spec   "$SPEC" --run-id demo --assume-decision promote_checkpoint --json
-# Render/submit on GPUs (needs NPA_SRC_S3_URI or --image, and secret-envs):
+# --var bucket= is required for a meaningful plan; without it the spec's
+# `example-bucket` placeholder is planned (plan-spec warns).
+npa workbench workflow plan-spec "$SPEC" --run-id demo \
+  --assume-decision promote_checkpoint --var bucket=<bucket> --json
+
+# Prerequisites, in order, on a fresh machine/account:
+npa provision-if-absent --project <alias>       # bucket + GPU cluster if missing
+npa skypilot bootstrap                          # persists skypilot.sky_bin
+npa workbench workflow stage-src --bucket <bucket>   # or submit --stage-src
+
+# Render/submit on GPUs:
 npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
-  --assume-decision promote_checkpoint --var bucket=<bucket> \
+  --assume-decision promote_checkpoint --var bucket=<bucket> --stage-src \
+  --infra k8s/<context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
 ```
+
+`submit` runs a prerequisite check first and reports **every** missing item at
+once (SkyPilot CLI, npa source for image-less steps, placeholder bucket) with
+the command that fixes each. `--plan-only` skips the runtime-only checks;
+`--skip-preflight` bypasses them.
 
 ## Key Operational Notes
 
