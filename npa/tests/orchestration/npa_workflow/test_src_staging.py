@@ -263,3 +263,72 @@ def test_stage_npa_source_serial_mode(tmp_path: Path) -> None:
     stage_npa_source(bucket="b", source_root=root, client=client, max_workers=1)
 
     assert len(client.uploads) == 3
+
+
+def test_storage_client_falls_back_to_saved_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`stage-src` must work on a machine configured only via `npa configure`.
+
+    Regression: StorageClient.from_environment reads AWS_* env vars only, so
+    staging died with "Unable to locate credentials" despite a populated
+    ~/.npa/credentials.yaml.
+    """
+    from types import SimpleNamespace
+
+    from npa.orchestration.npa_workflow import src_staging
+
+    for var in ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda *a, **k: SimpleNamespace(
+            s3_endpoint="https://storage.example.invalid",
+            s3_access_key_id="AK_saved",
+            s3_secret_access_key="SK_saved",
+        ),
+    )
+    captured: dict = {}
+
+    class _Client:
+        @classmethod
+        def from_environment(cls, **kwargs):
+            captured.update(kwargs)
+            return cls()
+
+    monkeypatch.setattr("npa.clients.storage.StorageClient", _Client)
+
+    src_staging._storage_client()
+
+    assert captured == {
+        "endpoint_url": "https://storage.example.invalid",
+        "aws_access_key_id": "AK_saved",
+        "aws_secret_access_key": "SK_saved",
+    }
+
+
+def test_storage_client_prefers_explicit_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.orchestration.npa_workflow import src_staging
+
+    def _must_not_load(*_a, **_k):
+        raise AssertionError("saved credentials must not be read when all values are given")
+
+    monkeypatch.setattr("npa.clients.credentials.load_credentials", _must_not_load)
+    captured: dict = {}
+
+    class _Client:
+        @classmethod
+        def from_environment(cls, **kwargs):
+            captured.update(kwargs)
+            return cls()
+
+    monkeypatch.setattr("npa.clients.storage.StorageClient", _Client)
+
+    src_staging._storage_client(
+        endpoint_url="https://explicit.invalid",
+        aws_access_key_id="AK",
+        aws_secret_access_key="SK",
+    )
+
+    assert captured["endpoint_url"] == "https://explicit.invalid"
+    assert captured["aws_access_key_id"] == "AK"

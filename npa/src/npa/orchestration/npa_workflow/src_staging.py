@@ -88,6 +88,42 @@ def iter_source_files(root: Path) -> Iterable[Path]:
         yield relative
 
 
+def _storage_client(
+    *,
+    endpoint_url: str = "",
+    aws_access_key_id: str = "",
+    aws_secret_access_key: str = "",
+):
+    """Build a StorageClient from explicit values, env, then ``~/.npa``.
+
+    ``StorageClient.from_environment`` only looks at AWS_* env vars, so staging
+    failed with "Unable to locate credentials" on a machine that was fully
+    configured through ``npa configure``. Fall back to the saved credentials the
+    rest of the CLI uses.
+    """
+
+    from npa.clients.credentials import load_credentials
+    from npa.clients.storage import StorageClient
+
+    endpoint = endpoint_url.strip()
+    key = aws_access_key_id.strip()
+    secret = aws_secret_access_key.strip()
+    if not (endpoint and key and secret):
+        try:
+            saved = load_credentials()
+        except Exception:  # noqa: BLE001 - staging must not require ~/.npa
+            saved = None
+        if saved is not None:
+            endpoint = endpoint or saved.s3_endpoint
+            key = key or saved.s3_access_key_id
+            secret = secret or saved.s3_secret_access_key
+    return StorageClient.from_environment(
+        endpoint_url=endpoint,
+        aws_access_key_id=key,
+        aws_secret_access_key=secret,
+    )
+
+
 def stage_npa_source(
     *,
     bucket: str,
@@ -119,9 +155,7 @@ def stage_npa_source(
         raise SrcStagingError(f"{root} does not look like the npa package (no pyproject.toml)")
 
     if client is None:
-        from npa.clients.storage import StorageClient
-
-        client = StorageClient.from_environment(
+        client = _storage_client(
             endpoint_url=endpoint_url,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
