@@ -187,7 +187,7 @@ def render_task_run_script(command: Sequence[str]) -> str:
         # GPU default image: the outer shell imports npa fine, the login shell does
         # not). Prepending the staged source tree unconditionally fixes every shell;
         # it is the same package, so it is a no-op where the install already works.
-        "PYTHONPATH=\"${PYTHONPATH:-}\"\n"
+        "set +u\n"
         "for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
         "/opt/nebius-physical-ai/npa/src; do\n"
         "  if [ -d \"$candidate\" ]; then\n"
@@ -195,6 +195,7 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "    break\n"
         "  fi\n"
         "done\n"
+        "set -u\n"
         f"{quoted}\n"
     )
 
@@ -308,7 +309,6 @@ def default_npa_setup() -> str:
         # stages that import npa. Verify importability with the body's own python and
         # fall back to the staged source tree, which works for any interpreter.
         "if ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
-        "  PYTHONPATH=\"${PYTHONPATH:-}\"\n"
         "  for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
         "/opt/nebius-physical-ai/npa/src; do\n"
         "    if [ -d \"$candidate\" ]; then\n"

@@ -537,8 +537,10 @@ def test_rendered_stages_repair_an_interpreter_mismatch(parallel_spec) -> None:
     # `bash -lc` login shell the command runs in resolves a different python3.
     assert "export PYTHONPATH=" in run_script
     assert "if ! python3 -c 'import npa'" not in run_script
-    # `set -u` safe: an unset PYTHONPATH must not abort the task.
-    assert 'PYTHONPATH="${PYTHONPATH:-}"' in run_script
+    # `set -u` safe without "${...}" (rendered YAML must stay placeholder-clean, and
+    # an unset PYTHONPATH must not abort the task).
+    assert "set +u" in run_script and "set -u" in run_script
+    assert "${" not in run_script
     assert run_script.rstrip().endswith("npa workbench insights dashboard")
 
 
