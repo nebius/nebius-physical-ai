@@ -270,6 +270,84 @@ def workflow_status(
     )
 
 
+def workflow_task_statuses(
+    job_id: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 300,
+) -> list[dict[str, Any]]:
+    """Return per-task rows for a managed job (pipeline tasks or JobGroup members).
+
+    Each row carries the timing fields SkyPilot records per task
+    (``submitted_at`` / ``start_at`` / ``end_at``), which is how a JobGroup can be
+    shown to have run its members *concurrently* and how a barrier state can be
+    shown to have started only after its predecessors finished.
+    """
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
+    result = subprocess.run(
+        cmd,
+        env=sky_environment(runtime_config.isolated_config_dir),
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return parse_task_statuses(result.stdout, job_id)
+
+
+def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
+    """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
+
+    payload = _json_payload_from_output(output)
+    if payload is None:
+        return []
+    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    rows: list[dict[str, Any]] = []
+    for job in jobs or []:
+        if not isinstance(job, dict):
+            continue
+        current_id = str(job.get("job_id") or job.get("id") or "")
+        if current_id != str(job_id):
+            continue
+        rows.append(
+            {
+                "job_id": current_id,
+                "task_id": job.get("task_id"),
+                "task_name": job.get("task_name") or job.get("job_name") or "",
+                "status": str(job.get("status") or "").upper(),
+                "submitted_at": job.get("submitted_at"),
+                "start_at": job.get("start_at"),
+                "end_at": job.get("end_at"),
+                "is_job_group": job.get("is_job_group"),
+                "execution": job.get("execution"),
+                "cluster_name": job.get("cluster_name_on_cloud")
+                or job.get("current_cluster_name")
+                or "",
+            }
+        )
+    rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
+    return rows
+
+
 def _wait_for_healthy_jobs_controller(
     sky_executable: str,
     *,

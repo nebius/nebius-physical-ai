@@ -135,7 +135,17 @@ def run_workflow(
     decision_reader: Any | None = None,
     artifact_checker: Any | None = None,
     state_store: RunStateStore | None = None,
+    step_executor: Any | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Plan or execute a workflow.
+
+    ``step_executor`` swaps out *where* a step runs without changing the traversal:
+    the default runs the step locally with ``subprocess``; the runtime tier
+    (``runtime.SkyPilotWaveExecutor``) submits it to SkyPilot and waits for a
+    terminal status. ``trigger_waiter`` blocks before a state whose ``trigger:``
+    prefix has not produced data yet.
+    """
     assume = _resolve_assume(spec, assume_decision)
     ctx = _make_context(spec, run_id=run_id)
     store = state_store
@@ -171,6 +181,8 @@ def run_workflow(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 results_out=results,
             )
             status = "completed"
@@ -530,6 +542,8 @@ def _execute_state_machine(
     on_step: Callable[[PlanStep], None] | None,
     decision_reader: Any | None,
     artifact_checker: Any | None,
+    step_executor: Any | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
     loop_label: str = "",
     follow_transitions: bool = True,
     results_out: list[dict[str, Any]] | None = None,
@@ -538,6 +552,40 @@ def _execute_state_machine(
     _guard_execution_depth(spec, depth)
     state = spec.states[state_name]
     results: list[dict[str, Any]] = results_out if results_out is not None else []
+
+    if state.parallel:
+        group_records = _run_parallel_group(
+            spec,
+            state,
+            ctx,
+            require_inputs=require_inputs,
+            on_step=on_step,
+            artifact_checker=artifact_checker,
+            step_executor=step_executor,
+            trigger_waiter=trigger_waiter,
+        )
+        results.extend(group_records)
+        failed = [item for item in group_records if item.get("status") == "failed"]
+        if failed:
+            raise NpaWorkflowError(
+                str(failed[-1].get("error") or f"parallel group {state.name} failed")
+            )
+        if state.next:
+            _execute_state_machine(
+                spec,
+                state.next,
+                ctx,
+                assume_decision=assume_decision,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                decision_reader=decision_reader,
+                artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
+                results_out=results,
+                depth=depth + 1,
+            )
+        return results
 
     if state.sequence:
         if state.loop:
@@ -555,6 +603,8 @@ def _execute_state_machine(
                         on_step=on_step,
                         decision_reader=decision_reader,
                         artifact_checker=artifact_checker,
+                        step_executor=step_executor,
+                        trigger_waiter=trigger_waiter,
                         loop_label=state.name,
                         follow_transitions=False,
                         results_out=results,
@@ -582,6 +632,8 @@ def _execute_state_machine(
                     on_step=on_step,
                     decision_reader=decision_reader,
                     artifact_checker=artifact_checker,
+                    step_executor=step_executor,
+                    trigger_waiter=trigger_waiter,
                     results_out=results,
                     depth=depth + 1,
                 )
@@ -597,6 +649,8 @@ def _execute_state_machine(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 loop_label=state.name,
                 follow_transitions=False,
                 results_out=results,
@@ -612,6 +666,8 @@ def _execute_state_machine(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 results_out=results,
                 depth=depth + 1,
             )
@@ -630,6 +686,8 @@ def _execute_state_machine(
                 require_inputs=require_inputs,
                 on_step=on_step,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
             )
             results.append(record)
             if record.get("status") == "failed":
@@ -650,6 +708,8 @@ def _execute_state_machine(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 results_out=results,
                 depth=depth + 1,
             )
@@ -663,6 +723,8 @@ def _execute_state_machine(
         require_inputs=require_inputs,
         on_step=on_step,
         artifact_checker=artifact_checker,
+        step_executor=step_executor,
+        trigger_waiter=trigger_waiter,
     )
     results.append(record)
     if record.get("status") == "failed":
@@ -688,10 +750,85 @@ def _execute_state_machine(
             on_step=on_step,
             decision_reader=decision_reader,
             artifact_checker=artifact_checker,
+            step_executor=step_executor,
+            trigger_waiter=trigger_waiter,
             results_out=results,
             depth=depth + 1,
         )
     return results
+
+
+def _run_parallel_group(
+    spec: NpaWorkflowSpec,
+    state: StateSpec,
+    ctx: RunContext,
+    *,
+    require_inputs: bool,
+    on_step: Callable[[PlanStep], None] | None,
+    artifact_checker: Any | None,
+    step_executor: Any | None,
+    trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Run every member of a ``parallel:`` group and barrier on all of them.
+
+    With an executor the whole group is handed over in one call so it can be
+    launched concurrently (SkyPilot JobGroup, bounded by ``maxConcurrency``).
+    Without one (local ``--execute``) members run in declared order, which keeps
+    the local interpreter dependency-free.
+    """
+
+    members = [spec.states[name] for name in state.parallel]
+    steps: list[PlanStep] = [
+        build_step(spec, member, ctx, loop_label=state.name, group=state.name)
+        for member in members
+    ]
+    for step in steps:
+        if require_inputs and step.inputs:
+            require_input_artifacts(
+                [item["uri"] for item in step.inputs], checker=artifact_checker
+            )
+        if on_step is not None:
+            on_step(step)
+
+    if step_executor is None:
+        records: list[dict[str, Any]] = []
+        for member, step in zip(members, steps):
+            try:
+                wait_for_trigger(member, ctx, waiter=trigger_waiter)
+                record = _dispatch_step(step, None)
+            except NpaWorkflowError as exc:
+                records.append(
+                    {
+                        "state": step.state,
+                        "iteration": step.iteration,
+                        "group": state.name,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+                continue
+            record.setdefault("group", state.name)
+            _record_state_outputs(member, ctx, step)
+            records.append(record)
+        return records
+
+    for member in members:
+        wait_for_trigger(member, ctx, waiter=trigger_waiter)
+    max_concurrency = len(steps)
+    if state.max_concurrency is not None:
+        max_concurrency = max(1, resolve_config_int(state.max_concurrency, ctx.config))
+    records = list(
+        step_executor.execute_parallel(
+            steps,
+            group=state.name,
+            max_concurrency=max_concurrency,
+        )
+    )
+    for member, step, record in zip(members, steps, records):
+        record.setdefault("group", state.name)
+        if record.get("status") != "failed":
+            _record_state_outputs(member, ctx, step)
+    return records
 
 
 def _run_single_state(
@@ -704,6 +841,8 @@ def _run_single_state(
     require_inputs: bool,
     on_step: Callable[[PlanStep], None] | None,
     artifact_checker: Any | None,
+    step_executor: Any | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     plan = ExecutionPlan(
         workflow=spec.name,
@@ -727,7 +866,8 @@ def _run_single_state(
     if on_step is not None:
         on_step(step)
     try:
-        record = _execute_step(step, execute=True)
+        wait_for_trigger(state, ctx, waiter=trigger_waiter)
+        record = _dispatch_step(step, step_executor)
     except NpaWorkflowError as exc:
         record = {
             "state": step.state,
@@ -738,6 +878,34 @@ def _run_single_state(
     else:
         _record_state_outputs(state, ctx, step)
     return record
+
+
+def _dispatch_step(step: PlanStep, step_executor: Any | None) -> dict[str, Any]:
+    """Run one step locally, or hand it to an injected executor (runtime tier)."""
+
+    if step_executor is None:
+        # Module-level lookup keeps monkeypatching `_execute_step` working.
+        return _execute_step(step, execute=True)
+    return step_executor.execute(step)
+
+
+def wait_for_trigger(
+    state: StateSpec,
+    ctx: RunContext,
+    *,
+    waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Block on a state's ``trigger:`` prefix before its work runs."""
+
+    if state.trigger is None or waiter is None:
+        return None
+    uri = resolve_tokens(
+        state.trigger.uri,
+        config=state_config(state, ctx),
+        run=ctx.run,
+        state_outputs=ctx.state_outputs,
+    )
+    return waiter(state, uri, ctx)
 
 
 def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, str]:
