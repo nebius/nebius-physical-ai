@@ -13,6 +13,7 @@ from typing import Any
 
 import typer
 
+from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.cluster.state import ClusterState, kubeconfig_file, save_cluster_state, utc_now_iso
 
 _DEFAULT_TERRAFORM_SUBDIR = Path("deploy") / "cluster"
@@ -21,6 +22,7 @@ _DEFAULT_FILESTORE_SIZE_GIB = 1024
 _GIB = 1024**3
 
 
+@resolve_typer_defaults
 def up_cmd(
     terraform_dir: Path | None = typer.Option(
         None,

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 import httpx
 import typer
 
+from npa.cli._typer_defaults import resolve_option_default, resolve_typer_defaults
 from npa.clients.config import (
     ConfigError,
     resolve_environment,
@@ -8423,19 +8424,19 @@ def preflight_cmd(
 def _coerce_cli_list(value: Any) -> list[str]:
     """Return a real list for a possibly-unresolved Typer option default.
 
-    ``deploy_cmd`` is a Typer command but is also invoked programmatically
-    (``fresh-setup`` and thin wrappers like ``agent setup``). When such a caller
-    omits a list-valued option, the Typer default leaks through as a
-    ``typer.models.OptionInfo``, which is not iterable — later code like
-    ``for item in tf_var`` then blew up with ``'OptionInfo' object is not
-    iterable``. Coerce anything unset / non-iterable to an empty list.
+    Belt-and-braces: the commands below carry ``@resolve_typer_defaults``, so an
+    unresolved ``typer.models.OptionInfo`` should never reach here. This keeps
+    working for any caller that hands a command a raw option default anyway
+    (which used to blow up with ``'OptionInfo' object is not iterable``).
     """
+    try:
+        value = resolve_option_default(value)
+    except TypeError:  # required option with no default
+        return []
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
         return list(value)
-    if type(value).__name__ == "OptionInfo":  # unresolved typer.Option default
-        return []
     try:
         return list(value)
     except TypeError:
@@ -8443,6 +8444,7 @@ def _coerce_cli_list(value: Any) -> list[str]:
 
 
 @app.command("deploy")
+@resolve_typer_defaults
 def deploy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias to store config under."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -8763,6 +8765,7 @@ def deploy_cmd(
 
 
 @app.command("fresh-setup")
+@resolve_typer_defaults
 def fresh_setup_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias for this fresh environment."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -8830,6 +8833,7 @@ def fresh_setup_cmd(
 
 
 @app.command("setup")
+@resolve_typer_defaults
 def setup_cmd(
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     project: str = typer.Option(
@@ -9191,6 +9195,7 @@ def status_cmd(
 
 
 @app.command("destroy")
+@resolve_typer_defaults
 def destroy_cmd(
     project: str = typer.Option(
         "", "--project", help="NPA project alias (default: configured default_project)."

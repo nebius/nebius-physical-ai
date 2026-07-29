@@ -2345,6 +2345,159 @@ def test_agent_setup_picks_configured_project(monkeypatch, tmp_path) -> None:
     assert captured["project_id"] == "project-prod"
 
 
+def _write_agent_setup_config(tmp_path, monkeypatch):
+    """Configure one project alias and return its ssh public-key path."""
+    import yaml
+
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "dev",
+                "projects": {
+                    "dev": {
+                        "project_id": "project-dev",
+                        "tenant_id": "tenant-a",
+                        "region": "us-central1",
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    key_file = tmp_path / "id_ed25519.pub"
+    key_file.write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    return key_file
+
+
+def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -> None:
+    """`agent setup` -> `fresh-setup` -> `deploy` must not leak Typer OptionInfo.
+
+    Regression: `setup_cmd` calls `fresh_setup_cmd` as a plain function, so every
+    omitted option used to arrive as a `typer.models.OptionInfo` sentinel and
+    flow into Terraform vars / nginx ports / boolean flags.
+    """
+    from npa.cli.agent import (
+        DEFAULT_AGENT_PORT,
+        DEFAULT_BACKEND_PORT,
+        DEFAULT_RERUN_PORT,
+    )
+
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+
+    captured: dict = {}
+    monkeypatch.setattr("npa.cli.agent.deploy_cmd", lambda **kwargs: captured.update(kwargs))
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+    assert result.exit_code == 0, result.output
+
+    leaked = {
+        key: value
+        for key, value in captured.items()
+        if type(value).__name__ in {"OptionInfo", "ArgumentInfo"}
+    }
+    assert leaked == {}, f"unresolved Typer defaults reached deploy: {sorted(leaked)}"
+
+    assert captured["ssh_user"] == "ubuntu"
+    assert captured["agent_port"] == DEFAULT_AGENT_PORT
+    assert captured["backend_port"] == DEFAULT_BACKEND_PORT
+    assert captured["rerun_port"] == DEFAULT_RERUN_PORT
+    assert captured["tf_var"] == []
+    assert captured["llm_models"] == []
+    assert captured["no_public_https"] is False
+
+
+def _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path):
+    """Stub every cloud side effect in `deploy_cmd`; return captured calls."""
+    calls: dict = {}
+    creds = {
+        "service_account_id": "sa-agent",
+        "nebius_api_key": "ak-agent",
+        "nebius_secret_key": "sk-agent",
+        "s3_bucket": "npa-agent-state",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+    }
+
+    def _apply(**kwargs):
+        calls["merged_vars"] = dict(kwargs["merged_vars"])
+        return {
+            "vm_ip": "203.0.113.50",
+            "instance_id": "instance-agent",
+            "ssh_key_path": str(tmp_path / "id_ed25519"),
+        }
+
+    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", lambda *a, **k: creds)
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr("npa.clients.nebius.get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_storage_credentials", lambda **k: creds)
+    monkeypatch.setattr("npa.cli.agent._agent_check_public_ip_quota", lambda *a, **k: None)
+    monkeypatch.setattr("npa.cli.agent._ensure_terraform_state_bucket", lambda **k: None)
+    monkeypatch.setattr("npa.cli.agent._apply_agent_terraform", _apply)
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+    monkeypatch.setattr("npa.cli.agent._write_auth_secret", lambda **k: tmp_path / "auth.env")
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model-a"))
+    monkeypatch.setattr(
+        "npa.cli.agent._bootstrap_agent_stack",
+        lambda **kwargs: calls.__setitem__("bootstrap", dict(kwargs)),
+    )
+    monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
+    return calls
+
+
+def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> None:
+    """The full `agent setup` chain must hand Terraform real strings.
+
+    Regression: `server_port` / `ssh_user` / `extra_ingress_ports` used to be
+    rendered from `OptionInfo` objects, producing literal
+    "<typer.models.OptionInfo object at 0x...>" Terraform var values.
+    """
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+    calls = _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+    assert result.exit_code == 0, result.output
+
+    merged_vars = calls["merged_vars"]
+    assert merged_vars["server_port"] == "8088"
+    assert merged_vars["ssh_user"] == "ubuntu"
+    assert merged_vars["extra_ingress_ports"] == "[443,9090]"
+    assert not any(
+        "OptionInfo" in str(value) for value in merged_vars.values()
+    ), f"OptionInfo leaked into terraform vars: {merged_vars}"
+
+
+def test_agent_setup_keeps_public_https_enabled(monkeypatch, tmp_path) -> None:
+    """`--no-public-https` defaults to False, so `agent setup` keeps HTTPS on.
+
+    Regression: the unresolved `OptionInfo(False)` sentinel is *truthy*, so
+    `public_https = not no_public_https` silently evaluated to False and the
+    agent deployed without HTTPS.
+    """
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+    calls = _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls["bootstrap"]["public_https"] is True
+    assert calls["bootstrap"]["ssh_user"] == "ubuntu"
+    assert calls["bootstrap"]["agent_port"] == 8088
+    assert calls["bootstrap"]["backend_port"] == 8787
+    assert calls["bootstrap"]["rerun_port"] == 9090
+
+
 def test_agent_setup_requires_configured_projects(monkeypatch, tmp_path) -> None:
     """With no configured projects, `npa agent setup` points to `npa configure`."""
     from npa.clients import config as config_module
