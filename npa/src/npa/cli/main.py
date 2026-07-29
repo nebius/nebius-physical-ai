@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import sys
 import traceback
-from importlib.metadata import version as package_version
 from typing import Any, Callable, Iterable, Optional
 
 import typer
@@ -130,7 +129,11 @@ extend the same file with workbench endpoints and Terraform state.
 def _version_callback(value: bool) -> None:
     if not value:
         return
-    typer.echo(f"npa {package_version('npa')}")
+    # Reuse the fast-path resolver so both --version paths emit an identical
+    # string (and both fall back to 0.0.0.dev0 in an uninstalled source tree).
+    from npa.cli.entry import _resolve_version
+
+    typer.echo(f"npa {_resolve_version()}")
     raise typer.Exit()
 
 

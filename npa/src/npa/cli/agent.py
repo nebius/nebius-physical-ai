@@ -3220,28 +3220,37 @@ def _list_chat_sessions(state: dict) -> list[dict]:
     if s3 is not None and settings.get("bucket"):
         prefix = _chat_memory_prefix(settings) + "/"
         try:
-            resp = s3.list_objects_v2(Bucket=settings["bucket"], Prefix=prefix, MaxKeys=200)
-            for item in resp.get("Contents", []) or []:
-                key = str(item.get("Key") or "")
-                if not key.endswith(".json"):
-                    continue
-                session_id = _sanitize_chat_session_id(Path(key).stem)
-                if session_id in rows:
-                    continue
-                last_modified = item.get("LastModified")
-                updated_at = (
-                    last_modified.isoformat()
-                    if hasattr(last_modified, "isoformat")
-                    else str(last_modified or "")
-                )
-                rows[session_id] = {{
-                    "id": session_id,
-                    "title": "Saved chat",
-                    "created_at": "",
-                    "updated_at": updated_at,
-                    "message_count": 0,
-                    "memory_uri": _chat_memory_uri(session_id, settings),
-                }}
+            # Paginate the keys (bounded) so sessions past the first page still
+            # list; this stays a single logical listing with no per-object GET.
+            remaining = 1000
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=settings["bucket"], Prefix=prefix):
+                for item in page.get("Contents", []) or []:
+                    if remaining <= 0:
+                        break
+                    key = str(item.get("Key") or "")
+                    if not key.endswith(".json"):
+                        continue
+                    session_id = _sanitize_chat_session_id(Path(key).stem)
+                    if session_id in rows:
+                        continue
+                    last_modified = item.get("LastModified")
+                    updated_at = (
+                        last_modified.isoformat()
+                        if hasattr(last_modified, "isoformat")
+                        else str(last_modified or "")
+                    )
+                    rows[session_id] = {{
+                        "id": session_id,
+                        "title": "Saved chat",
+                        "created_at": "",
+                        "updated_at": updated_at,
+                        "message_count": 0,
+                        "memory_uri": _chat_memory_uri(session_id, settings),
+                    }}
+                    remaining -= 1
+                if remaining <= 0:
+                    break
         except Exception:
             pass
     return sorted(
@@ -9797,10 +9806,13 @@ def verify_live_cmd(
     }
     if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
         test_env["NPA_AGENT_CHAT_LIVE"] = "1"
-    # Run the local test gate with the *current* interpreter and the repo root as
-    # cwd, so `npa agent verify-live` works from any directory. Previously it
-    # shelled out to a relative "npa/.venv/bin/python" and relative test paths,
-    # which raised FileNotFoundError unless invoked from the repo root.
+    # Run the local test gate with the *current* interpreter and the repo root
+    # (resolved from this file's location) as cwd, so the command works from any
+    # cwd within the source checkout. Previously it shelled out to a relative
+    # "npa/.venv/bin/python" and relative test paths, which raised
+    # FileNotFoundError unless invoked from the repo root. This gate is a
+    # source-tree dev/operator command (the npa/tests/ tree it runs is not
+    # shipped in a wheel), so the parents[4] repo-root resolution is expected.
     import sys as _sys
 
     repo_root = Path(__file__).resolve().parents[4]

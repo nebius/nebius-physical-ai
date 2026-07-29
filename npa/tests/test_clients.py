@@ -826,12 +826,13 @@ def test_is_permission_denied_matches_access_denied() -> None:
     assert not nebius.is_permission_denied("NotFound: bucket missing")
 
 
-def test_nebius_bucket_list_requests_large_page_size(mocker) -> None:
-    """Bucket existence checks must page-size past the CLI default.
+def test_nebius_bucket_list_paginates_with_all(mocker) -> None:
+    """Bucket existence checks must page past the CLI default.
 
     Regression: an unpaged ``storage bucket list`` dropped existing buckets
     beyond the first page, so ``bucket_exists`` returned False for a real
     bucket and ``npa configure`` wrongly prompted for new-bucket storage class.
+    Uses ``--all`` (true pagination) for consistency with the other listers.
     """
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
@@ -841,8 +842,7 @@ def test_nebius_bucket_list_requests_large_page_size(mocker) -> None:
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     args = run_json.call_args.args[0]
     assert args[:3] == ["storage", "bucket", "list"]
-    assert "--page-size" in args, args
-    assert args[args.index("--page-size") + 1] == "1000", args
+    assert "--all" in args, args
 
 
 def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:

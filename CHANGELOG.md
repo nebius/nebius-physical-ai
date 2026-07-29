@@ -93,6 +93,41 @@ a versioned heading when a release is cut.
   checks (plus the Token Factory 503 warning) ahead of any cloud IAM side effects
   in `npa agent deploy`, so Route C prerequisites fail fast instead of mid-run.
 
+### Agent deploy & README-path fixes
+
+- **`npa configure` project discovery is now scoped to the active profile's
+  tenant.** Enumerating every accessible tenant was O(tenants) serial CLI calls
+  (hundreds of tenants → minutes and thousands of projects dumped). Discovery now
+  lists projects in the profile's current tenant, offers a name/id filter with a
+  display cap for large tenants, and defaults to the current project (never
+  `all`). Other tenants are reachable by switching the Nebius profile.
+- **The CPU agent VM no longer installs a workbench in cloud-init.** Deploy used
+  `workbench_type=lerobot` on a `cpu-d3` host, whose cloud-init built LeRobot +
+  EGL and failed on a driverless CPU image. A new minimal `workbench_type="agent"`
+  branch does no workbench install (the agent stack is bootstrapped over SSH), and
+  the VM boots on `ubuntu24.04-driverless` (region-portable; the CUDA default is
+  absent in several regions).
+- **Terraform now fails when cloud-init ends in `error`** instead of reporting a
+  green deploy over a broken bootstrap (the `wait_for_cloud_init` poller exits
+  non-zero on `error`, so the instance rolls back).
+- **`npa agent preflight` checks the public-IPv4 quota** gate that deploy
+  enforces, and **`npa agent destroy` can reclaim orphan agents** (no local
+  record/state) by instance name + S3 remote state as long as the project is
+  configured. `--token-factory-key` now continues the rest of `configure` instead
+  of storing only the key and returning.
+- **Chat memory is scoped per agent.** *Migration note:* the S3 chat-session
+  prefix moved from `.../tenants/<tenant>/chat-sessions/` to
+  `.../tenants/<tenant>/agents/<project>/<name>/chat-sessions/` to stop cross-VM
+  context bleed. Chat history saved under the old (tenant-global) prefix is not
+  deleted but **will not be listed** by an upgraded agent.
+- Smaller deploy fixes: robust JSON-string `extra_ingress_ports` Terraform var
+  (`jsondecode`, no intermittent "Invalid expression"); expanded `~` in the
+  Terraform SSH key path/outputs; deploy resolves the project's real region
+  (placement follows the project); `--all` pagination for compute-instance and
+  bucket listings; and `npa agent verify-live` runs its local test gate with the
+  current interpreter from the repo root, so it works from any cwd in the source
+  checkout.
+
 ### Repo hardening
 
 - The base `pip install -e npa` is now fully capable: the previous

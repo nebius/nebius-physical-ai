@@ -19,14 +19,23 @@ def _is_bare_version_request(argv: list[str]) -> bool:
     return len(argv) == 1 and argv[0] in _VERSION_FLAGS
 
 
-def _print_version() -> None:
+def _resolve_version() -> str:
+    """Resolve the installed npa version string (shared by both --version paths).
+
+    Kept here (import-light) so the Typer version callback in ``npa.cli.main``
+    can reuse the exact same resolution, guaranteeing ``npa --version`` prints an
+    identical string whether the fast path or the full app serves it.
+    """
     from importlib.metadata import PackageNotFoundError, version
 
     try:
-        resolved = version("npa")
+        return version("npa")
     except PackageNotFoundError:  # pragma: no cover - source tree without install
-        resolved = "0.0.0.dev0"
-    print(f"npa {resolved}")
+        return "0.0.0.dev0"
+
+
+def _print_version() -> None:
+    print(f"npa {_resolve_version()}")
 
 
 def main() -> None:

@@ -812,16 +812,16 @@ def bucket_name_for(tenant_id: str, project_id: str) -> str:
 def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
     """Return every bucket in *project_id*.
 
-    Passes a large ``--page-size`` so existing buckets are not missed behind the
-    CLI's default pagination — mirrors the ``--page-size 1000`` pattern already
-    used for group membership. Without it, a project with many buckets returned
-    only the first page, so ``bucket_exists`` reported ``False`` for a real
-    bucket and ``npa configure`` wrongly prompted to create a new one.
+    Uses ``--all`` so existing buckets are never missed behind the CLI's default
+    pagination (matching the orphan-instance/tenant/project listers). Without it,
+    a project with many buckets returned only the first page, so ``bucket_exists``
+    reported ``False`` for a real bucket and ``npa configure`` wrongly prompted to
+    create a new one.
     """
     data = _run_json([
         "storage", "bucket", "list",
         "--parent-id", project_id,
-        "--page-size", "1000",
+        "--all",
     ])
     items = data.get("items", [])
     return items if isinstance(items, list) else []
