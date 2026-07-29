@@ -17,7 +17,8 @@ create a default npa-bucket with standard storage and a size cap.
 Use --no-provision to enter existing S3 credentials.
 [default: provision]
 --token-factory-key  <str>  Store a Nebius Token Factory API key in ~/.npa/credentials.yaml
-under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup).
+under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of
+setup.
 --help  Show this message and exit.
 ```
 
