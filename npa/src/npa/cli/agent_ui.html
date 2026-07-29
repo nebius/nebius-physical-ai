@@ -1827,8 +1827,7 @@
         return narrow || (coarse && mobileUa);
       }
       function applyMobileLayout() {
-        if (!detectMobileLayout()) return;
-        document.body.classList.add("mobile-agent");
+        document.body.classList.toggle("mobile-agent", detectMobileLayout());
       }
       function isMobileLayout() {
         return document.body.classList.contains("mobile-agent");
@@ -1924,6 +1923,12 @@
       applyMobileLayout();
       window.addEventListener("resize", applyMobileLayout);
       const chatHistory = [];
+      const MAX_CLIENT_CHAT_TURNS = 40;
+      function trimClientChatHistory() {
+        if (chatHistory.length > MAX_CLIENT_CHAT_TURNS) {
+          chatHistory.splice(0, chatHistory.length - MAX_CLIENT_CHAT_TURNS);
+        }
+      }
       let activeChatSessionId = "default";
       let chatSendInFlight = false;
       const chatQueue = [];
@@ -2402,7 +2407,9 @@
         return String(text || "")
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
       }
       function renderInlineMarkdownLite(text) {
         let value = escapeHtml(text);
@@ -2901,11 +2908,12 @@
               appendChat("user", opts.displayText || payloadText);
             }
             chatHistory.push({ role: "user", content: payloadText });
+            trimClientChatHistory();
             showThinkingBubble();
           }
           try {
             const messages = jobMessages || (stillActive
-              ? chatHistory
+              ? chatHistory.slice(-MAX_CLIENT_CHAT_TURNS)
               : [{ role: "user", content: payloadText }]);
             const body = {
               messages,
@@ -2938,6 +2946,7 @@
             if (reply) {
               appendChat("assistant", reply);
               chatHistory.push({ role: "assistant", content: reply });
+              trimClientChatHistory();
               refreshChatSessions(activeChatSessionId).catch(() => { /* best-effort */ });
             } else {
               appendChat("error", "empty reply from model");
@@ -3735,7 +3744,9 @@
       const RERUN_BLOB_SUCCESS = "SUCCESS";
       const RERUN_MOUNT_SUCCESS = "SUCCESS";
       window.addEventListener("message", (event) => {
-        if (event && event.data === "READY") {
+        // Only accept same-origin READY signals (ignore cross-origin spoofing).
+        if (!event || event.origin !== window.location.origin) return;
+        if (event.data === "READY" || (event.data && event.data.type === "rerunViewerAppReady")) {
           rerunViewerAppReady = true;
         }
       });
@@ -5612,10 +5623,6 @@
           <text x="8" y="152" font-size="11" fill="#334155">${String(camera.name || "")}</text>
         </svg>`;
       }
-      function renderCameraCards(list, activeName, simViz) {
-        // Cameras panel removed from UI; keep helper for API-driven camera metadata.
-        return;
-      }
       function renderAssetsSummary(assets) {
         const selection = (assets && assets.selection) || {};
         const resolved = (assets && assets.resolved_uris) || {};
@@ -5656,13 +5663,6 @@
           sim_backend: backend,
           props: (cubeEl && cubeEl.checked) ? ["cube"] : []
         };
-      }
-      function fillRunSelectOptions(select, runs, current) {
-        // Compatibility wrapper — prefer rich latest-first objects when available.
-        const rich = (Array.isArray(runs) ? runs : []).map((item) => (
-          typeof item === "string" ? { run_id: item } : item
-        ));
-        fillRunSelectOptionsRich(select, rich, current);
       }
       function syncRunChooserFields(runId) {
         const chosen = String(runId || "").trim();
@@ -5957,8 +5957,7 @@
         }
       }
       async function loadRunData() {
-        const input = document.getElementById("runIdInput");
-        const runId = String((input && input.value) || "").trim();
+        const runId = String(selectedRunIdFromUi() || "").trim();
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
@@ -5989,18 +5988,6 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify(selectionPayloadFromUi()),
         });
-        await refresh();
-      }
-      async function previewCamera(camera) {
-        const data = await apiJson("/api/sim-viz/camera-preview", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ camera }),
-        });
-        const simVizForMount = (data && data.sim_viz) || await waitForRerunReady();
-        await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
-        const entity = String(data.entity_path || ("world/camera_frustums/" + camera + "/frustum"));
-        appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
       }
       async function applySelection() {
@@ -6040,16 +6027,24 @@
         if (simViz && simViz.rrd_uri) {
           await bestEffortMountRerun(String(simViz.camera || "workspace"), submittedRunId);
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {
-            throw new Error("Rerun recording/iframe did not reach SUCCESS after workflow submit");
+            // Submit already succeeded — treat a late/degraded viewer as a warning, not failure.
+            appendChat(
+              "assistant",
+              "Warning: Rerun recording/iframe did not reach SUCCESS yet for run `" +
+                submittedRunId +
+                "`. The submit itself completed; refresh the viewer or load the run when the `.rrd` is ready."
+            );
+            showToast("Submit ok; Rerun viewer still catching up", "info");
+          } else {
+            appendChat(
+              "assistant",
+              "Rerun update: **run_id** `" +
+                String(simViz.run_id || data.run_id || "unknown") +
+                "`, **stage** `" +
+                String(simViz.stage || "running") +
+                "`, **iframe** `/rerun/`, **recording_mount** `" + RERUN_BLOB_SUCCESS + "`"
+            );
           }
-          appendChat(
-            "assistant",
-            "Rerun update: **run_id** `" +
-              String(simViz.run_id || data.run_id || "unknown") +
-              "`, **stage** `" +
-              String(simViz.stage || "running") +
-              "`, **iframe** `/rerun/`, **recording_mount** `" + RERUN_BLOB_SUCCESS + "`"
-          );
         } else {
           await loadRunDetails(submittedRunId);
           showRerunPlaceholder(
@@ -6227,8 +6222,10 @@
       function startPeriodicRefresh() {
         if (refreshTimer !== null) return;
         refreshTimer = window.setInterval(() => {
-          const iframe = document.getElementById("rerunFrame");
-          if (rerunIframeLoaded && iframe && !iframe.hidden) {
+          // Skip only while the Rerun panel is the active (visible) tab — do not
+          // kill chat/stages/model refresh for the rest of the session just because
+          // the iframe was mounted in the background.
+          if (activeMainTab === "rerun") {
             return;
           }
           refresh().catch(() => { /* periodic refresh is best-effort */ });

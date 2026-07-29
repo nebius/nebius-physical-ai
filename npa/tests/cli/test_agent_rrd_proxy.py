@@ -81,10 +81,12 @@ def test_embedded_and_source_contract() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     assert _AGENT_RRD_PROXY_EMBED in source
     assert "_embedded_agent_rrd_proxy_source" in source
-    assert "rrd_proxy_uri_allowed" in source
+    assert "resolve_rrd_proxy_target" in source or "rrd_proxy_uri_allowed" in source
+    assert "file_uri_path_allowed" in source
     assert "MAX_RRD_PROXY_BYTES" in source
     assert "httpx.stream" in source
     embedded = _embedded_agent_rrd_proxy_source()
     assert "def rrd_proxy_uri_allowed(" in embedded
+    assert "def resolve_rrd_proxy_target(" in embedded
     assert "from __future__" not in embedded
     assert proxy.MAX_RRD_PROXY_BYTES == 200 * 1024 * 1024

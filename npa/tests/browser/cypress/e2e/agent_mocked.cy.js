@@ -529,6 +529,40 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatSend").click();
     cy.wait("@chat");
     cy.get("#chatLog").should("contain.text", "mobile hello");
+
+    // Widening the viewport must leave mobile-agent layout (toggle, not add-only).
+    cy.viewport(1280, 800);
+    cy.get("body").should("not.have.class", "mobile-agent");
+  });
+
+  it("escapes quotes in artifact keys to prevent attribute XSS", () => {
+    const evilKey = 'a" onmouseover="alert(1)';
+    cy.intercept("GET", "/api/artifacts/run/*/list*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        run_id: "mock-run",
+        artifacts: [
+          {
+            key: evilKey,
+            s3_uri: `s3://mock/${evilKey}`,
+            size: 12,
+            last_modified: "2026-01-01T00:00:00Z",
+            render: "download",
+          },
+        ],
+        preferred: null,
+      },
+    }).as("evilArtifactList");
+    cy.get("#tabRerun").click();
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@evilArtifactList");
+    cy.get("#artifactList").then(($el) => {
+      const html = $el.html() || "";
+      expect(html).to.include("&quot;");
+      expect(html).to.not.match(/onmouseover\s*=/i);
+      expect(html).to.not.include('a" onmouseover');
+    });
   });
 
   it("clears the Rerun Caching cover and keeps it hidden after remounts", () => {
