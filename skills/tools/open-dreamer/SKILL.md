@@ -149,6 +149,29 @@ npa/.venv/bin/npa workbench workflow validate-spec \
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py -q
 ```
 
+### Live real-GPU e2e (the spec is the tested artifact)
+
+`npa/tests/e2e/test_byof_open_dreamer_live_e2e.py` drives the real
+`byof-open-dreamer.yaml` (its `smoke_command` + 2-GPU resource profile, read
+straight from the YAML) through the canonical BYOF runner on live GPUs, then
+verifies via S3 that all 7 capabilities were exercised with 0 deferred and that
+the dream `.rrd` was produced. Reuse a prebuilt image so the test does not
+rebuild:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_BYOF_OPEN_DREAMER_LIVE_GPU=1 \
+NPA_BYOF_TEST_IMAGE=<registry>/npa-byof:open-dreamer-<ref> \
+NPA_E2E_PROJECT=rtxpro NPA_NEBIUS_PROFILE=npa-mk8s \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_byof_open_dreamer_live_e2e.py -q
+```
+
+Without `NPA_BYOF_OPEN_DREAMER_LIVE_GPU=1` the multi-hour 2-GPU case skips; the
+non-GPU render check (`test_open_dreamer_spec_renders_via_workflow_machinery`)
+still asserts the spec plans/renders through the real npa.workflow machinery.
+The BYOF *submit* path is intentionally plan-only (its outer K8s pod cannot build
+the image); the runner path is the real GPU path.
+
 ## Gotchas
 
 - Use a **uv-managed** Python 3.11 installed to a world-readable dir
