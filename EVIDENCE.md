@@ -425,7 +425,32 @@ export NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1
 pytest npa/tests/e2e/test_npa_workflow_submit_live_e2e.py -v
 ```
 
-<!-- MATRIX_RESULT -->
+```
+collected 30 items
+
+test_npa_workflow_submit_live_reaches_terminal[cpu:token-factory-caption.yaml]        PASSED
+test_npa_workflow_submit_live_reaches_terminal[cpu:token-factory-generate.yaml]       PASSED
+test_npa_workflow_submit_live_reaches_terminal[cpu:token-factory-cosmos-reason.yaml]  PASSED
+test_npa_workflow_submit_live_reaches_terminal[cpu:retargeting.yaml]                  FAILED   <- pre-existing, see below
+test_npa_workflow_runtime_live_reaches_terminal[cpu:token-factory-parallel-fanout.yaml] PASSED
+test_npa_workflow_runtime_live_reaches_terminal[cpu:token-factory-gate-loop.yaml]       PASSED
+test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget                           PASSED
+test_npa_workflow_submit_plan_only_matrix_no_leak[...]  x23                             PASSED
+
+================== 1 failed, 29 passed in 4830.69s (1:20:30) ===================
+```
+
+The one failure is **pre-existing and unrelated**: `retargeting.yaml` has no
+fixture-seeding branch in `seed_live_workflow_inputs` (its tool needs a real
+SOMA/G1 motion dataset, which the harness only stages for
+`sonic-locomotion-finetuning.yaml` behind `NPA_E2E_SONIC_MOTION_SRC`), so the job
+fails with:
+
+```
+Error: S3 input contains no objects: s3://<artifact-bucket>/npa-workflow-e2e/npa-wf-cpu-retargeting-68430021/retargeting/source/
+```
+
+This change does not touch that spec, its seeding, or the one-shot submit path.
 
 **Why `cpu` and not `cpu,gpu,multi`:** the gpu/multi one-shot twins in the matrix
 (SONIC, Cosmos3, the 11-stage BDD100K pipeline, ...) are pre-existing cases that
@@ -496,7 +521,32 @@ Stated plainly, so nothing here is mistaken for proven:
 
 ## 9. Teardown
 
-<!-- TEARDOWN_PLACEHOLDER -->
+```bash
+sky jobs cancel -y 83   # the blocked Isaac sweep JobGroup (§5.2)
+sky jobs cancel -y 98   # the burst test's managed job, left PENDING after the test skipped
+sky status
+```
+
+Final state after the work:
+
+```
+Clusters
+NAME                          INFRA                         RESOURCES                STATUS  AUTOSTOP
+sky-jobs-controller-64ce57a0  Kubernetes (npa-rtxpro-mk8s)  1x(cpus=4, mem=16, ...)  UP      -
+
+non-terminal jobs on the controller: []
+```
+
+The only cluster left is the **pre-existing, shared** managed-jobs controller
+(it was up before this work and is not owned by it). No task cluster, no GPU pod
+and no managed job from these runs is still alive; every `npa-wf-*` /
+`manual-resume-*` job is in a terminal state.
+
+One deliberate change was made to shared infrastructure, and it was a repair, not
+a workaround: the cluster's `npa-nebius-registry` imagePullSecret held an expired
+IAM token, which was failing **every** private image pull on
+`npa-rtxpro-mk8s` (including a five-day-stuck job belonging to another run). It was
+re-minted with the same identity (§5.2).
 
 ---
 
