@@ -336,3 +336,162 @@ def test_serial_renderer_still_rejects_parallel_option(parallel_spec) -> None:
             run_id="p1",
             options=SkypilotRenderOptions(execution="parallel"),
         )
+
+
+# ------------------------------------------------------- schema-level failures
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("    parallel: not-a-list", "expected array"),
+        ("    parallel:\n      - 1\n      - 2", "expected string"),
+    ],
+)
+def test_schema_rejects_bad_parallel_types(tmp_path: Path, mutation: str, message: str) -> None:
+    """Type errors surface from the shipped JSON Schema, before dataclass parsing."""
+
+    text = PARALLEL_SPEC.replace("    parallel: [shard-a, shard-b, shard-c]", mutation)
+    with pytest.raises(NpaWorkflowError, match=message):
+        load_spec(_write(tmp_path, text))
+
+
+def test_schema_rejects_non_object_params(tmp_path: Path) -> None:
+    text = PARALLEL_SPEC.replace(
+        '    params:\n      images_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/a/"',
+        "    params:\n      - images_uri",
+        1,
+    )
+    with pytest.raises(NpaWorkflowError, match="expected object"):
+        load_spec(_write(tmp_path, text))
+
+
+def test_schema_requires_trigger_uri(tmp_path: Path) -> None:
+    text = PARALLEL_SPEC.replace(
+        "  join:\n    description: Barrier — aggregate every shard.",
+        "  join:\n    trigger:\n      pollSeconds: 5\n"
+        "    description: Barrier — aggregate every shard.",
+    )
+    with pytest.raises(NpaWorkflowError, match="missing required field 'uri'"):
+        load_spec(_write(tmp_path, text))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["pollSeconds: zero", "maxPolls: -1", "minObjects: 0"],
+)
+def test_trigger_numeric_fields_are_validated(tmp_path: Path, value: str) -> None:
+    text = PARALLEL_SPEC.replace(
+        "  join:\n    description: Barrier — aggregate every shard.",
+        "  join:\n    trigger:\n      uri: \"s3://{{config.bucket}}/inbox/\"\n"
+        f"      {value}\n"
+        "    description: Barrier — aggregate every shard.",
+    )
+    with pytest.raises(NpaWorkflowError, match="trigger."):
+        load_spec(_write(tmp_path, text))
+
+
+# --------------------------------------------------- the shipped catalog specs
+
+
+SHIPPED = Path(__file__).resolve().parents[4] / "npa" / "workflows" / "workbench" / "npa-workflows"
+
+
+def test_shipped_fanout_spec_wave_shape() -> None:
+    spec = load_spec(SHIPPED / "token-factory-parallel-fanout.yaml")
+    waves = build_wave_plan(spec, run_id="shape-1").waves
+    assert [(wave.kind, wave.name, len(wave.steps)) for wave in waves] == [
+        (WAVE_PARALLEL, "caption-shards", 3),
+        (WAVE_SERIAL, "aggregate", 1),
+    ]
+    assert waves[0].max_concurrency == 3
+    # Each shard captions its own prefix (params overlay reached the argv).
+    argvs = [" ".join(step.argv) for step in waves[0].steps]
+    assert all(f"/images/shard-{letter}/" in argv for letter, argv in zip("abc", argvs))
+
+
+def test_shipped_sweep_spec_wave_shape() -> None:
+    spec = load_spec(SHIPPED / "isaac-lab-rl-sweep.yaml")
+    waves = build_wave_plan(spec, run_id="shape-2").waves
+    assert [(wave.kind, wave.name, len(wave.steps)) for wave in waves] == [
+        (WAVE_PARALLEL, "sweep", 4),
+        (WAVE_SERIAL, "select-best", 1),
+    ]
+    assert waves[0].max_concurrency == 4
+    # Every variant trains with its own Hydra overrides and output prefix.
+    shells = [step.shell for step in waves[0].steps]
+    assert sum("learning_rate=1.0e-3" in shell for shell in shells) == 1
+    assert sum("entropy_coef=0.01" in shell for shell in shells) == 1
+    assert len({shell for shell in shells}) == 4
+
+
+@pytest.mark.parametrize(
+    ("assume", "expected_states"),
+    [
+        (
+            "promote_checkpoint",
+            ["caption-batch", "score-batch", "quality-gate", "route", "publish"],
+        ),
+        (
+            "loop_back",
+            [
+                "caption-batch",
+                "score-batch",
+                "quality-gate",
+                "caption-batch",
+                "score-batch",
+                "quality-gate",
+                "caption-batch",
+                "score-batch",
+                "quality-gate",
+                "route",
+                "escalate",
+            ],
+        ),
+    ],
+)
+def test_shipped_gate_loop_plan_matches_the_assumed_decision(
+    assume: str, expected_states: list[str]
+) -> None:
+    """The plan-time contract behind the two live runs (early exit vs full budget)."""
+
+    spec = load_spec(SHIPPED / "token-factory-gate-loop.yaml")
+    plan = build_plan(spec, run_id="shape-3", assume_decision=assume)
+    assert [step.state for step in plan.steps] == expected_states
+    assert all(step.group == "" for step in plan.steps)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "token-factory-parallel-fanout.yaml",
+        "token-factory-gate-loop.yaml",
+        "isaac-lab-rl-sweep.yaml",
+    ],
+)
+def test_shipped_specs_render_without_placeholders(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Offline render check for the new specs (the live matrix does this too)."""
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    spec = load_spec(SHIPPED / name)
+    plan = build_plan(spec, run_id="render-1", assume_decision="promote_checkpoint")
+    text = render_skypilot_yaml(spec, plan, run_id="render-1", options=_render_options())
+    assert_no_unresolved_placeholders(text)
+    docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
+    assert docs[0]["execution"] == "serial"
+    assert len(docs) - 1 == len(plan.steps)
+    assert all(doc["run"].strip() for doc in docs[1:])
+
+    # The parallel waves of the same plan render as a JobGroup.
+    for wave in build_wave_plan(spec, run_id="render-1", assume_decision="promote_checkpoint").waves:
+        if wave.kind != WAVE_PARALLEL:
+            continue
+        group_text = render_skypilot_job_group_yaml(
+            spec, wave.steps, run_id="render-1", options=_render_options(), name=wave.name
+        )
+        assert_no_unresolved_placeholders(group_text)
+        group_docs = [doc for doc in yaml.safe_load_all(group_text) if doc is not None]
+        assert group_docs[0]["execution"] == "parallel"
+        assert len(group_docs) - 1 == len(wave.steps)
