@@ -67,6 +67,7 @@ __all__ = [
     "materialize_live_spec",
     "parse_json_output",
     "parse_json_payload",
+    "parse_runtime_json",
     "resolve_spec_path",
     "seed_live_workflow_inputs",
     "selected_submit_cases",
@@ -617,5 +618,23 @@ def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None)
 
 def parse_json_payload(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
     payload = parse_json_output(result, forbidden=forbidden)
+    assert isinstance(payload, dict)
+    return payload
+
+
+def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
+    """Parse the JSON summary of a ``submit --runtime`` run.
+
+    The runtime driver streams ``[runtime] ...`` progress to stderr, and
+    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, so the JSON
+    document has to be sliced out of the combined stream.
+    """
+
+    assert_cli_ok(result, forbidden=forbidden)
+    text = result.output or ""
+    start = text.find("\n{")
+    start = 0 if text.lstrip().startswith("{") else (start + 1 if start >= 0 else -1)
+    assert start >= 0, f"no JSON summary in runtime output:\n{text[-4000:]}"
+    payload = json.loads(text[start:])
     assert isinstance(payload, dict)
     return payload

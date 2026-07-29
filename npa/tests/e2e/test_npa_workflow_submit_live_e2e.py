@@ -42,6 +42,7 @@ from .npa_workflow_live_helpers import (
     live_credential_markers,
     materialize_live_spec,
     parse_json_payload,
+    parse_runtime_json,
     seed_live_workflow_inputs,
     selected_submit_cases,
     write_runtime_evidence,
@@ -384,7 +385,7 @@ def test_npa_workflow_runtime_live_reaches_terminal(
     result = RUNNER.invoke(
         app, _runtime_submit_args(path, run_id=run_id, registry=e2e_registry, case=case)
     )
-    payload = parse_json_payload(result, forbidden_markers)
+    payload = parse_runtime_json(result, forbidden_markers)
     write_runtime_evidence(run_id, payload)
 
     assert payload["status"] == "succeeded", payload.get("error") or payload
@@ -459,7 +460,7 @@ def test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget(
             extra_vars={"grade_threshold": threshold},
         )
         result = RUNNER.invoke(app, args)
-        payload = parse_json_payload(result, forbidden_markers)
+        payload = parse_runtime_json(result, forbidden_markers)
         write_runtime_evidence(run_id, payload)
         assert payload["status"] == "succeeded", payload.get("error") or payload
         payloads[label] = payload
