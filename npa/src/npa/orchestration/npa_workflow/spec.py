@@ -9,6 +9,12 @@ from typing import Any
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.predicates import PREDICATES
 
+#: Upper bound for a ``parallel:`` group's declared concurrency. The *effective*
+#: concurrency is ``min(maxConcurrency, len(parallel))``, so a large value is not
+#: dangerous by itself — but a typo (400 for 40) should not silently ask a shared
+#: cluster for hundreds of simultaneous clusters.
+MAX_GROUP_CONCURRENCY = 64
+
 API_VERSION = "npa.workflow/v0.0.1"
 API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
 SUPPORTED_API_VERSIONS = frozenset({API_VERSION, API_VERSION_BETA})
@@ -199,6 +205,15 @@ def _parse_state(name: str, entry: dict[str, Any]) -> StateSpec:
     params_raw = entry.get("params") or {}
     if not isinstance(params_raw, dict):
         raise NpaWorkflowError(f"state {name}: params must be a mapping")
+    for param_key, param_value in params_raw.items():
+        # params values become config values for this state, and config values are
+        # rendered into commands/URIs by token substitution. A dict/list cannot be
+        # rendered, and would otherwise only fail much later (at render or run time).
+        if not isinstance(param_value, (str, int, float, bool)) or param_value is None:
+            raise NpaWorkflowError(
+                f"state {name}: params.{param_key} must be a string, number or bool "
+                f"(tokens render scalars), got {type(param_value).__name__}"
+            )
 
     # Type checks live here (not in the JSON Schema): the shipped schema walker in
     # schema_validation.py does not resolve `$ref`/`$defs`, so state bodies are
@@ -407,6 +422,13 @@ def _validate_parallel_group(spec: NpaWorkflowSpec, state: StateSpec) -> None:
         if resolved < 1:
             raise NpaWorkflowError(
                 f"state {state.name}: maxConcurrency must be >= 1, got {resolved}"
+            )
+        if resolved > MAX_GROUP_CONCURRENCY:
+            raise NpaWorkflowError(
+                f"state {state.name}: maxConcurrency must be <= "
+                f"{MAX_GROUP_CONCURRENCY}, got {resolved} (the effective value is "
+                f"min(maxConcurrency, {len(state.parallel)} members); a larger bound "
+                "is almost always a typo)"
             )
 
 

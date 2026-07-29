@@ -112,6 +112,24 @@ class RuntimeRunState:
                 return record
         return None
 
+    def in_flight_wave(self, key: str) -> dict[str, Any] | None:
+        """Return a wave recorded as started but never finished.
+
+        A ``running`` record means a driver submitted the wave and then stopped
+        watching it (crash, kill, lost connection). The managed job may still be
+        alive, so a resumed run must reconcile it instead of submitting a second
+        copy of the same work.
+        """
+
+        for record in reversed(self.waves):
+            if record.get("key") != key:
+                continue
+            status = str(record.get("status") or "")
+            if status == "succeeded":
+                return None
+            return dict(record) if status == "running" else None
+        return None
+
     def record_wave(self, record: Mapping[str, Any]) -> None:
         key = str(record.get("key") or "")
         for index, existing in enumerate(self.waves):

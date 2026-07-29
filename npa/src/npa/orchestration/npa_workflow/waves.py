@@ -25,6 +25,27 @@ WAVE_SERIAL = "serial"
 WAVE_PARALLEL = "parallel"
 
 
+def split_into_batches(
+    steps: Sequence[PlanStep], max_concurrency: int, *, cap: int = 0
+) -> list[list[PlanStep]]:
+    """Chunk steps into concurrency-bounded batches.
+
+    Single source of truth for batching so the offline ``--waves`` preview and the
+    runtime executor can never disagree about how a group is split. ``cap`` is the
+    operator's optional ceiling (``--max-concurrency``); it can only *lower* the
+    group's declared bound. A non-positive bound means "the whole group at once".
+    """
+
+    items = list(steps)
+    if not items:
+        return []
+    limit = int(max_concurrency) if max_concurrency and int(max_concurrency) > 0 else len(items)
+    if cap and int(cap) > 0:
+        limit = min(limit, int(cap))
+    limit = max(1, limit)
+    return [items[start : start + limit] for start in range(0, len(items), limit)]
+
+
 @dataclass(frozen=True)
 class Wave:
     """One submit-and-wait unit."""
@@ -42,9 +63,7 @@ class Wave:
     def batches(self) -> list[list[PlanStep]]:
         """Split the wave into concurrency-bounded batches (submitted in order)."""
 
-        limit = max(1, int(self.max_concurrency or 1))
-        steps = list(self.steps)
-        return [steps[start : start + limit] for start in range(0, len(steps), limit)]
+        return split_into_batches(self.steps, self.max_concurrency)
 
     def to_dict(self) -> dict[str, Any]:
         return {

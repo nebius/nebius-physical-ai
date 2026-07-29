@@ -60,6 +60,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_steps_yaml,
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
+from npa.orchestration.npa_workflow.waves import split_into_batches
 
 TERMINAL_OK = frozenset({"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"})
 TERMINAL_FAIL = frozenset(
@@ -79,6 +80,10 @@ TERMINAL_FAIL = frozenset(
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
+#: How many consecutive `sky jobs queue` failures to tolerate before giving up on a
+#: wave. A busy API server or a query timeout says nothing about the job itself, so
+#: transient errors must not orphan a running GPU job.
+MAX_CONSECUTIVE_STATUS_ERRORS = 5
 
 
 def is_terminal_ok(status: str) -> bool:
@@ -131,16 +136,23 @@ class WaveAttempt:
     outputs: list[str] = field(default_factory=list)
     error: str = ""
     replayed: bool = False
+    #: True when this wave attached to a managed job a previous driver had left in
+    #: flight (``--resume``) instead of submitting a new one.
+    adopted: bool = False
     #: Highest number of member tasks observed RUNNING at the same time while
     #: polling. For a parallel wave this is the direct, unambiguous evidence that
     #: the group really ran concurrently rather than as a serialized chain.
     max_concurrent_observed: int = 0
     observations: list[dict[str, Any]] = field(default_factory=list)
+    #: Transient status-query failures tolerated while polling (evidence that the
+    #: wave survived a flaky control plane rather than silently leaking a job).
+    status_errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "key": self.key,
             "replayed": self.replayed,
+            "adopted": self.adopted,
             "states": list(self.states),
             "kind": self.kind,
             "group": self.group,
@@ -156,6 +168,7 @@ class WaveAttempt:
             "error": self.error,
             "max_concurrent_observed": self.max_concurrent_observed,
             "observations": list(self.observations),
+            "status_errors": list(self.status_errors),
         }
 
 
@@ -244,15 +257,11 @@ class SkyPilotWaveExecutor:
     ) -> list[dict[str, Any]]:
         """StepExecutor protocol: run a fan-out group concurrently, then barrier."""
 
-        # The CLI knob is a *cap*: it can only lower a group's declared
-        # maxConcurrency (cost control), never raise it above what the spec asked
-        # for.
-        limit = max(1, max_concurrency or len(steps))
-        if self.options.max_concurrency:
-            limit = max(1, min(limit, self.options.max_concurrency))
-        batches = [
-            list(steps)[start : start + limit] for start in range(0, len(steps), limit)
-        ]
+        # Shared with the offline `--waves` preview so the two can never disagree.
+        # The CLI knob is a *cap*: it only lowers a group's declared maxConcurrency.
+        batches = split_into_batches(
+            steps, max_concurrency, cap=self.options.max_concurrency
+        )
         records: list[dict[str, Any]] = []
         for batch_index, batch in enumerate(batches, start=1):
             kind = "parallel" if len(batch) > 1 else "serial"
@@ -300,6 +309,11 @@ class SkyPilotWaveExecutor:
         self._sequence += 1
         key = wave_key(steps, group=group, sequence_number=self._sequence)
 
+        if self.options.resume:
+            adopted = self._reconcile_in_flight(key, steps, kind=kind, group=group)
+            if adopted is not None:
+                return adopted
+
         replayed = self.ledger.completed(key) if self.options.resume else None
         if replayed is not None:
             attempt = WaveAttempt(
@@ -336,12 +350,18 @@ class SkyPilotWaveExecutor:
             self.attempts.append(attempt)
             try:
                 self._submit_and_wait(steps, kind=kind, group=group, attempt=attempt)
-            except NpaWorkflowError as exc:
-                attempt.status = "failed"
-                attempt.error = str(exc)
-                attempt.ended_at = utc_now()
-                self.ledger.record(attempt)
-                last_error = str(exc)
+            except BaseException as exc:  # noqa: BLE001 - see _abort_wave
+                # ANY abort (workflow error, transient tooling error, KeyboardInterrupt)
+                # must cancel the managed job we just launched: leaving it running
+                # bills GPUs for a driver that is no longer watching it.
+                self._abort_wave(attempt, exc)
+                last_error = attempt.error
+                if not isinstance(exc, (NpaWorkflowError, Exception)):
+                    raise  # BaseException (Ctrl-C, SystemExit): cancel, then propagate
+                if not isinstance(exc, NpaWorkflowError):
+                    # Unexpected tooling failure: do not silently retry into more
+                    # spend — surface it as a workflow failure with the cause.
+                    return self.attempts[-1]
             else:
                 attempt.status = "succeeded"
                 attempt.ended_at = utc_now()
@@ -355,6 +375,129 @@ class SkyPilotWaveExecutor:
         failed = self.attempts[-1]
         failed.error = last_error or "wave failed"
         return failed
+
+    def _reconcile_in_flight(
+        self,
+        key: str,
+        steps: Sequence[PlanStep],
+        *,
+        kind: str,
+        group: str,
+    ) -> WaveAttempt | None:
+        """Adopt (or clear) a wave the ledger left in flight before resubmitting it.
+
+        A driver that died mid-poll leaves a ``running`` record whose managed job may
+        still be burning GPUs. Blindly resubmitting on ``--resume`` would double the
+        spend, so the recorded job is queried first:
+
+        * already succeeded → adopt it, no resubmission;
+        * still non-terminal → keep polling **that** job (never a second copy);
+        * terminal failure → clear it and fall through to a fresh attempt.
+        """
+
+        record = self.ledger.in_flight_wave(key)
+        if record is None:
+            return None
+        job_id = str(record.get("job_id") or "")
+        job_name = str(record.get("job_name") or "")
+        if not job_id:
+            self._log(
+                f"wave {key}: ledger has an in-flight record without a job id; "
+                "resubmitting"
+            )
+            return None
+
+        attempt = WaveAttempt(
+            key=key,
+            states=[step.state for step in steps],
+            kind=kind,
+            group=group,
+            attempt=int(record.get("attempt") or 1),
+            job_id=job_id,
+            job_name=job_name,
+            started_at=str(record.get("started_at") or utc_now()),
+            outputs=[item["uri"] for step in steps for item in step.outputs],
+            adopted=True,
+        )
+        self.attempts.append(attempt)
+
+        try:
+            status = str(getattr(self._status(job_id), "status", "") or "UNKNOWN").upper()
+        except Exception as exc:  # noqa: BLE001 - cannot reconcile blind
+            self._abort_wave(
+                attempt,
+                NpaWorkflowError(
+                    f"wave {key}: cannot determine the state of in-flight job {job_id} "
+                    f"recorded by a previous run ({exc}); refusing to submit a second "
+                    "copy. Cancel it manually or drop --resume."
+                ),
+            )
+            return attempt
+
+        if is_terminal_ok(status):
+            self._log(f"wave {key}: in-flight job {job_id} already succeeded; adopting it")
+            attempt.status = "succeeded"
+            attempt.sky_status = status
+            attempt.ended_at = utc_now()
+            attempt.tasks = self._timeline(job_id)
+            self.ledger.record(attempt)
+            return attempt
+
+        if is_terminal_fail(status):
+            self._log(
+                f"wave {key}: in-flight job {job_id} ended {status}; retrying with a "
+                "fresh submission"
+            )
+            self.attempts.pop()
+            return None
+
+        self._log(
+            f"wave {key}: job {job_id} from a previous driver is still {status}; "
+            "attaching to it instead of submitting a second copy"
+        )
+        attempt.status = "running"
+        attempt.sky_status = status
+        self.ledger.record(attempt)
+        try:
+            final_status = self._poll(job_id, attempt, observe_tasks=len(steps) > 1)
+            attempt.sky_status = final_status
+            attempt.tasks = self._timeline(job_id)
+            if not is_terminal_ok(final_status):
+                raise NpaWorkflowError(
+                    f"wave {key} (adopted job {job_id}) reached terminal status "
+                    f"{final_status}"
+                )
+        except BaseException as exc:  # noqa: BLE001 - same abort contract as a fresh wave
+            self._abort_wave(attempt, exc)
+            if not isinstance(exc, Exception):
+                raise
+            return attempt
+        attempt.status = "succeeded"
+        attempt.ended_at = utc_now()
+        self.ledger.record(attempt)
+        return attempt
+
+    def _abort_wave(self, attempt: WaveAttempt, exc: BaseException) -> None:
+        """Record a failed attempt and cancel its managed job if one is in flight."""
+
+        attempt.status = "failed"
+        if isinstance(exc, NpaWorkflowError):
+            attempt.error = str(exc)
+        else:
+            attempt.error = f"{type(exc).__name__}: {exc}"
+        attempt.ended_at = utc_now()
+        # Cancel whenever something may still be running. With a job id we cancel the
+        # managed job; with only a name (e.g. the submit reported no id) the canceller
+        # still tears the cluster down, which is what stops the billing.
+        if attempt.job_name and not is_terminal(attempt.sky_status):
+            self._log(
+                f"wave {attempt.key}: aborting with job "
+                f"{attempt.job_id or attempt.job_name} possibly in flight "
+                f"({attempt.error}); cancelling it"
+            )
+            self._cancel(attempt.job_id, attempt.job_name)
+            attempt.sky_status = "CANCELLED"
+        self.ledger.record(attempt)
 
     def _submit_and_wait(
         self,
@@ -380,7 +523,17 @@ class SkyPilotWaveExecutor:
             path = Path(tmp) / f"{job_name}.skypilot.yaml"
             path.write_text(yaml_text, encoding="utf-8")
             result = self._submit(path, job_name)
-        job_id = str(getattr(result, "job_id", "") or job_name)
+        job_id = str(getattr(result, "job_id", "") or "").strip()
+        if not job_id:
+            # Falling back to the job *name* used to look like a graceful default,
+            # but `sky jobs queue` matches numeric ids, so status would stay UNKNOWN
+            # until max_wait_seconds elapsed while the job kept running — and the
+            # cancel-by-name would miss it too. Fail fast instead (the wave is
+            # cancelled by name on the way out).
+            raise NpaWorkflowError(
+                f"wave {attempt.key}: SkyPilot did not report a job id for "
+                f"{job_name!r}; refusing to poll a job we cannot identify"
+            )
         attempt.job_id = job_id
         status = str(getattr(result, "status", "SUBMITTED") or "SUBMITTED").upper()
         attempt.sky_status = status
@@ -403,8 +556,35 @@ class SkyPilotWaveExecutor:
     def _poll(self, job_id: str, attempt: WaveAttempt, *, observe_tasks: bool = False) -> str:
         deadline = self._clock() + max(1, self.options.max_wait_seconds)
         last = "UNKNOWN"
+        consecutive_status_errors = 0
         while True:
-            current = self._status(job_id)
+            try:
+                current = self._status(job_id)
+            except Exception as exc:  # noqa: BLE001 - a status hiccup must not abort a job
+                # `sky jobs queue` can time out or trip over a busy API server. The
+                # job itself is unaffected, so keep polling (bounded) instead of
+                # bubbling out of the retry logic and orphaning a running GPU job.
+                consecutive_status_errors += 1
+                attempt.status_errors.append(f"{type(exc).__name__}: {exc}"[:200])
+                if consecutive_status_errors > MAX_CONSECUTIVE_STATUS_ERRORS:
+                    raise NpaWorkflowError(
+                        f"wave {attempt.key}: {consecutive_status_errors} consecutive "
+                        f"status queries failed for job {job_id}; last error: {exc}"
+                    ) from exc
+                self._log(
+                    f"wave {attempt.key}: status query {consecutive_status_errors} failed "
+                    f"({exc}); job {job_id} still running, retrying"
+                )
+                if self._clock() >= deadline:
+                    if self.options.cancel_on_timeout:
+                        self._cancel(job_id, attempt.job_name)
+                    raise NpaWorkflowError(
+                        f"wave {attempt.key} did not reach a terminal status within "
+                        f"{self.options.max_wait_seconds}s (last={last}, job_id={job_id})"
+                    ) from exc
+                self._sleep(self.options.poll_seconds)
+                continue
+            consecutive_status_errors = 0
             last = str(getattr(current, "status", "") or "UNKNOWN").upper()
             if observe_tasks:
                 self._observe_concurrency(job_id, attempt)
@@ -544,6 +724,9 @@ class RuntimeLedger:
     def completed(self, key: str) -> dict[str, Any] | None:
         return self.state.completed_wave(key)
 
+    def in_flight_wave(self, key: str) -> dict[str, Any] | None:
+        return self.state.in_flight_wave(key)
+
     def record(self, attempt: WaveAttempt) -> None:
         self.state.record_wave(attempt.to_dict())
         self.flush()
@@ -570,20 +753,55 @@ class RuntimeLedger:
 
 
 class RecordingDecisionReader:
-    """Wrap a decision reader so every runtime gate read lands in the ledger."""
+    """Wrap a decision reader so every runtime gate read lands in the ledger.
 
-    def __init__(self, reader: Callable[[str, str], str] | None, ledger: RuntimeLedger) -> None:
+    Also implements the *documented* fallback: when the gate artifact does not exist
+    yet, the reader synthesizes the plan-time assumption instead of hard-failing the
+    run. A corrupt artifact is still an error — silently looping on unreadable JSON
+    would be worse than stopping.
+    """
+
+    def __init__(
+        self,
+        reader: Callable[[str, str], str] | None,
+        ledger: RuntimeLedger,
+        *,
+        assume_decision: str = "",
+        logger: Callable[[str], None] | None = None,
+    ) -> None:
         self._reader = reader
         self._ledger = ledger
+        self._assume = normalize_decision(assume_decision or "")
+        self._log = logger or (lambda message: None)
         self.reads: list[dict[str, Any]] = []
+        self.missing: list[str] = []
 
     def __call__(self, bucket: str, key: str) -> str:
-        if self._reader is not None:
-            body = self._reader(bucket, key)
-        else:
-            from npa.orchestration.npa_workflow.decisions import _read_object
+        uri = f"s3://{bucket}/{key}"
+        try:
+            body = self._read(bucket, key)
+        except FileNotFoundError:
+            if not self._assume:
+                raise
+            # No gate artifact yet (a stage that did not write one, or an eval that
+            # produced nothing): fall back to the plan-time assumption so the run
+            # keeps the documented offline behaviour instead of dying.
+            self._log(
+                f"decision artifact {uri} not found; falling back to the plan-time "
+                f"assumption {self._assume!r}"
+            )
+            self.missing.append(uri)
+            payload = {
+                "uri": uri,
+                "decision": self._assume,
+                "source": "assume_decision_fallback",
+                "read_at": utc_now(),
+            }
+            self._ledger.record_decision(payload)
+            self.reads.append(payload)
+            import json as _json
 
-            body = _read_object(bucket, key)
+            return _json.dumps({"decision": self._assume})
         payload = {
             "uri": f"s3://{bucket}/{key}",
             "body": str(body)[:2000],
@@ -605,6 +823,13 @@ class RecordingDecisionReader:
         self._ledger.record_decision(payload)
         return body
 
+    def _read(self, bucket: str, key: str) -> str:
+        if self._reader is not None:
+            return self._reader(bucket, key)
+        from npa.orchestration.npa_workflow.decisions import _read_object
+
+        return _read_object(bucket, key)
+
 
 def s3_trigger_waiter(
     *,
@@ -612,12 +837,19 @@ def s3_trigger_waiter(
     lister: Callable[[str, str], Iterable[str]] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     logger: Callable[[str], None] | None = None,
+    max_wait_seconds: int = DEFAULT_MAX_WAIT_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Callable[[StateSpec, str, RunContext], dict[str, Any]]:
     """Build a driver-side watcher for ``trigger:`` states.
 
     Polls an object-storage prefix until at least ``minObjects`` keys are present,
     recording the observed watermark in the ledger so a resumed run does not wait
     again for data it already saw.
+
+    The wait is bounded twice over: by ``trigger.maxPolls`` when the spec sets one,
+    and **always** by ``max_wait_seconds`` (the run's per-wave deadline). Without the
+    second bound a spec that leaves ``maxPolls`` at its default of 0 would wait for
+    data forever instead of failing the run.
     """
 
     log = logger or (lambda message: None)
@@ -642,6 +874,7 @@ def s3_trigger_waiter(
             if seen and int(seen.get("objects") or 0) >= trigger.min_objects:
                 return dict(seen)
         polls = 0
+        deadline = clock() + max(1, max_wait_seconds)
         while True:
             keys = _list(uri)
             polls += 1
@@ -661,6 +894,11 @@ def s3_trigger_waiter(
                 raise NpaWorkflowError(
                     f"state {state.name}: trigger {uri} still has {len(keys)} object(s) "
                     f"after {polls} poll(s) (need {trigger.min_objects})"
+                )
+            if clock() >= deadline:
+                raise NpaWorkflowError(
+                    f"state {state.name}: trigger {uri} still has {len(keys)} object(s) "
+                    f"(need {trigger.min_objects}) after waiting {max_wait_seconds}s"
                 )
             log(f"trigger {state.name}: waiting for data at {uri} (poll {polls})")
             sleeper(trigger.poll_seconds)
@@ -711,9 +949,11 @@ def run_workflow_runtime(
 ) -> RuntimeReport:
     """Drive a spec to completion through the runtime tier.
 
-    ``assume_decision`` is only a *fallback* here: when a gate artifact cannot be
-    read the traversal keeps the plan-time behaviour instead of hanging. The real
-    decisions come from S3.
+    ``assume_decision`` is only a *fallback* here, and a narrow one: when a gate
+    artifact does not exist yet the reader synthesizes the assumption so the run keeps
+    the documented plan-time behaviour. A gate artifact that exists but is unreadable
+    or malformed still fails the run — silently looping on corrupt JSON would be worse
+    than stopping. Every real decision comes from S3 and is recorded in the ledger.
     """
 
     opts = options or RuntimeOptions()
@@ -725,6 +965,18 @@ def run_workflow_runtime(
         store = state_store
         if store is None:
             store = store_for_config(_resolved_config(spec, run_id), run_id=run_id)
+        if store is None:
+            message = (
+                "config.bucket is not set, so no runtime ledger can be written: "
+                "--resume will have nothing to replay and every wave would be "
+                "resubmitted"
+            )
+            if opts.resume:
+                raise NpaWorkflowError(
+                    f"{message}. Set config.bucket (or --var bucket=...) before "
+                    "resuming."
+                )
+            log(f"warning: {message}")
         ledger = RuntimeLedger(
             store,
             workflow=spec.name,
@@ -734,7 +986,9 @@ def run_workflow_runtime(
         )
     ledger.set_status("running")
 
-    recording_reader = RecordingDecisionReader(decision_reader, ledger)
+    recording_reader = RecordingDecisionReader(
+        decision_reader, ledger, assume_decision=assume_decision, logger=log
+    )
     wave_executor = executor or SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
@@ -745,7 +999,9 @@ def run_workflow_runtime(
     )
     waiter = trigger_waiter
     if waiter is None and any(state.trigger for state in spec.states.values()):
-        waiter = s3_trigger_waiter(ledger=ledger, logger=log)
+        waiter = s3_trigger_waiter(
+            ledger=ledger, logger=log, max_wait_seconds=opts.max_wait_seconds
+        )
 
     status = "succeeded"
     error = ""
