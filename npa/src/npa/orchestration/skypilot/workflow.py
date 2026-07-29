@@ -348,6 +348,18 @@ _STALE_CONTROLLER_SIGNALS = (
 _KUBECONFIG_PATH_RE = re.compile(r"[\w./~-]*kubeconfig[\w./-]*")
 
 
+def _referenced_kubeconfig_path(detail: str) -> str:
+    """Return the kubeconfig *path* named in *detail*, or "".
+
+    SkyPilot's message mentions the bare word "kubeconfig" several times before
+    the actual file, so pick the longest match that looks like a path.
+    """
+    candidates = [
+        match for match in _KUBECONFIG_PATH_RE.findall(str(detail or "")) if "/" in match
+    ]
+    return max(candidates, key=len) if candidates else ""
+
+
 def _controller_health_remedy(detail: str) -> str:
     """Return actionable remediation text for a failed controller health check.
 
@@ -367,10 +379,10 @@ def _controller_health_remedy(detail: str) -> str:
         "(sky-jobs-controller-*) still points at infrastructure from another "
         "setup. To recover:",
     ]
-    match = _KUBECONFIG_PATH_RE.search(str(detail or ""))
-    if match:
+    referenced = _referenced_kubeconfig_path(detail)
+    if referenced:
         lines.append(
-            f"  - the referenced kubeconfig is {match.group(0)}; provision or "
+            f"  - the referenced kubeconfig is {referenced}; provision or "
             "restore that cluster (`npa cluster up` / `npa provision-if-absent "
             "--project <alias>`), or point KUBECONFIG at the cluster you want."
         )

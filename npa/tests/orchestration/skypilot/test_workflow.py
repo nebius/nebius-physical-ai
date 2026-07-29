@@ -658,3 +658,28 @@ def test_launch_failure_unrelated_to_the_controller_stays_raw() -> None:
 
     assert "task yaml is invalid" in message
     assert "sky down" not in message
+
+
+def test_referenced_kubeconfig_path_prefers_the_real_path() -> None:
+    """SkyPilot says "kubeconfig" several times before naming the file.
+
+    Regression from a live run: the remedy printed "the referenced kubeconfig is
+    kubeconfig" because the first regex match was the bare word.
+    """
+    detail = (
+        "ValueError: Failed to load Kubernetes configuration for 'npa-rtxpro-mk8s'. "
+        "Please check if your kubeconfig file exists at "
+        "/home/op/.npa/clusters/npa-rtxpro-mk8s/kubeconfig and is valid.\n"
+        "Invalid kube-config file. No configuration found.\n"
+        "Hint: Kubernetes attempted to query the current-context set in kubeconfig."
+    )
+
+    assert (
+        workflow_module._referenced_kubeconfig_path(detail)
+        == "/home/op/.npa/clusters/npa-rtxpro-mk8s/kubeconfig"
+    )
+    assert workflow_module._referenced_kubeconfig_path("no paths here") == ""
+
+    remedy = workflow_module._controller_health_remedy(detail)
+    assert "referenced kubeconfig is /home/op/.npa/clusters" in remedy
+    assert "referenced kubeconfig is kubeconfig" not in remedy
