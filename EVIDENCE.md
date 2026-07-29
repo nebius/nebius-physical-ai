@@ -62,6 +62,30 @@ bash scripts/stage-npa-src.sh --bucket <artifact-bucket> --prefix npa-workflow-e
 | Guardrails | `pytest npa/tests/guardrails/ -q` | **50 passed** |
 | Lint | `ruff check` on every changed file | clean |
 
+### CI on the pull request — 15/15 green
+
+```
+docs-drift pass   gitleaks pass   guardrails pass   mypy pass
+ruff pass          scan pass       test (3.10) pass  test (3.12) pass  test (3.14) pass
+```
+
+Two checks needed attention and were resolved before green:
+
+* **gitleaks** initially failed with 5 hits. Reproduced locally with gitleaks
+  8.28.0 over the PR's own scan range: all five were the operational `lerobot-*`
+  artifact bucket inside the **first draft** of this file (commit `6937efd3`),
+  which a later commit had already redacted to `<artifact-bucket>`. A working-tree
+  scan of HEAD reports `no leaks found`, so that historical commit is allowlisted
+  in `.gitleaks.toml` using the mechanism the config already carries for this
+  exact situation — rather than force-pushing a rewritten history.
+* **docs-drift** (a *blocking* gate that regenerates `docs/cli/` from `npa --help`)
+  was checked proactively, because this change adds CLI options. Regenerating on
+  the dev VM and diffing showed `docs/cli/workbench.md` **unchanged**: the
+  generator documents top-level commands only, so options three levels deep
+  (`workbench workflow submit`) never reach it. The local diffs seen while checking
+  were a typer-version metavar artifact of the dev VM (`<str>` vs `TEXT`), not this
+  change — confirmed by CI, which passes docs-drift on the committed files.
+
 The 2 baseline errors are **pre-existing** and unrelated: the live-GPU fixtures in
 `npa/tests/workbench/test_vlm_eval_backend.py` and `test_vlm_eval_loop_e2e.py`
 try to launch a SkyPilot cluster whenever `sky` is on `PATH` and hit the 120 s
