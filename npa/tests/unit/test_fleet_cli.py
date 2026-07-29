@@ -335,6 +335,129 @@ def test_infra_fleet_deploy_toolref_registered() -> None:
     assert "{{config.fleet_spec}}" in argv
 
 
+def test_deploy_help_documents_yes_and_only_clusters() -> None:
+    result = runner.invoke(app, ["fleet", "deploy", "--help"])
+    assert result.exit_code == 0
+    assert "--yes" in result.output
+    assert "--only-clusters" in result.output
+
+
+def test_destroy_help_documents_yes_force_and_only_clusters() -> None:
+    result = runner.invoke(app, ["fleet", "destroy", "--help"])
+    assert result.exit_code == 0
+    assert "--yes" in result.output
+    assert "--force" in result.output
+    assert "--only-clusters" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# Confirmation gates (creation + removal)
+# --------------------------------------------------------------------------- #
+def _spec_file(tmp_path):
+    path = tmp_path / "fleet.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            apiVersion: npa.fleet/v0.0.1
+            name: fleet1-test
+            tenant_id: tenant-x
+            region: us-central1
+            project_prefix: "fleet1-test-"
+            defaults:
+              gpu_nodes: {count: 1, platform: gpu-rtx6000, preset: 1gpu-24vcpu-218gb}
+            projects:
+              - name: a
+              - name: b
+            """
+        )
+    )
+    return path
+
+
+def test_deploy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
+    import npa.cli.fleet as fleetcli
+
+    called = {"deploy": False}
+    monkeypatch.setattr(
+        fleetcli, "_load", fleetcli._load
+    )  # keep real loader
+    import npa.fleet.lifecycle as L
+
+    def _boom(*a, **k):
+        called["deploy"] = True
+        return {}
+
+    monkeypatch.setattr(L, "deploy_fleet", _boom)
+    # Answer "n" to the confirmation prompt.
+    result = runner.invoke(app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path))], input="n\n")
+    assert result.exit_code == 1
+    assert "Aborted." in result.output
+    assert called["deploy"] is False  # deploy must not run when declined
+
+
+def test_deploy_yes_flag_skips_prompt_and_runs(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as L
+
+    captured = {}
+
+    def _fake_deploy(spec, **kwargs):
+        captured.update(kwargs)
+        return {"name": spec.name, "region": "us-central1", "tenant_id": "t", "deployed": 2, "failed": 0, "clusters": []}
+
+    monkeypatch.setattr(L, "deploy_fleet", _fake_deploy)
+    result = runner.invoke(app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "2 deployed" in result.output
+
+
+def test_destroy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as L
+
+    called = {"destroy": False}
+
+    def _boom(*a, **k):
+        called["destroy"] = True
+        return {}
+
+    monkeypatch.setattr(L, "destroy_fleet", _boom)
+    result = runner.invoke(app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path))], input="n\n")
+    assert result.exit_code == 1
+    assert "Aborted." in result.output
+    assert "cascade" in result.output  # cascade warning is shown
+    assert called["destroy"] is False
+
+
+def test_destroy_force_and_yes_skip_prompt(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as L
+
+    monkeypatch.setattr(L, "destroy_fleet", lambda spec, **k: {"name": spec.name, "clusters": []})
+    for flag in ("--yes", "--force"):
+        result = runner.invoke(app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path)), flag])
+        assert result.exit_code == 0, result.output
+        assert "Destroyed fleet" in result.output
+
+
+def test_confirmation_lists_only_targeted_clusters(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as L
+
+    seen = {}
+
+    def _fake_deploy(spec, **kwargs):
+        seen.update(kwargs)
+        return {"name": spec.name, "region": "r", "tenant_id": "t", "deployed": 0, "failed": 0, "clusters": []}
+
+    monkeypatch.setattr(L, "deploy_fleet", _fake_deploy)
+    result = runner.invoke(
+        app,
+        ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--only-projects", "a", "--yes"],
+    )
+    assert result.exit_code == 0, result.output
+    # Only project a's cluster is listed/targeted, not b's.
+    assert "fleet1-test-a / cluster" in result.output
+    assert "fleet1-test-b" not in result.output
+    assert seen["only_projects"] == ["a"]
+
+
 def test_dns_name_rejects_over_63_chars() -> None:
     long_name = "a" * 64
     cluster = ClusterSpec(name=long_name, cpu_nodes=NodePoolSpec(count=1))
@@ -546,3 +669,96 @@ def test_destroy_leaves_reused_subnet_untouched(tmp_path, monkeypatch) -> None:
     )
     L.destroy_fleet(spec, work_root=tmp_path)
     assert deleted == []
+
+
+# --------------------------------------------------------------------------- #
+# add/remove one or multiple clusters (targeting + state reconciliation)
+# --------------------------------------------------------------------------- #
+def _two_cluster_project_spec() -> FleetSpec:
+    return FleetSpec(
+        name="f",
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[
+                    ClusterSpec(name="c1", cpu_nodes=NodePoolSpec(count=1)),
+                    ClusterSpec(name="c2", cpu_nodes=NodePoolSpec(count=1)),
+                ],
+            )
+        ],
+    )
+
+
+def test_deploy_only_clusters_targets_a_single_cluster(tmp_path, monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "tenant-x")
+    monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
+    monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "ssh-key")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
+    monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
+    monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("proj-1", False))
+    built: list[str] = []
+
+    def fake_one(**kwargs):
+        name = kwargs["cluster"].name
+        built.append(name)
+        return {"project_key": "a", "cluster_name": name, "status": "deployed", "cluster_id": f"id-{name}"}
+
+    monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
+    res = L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, only_clusters=["c2"])
+    assert built == ["c2"]  # only the targeted cluster is (re)deployed
+    assert res["deployed"] == 1
+
+
+def test_upsert_and_prune_fleet_state_roundtrip(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    fleet_root = tmp_path / "f"
+    fleet_root.mkdir()
+    base = {"name": "f", "tenant_id": "t", "region": "r", "project_prefix": "", "k8s_training_source": "x"}
+    # Deploy c1, then add c2 -- both must be present (upsert must not clobber c1).
+    L._upsert_fleet_state(fleet_root, base, [{"project_key": "a", "cluster_name": "c1", "status": "deployed"}])
+    L._upsert_fleet_state(fleet_root, base, [{"project_key": "a", "cluster_name": "c2", "status": "deployed"}])
+    state = L._load_fleet_state(fleet_root)
+    assert sorted(c["cluster_name"] for c in state["clusters"]) == ["c1", "c2"]
+    assert state["deployed"] == 2
+    # Remove c2 -- only c1 remains.
+    L._prune_fleet_state(fleet_root, {("a", "c2")})
+    state = L._load_fleet_state(fleet_root)
+    assert [c["cluster_name"] for c in state["clusters"]] == ["c1"]
+    assert state["deployed"] == 1
+
+
+def test_destroy_only_clusters_removes_install_dir_and_prunes_state(tmp_path, monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    # Two deployed clusters recorded in state + install dirs; destroy only c2.
+    fleet_root = tmp_path / "f"
+    for name in ("c1", "c2"):
+        d = fleet_root / "a" / name
+        (d / L._K8S_TRAINING_SUBDIR).mkdir(parents=True)
+        L._write_env_sidecar(
+            d,
+            {"tenant_id": "t", "project_id": "p1", "region": "us-central1", "subnet_id": "s",
+             "cluster_name": name, "status": "deployed"},
+        )
+    base = {"name": "f", "tenant_id": "t", "region": "r", "project_prefix": "", "k8s_training_source": "x"}
+    L._upsert_fleet_state(
+        fleet_root, base,
+        [{"project_key": "a", "cluster_name": "c1", "status": "deployed"},
+         {"project_key": "a", "cluster_name": "c2", "status": "deployed"}],
+    )
+    monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_terraform_env", lambda b: {})
+    monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
+
+    spec = _two_cluster_project_spec()
+    L.destroy_fleet(spec, work_root=tmp_path, only_clusters=["c2"])
+
+    assert not (fleet_root / "a" / "c2").exists()  # removed
+    assert (fleet_root / "a" / "c1").exists()  # untouched
+    state = L._load_fleet_state(fleet_root)
+    assert [c["cluster_name"] for c in state["clusters"]] == ["c1"]

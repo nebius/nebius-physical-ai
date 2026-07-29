@@ -77,15 +77,35 @@ Example spec: `npa/examples/fleet/fleet1-test.yaml`.
    `enable_filestore`. **Freshly created projects start with zero quota** — raise
    quotas (or deploy into projects that already have quota) before applying.
    Read with `nebius quotas quota-allowance get-by-name --parent-id <project> --region <region> --name <quota>`.
-5. **Deploy**: `npa fleet deploy --spec fleet.yaml`. Missing projects are created
-   via the `nebius` CLI unless `--no-create-projects`. Deploy runs per cluster
-   and continues past a failing target (`--fail-fast` to stop); a JSON summary
-   lists deployed vs failed clusters with kube contexts.
+5. **Deploy** (asks for confirmation): `npa fleet deploy --spec fleet.yaml`. It
+   prints the projects/clusters it will create/update and prompts before acting;
+   pass `--yes`/`-y` for non-interactive runs. Missing projects are created via
+   the `nebius` CLI unless `--no-create-projects`. Deploy runs per cluster and
+   continues past a failing target (`--fail-fast` to stop); a JSON summary lists
+   deployed vs failed clusters with kube contexts.
 6. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
    for a local checkout). Omit both to use the repo-vendored, tested copy.
-7. **Status / teardown**: `npa fleet status --spec fleet.yaml`;
-   `npa fleet destroy --spec fleet.yaml --force`.
+7. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
+   destroy --spec fleet.yaml` (prompts; `--yes`/`-y` or `--force` to skip).
+
+## Add / remove clusters and projects
+
+The fleet is spec-driven and idempotent, so growing or shrinking it is targeted:
+
+- **Add** one or many: put the new project/cluster in the spec and deploy just
+  those — `npa fleet deploy --spec fleet.yaml --only-projects c,d` or
+  `--only-clusters train,infer`. Existing clusters are reconciled in place and
+  untouched clusters are left alone (the persisted summary is merged, not
+  overwritten).
+- **Remove** one or many: `npa fleet destroy --spec fleet.yaml --only-clusters
+  train` (or `--only-projects c`). Destroy is a **cascade** — every cluster in
+  the targeted projects is torn down, any VPC network the fleet created is
+  reclaimed, and each removed cluster's local state is dropped so `status`
+  reflects the removal. Omitting `--only-*` tears down the whole fleet.
+
+Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
+`destroy` also accepts `--force`).
 
 ## Gotchas
 

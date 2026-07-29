@@ -29,6 +29,50 @@ def _load(spec_path: Path):
         raise typer.BadParameter(f"Invalid fleet spec: {exc}") from exc
 
 
+def _csv(value: str) -> list[str] | None:
+    return [v.strip() for v in value.split(",") if v.strip()] or None
+
+
+def _targets(spec, *, project_prefix, only_projects, only_clusters):
+    """Return the ``(project_display, project_key, cluster_name)`` targets in scope."""
+
+    prefix = project_prefix if project_prefix else spec.project_prefix
+    out = []
+    for project in spec.projects:
+        if only_projects and project.key() not in only_projects:
+            continue
+        for cluster in project.clusters:
+            if only_clusters and cluster.name not in only_clusters:
+                continue
+            out.append((project.display_name(prefix) or project.key(), project.key(), cluster.name))
+    return out
+
+
+def _confirm(action: str, spec, targets, *, yes: bool, cascade: bool = False) -> None:
+    """Show what will be created/destroyed and require confirmation unless ``yes``."""
+
+    projects = sorted({t[0] for t in targets})
+    typer.echo(
+        f"About to {action} fleet '{spec.name}': "
+        f"{len(targets)} cluster(s) across {len(projects)} project(s)."
+    )
+    for display, _key, cluster_name in targets:
+        typer.echo(f"  - {display} / cluster {cluster_name}")
+    if cascade:
+        typer.echo(
+            "  (destroy cascades: every listed cluster and any VPC network this "
+            "fleet created will be torn down.)"
+        )
+    if not targets:
+        typer.echo("  (no targets in scope) -- nothing to do.")
+        raise typer.Exit(0)
+    if yes:
+        return
+    if not typer.confirm(f"Proceed to {action}?"):
+        typer.echo("Aborted.")
+        raise typer.Exit(1)
+
+
 def plan_cmd(
     spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to an npa.fleet/v0.0.1 spec YAML."),
     project_prefix: str = typer.Option(
@@ -83,12 +127,20 @@ def deploy_cmd(
     only_projects: str = typer.Option(
         "",
         "--only-projects",
-        help="Comma-separated project keys to deploy (subset of the spec).",
+        help="Comma-separated project keys to deploy (add one or many; subset of the spec).",
+    ),
+    only_clusters: str = typer.Option(
+        "",
+        "--only-clusters",
+        help="Comma-separated cluster names to deploy (add one or many; subset within scope).",
     ),
     continue_on_error: bool = typer.Option(
         True,
         "--continue-on-error/--fail-fast",
         help="Continue deploying remaining clusters if one fails.",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt (non-interactive create)."
     ),
     timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform apply timeout in minutes."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
@@ -98,7 +150,14 @@ def deploy_cmd(
     from npa.fleet.lifecycle import deploy_fleet
 
     spec = _load(spec_path)
-    only = [p.strip() for p in only_projects.split(",") if p.strip()] or None
+    only = _csv(only_projects)
+    only_c = _csv(only_clusters)
+    _confirm(
+        "create/update",
+        spec,
+        _targets(spec, project_prefix=project_prefix, only_projects=only, only_clusters=only_c),
+        yes=yes,
+    )
     result = deploy_fleet(
         spec,
         k8s_training_dir=k8s_training_dir,
@@ -106,6 +165,7 @@ def deploy_cmd(
         project_prefix=project_prefix or None,
         create_projects=create_projects,
         only_projects=only,
+        only_clusters=only_c,
         continue_on_error=continue_on_error,
         timeout_minutes=timeout,
         on_status=lambda msg: typer.echo(f"  - {msg}"),
@@ -133,22 +193,36 @@ def deploy_cmd(
 
 def destroy_cmd(
     spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML used to deploy."),
-    only_projects: str = typer.Option("", "--only-projects", help="Comma-separated project keys to destroy."),
+    only_projects: str = typer.Option(
+        "", "--only-projects", help="Comma-separated project keys to destroy (remove one or many)."
+    ),
+    only_clusters: str = typer.Option(
+        "", "--only-clusters", help="Comma-separated cluster names to destroy (remove one or many)."
+    ),
     timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform destroy timeout in minutes."),
-    force: bool = typer.Option(False, "--force", help="Skip confirmation."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", "--force", help="Skip the confirmation prompt (non-interactive removal)."
+    ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
-    """Destroy every cluster in the fleet (best-effort, per-target)."""
+    """Destroy clusters in the fleet (cascade; best-effort, per-target)."""
 
     from npa.fleet.lifecycle import destroy_fleet
 
     spec = _load(spec_path)
-    if not force and not typer.confirm(f"Destroy all clusters in fleet '{spec.name}'?"):
-        raise typer.Exit(1)
-    only = [p.strip() for p in only_projects.split(",") if p.strip()] or None
+    only = _csv(only_projects)
+    only_c = _csv(only_clusters)
+    _confirm(
+        "destroy",
+        spec,
+        _targets(spec, project_prefix="", only_projects=only, only_clusters=only_c),
+        yes=yes,
+        cascade=True,
+    )
     result = destroy_fleet(
         spec,
         only_projects=only,
+        only_clusters=only_c,
         timeout_minutes=timeout,
         on_status=lambda msg: typer.echo(f"  - {msg}"),
     )

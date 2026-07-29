@@ -577,11 +577,17 @@ def deploy_fleet(
     project_prefix: str | None = None,
     create_projects: bool = True,
     only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None,
     timeout_minutes: int = 120,
     continue_on_error: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Deploy every ``(project, cluster)`` target in *spec*. Returns fleet metadata."""
+    """Deploy every ``(project, cluster)`` target in *spec*. Returns fleet metadata.
+
+    ``only_projects`` / ``only_clusters`` narrow the action to a subset so callers
+    can add one or many specific projects/clusters without touching the rest of a
+    fleet (deploy is idempotent: existing clusters reconcile in place).
+    """
 
     spec.validate()
     prefix = project_prefix if project_prefix is not None else spec.project_prefix
@@ -630,6 +636,8 @@ def deploy_fleet(
         project_ids[project.key()] = project_id
 
         for cluster in project.clusters:
+            if only_clusters and cluster.name not in only_clusters:
+                continue
             entry = _deploy_one_cluster(
                 spec=spec,
                 project=project,
@@ -650,17 +658,16 @@ def deploy_fleet(
             if entry.get("status") == "error" and not continue_on_error:
                 raise RuntimeError(entry.get("error") or "cluster deploy failed")
 
-    result = {
+    base_meta = {
         "name": spec.name,
         "tenant_id": tenant_id,
         "region": fleet_region,
         "project_prefix": prefix,
         "k8s_training_source": str(recipe_root),
-        "clusters": results,
-        "deployed": sum(1 for r in results if r.get("status") == "deployed"),
-        "failed": sum(1 for r in results if r.get("status") == "error"),
     }
-    _write_fleet_state(fleet_root, result)
+    result = {**base_meta, "clusters": results, **_recount(results)}
+    # Persist a merged view so a targeted deploy doesn't clobber untouched clusters.
+    _upsert_fleet_state(fleet_root, base_meta, results)
     return result
 
 
@@ -779,16 +786,75 @@ def _write_fleet_state(fleet_root: Path, result: dict[str, Any]) -> None:
         pass
 
 
+def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
+    path = fleet_root / _FLEET_STATE
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _recount(clusters: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "deployed": sum(1 for c in clusters if c.get("status") == "deployed"),
+        "failed": sum(1 for c in clusters if c.get("status") == "error"),
+    }
+
+
+def _upsert_fleet_state(
+    fleet_root: Path, base_meta: dict[str, Any], results: list[dict[str, Any]]
+) -> None:
+    """Merge this run's cluster results into the persisted fleet summary.
+
+    A targeted (``only_projects``/``only_clusters``) deploy must not clobber the
+    recorded state of clusters it did not touch, so entries are upserted by
+    ``(project_key, cluster_name)`` rather than overwritten wholesale.
+    """
+
+    state = _load_fleet_state(fleet_root)
+    clusters = state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
+    index = {(c.get("project_key"), c.get("cluster_name")): i for i, c in enumerate(clusters)}
+    for entry in results:
+        key = (entry.get("project_key"), entry.get("cluster_name"))
+        if key[1] is None:  # project-level failure (no cluster) -- don't persist
+            continue
+        if key in index:
+            clusters[index[key]] = entry
+        else:
+            index[key] = len(clusters)
+            clusters.append(entry)
+    _write_fleet_state(fleet_root, {**base_meta, "clusters": clusters, **_recount(clusters)})
+
+
+def _prune_fleet_state(fleet_root: Path, removed_keys: set[tuple[str, str]]) -> None:
+    """Drop destroyed ``(project_key, cluster_name)`` entries from the summary."""
+
+    state = _load_fleet_state(fleet_root)
+    clusters = state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
+    kept = [c for c in clusters if (c.get("project_key"), c.get("cluster_name")) not in removed_keys]
+    _write_fleet_state(fleet_root, {**state, "clusters": kept, **_recount(kept)})
+
+
 def destroy_fleet(
     spec: FleetSpec,
     *,
     work_root: Path | None = None,
     project_prefix: str | None = None,
     only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None,
     timeout_minutes: int = 120,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Destroy every cluster in the fleet (best-effort, per-target)."""
+    """Destroy clusters in the fleet (best-effort, per-target).
+
+    Destroying is a **cascade**: every cluster in the targeted projects is torn
+    down (and any VPC network the fleet created is reclaimed). ``only_projects`` /
+    ``only_clusters`` narrow the teardown to a subset so one or many specific
+    clusters/projects can be removed without touching the rest of the fleet.
+    """
 
     spec.validate()
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
@@ -797,10 +863,13 @@ def destroy_fleet(
     fleet_root = work_root / spec.name
 
     destroyed: list[dict[str, Any]] = []
+    removed_keys: set[tuple[str, str]] = set()
     for project in spec.projects:
         if only_projects and project.key() not in only_projects:
             continue
         for cluster in project.clusters:
+            if only_clusters and cluster.name not in only_clusters:
+                continue
             install_dir = fleet_root / project.key() / cluster.name
             label = f"{project.key()}/{cluster.name}"
             if not install_dir.exists():
@@ -856,14 +925,15 @@ def destroy_fleet(
                 _reclaim_created_network(
                     nebius_bin, project_id, created_network_id, subnet_id, env, on_status, label
                 )
-            for stale in workdir.glob("terraform.tfstate*"):
-                try:
-                    stale.unlink()
-                except OSError:
-                    pass
+            # Remove the whole per-cluster install dir (state + sidecar + recipe
+            # copy) so the removed cluster no longer appears in `status`.
+            shutil.rmtree(install_dir, ignore_errors=True)
+            removed_keys.add((project.key(), cluster.name))
             destroyed.append(
                 {"project_key": project.key(), "cluster_name": cluster.name, "status": status}
             )
+    if removed_keys:
+        _prune_fleet_state(fleet_root, removed_keys)
     return {"name": spec.name, "clusters": destroyed}
 
 
