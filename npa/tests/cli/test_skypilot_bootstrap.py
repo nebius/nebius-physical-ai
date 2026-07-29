@@ -139,7 +139,14 @@ def test_skypilot_install_package_pins_click_after_install(
     assert any(cmd[-1] == "click>=8.1,<8.2" for cmd in installs), installs
 
 
-def test_skypilot_bootstrap_can_install_local_tiny_package(tmp_path: Path) -> None:
+def test_skypilot_bootstrap_can_install_local_tiny_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Exercises venv-creation + install mechanics with the test interpreter; the
+    # SkyPilot Python-support policy is out of scope here (and the CI matrix runs
+    # this on Python versions outside SkyPilot's supported range), so treat the
+    # interpreter as supported.
+    monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
     package_dir = tmp_path / "fake-skypilot"
     sky_pkg = package_dir / "sky"
     sky_pkg.mkdir(parents=True)
