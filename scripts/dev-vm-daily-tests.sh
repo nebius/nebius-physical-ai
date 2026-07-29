@@ -53,8 +53,16 @@ LOG_FILE="${LOG_DIR}/daily-${TEST_TIER}-${RUN_STAMP}.log"
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+# Logs go to stderr so they never pollute `$(...)` command substitutions (both
+# stdout and stderr are still tee'd to the log file via the exec redirect above).
+log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() { log "ERROR: $*"; exit 2; }
+
+redact_url() {
+  # Strip any embedded credentials (user:token@ or x-access-token:...@) so a
+  # tokenized https remote never lands in the log.
+  sed -E 's#://[^/@]+@#://***@#' <<< "$1"
+}
 
 resolve_repo_url() {
   if [[ -n "${NPA_CI_REPO_URL:-}" ]]; then
@@ -77,7 +85,7 @@ sync_checkout() {
   local url
   if [[ ! -d "${CI_REPO_DIR}/.git" ]]; then
     url="$(resolve_repo_url)" || die "cannot resolve a git remote; set NPA_CI_REPO_URL"
-    log "Cloning ${url} -> ${CI_REPO_DIR}"
+    log "Cloning $(redact_url "$url") -> ${CI_REPO_DIR}"
     git clone "$url" "$CI_REPO_DIR"
   fi
 
@@ -95,6 +103,9 @@ sync_checkout() {
   log "HEAD is now $(git -C "$CI_REPO_DIR" rev-parse HEAD)"
 }
 
+# Sets the global PY to the venv interpreter (an absolute path, required by the
+# Makefile which `cd`s into npa/ before invoking $(PYTHON)).
+PY=""
 ensure_venv() {
   local venv="${CI_REPO_DIR}/.venv"
   if [[ ! -x "${venv}/bin/python" ]]; then
@@ -104,7 +115,7 @@ ensure_venv() {
   "${venv}/bin/python" -m pip install -q --upgrade pip
   log "Installing npa[${PIP_EXTRAS}] (editable)"
   "${venv}/bin/python" -m pip install -q -e "${CI_REPO_DIR}/npa[${PIP_EXTRAS}]"
-  printf '%s\n' "${venv}/bin/python"
+  PY="${venv}/bin/python"
 }
 
 run_unit() {
@@ -150,18 +161,33 @@ main() {
   log "CI checkout: ${CI_REPO_DIR}"
   log "Log file: ${LOG_FILE}"
 
+  # Validate inputs before any expensive clone/venv work.
+  case "$TEST_TIER" in
+    unit | e2e | e2e-serverless | live-gpu) ;;
+    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-serverless | live-gpu)" ;;
+  esac
+  if [[ "$TEST_TIER" == "live-gpu" && "${NPA_DAILY_ALLOW_LIVE_GPU:-0}" != "1" ]]; then
+    die "live-gpu tier requires NPA_DAILY_ALLOW_LIVE_GPU=1; it must never run on a schedule (docs/testing/live-e2e.md)"
+  fi
+
   command -v git >/dev/null 2>&1 || die "git not found on dev VM"
   command -v python3 >/dev/null 2>&1 || die "python3 not found on dev VM"
   command -v make >/dev/null 2>&1 || die "make not found on dev VM"
 
   sync_checkout
-  local py
-  py="$(ensure_venv)"
+  ensure_venv
+
+  # Put the venv on PATH (equivalent to activating it) so subprocesses spawned by
+  # the suite that call bare `python3`/`npa`/`ruff` resolve THIS run's install,
+  # not a global one that may be absent or stale.
+  export VIRTUAL_ENV="${CI_REPO_DIR}/.venv"
+  export PATH="${VIRTUAL_ENV}/bin:${PATH}"
+  log "PATH primed with ${VIRTUAL_ENV}/bin"
 
   case "$TEST_TIER" in
-    unit) run_unit "$py" ;;
-    e2e) run_e2e "$py" ;;
-    e2e-serverless) run_e2e_serverless "$py" ;;
+    unit) run_unit "$PY" ;;
+    e2e) run_e2e "$PY" ;;
+    e2e-serverless) run_e2e_serverless "$PY" ;;
     live-gpu) run_live_gpu ;;
     *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-serverless | live-gpu)" ;;
   esac
