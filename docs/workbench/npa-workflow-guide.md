@@ -92,6 +92,10 @@ states:
 | `run.shell` / `run.argv` | Ad-hoc command when no catalog entry exists |
 | `next` | Linear edge to the next state |
 | `sequence` | Ordered sub-states (optionally inside `loop`) |
+| `parallel` | Fan-out group: members launch concurrently (SkyPilot JobGroup) and the group's `next` state is the barrier |
+| `maxConcurrency` | Cap on concurrent members of a `parallel` group (int or `{{config.attr}}`); larger groups are submitted in batches |
+| `params` | Per-state config overlay used when resolving that state's tokens (how N sweep members share one `toolRef`) |
+| `trigger` | `{uri, pollSeconds, maxPolls, minObjects}` — the runtime driver waits for objects at `uri` before running this state |
 | `loop.max` | Fixed iteration count (`int` or `config.attr`) |
 | `loop.until` | Stop when predicate is true (`promote_checkpoint`) |
 | `transitions` | Branch on predicates after the state runs |
@@ -137,10 +141,37 @@ inventing YAML fields.
 | `--scheduler-plan` | Emit portable per-step task docs (`resources`, `command`) |
 | `run_workflow(..., execute=True)` | Dynamic traversal; not a static pre-built plan |
 | `npa workbench workflow submit <npa.workflow.yaml>` | Plan the graph and launch the run |
+| `plan-spec --waves` | Show the runtime wave shape (serial steps + parallel groups and their concurrency batches) |
+| `submit --runtime` | Runtime orchestrator: submit each wave, poll it to terminal, read the real decision artifact from S3, then replan |
 
 `npa workbench workflow submit` on an `npa.workflow/v0.0.1` spec plans the graph
 and launches it. Use `--plan-only` to inspect the plan without launching.
-Parallel fan-out remains out of scope for v0.0.1.
+
+### Runtime orchestrator (`--runtime`)
+
+The default submit path is one-shot: it renders the flattened serial plan (loops
+unrolled with `--assume-decision`) and launches it. That path is unchanged.
+
+`--runtime` adds a driver that executes the graph wave by wave:
+
+```bash
+npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
+  [--resume] [--poll-seconds 30] [--max-wait-seconds 3600] \
+  [--retries 1] [--max-concurrency 2] [--no-cancel-on-timeout]
+```
+
+| Capability | Behaviour |
+| --- | --- |
+| Parallel fan-out | A `parallel:` group is rendered as a SkyPilot JobGroup (`execution: parallel`) so members run concurrently, batched by `maxConcurrency` |
+| Barrier | The group's `next` state is submitted only after every member reached a terminal state |
+| Real early-exit | After each loop iteration the driver re-reads `config.decision_uri` from S3; a promoting gate ends the loop instead of running the remaining budget |
+| Data-dependent branching | `transitions` outside a loop body are resolved from the real decision artifact (`goto`) |
+| Trigger / watch | A state's `trigger:` prefix is polled by the driver before its wave is submitted |
+| Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--resume` replays succeeded waves instead of resubmitting them |
+| Timeout | A wave that never reaches a terminal state is cancelled (job + cluster) and fails the run |
+
+Design notes: [`DESIGN.md`](../../DESIGN.md). Live evidence:
+[`EVIDENCE.md`](../../EVIDENCE.md).
 
 ### Live submit E2E
 
@@ -177,9 +208,16 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 
 ## What is intentionally out of scope (v0.0.1)
 
-- Gang scheduling, parallel fan-out, runtime manifest-driven `foreach`
+- Gang scheduling and runtime manifest-driven `foreach`
+- Multi-step branches inside a `parallel:` group (members are leaf states)
 - JSON Schema validation of artifact payloads
-- Unified `workflow status` for npa.workflow runs (sim2real path is separate today)
+- A detached/daemonized `--runtime` driver, and a unified `workflow status` for
+  npa.workflow runs (the runtime ledger JSON is the source of truth today; the
+  sim2real path is separate)
+
+Parallel fan-out **is** supported as of the `parallel:` / `maxConcurrency` fields
+above — the explicit-field direction this section originally deferred to v0.0.2.
+They are optional and additive, so every pre-v0.0.1 spec is unaffected.
 
 ## YAML beauty conventions
 
@@ -191,4 +229,5 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 
 `run.shell` resolves `config.*` tokens into `/bin/bash -lc` commands; treat spec files as trusted authored input.
 
-Those advanced scheduling features belong in spec v0.0.2+ as explicit fields (`parallel`, `gang`, `foreach`), not Jinja.
+Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
+`params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.

@@ -52,23 +52,14 @@ from botocore.client import Config
 src = pathlib.Path(sys.argv[1]).resolve()
 bucket, prefix = sys.argv[2], sys.argv[3].strip("/")
 
-# Only what `pip install -e` needs at task runtime: the package + build metadata.
-# Tests/images/blueprint YAMLs are never executed inside a rendered task.
-skip_dirs = {
-    ".venv",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "build",
-    "dist",
-    "tests",
-    "docker",
-    "workflows",
-    "scripts",
-}
+# Noise directories, skipped at any depth.
+skip_anywhere = {".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"}
+# Heavy trees that a rendered task never executes, skipped only at the TOP level.
+# (Must not match nested packages such as src/npa/workflows/ — dropping those
+# breaks `run.shell` stages that import npa.workflows.*.)
+skip_top_level = {"tests", "docker"}
 if os.environ.get("NPA_STAGE_INCLUDE_ALL") == "1":
-    skip_dirs = {".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+    skip_top_level = set()
 kwargs = {"config": Config(signature_version="s3v4")}
 endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
 if endpoint:
@@ -80,7 +71,9 @@ for path in src.rglob("*"):
     if not path.is_file():
         continue
     rel = path.relative_to(src)
-    if any(part in skip_dirs for part in rel.parts):
+    if any(part in skip_anywhere for part in rel.parts):
+        continue
+    if rel.parts and rel.parts[0] in skip_top_level:
         continue
     if rel.suffix in {".pyc", ".pyo"}:
         continue
