@@ -9797,9 +9797,17 @@ def verify_live_cmd(
     }
     if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
         test_env["NPA_AGENT_CHAT_LIVE"] = "1"
+    # Run the local test gate with the *current* interpreter and the repo root as
+    # cwd, so `npa agent verify-live` works from any directory. Previously it
+    # shelled out to a relative "npa/.venv/bin/python" and relative test paths,
+    # which raised FileNotFoundError unless invoked from the repo root.
+    import sys as _sys
+
+    repo_root = Path(__file__).resolve().parents[4]
+    py = _sys.executable or "python3"
     smoke = subprocess.run(
         [
-            "npa/.venv/bin/python",
+            py,
             "-m",
             "pytest",
             "npa/tests/smoke/test_agent_smoke.py",
@@ -9808,12 +9816,13 @@ def verify_live_cmd(
         ],
         check=False,
         env=test_env,
+        cwd=str(repo_root),
     )
     if smoke.returncode != 0:
         _fail("pytest npa/tests/smoke/test_agent_smoke.py test_agent_chat_smoke.py failed")
     unit = subprocess.run(
         [
-            "npa/.venv/bin/python",
+            py,
             "-m",
             "pytest",
             "npa/tests/cli/test_agent.py",
@@ -9822,13 +9831,15 @@ def verify_live_cmd(
         ],
         check=False,
         env=test_env,
+        cwd=str(repo_root),
     )
     if unit.returncode != 0:
         _fail("pytest npa/tests/cli/test_agent.py failed")
     e2e = subprocess.run(
-        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
+        [py, "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
         check=False,
         env=test_env,
+        cwd=str(repo_root),
     )
     if e2e.returncode != 0:
         _fail("pytest npa/tests/e2e/test_agent_live.py failed")
