@@ -309,7 +309,7 @@ def _runtime_submit_args(
         "--poll-seconds",
         os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", "30"),
         "--max-wait-seconds",
-        str(_max_wait()),
+        str(case.max_wait_seconds or _max_wait()),
         "--submit-timeout",
         "1800",
         "--output-format",

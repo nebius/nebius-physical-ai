@@ -193,3 +193,18 @@ def test_runtime_selection_honours_the_tier_filter(monkeypatch) -> None:
     specs = {case.spec for case in runtime_submit_cases()}
     assert specs == {"token-factory-parallel-fanout.yaml", "token-factory-gate-loop.yaml"}
     assert "isaac-lab-rl-sweep.yaml" not in specs
+
+
+def test_slow_cases_carry_their_own_deadline() -> None:
+    """A slow case must not force the whole runtime tier onto its deadline."""
+
+    sweep = _case("isaac-lab-rl-sweep.yaml")
+    assert sweep is not None
+    assert sweep.max_wait_seconds >= 3600, (
+        "the GPU sweep pulls an ~8 GB image and trains; it needs a longer per-wave "
+        "deadline than the CPU cases"
+    )
+    for case in (c for c in SUBMIT_LIVE_MATRIX if c.runtime and not c.image_tool):
+        assert case.max_wait_seconds == 0, (
+            f"{case.spec} should inherit the env deadline instead of pinning one"
+        )

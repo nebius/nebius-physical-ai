@@ -35,6 +35,11 @@ class SubmitLiveCase:
     #: the live registry at submit time). Set for specs whose stages run inside a
     #: baked image instead of the default SkyPilot image + staged npa source.
     image_tool: str = ""
+    #: Per-wave deadline for this case, in seconds. 0 = use
+    #: ``NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS``. Set it when one case is
+    #: much slower than the rest (a 8 GB image pull plus GPU training) so the whole
+    #: runtime tier does not have to run with the slowest case's deadline.
+    max_wait_seconds: int = 0
 
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
@@ -155,6 +160,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         runtime=True,
         expected_parallel_tasks=4,
         image_tool="isaac-lab",
+        # The Isaac Lab image is ~8 GB per node and the variants train on GPU.
+        max_wait_seconds=5400,
         notes=(
             "Parallel GPU reference case (port of the execution:parallel SkyPilot "
             "template): four RSL-RL variants as one JobGroup + ranking barrier. "
