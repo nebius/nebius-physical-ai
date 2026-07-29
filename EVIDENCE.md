@@ -30,7 +30,7 @@ runs were disturbed.
 cd ~/npa-wf-runtime
 set -a; . ~/.npa/live-e2e.env; . ~/.npa/live-e2e-gates.env; set +a
 export PYTHONPATH=$PWD/npa/src
-export NPA_SRC_S3_URI=s3://lerobot-ccc9d3c7/npa-workflow-e2e/npa-src-wfrt/npa   # branch source
+export NPA_SRC_S3_URI=s3://<artifact-bucket>/npa-workflow-e2e/npa-src-wfrt/npa   # branch source
 export NPA_INTEGRATION_E2E=1 NPA_E2E_NPA_WORKFLOW_SUBMIT=1 NPA_E2E_NPA_WORKFLOW_RUNTIME=1
 export NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS=20
 export NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS=2700
@@ -44,8 +44,8 @@ Branch source staged for the tasks (tasks install `npa` from S3 because the live
 env sets `NPA_E2E_CLEAR_WORKBENCH_IMAGES=1`):
 
 ```bash
-bash scripts/stage-npa-src.sh --bucket lerobot-ccc9d3c7 --prefix npa-workflow-e2e/npa-src-wfrt
-# staged 549 files -> s3://lerobot-ccc9d3c7/npa-workflow-e2e/npa-src-wfrt/npa
+bash scripts/stage-npa-src.sh --bucket <artifact-bucket> --prefix npa-workflow-e2e/npa-src-wfrt
+# staged 549 files -> s3://<artifact-bucket>/npa-workflow-e2e/npa-src-wfrt/npa
 ```
 
 ---
@@ -112,7 +112,7 @@ pytest npa/tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_run
 ```
 
 **Run id:** `npa-wf-cpu-token-factory-parallel-fanout-a8cf71e0`
-**Run prefix:** `s3://lerobot-ccc9d3c7/npa-workflow-e2e/npa-wf-cpu-token-factory-parallel-fanout-a8cf71e0/token-factory-parallel-fanout/`
+**Run prefix:** `s3://<artifact-bucket>/npa-workflow-e2e/npa-wf-cpu-token-factory-parallel-fanout-a8cf71e0/token-factory-parallel-fanout/`
 
 ### 3.1 The three shards ran concurrently
 
@@ -183,7 +183,7 @@ Re-running the **same run id** with `--resume`:
 ```bash
 npa workbench workflow submit .../token-factory-parallel-fanout.yaml \
   --run-id npa-wf-cpu-token-factory-parallel-fanout-a8cf71e0 --runtime --resume \
-  --var bucket=lerobot-ccc9d3c7 --var prefix=npa-workflow-e2e/<run-id>/token-factory-parallel-fanout ...
+  --var bucket=<artifact-bucket> --var prefix=npa-workflow-e2e/<run-id>/token-factory-parallel-fanout ...
 ```
 
 ```
