@@ -46,10 +46,21 @@ def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
     )
 
     store: dict[tuple[str, str], bytes] = {}
+
+    def reader(bucket: str, key: str) -> str:
+        # Contract of the reader seam (and of the real S3 path): a missing object
+        # raises FileNotFoundError. Anything else must propagate, so a transient
+        # storage error can never be mistaken for "no ledger" and silently make
+        # --resume resubmit every wave.
+        try:
+            return store[(bucket, key)].decode("utf-8")
+        except KeyError as exc:
+            raise FileNotFoundError(f"s3://{bucket}/{key}") from exc
+
     state_store = RunStateStore(
         bucket="bucket",
         prefix="runs/demo",
-        reader=lambda bucket, key: store[(bucket, key)].decode("utf-8"),
+        reader=reader,
         writer=lambda bucket, key, body: store.__setitem__((bucket, key), body),
     )
 
@@ -88,3 +99,18 @@ def test_completed_wave_ignores_failed_attempts() -> None:
     assert state.completed_wave("001") is None
     state.record_wave({"key": "001", "status": "succeeded", "attempt": 2})
     assert state.completed_wave("001")["attempt"] == 2
+
+
+def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
+    """A transient read error must not look like "no ledger" (resume safety)."""
+
+    import pytest
+
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    def angry_reader(bucket: str, key: str) -> str:
+        raise PermissionError(f"denied s3://{bucket}/{key}")
+
+    store = Store(bucket="bucket", prefix="runs/demo", reader=angry_reader, writer=lambda *_: None)
+    with pytest.raises(PermissionError):
+        store.read_runtime_state()
