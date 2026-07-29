@@ -333,7 +333,13 @@ def _runtime_submit_args(
         args.append("--no-cancel-on-timeout")
     for key, value in [*case.config_vars, *sorted((extra_vars or {}).items())]:
         args.extend(["--var", f"{key}={value}"])
-    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
+    if case.image_tool:
+        # Stages that must run inside a baked workbench image (e.g. Isaac Lab's
+        # training script). Branch code is layered on with NPA_SRC_OVERLAY=1.
+        from npa.deploy.images import container_image_for_tool
+
+        args.extend(["--image", container_image_for_tool(case.image_tool, registry=registry)])
+    elif os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
         args.extend(["--image", "none"])
     args.extend(_secret_env_args(case))
     return args

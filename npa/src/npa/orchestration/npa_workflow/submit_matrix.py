@@ -31,6 +31,10 @@ class SubmitLiveCase:
     #: Expected number of concurrent tasks in the spec's largest parallel wave
     #: (0 when the spec has no fan-out); asserted from the live job timeline.
     expected_parallel_tasks: int = 0
+    #: Workbench tool whose image every task of this spec needs (resolved against
+    #: the live registry at submit time). Set for specs whose stages run inside a
+    #: baked image instead of the default SkyPilot image + staged npa source.
+    image_tool: str = ""
 
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
@@ -150,10 +154,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
         expected_parallel_tasks=4,
+        image_tool="isaac-lab",
         notes=(
             "Parallel GPU reference case (port of the execution:parallel SkyPilot "
             "template): four RSL-RL variants as one JobGroup + ranking barrier. "
-            "Needs --runtime; cap GPUs with --var max_concurrency=N."
+            "Needs --runtime and the Isaac Lab image (run branch code on top with "
+            "NPA_SRC_OVERLAY=1); cap GPUs with --var max_concurrency=N."
         ),
     ),
     SubmitLiveCase(
