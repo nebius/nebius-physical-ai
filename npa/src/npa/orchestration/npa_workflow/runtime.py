@@ -379,6 +379,11 @@ class SkyPilotWaveExecutor:
         attempt.job_id = job_id
         status = str(getattr(result, "status", "SUBMITTED") or "SUBMITTED").upper()
         attempt.sky_status = status
+        attempt.status = "running"
+        # Persist the in-flight wave immediately: if the driver dies mid-wave the
+        # ledger still names the managed job, so an operator can find (and cancel)
+        # it instead of leaking a cluster.
+        self.ledger.record(attempt)
         self._log(f"wave {attempt.key}: submitted job_id={job_id} name={job_name}")
 
         final_status = self._poll(job_id, attempt, observe_tasks=len(steps) > 1)
