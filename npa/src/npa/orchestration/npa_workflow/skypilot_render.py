@@ -181,6 +181,19 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
         "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+        # `setup:` and `run:` are separate shells, so an interpreter mismatch has to
+        # be repaired here too: a `run.shell` stage doing `python3 -c "import npa"`
+        # must work even when pip installed npa into a different python (observed on
+        # SkyPilot's GPU default image).
+        "if ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
+        "  for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
+        "/opt/nebius-physical-ai/npa/src; do\n"
+        "    if [ -d \"$candidate\" ]; then\n"
+        "      export PYTHONPATH=\"$candidate:$PYTHONPATH\"\n"
+        "      break\n"
+        "    fi\n"
+        "  done\n"
+        "fi\n"
         f"{quoted}\n"
     )
 
@@ -288,6 +301,24 @@ def default_npa_setup() -> str:
         "fi\n"
         "command -v npa >/dev/null 2>&1 || "
         "{ echo 'npa still missing after setup' >&2; exit 1; }\n"
+        # `pip install -e` binds npa to the interpreter that ran pip. On some images
+        # (notably SkyPilot's GPU default image) the task body resolves a DIFFERENT
+        # python3, which then fails with ModuleNotFoundError: npa for run.shell
+        # stages that import npa. Verify importability with the body's own python and
+        # fall back to the staged source tree, which works for any interpreter.
+        "if ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
+        "  for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
+        "/opt/nebius-physical-ai/npa/src; do\n"
+        "    if [ -d \"$candidate\" ]; then\n"
+        "      echo \"npa not importable by $(command -v python3); adding $candidate "
+        "to PYTHONPATH\" >&2\n"
+        "      export PYTHONPATH=\"$candidate:$PYTHONPATH\"\n"
+        "      break\n"
+        "    fi\n"
+        "  done\n"
+        "  python3 -c 'import npa' >/dev/null 2>&1 || "
+        "{ echo 'npa is not importable by python3 after setup' >&2; exit 1; }\n"
+        "fi\n"
     )
 
 

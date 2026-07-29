@@ -511,3 +511,28 @@ def test_shipped_specs_render_without_placeholders(
         group_docs = [doc for doc in yaml.safe_load_all(group_text) if doc is not None]
         assert group_docs[0]["execution"] == "parallel"
         assert len(group_docs) - 1 == len(wave.steps)
+
+
+def test_rendered_stages_repair_an_interpreter_mismatch(parallel_spec) -> None:
+    """A run.shell stage must be able to import npa even if pip used another python.
+
+    Regression guard for the live GPU-image failure (`ModuleNotFoundError: npa` in
+    the barrier task): `pip install -e` binds npa to the interpreter that ran pip,
+    while the task body may resolve a different `python3`.
+    """
+
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        default_npa_setup,
+        render_task_run_script,
+    )
+
+    setup = default_npa_setup()
+    assert "python3 -c 'import npa'" in setup
+    assert "/tmp/npa-src/src" in setup
+    assert "PYTHONPATH" in setup
+
+    run_script = render_task_run_script(["npa", "workbench", "insights", "dashboard"])
+    # The repair must be in the run script too: setup and run are separate shells.
+    assert "python3 -c 'import npa'" in run_script
+    assert "export PYTHONPATH=" in run_script
+    assert run_script.rstrip().endswith("npa workbench insights dashboard")

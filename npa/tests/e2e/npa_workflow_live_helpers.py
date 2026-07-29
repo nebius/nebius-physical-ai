@@ -492,8 +492,8 @@ def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
             raw = raw[:-2]
         elif raw.lower().endswith("g"):
             raw = raw[:-1]
-        relaxed = f"{prefix}{raw}+{suffix}"
-        return relaxed if line.endswith("\n") or not line.endswith("\n") else relaxed
+        # Keep the original line ending; `suffix` already carries it when present.
+        return f"{prefix}{raw}+{suffix}"
 
     def flush_profile() -> None:
         nonlocal profile_lines, profile_has_accel

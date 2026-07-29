@@ -22,6 +22,7 @@ npa.workflow twins through ``npa workbench workflow submit``.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -146,7 +147,12 @@ def _secret_env_args(case: SubmitLiveCase) -> list[str]:
 def _run_id_for(case: SubmitLiveCase) -> str:
     stamp = uuid.uuid4().hex[:8]
     stem = case.spec.replace(".yaml", "").replace("_", "-")[:40]
-    return f"npa-wf-{case.tier}-{stem}-{stamp}"
+    tier = case.tier
+    # NPA_E2E_FORCE_ACCELERATORS puts GPU-only resources on a cpu-tier spec, so the
+    # run id would otherwise claim "cpu" for a run that consumed GPUs.
+    if os.environ.get("NPA_E2E_FORCE_ACCELERATORS", "").strip() and tier == "cpu":
+        tier = "cpu-forcedgpu"
+    return f"npa-wf-{tier}-{stem}-{stamp}"
 
 
 @pytest.mark.parametrize(
@@ -288,6 +294,40 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 pass
 
 
+# Provisioning failures that say "this cluster/image cannot host the task", as
+# opposed to "the workflow is wrong". Mirrors the capacity rotation in
+# test_burst_live_e2e.py: an environment limitation skips with the reason, a real
+# workflow failure still fails.
+INFRA_UNAVAILABLE_MARKERS = (
+    "errimagepull",
+    "imagepullbackoff",
+    "failed to authorize",
+    "container not found",
+    "failed to get ssh user",
+    "resourcesunavailableerror",
+    "failed to provision",
+    "no resource available",
+    "insufficient",
+    "failed_no_resource",
+    "failed_prechecks",
+)
+
+
+def _skip_or_fail_infra(case: SubmitLiveCase, payload: dict) -> None:
+    """Skip when the cluster could not host the task; fail on real errors."""
+
+    blob = json.dumps(payload).lower()
+    hit = next((marker for marker in INFRA_UNAVAILABLE_MARKERS if marker in blob), "")
+    if hit:
+        pytest.skip(
+            f"{case.spec}: cluster could not host the task ({hit}); "
+            f"runtime status={payload.get('status')} error={str(payload.get('error'))[:200]}"
+        )
+    pytest.fail(
+        f"{case.spec} runtime run failed: {payload.get('error') or payload.get('status')}"
+    )
+
+
 def _runtime_submit_args(
     path: Path,
     *,
@@ -380,7 +420,8 @@ def test_npa_workflow_runtime_live_reaches_terminal(
     payload = parse_runtime_json(result, forbidden_markers)
     write_runtime_evidence(run_id, payload)
 
-    assert payload["status"] == "succeeded", payload.get("error") or payload
+    if payload["status"] != "succeeded":
+        _skip_or_fail_infra(case, payload)
     waves = payload["waves"]
     assert waves, payload
 
@@ -397,24 +438,28 @@ def test_npa_workflow_runtime_live_reaches_terminal(
             "parallel wave never showed concurrent tasks: "
             f"observed={observed} tasks={parallel_waves[0].get('tasks')}"
         )
-        # Barrier: the first downstream (serial) wave was submitted only after
-        # every member of the group had finished.
+        # Barrier: the waves *after* the group were submitted only once every
+        # member of the group had finished. Indexing off the group's position keeps
+        # this correct for specs that also have serial waves BEFORE the fan-out.
+        last_parallel_index = max(
+            index for index, wave in enumerate(waves) if wave["kind"] == "parallel"
+        )
         group_end = max(
             float(task.get("end_at") or 0.0)
-            for wave in parallel_waves
+            for wave in waves[: last_parallel_index + 1]
+            if wave["kind"] == "parallel"
             for task in wave.get("tasks") or []
         )
-        later_starts = [
+        downstream_starts = [
             float(task.get("start_at") or task.get("submitted_at") or 0.0)
-            for wave in waves
-            if wave["kind"] == "serial"
+            for wave in waves[last_parallel_index + 1 :]
             for task in wave.get("tasks") or []
             if float(task.get("start_at") or task.get("submitted_at") or 0.0) > 0
         ]
-        assert later_starts, "no barrier task timings recorded"
-        assert min(later_starts) >= group_end - 1.0, (
+        assert downstream_starts, "no barrier task timings recorded"
+        assert min(downstream_starts) >= group_end - 1.0, (
             f"barrier task started before the parallel group finished: "
-            f"group_end={group_end} starts={later_starts}"
+            f"group_end={group_end} starts={downstream_starts}"
         )
 
 
