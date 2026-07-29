@@ -412,12 +412,88 @@ The four-variant JobGroup was submitted (job **83**, run
 
 ---
 
-## 6. Cost
+## 6. Mandated harness commands
 
-<!-- COST_PLACEHOLDER -->
+### 6.1 `test_npa_workflow_submit_live_e2e.py` (cpu tier)
+
+```bash
+export NPA_INTEGRATION_E2E=1 NPA_E2E_NPA_WORKFLOW_SUBMIT=1 NPA_E2E_NPA_WORKFLOW_RUNTIME=1
+export NPA_E2E_REGISTRY=$NPA_E2E_REGISTRY
+export NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu
+export NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS=2700
+export NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1
+pytest npa/tests/e2e/test_npa_workflow_submit_live_e2e.py -v
+```
+
+<!-- MATRIX_RESULT -->
+
+**Why `cpu` and not `cpu,gpu,multi`:** the gpu/multi one-shot twins in the matrix
+(SONIC, Cosmos3, the 11-stage BDD100K pipeline, ...) are pre-existing cases that
+are unrelated to this change and would cost many GPU-hours; and on this cluster
+they need workbench images, which currently cannot host a SkyPilot k8s task
+(§5.2). The tiers that exercise **this change** are the runtime cases, which are
+all in the cpu tier plus the (blocked) `multi` sweep. Every spec in the matrix —
+all tiers — is still covered by the plan-only matrix test in the same file.
+
+### 6.2 `test_burst_live_e2e.py`
+
+```bash
+pytest npa/tests/e2e/test_burst_live_e2e.py -v
+# 1 skipped in 1188.16s (0:19:48)
+# reason: capacity / GPU not offered:
+#   RTXPRO-6000-BLACKWELL-SERVER-EDITION:1=FAILED_PRECHECKS, L40S:1=STARTING
+```
+
+The burst test rotates through its GPU candidates and **skips** when none can be
+scheduled; that is the test's own capacity guard, not a failure. The burst path is
+unrelated to this change (it does not use the npa.workflow engine); it was run
+because the mandate asked for it, and the honest result is "skipped for capacity".
 
 ---
 
-## 7. Not verified live
+## 7. Cost
 
-<!-- NOT_VERIFIED_PLACEHOLDER -->
+| Item | Amount |
+| --- | --- |
+| CPU tasks (Token Factory captions, VLM scoring via hosted API, gates, joins, dashboards) | ~45 short pods, `1x[CPU:4+]`, ~30–90 s each |
+| GPU seconds | 3 × RTXPRO-6000 × ~76 s (§5.1 fan-out) + 1 × ~60 s (barrier attempt) ≈ **~5 GPU-minutes** |
+| GPU sweep (`isaac-lab-rl-sweep`) | **0 GPU-minutes billed for compute** — every attempt failed in provisioning (`ErrImagePull`, then SkyPilot runtime start); cancelled after ~40 min of retries |
+| Burst test | 2-node GPU request, never scheduled (skipped) |
+| Token Factory | ~20 caption/score calls on `Qwen/Qwen2.5-VL-72B-Instruct` with `max_images<=4`, `max_tokens<=128` |
+| Storage | a few MB of PNG fixtures, JSON reports and ledgers under `s3://<bucket>/npa-workflow-e2e/...` |
+
+Approximate spend: **single-digit GPU-minutes** plus negligible CPU/hosted-token
+usage. No cluster was provisioned for this work; no cluster was left running (§9).
+
+---
+
+## 8. Not verified live
+
+Stated plainly, so nothing here is mistaken for proven:
+
+1. **`isaac-lab-rl-sweep.yaml` never executed its training variants live.** The
+   spec validates, plans, renders (4-task JobGroup + barrier) and is registered in
+   `SUBMIT_LIVE_MATRIX`; the JobGroup was submitted and SkyPilot did schedule four
+   GPU pods, but the Isaac Lab image cannot host a SkyPilot k8s task on this
+   cluster (§5.2). Its stage functions (`npa.workflows.rl_sweep`) are covered by
+   unit tests only. Concurrency and barrier semantics for the *same* code path are
+   proven live in §3 (CPU) and §5.1 (GPU).
+2. **The `trigger:` / watch pattern is unit-tested only.** No live run waited on an
+   S3 prefix; no spec in the shipped catalog uses `trigger:` yet.
+3. **Wave retry and timeout-cancellation are unit-tested only.** No live wave
+   failed transiently or timed out during these runs, so the retry/cancel paths did
+   not execute against real infrastructure.
+4. **Bounded-concurrency batching was exercised live only with
+   `maxConcurrency == group size`** (one batch). The multi-batch path (`3` members,
+   `maxConcurrency: 2` → two batches) is unit-tested.
+5. **The GPU-tier barrier task failed** with `ModuleNotFoundError: No module named
+   'npa'` on SkyPilot's GPU default image (§5.1). The same stage succeeds on the
+   CPU default image; the interpreter mismatch on GPU images is not fixed here.
+6. **Only the `cpu` tier of the live submit matrix was executed**; gpu/multi
+   one-shot twins were covered plan-only (§6.1).
+
+---
+
+## 9. Teardown
+
+<!-- TEARDOWN_PLACEHOLDER -->
