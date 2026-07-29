@@ -495,3 +495,74 @@ def test_status_from_queue_payload_failure_wins() -> None:
     ]
 
     assert _status_from_queue_payload(json.dumps(payload), "1") == "FAILED"
+
+
+# --- per-task timelines (JobGroup / pipeline evidence) -----------------------
+
+_QUEUE_JSON = """
+[
+  {"job_id": 75, "task_id": 0, "task_name": "caption-shard-a", "job_name": "wf-01-caption",
+   "status": "SUCCEEDED", "submitted_at": 1785297417.2239287, "start_at": null,
+   "end_at": 1785297483.0891774, "is_job_group": false, "execution": null,
+   "cluster_name_on_cloud": null, "current_cluster_name": null},
+  {"job_id": 75, "task_id": 2, "task_name": "caption-shard-c", "job_name": "wf-01-caption",
+   "status": "SUCCEEDED", "submitted_at": 1785297417.2361672, "start_at": null,
+   "end_at": 1785297477.9160478, "is_job_group": false, "execution": null},
+  {"job_id": 75, "task_id": 1, "task_name": "caption-shard-b", "job_name": "wf-01-caption",
+   "status": "RUNNING", "submitted_at": 1785297417.229656, "start_at": null,
+   "end_at": null, "is_job_group": false, "execution": null},
+  {"job_id": 76, "task_id": 0, "task_name": "wf-02-aggregate", "job_name": "wf-02-aggregate",
+   "status": "SUCCEEDED", "submitted_at": 1785297577.643265, "start_at": null,
+   "end_at": 1785297631.8969326, "is_job_group": false, "execution": null}
+]
+"""
+
+
+def test_parse_task_statuses_returns_ordered_rows_for_one_job() -> None:
+    from npa.orchestration.skypilot.workflow import parse_task_statuses
+
+    rows = parse_task_statuses(_QUEUE_JSON, "75")
+
+    assert [row["task_id"] for row in rows] == [0, 1, 2]
+    assert [row["task_name"] for row in rows] == [
+        "caption-shard-a",
+        "caption-shard-b",
+        "caption-shard-c",
+    ]
+    assert {row["job_id"] for row in rows} == {"75"}
+    assert rows[0]["status"] == "SUCCEEDED"
+    assert rows[1]["status"] == "RUNNING"
+    assert rows[0]["submitted_at"] == 1785297417.2239287
+    assert rows[0]["end_at"] == 1785297483.0891774
+    assert rows[1]["end_at"] is None
+
+
+def test_parse_task_statuses_isolates_other_jobs_and_bad_payloads() -> None:
+    from npa.orchestration.skypilot.workflow import parse_task_statuses
+
+    assert [row["task_name"] for row in parse_task_statuses(_QUEUE_JSON, "76")] == [
+        "wf-02-aggregate"
+    ]
+    assert parse_task_statuses(_QUEUE_JSON, "999") == []
+    assert parse_task_statuses("not json", "75") == []
+    assert parse_task_statuses("", "75") == []
+
+
+def test_workflow_task_statuses_returns_empty_on_command_failure(mocker) -> None:
+    import subprocess
+
+    from npa.orchestration.skypilot import workflow as workflow_mod
+
+    mocker.patch.object(
+        workflow_mod,
+        "resolve_config",
+        return_value=mocker.Mock(sky_bin="sky", isolated_config_dir=None, global_config_path=None),
+    )
+    mocker.patch.object(workflow_mod, "ensure_skypilot_version", return_value="sky")
+    mocker.patch.object(
+        workflow_mod.subprocess,
+        "run",
+        return_value=subprocess.CompletedProcess(["sky"], 1, stdout="", stderr="boom"),
+    )
+
+    assert workflow_mod.workflow_task_statuses("75") == []

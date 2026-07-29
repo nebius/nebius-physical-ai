@@ -34,3 +34,57 @@ def test_run_state_store_roundtrip() -> None:
     assert loaded.steps[0]["state"] == "augment"
     status_payload = json.loads(store[("bucket", "runs/demo/npa-workflow/status.json")])
     assert status_payload["status"] == "running"
+
+
+def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
+    """The runtime ledger is an additional document; RunManifest is untouched."""
+
+    from npa.orchestration.npa_workflow.run_state import (
+        RUNTIME_SCHEMA_VERSION,
+        RuntimeRunState,
+        runtime_key,
+    )
+
+    store: dict[tuple[str, str], bytes] = {}
+    state_store = RunStateStore(
+        bucket="bucket",
+        prefix="runs/demo",
+        reader=lambda bucket, key: store[(bucket, key)].decode("utf-8"),
+        writer=lambda bucket, key, body: store.__setitem__((bucket, key), body),
+    )
+
+    assert state_store.read_runtime_state() is None  # nothing written yet
+
+    runtime_state = RuntimeRunState(
+        workflow="demo", run_id="demo-1", api_version="npa.workflow/v0.0.1"
+    )
+    runtime_state.record_wave({"key": "001|serial|:a:-", "status": "running", "job_id": "7"})
+    state_store.write_runtime_state(runtime_state)
+    # Same key updated in place, not appended twice.
+    runtime_state.record_wave({"key": "001|serial|:a:-", "status": "succeeded", "job_id": "7"})
+    runtime_state.decisions.append({"decision": "promote_checkpoint"})
+    runtime_state.watermarks["ingest"] = {"objects": 2}
+    state_store.write_runtime_state(runtime_state)
+
+    loaded = state_store.read_runtime_state()
+    assert loaded is not None
+    assert loaded.schema_version == RUNTIME_SCHEMA_VERSION
+    assert loaded.run_prefix_uri == "s3://bucket/runs/demo"
+    assert [wave["status"] for wave in loaded.waves] == ["succeeded"]
+    assert loaded.completed_wave("001|serial|:a:-") is not None
+    assert loaded.completed_wave("002|serial|:b:-") is None
+    assert loaded.decisions[0]["decision"] == "promote_checkpoint"
+    assert loaded.watermarks["ingest"]["objects"] == 2
+    # Written next to, not instead of, the run manifest.
+    assert ("bucket", runtime_key("runs/demo")) in store
+    assert ("bucket", "runs/demo/npa-workflow/manifest.json") not in store
+
+
+def test_completed_wave_ignores_failed_attempts() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="demo-1")
+    state.record_wave({"key": "001", "status": "failed", "attempt": 1})
+    assert state.completed_wave("001") is None
+    state.record_wave({"key": "001", "status": "succeeded", "attempt": 2})
+    assert state.completed_wave("001")["attempt"] == 2
