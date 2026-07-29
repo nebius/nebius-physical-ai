@@ -19,6 +19,7 @@ list  List durable S3 workflow runs.
 cancel  Cancel a managed workflow job and explicitly tear down its cluster.
 teardown  Destroy both VMs from a distill workflow run.
 distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
+stage-src  Upload the local npa package to S3 for image-less workflow steps.
 validate-spec  Validate an NPA workflow specification file.
 plan-spec  Expand an NPA workflow spec into an execution plan (dry-run).
 run-spec  Run or plan an NPA workflow spec.
@@ -44,6 +45,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `cancel` | Cancel a managed workflow job and explicitly tear down its cluster. |
 | `teardown` | Destroy both VMs from a distill workflow run. |
 | `distill` | Run expert distillation: L40S (Genesis) + H100 (LeRobot). |
+| `stage-src` | Upload the local npa package to S3 for image-less workflow steps. |
 | `validate-spec` | Validate an NPA workflow specification file. |
 | `plan-spec` | Expand an NPA workflow spec into an execution plan (dry-run). |
 | `run-spec` | Run or plan an NPA workflow spec. |

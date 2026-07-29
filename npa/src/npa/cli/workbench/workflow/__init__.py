@@ -244,6 +244,20 @@ def submit_cmd(
         "--secret-env",
         help="Environment variable name to pass to SkyPilot as a secret.",
     ),
+    stage_src: bool = typer.Option(
+        False,
+        "--stage-src/--no-stage-src",
+        help=(
+            "Upload the local npa package to s3://<config.bucket>/npa-src/npa/ "
+            "and use it as NPA_SRC_S3_URI, so image-less steps (Token Factory "
+            "tools, run.shell) can install npa on the worker."
+        ),
+    ),
+    skip_preflight: bool = typer.Option(
+        False,
+        "--skip-preflight",
+        help="Skip the pre-submit prerequisite checks (SkyPilot CLI, npa source, bucket).",
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text,
         "--output-format",
@@ -311,6 +325,29 @@ def submit_cmd(
 
     prepared_npa = None
     if is_npa_workflow_spec(yaml_path):
+        # One prerequisite report instead of a sequence of one-at-a-time
+        # failures spread over the render, the SkyPilot resolver and the
+        # controller. Everything the operator still has to do is listed once,
+        # each with the command that fixes it.
+        spec_config = _npa_spec_config(yaml_path, substitutions)
+        if stage_src:
+            staged_uri = _stage_npa_src_for_submit(
+                spec_config,
+                s3_bucket=s3_bucket,
+                s3_endpoint=s3_endpoint,
+            )
+            os.environ["NPA_SRC_S3_URI"] = staged_uri
+        if not skip_preflight:
+            missing = _submit_prerequisites(
+                spec_config,
+                sky_bin=sky_bin,
+                image=image,
+                plan_only=plan_only,
+            )
+            if missing:
+                _fail_missing_prerequisites(yaml_path, missing)
+                return
+        _warn_placeholder_bucket(spec_config)
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
                 ensure_infra_present,
@@ -577,6 +614,146 @@ def _substitute_workflow_vars(yaml_path: Path, substitutions: dict[str, str]) ->
     for key, value in substitutions.items():
         content = content.replace(f"${{{key}}}", value)
     return content
+
+
+#: Bucket values that are spec placeholders rather than real storage. Shipped
+#: specs default to ``example-bucket`` so they validate offline; planning or
+#: running against that value looks like a real plan but writes nowhere useful.
+_PLACEHOLDER_BUCKETS = frozenset({"", "example-bucket", "your-bucket", "my-bucket"})
+
+
+def _is_placeholder_bucket(bucket: str) -> bool:
+    value = str(bucket or "").strip()
+    value = value.removeprefix("s3://").strip("/")
+    if not value or value in _PLACEHOLDER_BUCKETS:
+        return True
+    return "<" in value or ">" in value
+
+
+def _warn_placeholder_bucket(config) -> None:
+    """Warn when a spec is being planned/run against its placeholder bucket."""
+    bucket = str((config or {}).get("bucket", "") or "")
+    if not _is_placeholder_bucket(bucket):
+        return
+    shown = bucket or "<unset>"
+    typer.echo(
+        f"Warning: config.bucket is {shown!r}, a spec placeholder rather than "
+        "your configured storage. Pass `--var bucket=<your-bucket>` so artifact "
+        "URIs point at a bucket you can actually read.",
+        err=True,
+    )
+
+
+def _npa_spec_config(yaml_path: Path, substitutions: dict[str, str]) -> dict:
+    """Return an npa.workflow spec's config with ``--var`` overrides applied."""
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    try:
+        spec = load_spec(yaml_path)
+    except NpaWorkflowError:
+        # Let the real load happen later so its error is the one reported.
+        return dict(substitutions)
+    config = dict(spec.config)
+    config.update(substitutions)
+    return config
+
+
+def _stage_npa_src_for_submit(
+    spec_config: dict,
+    *,
+    s3_bucket: str = "",
+    s3_endpoint: str = "",
+) -> str:
+    """Upload the local npa package and return the resulting NPA_SRC_S3_URI."""
+    from npa.orchestration.npa_workflow.src_staging import SrcStagingError, stage_npa_source
+
+    bucket = str(s3_bucket or spec_config.get("bucket", "") or "").strip()
+    if _is_placeholder_bucket(bucket):
+        _fail(
+            "--stage-src needs a real bucket. Pass --var bucket=<your-bucket> "
+            "(or --s3-bucket <your-bucket>)."
+        )
+        return ""
+    try:
+        return stage_npa_source(
+            bucket=bucket,
+            endpoint_url=s3_endpoint,
+            on_status=lambda message: typer.echo(f"  {message}", err=True),
+        )
+    except SrcStagingError as exc:
+        _fail(str(exc))
+        return ""
+
+
+def _submit_prerequisites(
+    spec_config: dict,
+    *,
+    sky_bin: str,
+    image: str,
+    plan_only: bool,
+) -> list[tuple[str, str]]:
+    """Return ``[(missing, remedy)]`` for an npa.workflow submit.
+
+    A first submit used to fail one prerequisite at a time — no npa source, then
+    no SkyPilot CLI, then a placeholder bucket — each as a separate run. Collect
+    them so the operator sees the whole list once.
+    """
+    from npa.orchestration.npa_workflow.src_staging import resolve_src_uri_from_env
+
+    missing: list[tuple[str, str]] = []
+
+    if not plan_only:
+        from npa.orchestration.skypilot._bin import (
+            SkyPilotConfigError,
+            SkyPilotNotInstalledError,
+            resolve_sky_bin,
+        )
+
+        try:
+            resolve_sky_bin(sky_bin or None)
+        except (SkyPilotNotInstalledError, SkyPilotConfigError) as exc:
+            missing.append(
+                (
+                    f"SkyPilot CLI is not usable ({exc})",
+                    "run `npa skypilot bootstrap` (it now saves skypilot.sky_bin "
+                    "into ~/.npa/config.yaml)",
+                )
+            )
+
+    # Image-less steps install npa from S3 on the worker. `--image none` pins
+    # every task to SkyPilot's default image, so it needs the source too.
+    image_value = str(image or "").strip().lower()
+    image_pins_tasks = bool(image_value) and image_value not in {"none", "default", "-"}
+    if not image_pins_tasks and not resolve_src_uri_from_env():
+        missing.append(
+            (
+                "npa source for image-less steps (NPA_SRC_S3_URI is unset)",
+                "pass --stage-src, or set NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa, "
+                "or pin --image <registry>/npa-<tool>:<tag>",
+            )
+        )
+
+    bucket = str((spec_config or {}).get("bucket", "") or "")
+    if not plan_only and _is_placeholder_bucket(bucket):
+        missing.append(
+            (
+                f"config.bucket is the spec placeholder {bucket or '<unset>'!r}",
+                "pass --var bucket=<your-bucket>",
+            )
+        )
+    return missing
+
+
+def _fail_missing_prerequisites(
+    yaml_path: Path, missing: list[tuple[str, str]]
+) -> None:
+    lines = [f"Cannot submit {yaml_path.name}: missing prerequisites:"]
+    for item, remedy in missing:
+        lines.append(f"  - {item}")
+        lines.append(f"      fix: {remedy}")
+    lines.append("  (bypass these checks with --skip-preflight)")
+    _fail("\n".join(lines))
 
 
 def _warn_unresolved_placeholders(content: str) -> None:
@@ -1451,6 +1628,65 @@ def _load_npa_workflow(path: Path):
         _fail(str(exc))
 
 
+@app.command("stage-src")
+def stage_src_cmd(
+    bucket: str = typer.Option(
+        "",
+        "--bucket",
+        help="Destination bucket (name or s3://name) for the npa package copy.",
+    ),
+    prefix: str = typer.Option(
+        "",
+        "--prefix",
+        help="Key prefix inside the bucket. Defaults to npa-src/npa.",
+    ),
+    endpoint: str = typer.Option(
+        "",
+        "--endpoint",
+        help="S3-compatible endpoint. Defaults to AWS_ENDPOINT_URL / NEBIUS_S3_ENDPOINT.",
+    ),
+) -> None:
+    """Upload the local npa package to S3 for image-less workflow steps.
+
+    Workflow tasks that run on SkyPilot's default image (Token Factory tools and
+    `run.shell` states) install `npa` by syncing `$NPA_SRC_S3_URI` on the worker.
+    This publishes that copy and prints the export line to use, so a first submit
+    does not dead-end on "planned step ... has no workbench image and
+    NPA_SRC_S3_URI is unset".
+    """
+    from npa.orchestration.npa_workflow.src_staging import (
+        DEFAULT_SRC_PREFIX,
+        SrcStagingError,
+        stage_npa_source,
+    )
+
+    target = bucket.strip()
+    if not target:
+        from npa.clients.credentials import load_credentials
+
+        target = str(load_credentials().s3_bucket or "").strip()
+    if not target:
+        _fail(
+            "No bucket to stage into. Pass --bucket <your-bucket> or run "
+            "`npa configure` so storage.bucket is set."
+        )
+        return
+
+    try:
+        uri = stage_npa_source(
+            bucket=target,
+            prefix=prefix or DEFAULT_SRC_PREFIX,
+            endpoint_url=endpoint,
+            on_status=lambda message: typer.echo(f"  {message}", err=True),
+        )
+    except SrcStagingError as exc:
+        _fail(str(exc))
+        return
+
+    typer.echo(f"npa_src_s3_uri: {uri}")
+    typer.echo(f"export NPA_SRC_S3_URI={uri}")
+
+
 @app.command("validate-spec")
 def validate_spec_cmd(
     yaml_path: Path = typer.Argument(help="NPA workflow spec (apiVersion: npa.workflow/v0.0.1)."),
@@ -1482,13 +1718,25 @@ def plan_spec_cmd(
         "--assume-decision",
         help="Plan branch after decide states (promote_checkpoint or loop_back).",
     ),
+    var: list[str] = typer.Option(
+        [],
+        "--var",
+        help=(
+            "Config override as KEY=VALUE, merged into the spec's config "
+            "(same as `submit --var`). Without `--var bucket=<your-bucket>` the "
+            "plan uses the spec's `example-bucket` placeholder."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON plan."),
 ) -> None:
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
 
     from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
+    spec = merge_config_overrides(spec, _parse_submit_vars(var))
+    _warn_placeholder_bucket(spec.config)
     resolved_run_id = run_id or f"{spec.name}-plan"
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
@@ -1523,6 +1771,15 @@ def run_spec_cmd(
         help="Execute tool commands locally (default: plan only).",
     ),
     assume_decision: str = typer.Option("", "--assume-decision", help="Branch assumption for planning."),
+    var: list[str] = typer.Option(
+        [],
+        "--var",
+        help=(
+            "Config override as KEY=VALUE, merged into the spec's config "
+            "(same as `submit --var`). Without `--var bucket=<your-bucket>` the "
+            "run uses the spec's `example-bucket` placeholder."
+        ),
+    ),
     persist_state: bool = typer.Option(
         False,
         "--persist-state",
@@ -1544,8 +1801,11 @@ def run_spec_cmd(
 
     from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan, run_workflow
     from npa.orchestration.npa_workflow.scheduler import build_scheduler_plan
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
+    spec = merge_config_overrides(spec, _parse_submit_vars(var))
+    _warn_placeholder_bucket(spec.config)
     resolved_run_id = run_id or f"{spec.name}-{int(time.time())}"
     resolved_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "")
     try:

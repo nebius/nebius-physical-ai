@@ -363,6 +363,9 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
             "cr.example.invalid/reg",
             "--submit-timeout",
             "30",
+            # Rendering test: the real SkyPilot CLI / npa-source prerequisites
+            # are mocked out, so skip the submit preflight.
+            "--skip-preflight",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -417,6 +420,7 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
             "--plan-only",
             "--registry",
             "cr.eu-north1.nebius.cloud/reg",
+            "--skip-preflight",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -452,6 +456,7 @@ def test_workbench_workflow_submit_npa_var_merges_config(
             "bucket=my-live-bucket",
             "--registry",
             "cr.example.invalid/reg",
+            "--skip-preflight",
         ],
     )
     assert result.exit_code == 0, result.output
