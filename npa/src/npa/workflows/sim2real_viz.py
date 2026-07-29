@@ -16,6 +16,7 @@ but it MUST produce a non-empty ``.rrd`` whenever the SDK is available.
 from __future__ import annotations
 import logging
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass, field
@@ -31,6 +32,9 @@ APPLICATION_ID = "npa_sim2real_loop"
 TIMELINE = "frame_time"
 ROLLOUT_FRAME_SECONDS = 0.5
 HELDOUT_STEP_SECONDS = 1.0
+SYNTHETIC_STEP_SECONDS = 1.0
+SYNTHETIC_DATASET_SAMPLE_LIMIT = 6
+SYNTHETIC_AUGMENT_SAMPLE_LIMIT = 12
 CRITIQUE_COLOR = (255, 136, 0, 255)
 FRANKA_HOME_JOINTS = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785)
 
@@ -104,6 +108,7 @@ class Sim2RealVizResult:
     heldout_env_count: int = 0
     heldout_frame_count: int = 0
     pointcloud_frame_count: int = 0
+    synthetic_frame_count: int = 0
     mp4_paths: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -116,6 +121,7 @@ class Sim2RealVizResult:
             "heldout_env_count": self.heldout_env_count,
             "heldout_frame_count": self.heldout_frame_count,
             "pointcloud_frame_count": self.pointcloud_frame_count,
+            "synthetic_frame_count": self.synthetic_frame_count,
             "mp4_paths": list(self.mp4_paths),
         }
 
@@ -167,10 +173,12 @@ def emit_sim2real_rerun(
 
     heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
     has_heldout_cameras = bool(heldout_episodes)
+    has_synthetic_data = _has_synthetic_visual_data(local_dir)
     blueprint = _build_blueprint(
         rrb,
         has_heldout_cameras=has_heldout_cameras,
         heldout_env_ids=[env_id for env_id, _frames in heldout_episodes],
+        has_synthetic_data=has_synthetic_data,
     )
     recording = rr.RecordingStream(APPLICATION_ID)
     rr.save(output_rrd, default_blueprint=blueprint, recording=recording)
@@ -181,9 +189,11 @@ def emit_sim2real_rerun(
     rollout_count = 0
     frame_count = 0
     heldout_frame_count = 0
+    synthetic_frame_count = 0
     mp4_paths: list[str] = []
     critique_panel_rows: list[str] = []
-    _log_scene_overview(rr, recording, inner_evidence, counts)
+    if not has_heldout_cameras:
+        _log_scene_overview(rr, recording, inner_evidence, counts)
 
     iterations = inner_evidence.get("iterations") or []
     for record in iterations:
@@ -219,14 +229,14 @@ def emit_sim2real_rerun(
                 if mp4_path is not None:
                     mp4_paths.append(str(mp4_path))
 
-    _log_vlm_critique_panel(rr, recording, critique_panel_rows, counts)
     _log_reward_trend(rr, recording, inner_evidence.get("reward_trend") or [], counts)
+    synthetic_frame_count = _log_synthetic_data(rr, recording, local_dir, counts)
     heldout_frame_count, heldout_seconds = _log_heldout_cameras(
         rr,
         recording,
         heldout_episodes,
         counts,
-        start_seconds=seconds,
+        start_seconds=0.0 if has_heldout_cameras else seconds,
     )
     seconds = max(seconds, heldout_seconds)
     pointcloud_frame_count = _log_heldout_pointclouds(
@@ -242,19 +252,25 @@ def emit_sim2real_rerun(
         (heldout_report or {}).get("success_rate"),
         counts,
     )
+    _log_vlm_critique_panel(rr, recording, critique_panel_rows, counts)
+    _log_summary_documents(
+        rr,
+        recording,
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        critique_panel_rows=critique_panel_rows,
+        counts=counts,
+    )
 
     _disconnect(rr, recording)
 
     if not output_rrd.exists() or output_rrd.stat().st_size == 0:
         raise Sim2RealVizError(f"Rerun recording was not written: {output_rrd}")
-    if (
-        frame_count == 0
-        and rollout_count == 0
-        and heldout_env_count == 0
-        and heldout_frame_count == 0
-    ):
+    if frame_count == 0 and rollout_count == 0 and heldout_env_count == 0 and heldout_frame_count == 0:
         raise Sim2RealVizError(
-            "Sim2Real Rerun recording has no rollout frames, held-out cameras, signal, or held-out content"
+            "Sim2Real Rerun recording has no real rollout frames, held-out cameras, or held-out scores; "
+            f"synthetic descriptor previews logged={synthetic_frame_count}"
         )
 
     return Sim2RealVizResult(
@@ -266,6 +282,7 @@ def emit_sim2real_rerun(
         heldout_env_count=heldout_env_count,
         heldout_frame_count=heldout_frame_count,
         pointcloud_frame_count=pointcloud_frame_count,
+        synthetic_frame_count=synthetic_frame_count,
         mp4_paths=mp4_paths,
     )
 
@@ -357,12 +374,695 @@ def _log_vlm_critique_panel(
     if not entries:
         return
     _set_time(rr, recording, 0.0)
+    body = "# VLM critiques by rollout\n\n" + "\n\n---\n\n".join(entries)
     rr.log(
         "rollouts/summary/critique",
-        rr.TextDocument("# VLM critiques by rollout\n\n" + "\n\n---\n\n".join(entries), media_type="text/markdown"),
+        rr.TextDocument(body, media_type="text/markdown"),
         recording=recording,
     )
     _bump(counts, "rollouts/summary/critique")
+    rr.log(
+        "summary/vlm_critiques",
+        rr.TextDocument(body, media_type="text/markdown"),
+        recording=recording,
+    )
+    _bump(counts, "summary/vlm_critiques")
+
+
+def _log_summary_documents(
+    rr: Any,
+    recording: Any,
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+    critique_panel_rows: list[str],
+    counts: dict[str, int],
+) -> None:
+    index = _build_visual_index(
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        critique_panel_rows=critique_panel_rows,
+    )
+    reports_dir = Path(local_dir) / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    (reports_dir / "sim2real-visual-index.json").write_text(
+        json.dumps(index, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    documents = {
+        "summary/run_success": _run_success_markdown(index),
+        "summary/augmentation": _augmentation_markdown(index),
+        "summary/artifacts": _artifacts_markdown(index),
+    }
+    _set_time(rr, recording, 0.0)
+    for entity, body in documents.items():
+        if not body.strip():
+            continue
+        rr.log(entity, rr.TextDocument(body, media_type="text/markdown"), recording=recording)
+        _bump(counts, entity)
+
+
+def _build_visual_index(
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+    critique_panel_rows: list[str],
+) -> dict[str, Any]:
+    report = _read_json(Path(local_dir) / "reports" / "sim2real-report.json")
+    decision = _read_json(Path(local_dir) / "outer_loop" / "decision.json")
+    augment = _read_json(Path(local_dir) / "augment" / "manifest.json")
+    augment_index = _read_json(Path(local_dir) / "augment" / "frames" / "index.json")
+    tokens = _read_json(Path(local_dir) / "tokens" / "manifest.json")
+    split = _read_json(Path(local_dir) / "envs" / "manifest" / "split-manifest.json")
+    if not split:
+        split = _read_json(Path(local_dir) / "envs" / "split-manifest.json")
+    full_heldout = dict(heldout_report or {})
+    if not full_heldout:
+        full_heldout = dict((report.get("outer_loop") or {}).get("latest_heldout_report") or {})
+
+    return {
+        "schema": "npa.sim2real.visual_index.v1",
+        "run_id": report.get("run_id") or decision.get("run_id") or "",
+        "success": {
+            "status": report.get("status") or "",
+            "decision": decision.get("decision") or "",
+            "success_rate": _first_present(decision.get("success_rate"), full_heldout.get("success_rate")),
+            "threshold": _first_present(decision.get("threshold"), report.get("threshold")),
+            "checkpoint_uri": decision.get("checkpoint_uri") or "",
+            "heldout_envs": [
+                {
+                    "env_id": item.get("env_id"),
+                    "score": item.get("score"),
+                    "success": item.get("success"),
+                    "distance_m": item.get("distance_m"),
+                }
+                for item in (full_heldout.get("per_env") or [])[:8]
+                if isinstance(item, dict)
+            ],
+        },
+        "augmentation": {
+            "status": augment.get("status") or "",
+            "mode": augment.get("mode") or "",
+            "stage": augment.get("stage") or "",
+            "frame_count": _first_present(augment.get("frame_count"), augment_index.get("frame_count")),
+            "image": augment.get("image") or "",
+            "input_uri": augment.get("input_uri") or "",
+            "output_uri": augment.get("output_uri") or "",
+            "sample_frames": (augment_index.get("frames") or [])[:8],
+        },
+        "dataset": {
+            "raw_count": split.get("raw_count"),
+            "train_count": _first_present(split.get("train_count"), tokens.get("train_env_count")),
+            "heldout_count": _first_present(split.get("heldout_count"), tokens.get("heldout_env_count")),
+            "disjoint": split.get("disjoint"),
+            "seed": split.get("seed"),
+            "train_samples": _jsonl_samples(Path(local_dir) / "envs" / "train" / "envs.jsonl"),
+            "heldout_samples": _jsonl_samples(Path(local_dir) / "envs" / "heldout" / "envs.jsonl"),
+        },
+        "vlm": {
+            "critique_count": len(critique_panel_rows),
+            "model": _first_sample_value(inner_evidence, "sample_vlm_eval", "model"),
+            "score": _first_sample_value(inner_evidence, "sample_vlm_eval", "score"),
+        },
+        "synthetic": _synthetic_visual_index(Path(local_dir)),
+        "artifact_counts": _artifact_counts(Path(local_dir)),
+        "key_artifacts": _key_artifacts(Path(local_dir)),
+    }
+
+
+def _run_success_markdown(index: dict[str, Any]) -> str:
+    success = index.get("success") or {}
+    rows = [
+        ("Run", index.get("run_id") or "unknown"),
+        ("Status", success.get("status") or "unknown"),
+        ("Decision", success.get("decision") or "unknown"),
+        ("Held-out success rate", _format_value(success.get("success_rate"))),
+        ("Threshold", _format_value(success.get("threshold"))),
+        ("Final checkpoint", success.get("checkpoint_uri") or "not recorded"),
+    ]
+    per_env = success.get("heldout_envs") or []
+    lines = ["# Sim2Real success", "", _markdown_table(["Metric", "Value"], rows)]
+    if per_env:
+        lines.extend(
+            [
+                "",
+                "## Held-out eval",
+                "",
+                _markdown_table(
+                    ["Env", "Success", "Score", "Distance m"],
+                    [
+                        (
+                            item.get("env_id") or "",
+                            _format_value(item.get("success")),
+                            _format_value(item.get("score")),
+                            _format_value(item.get("distance_m")),
+                        )
+                        for item in per_env
+                    ],
+                ),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _augmentation_markdown(index: dict[str, Any]) -> str:
+    aug = index.get("augmentation") or {}
+    dataset = index.get("dataset") or {}
+    synthetic = index.get("synthetic") or {}
+    lines = [
+        "# Augmentation and dataset",
+        "",
+        "## Cosmos transfer augmentation",
+        "",
+        _markdown_table(
+            ["Field", "Value"],
+            [
+                ("Status", aug.get("status") or "unknown"),
+                ("Mode", aug.get("mode") or "unknown"),
+                ("Frame descriptors", _format_value(aug.get("frame_count"))),
+                ("Image", aug.get("image") or "not recorded"),
+                ("Input", aug.get("input_uri") or "not recorded"),
+                ("Output", aug.get("output_uri") or "not recorded"),
+            ],
+        ),
+        "",
+        "## Environment split",
+        "",
+        _markdown_table(
+            ["Field", "Value"],
+            [
+                ("Raw envs", _format_value(dataset.get("raw_count"))),
+                ("Train envs", _format_value(dataset.get("train_count"))),
+                ("Held-out envs", _format_value(dataset.get("heldout_count"))),
+                ("Disjoint split", _format_value(dataset.get("disjoint"))),
+                ("Seed", _format_value(dataset.get("seed"))),
+            ],
+        ),
+        "",
+        "## Rerun synthetic-data visuals",
+        "",
+        _markdown_table(
+            ["Field", "Value"],
+            [
+                ("Synthetic viewport", synthetic.get("view_origin") or "synthetic"),
+                ("Dataset samples visualized", _format_value(synthetic.get("dataset_sample_count"))),
+                ("Actual dataset camera PNGs", _format_value(synthetic.get("dataset_camera_image_count"))),
+                ("Dataset descriptor previews", _format_value(synthetic.get("dataset_descriptor_preview_count"))),
+                ("Augmentation samples visualized", _format_value(synthetic.get("augmentation_sample_count"))),
+                ("Actual augmentation PNGs", _format_value(synthetic.get("augmentation_image_count"))),
+                ("Augmentation descriptor previews", _format_value(synthetic.get("augmentation_descriptor_preview_count"))),
+            ],
+        ),
+    ]
+    samples = dataset.get("heldout_samples") or dataset.get("train_samples") or []
+    if samples:
+        lines.extend(["", "## Sample env descriptors", ""])
+        for sample in samples[:3]:
+            lines.append(
+                "- `{env_id}` `{asset}` friction `{friction}` lighting `{lighting}` augmented `{augmented}`".format(
+                    env_id=sample.get("env_id", "env"),
+                    asset=((sample.get("scene") or {}).get("simready_asset") or "asset"),
+                    friction=_format_value((sample.get("physics") or {}).get("friction")),
+                    lighting=_format_value((sample.get("physics") or {}).get("lighting_lux")),
+                    augmented=((sample.get("scene") or {}).get("augmented_frame_uri") or "not recorded"),
+                )
+            )
+    return "\n".join(lines)
+
+
+def _artifacts_markdown(index: dict[str, Any]) -> str:
+    counts = index.get("artifact_counts") or {}
+    artifacts = index.get("key_artifacts") or {}
+    vlm = index.get("vlm") or {}
+    lines = [
+        "# Visual artifact index",
+        "",
+        "## Counts",
+        "",
+        _markdown_table(["Artifact group", "Count"], sorted((key, value) for key, value in counts.items())),
+        "",
+        "## VLM signal",
+        "",
+        _markdown_table(
+            ["Field", "Value"],
+            [
+                ("Model", vlm.get("model") or "unknown"),
+                ("Sample score", _format_value(vlm.get("score"))),
+                ("Critique documents", _format_value(vlm.get("critique_count"))),
+            ],
+        ),
+        "",
+        "## Key artifacts",
+        "",
+        _markdown_table(["Name", "Path"], sorted((key, value) for key, value in artifacts.items())),
+    ]
+    return "\n".join(lines)
+
+
+def _synthetic_visual_index(local_dir: Path) -> dict[str, Any]:
+    dataset_samples = _synthetic_dataset_samples(local_dir)
+    dataset_camera_count = 0
+    dataset_view_count = 0
+    for _split, sample in dataset_samples:
+        for camera_name in _sample_camera_names(sample):
+            dataset_view_count += 1
+            if _local_camera_image_for_sample(local_dir, sample, camera_name) is not None:
+                dataset_camera_count += 1
+    augment_samples = _augmentation_visual_samples(local_dir)
+    augment_image_count = sum(1 for _frame_id, _payload, frame in augment_samples if frame is not None)
+    return {
+        "view_origin": "synthetic",
+        "dataset_sample_count": len(dataset_samples),
+        "dataset_camera_view_count": dataset_view_count,
+        "dataset_camera_image_count": dataset_camera_count,
+        "dataset_descriptor_preview_count": max(0, dataset_view_count - dataset_camera_count),
+        "augmentation_sample_count": len(augment_samples),
+        "augmentation_image_count": augment_image_count,
+        "augmentation_descriptor_preview_count": max(0, len(augment_samples) - augment_image_count),
+    }
+
+
+def _has_synthetic_visual_data(local_dir: Path) -> bool:
+    root = Path(local_dir)
+    return any(
+        path.is_file()
+        for path in (
+            root / "envs" / "train" / "envs.jsonl",
+            root / "envs" / "heldout" / "envs.jsonl",
+            root / "augment" / "frames" / "index.json",
+            root / "augment" / "manifest.json",
+        )
+    ) or any((root / "augment" / "frames").glob("frame-*.*"))
+
+
+def _log_synthetic_data(
+    rr: Any,
+    recording: Any,
+    local_dir: Path,
+    counts: dict[str, int],
+) -> int:
+    """Log synthetic dataset and augmentation samples as image streams.
+
+    If real RGB camera PNGs are present locally, those are logged. Current staged
+    runs often contain env/augment descriptors without persisted camera pixels;
+    those are rendered as labeled descriptor-preview tiles so the viewer exposes
+    the synthetic data surface without pretending descriptor metadata is footage.
+    """
+
+    logged = 0
+    dataset_samples = _synthetic_dataset_samples(Path(local_dir))
+    for sample_index, (split, sample) in enumerate(dataset_samples):
+        env_id = str(sample.get("env_id") or f"{split}-{sample_index:04d}")
+        cameras = _sample_camera_names(sample)
+        seconds = sample_index * SYNTHETIC_STEP_SECONDS
+        for camera_index, camera_name in enumerate(cameras):
+            frame = _local_camera_image_for_sample(Path(local_dir), sample, camera_name)
+            if frame is None:
+                frame = _synthetic_env_preview(sample, split=split, camera_name=camera_name, index=sample_index)
+            _set_time(rr, recording, seconds + camera_index * 0.01)
+            image = _rerun_image(rr, frame)
+            entity = f"synthetic/dataset/{split}/{env_id}/{camera_name}"
+            rr.log(entity, image, recording=recording)
+            _bump(counts, entity)
+            if logged == 0:
+                rr.log("synthetic/preview", image, recording=recording)
+                _bump(counts, "synthetic/preview")
+            logged += 1
+
+    for frame_index, (frame_id, payload, frame) in enumerate(_augmentation_visual_samples(Path(local_dir))):
+        if frame is None:
+            frame = _augmentation_preview(payload, index=frame_index)
+        _set_time(rr, recording, frame_index * SYNTHETIC_STEP_SECONDS)
+        image = _rerun_image(rr, frame)
+        entity = f"synthetic/augmentation/{frame_id}/image"
+        rr.log(entity, image, recording=recording)
+        _bump(counts, entity)
+        if logged == 0:
+            rr.log("synthetic/preview", image, recording=recording)
+            _bump(counts, "synthetic/preview")
+        logged += 1
+    return logged
+
+
+def _synthetic_dataset_samples(local_dir: Path, *, limit_per_split: int = SYNTHETIC_DATASET_SAMPLE_LIMIT) -> list[tuple[str, dict[str, Any]]]:
+    samples: list[tuple[str, dict[str, Any]]] = []
+    for split in ("train", "heldout"):
+        for sample in _jsonl_samples(Path(local_dir) / "envs" / split / "envs.jsonl", limit=limit_per_split):
+            samples.append((split, sample))
+    return samples
+
+
+def _sample_camera_names(sample: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for section in ("camera_obs", "cameras"):
+        values = sample.get(section)
+        if isinstance(values, dict):
+            names.extend(str(name) for name in values.keys() if str(name))
+    ordered = sorted(dict.fromkeys(names))
+    return ordered or ["workspace"]
+
+
+def _local_camera_image_for_sample(local_dir: Path, sample: dict[str, Any], camera_name: str) -> np.ndarray | None:
+    for section in ("camera_obs", "cameras"):
+        cameras = sample.get(section)
+        if not isinstance(cameras, dict):
+            continue
+        spec = cameras.get(camera_name)
+        if not isinstance(spec, dict):
+            continue
+        uri = str(spec.get("uri") or "")
+        if not uri:
+            continue
+        path = _local_artifact_path_from_uri(local_dir, uri)
+        if path is not None:
+            image = _read_image(path)
+            if image is not None:
+                return image
+    return None
+
+
+def _augmentation_visual_samples(
+    local_dir: Path,
+    *,
+    limit: int = SYNTHETIC_AUGMENT_SAMPLE_LIMIT,
+) -> list[tuple[str, dict[str, Any], np.ndarray | None]]:
+    frames_dir = Path(local_dir) / "augment" / "frames"
+    index = _read_json(frames_dir / "index.json")
+    manifest = _read_json(Path(local_dir) / "augment" / "manifest.json")
+    records: list[dict[str, Any]] = []
+    if isinstance(index.get("frames"), list):
+        records = [item for item in index["frames"] if isinstance(item, dict)]
+    if not records:
+        records = [{"frame_id": path.stem, "local": str(path)} for path in sorted(frames_dir.glob("frame-*.*"))]
+    if not records:
+        frame_count = int(_safe_float(manifest.get("frame_count"), 0.0))
+        frames_uri = str(manifest.get("augmented_frames_uri") or manifest.get("output_uri") or "").rstrip("/")
+        perturbations = ["lighting", "texture", "background", "contrast"]
+        records = [
+            {
+                "frame_id": f"frame-{index_no:05d}",
+                "uri": f"{frames_uri}/frame-{index_no:05d}.json" if frames_uri else "",
+                "source_dataset_uri": manifest.get("input_uri") or "",
+                "perturbation": perturbations[index_no % len(perturbations)],
+                "status": manifest.get("status") or "recorded",
+                "mode": manifest.get("mode") or "",
+                "image": manifest.get("image") or "",
+            }
+            for index_no in range(min(limit, frame_count))
+        ]
+
+    samples: list[tuple[str, dict[str, Any], np.ndarray | None]] = []
+    seen: set[str] = set()
+    for record in records:
+        if len(samples) >= limit:
+            break
+        frame_id = str(record.get("frame_id") or Path(str(record.get("local") or record.get("uri") or "")).stem)
+        if not frame_id or frame_id in seen:
+            continue
+        seen.add(frame_id)
+        json_path = frames_dir / f"{frame_id}.json"
+        payload_path = json_path if json_path.is_file() else _local_artifact_path_from_uri(local_dir, str(record.get("uri") or ""))
+        payload = _read_json(payload_path) if payload_path is not None else {}
+        if not payload:
+            payload = dict(record)
+        image_path = frames_dir / f"{frame_id}.png"
+        if not image_path.is_file():
+            image_path = _local_artifact_path_from_uri(local_dir, str(record.get("uri") or ""))
+        frame = _read_image(image_path) if image_path is not None else None
+        samples.append((frame_id, payload, frame))
+    return samples
+
+
+def _local_artifact_path_from_uri(local_dir: Path, uri: str) -> Path | None:
+    ref = str(uri or "").strip()
+    if not ref:
+        return None
+    if ref.startswith("file://"):
+        path = Path(ref.removeprefix("file://"))
+        return path if path.is_file() else None
+    path = Path(ref)
+    if not ref.startswith("s3://") and path.is_file():
+        return path
+    markers = ("/envs/", "/augment/", "/eval/", "/actions/", "/vlm_eval/", "/training_signal/", "/reports/")
+    for marker in markers:
+        if marker in ref:
+            rel = ref.split(marker, 1)[1]
+            candidate = Path(local_dir) / marker.strip("/") / rel
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _synthetic_env_preview(
+    sample: dict[str, Any],
+    *,
+    split: str,
+    camera_name: str,
+    index: int,
+) -> np.ndarray:
+    physics = sample.get("physics") if isinstance(sample.get("physics"), dict) else {}
+    scene = sample.get("scene") if isinstance(sample.get("scene"), dict) else {}
+    env_id = str(sample.get("env_id") or f"{split}-{index:04d}")
+    friction = _safe_float(physics.get("friction"), 0.8)
+    lighting = _safe_float(physics.get("lighting_lux"), 650.0)
+    mass = _safe_float(physics.get("mass_scale"), 1.0)
+    asset = str(scene.get("simready_asset") or "simready://unknown")
+    augmented = str(scene.get("augmented_frame_uri") or "")
+    accent = _color_from_text(f"{env_id}:{camera_name}:{asset}")
+    rows = [
+        f"{split.upper()} {env_id}",
+        f"CAM {camera_name}",
+        f"ASSET {Path(asset).name or asset.rsplit('/', 1)[-1]}",
+        f"FRICTION {friction:.2f} MASS {mass:.2f}",
+        f"LIGHT {lighting:.0f} LUX",
+        "AUGMENTED REF" if augmented else "NO AUGMENT REF",
+    ]
+    image = _descriptor_preview_image(rows, accent=accent, seed_text=f"{env_id}:{asset}")
+    _draw_env_glyph(image, accent=accent, friction=friction, lighting=lighting, mass=mass, wrist=camera_name == "wrist")
+    return image
+
+
+def _augmentation_preview(payload: dict[str, Any], *, index: int) -> np.ndarray:
+    frame_id = str(payload.get("frame_id") or f"frame-{index:05d}")
+    perturbation = str(payload.get("perturbation") or payload.get("mode") or "augmentation")
+    status = str(payload.get("status") or "recorded")
+    source = str(payload.get("source_dataset_uri") or payload.get("input_uri") or "")
+    accent = _color_from_text(f"{frame_id}:{perturbation}:{status}")
+    rows = [
+        "COSMOS TRANSFER",
+        frame_id.upper(),
+        f"PERTURB {perturbation.upper()}",
+        f"STATUS {status.upper()}",
+        Path(source.rstrip("/")).name.upper() if source else "SOURCE RECORDED",
+    ]
+    image = _descriptor_preview_image(rows, accent=accent, seed_text=f"{frame_id}:{perturbation}")
+    _draw_augmentation_glyph(image, accent=accent, seed_text=f"{frame_id}:{perturbation}")
+    return image
+
+
+def _descriptor_preview_image(
+    rows: list[str],
+    *,
+    accent: tuple[int, int, int],
+    seed_text: str,
+    width: int = 320,
+    height: int = 240,
+) -> np.ndarray:
+    seed = int(hashlib.sha256(seed_text.encode("utf-8")).hexdigest()[:8], 16)
+    rng = np.random.default_rng(seed)
+    yy = np.linspace(0, 1, height, dtype=np.float32)[:, None]
+    xx = np.linspace(0, 1, width, dtype=np.float32)[None, :]
+    base = np.zeros((height, width, 3), dtype=np.uint8)
+    base[:, :, 0] = np.clip(34 + 42 * xx + accent[0] * 0.18, 0, 255).astype(np.uint8)
+    base[:, :, 1] = np.clip(38 + 52 * yy + accent[1] * 0.14, 0, 255).astype(np.uint8)
+    base[:, :, 2] = np.clip(46 + 28 * (1.0 - yy) + accent[2] * 0.18, 0, 255).astype(np.uint8)
+    for x in range(0, width, 32):
+        base[:, x : x + 1] = np.maximum(base[:, x : x + 1], 96)
+    for y in range(0, height, 32):
+        base[y : y + 1, :] = np.maximum(base[y : y + 1, :], 96)
+    for _ in range(18):
+        x0 = int(rng.integers(0, max(1, width - 24)))
+        y0 = int(rng.integers(64, max(65, height - 20)))
+        w = int(rng.integers(10, 34))
+        h = int(rng.integers(8, 26))
+        color = np.array(_mix_color(accent, int(rng.integers(50, 180))), dtype=np.uint8)
+        base[y0 : min(height, y0 + h), x0 : min(width, x0 + w)] = color
+
+    try:
+        from PIL import Image, ImageDraw
+
+        image = Image.fromarray(base, mode="RGB")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, width, 46), fill=(12, 18, 28))
+        draw.rectangle((0, 46, width, 50), fill=accent)
+        for row_index, row in enumerate(rows):
+            y = 10 + row_index * 26
+            if row_index == 0:
+                draw.text((12, y), row[:32], fill=(255, 255, 255))
+            else:
+                draw.text((12, y + 36), row[:38], fill=(230, 236, 245))
+        return np.asarray(image, dtype=np.uint8).copy()
+    except Exception:
+        base[0:48, :] = np.array([12, 18, 28], dtype=np.uint8)
+        base[48:52, :] = np.array(accent, dtype=np.uint8)
+        return base
+
+
+def _draw_env_glyph(
+    image: np.ndarray,
+    *,
+    accent: tuple[int, int, int],
+    friction: float,
+    lighting: float,
+    mass: float,
+    wrist: bool,
+) -> None:
+    height, width = image.shape[:2]
+    left = int(width * 0.48)
+    right = width - 16
+    table_y0 = int(height * 0.54)
+    table_y1 = int(height * 0.86)
+    image[table_y0:table_y1, left:right] = np.array([96, 104, 116], dtype=np.uint8)
+    cx = int(width * (0.72 if wrist else 0.65))
+    cy = int(height * 0.66)
+    arm = np.array([236, 238, 240], dtype=np.uint8)
+    image[cy - 38 : cy + 38, cx - 8 : cx + 8] = arm
+    image[cy - 8 : cy + 8, max(left, cx - 36) : min(right, cx + 36)] = arm
+    block_size = int(14 + 10 * max(0.0, min(1.0, mass - 0.85)) / 0.3)
+    bx = int(width * 0.82)
+    by = int(height * 0.64)
+    image[by : by + block_size, bx : bx + block_size] = np.array(accent, dtype=np.uint8)
+    grip = int(10 + 20 * max(0.0, min(1.0, friction)))
+    image[cy + 34 : cy + 40, max(left, cx - grip) : min(right, cx + grip)] = np.array([30, 220, 140], dtype=np.uint8)
+    light_width = int(max(8, min(width - 24, lighting / 1200.0 * (width - 24))))
+    image[height - 18 : height - 10, 12 : 12 + light_width] = np.array([250, 204, 21], dtype=np.uint8)
+
+
+def _draw_augmentation_glyph(image: np.ndarray, *, accent: tuple[int, int, int], seed_text: str) -> None:
+    height, width = image.shape[:2]
+    seed = int(hashlib.sha256(seed_text.encode("utf-8")).hexdigest()[:8], 16)
+    rng = np.random.default_rng(seed)
+    for index in range(5):
+        x0 = int(width * 0.48) + index * 28
+        y0 = 145 + int(rng.integers(-16, 16))
+        image[y0 : y0 + 40, x0 : x0 + 22] = np.array(_mix_color(accent, 40 + index * 18), dtype=np.uint8)
+        image[y0 + 40 : y0 + 46, x0 - 2 : x0 + 24] = np.array([18, 24, 38], dtype=np.uint8)
+    for _ in range(30):
+        x = int(rng.integers(int(width * 0.45), width - 12))
+        y = int(rng.integers(82, height - 24))
+        image[y : y + 3, x : x + 3] = np.array([255, 255, 255], dtype=np.uint8)
+
+
+def _color_from_text(value: str) -> tuple[int, int, int]:
+    digest = hashlib.sha256(value.encode("utf-8")).digest()
+    return (72 + digest[0] % 152, 72 + digest[1] % 152, 72 + digest[2] % 152)
+
+
+def _mix_color(accent: tuple[int, int, int], amount: int) -> tuple[int, int, int]:
+    return tuple(int(max(0, min(255, channel + amount - 90))) for channel in accent)
+
+
+def _safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _markdown_table(headers: list[str], rows: list[Any]) -> str:
+    table = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
+    for row in rows:
+        values = list(row if isinstance(row, (list, tuple)) else [row])
+        table.append("| " + " | ".join(_escape_markdown(_format_value(value)) for value in values) + " |")
+    return "\n".join(table)
+
+
+def _escape_markdown(value: str) -> str:
+    return value.replace("\n", " ").replace("|", "\\|")
+
+
+def _format_value(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    return str(value)
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _first_sample_value(inner_evidence: dict[str, Any], sample_key: str, value_key: str) -> Any:
+    for record in inner_evidence.get("iterations") or []:
+        if not isinstance(record, dict):
+            continue
+        sample = record.get(sample_key)
+        if isinstance(sample, dict) and sample.get(value_key) is not None:
+            return sample.get(value_key)
+    return None
+
+
+def _jsonl_samples(path: Path, limit: int = 3) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    try:
+        with Path(path).open(encoding="utf-8") as handle:
+            for line in handle:
+                if len(samples) >= limit:
+                    break
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict):
+                    samples.append(item)
+    except OSError:
+        pass
+    return samples
+
+
+def _artifact_counts(local_dir: Path) -> dict[str, int]:
+    roots = {
+        "augment_frames": Path(local_dir) / "augment" / "frames",
+        "raw_env_shards": Path(local_dir) / "envs" / "raw",
+        "heldout_renders": Path(local_dir) / "eval" / "heldout" / "renders",
+        "rollout_dirs": Path(local_dir) / "actions" / "train",
+        "vlm_eval_json": Path(local_dir) / "vlm_eval" / "train",
+        "training_signal_json": Path(local_dir) / "training_signal" / "train",
+    }
+    counts: dict[str, int] = {}
+    for name, root in roots.items():
+        if not root.exists():
+            counts[name] = 0
+        elif name == "rollout_dirs":
+            counts[name] = sum(1 for path in root.rglob("rollout-*") if path.is_dir())
+        else:
+            counts[name] = sum(1 for path in root.rglob("*") if path.is_file())
+    return counts
+
+
+def _key_artifacts(local_dir: Path) -> dict[str, str]:
+    rels = [
+        "reports/sim2real-report.json",
+        "reports/sim2real-visual-index.json",
+        "outer_loop/decision.json",
+        "augment/manifest.json",
+        "augment/frames/index.json",
+        "envs/raw/raw-shard-00-of-16.jsonl",
+        "envs/raw/raw-shard-00-summary.json",
+        "envs/manifest/split-manifest.json",
+        "envs/train/envs.jsonl",
+        "envs/heldout/envs.jsonl",
+        "tokens/manifest.json",
+        "eval/heldout/report.json",
+    ]
+    return {rel: str(Path(local_dir) / rel) for rel in rels if (Path(local_dir) / rel).exists()}
 
 
 def _franka_joint_positions(joint_angles: tuple[float, ...]) -> list[list[float]]:
@@ -686,6 +1386,7 @@ def _build_blueprint(
     *,
     has_heldout_cameras: bool = False,
     heldout_env_ids: list[str] | None = None,
+    has_synthetic_data: bool = False,
 ) -> Any:
     env_ids = list(heldout_env_ids or [])
     has_heldout_cameras = has_heldout_cameras or bool(env_ids)
@@ -694,7 +1395,7 @@ def _build_blueprint(
         # single Spatial2DView, while the per-env grid remains available for
         # deeper inspection in the Streams tree.
         camera_view = rrb.Vertical(
-            rrb.Spatial2DView(origin="camera", name="Franka held-out sim camera"),
+            rrb.Spatial2DView(origin="camera", name="Isaac held-out simulation camera"),
             rrb.Grid(
                 *[
                     rrb.Spatial2DView(
@@ -733,17 +1434,65 @@ def _build_blueprint(
         if secondary_camera is not None
         else camera_view
     )
-    return rrb.Blueprint(
-        rrb.Horizontal(
+    synthetic_view = rrb.Vertical(
+        rrb.Spatial2DView(
+            origin="synthetic/preview",
+            name="Synthetic data preview",
+        ),
+        rrb.Grid(
+            rrb.Spatial2DView(
+                origin="synthetic/dataset/train",
+                contents="synthetic/dataset/train/**",
+                name="Train env samples",
+            ),
+            rrb.Spatial2DView(
+                origin="synthetic/dataset/heldout",
+                contents="synthetic/dataset/heldout/**",
+                name="Held-out env samples",
+            ),
+            rrb.Spatial2DView(
+                origin="synthetic/augmentation",
+                contents="synthetic/augmentation/**",
+                name="Augmentation samples",
+            ),
+            name="Synthetic dataset and augmentation",
+        ),
+        row_shares=[1.2, 2.0],
+    )
+    signal_view = rrb.Vertical(
+        rrb.TimeSeriesView(origin="signal", contents="signal/**", name="VLM->RL signal"),
+        rrb.TimeSeriesView(origin="heldout", contents="heldout/**", name="Held-out scores"),
+    )
+    summary_view = rrb.Vertical(
+        rrb.TextDocumentView(origin="summary/run_success", name="Success"),
+        rrb.TextDocumentView(origin="summary/augmentation", name="Augmented data"),
+        rrb.TextDocumentView(origin="summary/artifacts", name="Artifacts"),
+        rrb.TextDocumentView(origin="summary/vlm_critiques", name="VLM critiques"),
+        row_shares=[1.2, 1.1, 1.0, 1.0],
+    )
+    if has_heldout_cameras:
+        columns = [left_column]
+        shares = [2.4]
+        if has_synthetic_data:
+            columns.append(synthetic_view)
+            shares.append(2.1)
+        columns.extend([summary_view, signal_view])
+        shares.extend([1.5, 1.1])
+        layout = rrb.Horizontal(*columns, column_shares=shares)
+    else:
+        columns = [
             rrb.Spatial3DView(origin="world", contents="world/**", name="Scene overview"),
             left_column,
-            rrb.TextDocumentView(origin="rollouts", contents="rollouts/**/critique", name="VLM critiques"),
-            rrb.Vertical(
-                rrb.TimeSeriesView(origin="signal", contents="signal/**", name="VLM->RL signal"),
-                rrb.TimeSeriesView(origin="heldout", contents="heldout/**", name="Held-out scores"),
-            ),
-            column_shares=[2.0, 1.4, 1.2, 1.3],
-        ),
+        ]
+        shares = [2.0, 1.4]
+        if has_synthetic_data:
+            columns.append(synthetic_view)
+            shares.append(1.8)
+        columns.extend([summary_view, signal_view])
+        shares.extend([1.2, 1.3])
+        layout = rrb.Horizontal(*columns, column_shares=shares)
+    return rrb.Blueprint(
+        layout,
         rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=TIMELINE),
         auto_layout=False,
     )
@@ -842,21 +1591,32 @@ def _decode_png_bytes(data: bytes) -> np.ndarray | None:
     import zlib
 
     index = 8
-    width = height = bit_depth = color_type = 0
+    width = height = 0
+    bit_depth = color_type = interlace = 0
     idat = bytearray()
     while index + 8 <= len(data):
         length = struct.unpack("!I", data[index : index + 4])[0]
         chunk_type = data[index + 4 : index + 8]
         chunk = data[index + 8 : index + 8 + length]
         index += 12 + length
-        if chunk_type == b"IHDR" and len(chunk) >= 10:
-            width, height, bit_depth, color_type = struct.unpack("!IIBB", chunk[:10])
+        if chunk_type == b"IHDR" and len(chunk) >= 13:
+            width, height = struct.unpack("!II", chunk[:8])
+            bit_depth = int(chunk[8])
+            color_type = int(chunk[9])
+            interlace = int(chunk[12])
         elif chunk_type == b"IDAT":
             idat.extend(chunk)
         elif chunk_type == b"IEND":
             break
     channels = {0: 1, 2: 3, 4: 2, 6: 4}.get(color_type)
-    if width <= 0 or height <= 0 or not idat or bit_depth != 8 or channels is None:
+    if (
+        width <= 0
+        or height <= 0
+        or not idat
+        or bit_depth != 8
+        or interlace != 0
+        or channels is None
+    ):
         return None
     try:
         raw = zlib.decompress(bytes(idat))

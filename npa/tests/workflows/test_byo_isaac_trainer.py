@@ -380,6 +380,14 @@ def test_sanitize_tag():
     assert byo._sanitize_tag("") == ""
 
 
+def test_artifact_tag_from_output_dir_keeps_outer_iteration(tmp_path):
+    output_dir = tmp_path / "actions" / "train" / "outer-02" / "iter-01"
+
+    assert byo.artifact_tag_from_output_dir(output_dir) == "outer-02-iter-01"
+    assert byo.artifact_tag_from_output_dir(tmp_path / "iter-01") == "iter-01"
+    assert byo.artifact_tag("outer/02 iter 01") == "outer-02-iter-01"
+
+
 def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     # NPA_SIM2REAL_TRAINER_TAG must make each iteration's checkpoint a DISTINCT S3
     # path (so the prior model survives for the next outer iteration to resume from
