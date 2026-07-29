@@ -52,7 +52,23 @@ from botocore.client import Config
 src = pathlib.Path(sys.argv[1]).resolve()
 bucket, prefix = sys.argv[2], sys.argv[3].strip("/")
 
-skip_dirs = {".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"}
+# Only what `pip install -e` needs at task runtime: the package + build metadata.
+# Tests/images/blueprint YAMLs are never executed inside a rendered task.
+skip_dirs = {
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+    "tests",
+    "docker",
+    "workflows",
+    "scripts",
+}
+if os.environ.get("NPA_STAGE_INCLUDE_ALL") == "1":
+    skip_dirs = {".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 kwargs = {"config": Config(signature_version="s3v4")}
 endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
 if endpoint:
