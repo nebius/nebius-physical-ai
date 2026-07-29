@@ -4805,15 +4805,24 @@
         const stages = document.getElementById("stagesRunSelect");
         const runInput = document.getElementById("runIdInput");
         const stagesInput = document.getElementById("stagesRunInput");
-        const typed = String((runInput && runInput.value) || (stagesInput && stagesInput.value) || "").trim();
+        // Prefer the input that currently has focus when both are filled; otherwise
+        // any non-empty typed/pasted value wins so "type id → click Load" works
+        // after focus moves to the button.
+        let typed = "";
+        if (document.activeElement === stagesInput) {
+          typed = String((stagesInput && stagesInput.value) || "").trim();
+        } else if (document.activeElement === runInput) {
+          typed = String((runInput && runInput.value) || "").trim();
+        } else {
+          typed = String((runInput && runInput.value) || (stagesInput && stagesInput.value) || "").trim();
+        }
         const selected = String(
           (select && select.value) || (stages && stages.value) || activeRunId || ""
         ).trim();
-        // Prefer an explicit paste/search when present; otherwise the consolidated dropdown.
-        if (document.activeElement === runInput || document.activeElement === stagesInput) {
+        if (typed) {
           return resolveStagesRunChoice(typed, selected);
         }
-        return selected || typed;
+        return selected;
       }
       function resolveStagesRunChoice(typed, selected) {
         const query = String(typed || "").trim();
