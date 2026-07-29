@@ -116,6 +116,70 @@ def test_load_credentials_ignores_legacy_token_factory_alias(tmp_path: Path) -> 
     assert "NEBIUS_TOKEN_FACTORY_KEY" not in shared_credential_env(resolved)
 
 
+def test_load_credentials_reads_service_shaped_sections(tmp_path: Path) -> None:
+    """`token_factory:` / `huggingface:` blocks are accepted, not silently dropped.
+
+    The Physical AI Data Factory deploy guide documented this shape, so
+    hand-written files used it and every hosted call 401'd against a
+    credentials.yaml that visibly contained the keys.
+    """
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "token_factory": {"api_key": "tf-section"},
+                "huggingface": {"token": "hf-section"},
+            }
+        )
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.token_factory_api_key == "tf-section"
+    assert resolved.hf_token == "hf-section"
+    env = shared_credential_env(resolved)
+    assert env["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-section"
+    assert env["HF_TOKEN"] == "hf-section"
+
+
+def test_canonical_tokens_win_over_service_sections(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {
+                    "HF_TOKEN": "hf-canonical",
+                    "NEBIUS_TOKEN_FACTORY_KEY": "tf-canonical",
+                },
+                "token_factory": {"api_key": "tf-section"},
+                "huggingface": {"token": "hf-section"},
+            }
+        )
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.token_factory_api_key == "tf-canonical"
+    assert resolved.hf_token == "hf-canonical"
+
+
+def test_empty_service_sections_are_ignored(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "token_factory": {"api_key": ""},
+                "huggingface": None,
+            }
+        )
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.token_factory_api_key == ""
+    assert resolved.hf_token == ""
+
+
 def test_token_factory_key_env_overrides_file(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(

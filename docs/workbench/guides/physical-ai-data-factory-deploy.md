@@ -113,12 +113,18 @@ storage:
   aws_access_key_id: <your-s3-access-key-id>
   aws_secret_access_key: <your-s3-secret-access-key>
   endpoint_url: https://storage.<region>.nebius.cloud   # e.g. us-central1
-  bucket: <your-artifact-bucket>                          # no s3:// prefix
-token_factory:
-  api_key: <your-token-factory-key>
-huggingface:
-  token: <your-hf-token>            # optional
+  bucket: s3://<your-artifact-bucket>/
+tokens:
+  NEBIUS_TOKEN_FACTORY_KEY: <your-token-factory-key>
+  HF_TOKEN: <your-hf-token>         # optional
+ngc:
+  api_key: <your-ngc-api-key>       # optional
 ```
+
+This is exactly the layout `npa configure` writes — run `npa configure --show`
+to print it. The service-shaped aliases `token_factory: {api_key: ...}` and
+`huggingface: {token: ...}` are also accepted, but `tokens:` is canonical and
+wins when both are present.
 
 You can also point the CLI at these via environment variables when scripting:
 

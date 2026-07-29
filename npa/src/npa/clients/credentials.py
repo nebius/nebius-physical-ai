@@ -118,6 +118,28 @@ def _read_file_tokens(path: Path) -> dict[str, str]:
             value = _first_nonempty(ngc, *field_names)
             if value:
                 cleaned[env_key] = value
+
+    # Service-shaped sections, mirroring `ngc:`. Guides and hand-written files
+    # in the wild use `token_factory: {api_key: ...}` / `huggingface: {token: ...}`,
+    # which used to be parsed and then silently dropped — the operator saw a
+    # populated credentials.yaml and 401s from every hosted call. The canonical
+    # `tokens:` entries always win; these only fill gaps.
+    for section_name, env_key, field_names in (
+        (
+            "token_factory",
+            TOKEN_FACTORY_ENV_KEY,
+            ("api_key", "apikey", "key", "token", TOKEN_FACTORY_ENV_KEY),
+        ),
+        ("huggingface", "HF_TOKEN", ("token", "hf_token", "api_key", "key", "HF_TOKEN")),
+    ):
+        if cleaned.get(env_key):
+            continue
+        section = data.get(section_name, {})
+        if not isinstance(section, dict):
+            continue
+        value = _first_nonempty(section, *field_names)
+        if value:
+            cleaned[env_key] = value
     return cleaned
 
 
