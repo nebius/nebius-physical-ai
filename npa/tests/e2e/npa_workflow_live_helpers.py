@@ -585,8 +585,29 @@ def assert_no_credential_leakage(
 
 
 def assert_cli_ok(result: Result, *, forbidden: Iterable[str] | None = None) -> None:
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0, _cli_failure_detail(result)
     assert_no_credential_leakage(result.output, extra_forbidden=forbidden)
+
+
+def _cli_failure_detail(result: Result) -> str:
+    """Include the swallowed CliRunner exception; output alone hides real crashes."""
+
+    parts = [f"exit_code={result.exit_code}", result.output or "(no output)"]
+    exception = getattr(result, "exception", None)
+    if exception is not None and not isinstance(exception, SystemExit):
+        import traceback
+
+        parts.append(
+            "".join(
+                traceback.format_exception(
+                    type(exception), exception, exception.__traceback__
+                )
+            )
+        )
+    stderr = getattr(result, "stderr", None)
+    if stderr:
+        parts.append(f"stderr:\n{stderr}")
+    return "\n".join(parts)
 
 
 def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None) -> Any:
