@@ -85,9 +85,19 @@ variable "server_port" {
 }
 
 variable "extra_ingress_ports" {
-  description = "Additional TCP ingress ports exposed alongside server_port"
-  type        = list(number)
-  default     = []
+  description = "Additional TCP ingress ports exposed alongside server_port, as a JSON array string (e.g. \"[443,9090]\")"
+  # A JSON-string (decoded with jsondecode below) rather than list(number): a
+  # `-var extra_ingress_ports=[443,9090]` value is parsed by Terraform as an HCL
+  # expression for non-string types, which intermittently failed with
+  # "Invalid expression". A string var is taken verbatim, so decoding is
+  # deterministic.
+  type    = string
+  default = "[]"
+
+  validation {
+    condition     = can(jsondecode(var.extra_ingress_ports))
+    error_message = "extra_ingress_ports must be a JSON array string, e.g. \"[443,9090]\" or \"[]\"."
+  }
 }
 
 variable "workbench_type" {

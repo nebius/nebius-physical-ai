@@ -351,6 +351,16 @@ runcmd:
     echo "=== GR00T base VM setup complete - $(date) ==="
 %{ endif ~}
 %{ else ~}
+%{ if workbench_type == "agent" ~}
+    exec > /var/log/npa-agent-cloud-init.log 2>&1
+    echo "=== NPA agent VM base setup - $(date) ==="
+    # The public NPA agent VM is a CPU host that only runs the chat/UI stack,
+    # which is installed afterwards over SSH (see _bootstrap_agent_stack). Cloud
+    # init must NOT install a workbench (e.g. LeRobot + EGL), which fails to
+    # build on a driverless CPU image and would otherwise mark the VM broken.
+    install -d -m 0755 -o ${ssh_user} -g ${ssh_user} /opt/npa-agent
+    echo "=== NPA agent VM base setup complete - $(date) ==="
+%{ else ~}
 %{ if workbench_type == "lerobot-container" ~}
     install -d -m 0755 -o ${ssh_user} -g ${ssh_user} /opt/lerobot
     chown ${ssh_user}:${ssh_user} /opt/lerobot/.env 2>/dev/null || true
@@ -542,6 +552,7 @@ runcmd:
     echo "=== LeRobot setup complete - $(date) ==="
     echo "Setup logs saved to: /var/log/cloud-init-output.log"
     echo "LeRobot setup logs saved to: /var/log/lerobot-setup.log"
+%{ endif ~}
 %{ endif ~}
 %{ endif ~}
 %{ endif ~}

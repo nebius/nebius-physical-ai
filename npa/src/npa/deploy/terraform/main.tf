@@ -54,7 +54,7 @@ resource "nebius_vpc_v1_security_rule" "allow_server" {
 
   ingress = {
     source_cidrs      = [var.ssh_cidr_block]
-    destination_ports = distinct(concat([var.server_port], var.extra_ingress_ports))
+    destination_ports = distinct(concat([var.server_port], jsondecode(var.extra_ingress_ports)))
   }
 }
 
@@ -213,15 +213,25 @@ resource "null_resource" "wait_for_cloud_init" {
       # Do not use `cloud-init status --wait`: on some CUDA13 images it hangs
       # forever even when status is already "done" (boot-finished present).
       echo "Polling cloud-init status..."
+      final_status="unknown"
       for _ in $(seq 1 60); do
         status="$("$${ssh_cmd[@]}" "cloud-init status 2>/dev/null | awk '{print \$2}'" || true)"
-        echo "cloud-init status: $${status:-unknown}"
+        final_status="$${status:-unknown}"
+        echo "cloud-init status: $final_status"
         case "$status" in
           done|error|disabled) break ;;
         esac
         sleep 5
       done
       "$${ssh_cmd[@]}" "cloud-init status --long || true" || true
+
+      # A cloud-init "error" means a runcmd (e.g. the workbench install) failed.
+      # Treat it as a hard failure so the deploy does not report success on a VM
+      # whose bootstrap is broken; Terraform then rolls the instance back.
+      if [ "$final_status" = "error" ]; then
+        echo "ERROR: cloud-init finished with status 'error'; the VM bootstrap failed."
+        exit 1
+      fi
     EOT
   }
 }
