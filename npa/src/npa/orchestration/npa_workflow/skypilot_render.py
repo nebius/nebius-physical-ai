@@ -181,19 +181,20 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
         "export PATH=\"$HOME/.local/bin:$PATH\"\n"
-        # `setup:` and `run:` are separate shells, so an interpreter mismatch has to
-        # be repaired here too: a `run.shell` stage doing `python3 -c "import npa"`
-        # must work even when pip installed npa into a different python (observed on
-        # SkyPilot's GPU default image).
-        "if ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
-        "  for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
+        # Interpreter-independent import path for npa. `pip install -e` binds npa to
+        # whichever python ran pip, and the command below runs through `bash -lc`,
+        # whose login profile can resolve a DIFFERENT python3 (observed on SkyPilot's
+        # GPU default image: the outer shell imports npa fine, the login shell does
+        # not). Prepending the staged source tree unconditionally fixes every shell;
+        # it is the same package, so it is a no-op where the install already works.
+        "PYTHONPATH=\"${PYTHONPATH:-}\"\n"
+        "for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
         "/opt/nebius-physical-ai/npa/src; do\n"
-        "    if [ -d \"$candidate\" ]; then\n"
-        "      export PYTHONPATH=\"$candidate:$PYTHONPATH\"\n"
-        "      break\n"
-        "    fi\n"
-        "  done\n"
-        "fi\n"
+        "  if [ -d \"$candidate\" ]; then\n"
+        "    export PYTHONPATH=\"$candidate:$PYTHONPATH\"\n"
+        "    break\n"
+        "  fi\n"
+        "done\n"
         f"{quoted}\n"
     )
 
@@ -307,6 +308,7 @@ def default_npa_setup() -> str:
         # stages that import npa. Verify importability with the body's own python and
         # fall back to the staged source tree, which works for any interpreter.
         "if ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
+        "  PYTHONPATH=\"${PYTHONPATH:-}\"\n"
         "  for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
         "/opt/nebius-physical-ai/npa/src; do\n"
         "    if [ -d \"$candidate\" ]; then\n"
@@ -453,6 +455,9 @@ def build_skypilot_task_doc(
                 "or pass --image <registry>/npa-<tool>:<tag>"
             )
         envs["NPA_SRC_S3_URI"] = src_uri
+        # Exported by SkyPilot into every shell it spawns, so a `run.shell` stage can
+        # import npa even if the task body's python3 is not the one pip installed into.
+        envs["PYTHONPATH"] = "/tmp/npa-src/src"
         doc["envs"] = envs
     else:
         # Image is pinned (baked npa). Opt-in overlay: when NPA_SRC_OVERLAY=1,
@@ -467,6 +472,7 @@ def build_skypilot_task_doc(
             if src_uri:
                 envs["NPA_SRC_S3_URI"] = src_uri
                 envs["NPA_SRC_OVERLAY"] = "1"
+                envs["PYTHONPATH"] = "/tmp/npa-src-overlay/src"
                 doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
         doc,

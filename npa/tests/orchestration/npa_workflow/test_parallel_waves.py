@@ -532,7 +532,26 @@ def test_rendered_stages_repair_an_interpreter_mismatch(parallel_spec) -> None:
     assert "PYTHONPATH" in setup
 
     run_script = render_task_run_script(["npa", "workbench", "insights", "dashboard"])
-    # The repair must be in the run script too: setup and run are separate shells.
-    assert "python3 -c 'import npa'" in run_script
+    # The repair must be in the run script too (setup and run are separate shells),
+    # and it must be UNCONDITIONAL: the outer shell can import npa while the
+    # `bash -lc` login shell the command runs in resolves a different python3.
     assert "export PYTHONPATH=" in run_script
+    assert "if ! python3 -c 'import npa'" not in run_script
+    # `set -u` safe: an unset PYTHONPATH must not abort the task.
+    assert 'PYTHONPATH="${PYTHONPATH:-}"' in run_script
     assert run_script.rstrip().endswith("npa workbench insights dashboard")
+
+
+def test_staged_source_is_published_through_the_task_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every shell SkyPilot spawns must see the staged import path."""
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    spec = load_spec(SHIPPED / "token-factory-parallel-fanout.yaml")
+    plan = build_plan(spec, run_id="env-1")
+    text = render_skypilot_yaml(
+        spec, plan, run_id="env-1", options=SkypilotRenderOptions(image_overrides={"*": ""})
+    )
+    docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
+    for task in docs[1:]:
+        assert task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
+        assert task["envs"]["PYTHONPATH"] == "/tmp/npa-src/src"
