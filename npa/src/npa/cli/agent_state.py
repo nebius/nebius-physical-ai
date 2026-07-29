@@ -8,12 +8,14 @@ cannot clobber confirm tokens, chat history, or sim-viz selection.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 class StateStore:
@@ -43,7 +45,7 @@ class StateStore:
                 if isinstance(payload, dict):
                     return payload
             except Exception:  # noqa: BLE001
-                pass
+                logger.debug("failed to load agent state from %s", self.path, exc_info=True)
         return self._default_factory()
 
     def save(self, state: dict[str, Any]) -> None:
@@ -57,7 +59,7 @@ class StateStore:
             try:
                 self._after_save(state)
             except Exception:  # noqa: BLE001
-                pass
+                logger.debug("agent state after_save hook failed for %s", self.path, exc_info=True)
 
     def mutate(self, fn: Callable[[dict[str, Any]], T]) -> T:
         """Atomically load → mutate → save under the process-wide lock."""
