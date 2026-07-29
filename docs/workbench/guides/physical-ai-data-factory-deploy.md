@@ -20,6 +20,41 @@ tool — every stage is an existing workbench tool or a real `run.shell` step.
 
 ---
 
+## Quick start (copy-paste)
+
+Already installed `npa`, written `~/.npa` credentials (§2), and deployed an agent
+(§3)? Stage input and launch a **stock-Cosmos** demo run in one block. It needs
+`ffmpeg` and the S3 keys / `AWS_ENDPOINT_URL` you exported in §2 — no custom
+dataset required:
+
+```bash
+BUCKET=<your-artifact-bucket>
+RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
+INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
+
+# 1) Make captionable frames with no dataset and upload them (the "Cosmos data"
+#    the first stage needs). Swap the ffmpeg line for a real clip anytime:
+#      ffmpeg -i my_clip.mp4 -vf fps=2 -frames:v 12 frame_%04d.png
+ffmpeg -f lavfi -i testsrc=size=1280x720:rate=1 -frames:v 12 frame_%04d.png
+aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
+
+# 2) Submit. The default augment renders the bundled Cosmos example; the frames
+#    above satisfy the mandatory caption stage.
+npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
+  --run-id "$RUN_ID" --var bucket="$BUCKET" \
+  --assume-decision promote_checkpoint \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+That's the whole happy path: **frames in → submit**. Everything below is the
+full explanation — prerequisites, credential/config setup, agent deploy, why
+frames are mandatory even for stock-Cosmos, multi-GPU fan-out, and viewing
+results. To transfer appearance onto **your** footage instead of stock material,
+stage a real `video_0.mp4` and add `NPA_COSMOS_CONDITION_ON_INPUT=1` (see §5).
+
+---
+
 ## 0. Prerequisites
 
 - **Python 3.10+** and `git` on an operator/dev machine (Linux or macOS). All

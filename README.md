@@ -194,6 +194,11 @@ Short copy-paste walkthroughs — pick any robot or simulator. Full index:
 | [Make a Unitree G1 walk](docs/workbench/guides/g1-humanoid-walk-sonic.md)                         | Unitree G1           | MuJoCo           | NVIDIA GEAR-SONIC                  |
 | [Train a quadruped to run](docs/workbench/guides/quadruped-isaac-lab.md)                          | ANYmal / quadruped   | Isaac Lab        | Isaac Lab built-in tasks           |
 
+Want a data pipeline instead of a robot? The **NVIDIA Physical AI Data Factory**
+blueprint (annotate → Cosmos Transfer augment → curate → visualize) has a
+one-block copy-paste quickstart:
+[docs/workbench/guides/physical-ai-data-factory-deploy.md](docs/workbench/guides/physical-ai-data-factory-deploy.md).
+
 Longer end-to-end recipes (BDD100K + LanceDB, Isaac-Lab BYOF, LeRobot GPU
 benchmarks): [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md).
 
@@ -344,6 +349,7 @@ More architectural detail: [docs/architecture/contributor-context.md](docs/archi
 | Install & auth       | [docs/quickstart.md](docs/quickstart.md)                                                               |
 | Workbench setup     | [docs/workbench/getting-started.md](docs/workbench/getting-started.md)                                 |
 | Beginner robot guides | [docs/workbench/guides/README.md](docs/workbench/guides/README.md)                                    |
+| Physical AI Data Factory | [deploy runbook](docs/workbench/guides/physical-ai-data-factory-deploy.md) (copy-paste quickstart) · [concepts](docs/workbench/guides/physical-ai-data-factory.md) |
 | Cookbooks            | [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md) — includes the [BDD100K + LanceDB pipeline](docs/workbench/cookbooks/bdd100k-pipeline.md) and [Isaac-Lab BYOF](docs/workbench/cookbooks/byof-isaac-lab/) |
 | Workflow authoring   | [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md) · [tool catalog](docs/workbench/npa-workflow-tool-catalog.md) |
 | `npa agent`          | [skills/tools/npa-agent/SKILL.md](skills/tools/npa-agent/SKILL.md) · [agent operate](skills/workflows/agent-fresh-operate/SKILL.md) |

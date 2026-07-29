@@ -16,6 +16,7 @@ workflows, and operational runbooks.
 | [oss-solution-catalog.md](oss-solution-catalog.md) | OSS Physical AI registry candidates with pinned refs, cloud-fit notes, and E2E gates |
 | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) | How to call any Workbench tool through the CLI, SDK, and SkyPilot YAML against the same service |
 | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) | One-command H100 sim-to-real proof run with checkpoint, metric, S3 artifacts, and teardown |
+| [guides/physical-ai-data-factory-deploy.md](guides/physical-ai-data-factory-deploy.md) | **Physical AI Data Factory** — copy-paste runbook (stage input frames, submit) for the annotate → Cosmos augment → curate → visualize blueprint |
 | [../quickstart.md](../quickstart.md) | Full `npa` CLI quickstart |
 | [../cli/README.md](../cli/README.md) | CLI command reference index |
 | [../cli-errors.md](../cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |
