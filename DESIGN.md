@@ -331,6 +331,18 @@ process supervisor story of its own.
 4. **Root-cause error reporting for parallel groups** — `_execute_state_machine`
    now raises the *first* failure of a group rather than the last, so the cascade
    of "skipped after batch N failed" records cannot mask the real error.
+5. **The new fields are validated in Python, not by the JSON Schema.** The shipped
+   `npa.workflow.v0.0.1.schema.json` gained entries for `parallel`,
+   `maxConcurrency`, `params` and `trigger`, but the hand-rolled walker in
+   `schema_validation.py` does **not** resolve `$ref` / `$defs` /
+   `additionalProperties`, so `states.<name>.*` bodies have never actually been
+   schema-enforced (pre-existing, unrelated to this change). Writing the tests for
+   it exposed the consequence for the new fields — `parallel: shard-a` was iterated
+   character by character and reported "duplicate parallel member" — so
+   `_parse_state` now rejects a non-list `parallel` and non-string members with
+   actionable messages, alongside the existing `params`/`trigger` mapping checks.
+   Teaching the walker to resolve `$ref` would retroactively tighten validation for
+   every shipped spec and is deliberately left out of this change.
 
 ---
 
