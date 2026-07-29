@@ -347,7 +347,9 @@ def submit_cmd(
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
-        _warn_placeholder_bucket(spec_config)
+        _warn_placeholder_bucket(
+            spec_config, quiet=output_format == OutputFormat.json
+        )
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
                 ensure_infra_present,
@@ -630,8 +632,15 @@ def _is_placeholder_bucket(bucket: str) -> bool:
     return "<" in value or ">" in value
 
 
-def _warn_placeholder_bucket(config) -> None:
-    """Warn when a spec is being planned/run against its placeholder bucket."""
+def _warn_placeholder_bucket(config, *, quiet: bool = False) -> None:
+    """Warn when a spec is being planned/run against its placeholder bucket.
+
+    ``quiet`` suppresses the notice for machine-readable output (``--json``),
+    where the caller wants a clean document and the shipped specs all default to
+    ``bucket: example-bucket``.
+    """
+    if quiet:
+        return
     bucket = str((config or {}).get("bucket", "") or "")
     if not _is_placeholder_bucket(bucket):
         return
@@ -1736,7 +1745,7 @@ def plan_spec_cmd(
 
     spec = _load_npa_workflow(yaml_path)
     spec = merge_config_overrides(spec, _parse_submit_vars(var))
-    _warn_placeholder_bucket(spec.config)
+    _warn_placeholder_bucket(spec.config, quiet=json_output)
     resolved_run_id = run_id or f"{spec.name}-plan"
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
@@ -1805,7 +1814,7 @@ def run_spec_cmd(
 
     spec = _load_npa_workflow(yaml_path)
     spec = merge_config_overrides(spec, _parse_submit_vars(var))
-    _warn_placeholder_bucket(spec.config)
+    _warn_placeholder_bucket(spec.config, quiet=json_output)
     resolved_run_id = run_id or f"{spec.name}-{int(time.time())}"
     resolved_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "")
     try:

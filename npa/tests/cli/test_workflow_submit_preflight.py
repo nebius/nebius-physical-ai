@@ -183,6 +183,28 @@ def test_plan_spec_without_var_warns_about_the_placeholder() -> None:
     assert "--var bucket=<your-bucket>" in result.output
 
 
+def test_plan_spec_json_output_stays_machine_readable() -> None:
+    """`--json` must emit a clean document, not the placeholder warning."""
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(SPEC),
+            "--run-id",
+            "plan-demo",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "config.bucket is" not in result.output
+    json.loads(result.output)  # parses even with stderr mixed in
+
+
 def test_run_spec_accepts_var_overrides() -> None:
     result = runner.invoke(
         app,
