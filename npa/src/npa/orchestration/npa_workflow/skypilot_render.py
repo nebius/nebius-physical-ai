@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep
+from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep  # noqa: F401
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 
@@ -533,7 +533,12 @@ def render_skypilot_yaml(
     run_id: str,
     options: SkypilotRenderOptions | None = None,
 ) -> str:
-    """Return multi-document SkyPilot YAML text for a planned npa.workflow."""
+    """Return multi-document SkyPilot **pipeline** YAML for a planned npa.workflow.
+
+    This is the default, unchanged path: a flat serial chain. Concurrent fan-out
+    is rendered by :func:`render_skypilot_job_group_yaml`, which is a separate
+    entry point so that "serial" stays the only mode this function will ever emit.
+    """
 
     opts = options or SkypilotRenderOptions()
     if opts.execution != "serial":
@@ -542,14 +547,103 @@ def render_skypilot_yaml(
         )
     if not plan.steps:
         raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
+    return _render_docs(spec, plan.steps, run_id=run_id, options=opts, execution="serial")
 
+
+def render_skypilot_job_group_yaml(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions | None = None,
+    name: str = "",
+) -> str:
+    """Return a SkyPilot **JobGroup** YAML (``execution: parallel``) for one wave.
+
+    SkyPilot >= 0.12 treats a multi-document YAML whose header sets
+    ``execution: parallel`` as a JobGroup: every task shares one managed ``job_id``
+    but launches its **own cluster concurrently**. ``primary_tasks`` is intentionally
+    omitted, which marks every task primary, so the group only reaches a terminal
+    state once all members do — that is the barrier the downstream ``needs:`` state
+    waits on.
+    """
+
+    opts = options or SkypilotRenderOptions()
+    if not steps:
+        raise NpaWorkflowRenderError(
+            f"workflow {spec.name!r} rendered an empty parallel group"
+        )
+    if len(steps) < 2:
+        raise NpaWorkflowRenderError(
+            "a SkyPilot JobGroup needs at least two tasks; render single-task waves "
+            "with the serial pipeline renderer"
+        )
+    return _render_docs(
+        spec,
+        steps,
+        run_id=run_id,
+        options=opts,
+        execution="parallel",
+        name=name or spec.name,
+    )
+
+
+def render_skypilot_steps_yaml(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions | None = None,
+    execution: str = "serial",
+    name: str = "",
+) -> str:
+    """Render one runtime wave: a serial pipeline or a parallel JobGroup."""
+
+    if execution == "parallel" and len(steps) > 1:
+        return render_skypilot_job_group_yaml(
+            spec, steps, run_id=run_id, options=options, name=name
+        )
+    opts = options or SkypilotRenderOptions()
+    if opts.execution != "serial":
+        raise NpaWorkflowRenderError(
+            f"npa.workflow/v0.0.1 renderer only supports execution=serial, got {opts.execution!r}"
+        )
+    if not steps:
+        raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
+    return _render_docs(
+        spec, steps, run_id=run_id, options=opts, execution="serial", name=name or spec.name
+    )
+
+
+def _render_docs(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+    execution: str,
+    name: str = "",
+) -> str:
     header = {
-        "name": spec.name,
-        "execution": "serial",
+        "name": name or spec.name,
+        "execution": execution,
     }
     docs: list[dict[str, Any]] = [header]
-    for step in plan.steps:
-        docs.append(build_skypilot_task_doc(spec, step, run_id=run_id, options=opts))
+    seen: set[str] = set()
+    for step in steps:
+        doc = build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+        task_name = str(doc.get("name") or "")
+        # Serial pipelines may legitimately repeat a task name (an unrolled loop
+        # body re-runs the same state), so only JobGroups — whose tasks run at the
+        # same time on distinct clusters — require unique names.
+        if execution == "parallel":
+            if task_name in seen:
+                raise NpaWorkflowRenderError(
+                    f"duplicate SkyPilot task name {task_name!r} in parallel group "
+                    f"of workflow {spec.name!r}"
+                )
+            seen.add(task_name)
+        docs.append(doc)
 
     chunks: list[str] = []
     for doc in docs:
