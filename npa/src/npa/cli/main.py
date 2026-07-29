@@ -123,6 +123,13 @@ chmod 600 ~/.npa/credentials.yaml
 tenant id, region, and container registry so commands no longer need those
 values exported in the shell or read from the Nebius CLI. Deploy commands
 extend the same file with workbench endpoints and Terraform state.
+
+Treat ~/.npa/config.yaml as sensitive too: deploys persist the Terraform remote
+state S3 access key and secret under projects.<alias>.terraform_state. npa keeps
+it at mode 600 (and ~/.npa at 700); do not copy it between machines or into a
+repo. If you ever see the permissions warning:
+
+chmod 700 ~/.npa && chmod 600 ~/.npa/config.yaml
 """
 
 
@@ -785,6 +792,7 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
 
     from npa.clients.config import (
         CONFIG_PATH,
+        config_permissions_warning,
         default_project_name,
         list_projects,
         write_config,
@@ -1115,6 +1123,10 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             )
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True
+
+    permissions_warning = config_permissions_warning()
+    if permissions_warning:
+        typer.echo(f"\nWarning: {permissions_warning}", err=True)
 
     typer.echo(f"\nWrote {credentials_path} (chmod 600).")
     if wrote_config:

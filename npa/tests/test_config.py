@@ -784,3 +784,45 @@ def test_resolve_container_registry_prefers_project_override(
     monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
     # proj-a has an explicit container_registry, which wins over env.
     assert config.resolve_container_registry("proj-a") == "registry.example/npa"
+
+
+def test_write_config_locks_down_file_and_directory(tmp_path, monkeypatch) -> None:
+    """~/.npa holds S3 keys, kubeconfigs and agent auth secrets: owner-only."""
+    import stat as stat_module
+
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / ".npa" / "config.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    config_module.write_config({"projects": {"p": {"project_id": "pid"}}})
+
+    assert stat_module.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert stat_module.S_IMODE(config_path.parent.stat().st_mode) == 0o700
+
+
+def test_config_permissions_warning_flags_a_world_readable_file(
+    tmp_path, monkeypatch
+) -> None:
+    """Terraform backend S3 keys live in config.yaml, so loose modes matter."""
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    config_path.chmod(0o600)
+    assert config_module.config_permissions_warning() == ""
+
+    config_path.chmod(0o644)
+    warning = config_module.config_permissions_warning()
+    assert "terraform_state" in warning
+    assert "chmod 600" in warning
+
+
+def test_config_permissions_warning_is_quiet_without_a_file(tmp_path, monkeypatch) -> None:
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "missing.yaml")
+
+    assert config_module.config_permissions_warning() == ""

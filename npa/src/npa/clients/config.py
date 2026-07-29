@@ -25,6 +25,7 @@ User secrets that are not tied to a single workbench live in
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -466,6 +467,33 @@ def resolve_container_registry(project: str | None = None) -> str:
 # ── Read / write ─────────────────────────────────────────────────────────
 
 
+CONFIG_PERMISSIONS_WARNING = (
+    "config.yaml is readable by other users. It holds Terraform backend S3 keys "
+    "under projects.<alias>.terraform_state. Run chmod 600 ~/.npa/config.yaml."
+)
+
+
+def config_permissions_warning(path: Path | None = None) -> str:
+    """Return a warning when ``~/.npa/config.yaml`` is group/world-readable.
+
+    ``config.yaml`` is usually thought of as non-secret machine config, but the
+    deploy paths persist Terraform remote-state S3 access keys into it
+    (``projects.<alias>.terraform_state``). ``credentials.yaml`` already warns on
+    loose permissions; this gives config.yaml the same treatment for a file that
+    predates the ``terraform_state`` block or was copied between machines.
+    """
+    target = path or CONFIG_PATH
+    try:
+        if not target.exists():
+            return ""
+        mode = target.stat().st_mode
+    except OSError:
+        return ""
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        return CONFIG_PERMISSIONS_WARNING
+    return ""
+
+
 def write_config(data: dict[str, Any]) -> Path:
     """Deep-merge *data* into ``~/.npa/config.yaml`` and write."""
     existing = _load_yaml()
@@ -474,6 +502,12 @@ def write_config(data: dict[str, Any]) -> Path:
     with CONFIG_PATH.open("w") as f:
         yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
     CONFIG_PATH.chmod(0o600)
+    # The directory holds credentials.yaml, per-agent auth.env secrets and
+    # cluster kubeconfigs, so keep it owner-only too.
+    try:
+        CONFIG_PATH.parent.chmod(0o700)
+    except OSError:  # pragma: no cover - unusual filesystems (e.g. mounted FAT)
+        pass
     return CONFIG_PATH
 
 
