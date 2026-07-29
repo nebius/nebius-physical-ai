@@ -497,3 +497,30 @@ Stated plainly, so nothing here is mistaken for proven:
 ## 9. Teardown
 
 <!-- TEARDOWN_PLACEHOLDER -->
+
+---
+
+## 10. Self-review checklist
+
+| # | Acceptance item | Commit(s) | Evidence |
+| --- | --- | --- | --- |
+| 1 | A workflow can declare parallel fan-out and it launches as genuinely concurrent SkyPilot jobs | `4ab46d20` (spec fields + wave planner), `a8419888` (JobGroup renderer) | §3.1 — one `job_id`, 3 tasks submitted within 12 ms, overlapping lifetimes, driver log "3 tasks running concurrently" |
+| 2 | The serial-only guard is lifted behind an **explicit** parallel path; serial stays the default | `a8419888` | `render_skypilot_yaml` untouched; `test_render_rejects_parallel_execution` still passes verbatim; §2 shows `--plan-only` still emits `execution: serial` for all 23 twins |
+| 3 | Barrier: a downstream `needs:` state waits for all parallel predecessors | `b55d081f` (wave boundary in the runtime tier) | §3.2 — barrier submitted 94.6 s after the last member ended; §5.1 — 84 s after |
+| 4 | Bounded concurrency respected | `4ab46d20` (`maxConcurrency` + batching), `b55d081f` (`execute_parallel` chunking) | unit: `test_wave_plan_groups_parallel_members`, `test_runtime_launches_parallel_group_as_job_group_with_barrier` (2+1 batches), `test_runtime_max_concurrency_override_widens_batches`; live: single-batch only (§8.4) |
+| 5 | `isaac-lab-rl-sweep.yaml` ported to a real npa.workflow parallel spec | `0cd3cc40` (spec + `rl_sweep` stages) | §2 wave preview (4-task JobGroup + barrier); **not run live** — §5.2 / §8.1 |
+| 6 | Runtime tier above `build_scheduler_task`: plan → submit → poll → read S3 decision → replan | `b55d081f` | §4.1/§4.2 ledgers: per-wave `job_id`, `sky_status`, decision reads |
+| 7 | Consumes the existing decision contract, no new gate mechanism | `b55d081f` (`RecordingDecisionReader` over `decisions.refresh_context_decision`) | §4.1 `gate/decision.json` written by the existing `grade_gate`, read back by the engine |
+| 8 | Bounded loops with **real** early-exit | `b55d081f`, `0cd3cc40` | §4 — 5 waves / 1 iteration (threshold 0.0) vs 11 waves / 3 iterations (threshold 1.01), same spec |
+| 9 | Data-dependent branching (`goto`) | `b55d081f` | §4 — `route` → `publish` vs `route` → `escalate` decided by the artifact; unit `test_runtime_branch_follows_transition_goto` |
+| 10 | Trigger / watch-loop pattern | `4ab46d20` (spec field), `b55d081f` (`s3_trigger_waiter`) | unit `test_trigger_waits_for_objects_then_runs`, `test_trigger_gives_up_after_max_polls`; **not run live** — §8.2 |
+| 11 | `--assume-decision` plan-only path preserved as the offline fallback | (unchanged code) | §4.3 — plan JSON identical to base commit `d129ee90` for 3 dynamic specs × 2 assumptions |
+| 12 | Every existing plan-only test and the shown-catalog guardrail still pass | all | §1 (263 engine+smoke, 3581 full offline), §2 (23 plan-only matrix cases) |
+| 13 | Job failure/retry, idempotency and resume built on `run_state.py` | `b55d081f` (`RuntimeLedger`, `npa.workflow.runtime.v1`) | §3.4 — live `--resume` replayed both waves, **zero** new jobs; unit tests for retry/timeout/exhaustion |
+| 14 | No hardcoded project/tenant/registry/bucket IDs or secrets | all | every live value comes from `NPA_E2E_*` / `~/.npa/*`; `scripts/stage-npa-src.sh` takes `--bucket`; leak assertions in the harness |
+| 15 | Unit tests mock all infra | `4ab46d20`, `a8419888`, `b55d081f`, `e378d38a`, `a7cbde3a` | injected submitter/status/timeline/canceller/sleeper/clock/storage in `test_runtime_orchestrator.py`, `test_rl_sweep.py`, `test_fanout_join.py` |
+| 16 | Scheduler-task seam preserved | `a8419888` | both renderers build docs via `build_skypilot_task_doc` → `build_scheduler_task`; the runtime tier only passes `PlanStep`s |
+| 17 | Backward compatible: existing serial specs render and submit unchanged | `4ab46d20` (flatten), `a8419888` (separate entry point) | §4.3 plan parity; §6.1 the pre-existing cpu twins still submit and succeed |
+| 18 | New specs registered in `SUBMIT_LIVE_MATRIX` (incl. a `multi`/parallel case) | `683a1abd`, `e747c8ef` | `token-factory-parallel-fanout` (cpu), `token-factory-gate-loop` (cpu, also in `DYNAMIC_SPECS`), `isaac-lab-rl-sweep` (multi) |
+| 19 | Cheapest live path first; cancel on timeout; no leaked clusters | — | §3 (CPU first), §5.2 (`sky jobs cancel -y 83`), §9 |
+| 20 | Honest reporting of what was not verified live | — | §8 |
