@@ -572,16 +572,47 @@ def _select_discovered_projects(
     """
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
+    # Large Nebius accounts can expose hundreds/thousands of projects. Dumping
+    # them all (and defaulting to 'all', which then discovers a registry per
+    # project) is unusable, so offer a name/id filter and cap the printed list.
+    display_cap = 40
+    shown = list(projects)
+    if len(shown) > display_cap:
+        typer.echo(
+            f"{len(shown)} projects are accessible. Type part of a project name or "
+            "id to filter (blank = just the current/first project)."
+        )
+        needle = ask("Filter projects", default="").strip().lower()
+        if needle:
+            filtered = [
+                proj
+                for proj in projects
+                if needle in (proj.get("name", "") or "").lower()
+                or needle in proj["id"].lower()
+            ]
+            shown = filtered or list(projects)
+        else:
+            current = [proj for proj in projects if proj["id"] == current_project_id]
+            shown = current or list(projects)
+        if len(shown) > display_cap:
+            typer.echo(
+                f"Showing the first {display_cap} of {len(shown)} matches; refine the "
+                "filter to narrow further."
+            )
+            shown = shown[:display_cap]
+
     typer.echo("Nebius projects accessible with your profile:\n")
-    for i, proj in enumerate(projects, start=1):
+    for i, proj in enumerate(shown, start=1):
         marker = "  *" if proj["id"] == current_project_id else "   "
         region = proj.get("region", "") or "?"
         typer.echo(
             f"{marker}{i:>2}. {proj.get('name', '') or proj['id']} "
             f"({region})  [{proj['id']}]"
         )
-    default_pick = "all"
-    for i, proj in enumerate(projects, start=1):
+    # Default to the current project (never 'all', which would configure every
+    # discovered project and run per-project registry discovery).
+    default_pick = "1"
+    for i, proj in enumerate(shown, start=1):
         if proj["id"] == current_project_id:
             default_pick = str(i)
             break
@@ -589,12 +620,12 @@ def _select_discovered_projects(
         "\nSelect project(s) to configure (comma-separated numbers, or 'all')",
         default=default_pick,
     )
-    chosen = _parse_selection(raw, len(projects)) or _parse_selection(default_pick, len(projects))
+    chosen = _parse_selection(raw, len(shown)) or _parse_selection(default_pick, len(shown))
 
     selected: list[tuple[str, dict[str, str]]] = []
     used_aliases: set[str] = set()
     for idx in chosen:
-        proj = projects[idx]
+        proj = shown[idx]
         alias = _slugify_alias(proj.get("name", ""), proj["id"])
         base_alias = alias
         suffix = 2
@@ -687,8 +718,16 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     # back to the manual prompts below, which also covers the offline unit tests.
     discovered_selection: list[tuple[str, dict[str, str]]] = []
     discovered_default_alias = ""
+    # Scope discovery to the active profile's tenant. Enumerating every tenant
+    # (list_accessible_projects) is O(tenants) serial CLI calls — hundreds of
+    # tenants take minutes and dump thousands of projects. The profile's own
+    # tenant holds the projects the operator actually deploys into; other tenants
+    # are reachable by switching the Nebius profile and re-running configure.
+    current_tenant = nebius_client.current_tenant_id() if profile_ready else ""
     discovered_projects = (
-        nebius_client.list_accessible_projects() if profile_ready else []
+        nebius_client.list_projects_in_tenant(current_tenant)
+        if (profile_ready and current_tenant)
+        else []
     )
     if discovered_projects:
         discovered_selection, discovered_default_alias = _select_discovered_projects(
@@ -1021,8 +1060,10 @@ def _configure_impl(
     token_factory_key: str = "",
 ) -> None:
     if token_factory_key.strip():
+        # Store the key, then continue with the rest of configure. Returning here
+        # left users thinking configure finished when no project/S3/HF/NGC/config
+        # had been written.
         _store_token_factory_key(token_factory_key.strip())
-        return
     if show:
         typer.echo(_SETUP_GUIDANCE)
         return
@@ -1076,7 +1117,7 @@ def configure(
         "--token-factory-key",
         help=(
             "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
-            "under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup)."
+            "under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of setup."
         ),
     ),
 ) -> None:
@@ -1120,7 +1161,7 @@ def init(
         "--token-factory-key",
         help=(
             "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
-            "under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup)."
+            "under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of setup."
         ),
     ),
 ) -> None:

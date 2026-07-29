@@ -135,8 +135,8 @@ def test_configure_discovers_and_writes_multiple_projects(monkeypatch, tmp_path)
     )
     monkeypatch.setattr(
         nebius_module,
-        "list_accessible_projects",
-        lambda: [
+        "list_projects_in_tenant",
+        lambda tenant_id: [
             {"id": "project-prod", "name": "prod", "tenant_id": "tenant-a", "region": "eu-north1"},
             {"id": "project-dev", "name": "dev", "tenant_id": "tenant-a", "region": "us-central1"},
         ],
