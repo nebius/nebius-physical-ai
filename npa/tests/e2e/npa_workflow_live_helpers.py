@@ -48,6 +48,7 @@ DYNAMIC_SPECS = frozenset(
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
+        "token-factory-gate-loop.yaml",
     }
 )
 
@@ -60,6 +61,7 @@ __all__ = [
     "assume_decision_for",
     "assert_cli_ok",
     "assert_no_credential_leakage",
+    "concurrency_overlaps",
     "live_bucket",
     "live_credential_markers",
     "materialize_live_spec",
@@ -68,6 +70,7 @@ __all__ = [
     "resolve_spec_path",
     "seed_live_workflow_inputs",
     "selected_submit_cases",
+    "write_runtime_evidence",
 ]
 
 _LEAK_PATTERNS = (
@@ -128,6 +131,18 @@ def seed_live_workflow_inputs(
             Body=buf.getvalue(),
             ContentType="image/png",
         )
+        return
+
+    if spec_name == "token-factory-parallel-fanout.yaml":
+        # One small image per shard prefix so all three fan-out members have real
+        # Token Factory work to do concurrently.
+        for shard in ("shard-a", "shard-b", "shard-c"):
+            _seed_images(client, bucket=bucket, prefix=f"{marker}/images/{shard}/", count=2)
+        return
+
+    if spec_name == "token-factory-gate-loop.yaml":
+        # The loop captions and scores the same small batch every iteration.
+        _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
         return
 
     if spec_name == "token-factory-generate.yaml":
@@ -191,6 +206,71 @@ def seed_live_workflow_inputs(
             # This twin also reasons over a captured scene before judging.
             _seed_scene_frame(client, bucket=bucket, marker=marker)
         return
+
+
+def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
+    """Upload ``count`` small deterministic PNGs under ``prefix``."""
+
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover
+        pytest.fail(f"Pillow required to seed image fixtures: {exc}")
+    for index in range(max(1, count)):
+        image = Image.new("RGB", (320, 240), (30, 30, 30))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([0, 190, 320, 240], fill=(90, 70, 50))
+        draw.rectangle([40 + index * 30, 120, 120 + index * 30, 190], fill=(200, 60, 60))
+        draw.rectangle([240, 120, 300, 190], fill=(40, 200, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{prefix}frame_{index:03d}.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+
+
+def concurrency_overlaps(tasks: Iterable[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Return task-name pairs whose [start_at, end_at] intervals overlap.
+
+    This is the live proof that a ``parallel:`` group really ran concurrently:
+    SkyPilot records per-task ``start_at`` / ``end_at`` for every member of a
+    JobGroup, so overlapping intervals cannot be produced by a serial chain.
+    """
+
+    rows = [
+        (
+            str(task.get("task_name") or task.get("task_id")),
+            float(task.get("start_at") or 0.0),
+            float(task.get("end_at") or 0.0),
+        )
+        for task in tasks
+        if task.get("start_at")
+    ]
+    overlaps: list[tuple[str, str]] = []
+    for index, (name_a, start_a, end_a) in enumerate(rows):
+        for name_b, start_b, end_b in rows[index + 1 :]:
+            latest_start = max(start_a, start_b)
+            earliest_end = min(end_a or float("inf"), end_b or float("inf"))
+            if earliest_end > latest_start:
+                overlaps.append((name_a, name_b))
+    return overlaps
+
+
+def write_runtime_evidence(name: str, payload: Any) -> Path:
+    """Persist a runtime run's JSON summary for EVIDENCE.md (never contains secrets)."""
+
+    log_dir = Path(
+        os.environ.get("NPA_LIVE_E2E_LOG_DIR", "")
+        or (Path.home() / "npa-live-e2e-logs")
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"runtime-{name}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
 
 
 def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client) -> None:

@@ -37,12 +37,14 @@ from .npa_workflow_live_helpers import (
     SubmitLiveCase,
     assert_no_credential_leakage,
     assume_decision_for,
+    concurrency_overlaps,
     live_bucket,
     live_credential_markers,
     materialize_live_spec,
     parse_json_payload,
     seed_live_workflow_inputs,
     selected_submit_cases,
+    write_runtime_evidence,
 )
 
 pytestmark = [
@@ -143,9 +145,22 @@ def _run_id_for(case: SubmitLiveCase) -> str:
     return f"npa-wf-{case.tier}-{stem}-{stamp}"
 
 
+def _one_shot_cases() -> list[SubmitLiveCase]:
+    """Matrix cases for the classic one-shot submit path.
+
+    Runtime cases (``parallel:`` fan-out, runtime gate loops) are covered by
+    ``test_npa_workflow_runtime_live_reaches_terminal`` instead: submitting them
+    through the one-shot path would render the flattened serial plan, which is
+    valid but proves nothing about concurrency/early-exit and burns GPU hours
+    running a sweep serially.
+    """
+
+    return [case for case in selected_submit_cases() if not case.runtime]
+
+
 @pytest.mark.parametrize(
     "case",
-    selected_submit_cases(),
+    _one_shot_cases(),
     ids=lambda c: f"{c.tier}:{c.spec}",
 )
 def test_npa_workflow_submit_live_reaches_terminal(
@@ -280,6 +295,188 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 )
             except Exception:
                 pass
+
+
+def _runtime_cases() -> list[SubmitLiveCase]:
+    return [case for case in selected_submit_cases() if case.runtime and not case.plan_only]
+
+
+def _runtime_submit_args(
+    path: Path,
+    *,
+    run_id: str,
+    registry: str,
+    case: SubmitLiveCase,
+    extra_vars: dict[str, str] | None = None,
+) -> list[str]:
+    args = [
+        "workbench",
+        "workflow",
+        "submit",
+        str(path),
+        "--run-id",
+        run_id,
+        "--runtime",
+        "--registry",
+        registry,
+        "--poll-seconds",
+        os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", "30"),
+        "--max-wait-seconds",
+        str(_max_wait()),
+        "--submit-timeout",
+        "1800",
+        "--output-format",
+        "json",
+    ]
+    if not _cancel_on_timeout():
+        args.append("--no-cancel-on-timeout")
+    for key, value in [*case.config_vars, *sorted((extra_vars or {}).items())]:
+        args.extend(["--var", f"{key}={value}"])
+    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
+        args.extend(["--image", "none"])
+    args.extend(_secret_env_args(case))
+    return args
+
+
+def _prepare_runtime_run(
+    case: SubmitLiveCase,
+    tmp_path: Path,
+    e2e_project: str | None,
+    suffix: str = "",
+) -> tuple[str, Path]:
+    bucket = live_bucket(e2e_project)
+    run_id = _run_id_for(case) + (f"-{suffix}" if suffix else "")
+    path = materialize_live_spec(tmp_path, case.spec, bucket=bucket, run_id=run_id)
+    seed_live_workflow_inputs(
+        spec_name=case.spec,
+        bucket=bucket,
+        run_id=run_id,
+        e2e_project=e2e_project,
+    )
+    return run_id, path
+
+
+@pytest.mark.parametrize(
+    "case",
+    _runtime_cases(),
+    ids=lambda c: f"{c.tier}:{c.spec}",
+)
+def test_npa_workflow_runtime_live_reaches_terminal(
+    case: SubmitLiveCase,
+    tmp_path: Path,
+    e2e_project: str | None,
+    e2e_registry: str,
+    forbidden_markers: list[str],
+) -> None:
+    """Drive a spec through the runtime orchestrator against real infrastructure.
+
+    Asserts the run reaches a terminal success, and — for specs with a
+    ``parallel:`` group — that the group's SkyPilot tasks actually overlapped in
+    time and that the barrier state started only after they finished.
+    """
+
+    if os.environ.get("NPA_E2E_NPA_WORKFLOW_RUNTIME") != "1":
+        pytest.skip("NPA_E2E_NPA_WORKFLOW_RUNTIME not set")
+    if case.requires_token_factory and not os.environ.get("NEBIUS_TOKEN_FACTORY_KEY"):
+        pytest.skip("NEBIUS_TOKEN_FACTORY_KEY required for this twin")
+
+    run_id, path = _prepare_runtime_run(case, tmp_path, e2e_project)
+    result = RUNNER.invoke(
+        app, _runtime_submit_args(path, run_id=run_id, registry=e2e_registry, case=case)
+    )
+    payload = parse_json_payload(result, forbidden_markers)
+    write_runtime_evidence(run_id, payload)
+
+    assert payload["status"] == "succeeded", payload.get("error") or payload
+    waves = payload["waves"]
+    assert waves, payload
+
+    if case.expected_parallel_tasks > 1:
+        parallel_waves = [wave for wave in waves if wave["kind"] == "parallel"]
+        assert parallel_waves, f"{case.spec} declared a parallel group but ran none: {waves}"
+        launched = sum(len(wave["states"]) for wave in parallel_waves)
+        assert launched == case.expected_parallel_tasks
+        overlaps = concurrency_overlaps(parallel_waves[0].get("tasks") or [])
+        assert overlaps, (
+            "parallel wave tasks did not overlap in time: "
+            f"{parallel_waves[0].get('tasks')}"
+        )
+        # Barrier: every serial wave after the group started after it ended.
+        group_end = max(
+            float(task.get("end_at") or 0.0)
+            for wave in parallel_waves
+            for task in wave.get("tasks") or []
+        )
+        later_starts = [
+            float(task.get("start_at") or 0.0)
+            for wave in waves
+            if wave["kind"] == "serial"
+            for task in wave.get("tasks") or []
+            if float(task.get("start_at") or 0.0) > 0
+        ]
+        assert later_starts, "no barrier task timings recorded"
+        assert min(later_starts) >= group_end - 1.0, (
+            f"barrier task started before the parallel group finished: "
+            f"group_end={group_end} starts={later_starts}"
+        )
+
+
+def test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget(
+    tmp_path: Path,
+    e2e_project: str | None,
+    e2e_registry: str,
+    forbidden_markers: list[str],
+) -> None:
+    """The same bounded-loop spec must early-exit or run its full budget live.
+
+    Run A passes the gate on iteration 1 (``grade_threshold=0.0``) and must NOT
+    submit the remaining iterations. Run B can never pass the gate
+    (``grade_threshold`` above any achievable score) and must run the whole
+    budget and take the other branch. The decision each iteration comes from the
+    real ``decision.json`` the gate stage wrote to S3.
+    """
+
+    if os.environ.get("NPA_E2E_NPA_WORKFLOW_RUNTIME") != "1":
+        pytest.skip("NPA_E2E_NPA_WORKFLOW_RUNTIME not set")
+    if not os.environ.get("NEBIUS_TOKEN_FACTORY_KEY"):
+        pytest.skip("NEBIUS_TOKEN_FACTORY_KEY required for the gate-loop twin")
+
+    case = next(
+        c for c in SUBMIT_LIVE_MATRIX if c.spec == "token-factory-gate-loop.yaml"
+    )
+    payloads: dict[str, dict] = {}
+    for label, threshold in (("early", "0.0"), ("full", "1.01")):
+        run_id, path = _prepare_runtime_run(case, tmp_path, e2e_project, suffix=label)
+        args = _runtime_submit_args(
+            path,
+            run_id=run_id,
+            registry=e2e_registry,
+            case=case,
+            extra_vars={"grade_threshold": threshold},
+        )
+        result = RUNNER.invoke(app, args)
+        payload = parse_json_payload(result, forbidden_markers)
+        write_runtime_evidence(run_id, payload)
+        assert payload["status"] == "succeeded", payload.get("error") or payload
+        payloads[label] = payload
+
+    def _count(payload: dict, state: str) -> int:
+        return sum(
+            1 for wave in payload["waves"] for name in wave["states"] if name == state
+        )
+
+    early, full = payloads["early"], payloads["full"]
+    assert _count(early, "quality-gate") == 1, "gate did not early-exit on iteration 1"
+    assert _count(full, "quality-gate") >= 2, "gate loop did not run its budget"
+    assert _count(full, "caption-batch") > _count(early, "caption-batch")
+    assert early["decisions"], "no decision artifact was read at runtime"
+    assert early["decisions"][-1]["decision"] == "promote_checkpoint"
+    assert full["decisions"][-1]["decision"] == "loop_back_to_inner_loop"
+    # Data-dependent branching: promote publishes, exhausted budget escalates.
+    early_states = [name for wave in early["waves"] for name in wave["states"]]
+    full_states = [name for wave in full["waves"] for name in wave["states"]]
+    assert early_states[-1] == "publish"
+    assert full_states[-1] == "escalate"
 
 
 @pytest.mark.parametrize("case", SUBMIT_LIVE_MATRIX, ids=lambda c: c.spec)

@@ -21,6 +21,16 @@ class SubmitLiveCase:
     requires_token_factory: bool = False
     plan_only: bool = False
     notes: str = ""
+    #: Submit through the runtime orchestrator (``submit --runtime``) instead of
+    #: the one-shot serial path. Required for specs with a ``parallel:`` group or
+    #: a loop that must early-exit on the real decision artifact.
+    runtime: bool = False
+    #: Config overrides applied at submit time (``--var k=v``), e.g. to drive a
+    #: gate threshold in one live run.
+    config_vars: tuple[tuple[str, str], ...] = ()
+    #: Expected number of concurrent tasks in the spec's largest parallel wave
+    #: (0 when the spec has no fan-out); asserted from the live job timeline.
+    expected_parallel_tasks: int = 0
 
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
@@ -43,6 +53,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "cpu",
         secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         requires_token_factory=True,
+    ),
+    SubmitLiveCase(
+        "token-factory-parallel-fanout.yaml",
+        "cpu",
+        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        requires_token_factory=True,
+        runtime=True,
+        expected_parallel_tasks=3,
+        notes=(
+            "Cheapest live PARALLEL path: three caption shards launch as one "
+            "SkyPilot JobGroup, then an insights barrier. Needs --runtime."
+        ),
+    ),
+    SubmitLiveCase(
+        "token-factory-gate-loop.yaml",
+        "cpu",
+        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        requires_token_factory=True,
+        runtime=True,
+        config_vars=(("grade_threshold", "0.0"),),
+        notes=(
+            "Cheapest live RUNTIME-GATE path: the loop reads the real decision "
+            "artifact and early-exits on iteration 1 with grade_threshold=0.0 "
+            "(raise it above the achievable score to run the full budget)."
+        ),
     ),
     SubmitLiveCase(
         "retargeting.yaml",
@@ -108,6 +143,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
         notes="retarget → train → mjlab",
+    ),
+    SubmitLiveCase(
+        "isaac-lab-rl-sweep.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        expected_parallel_tasks=4,
+        notes=(
+            "Parallel GPU reference case (port of the execution:parallel SkyPilot "
+            "template): four RSL-RL variants as one JobGroup + ranking barrier. "
+            "Needs --runtime; cap GPUs with --var max_concurrency=N."
+        ),
     ),
     SubmitLiveCase(
         "bdd100k-pipeline.yaml",
