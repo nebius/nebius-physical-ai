@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
-
-import pytest
 
 from npa.cli.agent_rrd_proxy import (
     file_uri_path_allowed,
@@ -24,7 +21,6 @@ from npa.cli.agent_workflow import (
     format_workflow_chat_reply,
     _desired_step_count,
 )
-from npa.cli import agent as agent_module
 
 
 AGENT_PY = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
