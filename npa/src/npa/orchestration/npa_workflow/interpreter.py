@@ -33,6 +33,8 @@ class PlanStep:
     resources_profile: dict[str, Any] = field(default_factory=dict)
     outputs: list[dict[str, str]] = field(default_factory=list)
     inputs: list[dict[str, str]] = field(default_factory=list)
+    #: Name of the ``parallel:`` group this step belongs to ("" for serial steps).
+    group: str = ""
 
 
 @dataclass
@@ -61,6 +63,7 @@ class ExecutionPlan:
                     "resources_profile": step.resources_profile,
                     "outputs": step.outputs,
                     "inputs": step.inputs,
+                    "group": step.group,
                 }
                 for step in self.steps
             ],
@@ -254,6 +257,26 @@ def _expand_state(
     state = spec.states[state_name]
     _guard_plan_size(spec, plan)
 
+    if state.parallel:
+        # Plan-time preview flattens a parallel group into declared order, exactly
+        # like `sequence:`. The concurrent shape lives in the wave plan
+        # (`waves.build_wave_plan`) and is executed by the runtime tier; keeping the
+        # static plan serial means `--plan-only` output (and every existing
+        # plan-only guardrail) is unchanged for serial and parallel specs alike.
+        for member in state.parallel:
+            _append_state_step(
+                spec,
+                spec.states[member],
+                ctx,
+                plan,
+                loop_label=state.name,
+                group=state.name,
+            )
+            _guard_plan_size(spec, plan)
+        if state.next:
+            _expand_state(spec, state.next, ctx, plan, assume_decision=assume_decision)
+        return
+
     if state.sequence:
         if state.loop:
             max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
@@ -339,6 +362,31 @@ def _expand_state(
         )
 
 
+def state_config(state: StateSpec, ctx: RunContext) -> dict[str, Any]:
+    """Return the config mapping used to resolve one state's tokens.
+
+    ``params`` on a state is a *config overlay* scoped to that state, so N members
+    of a ``parallel:`` sweep can share one ``toolRef`` argv template and still
+    differ (learning rate, output prefix, ...). Overlay values may themselves use
+    ``{{config.*}}`` / ``{{run.*}}`` tokens, resolved against the base config.
+    """
+
+    if not state.params:
+        return ctx.config
+    overlay = dict(ctx.config)
+    for key, value in state.params.items():
+        if isinstance(value, str):
+            overlay[key] = resolve_tokens(
+                value,
+                config=ctx.config,
+                run=ctx.run,
+                state_outputs=ctx.state_outputs,
+            )
+        else:
+            overlay[key] = value
+    return overlay
+
+
 def _guard_plan_size(spec: NpaWorkflowSpec, plan: ExecutionPlan) -> None:
     limit = _execution_step_limit(spec)
     if len(plan.steps) >= limit:
@@ -374,13 +422,39 @@ def _append_state_step(
     *,
     iteration: int | None = None,
     loop_label: str = "",
+    group: str = "",
 ) -> None:
+    plan.steps.append(
+        build_step(
+            spec,
+            state,
+            ctx,
+            iteration=iteration,
+            loop_label=loop_label,
+            group=group,
+        )
+    )
+    _record_state_outputs(state, ctx, plan.steps[-1])
+
+
+def build_step(
+    spec: NpaWorkflowSpec,
+    state: StateSpec,
+    ctx: RunContext,
+    *,
+    iteration: int | None = None,
+    loop_label: str = "",
+    group: str = "",
+) -> PlanStep:
+    """Materialize one planned step (tokens resolved, params overlay applied)."""
+
     argv, shell, tool_ref = _resolved_run(state, ctx)
+    config = state_config(state, ctx)
     outputs = [
         {
             "uri": resolve_tokens(
                 artifact.uri,
-                config=ctx.config,
+                config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
             ),
@@ -389,21 +463,19 @@ def _append_state_step(
         for artifact in state.outputs
         if artifact.uri
     ]
-    plan.steps.append(
-        PlanStep(
-            state=state.name,
-            iteration=iteration,
-            loop_label=loop_label,
-            argv=argv,
-            shell=shell,
-            tool_ref=tool_ref,
-            resources=state.resources,
-            resources_profile=_resources_profile(spec, state.resources),
-            outputs=outputs,
-            inputs=_resolved_inputs(state, ctx),
-        )
+    return PlanStep(
+        state=state.name,
+        iteration=iteration,
+        loop_label=loop_label,
+        argv=argv,
+        shell=shell,
+        tool_ref=tool_ref,
+        resources=state.resources,
+        resources_profile=_resources_profile(spec, state.resources),
+        outputs=outputs,
+        inputs=_resolved_inputs(state, ctx),
+        group=group,
     )
-    _record_state_outputs(state, ctx, plan.steps[-1])
 
 
 def _resources_profile(spec: NpaWorkflowSpec, profile: str) -> dict[str, Any]:
@@ -412,11 +484,12 @@ def _resources_profile(spec: NpaWorkflowSpec, profile: str) -> dict[str, Any]:
 
 
 def _resolved_inputs(state: StateSpec, ctx: RunContext) -> list[dict[str, str]]:
+    config = state_config(state, ctx)
     return [
         {
             "uri": resolve_tokens(
                 artifact.uri,
-                config=ctx.config,
+                config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
             ),
@@ -668,11 +741,12 @@ def _run_single_state(
 
 
 def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, str]:
+    config = state_config(state, ctx)
     if state.tool_ref:
         argv = [
             resolve_tokens(
                 token,
-                config=ctx.config,
+                config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
             )
@@ -683,12 +757,12 @@ def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, st
         return [], "", ""
     shell = resolve_tokens(
         state.run.shell,
-        config=ctx.config,
+        config=config,
         run=ctx.run,
         state_outputs=ctx.state_outputs,
     )
     argv = [
-        resolve_tokens(token, config=ctx.config, run=ctx.run, state_outputs=ctx.state_outputs)
+        resolve_tokens(token, config=config, run=ctx.run, state_outputs=ctx.state_outputs)
         for token in state.run.argv
     ]
     return argv, shell, ""
