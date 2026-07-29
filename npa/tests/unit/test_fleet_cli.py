@@ -333,3 +333,216 @@ def test_infra_fleet_deploy_toolref_registered() -> None:
     argv = argv_for_tool("infra.fleet.deploy")
     assert argv[:3] == ["npa", "fleet", "deploy"]
     assert "{{config.fleet_spec}}" in argv
+
+
+def test_dns_name_rejects_over_63_chars() -> None:
+    long_name = "a" * 64
+    cluster = ClusterSpec(name=long_name, cpu_nodes=NodePoolSpec(count=1))
+    with pytest.raises(FleetSpecError, match="DNS-1123 label"):
+        cluster.validate()
+
+
+# --------------------------------------------------------------------------- #
+# ensure_subnet (mocked, no infra)
+# --------------------------------------------------------------------------- #
+class _Cap:
+    def __init__(self, stdout: str = "", returncode: int = 0) -> None:
+        self.stdout = stdout
+        self.returncode = returncode
+
+
+def test_ensure_subnet_reuses_existing_and_reports_no_created_network(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_list_subnets", lambda *a, **k: [{"metadata": {"id": "subnet-x"}}])
+    assert L.ensure_subnet("neb", "proj", name_stem="c", env={}) == ("subnet-x", "")
+
+
+def test_ensure_subnet_creates_network_and_subnet(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_list_subnets", lambda *a, **k: [])
+
+    def cap(cmd, *, env=None, check=True, timeout=None, cwd=None):
+        if "network" in cmd and "create" in cmd:
+            return _Cap(json.dumps({"metadata": {"id": "net-9"}}))
+        if "subnet" in cmd and "create" in cmd:
+            return _Cap(json.dumps({"metadata": {"id": "sub-9"}}))
+        return _Cap("{}")
+
+    monkeypatch.setattr(L, "_run_capture", cap)
+    assert L.ensure_subnet("neb", "proj", name_stem="c", env={}) == ("sub-9", "net-9")
+
+
+# --------------------------------------------------------------------------- #
+# _prepare_install_dir provider-domain patch (loud no-op)
+# --------------------------------------------------------------------------- #
+def _fake_recipe(tmp_path, provider_body: str):
+    root = tmp_path / "recipe"
+    (root / "k8s-training").mkdir(parents=True)
+    (root / "modules").mkdir()
+    (root / "k8s-training" / "provider.tf").write_text(provider_body)
+    (root / "k8s-training" / "variables.tf").write_text("")
+    return root
+
+
+def test_prepare_install_dir_patches_eu_domain(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n')
+    msgs: list[str] = []
+    wd = L._prepare_install_dir(
+        tmp_path / "inst",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+        on_status=msgs.append,
+    )
+    txt = (wd / "provider.tf").read_text()
+    assert "api.nebius.cloud:443" in txt and "api.eu.nebius.cloud:443" not in txt
+    assert not any("not patched" in m for m in msgs)
+
+
+def test_prepare_install_dir_warns_when_provider_domain_not_matched(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    # Recipe drift: the EU domain string is absent, so the literal replace is a
+    # no-op. For a non-EU region this must warn loudly instead of silently using
+    # the wrong endpoint.
+    root = _fake_recipe(tmp_path, 'provider "nebius" { domain = "renamed-domain:443" }\n')
+    msgs: list[str] = []
+    L._prepare_install_dir(
+        tmp_path / "inst",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+        on_status=msgs.append,
+    )
+    assert any("not patched" in m for m in msgs)
+
+
+# --------------------------------------------------------------------------- #
+# _deploy_one_cluster sidecar status transitions (mocked)
+# --------------------------------------------------------------------------- #
+def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
+    from npa.fleet import lifecycle as L
+
+    def fake_prepare(install_dir, **k):
+        install_dir.mkdir(parents=True, exist_ok=True)
+        return install_dir / "k8s-training"
+
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("subnet-1", "net-1"))
+    monkeypatch.setattr(L, "_prepare_install_dir", fake_prepare)
+    monkeypatch.setattr(L, "_cluster_tf_env", lambda *a, **k: {})
+
+    def fake_stream(*a, **k):
+        if apply_fails:
+            raise RuntimeError("terraform boom")
+        return None
+
+    monkeypatch.setattr(L, "_run_stream", fake_stream)
+    monkeypatch.setattr(
+        L, "_terraform_outputs", lambda *a, **k: {"kube_cluster": {"value": {"id": "mk8s-1"}}}
+    )
+    monkeypatch.setattr(L, "_write_kubeconfig", lambda *a, **k: None)
+    return L
+
+
+def _run_one_cluster(L, tmp_path):
+    spec = FleetSpec(name="f")
+    project = ProjectSpec(name="a")
+    cluster = ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))
+    return L._deploy_one_cluster(
+        spec=spec,
+        project=project,
+        cluster=cluster,
+        project_id="p1",
+        project_created=False,
+        region="us-central1",
+        tenant_id="t",
+        ssh_public_key="k",
+        fleet_root=tmp_path,
+        recipe_root=tmp_path,
+        terraform_bin="terraform",
+        nebius_bin="nebius",
+        timeout_minutes=1,
+        on_status=None,
+    )
+
+
+def test_deploy_one_cluster_success_promotes_sidecar_and_records_network(tmp_path, monkeypatch) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    res = _run_one_cluster(L, tmp_path)
+    assert res["status"] == "deployed"
+    assert res["cluster_id"] == "mk8s-1"
+    sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["status"] == "deployed"
+    assert sidecar["created_network_id"] == "net-1"
+    assert sidecar["cluster_id"] == "mk8s-1"
+
+
+def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(tmp_path, monkeypatch) -> None:
+    L = _mock_deploy_boundary(monkeypatch, apply_fails=True)
+    res = _run_one_cluster(L, tmp_path)
+    assert res["status"] == "error"
+    # Sidecar was written before apply; a failed apply must NOT read as deployed.
+    sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["status"] == "provisioning"
+
+
+# --------------------------------------------------------------------------- #
+# destroy_fleet reclaims a fleet-created network (mocked)
+# --------------------------------------------------------------------------- #
+def _setup_destroy(tmp_path, monkeypatch, sidecar_extra: dict):
+    from npa.fleet import lifecycle as L
+
+    install = tmp_path / "f" / "a" / "c"
+    (install / L._K8S_TRAINING_SUBDIR).mkdir(parents=True)
+    L._write_env_sidecar(
+        install,
+        {
+            "tenant_id": "t",
+            "project_id": "p1",
+            "region": "us-central1",
+            "subnet_id": "sub-9",
+            "cluster_name": "c",
+            "status": "deployed",
+            **sidecar_extra,
+        },
+    )
+    monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_terraform_env", lambda b: {})
+    monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
+    deleted: list[str] = []
+
+    def cap(cmd, *, env=None, check=True, timeout=None, cwd=None):
+        if "delete" in cmd and ("subnet" in cmd or "network" in cmd):
+            deleted.append(cmd[cmd.index("--id") + 1])
+        return _Cap("", 0)
+
+    monkeypatch.setattr(L, "_run_capture", cap)
+    return L, deleted
+
+
+def test_destroy_reclaims_created_network_and_subnet(tmp_path, monkeypatch) -> None:
+    L, deleted = _setup_destroy(tmp_path, monkeypatch, {"created_network_id": "net-9"})
+    spec = FleetSpec(
+        name="f",
+        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+    )
+    L.destroy_fleet(spec, work_root=tmp_path)
+    # Subnet first, then network.
+    assert deleted == ["sub-9", "net-9"]
+
+
+def test_destroy_leaves_reused_subnet_untouched(tmp_path, monkeypatch) -> None:
+    # No created_network_id -> the subnet was pre-existing; must not be deleted.
+    L, deleted = _setup_destroy(tmp_path, monkeypatch, {"created_network_id": ""})
+    spec = FleetSpec(
+        name="f",
+        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+    )
+    L.destroy_fleet(spec, work_root=tmp_path)
+    assert deleted == []

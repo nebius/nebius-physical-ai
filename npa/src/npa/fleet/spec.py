@@ -47,7 +47,8 @@ def _slug(value: str) -> str:
 
 
 def _is_dns_name(value: str) -> bool:
-    return bool(value) and value == _slug(value) and value[0].isalnum()
+    # DNS-1123 label: lowercase alphanumeric/dash, start alphanumeric, <= 63 chars.
+    return bool(value) and len(value) <= 63 and value == _slug(value) and value[0].isalnum()
 
 
 @dataclass

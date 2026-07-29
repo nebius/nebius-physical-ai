@@ -91,14 +91,38 @@ Example spec: `npa/examples/fleet/fleet1-test.yaml`.
 
 - **Per-cluster isolation**: each `(project, cluster)` gets its own Terraform
   install dir + local state under `~/.npa/fleet/<name>/<project>/<cluster>` and
-  an env sidecar so `destroy` can rebuild the required `TF_VAR_*`.
-- **Region domain**: the wrapper provider domain is patched to `api.nebius.cloud`
-  for non-EU regions automatically (EU uses `api.eu.nebius.cloud`).
+  an env sidecar so `destroy` can rebuild the required `TF_VAR_*`. The sidecar's
+  `status` starts as `provisioning` and is promoted to `deployed` only after a
+  successful apply, so `status` never mislabels a half-applied cluster.
+- **Region domain**: the recipe's `provider.tf` domain is patched to
+  `api.nebius.cloud` for non-EU regions automatically (EU uses
+  `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,
+  moves the provider block, or changes the default domain), the patch becomes a
+  no-op and the deploy logs a loud `WARNING` rather than silently talking to the
+  wrong endpoint.
+- **Latest-recipe coupling** (`--k8s-training-ref`/`--k8s-training-dir`): the
+  rendered `terraform.tfvars` targets the recipe's *current* variable surface --
+  the pinned `filesystem_csi.chart_version`, the `loki`/observability toggles,
+  and the o11y/kuberay/gatekeeper `enable_*` flags. Pulling a newer recipe whose
+  variables changed can require updating `fleet/tfvars.py`; validate with
+  `npa fleet plan` + a `terraform plan` before a fleet-wide apply.
+- **Filesystem quota**: `enable_filestore: true` creates one shared filesystem
+  per cluster and consumes tenant `compute.filesystem.count` +
+  `compute.filesystem.size.network-ssd` quota. Set `enable_filestore: false`
+  (or raise quota) if the tenant is at its filesystem limit.
+- **Auto-created VPC on destroy**: when a target project has no subnet, deploy
+  creates a `<cluster>-net` + `<cluster>-subnet`; `destroy` reclaims exactly
+  those (subnet then network). A *reused* pre-existing subnet is left untouched,
+  and created *projects* are never deleted.
+- **Serial deploys**: clusters are deployed sequentially, each with its own
+  `--timeout` (minutes) apply. A large fleet is `N ×` apply wall-clock; size
+  `--timeout` and expectations accordingly.
 - **Stale IAM token**: a stale ambient `NEBIUS_IAM_TOKEN` shadows the profile
   exec-plugin; npa strips it for `nebius`/`terraform` calls unless
   `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token).
-- **Old terraform**: the recipe needs a recent terraform; set `NPA_TERRAFORM_BIN`
-  if the system terraform is too old.
+- **terraform >= 1.12**: the recipe's modules use `ephemeral` blocks and a
+  `>= 1.12` version constraint; set `NPA_TERRAFORM_BIN` if the system terraform
+  is older.
 
 ## Verify
 

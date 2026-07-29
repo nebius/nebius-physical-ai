@@ -32,7 +32,7 @@ from npa.cli.cluster.terraform_lifecycle import (
     _terraform_env,
 )
 from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
-from npa.fleet.tfvars import patch_provider_domain, render_tfvars
+from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
 
 _SOLUTIONS_LIBRARY_REPO = "https://github.com/nebius/nebius-solutions-library.git"
 _K8S_TRAINING_SUBDIR = "k8s-training"
@@ -276,19 +276,22 @@ def ensure_subnet(
     name_stem: str,
     env: dict[str, str],
     on_status: Callable[[str], None] | None = None,
-) -> str:
-    """Return a usable subnet id in *project_id*, creating a network+subnet if none.
+) -> tuple[str, str]:
+    """Return ``(subnet_id, created_network_id)`` for *project_id*.
 
     The k8s-training root module requires an existing ``subnet_id`` (it does not
     create one). Freshly created projects may have no VPC yet, so create a
     network + subnet (inheriting the network's default IPv4 pools) when absent.
+    ``created_network_id`` is non-empty only when this call created the network,
+    so ``destroy`` can reclaim the network + subnet it created (an existing
+    subnet is reused and left untouched).
     """
 
     subnets = _list_subnets(nebius_bin, project_id, env)
     if subnets:
         sid = str(subnets[0].get("metadata", {}).get("id") or "")
         if sid:
-            return sid
+            return sid, ""
     _log(on_status, f"no subnet in project {project_id[:12]}...; creating network + subnet")
     net = _run_capture(
         [
@@ -317,7 +320,7 @@ def ensure_subnet(
         subnet_id = ""
     if not subnet_id:
         raise ValueError(f"could not create subnet in project {project_id}: {sub.stdout[:200]}")
-    return subnet_id
+    return subnet_id, network_id
 
 
 def resolve_project_id(
@@ -378,6 +381,7 @@ def _prepare_install_dir(
     region: str,
     cluster: ClusterSpec,
     ssh_public_key: str,
+    on_status: Callable[[str], None] | None = None,
 ) -> Path:
     """Materialize a per-cluster copy of the recipe and return the terraform workdir.
 
@@ -406,7 +410,26 @@ def _prepare_install_dir(
 
     provider_tf = workdir / "provider.tf"
     if provider_tf.exists():
-        provider_tf.write_text(patch_provider_domain(provider_tf.read_text(), region))
+        original = provider_tf.read_text()
+        patched = patch_provider_domain(original, region)
+        # Loud no-op guard: if the recipe drifts (renamed file, moved/renamed
+        # provider block, or changed default domain) the literal replace silently
+        # matches nothing and terraform would talk to the EU endpoint from a
+        # non-EU region, failing confusingly at apply. Surface it here instead.
+        target = provider_domain(region)
+        if patched == original and target not in original:
+            _log(
+                on_status,
+                f"WARNING: provider.tf domain not patched to {target} for region "
+                f"{region!r} (recipe may have changed); check {provider_tf}",
+            )
+        provider_tf.write_text(patched)
+    elif not region.startswith("eu"):
+        _log(
+            on_status,
+            f"WARNING: no provider.tf in recipe copy at {workdir}; cannot patch "
+            f"provider domain for region {region!r}",
+        )
 
     (workdir / "terraform.tfvars").write_text(
         render_tfvars(cluster, ssh_public_key=ssh_public_key)
@@ -663,19 +686,24 @@ def _deploy_one_cluster(
     context = _context_name(spec.name, project_key, cluster.name)
     label = f"{project_key}/{cluster.name}"
     try:
-        subnet_id = cluster.subnet_id or ensure_subnet(
-            nebius_bin,
-            project_id,
-            name_stem=cluster.name,
-            env=_nebius_cli_env(),
-            on_status=on_status,
-        )
+        created_network_id = ""
+        if cluster.subnet_id:
+            subnet_id = cluster.subnet_id
+        else:
+            subnet_id, created_network_id = ensure_subnet(
+                nebius_bin,
+                project_id,
+                name_stem=cluster.name,
+                env=_nebius_cli_env(),
+                on_status=on_status,
+            )
         workdir = _prepare_install_dir(
             install_dir,
             recipe_root=recipe_root,
             region=region,
             cluster=cluster,
             ssh_public_key=ssh_public_key,
+            on_status=on_status,
         )
         env = _cluster_tf_env(
             nebius_bin,
@@ -684,17 +712,21 @@ def _deploy_one_cluster(
             region=region,
             subnet_id=subnet_id,
         )
-        _write_env_sidecar(
-            install_dir,
-            {
-                "tenant_id": tenant_id,
-                "project_id": project_id,
-                "region": region,
-                "subnet_id": subnet_id,
-                "cluster_name": cluster.name,
-                "context": context,
-            },
-        )
+        # Written before apply so ``destroy`` can reconstruct TF_VAR_* and reclaim
+        # the network we created even if apply fails midway. ``status`` starts as
+        # "provisioning" and is promoted to "deployed" only on success, so the
+        # status fallback never mislabels a failed cluster as deployed.
+        sidecar = {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "region": region,
+            "subnet_id": subnet_id,
+            "created_network_id": created_network_id,
+            "cluster_name": cluster.name,
+            "context": context,
+            "status": "provisioning",
+        }
+        _write_env_sidecar(install_dir, sidecar)
         _log(on_status, f"[{label}] terraform init")
         _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900)
         _log(
@@ -714,6 +746,7 @@ def _deploy_one_cluster(
         if cluster_id:
             _log(on_status, f"[{label}] writing kubeconfig context {context}")
             _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, env)
+        _write_env_sidecar(install_dir, {**sidecar, "cluster_id": cluster_id, "status": "deployed"})
         return {
             "project_key": project_key,
             "project_id": project_id,
@@ -812,6 +845,17 @@ def destroy_fleet(
                             timeout=timeout_minutes * 60,
                         )
                 status = "destroyed-with-fallback"
+            # Reclaim the VPC network + subnet this fleet created (only when we
+            # created them; a reused pre-existing subnet has no created_network_id
+            # and is left untouched). The recipe treats subnet_id as an existing
+            # input, so terraform never deletes it -- without this, repeated
+            # deploy/destroy cycles on fresh projects leak a network+subnet each
+            # time. Runs after the cluster is gone so the subnet is unused.
+            created_network_id = str(saved.get("created_network_id") or "")
+            if created_network_id and project_id:
+                _reclaim_created_network(
+                    nebius_bin, project_id, created_network_id, subnet_id, env, on_status, label
+                )
             for stale in workdir.glob("terraform.tfstate*"):
                 try:
                     stale.unlink()
@@ -821,6 +865,34 @@ def destroy_fleet(
                 {"project_key": project.key(), "cluster_name": cluster.name, "status": status}
             )
     return {"name": spec.name, "clusters": destroyed}
+
+
+def _reclaim_created_network(
+    nebius_bin: str,
+    project_id: str,
+    network_id: str,
+    subnet_id: str,
+    env: dict[str, str],
+    on_status: Callable[[str], None] | None,
+    label: str,
+) -> None:
+    """Best-effort delete of a fleet-created subnet + network (subnet first)."""
+
+    if subnet_id:
+        _log(on_status, f"[{label}] deleting fleet-created subnet {subnet_id}")
+        _run_capture(
+            [nebius_bin, "vpc", "subnet", "delete", "--id", subnet_id],
+            env=env,
+            check=False,
+            timeout=600,
+        )
+    _log(on_status, f"[{label}] deleting fleet-created network {network_id}")
+    _run_capture(
+        [nebius_bin, "vpc", "network", "delete", "--id", network_id],
+        env=env,
+        check=False,
+        timeout=600,
+    )
 
 
 def fleet_status(
@@ -844,11 +916,15 @@ def fleet_status(
         for cluster in project.clusters:
             install_dir = fleet_root / project.key() / cluster.name
             saved = _load_env_sidecar(install_dir)
+            # Trust the sidecar's own status ("provisioning"/"deployed"); a
+            # present sidecar does not imply a successful apply (it is written
+            # before terraform runs), so never assume "deployed" from presence.
+            status = str(saved.get("status") or "unknown") if saved else "unknown"
             clusters.append(
                 {
                     "project_key": project.key(),
                     "cluster_name": cluster.name,
-                    "status": "deployed" if saved else "unknown",
+                    "status": status,
                     **({k: v for k, v in saved.items()} if saved else {}),
                 }
             )
