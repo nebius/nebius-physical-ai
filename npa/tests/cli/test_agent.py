@@ -1423,9 +1423,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     result = runner.invoke(app, ["verify-live"])
     assert result.exit_code == 0, result.output
     assert "verify-live: ok" in result.output
+    import sys as _sys
+
+    expected_py = _sys.executable or "python3"
     assert calls == [
         [
-            "npa/.venv/bin/python",
+            expected_py,
             "-m",
             "pytest",
             "npa/tests/smoke/test_agent_smoke.py",
@@ -1433,14 +1436,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             "-q",
         ],
         [
-            "npa/.venv/bin/python",
+            expected_py,
             "-m",
             "pytest",
             "npa/tests/cli/test_agent.py",
             "npa/tests/cli/test_agent_workflow.py",
             "-q",
         ],
-        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
+        [expected_py, "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
     ]
 
 
