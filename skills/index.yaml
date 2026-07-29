@@ -472,6 +472,9 @@ skills:
           - npa/workflows/workbench/npa-workflows/cosmos-synth-fanout-curation.yaml
           - npa/workflows/physical-ai-data-factory.yaml
           - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
+          - npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml
+          - npa/workflows/workbench/npa-workflows/token-factory-gate-loop.yaml
+          - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."

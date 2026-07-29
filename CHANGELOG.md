@@ -7,6 +7,37 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### npa.workflow: real parallel execution and a runtime orchestrator
+
+- **Parallel fan-out.** `npa.workflow/v0.0.1` specs can declare a `parallel:`
+  group with an optional `maxConcurrency`. The group renders as a SkyPilot
+  **JobGroup** (`execution: parallel`), so its members launch as genuinely
+  concurrent jobs, and the group's `next` state is a barrier that starts only
+  after every member reaches a terminal state. Groups larger than
+  `maxConcurrency` are submitted in batches. Serial remains the default: the
+  serial renderer and its guard are untouched, and `--plan-only` still renders
+  the flattened serial plan for every spec.
+- **`params:` per-state config overlay** so N members of a sweep can share one
+  `toolRef` and still differ (learning rate, output prefix, ...).
+- **Runtime orchestrator** (`npa workbench workflow submit --runtime`): submits
+  each wave, polls it to a terminal state, reads the *real* decision artifact
+  from S3 through the existing `decisions.py` contract, and replans — bounded
+  loops with true early-exit, data-dependent `goto` branching, wave retry,
+  timeout cancellation, and `--resume` on a durable ledger
+  (`npa.workflow.runtime.v1` at `<prefix>/npa-workflow/runtime.json`). The
+  plan-time `--assume-decision` path is unchanged and remains the offline mode.
+- **`trigger:`** on a state makes the runtime driver wait for objects at an S3
+  prefix before that state runs (watermark recorded in the ledger).
+- **New CLI:** `submit --runtime/--resume/--poll-seconds/--max-wait-seconds/
+  --retries/--max-concurrency/--cancel-on-timeout`, `plan-spec --waves`.
+- **New specs:** `token-factory-parallel-fanout.yaml` (zero-GPU JobGroup + join
+  barrier), `token-factory-gate-loop.yaml` (zero-GPU runtime gate loop with real
+  early-exit and branch), `isaac-lab-rl-sweep.yaml` (port of the one
+  `execution: parallel` SkyPilot template). All three are registered in
+  `SUBMIT_LIVE_MATRIX` and covered by a live runtime e2e tier
+  (`scripts/npa-workflow-runtime-live-e2e.sh`).
+- Design: repo-root `DESIGN.md`; live evidence: repo-root `EVIDENCE.md`.
+
 ### First-time-user cold-start fixes
 
 - `npa configure --interactive` no longer exits 0 having written nothing. When it
