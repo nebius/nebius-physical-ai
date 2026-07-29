@@ -33,6 +33,35 @@ kind: Workflow
 # through S3 under a single run prefix so input / intermediate / output artifacts
 # are all discoverable in the NPA agent artifact browser
 # (GET /api/artifacts/runs?prefix=physical-ai-data-factory).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# PREREQUISITE -- STAGE CAPTIONABLE INPUT FRAMES BEFORE YOU SUBMIT
+# ─────────────────────────────────────────────────────────────────────────────
+# The FIRST stage, annotate-original, captions IMAGE frames from input/. With an
+# empty input/ it fails fast with "No images found in .../input/" and the later
+# augment -> grade -> curate -> visualize -> finalize stages never run. So before
+# submit, upload frames to (run-id == the S3 prefix you submit with):
+#
+#     s3://{{config.bucket}}/physical-ai-data-factory/<run-id>/input/
+#
+#   REQUIRED: 8-16 PNG/JPEG frames (.png/.jpg/.jpeg). Only the first
+#             config.max_images (default 8) are captioned. A .mp4 ALONE IS NOT
+#             ENOUGH -- workbench.token_factory.caption needs image files.
+#   OPTIONAL: video_0.mp4 (720p-1080p, 5-15 s) for the Rerun viz and for the
+#             condition-on-input augment path.
+#
+# Two augment paths -- BOTH still require the input frames above for captioning:
+#   * Stock-Cosmos (default): augment re-renders the bundled, self-contained
+#     Cosmos control example under each sampled appearance prompt (an appearance
+#     study on stock material; no source clip required). Best for a first
+#     end-to-end demo.
+#   * Condition-on-input: submit with NPA_COSMOS_CONDITION_ON_INPUT=1 and a clip
+#     under input/ to transfer the sampled appearance onto YOUR real footage
+#     (geometry/motion preserved; edge/vis control computed on-the-fly).
+#
+# Copy-paste staging (aws s3 cp) + extract-from-mp4 / synthesize-frames one-liners:
+#   docs/workbench/guides/physical-ai-data-factory-deploy.md  ("Stage input first")
+# ─────────────────────────────────────────────────────────────────────────────
 
 metadata:
   name: physical-ai-data-factory
@@ -60,6 +89,9 @@ config:
   max_tokens: "512"
 
   # --- S3 artifact layout: input / intermediate / output under one run prefix ---
+  # input_uri / images_uri = the input/ prefix you MUST stage with PNG/JPEG frames
+  # BEFORE submit (see the PREREQUISITE block at the top of this file). The
+  # annotate-original stage captions these frames and fails fast on an empty input/.
   input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   images_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   configs_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/"
@@ -126,6 +158,10 @@ states:
     description: >
       Stage 2a - Understand & Annotate. Dense-caption the source video frames with a
       hosted Token Factory VLM (zero-GPU) to produce pseudo-labels for the originals.
+      REQUIRES image frames (.png/.jpg) staged under input/ BEFORE submit -- it
+      fails fast with "No images found in .../input/" on an empty prefix (see the
+      PREREQUISITE block at the top of this file). This runs even when the augment
+      stage uses the stock-Cosmos default, so frames are always mandatory.
     needs: [generate-configs]
     toolRef: workbench.token_factory.caption
     resources: cpu

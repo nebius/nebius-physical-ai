@@ -119,6 +119,22 @@ npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)
 
 ## Key Operational Notes
 
+- **Stage captionable input frames BEFORE submit (most common first-run
+  failure).** `annotate-original` (the first stage) captions IMAGE frames from
+  `input/` and fails fast with `No images found …/input/` on an empty prefix, so
+  augment → curate → visualize never run (only `configs/manifest.json` is
+  written). Upload 8–16 PNG/JPEG frames (only the first `config.max_images`,
+  default 8, are captioned) to
+  `s3://<bucket>/physical-ai-data-factory/<run-id>/input/` — this is required even
+  for the default **stock-Cosmos** augment (the augment video is the bundled
+  Cosmos example, but captioning still needs real image files; a `.mp4` alone is
+  not enough). For appearance transfer onto the caller's OWN footage, also stage a
+  clip and submit with `NPA_COSMOS_CONDITION_ON_INPUT=1`. Copy-paste staging +
+  `ffmpeg` extract/synthesize one-liners:
+  `docs/workbench/guides/physical-ai-data-factory-deploy.md` ("Stage input
+  first"). Consequently the Voxel51 tab and the full `reports/sim2real.rrd` Rerun
+  recording only appear once the run gets past annotate → augment → curate →
+  visualize.
 - **GPU accelerator name is cluster-specific.** The spec uses canonical
   `RTXPRO6000:1`; some clusters advertise `RTXPRO-6000-BLACKWELL-SERVER-EDITION`.
   If `sky` reports `FAILED_PRECHECKS` / no matching resources, check

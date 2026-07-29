@@ -81,9 +81,20 @@ npa workbench workflow submit "$SPEC" \
 ```
 
 Set `config.bucket` (via `--var bucket=<your-bucket>`) to the artifact bucket
-your NPA agent reads. Input source videos/frames go under
-`s3://<bucket>/physical-ai-data-factory/<run-id>/input/` (flat `.mp4` H.264/H.265
-clips, 720p–1080p, 5–15 s, plus extracted `.png` frames for the VLM stages).
+your NPA agent reads.
+
+> **Stage input frames first (required).** Before you submit, upload **PNG/JPEG
+> frames** (8–16; only the first `config.max_images`, default 8, are captioned) to
+> `s3://<bucket>/physical-ai-data-factory/<run-id>/input/`. The first stage,
+> `annotate-original`, captions image frames and **fails fast on an empty `input/`**
+> (`No images found …/input/`), so the later augment → grade → curate → visualize →
+> finalize stages never run. This holds **even for the default stock-Cosmos
+> augment**: the augment *video* is the bundled Cosmos example, but captioning
+> still needs real image files — a `.mp4` alone is not enough. Add an optional
+> `video_0.mp4` (720p–1080p H.264/H.265, 5–15 s) for the Rerun viz and the
+> `NPA_COSMOS_CONDITION_ON_INPUT=1` path. Copy-paste `aws s3 cp` staging plus
+> `ffmpeg` extract/synthesize one-liners are in the
+> [deploy runbook](physical-ai-data-factory-deploy.md) ("Stage input first").
 
 ## S3 artifact layout (agent-viewable)
 
@@ -124,3 +135,11 @@ POST /api/sim-viz/load-artifact  {"s3_uri":"s3://<bucket>/.../input/video_0.mp4"
 Input clips render as `video`, extracted frames as `image`, and every stage's
 labels/reports as `json` — so the full input → intermediate → output flow is
 browsable in the agent.
+
+> **Voxel51 and the full Rerun recording only appear once the run gets past
+> annotate → augment → curate → visualize.** With an empty `input/` the run stops
+> at `annotate-original` (only `configs/manifest.json` is written), so there is no
+> `cosmos_augmented/`, no `curation/report.json` for the Voxel51 tab, and no
+> `reports/sim2real.rrd` for the Rerun panel. Stage input frames first (see the
+> callout above) so the pipeline reaches curate/visualize and those panels
+> populate.

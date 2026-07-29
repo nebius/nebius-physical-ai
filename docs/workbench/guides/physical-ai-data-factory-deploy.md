@@ -176,8 +176,7 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 
 ## 4. Submit the Physical AI Data Factory workflow
 
-The blueprint lives at the promoted top-level path. Validate → plan → submit from
-there:
+The blueprint lives at the promoted top-level path. Validate and plan first:
 
 ```bash
 SPEC=npa/workflows/physical-ai-data-factory.yaml
@@ -187,20 +186,78 @@ npa workbench workflow plan-spec   "$SPEC" \
   --run-id demo --assume-decision promote_checkpoint --json
 ```
 
-Stage input clips/frames under the run prefix your agent reads, e.g.:
+### 4a. Stage input first (required — the run fails on empty `input/`)
+
+The first stage, **annotate-original**, captions **image frames** from the run's
+`input/` prefix. Submit without staging frames and it fails fast with:
 
 ```
-s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/input/
-  video_0.mp4        # H.264/H.265, 720p-1080p, 5-15 s
-  frame_0000.png ... # extracted frames for the VLM stages
+No images found in s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/input/
 ```
 
-Submit a real run (dynamic gate → pass `--assume-decision`):
+…and the later augment → grade → curate → visualize → finalize stages never run
+(only `configs/manifest.json` is written). This is true **even for the default
+stock-Cosmos augment** (which re-renders a bundled Cosmos control example): the
+augment *video* is stock, but captioning still needs real image files — **a
+`.mp4` alone is not enough** for `workbench.token_factory.caption`.
+
+Pick one `RUN_ID` and reuse it for both staging and submit so the S3 prefix and
+`--run-id` match:
+
+```bash
+BUCKET=<your-artifact-bucket>
+RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
+INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
+# The aws CLI uses the S3 keys + AWS_ENDPOINT_URL you exported in §2.
+```
+
+**Minimum — 8–16 PNG/JPEG frames** (only the first `config.max_images`, default
+8, are captioned; `.png`/`.jpg`/`.jpeg`):
+
+```bash
+aws s3 cp ./frames/ "$INPUT/" --recursive --exclude '*' --include '*.png'
+```
+
+**Optional — a source clip** for the Rerun viz and the condition-on-input augment
+path:
+
+```bash
+aws s3 cp ./video_0.mp4 "$INPUT/video_0.mp4"   # 720p–1080p H.264/H.265, 5–15 s
+```
+
+No dataset yet? Two hermetic ways to produce captionable frames for a
+stock-Cosmos-style demo end-to-end (needs `ffmpeg`), then upload them:
+
+```bash
+# (a) Extract frames from any short clip you have:
+ffmpeg -i video_0.mp4 -vf fps=2 -frames:v 12 frame_%04d.png
+
+# (b) …or synthesize frames with no source asset at all:
+ffmpeg -f lavfi -i testsrc=size=1280x720:rate=1 -frames:v 12 frame_%04d.png
+
+aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
+```
+
+Either way annotate-original gets real image files so the run proceeds while the
+default augment still renders the bundled Cosmos stock example. To make augment
+transform **your** footage instead (geometry/motion preserved, appearance
+changed), stage a real `video_0.mp4` and submit with
+`NPA_COSMOS_CONDITION_ON_INPUT=1` (see §5).
+
+Confirm the frames landed before you submit:
+
+```bash
+aws s3 ls "$INPUT/"
+```
+
+### 4b. Submit a real run
+
+Submit with the **same** `RUN_ID` (dynamic gate → pass `--assume-decision`):
 
 ```bash
 npa workbench workflow submit "$SPEC" \
-  --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
-  --var bucket=<your-artifact-bucket> \
+  --run-id "$RUN_ID" \
+  --var bucket="$BUCKET" \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
