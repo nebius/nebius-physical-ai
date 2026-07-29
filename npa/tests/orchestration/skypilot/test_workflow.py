@@ -495,3 +495,48 @@ def test_status_from_queue_payload_failure_wins() -> None:
     ]
 
     assert _status_from_queue_payload(json.dumps(payload), "1") == "FAILED"
+
+
+def _controller_status_run(status: str):
+    payload = json.dumps(
+        {"clusters": [{"name": "sky-jobs-controller-abc123", "status": status}]}
+    )
+
+    def _run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=payload, stderr="")
+
+    return _run
+
+
+def test_wait_for_controller_proceeds_when_stopped(monkeypatch) -> None:
+    # A STOPPED (autostopped) controller must not block launch: `sky jobs launch`
+    # restarts it. Regression for the stale-controller submit block.
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("STOPPED")
+    )
+    # Returns (no raise) even with a tiny timeout because STOPPED is ready.
+    workflow_module._wait_for_healthy_jobs_controller(
+        "sky", env={}, timeout=0, interval=0.01
+    )
+
+
+def test_wait_for_controller_proceeds_when_up(monkeypatch) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("UP")
+    )
+    workflow_module._wait_for_healthy_jobs_controller(
+        "sky", env={}, timeout=0, interval=0.01
+    )
+
+
+def test_wait_for_controller_blocks_on_transient_init(monkeypatch) -> None:
+    # A transient INIT/provisioning controller is still treated as not-ready.
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("INIT")
+    )
+    with pytest.raises(SkyPilotSubmitError) as exc:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky", env={}, timeout=0, interval=0.01
+        )
+    assert "INIT" in str(exc.value)
+    assert "sky down" in str(exc.value)

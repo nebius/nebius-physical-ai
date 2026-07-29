@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -34,6 +35,23 @@ DEFAULT_VENV_PATH = Path.home() / ".npa" / "skypilot-venv"
 VENV_PATH_ENV = "NPA_SKYPILOT_VENV_PATH"
 PYTHON_ENV = "NPA_SKYPILOT_PYTHON"
 MARKER_FILE = ".npa-bootstrap-ok"
+
+# SkyPilot 0.12.2 (and its `kubernetes`/`ray` dependencies) build and import
+# cleanly only on this Python range. On a too-new interpreter (e.g. 3.14 on a
+# fresh image) `pip install skypilot[kubernetes]` pulls a kubernetes client whose
+# typing/imports fail, so the venv is created but `import sky`/submits blow up.
+# Guard the interpreter up front and auto-select a supported one when the default
+# is out of range.
+SKYPILOT_MIN_PYTHON = (3, 9)
+SKYPILOT_MAX_PYTHON = (3, 12)
+_PREFERRED_PYTHON_BINS = ("python3.12", "python3.11", "python3.10", "python3.9")
+
+
+def _supported_python_range_str() -> str:
+    return (
+        f"{SKYPILOT_MIN_PYTHON[0]}.{SKYPILOT_MIN_PYTHON[1]}-"
+        f"{SKYPILOT_MAX_PYTHON[0]}.{SKYPILOT_MAX_PYTHON[1]}"
+    )
 
 
 class SkyPilotBootstrapError(RuntimeError):
@@ -307,9 +325,68 @@ def _reject_npa_environment(path: Path) -> None:
             )
 
 
+def _detect_python_version(executable: str | os.PathLike[str]) -> tuple[int, int] | None:
+    """Return the ``(major, minor)`` of *executable*, or None when undeterminable."""
+    result = _run_no_raise(
+        [os.fspath(executable), "-c", "import sys;print(sys.version_info[0], sys.version_info[1])"]
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        major, minor = (int(part) for part in (result.stdout or "").split()[:2])
+    except (ValueError, IndexError):
+        return None
+    return (major, minor)
+
+
+def _is_supported_python(version: tuple[int, int] | None) -> bool:
+    return version is not None and SKYPILOT_MIN_PYTHON <= version <= SKYPILOT_MAX_PYTHON
+
+
+def _resolve_python_bin(python_bin: str | os.PathLike[str] | None) -> str:
+    """Resolve the interpreter used to create the SkyPilot venv.
+
+    An explicit ``--python`` / ``NPA_SKYPILOT_PYTHON`` is honored but rejected
+    when its version is known-unsupported. Otherwise the current interpreter is
+    used when supported; if it is too new/old (e.g. Python 3.14, which breaks the
+    kubernetes client), a supported ``python3.x`` on PATH is auto-selected. A
+    version we cannot determine is passed through so the normal venv-creation
+    error still surfaces.
+    """
+    explicit = python_bin or os.environ.get(PYTHON_ENV)
+    if explicit:
+        version = _detect_python_version(explicit)
+        if version is not None and not _is_supported_python(version):
+            raise SkyPilotBootstrapError(
+                f"Python {version[0]}.{version[1]} ({explicit}) is outside SkyPilot "
+                f"{SKYPILOT_VERSION}'s supported range ({_supported_python_range_str()}); "
+                "its kubernetes/ray dependencies fail to build/import on newer "
+                "versions. Suggested action: pass --python for a supported "
+                "interpreter (e.g. python3.12)."
+            )
+        return os.fspath(explicit)
+
+    current = _detect_python_version(sys.executable)
+    if _is_supported_python(current) or current is None:
+        return sys.executable
+
+    for name in _PREFERRED_PYTHON_BINS:
+        candidate = shutil.which(name)
+        if candidate and _is_supported_python(_detect_python_version(candidate)):
+            return candidate
+
+    raise SkyPilotBootstrapError(
+        f"The default Python ({current[0]}.{current[1]}) is outside SkyPilot "
+        f"{SKYPILOT_VERSION}'s supported range ({_supported_python_range_str()}) — "
+        "its kubernetes client fails to import there — and no supported "
+        f"python3.x was found on PATH. Suggested action: install a supported "
+        "Python (e.g. python3.12) or pass --python <interpreter>."
+    )
+
+
 def _create_venv(path: Path, python_bin: str | os.PathLike[str] | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    executable = os.fspath(python_bin or os.environ.get(PYTHON_ENV) or sys.executable)
+    executable = _resolve_python_bin(python_bin)
     result = _run_no_raise([executable, "-m", "venv", str(path)])
     if result.returncode != 0:
         detail = _combined_output(result) or "no output"

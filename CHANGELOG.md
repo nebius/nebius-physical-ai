@@ -128,6 +128,24 @@ a versioned heading when a release is cut.
   current interpreter from the repo root, so it works from any cwd in the source
   checkout.
 
+### SkyPilot submit robustness
+
+- **Pin the isolated SkyPilot venv to a supported Python.** `npa skypilot
+  bootstrap` created the venv with the current/`python3` interpreter with no
+  version guard; on a fresh image where that is Python 3.14, `skypilot[kubernetes]
+  ==0.12.2` installs a kubernetes client whose typing/imports fail, so submits
+  broke. Bootstrap now validates the interpreter against SkyPilot's supported
+  range (3.9–3.12): an explicit `--python`/`NPA_SKYPILOT_PYTHON` that is too new
+  is rejected with guidance, and an unsupported default auto-selects a supported
+  `python3.x` on PATH (or errors clearly when none exists). A version it can't
+  determine is passed through unchanged.
+- **A STOPPED (autostopped) managed-jobs controller no longer blocks submit.**
+  The pre-launch health check treated anything but `UP` as unhealthy, so a
+  stale/autostopped controller — which `sky jobs launch` simply restarts — burned
+  the whole preflight timeout and failed the submit. STOPPED is now treated as
+  ready (only transient states like `INIT` block), and the timeout error points
+  at `sky down <controller>` to clear a genuinely stuck controller.
+
 ### Repo hardening
 
 - The base `pip install -e npa` is now fully capable: the previous

@@ -32,6 +32,13 @@ from npa.orchestration.skypilot.controller import (
 
 JOBS_CONTROLLER_PREFIX = "sky-jobs-controller-"
 HEALTHY_CONTROLLER_STATUS = "UP"
+# A managed-jobs controller may be UP or autostopped (STOPPED). Both are safe to
+# launch against: `sky jobs launch` restarts a STOPPED controller on demand.
+# Only genuinely transient states (e.g. INIT / provisioning) should block a
+# concurrent launch. Treating STOPPED as unhealthy made a stale/autostopped
+# controller wait for a status ("UP") it never reaches without a launch, so the
+# preflight burned the whole timeout and failed a submit that would have worked.
+READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
 
 
 def _stable_sky_cwd(isolated_config_dir: Path | None) -> str:
@@ -303,13 +310,17 @@ def _wait_for_healthy_jobs_controller(
             unhealthy = [
                 (name, status)
                 for name, status in controllers
-                if status.upper() != HEALTHY_CONTROLLER_STATUS
+                if status.upper() not in READY_CONTROLLER_STATUSES
             ]
             if not unhealthy:
                 return
             last_summary = ", ".join(f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy)
         if time.monotonic() >= deadline:
-            raise SkyPilotSubmitError(f"SkyPilot jobs controller not healthy before launch: {last_summary}")
+            raise SkyPilotSubmitError(
+                "SkyPilot jobs controller not healthy before launch: "
+                f"{last_summary}. If it is stuck/stale, tear it down with "
+                "`sky down <controller-name>` (it is recreated on the next launch)."
+            )
         time.sleep(max(interval, 0.1))
 
 

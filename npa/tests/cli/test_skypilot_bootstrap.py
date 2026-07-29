@@ -261,3 +261,48 @@ def test_verify_fails_clearly_on_missing_kubeconfig(
 
     assert result.exit_code == 1
     assert "Kubeconfig not found" in result.output
+
+
+def test_is_supported_python_range() -> None:
+    assert skypilot_cli._is_supported_python((3, 11)) is True
+    assert skypilot_cli._is_supported_python((3, 12)) is True
+    assert skypilot_cli._is_supported_python((3, 14)) is False
+    assert skypilot_cli._is_supported_python((3, 8)) is False
+    assert skypilot_cli._is_supported_python(None) is False
+
+
+def test_resolve_python_bin_rejects_explicit_unsupported(monkeypatch, tmp_path: Path) -> None:
+    fake = _write_executable(tmp_path / "py314", '#!/bin/sh\necho "3 14"\n')
+    with pytest.raises(skypilot_cli.SkyPilotBootstrapError) as exc:
+        skypilot_cli._resolve_python_bin(str(fake))
+    assert "3.14" in str(exc.value)
+    assert "supported range" in str(exc.value)
+
+
+def test_resolve_python_bin_autoselects_supported_when_default_too_new(monkeypatch) -> None:
+    # Default interpreter reports 3.14; a supported python3.12 is on PATH.
+    def fake_detect(executable):
+        return (3, 14) if str(executable) == sys.executable else (3, 12)
+
+    monkeypatch.setattr(skypilot_cli, "_detect_python_version", fake_detect)
+    monkeypatch.setattr(
+        skypilot_cli.shutil,
+        "which",
+        lambda name: "/usr/bin/python3.12" if name == "python3.12" else None,
+    )
+    assert skypilot_cli._resolve_python_bin(None) == "/usr/bin/python3.12"
+
+
+def test_resolve_python_bin_errors_when_no_supported_interpreter(monkeypatch) -> None:
+    monkeypatch.setattr(skypilot_cli, "_detect_python_version", lambda _e: (3, 14))
+    monkeypatch.setattr(skypilot_cli.shutil, "which", lambda _name: None)
+    with pytest.raises(skypilot_cli.SkyPilotBootstrapError) as exc:
+        skypilot_cli._resolve_python_bin(None)
+    assert "supported range" in str(exc.value)
+
+
+def test_resolve_python_bin_passes_through_unknown_version(monkeypatch) -> None:
+    # An interpreter whose version can't be determined is passed through so the
+    # normal venv-creation error still surfaces (no false rejection).
+    monkeypatch.setattr(skypilot_cli, "_detect_python_version", lambda _e: None)
+    assert skypilot_cli._resolve_python_bin("/some/python") == "/some/python"
