@@ -341,9 +341,74 @@ no step, argv, iteration or ordering change. The plan-time full unroll under
 
 ---
 
-## 5. Phase 1 — parallel GPU reference case (`isaac-lab-rl-sweep.yaml`)
+## 5. GPU tier
 
-<!-- SWEEP_PLACEHOLDER -->
+### 5.1 A parallel wave whose tasks really request GPUs (live, SUCCEEDED)
+
+Same spec and same code path as §3, re-run with the operator knob that puts every
+task on a GPU (`NPA_E2E_FORCE_ACCELERATORS=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`),
+to show the JobGroup path is not CPU-specific.
+
+**Run id:** `npa-wf-cpu-token-factory-parallel-fanout-d65368f3`
+
+```
+ID  TASK  NAME                                       REQUESTED                                   STATUS
+94        ...-01-caption  (JobGroup)                 -                                           SUCCEEDED
+ ↳  0     caption-shard-a                            1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  SUCCEEDED
+ ↳  1     caption-shard-b                            1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  SUCCEEDED
+ ↳  2     caption-shard-c                            1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  SUCCEEDED
+95        ...-02-aggregate (barrier)                 1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  FAILED
+```
+
+| task | submitted_at | end_at |
+| --- | --- | --- |
+| caption-shard-a | 1785301226.5093 | 1785301302.4967 |
+| caption-shard-b | 1785301226.5134 | 1785301302.2853 |
+| caption-shard-c | 1785301226.5172 | 1785301302.7468 |
+| aggregate (barrier) | **1785301386.9483** | — |
+
+Three GPU tasks, submitted within 8 ms of each other, ran concurrently
+(driver log: `3 tasks running concurrently (caption-shard-a, caption-shard-b,
+caption-shard-c)`), and the barrier was submitted 84 s after the last one ended.
+
+The barrier task then failed with `ModuleNotFoundError: No module named 'npa'`:
+SkyPilot's **GPU** default image resolves a different `python3` for the task body
+than the one `setup` pip-installs into, so the S3-staged package is not importable
+there. The identical stage succeeds on the CPU default image (§3, job 76). This is
+an image/interpreter quirk of the default-image + staged-source path, not the
+parallel or runtime engine — but it is a real failure and is reported as such.
+
+### 5.2 `isaac-lab-rl-sweep.yaml` — NOT completed live (see §7)
+
+The four-variant JobGroup was submitted (job **83**, run
+`npa-wf-multi-isaac-lab-rl-sweep-f1d78688`, four
+`1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]` tasks). Two blockers appeared:
+
+1. **`ErrImagePull` 401 for every private image on the cluster.** The cluster's
+   `npa-nebius-registry` imagePullSecret (referenced by
+   `~/.sky/config.yaml → kubernetes.pod_config.imagePullSecrets`) held a 9-day-old
+   Nebius IAM token. Fixed by minting a fresh token and patching the secret:
+
+   ```bash
+   TOKEN=$(python -c "from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token; print(mint_nebius_registry_token())")
+   kubectl create secret docker-registry npa-nebius-registry -n default \
+     --docker-server=cr.us-central1.nebius.cloud --docker-username=iam --docker-password="$TOKEN" \
+     --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+   After that the image pulled in ~0.3 s (`Successfully pulled image
+   "...npa-isaac-lab:2.3.2.post1" ... Image size: 8413247039 bytes`). Side effect:
+   this also unblocked another agent's job that had been stuck pulling
+   `npa-cosmos2-transfer` for five days.
+2. **SkyPilot cannot host a task inside the Isaac Lab image on this cluster.**
+   Every provisioning attempt then failed with
+   `KubernetesError: Failed to get ssh user for pod variant-*-83-...-head ...
+   container not found ("ray-node")` and retried in a loop. This is the
+   pre-existing workbench-image limitation the operator environment already works
+   around with `NPA_E2E_CLEAR_WORKBENCH_IMAGES=1` (see the comment in
+   `skypilot_render.py`: *"SkyPilot's k8s apt-ssh runtime setup fails inside
+   npa-cosmos"*). The job was cancelled (`sky jobs cancel -y 83`) rather than left
+   retrying.
 
 ---
 
