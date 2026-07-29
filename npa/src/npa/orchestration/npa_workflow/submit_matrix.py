@@ -233,3 +233,26 @@ def selected_submit_cases() -> list[SubmitLiveCase]:
         for case in SUBMIT_LIVE_MATRIX
         if case.tier in tiers and (not specs or case.spec in specs)
     ]
+
+
+def runtime_submit_cases() -> list[SubmitLiveCase]:
+    """Selected cases that must be driven by the runtime orchestrator.
+
+    These are the specs with a ``parallel:`` group or a loop that has to
+    early-exit on the real decision artifact; they are submitted with
+    ``submit --runtime``.
+    """
+
+    return [case for case in selected_submit_cases() if case.runtime and not case.plan_only]
+
+
+def one_shot_submit_cases() -> list[SubmitLiveCase]:
+    """Selected cases for the classic one-shot submit path.
+
+    Runtime cases are excluded on purpose: submitting them one-shot would render
+    the flattened serial plan, which is valid but proves nothing about
+    concurrency or early-exit — and would run a GPU sweep serially. They are
+    still covered by the plan-only matrix and by the runtime live test.
+    """
+
+    return [case for case in selected_submit_cases() if not case.runtime]

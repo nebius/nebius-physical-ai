@@ -31,6 +31,10 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.orchestration.npa_workflow.submit_matrix import (
+    one_shot_submit_cases,
+    runtime_submit_cases,
+)
 from npa.orchestration.skypilot.workflow import workflow_status
 from .npa_workflow_live_helpers import (
     SUBMIT_LIVE_MATRIX,
@@ -44,7 +48,6 @@ from .npa_workflow_live_helpers import (
     parse_json_payload,
     parse_runtime_json,
     seed_live_workflow_inputs,
-    selected_submit_cases,
     write_runtime_evidence,
 )
 
@@ -146,22 +149,9 @@ def _run_id_for(case: SubmitLiveCase) -> str:
     return f"npa-wf-{case.tier}-{stem}-{stamp}"
 
 
-def _one_shot_cases() -> list[SubmitLiveCase]:
-    """Matrix cases for the classic one-shot submit path.
-
-    Runtime cases (``parallel:`` fan-out, runtime gate loops) are covered by
-    ``test_npa_workflow_runtime_live_reaches_terminal`` instead: submitting them
-    through the one-shot path would render the flattened serial plan, which is
-    valid but proves nothing about concurrency/early-exit and burns GPU hours
-    running a sweep serially.
-    """
-
-    return [case for case in selected_submit_cases() if not case.runtime]
-
-
 @pytest.mark.parametrize(
     "case",
-    _one_shot_cases(),
+    one_shot_submit_cases(),
     ids=lambda c: f"{c.tier}:{c.spec}",
 )
 def test_npa_workflow_submit_live_reaches_terminal(
@@ -298,10 +288,6 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 pass
 
 
-def _runtime_cases() -> list[SubmitLiveCase]:
-    return [case for case in selected_submit_cases() if case.runtime and not case.plan_only]
-
-
 def _runtime_submit_args(
     path: Path,
     *,
@@ -365,7 +351,7 @@ def _prepare_runtime_run(
 
 @pytest.mark.parametrize(
     "case",
-    _runtime_cases(),
+    runtime_submit_cases(),
     ids=lambda c: f"{c.tier}:{c.spec}",
 )
 def test_npa_workflow_runtime_live_reaches_terminal(
