@@ -4818,6 +4818,14 @@
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
       }
+      // Effective run timestamp for display + sort: prefer real artifact recency
+      // (last_modified from S3 discovery); fall back to viewer activity ONLY when
+      // a run has no artifact timestamp (e.g. seen in the viewer but not yet in
+      // S3 discovery). This keeps a days-old run that was merely opened today from
+      // being relabeled/sorted as if it were produced today.
+      function effectiveRunTs(run) {
+        return String((run && (run.last_modified || run.activity_at)) || "");
+      }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
         const ingest = (run, source) => {
@@ -4826,12 +4834,18 @@
           const prev = map.get(runId) || {
             run_id: runId,
             last_modified: "",
+            activity_at: "",
             has_viewable: false,
             artifact_count: 0,
             source: source,
           };
-          const ts = String((run && (run.last_modified || run.rrd_updated_at || run.updated_at || run.submitted_at)) || "");
-          if (ts && ts > String(prev.last_modified || "")) prev.last_modified = ts;
+          // Artifact recency: when the run's objects were last written in S3.
+          const artifactTs = String((run && run.last_modified) || "");
+          if (artifactTs && artifactTs > String(prev.last_modified || "")) prev.last_modified = artifactTs;
+          // Viewer activity: when the run was last loaded/visualized in the agent.
+          // Tracked separately so it never inflates the run's displayed date.
+          const activityTs = String((run && (run.activity_at || run.rrd_updated_at || run.updated_at || run.submitted_at)) || "");
+          if (activityTs && activityTs > String(prev.activity_at || "")) prev.activity_at = activityTs;
           if (run && run.has_viewable) prev.has_viewable = true;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
           if (run && run.stage) prev.stage = String(run.stage || "");
@@ -4841,7 +4855,7 @@
         for (const run of Array.isArray(knownRuns) ? knownRuns : []) ingest(run, "known");
         for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
         return [...map.values()].sort((a, b) => {
-          const cmp = String(b.last_modified || "").localeCompare(String(a.last_modified || ""));
+          const cmp = effectiveRunTs(b).localeCompare(effectiveRunTs(a));
           if (cmp !== 0) return cmp;
           return String(b.run_id || "").localeCompare(String(a.run_id || ""));
         });
@@ -4861,7 +4875,8 @@
           const bits = [runId];
           if (run && run.has_viewable) bits.push("viewable");
           if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
-          if (run && run.last_modified) bits.push(String(run.last_modified).slice(0, 19));
+          const shownTs = effectiveRunTs(run);
+          if (shownTs) bits.push(shownTs.slice(0, 19));
           opt.textContent = bits.length > 1 ? (runId + " · " + bits.slice(1).join(" · ")) : runId;
           if (runId === current || (!current && runId === previous)) opt.selected = true;
           select.appendChild(opt);
@@ -5685,6 +5700,7 @@
           knownAvailableRuns = simViz.available_runs.map((item) => ({
             run_id: String((item && item.run_id) || "").trim(),
             last_modified: String((item && item.last_modified) || "").trim(),
+            activity_at: String((item && (item.activity_at || item.rrd_updated_at)) || "").trim(),
             stage: String((item && item.stage) || "").trim(),
           })).filter((item) => item.run_id);
         } else {

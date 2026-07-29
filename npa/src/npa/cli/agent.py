@@ -64,7 +64,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072402"
+AGENT_UI_VERSION = "2026072901"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -6635,12 +6635,19 @@ def sim_viz_status(run_id: str = ""):
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # activity_at is when this run was last loaded/visualized in the agent
+            # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
+            # separately so the client never relabels a days-old run as recent just
+            # because it was opened today. Real recency (last_modified) is supplied
+            # by S3 artifact discovery; left blank here so viewer activity cannot
+            # override it in the merged, date-sorted run list.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
@@ -6708,12 +6715,15 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # See sim_viz_status: activity_at is viewer-load time, not artifact
+            # recency; last_modified stays blank so S3 discovery owns the date.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
