@@ -257,14 +257,87 @@ ran.
 
 ### 4.2 Run B — gate can never pass → full budget + the other branch
 
-**Run id:** `npa-wf-cpu-token-factory-gate-loop-<hex>-full` (`grade_threshold=1.01`,
-above the clamped `[0,1]` VLM score)
+**Run id:** `npa-wf-cpu-token-factory-gate-loop-9f272bff-full` (`grade_threshold=1.01`,
+above the clamped `[0,1]` VLM score, so the gate can never promote)
 
-<!-- RUN_B_PLACEHOLDER -->
+```
+status: succeeded | schema: npa.workflow.runtime.v1
+  001|serial|refine:caption-batch:-   serial job=82 succeeded states=caption-batch
+  002|serial|refine:score-batch:-     serial job=84 succeeded states=score-batch
+  003|serial|refine:quality-gate:-    serial job=85 succeeded states=quality-gate
+  004|serial|refine:caption-batch:-   serial job=86 succeeded states=caption-batch
+  005|serial|refine:score-batch:-     serial job=87 succeeded states=score-batch
+  006|serial|refine:quality-gate:-    serial job=88 succeeded states=quality-gate
+  007|serial|refine:caption-batch:-   serial job=89 succeeded states=caption-batch
+  008|serial|refine:score-batch:-     serial job=90 succeeded states=score-batch
+  009|serial|refine:quality-gate:-    serial job=91 succeeded states=quality-gate
+  010|serial|:route:-                 serial job=92 succeeded states=route
+  011|serial|:escalate:-              serial job=93 succeeded states=escalate
+  decision: loop_back_to_inner_loop <- s3://.../gate/decision.json   (iteration 1)
+  decision: loop_back_to_inner_loop <- s3://.../gate/decision.json   (iteration 2)
+  decision: loop_back_to_inner_loop <- s3://.../gate/decision.json   (iteration 3)
+  decision: loop_back_to_inner_loop <- s3://.../gate/decision.json   (route branch)
+```
+
+**Eleven** waves — the full budget of three iterations — and the *other* branch:
+
+```
+gate/decision.json                  44   {"decision": "loop_back_to_inner_loop"}
+grade/vlm_eval_stub.json          1038   score 0.0, backend "api", dry_run false, Qwen/Qwen2.5-VL-72B-Instruct
+reports/shortfall/dashboard.html  1220   the ESCALATE branch artifact (no reports/promoted/)
+npa-workflow/runtime.json        14005   wave ledger
+```
+
+### Side-by-side
+
+| | Run A (`grade_threshold=0.0`) | Run B (`grade_threshold=1.01`) |
+| --- | --- | --- |
+| loop iterations executed | **1** of 3 | **3** of 3 |
+| SkyPilot jobs | 77, 78, 79, 80, 81 | 82, 84–93 |
+| waves | 5 | 11 |
+| decision read from S3 | `promote_checkpoint` | `loop_back_to_inner_loop` (×4) |
+| terminal branch | `publish` → `reports/promoted/` | `escalate` → `reports/shortfall/` |
+
+Nothing but the threshold differed; the engine read the real artifact each
+iteration, exited early in Run A, and branched differently in the two runs. The
+harness test that asserts exactly this passed:
+
+```
+pytest .../test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget -q -s
+1 passed in 2854.45s (0:47:34)
+```
 
 ### 4.3 `--assume-decision` plan-only is unchanged
 
-<!-- PLAN_ONLY_PLACEHOLDER -->
+A second worktree was checked out at the **base commit** `d129ee90` and the same
+specs were planned with both interpreters:
+
+```bash
+git worktree add -f /tmp/npa-base d129ee90
+for s in sim2real-vlm-rl tokenfactory-cosmos-gate physical-ai-data-factory; do
+  for d in loop_back promote_checkpoint; do
+    PYTHONPATH=/tmp/npa-base/npa/src  python -m npa.cli.main workbench workflow plan-spec /tmp/npa-base/$P --run-id fixed-run --assume-decision $d --json > base.json
+    PYTHONPATH=$WT/npa/src            python -m npa.cli.main workbench workflow plan-spec $WT/$P        --run-id fixed-run --assume-decision $d --json > branch.json
+    diff base.json branch.json
+  done
+done
+```
+
+Result (after dropping the one additive JSON key `group`, which is `""` for every
+serial step):
+
+```
+IDENTICAL (ignoring additive group key)  sim2real-vlm-rl          [loop_back]           steps=19
+IDENTICAL (ignoring additive group key)  sim2real-vlm-rl          [promote_checkpoint]  steps=11
+IDENTICAL (ignoring additive group key)  tokenfactory-cosmos-gate [loop_back]           steps=9
+IDENTICAL (ignoring additive group key)  tokenfactory-cosmos-gate [promote_checkpoint]  steps=5
+IDENTICAL (ignoring additive group key)  physical-ai-data-factory [loop_back]           steps=12
+IDENTICAL (ignoring additive group key)  physical-ai-data-factory [promote_checkpoint]  steps=9
+```
+
+The raw diff before normalization contains **only** added `"group": ""` lines —
+no step, argv, iteration or ordering change. The plan-time full unroll under
+`--assume-decision` is byte-for-byte the same as on `main`.
 
 ---
 
