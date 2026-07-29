@@ -4818,13 +4818,12 @@
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
       }
-      // Effective run timestamp for display + sort: prefer real artifact recency
-      // (last_modified from S3 discovery); fall back to viewer activity ONLY when
-      // a run has no artifact timestamp (e.g. seen in the viewer but not yet in
-      // S3 discovery). This keeps a days-old run that was merely opened today from
-      // being relabeled/sorted as if it were produced today.
+      // Effective run timestamp for display + sort: when the run STARTED
+      // (started_at). Falls back to artifact recency (last_modified), then viewer
+      // activity, only when no start time is known. This keeps the picker date on
+      // the run's start — not the newest artifact write or when it was last opened.
       function effectiveRunTs(run) {
-        return String((run && (run.last_modified || run.activity_at)) || "");
+        return String((run && (run.started_at || run.last_modified || run.activity_at)) || "");
       }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
@@ -4833,12 +4832,17 @@
           if (!runId) return;
           const prev = map.get(runId) || {
             run_id: runId,
+            started_at: "",
             last_modified: "",
             activity_at: "",
             has_viewable: false,
             artifact_count: 0,
             source: source,
           };
+          // Run start: keep the EARLIEST across sources (submit time / earliest
+          // artifact write). This is the displayed date.
+          const startTs = String((run && (run.started_at || run.submitted_at)) || "");
+          if (startTs && (!prev.started_at || startTs < prev.started_at)) prev.started_at = startTs;
           // Artifact recency: when the run's objects were last written in S3.
           const artifactTs = String((run && run.last_modified) || "");
           if (artifactTs && artifactTs > String(prev.last_modified || "")) prev.last_modified = artifactTs;
@@ -5699,6 +5703,7 @@
         if (Array.isArray(simViz && simViz.available_runs) && simViz.available_runs.length) {
           knownAvailableRuns = simViz.available_runs.map((item) => ({
             run_id: String((item && item.run_id) || "").trim(),
+            started_at: String((item && (item.started_at || item.submitted_at)) || "").trim(),
             last_modified: String((item && item.last_modified) || "").trim(),
             activity_at: String((item && (item.activity_at || item.rrd_updated_at)) || "").trim(),
             stage: String((item && item.stage) || "").trim(),

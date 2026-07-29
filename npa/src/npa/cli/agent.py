@@ -64,7 +64,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072901"
+AGENT_UI_VERSION = "2026072902"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -6647,6 +6647,10 @@ def sim_viz_status(run_id: str = ""):
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # When the run started (its submit time). Used for the displayed date;
+            # S3 discovery supplies started_at for runs it can see, and the client
+            # keeps the earliest of the two.
+            "started_at": str(item.get("submitted_at") or "").strip(),
             "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
@@ -6723,6 +6727,8 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # Run start (submit time) for the displayed date; see sim_viz_status.
+            "started_at": str(item.get("submitted_at") or "").strip(),
             "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
