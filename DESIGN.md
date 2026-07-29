@@ -124,15 +124,21 @@ field* direction it asked for, inside v0.0.1, and note it in the doc.
 
 `plan-spec --waves` prints this shape offline.
 
-### Rendering: a separate entry point, guard untouched
+### Rendering: a separate entry point, serial output unchanged
 
 `render_skypilot_yaml` still raises on anything but `execution: serial` — the
-historic guardrail test passes verbatim. Parallel rendering is a *new* function,
-`render_skypilot_job_group_yaml` (and the dispatching
-`render_skypilot_steps_yaml`), sharing the same document builder. Every task doc
-is still produced by `build_skypilot_task_doc` → `scheduler.build_scheduler_task`,
-so the portable-task seam is intact and the runtime tier never reaches into
-rendering internals.
+historic guardrail test passes verbatim — and its **output is byte-identical** to
+before (verified by planning three dynamic specs on the base commit and diffing).
+
+Its *body*, however, was refactored: it now delegates to a shared `_render_docs(...,
+execution="serial")` that the parallel renderer also uses. So the accurate claim is
+"**serial output unchanged**", not "serial renderer untouched": there is one shared
+code path, and the guard plus the byte-identical-output check are what protect it.
+Parallel rendering is a separate public entry point,
+`render_skypilot_job_group_yaml` (with the dispatching
+`render_skypilot_steps_yaml`). Every task doc is still produced by
+`build_skypilot_task_doc` → `scheduler.build_scheduler_task`, so the portable-task
+seam is intact and the runtime tier never reaches into rendering internals.
 
 ### Why a SkyPilot JobGroup
 
@@ -219,6 +225,12 @@ Decisions are read through the existing helpers:
 body, normalized decision, timestamp) lands in the ledger — that is what makes a
 live claim auditable after the fact.
 
+Failure modes are deliberately asymmetric: a gate artifact that **does not exist
+yet** falls back to the plan-time assumption (recorded in the ledger with
+`source: assume_decision_fallback`), because that is the documented offline
+behaviour; a gate artifact that exists but is **unreadable or malformed** fails the
+run, because silently looping on corrupt JSON would be worse than stopping.
+
 Two control-flow shapes fall out of the existing semantics:
 
 * **Bounded loop with early exit** — `loop.until: promote_checkpoint` on a
@@ -250,6 +262,34 @@ wave *k*.
 Wave keys embed the loop label, state name, iteration and a monotonic sequence
 number, so a loop body that runs three times produces three distinct keys.
 
+**Determinism constraint (important).** Because the key carries that in-process
+sequence number, replay is only sound while the traversal is deterministic. It is
+deterministic when the inputs are: decisions are re-read from the same S3 objects
+and trigger watermarks are already satisfied. If a gate artifact *changes* between
+runs (a later run reads `promote_checkpoint` where the first read `loop_back`), the
+graph legitimately diverges, keys shift from the divergence point onwards, and the
+waves after it re-run. That is the correct outcome — the plan really is different —
+but it means `--resume` is "continue this run", not "reproduce this run".
+
+**Never resubmit work that may still be running.** A wave is recorded `running` the
+moment it is submitted, so a driver that dies mid-poll leaves a job that may still
+be billing. On `--resume`, such a record is *reconciled* rather than replaced: the
+recorded job is queried and then adopted if it already succeeded, attached to (kept
+polling) if it is still alive, or replaced only once it is observably terminal-failed.
+If its state cannot be determined at all, the run fails instead of launching a second
+copy. `--resume` without `config.bucket` (i.e. without a ledger) fails fast for the
+same reason.
+
+**Never leave a job running after an abort.** Every wave failure path — workflow
+error, unexpected tooling error, `KeyboardInterrupt` — goes through `_abort_wave`,
+which cancels the managed job (by id, or by cluster name when the submit reported no
+id) before recording the failure. Status queries are treated as unreliable rather
+than fatal: up to `MAX_CONSECUTIVE_STATUS_ERRORS` transient `sky jobs queue`
+failures are tolerated (and recorded in the ledger) because a failed *query* says
+nothing about the job, while the wave deadline still applies. A submit that reports
+no job id is rejected outright, since polling would otherwise sit on `UNKNOWN` for
+the whole deadline while the job ran.
+
 ### Failure, retry, cancellation
 
 * A wave whose managed job reaches a terminal failure is retried up to
@@ -262,11 +302,22 @@ number, so a loop body that runs three times produces three distinct keys.
   recorded as skipped, and the run fails with the **root cause** (the first
   failure), not the cascade.
 
+### Local `--execute` vs runtime: one intentional difference
+
+With the local executor a failed member of a `parallel:` group does **not** stop the
+other members (they run in declared order, each recorded independently); with the
+runtime executor a failed *batch* stops the group and the remaining members are
+recorded as skipped. Both report the same root cause, and both fail the run. The
+runtime behaviour is deliberate: continuing to launch cloud jobs whose barrier can
+no longer be satisfied only spends money.
+
 ### Trigger / watch pattern
 
 `trigger:` is polled **driver-side** (`s3_trigger_waiter`): list the prefix until
-`minObjects` keys exist or `maxPolls` is exhausted, record the watermark in the
-ledger, then submit the state's wave. No cloud job is burned to wait, and a
+`minObjects` keys exist, record the watermark in the ledger, then submit the state's
+wave. The wait is bounded twice — by `maxPolls` when the spec sets one, and *always*
+by the run's `max_wait_seconds`, so the default `maxPolls: 0` cannot mean "wait
+forever". No cloud job is burned to wait, and a
 resumed run skips a watch it already satisfied. `sim_to_real_trigger`'s
 SkyPilot-specific watcher is unchanged; this is the npa.workflow-native analogue.
 
