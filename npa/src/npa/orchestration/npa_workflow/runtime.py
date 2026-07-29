@@ -131,6 +131,11 @@ class WaveAttempt:
     outputs: list[str] = field(default_factory=list)
     error: str = ""
     replayed: bool = False
+    #: Highest number of member tasks observed RUNNING at the same time while
+    #: polling. For a parallel wave this is the direct, unambiguous evidence that
+    #: the group really ran concurrently rather than as a serialized chain.
+    max_concurrent_observed: int = 0
+    observations: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,6 +154,8 @@ class WaveAttempt:
             "tasks": list(self.tasks),
             "outputs": list(self.outputs),
             "error": self.error,
+            "max_concurrent_observed": self.max_concurrent_observed,
+            "observations": list(self.observations),
         }
 
 
@@ -374,7 +381,7 @@ class SkyPilotWaveExecutor:
         attempt.sky_status = status
         self._log(f"wave {attempt.key}: submitted job_id={job_id} name={job_name}")
 
-        final_status = self._poll(job_id, attempt)
+        final_status = self._poll(job_id, attempt, observe_tasks=len(steps) > 1)
         attempt.sky_status = final_status
         attempt.tasks = self._timeline(job_id)
         if not is_terminal_ok(final_status):
@@ -383,12 +390,14 @@ class SkyPilotWaveExecutor:
                 f"(job_id={job_id}, name={job_name})"
             )
 
-    def _poll(self, job_id: str, attempt: WaveAttempt) -> str:
+    def _poll(self, job_id: str, attempt: WaveAttempt, *, observe_tasks: bool = False) -> str:
         deadline = self._clock() + max(1, self.options.max_wait_seconds)
         last = "UNKNOWN"
         while True:
             current = self._status(job_id)
             last = str(getattr(current, "status", "") or "UNKNOWN").upper()
+            if observe_tasks:
+                self._observe_concurrency(job_id, attempt)
             if is_terminal(last):
                 return last
             if self._clock() >= deadline:
@@ -399,6 +408,34 @@ class SkyPilotWaveExecutor:
                     f"{self.options.max_wait_seconds}s (last={last}, job_id={job_id})"
                 )
             self._sleep(self.options.poll_seconds)
+
+    def _observe_concurrency(self, job_id: str, attempt: WaveAttempt) -> None:
+        """Record how many member tasks are RUNNING at this instant."""
+
+        tasks = self._timeline(job_id)
+        if not tasks:
+            return
+        running = [
+            str(task.get("task_name") or task.get("task_id"))
+            for task in tasks
+            if str(task.get("status") or "").upper() in {"RUNNING", "RECOVERING"}
+        ]
+        observation = {
+            "observed_at": utc_now(),
+            "running": sorted(running),
+            "running_count": len(running),
+            "statuses": {
+                str(task.get("task_name") or task.get("task_id")): task.get("status")
+                for task in tasks
+            },
+        }
+        attempt.observations.append(observation)
+        attempt.max_concurrent_observed = max(attempt.max_concurrent_observed, len(running))
+        if len(running) > 1:
+            self._log(
+                f"wave {attempt.key}: {len(running)} tasks running concurrently "
+                f"({', '.join(sorted(running))})"
+            )
 
     def _job_name(self, steps: Sequence[PlanStep], *, group: str, attempt: WaveAttempt) -> str:
         label = group or steps[0].state

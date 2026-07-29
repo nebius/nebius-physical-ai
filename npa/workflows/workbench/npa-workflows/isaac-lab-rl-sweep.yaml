@@ -38,8 +38,6 @@ config:
   sweep_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/"
   report_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/npa_rl_sweep_best.json"
   run_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
-  insights_store_uri: "s3://{{config.bucket}}/{{config.prefix}}/insights/"
-  dashboard_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
 
 resources:
   trainer-gpu:
@@ -138,7 +136,10 @@ states:
         schema: npa.rl_sweep.variant_metrics.v1
 
   select-best:
-    description: Barrier — rank every variant's metrics and publish the winner.
+    description: >
+      Barrier — rank every variant's metrics and publish the winner. Runs only
+      after all four variants reached a terminal state, so a partial sweep can
+      never produce a "best" variant.
     needs: [sweep]
     resources: cpu
     run:
@@ -152,14 +153,4 @@ states:
     outputs:
       - uri: "{{config.report_uri}}"
         schema: npa.rl_sweep.report.v1
-    next: rollup
-
-  rollup:
-    description: Ingest the sweep's artifacts into the insights store and render a dashboard.
-    needs: [select-best]
-    toolRef: workbench.insights.ingest_run
-    resources: cpu
-    outputs:
-      - uri: "{{config.insights_store_uri}}"
-        schema: npa.insights.store.v1
     terminal: true

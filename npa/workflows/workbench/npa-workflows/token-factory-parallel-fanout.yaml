@@ -34,9 +34,9 @@ config:
 
   images_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/"
   captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/captions/"
+  shards: "shard-a,shard-b,shard-c"
   run_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
-  insights_store_uri: "s3://{{config.bucket}}/{{config.prefix}}/insights/"
-  dashboard_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+  join_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/join_report.json"
 
 resources:
   cpu:
@@ -90,24 +90,22 @@ states:
         schema: npa.token_factory.captions.v1
 
   aggregate:
-    description: Barrier — scan the run prefix and ingest every shard's report.
+    description: >
+      Barrier — merge every shard's captions manifest into one report. Runs only
+      after all three shards reached a terminal state, and fails loudly if any
+      shard's artifact is missing.
     needs: [caption-shards]
-    toolRef: workbench.insights.ingest_run
     resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.fanout_join import join_shards;
+        join_shards(shards_uri='{{config.captions_uri}}',
+        report_uri='{{config.join_report_uri}}', shards='{{config.shards}}',
+        run_id='{{run.id}}')"
     inputs:
       - uri: "{{config.captions_uri}}"
         schema: npa.token_factory.captions.v1
     outputs:
-      - uri: "{{config.insights_store_uri}}"
-        schema: npa.insights.store.v1
-    next: report
-
-  report:
-    description: Render the sweep rollup dashboard from the insights store.
-    needs: [aggregate]
-    toolRef: workbench.insights.dashboard
-    resources: cpu
-    outputs:
-      - uri: "{{config.dashboard_uri}}"
-        schema: npa.insights.dashboard.v1
+      - uri: "{{config.join_report_uri}}"
+        schema: npa.fanout.join_report.v1
     terminal: true

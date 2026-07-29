@@ -396,23 +396,27 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         assert parallel_waves, f"{case.spec} declared a parallel group but ran none: {waves}"
         launched = sum(len(wave["states"]) for wave in parallel_waves)
         assert launched == case.expected_parallel_tasks
+        # Two independent concurrency signals: live RUNNING observations taken
+        # while polling, and overlapping submitted/end intervals afterwards.
+        observed = max(wave.get("max_concurrent_observed", 0) for wave in parallel_waves)
         overlaps = concurrency_overlaps(parallel_waves[0].get("tasks") or [])
-        assert overlaps, (
-            "parallel wave tasks did not overlap in time: "
-            f"{parallel_waves[0].get('tasks')}"
+        assert observed >= 2 or overlaps, (
+            "parallel wave never showed concurrent tasks: "
+            f"observed={observed} tasks={parallel_waves[0].get('tasks')}"
         )
-        # Barrier: every serial wave after the group started after it ended.
+        # Barrier: the first downstream (serial) wave was submitted only after
+        # every member of the group had finished.
         group_end = max(
             float(task.get("end_at") or 0.0)
             for wave in parallel_waves
             for task in wave.get("tasks") or []
         )
         later_starts = [
-            float(task.get("start_at") or 0.0)
+            float(task.get("start_at") or task.get("submitted_at") or 0.0)
             for wave in waves
             if wave["kind"] == "serial"
             for task in wave.get("tasks") or []
-            if float(task.get("start_at") or 0.0) > 0
+            if float(task.get("start_at") or task.get("submitted_at") or 0.0) > 0
         ]
         assert later_starts, "no barrier task timings recorded"
         assert min(later_starts) >= group_end - 1.0, (

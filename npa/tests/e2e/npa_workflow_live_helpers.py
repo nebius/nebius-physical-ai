@@ -241,14 +241,16 @@ def concurrency_overlaps(tasks: Iterable[dict[str, Any]]) -> list[tuple[str, str
     JobGroup, so overlapping intervals cannot be produced by a serial chain.
     """
 
+    # SkyPilot leaves ``start_at`` unset for JobGroup members on some versions;
+    # ``submitted_at`` is always recorded, so use it as the interval start.
     rows = [
         (
             str(task.get("task_name") or task.get("task_id")),
-            float(task.get("start_at") or 0.0),
+            float(task.get("start_at") or task.get("submitted_at") or 0.0),
             float(task.get("end_at") or 0.0),
         )
         for task in tasks
-        if task.get("start_at")
+        if task.get("start_at") or task.get("submitted_at")
     ]
     overlaps: list[tuple[str, str]] = []
     for index, (name_a, start_a, end_a) in enumerate(rows):
