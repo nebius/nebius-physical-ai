@@ -334,6 +334,7 @@ def _wait_for_healthy_jobs_controller(
 # cluster, a renamed context) rather than because of a transient error.
 _STALE_CONTROLLER_SIGNALS = (
     "kubeconfig",
+    "kube-config",
     "no such file or directory",
     "unable to connect",
     "connection refused",
@@ -341,6 +342,8 @@ _STALE_CONTROLLER_SIGNALS = (
     "invalid kube-context",
     "kubernetes context",
     "credentials not found",
+    "cachedclusterunavailable",
+    "clusterstatusfetchingerror",
 )
 _KUBECONFIG_PATH_RE = re.compile(r"[\w./~-]*kubeconfig[\w./-]*")
 
@@ -478,7 +481,11 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
 def _format_submit_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
     detail = _command_detail(result)
     prefix = "SkyPilot auth failure during jobs launch" if _looks_like_auth_error(detail) else "sky jobs launch failed"
-    return f"{prefix}: {' '.join(cmd)}: {detail}"
+    # `sky status --refresh` exits 0 while merely *warning* about clusters it
+    # cannot refresh, so a controller cached against a dead kubeconfig gets past
+    # the health check and fails here instead (CachedClusterUnavailable). Attach
+    # the same NPA-level recovery steps.
+    return f"{prefix}: {' '.join(cmd)}: {detail}" + _controller_health_remedy(detail)
 
 
 def _command_detail(result: subprocess.CompletedProcess[str]) -> str:

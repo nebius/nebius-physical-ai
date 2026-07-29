@@ -619,3 +619,42 @@ def test_unhealthy_controller_timeout_names_the_controller(monkeypatch) -> None:
         )
 
     assert "sky down sky-jobs-controller-abc123" in str(exc.value)
+
+
+def test_launch_failure_on_a_cached_controller_gets_the_same_remedy() -> None:
+    """`sky status --refresh` exits 0 while only *warning* about dead clusters.
+
+    Reproduced live: the health check passes and `sky jobs launch` is what fails,
+    with CachedClusterUnavailable naming an NPA cluster kubeconfig that is gone.
+    """
+    detail = (
+        "sky.exceptions.CachedClusterUnavailable: Cached jobs controller cluster "
+        "sky-jobs-controller-64ce57a0 cannot be refreshed.\n"
+        "Reason: ValueError: Failed to load Kubernetes configuration for "
+        "'npa-rtxpro-mk8s'. Please check if your kubeconfig file exists at "
+        "/home/op/.npa/clusters/npa-rtxpro-mk8s/kubeconfig and is valid."
+    )
+    result = subprocess.CompletedProcess(
+        args=["sky", "jobs", "launch"], returncode=1, stdout="", stderr=detail
+    )
+
+    message = workflow_module._format_submit_error(["sky", "jobs", "launch"], result)
+
+    assert "sky jobs launch failed" in message
+    assert "/home/op/.npa/clusters/npa-rtxpro-mk8s/kubeconfig" in message
+    assert "sky down sky-jobs-controller-" in message
+    assert "--infra k8s/<context>" in message
+
+
+def test_launch_failure_unrelated_to_the_controller_stays_raw() -> None:
+    result = subprocess.CompletedProcess(
+        args=["sky", "jobs", "launch"],
+        returncode=1,
+        stdout="",
+        stderr="ValueError: task yaml is invalid",
+    )
+
+    message = workflow_module._format_submit_error(["sky", "jobs", "launch"], result)
+
+    assert "task yaml is invalid" in message
+    assert "sky down" not in message
