@@ -25,8 +25,15 @@
 #
 # USAGE
 #   dev-vm-daily-tests.sh [tier] [git-ref]
-#     tier     one of: unit | e2e | e2e-serverless | live-gpu   (default: unit)
+#     tier     one of: unit | e2e | e2e-daily | e2e-serverless | live-gpu
+#              (default: unit)
 #     git-ref  branch, tag, or sha to test                       (default: main)
+#
+#   e2e-daily is the scheduled default: every day it runs the >= 4-step
+#   comprehensive workflow E2E coverage gate + plans every npa.workflow spec,
+#   checks that every workbench image is reachable in the registry, and runs a
+#   DIFFERENT rotating shard of the real S3 e2e suite (so the whole suite is
+#   covered over NPA_DAILY_E2E_SHARDS days).
 #
 # ENV
 #   NPA_CI_REPO_DIR        dedicated CI checkout dir  (default: $HOME/npa-ci-daily)
@@ -35,10 +42,28 @@
 #   NPA_REPO               shared dev clone used only to derive the remote URL
 #                          (default: $HOME/nebius-physical-ai)
 #   NPA_DAILY_LOG_DIR      log directory              (default: $HOME/npa-daily-test-logs)
+#   NPA_DAILY_FRESH=1      hard-reset + clean the checkout to a pristine ref
+#                          (default: 1; keeps .venv)
+#   NPA_DAILY_DETACH=1     re-exec under `setsid` as a separate process group
+#                          (default: 1)
+#   NPA_DAILY_E2E_SHARDS   how many days to spread the S3 e2e suite over
+#                          (default: 7)
+#   NPA_REGISTRY_ID        Nebius registry id for the daily all-image reachability
+#                          check (unset => that check is skipped with a warning)
 #   NPA_DAILY_ALLOW_LIVE_GPU=1  required to run the live-gpu tier
 #   NPA_DAILY_PIP_EXTRAS   pip extras to install      (default: dev,adapter)
 #
 set -Eeuo pipefail
+
+# Run the daily suite in its own session/process group (a genuinely separate
+# process from the invoking SSH TTY / shared shell), so a dropped SSH channel or
+# a shared-shell signal cannot disturb it. Re-exec at most once, and only when
+# `setsid --wait` is available (util-linux) so the exit code is still preserved.
+if [[ "${NPA_DAILY_DETACHED:-0}" != "1" && "${NPA_DAILY_DETACH:-1}" == "1" ]] \
+   && command -v setsid >/dev/null 2>&1 && setsid --help 2>&1 | grep -q -- '--wait'; then
+  export NPA_DAILY_DETACHED=1
+  exec setsid --wait "$0" "$@"
+fi
 
 TEST_TIER="${1:-${NPA_DAILY_TEST_TIER:-unit}}"
 GIT_REF="${2:-${NPA_DAILY_GIT_REF:-main}}"
@@ -100,6 +125,15 @@ sync_checkout() {
     # Tag or explicit sha.
     git -C "$CI_REPO_DIR" checkout -f "$GIT_REF"
   fi
+
+  if [[ "${NPA_DAILY_FRESH:-1}" == "1" ]]; then
+    # Pristine tree for the day's run: discard any tracked drift and remove
+    # untracked build artifacts, but keep the venv so we don't reinstall deps
+    # from scratch every day.
+    log "Fresh mode: hard-reset + clean (keeping .venv)"
+    git -C "$CI_REPO_DIR" reset --hard HEAD
+    git -C "$CI_REPO_DIR" clean -ffdx -e .venv
+  fi
   log "HEAD is now $(git -C "$CI_REPO_DIR" rev-parse HEAD)"
 }
 
@@ -138,6 +172,82 @@ run_e2e() {
   )
 }
 
+run_workflow_coverage_gate() {
+  local py="$1"
+  log "e2e-daily [1/4]: >= 4-step workflow image-coverage report + regression gate"
+  "$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" report || true
+  "$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" check
+}
+
+run_workflow_plan_smoke() {
+  local py="$1"
+  log "e2e-daily [2/4]: validate + plan every npa.workflow spec (all >= 4-step workflows, no GPU)"
+  (
+    cd "${CI_REPO_DIR}/npa"
+    "$py" -m pytest \
+      tests/smoke/test_all_workflow_yamls.py \
+      tests/smoke/test_npa_workflow_smoke.py \
+      tests/orchestration/npa_workflow/test_skypilot_render.py \
+      -q --timeout=300
+  )
+}
+
+run_image_reachability() {
+  local py="$1"
+  log "e2e-daily [3/4]: resolve + inspect every workbench image in the registry"
+  # Resolves all CONTAINER_IMAGE_NAMES to pinned refs and inspects registry
+  # presence (needs crane/skopeo/docker on the dev VM; degrades to 'unknown'
+  # otherwise). Report-only by default so an intentionally unpushed image does
+  # not fail the daily run; set NPA_DAILY_REQUIRE_IMAGES=1 to enforce presence.
+  local require_flag=()
+  if [[ "${NPA_DAILY_REQUIRE_IMAGES:-0}" == "1" ]]; then
+    require_flag=(--require)
+  fi
+  "$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" images --inspect "${require_flag[@]}"
+}
+
+run_e2e_shard() {
+  local py="$1"
+  local shards day shard
+  shards="${NPA_DAILY_E2E_SHARDS:-7}"
+  day="$(date -u +%j)"
+  day=$((10#$day))
+  shard=$(( day % shards ))
+  log "e2e-daily [4/4]: rotating S3 e2e shard ${shard} of ${shards} (day-of-year ${day})"
+  (
+    cd "${CI_REPO_DIR}/npa"
+    local nodes=()
+    # `-o addopts=` clears the repo's default `-v` so --collect-only -q emits
+    # flat `path::node` ids (not the verbose tree) for deterministic slicing.
+    mapfile -t nodes < <(NPA_INTEGRATION_E2E=1 "$py" -m pytest tests/e2e -m e2e --collect-only -q -o addopts='' 2>/dev/null | grep -E '::' | sort -u)
+    if [[ "${#nodes[@]}" -eq 0 ]]; then
+      log "no S3 e2e node ids collected; skipping shard"
+      return 0
+    fi
+    local selected=() i
+    for i in "${!nodes[@]}"; do
+      if (( i % shards == shard )); then
+        selected+=("${nodes[$i]}")
+      fi
+    done
+    log "today's shard selects ${#selected[@]} of ${#nodes[@]} S3 e2e tests"
+    if [[ "${#selected[@]}" -eq 0 ]]; then
+      log "shard is empty today; nothing to run"
+      return 0
+    fi
+    NPA_INTEGRATION_E2E=1 "$py" -m pytest "${selected[@]}" -m e2e --tb=short
+  )
+}
+
+run_e2e_daily() {
+  local py="$1"
+  log "Tier=e2e-daily: comprehensive >= 4-step workflow coverage + all-image check + rotating S3 e2e subset"
+  run_workflow_coverage_gate "$py"
+  run_workflow_plan_smoke "$py"
+  run_image_reachability "$py"
+  run_e2e_shard "$py"
+}
+
 run_e2e_serverless() {
   local py="$1"
   [[ -n "${NPA_E2E_SERVERLESS_PROJECT:-}" ]] \
@@ -163,8 +273,8 @@ main() {
 
   # Validate inputs before any expensive clone/venv work.
   case "$TEST_TIER" in
-    unit | e2e | e2e-serverless | live-gpu) ;;
-    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-serverless | live-gpu)" ;;
+    unit | e2e | e2e-daily | e2e-serverless | live-gpu) ;;
+    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | e2e-serverless | live-gpu)" ;;
   esac
   if [[ "$TEST_TIER" == "live-gpu" && "${NPA_DAILY_ALLOW_LIVE_GPU:-0}" != "1" ]]; then
     die "live-gpu tier requires NPA_DAILY_ALLOW_LIVE_GPU=1; it must never run on a schedule (docs/testing/live-e2e.md)"
@@ -187,9 +297,10 @@ main() {
   case "$TEST_TIER" in
     unit) run_unit "$PY" ;;
     e2e) run_e2e "$PY" ;;
+    e2e-daily) run_e2e_daily "$PY" ;;
     e2e-serverless) run_e2e_serverless "$PY" ;;
     live-gpu) run_live_gpu ;;
-    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-serverless | live-gpu)" ;;
+    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | e2e-serverless | live-gpu)" ;;
   esac
 
   log "Daily dev-VM tests completed: tier=${TEST_TIER} ref=${GIT_REF}"

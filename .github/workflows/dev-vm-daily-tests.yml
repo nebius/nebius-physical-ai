@@ -27,10 +27,11 @@ on:
       test_tier:
         description: "Which test tier to run on the dev VM"
         type: choice
-        default: e2e
+        default: e2e-daily
         options:
           - unit
           - e2e
+          - e2e-daily
           - e2e-serverless
           - live-gpu
       git_ref:
@@ -38,10 +39,13 @@ on:
         type: string
         default: main
 
-# The tier the daily schedule runs. Keep this at `e2e` or lighter: it must never
-# be `live-gpu` (that path provisions real GPUs and can leak spend unattended).
+# The tier the daily schedule runs. `e2e-daily` runs the >= 4-step workflow
+# coverage gate, plans every npa.workflow spec, checks every image is reachable
+# in the registry, and runs a DIFFERENT rotating shard of the S3 e2e suite each
+# day. Keep this at `e2e-daily`/`e2e` or lighter: it must never be `live-gpu`
+# (that path provisions real GPUs and can leak spend unattended).
 env:
-  SCHEDULED_TEST_TIER: e2e
+  SCHEDULED_TEST_TIER: e2e-daily
 
 permissions:
   contents: read
@@ -84,7 +88,7 @@ jobs:
             tier="${SCHEDULED_TEST_TIER}"
             ref="main"
           else
-            tier="${INPUT_TIER:-e2e}"
+            tier="${INPUT_TIER:-e2e-daily}"
             ref="${INPUT_REF:-main}"
           fi
 
@@ -134,6 +138,9 @@ jobs:
           # Optional passthroughs; empty when not configured.
           NPA_E2E_SERVERLESS_PROJECT: ${{ vars.NPA_E2E_SERVERLESS_PROJECT }}
           NPA_E2E_PROJECT: ${{ vars.NPA_E2E_PROJECT }}
+          # Registry id enables the daily all-image reachability check on the dev VM.
+          NPA_REGISTRY_ID: ${{ vars.NPA_REGISTRY_ID }}
+          NPA_DAILY_E2E_SHARDS: ${{ vars.NPA_DAILY_E2E_SHARDS }}
         run: |
           # Only the live-gpu tier is allowed to arm the GPU path, and only from a
           # manual dispatch (already guarded above). The scheduled path never
@@ -147,6 +154,8 @@ jobs:
             NPA_DAILY_ALLOW_LIVE_GPU=${allow_gpu} \
             NPA_E2E_SERVERLESS_PROJECT='${NPA_E2E_SERVERLESS_PROJECT}' \
             NPA_E2E_PROJECT='${NPA_E2E_PROJECT}' \
+            NPA_REGISTRY_ID='${NPA_REGISTRY_ID}' \
+            NPA_DAILY_E2E_SHARDS='${NPA_DAILY_E2E_SHARDS}' \
             bash /tmp/npa-dev-vm-daily-tests.sh '${TIER}' '${REF}'"
 
           ssh -p "$SSH_PORT" \
