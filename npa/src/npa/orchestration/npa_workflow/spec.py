@@ -200,6 +200,23 @@ def _parse_state(name: str, entry: dict[str, Any]) -> StateSpec:
     if not isinstance(params_raw, dict):
         raise NpaWorkflowError(f"state {name}: params must be a mapping")
 
+    # Type checks live here (not in the JSON Schema): the shipped schema walker in
+    # schema_validation.py does not resolve `$ref`/`$defs`, so state bodies are
+    # only enforced in Python. Without this an author writing `parallel: shard-a`
+    # would get a confusing "duplicate parallel member" error from iterating a
+    # string character by character.
+    parallel_raw = entry.get("parallel")
+    if parallel_raw is not None and not isinstance(parallel_raw, list):
+        raise NpaWorkflowError(
+            f"state {name}: parallel must be a list of state names, got "
+            f"{type(parallel_raw).__name__}"
+        )
+    for member in parallel_raw or []:
+        if not isinstance(member, str):
+            raise NpaWorkflowError(
+                f"state {name}: parallel member must be a state name (string), got {member!r}"
+            )
+
     inputs = [
         ArtifactSpec(uri=str(item.get("uri") or ""), schema=str(item.get("schema") or ""))
         for item in (entry.get("inputs") or [])

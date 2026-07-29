@@ -338,41 +338,57 @@ def test_serial_renderer_still_rejects_parallel_option(parallel_spec) -> None:
         )
 
 
-# ------------------------------------------------------- schema-level failures
+# --------------------------------------------------------- field type failures
+#
+# NOTE: the shipped JSON Schema is only enforced at the document level — the
+# hand-rolled walker in schema_validation.py does not resolve `$ref`/`$defs`, so
+# `states.<name>.*` bodies have never been schema-checked. Type errors for the new
+# fields therefore have to raise (with an actionable message) from the Python
+# parser/validator, which is what these tests pin.
 
 
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        ("    parallel: not-a-list", "expected array"),
-        ("    parallel:\n      - 1\n      - 2", "expected string"),
+        ("    parallel: shard-a", "parallel must be a list of state names"),
+        ("    parallel:\n      - 1\n      - 2", "parallel member must be a state name"),
     ],
 )
-def test_schema_rejects_bad_parallel_types(tmp_path: Path, mutation: str, message: str) -> None:
-    """Type errors surface from the shipped JSON Schema, before dataclass parsing."""
-
+def test_bad_parallel_types_raise_actionable_errors(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
     text = PARALLEL_SPEC.replace("    parallel: [shard-a, shard-b, shard-c]", mutation)
     with pytest.raises(NpaWorkflowError, match=message):
         load_spec(_write(tmp_path, text))
 
 
-def test_schema_rejects_non_object_params(tmp_path: Path) -> None:
+def test_non_mapping_params_is_rejected(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
-        '    params:\n      images_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/a/"',
-        "    params:\n      - images_uri",
+        '    params:\n      images_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/a/"\n'
+        '      captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/captions/a/"',
+        "    params: not-a-mapping",
         1,
     )
-    with pytest.raises(NpaWorkflowError, match="expected object"):
+    with pytest.raises(NpaWorkflowError, match="params must be a mapping"):
         load_spec(_write(tmp_path, text))
 
 
-def test_schema_requires_trigger_uri(tmp_path: Path) -> None:
+def test_trigger_uri_is_required(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
         "  join:\n    description: Barrier — aggregate every shard.",
         "  join:\n    trigger:\n      pollSeconds: 5\n"
         "    description: Barrier — aggregate every shard.",
     )
-    with pytest.raises(NpaWorkflowError, match="missing required field 'uri'"):
+    with pytest.raises(NpaWorkflowError, match="trigger.uri is required"):
+        load_spec(_write(tmp_path, text))
+
+
+def test_non_mapping_trigger_is_rejected(tmp_path: Path) -> None:
+    text = PARALLEL_SPEC.replace(
+        "  join:\n    description: Barrier — aggregate every shard.",
+        "  join:\n    trigger: soon\n    description: Barrier — aggregate every shard.",
+    )
+    with pytest.raises(NpaWorkflowError, match="trigger must be a mapping"):
         load_spec(_write(tmp_path, text))
 
 
