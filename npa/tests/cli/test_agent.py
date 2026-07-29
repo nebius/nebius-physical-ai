@@ -2406,3 +2406,44 @@ def test_agent_check_public_ip_quota_noop_when_region_unresolved(monkeypatch) ->
 
     # No region and no fallback -> skip entirely.
     _agent_check_public_ip_quota("project-x", "tenant-x", "")
+
+
+def test_agent_public_ip_quota_result_fails_when_exhausted(monkeypatch) -> None:
+    from npa.cli.agent import _agent_public_ip_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(config_module, "list_projects", lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "us-central1"}})
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _t, _r: (10, 10))
+
+    result = _agent_public_ip_quota_result()
+    assert result.status == "FAIL"
+    assert "exhausted" in result.summary.lower()
+
+
+def test_agent_public_ip_quota_result_passes_with_headroom(monkeypatch) -> None:
+    from npa.cli.agent import _agent_public_ip_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(config_module, "list_projects", lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "uk-south1"}})
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _t, _r: (0, 3))
+
+    result = _agent_public_ip_quota_result()
+    assert result.status == "PASS"
+
+
+def test_agent_public_ip_quota_result_skips_without_project(monkeypatch) -> None:
+    from npa.cli.agent import _agent_public_ip_quota_result
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "list_projects", lambda: {})
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "")
+
+    result = _agent_public_ip_quota_result()
+    assert result.status == "PASS"
+    assert "skipped" in result.summary.lower()

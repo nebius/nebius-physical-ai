@@ -667,7 +667,7 @@ def _resolve_destroy_tf_vars(
         "iam_token": iam_token,
         "instance_name": f"agent-{project}-{name}",
         "server_port": str(DEFAULT_AGENT_PORT),
-        "workbench_type": "lerobot",
+        "workbench_type": "agent",
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
         "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
@@ -707,7 +707,11 @@ def _cleanup_orphan_agent_instances(project_id: str, instance_name: str) -> None
     from npa.clients.nebius import NebiusError, _run, _run_json
 
     try:
-        payload = _run_json(["compute", "instance", "list", "--parent-id", project_id])
+        # --all paginates: the API returns a next_page_token at 10 items, so a
+        # single page can miss agent VMs (and their public IPs) to reclaim.
+        payload = _run_json(
+            ["compute", "instance", "list", "--parent-id", project_id, "--all"]
+        )
     except NebiusError:
         return
     items = payload.get("items", [])
@@ -737,22 +741,35 @@ def _destroy_agent_terraform(
     *,
     record: dict[str, Any] | None = None,
 ) -> None:
-    """Destroy the agent Terraform stack and optional npa-managed ingress rules."""
-    if not _agent_terraform_state_exists(project, name):
-        return
-    state = resolve_terraform_state(project)
-    if not state.bucket or not state.access_key or not state.secret_key:
-        _fail(
-            f"Terraform state backend is not configured for project {project!r}. "
-            "Run `npa configure` or redeploy once to persist terraform_state."
-        )
+    """Destroy the agent Terraform stack and optional npa-managed ingress rules.
+
+    Works for *orphan* agents too — ones created elsewhere with no local record
+    or Terraform state (e.g. a fresh laptop). By-name instance cleanup reclaims
+    the public IP regardless, and when the project's S3 remote backend is
+    configured the remote state is pulled and destroyed to remove the VPC stack.
+    """
     tf_vars = _resolve_destroy_tf_vars(project, name, record)
     region = tf_vars["nebius_region"]
     instance_id = str((record or {}).get("instance_id", "")).strip()
     instance_name = tf_vars["instance_name"]
     project_id = tf_vars["nebius_project_id"]
+    # Always reclaim by-name orphan instances first (releases their public IPs),
+    # even when no Terraform state exists locally or remotely.
     _cleanup_agent_ingress(instance_id)
     _cleanup_orphan_agent_instances(project_id, instance_name)
+
+    state = resolve_terraform_state(project)
+    have_local_state = _agent_terraform_state_exists(project, name)
+    have_remote_backend = bool(state.bucket and state.access_key and state.secret_key)
+    if not have_local_state and not have_remote_backend:
+        # No Terraform state to act on; the orphan-instance cleanup above is the
+        # best we can do (VPC/subnet without state cannot be reconciled here).
+        return
+    if not have_remote_backend:
+        _fail(
+            f"Terraform state backend is not configured for project {project!r}. "
+            "Run `npa configure` or redeploy once to persist terraform_state."
+        )
     tf_dir = provisioner.prepare_working_dir(
         project,
         name,
@@ -960,6 +977,74 @@ def _agent_nebius_auth_result() -> CheckResult:
         status=FAIL,
         summary="Nebius IAM token unavailable.",
         remedy="Run `npa configure` / `nebius profile create` to authenticate.",
+    )
+
+
+def _agent_public_ip_quota_result() -> "CheckResult":
+    """Public-IPv4 quota check (FAIL): deploy needs one free public IP.
+
+    Mirrors the gate `deploy_cmd` enforces so an exhausted quota is caught in
+    preflight rather than after provisioning starts. Best-effort: resolves the
+    configured default project; skips (PASS with note) when the project/region
+    or quota can't be resolved so preflight never false-fails.
+    """
+    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
+
+    try:
+        from npa.clients.config import default_project_name, list_projects
+
+        projects = list_projects()
+        alias = default_project_name()
+        stanza = projects.get(alias) or (
+            next(iter(projects.values())) if projects else {}
+        )
+        project_id = str((stanza or {}).get("project_id", "")).strip()
+        tenant_id = str((stanza or {}).get("tenant_id", "")).strip()
+        fallback_region = str((stanza or {}).get("region", "")).strip()
+    except Exception:  # noqa: BLE001
+        project_id = tenant_id = fallback_region = ""
+
+    if not project_id or not tenant_id:
+        return CheckResult(
+            name="public_ipv4_quota",
+            status=PASS,
+            summary="Public IPv4 quota check skipped (no configured project).",
+        )
+
+    from npa.clients.nebius import get_project_region, get_public_ipv4_quota
+
+    region = (get_project_region(project_id) or fallback_region).strip()
+    if not region:
+        return CheckResult(
+            name="public_ipv4_quota",
+            status=PASS,
+            summary="Public IPv4 quota check skipped (region unresolved).",
+        )
+    usage, limit = get_public_ipv4_quota(tenant_id, region)
+    if usage is None or limit is None:
+        return CheckResult(
+            name="public_ipv4_quota",
+            status=PASS,
+            summary=f"Public IPv4 quota not readable for region {region!r}; skipping.",
+        )
+    if usage >= limit:
+        return CheckResult(
+            name="public_ipv4_quota",
+            status=FAIL,
+            summary=(
+                f"Public IPv4 quota is exhausted in region {region} "
+                f"({usage}/{limit}); agent deploy needs one public IP."
+            ),
+            remedy=(
+                "Free a public IP (`npa agent destroy` an unused agent, or delete "
+                "an idle VM/allocation), or ask a tenant admin to raise the "
+                "vpc.ipv4-address.public.count quota, then re-run."
+            ),
+        )
+    return CheckResult(
+        name="public_ipv4_quota",
+        status=PASS,
+        summary=f"Public IPv4 quota OK in {region} ({usage}/{limit}).",
     )
 
 
@@ -2928,10 +3013,24 @@ def _chat_memory_tenant() -> str:
     return value or "default-tenant"
 
 
+def _chat_memory_scope() -> str:
+    # Per-agent memory scope (project alias + agent name), sanitized. Chat
+    # sessions were keyed by tenant only, so every agent VM in a tenant shared
+    # one chat-sessions/ prefix (cross-talk / polluted context). Scope by the
+    # deployment identity so each agent has its own memory namespace.
+    project = re.sub(
+        r"[^A-Za-z0-9_.-]+", "-", os.environ.get("NPA_AGENT_PROJECT_ALIAS", "").strip()
+    ).strip("-")
+    name = re.sub(
+        r"[^A-Za-z0-9_.-]+", "-", os.environ.get("NPA_AGENT_NAME", "").strip()
+    ).strip("-")
+    scope = "/".join(part for part in (project, name) if part)
+    return scope or "default"
+
+
 def _chat_memory_prefix(settings: dict[str, str] | None = None) -> str:
-    bucket = (settings or {{}}).get("bucket", "")
     tenant = _chat_memory_tenant()
-    return f"npa-agent/tenants/{{tenant}}/chat-sessions"
+    return f"npa-agent/tenants/{{tenant}}/agents/{{_chat_memory_scope()}}/chat-sessions"
 
 
 def _chat_session_key(session_id: str, settings: dict[str, str] | None = None) -> str:
@@ -8265,6 +8364,7 @@ def preflight_cmd(
     results = list(_agent_hard_prereq_results(ssh_public_key_path))
     if not skip_nebius:
         results.append(_agent_nebius_auth_result())
+        results.append(_agent_public_ip_quota_result())
     results.append(_agent_token_factory_result())
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
@@ -8328,6 +8428,11 @@ def deploy_cmd(
     # (OptionInfo) can never crash `for item in tf_var` / `list(llm_models)`.
     tf_var = _coerce_cli_list(tf_var)
     llm_models = _coerce_cli_list(llm_models)
+    # Expand ``~`` up front so the absolute path flows into Terraform vars and
+    # outputs (e.g. ssh_key_path). Terraform reads the key with pathexpand, but
+    # the raw var also lands in outputs consumed downstream, where an unexpanded
+    # ``~`` breaks non-shell consumers.
+    ssh_public_key_path = str(Path(ssh_public_key_path).expanduser())
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
     if profile and shutil.which("nebius"):
         subprocess.run(["nebius", "profile", "activate", profile], check=False)
@@ -8342,6 +8447,24 @@ def deploy_cmd(
     env_region = region or (saved_env.region if saved_env else "")
     if not env_project_id or not env_tenant_id or not env_region:
         _fail("--project-id, --tenant-id, and --region are required")
+
+    # Compute placement follows the project's own region, not the --region flag
+    # (whose default can mismatch the project, e.g. alias us-central1 + default
+    # eu-north1). Resolve the project's real region and prefer it so the quota
+    # check, storage endpoint, and cloud-init all target where the VM lands.
+    try:
+        from npa.clients.nebius import get_project_region
+
+        real_region = get_project_region(env_project_id)
+    except Exception:  # noqa: BLE001
+        real_region = ""
+    if real_region and real_region != env_region:
+        typer.echo(
+            f"  Note: project {env_project_id} is in region {real_region!r}; using it "
+            f"instead of {env_region!r} (compute placement follows the project).",
+            err=True,
+        )
+        env_region = real_region
 
     # Fail fast on cheap, side-effect-free prerequisites BEFORE any cloud IAM
     # side effects or Terraform apply: a missing terraform binary or SSH key
@@ -8408,7 +8531,7 @@ def deploy_cmd(
             if extra_ingress_ports
             else "[]"
         ),
-        "workbench_type": "lerobot",
+        "workbench_type": "agent",
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
         "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
@@ -9020,10 +9143,28 @@ def destroy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
 ) -> None:
-    """Destroy agent VM/resources and remove saved config entry."""
+    """Destroy agent VM/resources and remove saved config entry.
+
+    Also reclaims *orphan* agents (created elsewhere, so no local record/state)
+    as long as the project is configured (``npa configure``): the deployment name
+    maps to the ``agent-{project}-{name}`` instance, whose public IP is reclaimed
+    by name and whose VPC stack is destroyed from the S3 remote state.
+    """
     record = _agent_record(project, name)
     if not record and not _agent_terraform_state_exists(project, name):
-        _fail(f"Agent config not found for {project}/{name}")
+        saved_env = resolve_environment(project)
+        if not (saved_env and saved_env.project_id):
+            _fail(
+                f"Agent config not found for {project}/{name}, and project "
+                f"{project!r} is not configured. Run `npa configure` (so the "
+                "project_id/tenant_id/region and S3 remote state are known), then "
+                "re-run destroy to reclaim an orphan agent."
+            )
+        typer.echo(
+            f"No local record for {project}/{name}; attempting orphan reclaim by "
+            f"instance name agent-{project}-{name} and S3 remote state.",
+            err=True,
+        )
     try:
         _destroy_agent_terraform(project, name, record=record or None)
     except ProvisionerError as exc:
@@ -9546,8 +9687,12 @@ def verify_live_cmd(
     if not isinstance(wf_payload, dict) or not wf_payload.get("workflow_yaml"):
         _fail("create-workflow chat did not return workflow_yaml")
     wf_yaml = str(wf_payload.get("workflow_yaml") or "")
-    if "augment" not in wf_yaml or "envgen" not in wf_yaml:
-        _fail("create-workflow chat yaml missing sim2real stages")
+    # Assert the chat authored a real npa.workflow spec, not specific stage names:
+    # the author's stage naming is not a stable contract (a valid 2-step sim2real
+    # spec may use finalize/heldout-eval rather than augment/envgen), and the
+    # validate + submit dry-run below already prove the spec is runnable.
+    if "apiVersion" not in wf_yaml or "npa.workflow" not in wf_yaml:
+        _fail("create-workflow chat yaml is not an npa.workflow spec")
     try:
         wf_validate = httpx.post(
             f"{agent_base}/api/workflows/validate",
