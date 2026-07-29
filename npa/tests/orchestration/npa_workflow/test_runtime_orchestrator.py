@@ -703,12 +703,22 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert report.waves[0]["sky_status"] == "CANCELLED"
 
 
-def test_unexpected_submit_error_cancels_nothing_but_fails_fast(tmp_path: Path) -> None:
+def test_unexpected_submit_error_tears_down_defensively_and_fails_fast(
+    tmp_path: Path,
+) -> None:
+    """A failed submit may still have provisioned a cluster, so tear it down.
+
+    ``sky jobs launch`` can raise *after* provisioning starts (e.g. a submit
+    timeout), so an abort during submission attempts a teardown by cluster name
+    rather than assuming nothing was created. The run then fails immediately
+    instead of retrying into more spend.
+    """
+
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
 
     def boom_submitter(path: Path, job_name: str, **kwargs: Any):
-        raise RuntimeError("sky binary missing")
+        raise RuntimeError("submit timed out")
 
     executor = _executor(spec, submitter=boom_submitter, cancels=cancels)
     report = run_workflow_runtime(
@@ -716,9 +726,11 @@ def test_unexpected_submit_error_cancels_nothing_but_fails_fast(tmp_path: Path) 
     )
 
     assert report.status == "failed"
-    assert "RuntimeError: sky binary missing" in report.waves[0]["error"]
-    # Nothing was launched, so there is nothing to cancel.
-    assert not cancels
+    assert "RuntimeError: submit timed out" in report.waves[0]["error"]
+    assert cancels and cancels[0]["cluster"], "must attempt a teardown by cluster name"
+    assert cancels[0]["job_id"] == "", "no job id was ever reported"
+    # One attempt only: an unexpected tooling failure is not retried.
+    assert len(report.waves) == 1
 
 
 def test_empty_job_id_is_rejected_instead_of_polling_unknown(tmp_path: Path) -> None:
