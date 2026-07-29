@@ -587,8 +587,10 @@ class RecordingDecisionReader:
                 payload["decision"] = normalize_decision(
                     str(decoded.get("decision") or decoded.get("last_decision") or "")
                 )
-        except Exception:  # noqa: BLE001 - the caller surfaces malformed payloads
-            pass
+        except (ValueError, TypeError) as exc:
+            # Record why the ledger entry has no normalized decision; the caller
+            # (decisions.load_decision) still raises on a malformed payload.
+            payload["decode_error"] = str(exc)[:200]
         self.reads.append(payload)
         self._ledger.record_decision(payload)
         return body
