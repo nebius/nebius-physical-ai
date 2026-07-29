@@ -420,16 +420,38 @@ def test_runtime_launches_parallel_group_as_job_group_with_barrier(tmp_path: Pat
     assert [wave["kind"] for wave in report.waves] == ["parallel", "serial", "serial"]
 
 
-def test_runtime_max_concurrency_override_widens_batches(tmp_path: Path) -> None:
-    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
-    submitter = FakeSubmitter()
-    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, max_concurrency=3)
-    executor = _executor(spec, submitter=submitter, options=options)
+def test_runtime_max_concurrency_option_is_a_cap_not_an_override(tmp_path: Path) -> None:
+    """--max-concurrency can only lower a group's declared bound (cost control)."""
 
-    run_workflow_runtime(spec, run_id="rt-wide", executor=executor, options=options)
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))  # group declares 2
 
-    assert [call["tasks"] for call in submitter.calls] == [
-        ["shard-a", "shard-b", "shard-c"],
+    tighter = FakeSubmitter()
+    tight_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, max_concurrency=1)
+    run_workflow_runtime(
+        spec,
+        run_id="rt-tight",
+        executor=_executor(spec, submitter=tighter, options=tight_options),
+        options=tight_options,
+    )
+    assert [call["tasks"] for call in tighter.calls] == [
+        ["shard-a"],
+        ["shard-b"],
+        ["shard-c"],
+        ["join"],
+    ]
+
+    wider = FakeSubmitter()
+    wide_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, max_concurrency=8)
+    run_workflow_runtime(
+        spec,
+        run_id="rt-wide",
+        executor=_executor(spec, submitter=wider, options=wide_options),
+        options=wide_options,
+    )
+    # Still two batches: the spec's maxConcurrency: 2 is respected.
+    assert [call["tasks"] for call in wider.calls] == [
+        ["shard-a", "shard-b"],
+        ["shard-c"],
         ["join"],
     ]
 

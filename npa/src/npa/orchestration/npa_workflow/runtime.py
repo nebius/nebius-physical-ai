@@ -244,7 +244,12 @@ class SkyPilotWaveExecutor:
     ) -> list[dict[str, Any]]:
         """StepExecutor protocol: run a fan-out group concurrently, then barrier."""
 
-        limit = max(1, self.options.max_concurrency or max_concurrency or len(steps))
+        # The CLI knob is a *cap*: it can only lower a group's declared
+        # maxConcurrency (cost control), never raise it above what the spec asked
+        # for.
+        limit = max(1, max_concurrency or len(steps))
+        if self.options.max_concurrency:
+            limit = max(1, min(limit, self.options.max_concurrency))
         batches = [
             list(steps)[start : start + limit] for start in range(0, len(steps), limit)
         ]
@@ -760,6 +765,12 @@ def run_workflow_runtime(
     except NpaWorkflowError as exc:
         status = "failed"
         error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - a long-running driver must always
+        # reach a terminal ledger status; the error type is kept in the report so
+        # an unexpected crash is not mistaken for a workflow-level failure.
+        status = "failed"
+        error = f"{type(exc).__name__}: {exc}"
+        log(f"runtime driver crashed: {error}")
     ledger.set_status(status)
 
     return RuntimeReport(
