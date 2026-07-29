@@ -396,7 +396,11 @@ def _validate_parallel_group(spec: NpaWorkflowSpec, state: StateSpec) -> None:
 def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
     """Resolve tokens and loop bounds so user errors surface at validate time."""
 
-    from npa.orchestration.npa_workflow.interpreter import _make_context, _resolved_run
+    from npa.orchestration.npa_workflow.interpreter import (
+        _make_context,
+        _resolved_run,
+        state_config,
+    )
     from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
     ctx = _make_context(spec, run_id="validate-run")
@@ -422,10 +426,14 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
         except TokenError as exc:
             if not str(exc).startswith("unknown state token:"):
                 raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+        # Artifact URIs and trigger prefixes see the same per-state ``params``
+        # overlay the command does, so a fan-out member can point its outputs at
+        # its own prefix.
+        state_scope = state_config(state, ctx)
         trigger_uris = [state.trigger.uri] if state.trigger is not None else []
         for uri in trigger_uris:
             try:
-                resolve_tokens(uri, config=ctx.config, run=ctx.run)
+                resolve_tokens(uri, config=state_scope, run=ctx.run)
             except TokenError as exc:
                 raise NpaWorkflowError(f"state {state.name}: trigger.uri: {exc}") from exc
         for artifact in [*state.inputs, *state.outputs]:
@@ -434,7 +442,7 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
             try:
                 resolve_tokens(
                     artifact.uri,
-                    config=ctx.config,
+                    config=state_scope,
                     run=ctx.run,
                     state_outputs=ctx.state_outputs,
                 )
