@@ -304,8 +304,12 @@ process supervisor story of its own.
 ### Deviations that were necessary (and why)
 
 1. **`SubmitLiveCase` gained fields** (`runtime`, `config_vars`,
-   `expected_parallel_tasks`) and the one-shot live test now skips `runtime=True`
-   cases. Reason: submitting a parallel sweep through the one-shot path would
+   `expected_parallel_tasks`, `image_tool`, `max_wait_seconds`) and the one-shot
+   live test now skips `runtime=True` cases. An `expected_execution` field was
+   considered and deliberately **not** added: because `--plan-only` always renders
+   the flattened serial plan (D6), the plan-only guardrail's
+   `"execution: serial"` assertion holds for parallel specs too, so the field would
+   never carry a value other than `"serial"`. Reason: submitting a parallel sweep through the one-shot path would
    render the flattened serial plan — valid, but it proves nothing about
    concurrency and would burn four GPU-hours running a sweep serially. The
    plan-only matrix still covers every spec including the new ones.
