@@ -292,3 +292,84 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1
     assert report["multiply_mode"] == "single-variant"
+
+
+def test_is_truthy_matches_common_values() -> None:
+    for v in ("1", "true", "TRUE", "yes", "on", True):
+        assert dfs._is_truthy(v) is True
+    for v in ("", "0", "false", "no", None, "off"):
+        assert dfs._is_truthy(v) is False
+
+
+class _FakeStorage:
+    def __init__(self) -> None:
+        self.uploads: list[str] = []
+
+    def upload_file(self, local: str, dest: str) -> str:
+        assert Path(local).is_file()  # a real PNG was produced
+        self.uploads.append(dest)
+        return dest
+
+
+def test_seed_default_input_frames_writes_when_empty(monkeypatch) -> None:
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: [])
+    fake = _FakeStorage()
+    monkeypatch.setattr(dfs, "_storage", lambda: fake)
+
+    written = dfs._seed_default_input_frames("s3://b/physical-ai-data-factory/run/input/", count=3, seed="x")
+
+    assert written == 3
+    assert len(fake.uploads) == 3
+    assert all(dest.endswith(".png") for dest in fake.uploads)
+    assert fake.uploads[0].endswith("input/frame_0000.png")
+
+
+def test_seed_default_input_frames_skips_when_images_exist(monkeypatch) -> None:
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: ["physical-ai-data-factory/run/input/frame_0000.png"])
+    fake = _FakeStorage()
+    monkeypatch.setattr(dfs, "_storage", lambda: fake)
+
+    written = dfs._seed_default_input_frames("s3://b/physical-ai-data-factory/run/input/", seed="x")
+
+    assert written == 0
+    assert fake.uploads == []
+
+
+def test_seed_default_input_frames_noop_without_uri() -> None:
+    assert dfs._seed_default_input_frames("", seed="x") == 0
+
+
+def test_generate_configs_seeds_default_input_when_flag_set(tmp_path: Path, monkeypatch) -> None:
+    calls: dict[str, str] = {}
+
+    def fake_seed(input_uri: str, seed: str = "") -> int:
+        calls["input_uri"] = input_uri
+        calls["seed"] = seed
+        return 8
+
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", fake_seed)
+    result = dfs.generate_configs(
+        str(tmp_path / "c.json"),
+        n_augmentations=1,
+        seed="run-x",
+        input_uri="s3://b/physical-ai-data-factory/run-x/input/",
+        seed_default_input="true",
+    )
+    assert result["seeded_default_input_frames"] == 8
+    assert calls["input_uri"] == "s3://b/physical-ai-data-factory/run-x/input/"
+    assert calls["seed"] == "run-x"
+
+
+def test_generate_configs_no_seed_when_flag_false(tmp_path: Path, monkeypatch) -> None:
+    def boom(*_a, **_k) -> int:  # pragma: no cover - must not run
+        raise AssertionError("must not seed default input when the flag is falsy")
+
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", boom)
+    result = dfs.generate_configs(
+        str(tmp_path / "c.json"),
+        n_augmentations=1,
+        seed="s",
+        input_uri="s3://b/input/",
+        seed_default_input="false",
+    )
+    assert result["seeded_default_input_frames"] == 0

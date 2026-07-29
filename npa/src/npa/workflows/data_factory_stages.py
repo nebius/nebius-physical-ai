@@ -136,11 +136,71 @@ def _download_json(uri: str) -> dict[str, Any]:
         return json.loads(Path(p).read_text())
 
 
-def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str = "") -> dict[str, Any]:
+def _is_truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_DEFAULT_INPUT_FRAME_COUNT = 8
+
+
+def _seed_default_input_frames(
+    input_uri: str, count: int = _DEFAULT_INPUT_FRAME_COUNT, seed: str = ""
+) -> int:
+    """Seed a small set of synthetic, captionable PNG frames into ``input_uri``.
+
+    Lets the blueprint run end-to-end with **no uploaded dataset**: the caption
+    stage needs real image files (a ``.mp4`` alone is not enough) while the augment
+    stage renders the bundled Cosmos control example. These frames are synthetic
+    placeholders (a varying block + gripper bar), not real footage — they exist so
+    a first run completes without staging data. Skips seeding when the prefix
+    already holds images so a real staged dataset is never clobbered. Returns the
+    number of frames written (0 when skipped / no ``input_uri``).
+    """
+    if not input_uri:
+        return 0
+    existing = [
+        k for k in _list_keys(input_uri) if k.lower().endswith((".png", ".jpg", ".jpeg"))
+    ]
+    if existing:
+        return 0
+
+    from PIL import Image, ImageDraw
+
+    rng = random.Random(f"{seed}:default-input")
+    written = 0
+    with tempfile.TemporaryDirectory(prefix="npa-df-seed-") as tmp:
+        for i in range(max(1, count)):
+            img = Image.new("RGB", (1280, 720), (18 + (i * 5) % 60, 24, 40))
+            draw = ImageDraw.Draw(img)
+            # A varying colored block ("cloth"/object) plus a fixed gripper-ish
+            # bar, so frames are distinct and give the VLM something concrete.
+            bx = 200 + (i * 90) % 700
+            color = (rng.randint(60, 230), rng.randint(60, 230), rng.randint(60, 230))
+            draw.rectangle([bx, 300, bx + 260, 520], fill=color)
+            draw.rectangle([600, 120, 680, 320], fill=(200, 200, 200))
+            local = Path(tmp) / f"frame_{i:04d}.png"
+            img.save(local)
+            _storage().upload_file(str(local), input_uri.rstrip("/") + f"/frame_{i:04d}.png")
+            written += 1
+    return written
+
+
+def generate_configs(
+    configs_uri: str,
+    n_augmentations: int | str = 2,
+    seed: str = "",
+    input_uri: str = "",
+    seed_default_input: str | bool = "",
+) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
     ``n_augmentations`` accepts a str (the blueprint interpolates a quoted config
     value) or int; a non-numeric value falls back to 2 rather than crashing.
+
+    When ``seed_default_input`` is truthy and ``input_uri`` is given, seed a small
+    set of default synthetic frames into ``input_uri`` (only when it has none) so
+    the pipeline runs without an uploaded dataset — see
+    :func:`_seed_default_input_frames`.
     """
     try:
         n = int(n_augmentations)
@@ -163,6 +223,14 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
     }
     uri = configs_uri.rstrip("/") + "/manifest.json" if not configs_uri.endswith(".json") else configs_uri
     manifest["written_uri"] = _upload_json(manifest, uri)
+    # Optionally seed default input frames so the run needs no uploaded dataset.
+    seeded = 0
+    if _is_truthy(seed_default_input):
+        try:
+            seeded = _seed_default_input_frames(input_uri, seed=seed)
+        except Exception as exc:  # noqa: BLE001 - seeding is best-effort convenience
+            print(json.dumps({"stage": "generate_configs", "warn": f"default-input seed failed: {exc}"[:200]}))
+    manifest["seeded_default_input_frames"] = seeded
     print(json.dumps(manifest))
     return manifest
 

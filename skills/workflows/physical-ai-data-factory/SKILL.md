@@ -128,8 +128,13 @@ npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)
   `s3://<bucket>/physical-ai-data-factory/<run-id>/input/` — this is required even
   for the default **stock-Cosmos** augment (the augment video is the bundled
   Cosmos example, but captioning still needs real image files; a `.mp4` alone is
-  not enough). For appearance transfer onto the caller's OWN footage, also stage a
-  clip and submit with `NPA_COSMOS_CONDITION_ON_INPUT=1`. Copy-paste staging +
+  not enough).   For appearance transfer onto the caller's OWN footage, also stage a
+  clip and submit with `NPA_COSMOS_CONDITION_ON_INPUT=1`. To run with **no
+  uploaded dataset at all**, submit `--var seed_default_input=true`
+  (config field `seed_default_input`): `generate-configs` then seeds `input/`
+  with a few default synthetic frames when it is empty (never overwriting real
+  staged frames), so the caption stage has images while augment uses stock
+  Cosmos. Copy-paste staging +
   `ffmpeg` extract/synthesize one-liners:
   `docs/workbench/guides/physical-ai-data-factory-deploy.md` ("Stage input
   first"). Consequently the Voxel51 tab and the full `reports/sim2real.rrd` Rerun

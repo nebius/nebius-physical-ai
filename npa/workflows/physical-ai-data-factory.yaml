@@ -49,6 +49,11 @@ kind: Workflow
 #             ENOUGH -- workbench.token_factory.caption needs image files.
 #   OPTIONAL: video_0.mp4 (720p-1080p, 5-15 s) for the Rerun viz and for the
 #             condition-on-input augment path.
+#   NO DATASET? Set config.seed_default_input: "true" (or
+#             --var seed_default_input=true) and the generate-configs stage seeds
+#             input/ with a few default synthetic frames automatically, so the run
+#             completes end-to-end without uploading anything (augment still uses
+#             the bundled Cosmos example). It never overwrites real staged frames.
 #
 # Two augment paths -- BOTH still require the input frames above for captioning:
 #   * Stock-Cosmos (default): augment re-renders the bundled, self-contained
@@ -77,6 +82,12 @@ config:
   prefix: "physical-ai-data-factory/{{run.id}}"
 
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
+  # Set "true" to run with NO uploaded dataset: generate-configs seeds input/ with
+  # a few default synthetic frames so the mandatory caption stage has images while
+  # the augment stage renders the bundled Cosmos control example. It never
+  # clobbers real frames already staged under input/. Submit override:
+  #   --var seed_default_input=true
+  seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
   refinement_iterations: "2"      # max evaluate/validate passes before promote
   grade_threshold: "0.5"          # min VLM attribute score to promote (else loop_back)
@@ -148,7 +159,8 @@ states:
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import generate_configs;
-        generate_configs('{{config.configs_uri}}', '{{config.n_augmentations}}', '{{run.id}}')"
+        generate_configs('{{config.configs_uri}}', '{{config.n_augmentations}}', '{{run.id}}',
+        '{{config.images_uri}}', '{{config.seed_default_input}}')"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
