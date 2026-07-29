@@ -313,3 +313,66 @@ def test_resolve_python_bin_passes_through_unknown_version(monkeypatch) -> None:
     # normal venv-creation error still surfaces (no false rejection).
     monkeypatch.setattr(skypilot_cli, "_detect_python_version", lambda _e: None)
     assert skypilot_cli._resolve_python_bin("/some/python") == "/some/python"
+
+
+def _config_path() -> Path:
+    from npa.clients import config as config_module
+
+    return config_module.CONFIG_PATH
+
+
+def test_bootstrap_persists_sky_bin_to_config(tmp_path: Path) -> None:
+    """Bootstrap must survive the shell it ran in.
+
+    Regression: bootstrap only printed `export NPA_SKYPILOT_BIN=...`, so the
+    next shell (and every `workflow submit` in it) failed with "SkyPilot CLI
+    executable is not configured".
+    """
+    import yaml
+
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+
+    result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+
+    assert result.exit_code == 0, result.output
+    assert "saved: skypilot.sky_bin" in result.output
+    saved = yaml.safe_load(_config_path().read_text(encoding="utf-8"))
+    assert saved["skypilot"]["sky_bin"] == str((venv / "bin" / "sky").resolve())
+
+
+def test_bootstrap_saved_sky_bin_resolves_without_env(tmp_path: Path) -> None:
+    """The persisted value is the one NPA's resolver reads."""
+    from npa.orchestration.skypilot._bin import resolve_sky_bin
+
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+    assert result.exit_code == 0, result.output
+
+    # No NPA_SKYPILOT_BIN in the environment: config alone must resolve it.
+    assert os.environ.get("NPA_SKYPILOT_BIN") in (None, "")
+    assert resolve_sky_bin() == (venv / "bin" / "sky").resolve()
+
+
+def test_bootstrap_no_save_leaves_config_untouched(tmp_path: Path) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+
+    result = runner.invoke(
+        app, ["skypilot", "bootstrap", "--path", str(venv), "--no-save"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "saved: skypilot.sky_bin" not in result.output
+    assert "export NPA_SKYPILOT_BIN=" in result.output
+    assert not _config_path().exists()
+
+
+def test_bootstrap_still_succeeds_when_saving_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    monkeypatch.setattr(skypilot_cli, "_persist_sky_bin", lambda _bin: "")
+
+    result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+
+    assert result.exit_code == 0, result.output
+    assert "could not save skypilot.sky_bin" in result.output

@@ -302,7 +302,11 @@ def _wait_for_healthy_jobs_controller(
             check=False,
         )
         if result.returncode != 0:
-            raise SkyPilotSubmitError(f"SkyPilot controller health check failed: {_command_detail(result)}")
+            detail = _command_detail(result)
+            raise SkyPilotSubmitError(
+                f"SkyPilot controller health check failed: {detail}"
+                + _controller_health_remedy(detail)
+            )
         controllers = _jobs_controller_statuses(result.stdout)
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
@@ -316,12 +320,72 @@ def _wait_for_healthy_jobs_controller(
                 return
             last_summary = ", ".join(f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy)
         if time.monotonic() >= deadline:
+            names = [name for name, _status in controllers] or ["<controller-name>"]
             raise SkyPilotSubmitError(
                 "SkyPilot jobs controller not healthy before launch: "
                 f"{last_summary}. If it is stuck/stale, tear it down with "
-                "`sky down <controller-name>` (it is recreated on the next launch)."
+                f"`sky down {names[0]}` (it is recreated on the next launch)."
             )
         time.sleep(max(interval, 0.1))
+
+
+# Signals that `sky status` failed because a *cached* controller still points at
+# infrastructure that is gone (a kubeconfig from another setup, a deleted
+# cluster, a renamed context) rather than because of a transient error.
+_STALE_CONTROLLER_SIGNALS = (
+    "kubeconfig",
+    "no such file or directory",
+    "unable to connect",
+    "connection refused",
+    "not found in kubeconfig",
+    "invalid kube-context",
+    "kubernetes context",
+    "credentials not found",
+)
+_KUBECONFIG_PATH_RE = re.compile(r"[\w./~-]*kubeconfig[\w./-]*")
+
+
+def _controller_health_remedy(detail: str) -> str:
+    """Return actionable remediation text for a failed controller health check.
+
+    A stale managed-jobs controller cached from an unrelated NPA setup (pointing
+    at a kubeconfig that no longer exists) surfaced only as a raw `sky status`
+    stack trace, with nothing telling the operator that the fix is to purge the
+    controller or repoint KUBECONFIG.
+    """
+
+    lowered = str(detail or "").lower()
+    if not any(signal in lowered for signal in _STALE_CONTROLLER_SIGNALS):
+        return ""
+    lines = [
+        "",
+        "",
+        "This usually means a cached SkyPilot managed-jobs controller "
+        "(sky-jobs-controller-*) still points at infrastructure from another "
+        "setup. To recover:",
+    ]
+    match = _KUBECONFIG_PATH_RE.search(str(detail or ""))
+    if match:
+        lines.append(
+            f"  - the referenced kubeconfig is {match.group(0)}; provision or "
+            "restore that cluster (`npa cluster up` / `npa provision-if-absent "
+            "--project <alias>`), or point KUBECONFIG at the cluster you want."
+        )
+    else:
+        lines.append(
+            "  - point KUBECONFIG at the cluster you want, or provision one "
+            "with `npa cluster up` / `npa provision-if-absent --project <alias>`."
+        )
+    lines.extend(
+        [
+            "  - list what SkyPilot has cached: `sky status --all`.",
+            "  - purge the stale controller: `sky down sky-jobs-controller-<id>` "
+            "(it is recreated on the next launch).",
+            "  - target a specific context explicitly with "
+            "`npa workbench workflow submit ... --infra k8s/<context>`.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:

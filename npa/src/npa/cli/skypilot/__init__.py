@@ -98,6 +98,15 @@ def bootstrap_cmd(
         "--python",
         help=f"Python executable used to create the isolated venv. Defaults to {PYTHON_ENV} or this interpreter.",
     ),
+    save: bool = typer.Option(
+        True,
+        "--save/--no-save",
+        help=(
+            "Persist the resolved sky binary as skypilot.sky_bin in "
+            "~/.npa/config.yaml so later shells resolve it without exporting "
+            "NPA_SKYPILOT_BIN."
+        ),
+    ),
 ) -> None:
     """Install SkyPilot into an isolated, idempotent virtualenv."""
 
@@ -111,7 +120,32 @@ def bootstrap_cmd(
     typer.echo(f"SkyPilot {SKYPILOT_VERSION} {state} at {result.path}")
     typer.echo(str(result.sky_bin))
     typer.echo(f"export NPA_SKYPILOT_BIN={shlex.quote(str(result.sky_bin))}")
+    if save:
+        # Printing an `export` line only helped the current shell: the next
+        # shell (and every `npa workbench workflow submit` in it) failed with
+        # "SkyPilot CLI executable is not configured". `skypilot.sky_bin` in
+        # ~/.npa/config.yaml is the persistent form NPA already resolves.
+        saved_path = _persist_sky_bin(result.sky_bin)
+        if saved_path:
+            typer.echo(f"saved: skypilot.sky_bin -> {saved_path}")
+        else:
+            typer.echo(
+                "warning: could not save skypilot.sky_bin; export "
+                "NPA_SKYPILOT_BIN in each shell instead.",
+                err=True,
+            )
     typer.echo(f"marker: {result.marker_path}")
+
+
+def _persist_sky_bin(sky_bin: Path) -> str:
+    """Write ``skypilot.sky_bin`` into ``~/.npa/config.yaml``; "" on failure."""
+
+    try:
+        from npa.clients.config import write_config
+
+        return str(write_config({"skypilot": {"sky_bin": str(sky_bin)}}))
+    except Exception:  # noqa: BLE001 - persisting is a convenience, never fatal
+        return ""
 
 
 @app.command("status")

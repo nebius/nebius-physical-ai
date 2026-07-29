@@ -540,3 +540,82 @@ def test_wait_for_controller_blocks_on_transient_init(monkeypatch) -> None:
         )
     assert "INIT" in str(exc.value)
     assert "sky down" in str(exc.value)
+
+
+def _failing_status_run(stderr: str):
+    def _run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=1, stdout="", stderr=stderr
+        )
+
+    return _run
+
+
+def test_stale_controller_kubeconfig_failure_explains_the_fix(monkeypatch) -> None:
+    """A controller cached against a missing kubeconfig must say how to recover.
+
+    Regression: submitting against a stale `sky-jobs-controller-*` from another
+    NPA setup only produced a raw `sky status` stack trace, with nothing about
+    purging the controller or repointing KUBECONFIG.
+    """
+    stderr = (
+        "RuntimeError: Failed to load kubeconfig "
+        "/home/op/.npa/clusters/npa-rtxpro-mk8s/kubeconfig: "
+        "No such file or directory"
+    )
+    monkeypatch.setattr(workflow_module.subprocess, "run", _failing_status_run(stderr))
+
+    with pytest.raises(SkyPilotSubmitError) as exc:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky", env={}, timeout=0, interval=0.01
+        )
+
+    message = str(exc.value)
+    assert "controller health check failed" in message
+    # Names the exact kubeconfig it is stuck on ...
+    assert "/home/op/.npa/clusters/npa-rtxpro-mk8s/kubeconfig" in message
+    # ... and every recovery lever.
+    assert "sky status --all" in message
+    assert "sky down sky-jobs-controller-" in message
+    assert "provision-if-absent" in message
+    assert "--infra k8s/<context>" in message
+
+
+def test_unrelated_status_failure_keeps_the_raw_error(monkeypatch) -> None:
+    """Don't bolt stale-controller advice onto unrelated failures."""
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        _failing_status_run("error: quota exceeded for account"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as exc:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky", env={}, timeout=0, interval=0.01
+        )
+
+    message = str(exc.value)
+    assert "quota exceeded" in message
+    assert "sky down" not in message
+
+
+def test_controller_health_remedy_without_a_kubeconfig_path() -> None:
+    remedy = workflow_module._controller_health_remedy(
+        "kubernetes.config.config_exception: Invalid kube-context specified"
+    )
+
+    assert "KUBECONFIG" in remedy
+    assert "sky down sky-jobs-controller-" in remedy
+
+
+def test_unhealthy_controller_timeout_names_the_controller(monkeypatch) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess, "run", _controller_status_run("INIT")
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as exc:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky", env={}, timeout=0, interval=0.01
+        )
+
+    assert "sky down sky-jobs-controller-abc123" in str(exc.value)
