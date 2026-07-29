@@ -19,6 +19,7 @@ import pytest
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
 from npa.orchestration.npa_workflow.runtime import (
     RuntimeLedger,
@@ -645,3 +646,300 @@ def test_ledger_persists_waves_and_decisions(tmp_path: Path) -> None:
     assert [wave["states"] for wave in persisted.waves] == [["work"], ["gate"], ["publish"]]
     assert persisted.decisions[-1]["decision"] == "promote_checkpoint"
     assert persisted.decisions[-1]["uri"].endswith("/gate/decision.json")
+
+
+# ------------------------------------------------- cost safety / leak protection
+#
+# These pin the review findings: a wave must never end with a managed job still
+# running, and --resume must never submit a second copy of work already in flight.
+
+
+class BoomStatus:
+    """Status function that raises for the first ``failures`` calls."""
+
+    def __init__(self, failures: int, exc: Exception | None = None) -> None:
+        self.failures = failures
+        self.calls = 0
+        self.exc = exc or TimeoutError("sky jobs queue timed out")
+
+    def __call__(self, job_id: str, **_: Any) -> FakeResult:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.exc
+        return FakeResult(status="SUCCEEDED", job_id=job_id)
+
+
+def test_transient_status_errors_do_not_orphan_the_job(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(
+        spec, status_fn=BoomStatus(failures=3), cancels=cancels
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-flaky-status", executor=executor, options=executor.options
+    )
+
+    assert report.status == "succeeded"
+    assert not cancels, "a recoverable status hiccup must not cancel a healthy job"
+    first = report.waves[0]
+    assert len(first["status_errors"]) == 3
+    assert "TimeoutError" in first["status_errors"][0]
+
+
+def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(spec, status_fn=BoomStatus(failures=99), cancels=cancels)
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-dead-status", executor=executor, options=executor.options
+    )
+
+    assert report.status == "failed"
+    assert "consecutive" in report.error
+    # The whole point: the job we launched is not left running.
+    assert cancels and cancels[0]["job_id"] == "1"
+    assert report.waves[0]["sky_status"] == "CANCELLED"
+
+
+def test_unexpected_submit_error_cancels_nothing_but_fails_fast(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+
+    def boom_submitter(path: Path, job_name: str, **kwargs: Any):
+        raise RuntimeError("sky binary missing")
+
+    executor = _executor(spec, submitter=boom_submitter, cancels=cancels)
+    report = run_workflow_runtime(
+        spec, run_id="rt-submit-boom", executor=executor, options=executor.options
+    )
+
+    assert report.status == "failed"
+    assert "RuntimeError: sky binary missing" in report.waves[0]["error"]
+    # Nothing was launched, so there is nothing to cancel.
+    assert not cancels
+
+
+def test_empty_job_id_is_rejected_instead_of_polling_unknown(tmp_path: Path) -> None:
+    """An unparseable job id used to burn max_wait_seconds and then leak the job."""
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+    status_fn = FakeStatus()
+
+    class NoIdSubmitter(FakeSubmitter):
+        def __call__(self, path: Path, job_name: str, **kwargs: Any) -> FakeResult:
+            super().__call__(path, job_name, **kwargs)
+            return FakeResult(job_id="")
+
+    executor = _executor(
+        spec, submitter=NoIdSubmitter(), status_fn=status_fn, cancels=cancels
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-no-jobid", executor=executor, options=executor.options
+    )
+
+    assert report.status == "failed"
+    assert "did not report a job id" in report.error
+    assert status_fn.calls == [], "must not poll a job it cannot identify"
+    # Cancel by cluster name is still attempted so a launched-but-unnamed job dies.
+    assert cancels and cancels[0]["cluster"]
+
+
+def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+
+    # First driver: submits the group, then "dies" while polling.
+    first_submitter = FakeSubmitter()
+    first = _executor(
+        spec,
+        run_id="rt-adopt",
+        submitter=first_submitter,
+        status_fn=BoomStatus(failures=99),
+        store=store,
+    )
+    first_report = run_workflow_runtime(
+        spec, run_id="rt-adopt", executor=first, options=first.options
+    )
+    assert first_report.status == "failed"
+    assert len(first_submitter.calls) == 1
+
+    # Simulate "the job actually kept running": rewrite the ledger record to running.
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    key = persisted.waves[0]["key"]
+    persisted.record_wave({**persisted.waves[0], "status": "running", "sky_status": "RUNNING"})
+    store.write_runtime_state(persisted)
+
+    # Second driver resumes: it must poll job 1, not submit a second copy.
+    second_submitter = FakeSubmitter()
+    resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    second = _executor(
+        spec,
+        run_id="rt-adopt",
+        submitter=second_submitter,
+        options=resume_options,
+        store=store,
+    )
+    second_report = run_workflow_runtime(
+        spec, run_id="rt-adopt", executor=second, options=resume_options
+    )
+
+    assert second_report.status == "succeeded"
+    adopted = [wave for wave in second_report.waves if wave.get("adopted")]
+    assert adopted and adopted[0]["job_id"] == "1"
+    assert adopted[0]["key"] == key
+    # Only the *remaining* waves were submitted; the in-flight one was adopted.
+    assert [call["tasks"] for call in second_submitter.calls] == [["shard-c"], ["join"]]
+
+
+def test_resume_replaces_an_in_flight_job_that_actually_failed(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-adopt-failed")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "77",
+            "job_name": "rt-adopt-failed-01-shards",
+            "attempt": 1,
+        }
+    )
+    store.write_runtime_state(state)
+
+    resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-adopt-failed",
+        submitter=submitter,
+        status_fn=FakeStatus(["FAILED"]),  # the adopted job had died
+        options=resume_options,
+        store=store,
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-adopt-failed", executor=executor, options=resume_options
+    )
+
+    assert report.status == "succeeded"
+    # Wave was resubmitted (fresh job ids) after the dead one was observed.
+    assert [call["tasks"] for call in submitter.calls] == [
+        ["shard-a", "shard-b"],
+        ["shard-c"],
+        ["join"],
+    ]
+
+
+def test_resume_without_a_ledger_bucket_fails_fast(tmp_path: Path) -> None:
+    """Silently resubmitting everything is worse than refusing to resume."""
+
+    text = FANOUT_SPEC.replace("  bucket: example-bucket\n", "")
+    text = text.replace('  prefix: "fanout/{{run.id}}"', '  prefix: "fanout/{{run.id}}"')
+    spec = load_spec(_write_spec(tmp_path, text))
+    with pytest.raises(NpaWorkflowError, match="config.bucket is not set"):
+        run_workflow_runtime(
+            spec,
+            run_id="rt-no-bucket",
+            options=RuntimeOptions(poll_seconds=0, max_wait_seconds=10, resume=True),
+        )
+
+
+# ------------------------------------------------------ decision-contract edges
+
+
+def test_missing_decision_artifact_falls_back_to_the_assumption(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    submitter = FakeSubmitter()
+    executor = _executor(spec, submitter=submitter)
+
+    def missing_reader(bucket: str, key: str) -> str:
+        raise FileNotFoundError(f"s3://{bucket}/{key}")
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-missing-decision",
+        executor=executor,
+        options=executor.options,
+        decision_reader=missing_reader,
+        assume_decision="promote_checkpoint",
+    )
+
+    assert report.status == "succeeded"
+    assert report.decisions[-1]["source"] == "assume_decision_fallback"
+    assert report.decisions[-1]["decision"] == "promote_checkpoint"
+    assert [call["tasks"][0] for call in submitter.calls] == [
+        "work",
+        "gate",
+        "publish",
+    ]
+
+
+def test_missing_decision_without_an_assumption_fails(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec)
+
+    def missing_reader(bucket: str, key: str) -> str:
+        raise FileNotFoundError(f"s3://{bucket}/{key}")
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-missing-strict",
+        executor=executor,
+        options=executor.options,
+        decision_reader=missing_reader,
+    )
+    assert report.status == "failed"
+
+
+def test_corrupt_decision_artifact_fails_the_run(tmp_path: Path) -> None:
+    """A malformed gate artifact must stop the run, not silently loop."""
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec)
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-corrupt-decision",
+        executor=executor,
+        options=executor.options,
+        decision_reader=lambda bucket, key: "{not json",
+        assume_decision="promote_checkpoint",
+    )
+
+    assert report.status == "failed"
+    decisions = [d for d in report.decisions if d.get("decode_error")]
+    assert decisions, "the unreadable payload should be recorded in the ledger"
+
+
+# -------------------------------------------------------------- trigger bounds
+
+
+def test_trigger_is_bounded_by_the_run_deadline(tmp_path: Path) -> None:
+    """maxPolls: 0 must not mean 'wait forever'."""
+
+    text = TRIGGER_SPEC.replace("      maxPolls: 5\n", "")
+    spec = load_spec(_write_spec(tmp_path, text))
+    assert spec.states["ingest"].trigger is not None
+    assert spec.states["ingest"].trigger.max_polls == 0
+
+    executor = _executor(spec, run_id="rt-trigger-deadline")
+    waiter = s3_trigger_waiter(
+        ledger=executor.ledger,
+        lister=lambda *_: [],
+        sleeper=lambda _s: None,
+        max_wait_seconds=3,
+        clock=_fake_clock(),
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-trigger-deadline",
+        executor=executor,
+        options=executor.options,
+        trigger_waiter=waiter,
+    )
+
+    assert report.status == "failed"
+    assert "after waiting 3s" in report.error
