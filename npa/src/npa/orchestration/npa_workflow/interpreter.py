@@ -567,8 +567,10 @@ def _execute_state_machine(
         results.extend(group_records)
         failed = [item for item in group_records if item.get("status") == "failed"]
         if failed:
+            # Surface the ROOT cause (first failure), not the cascade of members
+            # that were skipped once the barrier could no longer be satisfied.
             raise NpaWorkflowError(
-                str(failed[-1].get("error") or f"parallel group {state.name} failed")
+                str(failed[0].get("error") or f"parallel group {state.name} failed")
             )
         if state.next:
             _execute_state_machine(
