@@ -2450,3 +2450,125 @@ def test_agent_public_ip_quota_result_skips_without_project(monkeypatch) -> None
     result = _agent_public_ip_quota_result()
     assert result.status == "PASS"
     assert "skipped" in result.summary.lower()
+
+
+def test_resolve_project_alias_prefers_explicit(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_project_alias
+
+    assert _resolve_project_alias("myproj") == "myproj"
+
+
+def test_resolve_project_alias_uses_configured_default(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_project_alias
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "workbench-poc")
+    assert _resolve_project_alias("") == "workbench-poc"
+
+
+def test_resolve_project_alias_falls_back_to_static_default(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_project_alias, DEFAULT_PROJECT_ALIAS
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "")
+    assert _resolve_project_alias("") == DEFAULT_PROJECT_ALIAS
+
+
+def test_remove_agent_record_drops_empty_agents_key(monkeypatch, tmp_path) -> None:
+    import yaml
+    from npa.cli.agent import _remove_agent_record
+    from npa.clients import config as config_module
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"projects": {"p": {"project_id": "project-x", "agents": {"agent": {"public_ip": "203.0.113.50"}}}}}
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", cfg)
+
+    _remove_agent_record("p", "agent")
+
+    data = yaml.safe_load(cfg.read_text())
+    # The empty agents map is dropped entirely, but the project stanza stays.
+    assert "agents" not in data["projects"]["p"]
+    assert data["projects"]["p"]["project_id"] == "project-x"
+
+
+def test_cleanup_agent_local_files_removes_auth_env(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(agent_module.Path, "home", staticmethod(lambda: tmp_path))
+    agent_dir = tmp_path / ".npa" / "agents" / "p" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth.env").write_text("AGENT_USER=npa\nAGENT_PASSWORD=x\n")
+
+    agent_module._cleanup_agent_local_files("p", "agent")
+
+    assert not agent_dir.exists()
+
+
+def test_destroy_terraform_orphan_sweep_runs_after_tf_destroy(monkeypatch, tmp_path) -> None:
+    from types import SimpleNamespace
+    from npa.cli import agent as agent_module
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda p, n, r: {
+            "nebius_region": "eu-north1",
+            "instance_name": f"agent-{p}-{n}",
+            "nebius_project_id": "project-x",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a, **_k: calls.append("ingress"))
+    monkeypatch.setattr(agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: calls.append("orphan"))
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(bucket="b", access_key="k", secret_key="s", endpoint="e"),
+    )
+    monkeypatch.setattr(agent_module, "_agent_terraform_state_exists", lambda _p, _n: True)
+    monkeypatch.setattr(agent_module.provisioner, "prepare_working_dir", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(agent_module.provisioner, "init", lambda *a, **k: None)
+    monkeypatch.setattr(agent_module.provisioner, "destroy", lambda *a, **k: calls.append("tf_destroy"))
+
+    agent_module._destroy_agent_terraform("p", "n", record={"instance_id": "i"})
+
+    # Terraform owns the instance (destroy first); the by-name orphan sweep is a
+    # post-destroy safety net, not a pre-Terraform delete of the managed VM.
+    assert calls == ["ingress", "tf_destroy", "orphan"]
+
+
+def test_destroy_terraform_no_state_uses_orphan_reclaim(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from npa.cli import agent as agent_module
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda p, n, r: {
+            "nebius_region": "eu-north1",
+            "instance_name": f"agent-{p}-{n}",
+            "nebius_project_id": "project-x",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a, **_k: calls.append("ingress"))
+    monkeypatch.setattr(agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: calls.append("orphan"))
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(bucket="", access_key="", secret_key="", endpoint=""),
+    )
+    monkeypatch.setattr(agent_module, "_agent_terraform_state_exists", lambda _p, _n: False)
+
+    def _boom(*_a, **_k):  # pragma: no cover - must not run without state
+        raise AssertionError("terraform destroy must not run without state")
+
+    monkeypatch.setattr(agent_module.provisioner, "destroy", _boom)
+
+    agent_module._destroy_agent_terraform("p", "n", record=None)
+
+    assert calls == ["ingress", "orphan"]

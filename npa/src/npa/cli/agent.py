@@ -9,6 +9,7 @@ import secrets
 import shlex
 import shutil
 import subprocess
+import sys
 import ipaddress
 import tarfile
 import tempfile
@@ -581,6 +582,26 @@ def _apply_agent_terraform(
         raise
 
 
+def _resolve_project_alias(project: str) -> str:
+    """Resolve an agent ``--project``: explicit value, else the configured
+    ``default_project``, else the static ``DEFAULT_PROJECT_ALIAS`` fallback.
+
+    Commands default ``--project`` to "" so an omitted flag targets the operator's
+    configured default project rather than a hard-coded ``us-central1`` alias
+    (which risked tearing down / inspecting the wrong thing).
+    """
+    alias = str(project or "").strip()
+    if alias:
+        return alias
+    try:
+        from npa.clients.config import default_project_name
+
+        configured = str(default_project_name() or "").strip()
+    except Exception:  # noqa: BLE001 - best-effort; fall back to the static default
+        configured = ""
+    return configured or DEFAULT_PROJECT_ALIAS
+
+
 def _agent_record(project_alias: str, name: str) -> dict[str, Any]:
     cfg = resolve_project_agents(project_alias)
     record = cfg.get(name, {})
@@ -615,7 +636,11 @@ def _remove_agent_record(project_alias: str, name: str) -> None:
     if not isinstance(agents, dict) or name not in agents:
         return
     del agents[name]
-    project["agents"] = agents
+    # Drop the empty map rather than leaving an `agents: {}` stub behind.
+    if agents:
+        project["agents"] = agents
+    else:
+        project.pop("agents", None)
     projects[project_alias] = project
     data["projects"] = projects
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -753,17 +778,16 @@ def _destroy_agent_terraform(
     instance_id = str((record or {}).get("instance_id", "")).strip()
     instance_name = tf_vars["instance_name"]
     project_id = tf_vars["nebius_project_id"]
-    # Always reclaim by-name orphan instances first (releases their public IPs),
-    # even when no Terraform state exists locally or remotely.
     _cleanup_agent_ingress(instance_id)
-    _cleanup_orphan_agent_instances(project_id, instance_name)
 
     state = resolve_terraform_state(project)
     have_local_state = _agent_terraform_state_exists(project, name)
     have_remote_backend = bool(state.bucket and state.access_key and state.secret_key)
     if not have_local_state and not have_remote_backend:
-        # No Terraform state to act on; the orphan-instance cleanup above is the
-        # best we can do (VPC/subnet without state cannot be reconciled here).
+        # No Terraform state to act on — by-name reclaim is the only option for a
+        # true orphan (created elsewhere, no local record/state). This releases
+        # the public IP; VPC/subnet without state cannot be reconciled here.
+        _cleanup_orphan_agent_instances(project_id, instance_name)
         return
     if not have_remote_backend:
         _fail(
@@ -800,10 +824,26 @@ def _destroy_agent_terraform(
             _run_destroy()
         except ProvisionerError:
             raise first_exc from None
+    # Terraform owns the managed instance and destroyed it above. Sweep for a
+    # by-name leftover ONLY as a safety net: after a successful destroy the
+    # managed VM is already gone, so this catches only a genuine orphan/duplicate
+    # not tracked in state (and no longer logs a misleading "orphan" delete of
+    # the real agent on every teardown).
+    _cleanup_orphan_agent_instances(project_id, instance_name)
 
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
     return Path.home() / ".npa" / "agents" / project_alias / name / "auth.env"
+
+
+def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
+    """Remove the local agent state dir (auth.env + secrets) after a destroy.
+
+    The auth secret file held live basic-auth credentials for the torn-down VM;
+    leaving it on disk after ``destroy`` was a stale-credential leak.
+    """
+    agent_dir = Path.home() / ".npa" / "agents" / project_alias / name
+    shutil.rmtree(agent_dir, ignore_errors=True)
 
 
 def _write_auth_secret(*, project_alias: str, name: str, user: str, password: str) -> Path:
@@ -9100,11 +9140,14 @@ def bootstrap_cmd(
 
 @app.command("status")
 def status_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias (default: configured default_project)."
+    ),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Show agent status, URLs, and health checks."""
+    project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
@@ -9149,8 +9192,13 @@ def status_cmd(
 
 @app.command("destroy")
 def destroy_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias (default: configured default_project)."
+    ),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the interactive confirmation prompt."
+    ),
 ) -> None:
     """Destroy agent VM/resources and remove saved config entry.
 
@@ -9159,6 +9207,7 @@ def destroy_cmd(
     maps to the ``agent-{project}-{name}`` instance, whose public IP is reclaimed
     by name and whose VPC stack is destroyed from the S3 remote state.
     """
+    project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record and not _agent_terraform_state_exists(project, name):
         saved_env = resolve_environment(project)
@@ -9174,12 +9223,24 @@ def destroy_cmd(
             f"instance name agent-{project}-{name} and S3 remote state.",
             err=True,
         )
+    # Guard against tearing down the wrong agent interactively. Automation
+    # (non-TTY) and --yes proceed without prompting, so scripts are unaffected.
+    if not yes and sys.stdin.isatty():
+        if not typer.confirm(
+            f"Destroy agent {project}/{name} (VM, network, and local config)?",
+            default=False,
+        ):
+            typer.echo("Aborted.")
+            raise typer.Exit(code=1)
     try:
         _destroy_agent_terraform(project, name, record=record or None)
     except ProvisionerError as exc:
         _fail(f"Terraform destroy failed: {exc}")
     if record:
         _remove_agent_record(project, name)
+    # Drop the local auth secret + agent state dir (stale credentials otherwise
+    # linger after the VM is gone).
+    _cleanup_agent_local_files(project, name)
     typer.echo(f"destroyed: {project}/{name}")
 
 

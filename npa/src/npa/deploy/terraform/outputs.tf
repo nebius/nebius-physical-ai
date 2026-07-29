@@ -1,5 +1,8 @@
 locals {
-  ssh_private_key_path = trimsuffix(var.ssh_public_key_path, ".pub")
+  # pathexpand so the emitted ssh_key_path is absolute (no leading ~) for
+  # downstream non-shell consumers, even on the destroy path where the CLI does
+  # not pre-expand ssh_public_key_path.
+  ssh_private_key_path = trimsuffix(pathexpand(var.ssh_public_key_path), ".pub")
   _raw_public          = try(nebius_compute_v1_instance.workbench.status.network_interfaces[0].public_ip_address.address, "")
   _raw_private         = try(nebius_compute_v1_instance.workbench.status.network_interfaces[0].ip_address.address, "")
   instance_external_ip = local._raw_public != "" ? split("/", local._raw_public)[0] : ""
