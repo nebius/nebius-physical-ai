@@ -1134,6 +1134,73 @@ def test_nebius_get_project_region_empty_without_project() -> None:
     assert nebius.get_project_region("") == ""
 
 
+def test_nebius_get_project_tenant_id_reads_parent(mocker) -> None:
+    """Recovers the tenant when the CLI profile only knows the project."""
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={"metadata": {"id": "project-abc", "parent_id": "tenant-xyz"}},
+    )
+
+    assert nebius.get_project_tenant_id("project-abc") == "tenant-xyz"
+
+
+def test_nebius_get_project_tenant_id_accepts_camel_case(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={"metadata": {"parentId": "tenant-xyz"}},
+    )
+
+    assert nebius.get_project_tenant_id("project-abc") == "tenant-xyz"
+
+
+def test_nebius_get_project_tenant_id_best_effort(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
+
+    assert nebius.get_project_tenant_id("project-abc") == ""
+    assert nebius.get_project_tenant_id("") == ""
+
+
+def test_nebius_get_project_name(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={"metadata": {"id": "project-abc", "name": "tle-workbench"}},
+    )
+
+    assert nebius.get_project_name("project-abc") == "tle-workbench"
+
+
+def test_nebius_get_project_name_best_effort(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
+
+    assert nebius.get_project_name("project-abc") == ""
+
+
+def test_nebius_set_profile_project_writes_both_ids(mocker) -> None:
+    run = mocker.patch("npa.clients.nebius._run", return_value="")
+
+    assert nebius.set_profile_project("project-abc", "tenant-xyz") is True
+    assert [call.args[0] for call in run.call_args_list] == [
+        ["config", "set", "parent-id", "project-abc"],
+        ["config", "set", "tenant-id", "tenant-xyz"],
+    ]
+
+
+def test_nebius_set_profile_project_skips_empty_tenant(mocker) -> None:
+    run = mocker.patch("npa.clients.nebius._run", return_value="")
+
+    assert nebius.set_profile_project("project-abc") is True
+    assert [call.args[0] for call in run.call_args_list] == [
+        ["config", "set", "parent-id", "project-abc"]
+    ]
+
+
+def test_nebius_set_profile_project_is_best_effort(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run", side_effect=NebiusError("no cli"))
+
+    assert nebius.set_profile_project("project-abc", "tenant-xyz") is False
+    assert nebius.set_profile_project("") is False
+
+
 def _public_ip_quota_items() -> dict:
     return {
         "items": [

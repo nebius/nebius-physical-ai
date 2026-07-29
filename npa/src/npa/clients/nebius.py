@@ -268,6 +268,32 @@ def current_tenant_id() -> str:
     return _config_get("tenant-id")
 
 
+def set_profile_project(project_id: str, tenant_id: str = "") -> bool:
+    """Point the active Nebius CLI profile at *project_id* / *tenant_id*.
+
+    ``npa`` shells out to the Nebius CLI with the operator's active profile, so a
+    profile whose ``parent-id``/``tenant-id`` are empty (or point somewhere else)
+    silently disables project discovery and makes later commands target the wrong
+    place. Writing the selected ids back onto the profile keeps the two in sync.
+
+    Best-effort: returns ``False`` (never raises) when the CLI is missing or a
+    ``nebius config set`` call fails.
+    """
+    project = str(project_id or "").strip()
+    tenant = str(tenant_id or "").strip()
+    if not project:
+        return False
+    updates = [("parent-id", project)]
+    if tenant:
+        updates.append(("tenant-id", tenant))
+    try:
+        for key, value in updates:
+            _run(["config", "set", key, value])
+    except Exception:
+        return False
+    return True
+
+
 # ── Tenant / project discovery ───────────────────────────────────────────
 
 
@@ -360,16 +386,44 @@ def get_project_region(project_id: str) -> str:
     right per-region quota and render accurate region-dependent config. Returns
     "" when the CLI is missing/unauthenticated or the lookup fails.
     """
-    pid = str(project_id or "").strip()
-    if not pid:
-        return ""
-    try:
-        data = _run_json(["iam", "project", "get", "--id", pid])
-    except Exception:
-        return ""
+    data = _get_project(project_id)
     status = data.get("status", {}) or {}
     spec = data.get("spec", {}) or {}
     return str(status.get("region", "") or spec.get("region", "") or "").strip()
+
+
+def _get_project(project_id: str) -> dict[str, Any]:
+    """Best-effort ``iam project get`` payload for *project_id*, or ``{}``."""
+    pid = str(project_id or "").strip()
+    if not pid:
+        return {}
+    try:
+        return _run_json(["iam", "project", "get", "--id", pid]) or {}
+    except Exception:
+        return {}
+
+
+def get_project_tenant_id(project_id: str) -> str:
+    """Best-effort tenant (parent) id for *project_id*, or "".
+
+    A Nebius CLI profile does not always carry ``tenant-id`` (federation
+    profiles, and profiles created against a single project, often set only
+    ``parent-id``). Project discovery needs a tenant, so recover it from the
+    project itself rather than silently skipping discovery.
+    """
+    metadata = _get_project(project_id).get("metadata", {}) or {}
+    return str(metadata.get("parent_id", "") or metadata.get("parentId", "") or "").strip()
+
+
+def get_project_name(project_id: str) -> str:
+    """Best-effort human-readable name for *project_id*, or "".
+
+    Used to derive a local project alias (``tle-workbench``) instead of falling
+    back to the region (``us-central1``), which reads like a region field rather
+    than a project handle.
+    """
+    metadata = _get_project(project_id).get("metadata", {}) or {}
+    return str(metadata.get("name", "") or "").strip()
 
 
 def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int | None]:

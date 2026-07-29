@@ -659,6 +659,127 @@ def _select_discovered_projects(
     return selected, default_alias
 
 
+def _resolve_discovery_tenant(
+    nebius_client, ask: Callable[..., str]
+) -> tuple[str, str]:
+    """Return ``(tenant_id, skip_reason)`` for project discovery.
+
+    ``nebius config get tenant-id`` is empty for plenty of real profiles —
+    federation profiles and profiles created against a single project commonly
+    set only ``parent-id``. Discovery used to bail out silently in that case and
+    drop the operator into hand-typing tenant/project ids even though the
+    account was perfectly reachable. Recover the tenant instead:
+
+    1. the profile's own ``tenant-id``;
+    2. the parent tenant of the profile's ``parent-id`` project;
+    3. the tenants the profile can list (auto-select a single one, otherwise
+       prompt).
+
+    ``skip_reason`` explains the failure so the caller can say why discovery was
+    skipped rather than staying quiet.
+    """
+
+    tenant = str(nebius_client.current_tenant_id() or "").strip()
+    if tenant:
+        return tenant, ""
+
+    project_id = str(nebius_client.current_project_id() or "").strip()
+    if project_id:
+        derived = str(nebius_client.get_project_tenant_id(project_id) or "").strip()
+        if derived:
+            typer.echo(
+                f"Nebius profile has no tenant-id; using {derived} "
+                f"(the parent tenant of project {project_id})."
+            )
+            return derived, ""
+
+    tenants = nebius_client.list_tenants()
+    if len(tenants) == 1:
+        only = str(tenants[0].get("id", "") or "").strip()
+        if only:
+            typer.echo(
+                f"Nebius profile has no tenant-id; using the only tenant you can "
+                f"see: {only}."
+            )
+            return only, ""
+    if len(tenants) > 1:
+        typer.echo(
+            "\nNebius profile has no tenant-id. Tenants you can see:\n"
+        )
+        for index, tenant_entry in enumerate(tenants, start=1):
+            label = str(tenant_entry.get("name", "") or "").strip()
+            suffix = f"  ({label})" if label else ""
+            typer.echo(f"   {index:>2}. {tenant_entry.get('id', '')}{suffix}")
+        raw = ask("\nDiscover projects in which tenant? (number)", default="1")
+        choice = raw.strip()
+        index = int(choice) - 1 if choice.isdigit() else 0
+        if not (0 <= index < len(tenants)):
+            index = 0
+        picked = str(tenants[index].get("id", "") or "").strip()
+        if picked:
+            return picked, ""
+
+    if project_id:
+        return "", (
+            f"the Nebius profile has no tenant-id and the parent tenant of "
+            f"{project_id} could not be read"
+        )
+    return "", "the Nebius profile has no tenant-id and no tenants are listable"
+
+
+def _offer_profile_binding(
+    nebius_client,
+    ask: Callable[..., str],
+    *,
+    project_id: str,
+    tenant_id: str,
+) -> bool:
+    """Offer to point the active Nebius CLI profile at the chosen project.
+
+    Returns True when the profile was updated. Best-effort and confirm-gated:
+    declining just prints what stays out of sync.
+    """
+
+    try:
+        profile_project = str(nebius_client.current_project_id() or "").strip()
+        profile_tenant = str(nebius_client.current_tenant_id() or "").strip()
+    except Exception:  # noqa: BLE001 - never fail configure over a profile read
+        return False
+    if profile_project == project_id and (not tenant_id or profile_tenant == tenant_id):
+        return False
+
+    if profile_project or profile_tenant:
+        detail = (
+            f"currently parent-id={profile_project or '<unset>'}, "
+            f"tenant-id={profile_tenant or '<unset>'}"
+        )
+    else:
+        detail = "currently unset"
+    typer.echo(
+        f"\nYour Nebius CLI profile does not point at this project ({detail}). "
+        "npa runs the Nebius CLI with that profile, so leaving them out of sync "
+        "disables project discovery on the next run."
+    )
+    answer = ask(
+        f"Point the active Nebius profile at {project_id}? [Y/n]", default="Y"
+    )
+    if answer.lower() not in ("", "y", "yes"):
+        typer.echo(
+            "  Leaving the Nebius profile unchanged. Set it later with "
+            f"`nebius config set parent-id {project_id}`"
+            + (f" && `nebius config set tenant-id {tenant_id}`." if tenant_id else ".")
+        )
+        return False
+    if nebius_client.set_profile_project(project_id, tenant_id):
+        typer.echo(f"  Nebius profile now points at {project_id}.")
+        return True
+    typer.echo(
+        "  Could not update the Nebius profile. Set it by hand with "
+        f"`nebius config set parent-id {project_id}`."
+    )
+    return False
+
+
 def _run_interactive_configure(*, provision: bool = True) -> None:
     """Prompt for credentials/config and write the NPA dotfiles."""
 
@@ -695,12 +816,29 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         )
         raise typer.Exit(code=1)
 
+    # Hidden input needs a controlling terminal. On piped stdin (scripted setup,
+    # `printf ... | npa configure --interactive`) getpass cannot turn the echo
+    # off and emits `GetPassWarning: Can not control echo on the terminal`,
+    # after which the value it reads is easy to mis-bind. Fall back to a visible
+    # prompt there and say so once, instead of warning per secret.
+    stdin_is_tty = sys.stdin.isatty()
+    echo_notice_shown = False
+
     def ask(label: str, *, default: str = "", secret: bool = False) -> str:
+        nonlocal echo_notice_shown
+        hide_input = secret and stdin_is_tty
+        if secret and not hide_input and not echo_notice_shown:
+            echo_notice_shown = True
+            typer.echo(
+                "\nNote: stdin is not a terminal, so secret values will be "
+                "visible as you enter them. For automation prefer environment "
+                "variables or `npa configure --token-factory-key ...`."
+            )
         return str(
             typer.prompt(
                 label,
                 default=default,
-                hide_input=secret,
+                hide_input=hide_input,
                 show_default=bool(default) and not secret,
             )
         ).strip()
@@ -726,12 +864,26 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     # tenants take minutes and dump thousands of projects. The profile's own
     # tenant holds the projects the operator actually deploys into; other tenants
     # are reachable by switching the Nebius profile and re-running configure.
-    current_tenant = nebius_client.current_tenant_id() if profile_ready else ""
+    current_tenant = ""
+    tenant_skip_reason = "no authenticated Nebius CLI profile"
+    if profile_ready:
+        current_tenant, tenant_skip_reason = _resolve_discovery_tenant(
+            nebius_client, ask
+        )
     discovered_projects = (
         nebius_client.list_projects_in_tenant(current_tenant)
         if (profile_ready and current_tenant)
         else []
     )
+    if profile_ready and not current_tenant:
+        # Silence here used to look like "you have no projects": discovery was
+        # skipped and the operator was dropped into hand-typing ids.
+        typer.echo(
+            f"Skipping project discovery ({tenant_skip_reason}). Enter the ids "
+            "manually below, or set them on the profile with `nebius config set "
+            "tenant-id <id>` / `nebius config set parent-id <project-id>` and "
+            "re-run `npa configure`.\n"
+        )
     if discovered_projects:
         discovered_selection, discovered_default_alias = _select_discovered_projects(
             discovered_projects,
@@ -782,6 +934,15 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         # cross-region and a project can hold registries in several regions, so we do
         # not warn when the chosen region differs from the registry's region.
         registry = ask("Container registry", default=registry_default)
+
+    # Keep the Nebius CLI profile and the npa project in sync. npa shells out to
+    # the CLI with the operator's active profile, so a profile whose parent-id /
+    # tenant-id are empty (or point at a different project) silently disables
+    # discovery on the next run and sends later commands somewhere else.
+    if profile_ready and project_id:
+        _offer_profile_binding(
+            nebius_client, ask, project_id=project_id, tenant_id=tenant_id
+        )
 
     storage: dict[str, str] | None = None
 
@@ -934,13 +1095,24 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         }
         # Local name for later `-p <alias>` flags. Derived automatically (no
         # prompt): reuse the existing default alias so a re-run updates the same
-        # stanza, otherwise use the region so a first-time configure still
-        # resolves. Multi-project users rename via ~/.npa/config.yaml.
-        alias = (
-            existing_default_alias
-            if existing_default_alias and existing_default_alias != "default"
-            else (region or "default")
-        )
+        # stanza, else the Nebius project's own name (matching what the
+        # discovery path derives), else the region. A region-shaped alias
+        # (`us-central1`) reads like a region field sitting next to the real
+        # `region:` key, so it is only the last resort.
+        # Multi-project users rename via ~/.npa/config.yaml.
+        if existing_default_alias and existing_default_alias != "default":
+            alias = existing_default_alias
+        else:
+            project_name = ""
+            try:
+                project_name = nebius_client.get_project_name(project_id)
+            except Exception:  # noqa: BLE001 - alias derivation is best-effort
+                project_name = ""
+            alias = (
+                _slugify_alias(project_name, project_id)
+                if project_name
+                else (region or "default")
+            )
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True
 
