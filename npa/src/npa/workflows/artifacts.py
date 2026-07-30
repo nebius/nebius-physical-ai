@@ -880,56 +880,70 @@ def _run_id_for_key(key: str, normalized_prefix: str) -> str:
 _RUN_ID_TS_RE = re.compile(r"(?<![0-9])(\d{8}|\d{4})[tT_-]?(\d{6})(?![0-9])")
 
 
-def _parse_run_id_timestamp(run_id: str, *, year_hint: "int | None" = None) -> str:
-    """Best-effort extract the start time encoded in a run id.
+def _parse_run_id_timestamps(run_id: str, *, year_hint: int | None = None) -> list[str]:
+    """Best-effort extract every start time encoded in a run id.
 
-    Returns an ISO-8601 UTC string, or ``""`` when nothing plausible is found.
+    Returns ISO-8601 UTC strings (possibly several — a run id may contain more
+    than one timestamp-like token; :func:`_run_started_at` picks the right one).
     For the year-less ``MMDD`` form the year comes from ``year_hint`` (typically
-    the earliest artifact's year) or the current UTC year.
+    the earliest artifact's year) or the current UTC year; the prior year is also
+    offered so a run that started late in December with its first artifact in
+    January (or a hint one year off) still resolves.
     """
+    out: list[str] = []
     for match in _RUN_ID_TS_RE.finditer(str(run_id or "")):
         date_part, time_part = match.group(1), match.group(2)
         try:
+            hour, minute, second = int(time_part[0:2]), int(time_part[2:4]), int(time_part[4:6])
             if len(date_part) == 8:
-                year, month, day = int(date_part[0:4]), int(date_part[4:6]), int(date_part[6:8])
+                candidate_years = [int(date_part[0:4])]
+                month, day = int(date_part[4:6]), int(date_part[6:8])
             else:
-                year = int(year_hint or datetime.now(timezone.utc).year)
+                base_year = int(year_hint or datetime.now(timezone.utc).year)
+                candidate_years = [base_year, base_year - 1]
                 month, day = int(date_part[0:2]), int(date_part[2:4])
-            dt = datetime(
-                year, month, day,
-                int(time_part[0:2]), int(time_part[2:4]), int(time_part[4:6]),
-                tzinfo=timezone.utc,
-            )
         except ValueError:
             continue
-        return dt.isoformat()
-    return ""
+        for year in candidate_years:
+            try:
+                dt = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            out.append(dt.isoformat())
+    return out
 
 
 def _run_started_at(run_id: str, earliest_iso: str) -> str:
     """Resolve when a run started: the id-encoded submit time when trustworthy,
     else the earliest artifact write.
 
-    A run's start precedes its first artifact write, so the id-encoded time is
+    A run's start precedes its first artifact write, so an id-encoded time is
     accepted only when it is at/just-before the earliest object (within a few
-    days). This guards against unrelated digit runs in an id parsing to a bogus
-    far-off date, while still yielding an exact start for delayed-upload runs.
+    days). Among several id-encoded candidates, the latest one satisfying that
+    constraint is chosen — this ignores red-herring timestamps elsewhere in the
+    id and unrelated digit runs that would parse to a bogus far-off date, while
+    still yielding an exact start for delayed-upload runs.
     """
     earliest = str(earliest_iso or "")
     year_hint = int(earliest[0:4]) if earliest[0:4].isdigit() else None
-    parsed = _parse_run_id_timestamp(run_id, year_hint=year_hint)
-    if not parsed:
+    candidates = _parse_run_id_timestamps(run_id, year_hint=year_hint)
+    if not candidates:
         return earliest
     if not earliest:
-        return parsed
-    if parsed <= earliest:
+        # No artifact time to corroborate against; use the first-encoded time.
+        return candidates[0]
+    window_seconds = 3 * 24 * 3600
+    best = ""
+    for candidate in candidates:
+        if candidate > earliest:
+            continue
         try:
-            gap = datetime.fromisoformat(earliest) - datetime.fromisoformat(parsed)
+            gap = (datetime.fromisoformat(earliest) - datetime.fromisoformat(candidate)).total_seconds()
         except ValueError:
-            return parsed
-        if gap.total_seconds() <= 3 * 24 * 3600:
-            return parsed
-    return earliest
+            gap = 0.0
+        if gap <= window_seconds and candidate > best:
+            best = candidate
+    return best or earliest
 
 
 def _to_iso8601(value: Any) -> str:
