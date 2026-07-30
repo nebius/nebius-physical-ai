@@ -33,9 +33,12 @@ UPSTREAM_LICENSE = "Apache-2.0"
 SRC_ENV = "NPA_COSMOS_CURATE_SRC"
 
 # Conventional locations a workbench image can bake an upstream checkout into.
+# ``/opt/cosmos-curator`` is upstream's own in-container code directory
+# (``CONTAINER_PATHS_CODE_DIR``), so a checkout there also satisfies the paths
+# upstream resolves internally, such as its model registry.
 DEFAULT_SRC_CANDIDATES = (
-    "/opt/cosmos-curate",
     "/opt/cosmos-curator",
+    "/opt/cosmos-curate",
     "/opt/nvidia/cosmos-curate",
 )
 

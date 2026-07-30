@@ -22,6 +22,18 @@ it as an ``npa.cosmos_curate.curation.v1`` report.
 
 from __future__ import annotations
 
+from npa.workbench.cosmos_curate.models import (
+    DEFAULT_SET,
+    MODEL_SETS,
+    FetchResult,
+    ModelSpec,
+    ModelStatus,
+    describe_models,
+    fetch_models,
+    model_status,
+    resolve_models,
+    weights_dir,
+)
 from npa.workbench.cosmos_curate.pipeline import (
     ENGINE_IN_PROCESS,
     ENGINE_PIPELINE_CLI,
@@ -50,8 +62,10 @@ from npa.workbench.cosmos_curate.upstream import (
 )
 
 __all__ = [
+    "DEFAULT_SET",
     "ENGINE_IN_PROCESS",
     "ENGINE_PIPELINE_CLI",
+    "MODEL_SETS",
     "RESULT_FILENAME",
     "UPSTREAM_LICENSE",
     "UPSTREAM_REPO",
@@ -61,13 +75,21 @@ __all__ = [
     "CurationReport",
     "CuratorAvailability",
     "CuratorRunResult",
+    "FetchResult",
+    "ModelSpec",
+    "ModelStatus",
     "curate_augmented",
     "curate_videos",
+    "describe_models",
     "discover_videos",
+    "fetch_models",
     "ingest_output",
+    "model_status",
     "probe_availability",
+    "resolve_models",
     "result_uri_for",
     "split_pipeline_argv",
     "upstream_source_dir",
+    "weights_dir",
     "write_report",
 ]

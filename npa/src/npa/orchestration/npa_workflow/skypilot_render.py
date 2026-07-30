@@ -22,9 +22,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos2": "cosmos2-transfer",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.cosmos_curate": "cosmos-curate",
-    # The evaluator's checks are CPU pixel work plus hosted Token Factory calls,
-    # which the cosmos image already carries (it is what vlm_eval grades in).
-    "workbench.cosmos_evaluator": "cosmos",
+    "workbench.cosmos_evaluator": "cosmos-evaluator",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.fiftyone": "fiftyone",

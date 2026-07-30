@@ -175,6 +175,66 @@ def plan_pipeline_cmd(
     _emit({"argv": argv}, output=output, text=" ".join(argv))
 
 
+@app.command("fetch-models")
+def fetch_models_cmd(
+    models: list[str] = typer.Option(
+        [],
+        "--models",
+        "-m",
+        help="Model set or upstream model key; repeatable. Default: the split-annotate set.",
+    ),
+    force: bool = typer.Option(False, "--force", help="Re-download models that are already complete."),
+    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+) -> None:
+    """Download curator model weights with your own Hugging Face token.
+
+    The image ships no model weights: TransNetV2, InternVideo2, Cosmos-Embed1,
+    CLIP, and Qwen are third-party or NVIDIA models under their own licenses. The
+    model ids and their pinned revisions come from upstream's own registry.
+    """
+
+    from npa.workbench.cosmos_curate import CosmosCurateError, fetch_models
+
+    try:
+        result = fetch_models(models, force=force)
+    except CosmosCurateError as exc:
+        _fail(str(exc))
+        return
+    payload = result.to_dict()
+    _emit(
+        payload,
+        output=output,
+        text=(
+            f"status={result.status} fetched={len(result.fetched)} "
+            f"present={len(result.already_present)} failed={len(result.failed)} "
+            f"-> {result.weights_dir}"
+        ),
+    )
+    if result.failed:
+        raise typer.Exit(1)
+
+
+@app.command("models")
+def models_cmd(
+    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+) -> None:
+    """Show the curator model sets, their upstream pins, and what is present."""
+
+    from npa.workbench.cosmos_curate import describe_models
+
+    payload = describe_models()
+    lines = [
+        f"weights_dir={payload['weights_dir']} hf_token={payload['hf_token_present']} "
+        f"ngc_key={payload.get('ngc_key_present')}"
+    ]
+    for name, entry in sorted(payload.get("sets", {}).items()):
+        present = sum(1 for model in entry["models"] if model["present"])
+        lines.append(f"{name}: {present}/{len(entry['models'])} present ({', '.join(entry['keys'])})")
+    if payload.get("error"):
+        lines.append(f"error: {payload['error']}")
+    _emit(payload, output=output, text="\n".join(lines))
+
+
 @app.command("engine")
 def engine_cmd(
     output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),

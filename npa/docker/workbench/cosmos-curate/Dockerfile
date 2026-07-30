@@ -9,7 +9,21 @@
 #   VideoDownloader -> FixedStrideExtractorStage -> ClipTranscodingStage
 #   -> MotionVectorDecodeStage -> MotionFilterStage -> ClipWriterStage
 #
-# Two build details matter:
+# NO MODEL WEIGHTS ARE BAKED IN. Those stages need none — they are ffmpeg and
+# OpenCV work. The curator's GPU stages (TransNetV2 shot detection, InternVideo2 /
+# Cosmos-Embed1 embeddings, CLIP + aesthetic head, Qwen VLM captioning) do need
+# weights, and those are third-party and NVIDIA models under their own licenses.
+# They are downloaded at RUN time into ${NPA_COSMOS_CURATE_WEIGHTS_DIR} with the
+# operator's own Hugging Face token:
+#
+#   docker run -e HF_TOKEN=... -v curator-weights:/config/models <image> fetch-models
+#
+# The model ids and their pinned revisions come from upstream's own registry
+# (cosmos_curator/configs/all_models.json), and the download is upstream's own
+# huggingface_hub call. A build-time check asserts the weights directory is empty,
+# so a weight can never be redistributed inside this image by accident.
+#
+# Two other build details matter:
 #
 #  * Python 3.12 — upstream requires >=3.12,<3.13.
 #  * ffmpeg with libopenh264 — upstream's ClipTranscodingStage accepts only
@@ -29,14 +43,19 @@ ARG FFMPEG_VERSION=7.1.1
 ARG TORCH_VERSION=2.9.0
 
 LABEL npa.tool="cosmos-curate" \
-      npa.version="${COSMOS_CURATE_VERSION}"
+      npa.version="${COSMOS_CURATE_VERSION}" \
+      npa.model_weights="none-baked-in; fetched at runtime with HF_TOKEN"
 
+# CODE_DIR is upstream's own in-container code directory
+# (cosmos_curator.core.utils.environment.CONTAINER_PATHS_CODE_DIR) and WORKSPACE is
+# its workspace root, so upstream's internal path resolution works unmodified.
 ENV DEBIAN_FRONTEND=noninteractive \
-    COSMOS_CURATE_HOME=/opt/cosmos-curate \
+    COSMOS_CURATE_CODE_DIR=/opt/cosmos-curator \
     COSMOS_CURATE_VENV=/opt/cosmos-curate/venv \
-    FFMPEG_PREFIX=/opt/ffmpeg \
-    NPA_COSMOS_CURATE_SRC=/opt/cosmos-curate/src \
     COSMOS_CURATOR_LOCAL_DOCKER_JOB=1 \
+    FFMPEG_PREFIX=/opt/ffmpeg \
+    NPA_COSMOS_CURATE_SRC=/opt/cosmos-curator \
+    NPA_COSMOS_CURATE_WEIGHTS_DIR=/config/models \
     PATH=/opt/cosmos-curate/venv/bin:/opt/ffmpeg/bin:$PATH \
     PYTHONUNBUFFERED=1
 
@@ -51,10 +70,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
-    &&     install -d -m 0755 -o ubuntu -g ubuntu \
+    && install -d -m 0755 -o ubuntu -g ubuntu \
+      /config \
+      /config/models \
+      /config/tmp \
       /opt/cosmos-curate \
-      /opt/cosmos-curate/src \
       /opt/cosmos-curate/venv \
+      /opt/cosmos-curator \
       /opt/ffmpeg \
       /opt/npa/src/npa \
       /opt/npa/docker/workbench/cosmos-curate
@@ -75,16 +97,17 @@ RUN set -eux; \
 USER ubuntu
 WORKDIR /opt/cosmos-curate
 
-# Upstream source checkout, pinned to COSMOS_CURATE_REF. Only the pipeline
-# packages are needed; the pixi environment and container tooling are not.
+# Upstream source checkout, pinned to COSMOS_CURATE_REF. GIT_LFS_SKIP_SMUDGE keeps
+# any large-file objects out of the image; only the pipeline source is needed.
 RUN set -eux; \
-    git init -q "${NPA_COSMOS_CURATE_SRC}"; \
-    cd "${NPA_COSMOS_CURATE_SRC}"; \
+    git init -q "${COSMOS_CURATE_CODE_DIR}"; \
+    cd "${COSMOS_CURATE_CODE_DIR}"; \
     git remote add origin https://github.com/nvidia-cosmos/cosmos-curate.git; \
-    git fetch -q --depth 1 origin "${COSMOS_CURATE_REF}"; \
-    git checkout -q FETCH_HEAD; \
+    GIT_LFS_SKIP_SMUDGE=1 git fetch -q --depth 1 origin "${COSMOS_CURATE_REF}"; \
+    GIT_LFS_SKIP_SMUDGE=1 git checkout -q FETCH_HEAD; \
     rm -rf .git; \
-    test -d cosmos_curator/pipelines/video
+    test -d cosmos_curator/pipelines/video; \
+    test -f cosmos_curator/configs/all_models.json
 
 # The dependency set upstream's GPU-free stages import. torch is CPU-only here:
 # the motion stage runs its CPU code path when no GPU is requested, and the CUDA
@@ -101,6 +124,7 @@ RUN python -m venv "${COSMOS_CURATE_VENV}" \
       "azure-identity" \
       "azure-storage-blob" \
       "boto3" \
+      "huggingface_hub" \
       "loguru" \
       "ngcsdk" \
       "numpy" \
@@ -117,20 +141,44 @@ RUN python -m venv "${COSMOS_CURATE_VENV}" \
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos-curate/smoke_functional.py /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos-curate/entrypoint.sh /opt/npa/docker/workbench/cosmos-curate/entrypoint.sh
 
 RUN python -m pip install --no-cache-dir -e /opt/npa \
-    && python -m py_compile /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py
+    && python -m py_compile /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py \
+    && chmod +x /opt/npa/docker/workbench/cosmos-curate/entrypoint.sh
 
-# Build-time proof that the real upstream stages import and that the transcoding
-# encoder this image relies on is actually present.
+# Build-time proof that the real upstream stages import, that the transcoding
+# encoder this image relies on is present, that the model registry resolves, and
+# that NO model weights were baked in.
 RUN python - <<'PY'
-from npa.workbench.cosmos_curate import probe_availability
+import os
+from pathlib import Path
+
+from npa.workbench.cosmos_curate import MODEL_SETS, probe_availability, resolve_models, weights_dir
 
 availability = probe_availability()
 if not availability.can_run_in_process:
     raise RuntimeError(f"cosmos-curate image cannot run the curator: {availability.reason()}")
-print(f"COSMOS_CURATE_BUILD_OK source={availability.source} encoder={availability.encoder}")
+
+specs = resolve_models([])
+if not specs:
+    raise RuntimeError("upstream model registry resolved no models for the default set")
+
+root = weights_dir()
+baked = [str(path) for path in root.rglob("*") if path.is_file()] if root.is_dir() else []
+if baked:
+    raise RuntimeError(
+        f"model weights must never be baked into this image; found {len(baked)} file(s) under {root}"
+    )
+print(
+    "COSMOS_CURATE_BUILD_OK "
+    f"source={availability.source} encoder={availability.encoder} "
+    f"model_sets={len(MODEL_SETS)} default_set={[spec.key for spec in specs]} weights_dir={root} (empty)"
+)
 PY
 
+# Weights and scratch live here; mount a volume to persist downloads across runs.
+VOLUME ["/config/models"]
 WORKDIR /opt/cosmos-curate
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/opt/npa/docker/workbench/cosmos-curate/entrypoint.sh"]
+CMD ["engine"]

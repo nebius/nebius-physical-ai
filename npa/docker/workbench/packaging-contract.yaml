@@ -65,7 +65,12 @@ images:
     tier: job
   cosmos-curate:
     dockerfile: cosmos-curate/Dockerfile
-    tier: interactive
+    tier: job
+    notes: "Mode-based entrypoint; no model weights baked in (fetch-models mode uses HF_TOKEN)."
+  cosmos-evaluator:
+    dockerfile: cosmos-evaluator/Dockerfile
+    tier: job
+    notes: "Mode-based entrypoint; the wired checks need no model weights."
   lerobot-vlm-rl:
     dockerfile: lerobot-vlm-rl/Dockerfile
     tier: job
