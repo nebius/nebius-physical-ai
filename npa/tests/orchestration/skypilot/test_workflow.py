@@ -574,8 +574,11 @@ def test_stale_controller_kubeconfig_failure_explains_the_fix(monkeypatch) -> No
     assert "controller health check failed" in message
     # Names the exact kubeconfig it is stuck on ...
     assert "/home/op/.npa/clusters/npa-rtxpro-mk8s/kubeconfig" in message
-    # ... and every recovery lever.
-    assert "sky status --all" in message
+    # ... and every recovery lever. `sky status` in SkyPilot 0.12 has no `--all`
+    # flag (it errors with "Did you mean --all-users?"), so the remedy must use
+    # `sky status -r` / plain `sky status`.
+    assert "sky status -r" in message
+    assert "sky status --all" not in message
     assert "sky down sky-jobs-controller-" in message
     assert "provision-if-absent" in message
     assert "--infra k8s/<context>" in message

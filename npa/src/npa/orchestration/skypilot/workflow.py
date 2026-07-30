@@ -393,7 +393,8 @@ def _controller_health_remedy(detail: str) -> str:
         )
     lines.extend(
         [
-            "  - list what SkyPilot has cached: `sky status --all`.",
+            "  - list what SkyPilot has cached: `sky status -r` (refresh) or "
+            "`sky status` (SkyPilot 0.12 has no `--all` for `sky status`).",
             "  - purge the stale controller: `sky down sky-jobs-controller-<id>` "
             "(it is recreated on the next launch).",
             "  - target a specific context explicitly with "
