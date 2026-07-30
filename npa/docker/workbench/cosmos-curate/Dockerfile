@@ -111,6 +111,7 @@ RUN python -m venv "${COSMOS_CURATE_VENV}" \
       "pyarrow" \
       "pydantic" \
       "pylance" \
+      "tqdm" \
       "webdataset"
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
