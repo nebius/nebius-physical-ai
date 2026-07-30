@@ -370,76 +370,124 @@ no step, argv, iteration or ordering change. The plan-time full unroll under
 
 ---
 
-## 5. GPU tier
+## 5. GPU tier — verified on real GPUs
 
-### 5.1 A parallel wave whose tasks really request GPUs (live, SUCCEEDED)
+Everything in this section ran on `npa-rtxpro-mk8s` GPU nodes
+(`RTXPRO-6000-BLACKWELL-SERVER-EDITION`). Both GPU claims that were previously
+unproven are now green, and getting there exposed **five distinct real bugs** that
+mocked tests could not have found (§5.3).
 
-Same spec and same code path as §3, re-run with the operator knob that puts every
-task on a GPU (`NPA_E2E_FORCE_ACCELERATORS=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`),
-to show the JobGroup path is not CPU-specific.
+### 5.1 Parallel fan-out + barrier on GPU-requesting tasks — PASSED
 
-**Run id:** `npa-wf-cpu-token-factory-parallel-fanout-d65368f3`
+**Run id:** `npa-wf-cpu-forcedgpu-token-factory-parallel-fanout-5a8b6c69` (jobs 136/137)
 
 ```
-ID  TASK  NAME                                       REQUESTED                                   STATUS
-94        ...-01-caption  (JobGroup)                 -                                           SUCCEEDED
- ↳  0     caption-shard-a                            1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  SUCCEEDED
- ↳  1     caption-shard-b                            1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  SUCCEEDED
- ↳  2     caption-shard-c                            1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  SUCCEEDED
-95        ...-02-aggregate (barrier)                 1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]  FAILED
+pytest .../test_npa_workflow_runtime_live_reaches_terminal -q -s   # NPA_E2E_FORCE_ACCELERATORS=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+1 passed in 471.41s (0:07:51)
 ```
 
-| task | submitted_at | end_at |
-| --- | --- | --- |
-| caption-shard-a | 1785301226.5093 | 1785301302.4967 |
-| caption-shard-b | 1785301226.5134 | 1785301302.2853 |
-| caption-shard-c | 1785301226.5172 | 1785301302.7468 |
-| aggregate (barrier) | **1785301386.9483** | — |
+| job | task | REQUESTED | status |
+| --- | --- | --- | --- |
+| 136 | caption-shard-a/b/c (JobGroup) | `1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]` each | **SUCCEEDED** |
+| 137 | aggregate (barrier) | `1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]` | **SUCCEEDED** |
 
-Three GPU tasks, submitted within 8 ms of each other, ran concurrently
-(driver log: `3 tasks running concurrently (caption-shard-a, caption-shard-b,
-caption-shard-c)`), and the barrier was submitted 84 s after the last one ended.
+The barrier stage that previously failed with `ModuleNotFoundError: npa` now
+completes, so the fan-out → barrier sequence is proven end-to-end on GPU, not just
+on CPU.
 
-The barrier task then failed with `ModuleNotFoundError: No module named 'npa'`:
-SkyPilot's **GPU** default image resolves a different `python3` for the task body
-than the one `setup` pip-installs into, so the S3-staged package is not importable
-there. The identical stage succeeds on the CPU default image (§3, job 76). This is
-an image/interpreter quirk of the default-image + staged-source path, not the
-parallel or runtime engine — but it is a real failure and is reported as such.
+### 5.2 `isaac-lab-rl-sweep.yaml` — PASSED, four variants trained concurrently on four GPUs
 
-### 5.2 `isaac-lab-rl-sweep.yaml` — NOT completed live (see §7)
+**Run id:** `npa-wf-multi-isaac-lab-rl-sweep-2a9e0093` (jobs 143/144)
 
-The four-variant JobGroup was submitted (job **83**, run
-`npa-wf-multi-isaac-lab-rl-sweep-f1d78688`, four
-`1x[RTXPRO-6000-BLACKWELL-SERVER-EDITION:1]` tasks). Two blockers appeared:
+```
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=multi \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=isaac-lab-rl-sweep.yaml \
+NPA_E2E_IMAGE_OVERRIDE_ISAAC_LAB=<registry>/npa-isaac-lab:2.3.2.post1-sky \
+pytest .../test_npa_workflow_runtime_live_reaches_terminal -q -s
+1 passed in 904.04s (0:15:04)
+```
 
-1. **`ErrImagePull` 401 for every private image on the cluster.** The cluster's
-   `npa-nebius-registry` imagePullSecret (referenced by
-   `~/.sky/config.yaml → kubernetes.pod_config.imagePullSecrets`) held a 9-day-old
-   Nebius IAM token. Fixed by minting a fresh token and patching the secret:
+Concurrency and barrier, from `sky jobs queue --all --output json`:
 
-   ```bash
-   TOKEN=$(python -c "from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token; print(mint_nebius_registry_token())")
-   kubectl create secret docker-registry npa-nebius-registry -n default \
-     --docker-server=cr.us-central1.nebius.cloud --docker-username=iam --docker-password="$TOKEN" \
-     --dry-run=client -o yaml | kubectl apply -f -
-   ```
+| job | task | submitted_at | end_at | status |
+| --- | --- | --- | --- | --- |
+| 143 | variant-lr-1e-3 | 1785381216.9542 | 1785381366.9235 | SUCCEEDED |
+| 143 | variant-lr-3e-4 | 1785381216.9586 | 1785381368.3220 | SUCCEEDED |
+| 143 | variant-entropy-0 | 1785381216.9624 | 1785381367.1467 | SUCCEEDED |
+| 143 | variant-entropy-0-01 | 1785381216.9660 | 1785381367.8016 | SUCCEEDED |
+| 144 | select-best (barrier) | **1785381437.5002** | 1785382022.5636 | SUCCEEDED |
 
-   After that the image pulled in ~0.3 s (`Successfully pulled image
-   "...npa-isaac-lab:2.3.2.post1" ... Image size: 8413247039 bytes`). Side effect:
-   this also unblocked another agent's job that had been stuck pulling
-   `npa-cosmos2-transfer` for five days.
-2. **SkyPilot cannot host a task inside the Isaac Lab image on this cluster.**
-   Every provisioning attempt then failed with
-   `KubernetesError: Failed to get ssh user for pod variant-*-83-...-head ...
-   container not found ("ray-node")` and retried in a loop. This is the
-   pre-existing workbench-image limitation the operator environment already works
-   around with `NPA_E2E_CLEAR_WORKBENCH_IMAGES=1` (see the comment in
-   `skypilot_render.py`: *"SkyPilot's k8s apt-ssh runtime setup fails inside
-   npa-cosmos"*). The job was cancelled (`sky jobs cancel -y 83`) rather than left
-   retrying.
+Four GPU tasks submitted within **12 ms** of each other with fully overlapping
+lifetimes, and the barrier submitted **69 s after the last variant finished**.
 
----
+The work is real Isaac Lab RSL-RL training, not a stub — artifacts under
+`s3://<artifact-bucket>/.../isaac-lab-rl-sweep/`:
+
+```
+variants/lr-1e-3/checkpoint.pt                  45575   real RSL-RL checkpoint
+variants/lr-1e-3/train.log                      20419   real training log
+variants/lr-1e-3/npa_rl_sweep_metrics.json        726
+... (same for lr-3e-4, entropy-0, entropy-0-01)
+report/npa_rl_sweep_best.json                    3559   the barrier's ranking
+npa-workflow/runtime.json                        6377   wave ledger
+```
+
+`report/npa_rl_sweep_best.json` (excerpt) — each variant trained with its own Hydra
+overrides, and the barrier ranked all four:
+
+```json
+{
+  "best_value": -3.76, "best_variant": "entropy-0", "metric": "mean_reward",
+  "schema": "npa.rl_sweep.report.v1", "succeeded": 4, "variant_count": 4,
+  "variants": [
+    {"variant": "entropy-0",     "hydra_overrides": "agent.save_interval=1 agent.algorithm.entropy_coef=0.0",
+     "mean_reward": -3.76, "task": "Isaac-Cartpole-v0", "num_envs": 64, "max_iterations": 10,
+     "duration_seconds": 28.087, "returncode": 0, "status": "success"},
+    {"variant": "entropy-0-01",  "hydra_overrides": "agent.save_interval=1 agent.algorithm.entropy_coef=0.01",
+     "mean_reward": -4.55, "...": "..."}
+  ]
+}
+```
+
+**What it took to get there.** SkyPilot cannot host a task in the shipped Isaac Lab
+image on Kubernetes: the image has **no system python3** (SkyPilot's runtime
+bootstrap needs one) and Isaac's own interpreter lives under `/isaac-sim`, mode
+`750 isaac-sim:isaac-sim`, unreadable by the pod user. Diagnosed with a raw pod
+probe (`SHELL_OK; ubuntu; /bin/bash: line 1: python3: command not found`). A thin
+derived image was built **in-cluster with kaniko** (so an 8 GB base never had to be
+pulled onto the disk-constrained dev VM), adding `python3`, `rsync`, `curl`,
+`openssh-client`, `sudo` and running as root:
+`npa-isaac-lab:2.3.2.post1-sky`. The live runner points at it through the new
+`NPA_E2E_IMAGE_OVERRIDE_ISAAC_LAB` hook; the base image is unchanged and the sweep
+spec still resolves the base tag by default.
+
+### 5.3 Bugs that only real GPUs exposed (all fixed in this PR)
+
+| # | Symptom on GPU | Root cause | Fix |
+| --- | --- | --- | --- |
+| 1 | Barrier stage: `ModuleNotFoundError: npa` | `pip install -e` binds npa to the interpreter that ran pip; the stage body ran through `bash -lc`, whose login profile resolved a different python3 | stage commands use `bash -c` and inherit the task env; `/etc/profile.d/*.sh` is sourced explicitly so images that activate that way still work |
+| 2 | Then: `ModuleNotFoundError: numpy` | patching `PYTHONPATH` gave that python3 npa's *source* but not its *dependencies* | setup records an interpreter that can import npa and a PATH shim points `python3` at it |
+| 3 | `npa still missing after setup` (Isaac) / `/usr/bin/python3: No module named pip` (GPU default) | setup demanded the `npa` console script on PATH, and tried to install into an interpreter with no pip | verify by import (not by console script), link the console script into `/usr/local/bin`, and never require pip in the task shell |
+| 4 | Recorded interpreter was the string `alias python3='...python.sh'`, then Isaac's embedded kit python which cannot import its own site-packages | `command -v python3` prints alias definitions; `sys.executable` names an interpreter that needs its wrapper | try `sys.executable`, then the alias target, then `type -P python3`, and record the first that can actually import npa |
+| 5 | **Driver abandoned a running 4-GPU job**: it polled job 140 (already cancelled) while job 141 kept training | after the local SkyPilot API server flaked, `sky jobs launch` output carried a stale `Job submitted, ID:` line, and the driver trusted the scraped id | the launched job **name** is authoritative: the parsed id is cross-checked and recovered via `find_job_ids_by_name`, and only an unidentifiable job fails the wave |
+
+Bug 5 is the most important: it is precisely the leak class this PR exists to
+prevent, it was invisible to mocked tests (the fake submitter always returns a
+correct id), and it is now covered by
+`test_stale_job_id_from_launch_output_is_corrected_by_name`.
+
+### 5.4 The abort-cancel fix, proven live
+
+The same API-server flake produced a live demonstration of review finding #1. The
+submit raised, and the driver did exactly what it now must:
+
+```
+[runtime] wave 001|sweep|...: aborting with job npa-wf-multi-isaac-lab-rl-sweep-190f5ab7-01-sweep
+          possibly in flight (SkyPilotSubmitError: ... Connection refused); cancelling it
+"sky_status": "CANCELLED", "status": "failed"
+```
+
+Before this PR that path recorded a failure and walked away.
 
 ## 6. Mandated harness commands
 
@@ -523,30 +571,24 @@ usage. No cluster was provisioned for this work; no cluster was left running (§
 
 ## 8. Not verified live
 
-Stated plainly, so nothing here is mistaken for proven:
+Now much shorter — the two GPU items that headed this list are verified in §5.
 
-1. **`isaac-lab-rl-sweep.yaml` never executed its training variants live.** The
-   spec validates, plans, renders (4-task JobGroup + barrier) and is registered in
-   `SUBMIT_LIVE_MATRIX`; the JobGroup was submitted and SkyPilot did schedule four
-   GPU pods, but the Isaac Lab image cannot host a SkyPilot k8s task on this
-   cluster (§5.2). Its stage functions (`npa.workflows.rl_sweep`) are covered by
-   unit tests only. Concurrency and barrier semantics for the *same* code path are
-   proven live in §3 (CPU) and §5.1 (GPU).
-2. **The `trigger:` / watch pattern is unit-tested only.** No live run waited on an
-   S3 prefix; no spec in the shipped catalog uses `trigger:` yet.
-3. **Wave retry and timeout-cancellation are unit-tested only.** No live wave
-   failed transiently or timed out during these runs, so the retry/cancel paths did
-   not execute against real infrastructure.
-4. **Bounded-concurrency batching was exercised live only with
-   `maxConcurrency == group size`** (one batch). The multi-batch path (`3` members,
-   `maxConcurrency: 2` → two batches) is unit-tested.
-5. **The GPU-tier barrier task failed** with `ModuleNotFoundError: No module named
-   'npa'` on SkyPilot's GPU default image (§5.1). The same stage succeeds on the
-   CPU default image; the interpreter mismatch on GPU images is not fixed here.
-6. **Only the `cpu` tier of the live submit matrix was executed**; gpu/multi
-   one-shot twins were covered plan-only (§6.1).
-
----
+1. **The `trigger:` / watch pattern is unit-tested only.** No live run waited on an
+   S3 prefix; no shipped spec uses `trigger:` yet.
+2. **Wave retry is unit-tested only.** No live wave failed *transiently* and then
+   succeeded on a retry (the live failures were deterministic, so retries would not
+   have helped).
+3. **Timeout-cancellation is unit-tested only** — no live wave exceeded its
+   deadline. The closely-related *abort*-cancellation path did fire live (§5.4).
+4. **Bounded-concurrency batching ran live only with `maxConcurrency == group size`**
+   (one batch). The multi-batch path is unit-tested.
+5. **Only the `cpu` and `multi` tiers of the live matrix were executed**; the `gpu`
+   one-shot twins (SONIC, Cosmos3, vlm-eval) are pre-existing cases unrelated to this
+   change and were covered plan-only.
+6. **The derived `npa-isaac-lab:...-sky` image is an operator artifact, not a repo
+   deliverable.** The Dockerfile is recorded in §5.2 and the override hook is
+   committed, but this PR does not add an image build to the repo's image manifest;
+   making the shipped Isaac image SkyPilot-hostable is a follow-up.
 
 ## 9. Teardown
 
