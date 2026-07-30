@@ -64,6 +64,52 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     assert "--input-uri" in argv and "--output-uri" in argv
 
 
+def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
+    """The grade loop must grade with Cosmos Evaluator, not a generic VLM scorer."""
+
+    states = _states()
+    assert states["evaluate"].get("toolRef") == "workbench.cosmos_evaluator.evaluate", (
+        "evaluate must run the real NVIDIA Cosmos Evaluator checks"
+    )
+    argv = TOOL_CATALOG["workbench.cosmos_evaluator.evaluate"].argv_template
+    assert argv[:4] == ["npa", "workbench", "cosmos-evaluator", "evaluate"]
+    # The hallucination check needs the run's source clip and attribute
+    # verification needs the sampled option table, so both must be passed.
+    assert "--input-uri" in argv and "--configs-uri" in argv
+
+    loop = states["grade"]["loop"]
+    assert loop["until"] == "promote_checkpoint"
+    assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
+
+
+def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
+    """Curation must run Cosmos Curator, with FiftyOne reviewing its output."""
+
+    states = _states()
+    assert states["cosmos-curate"].get("toolRef") == "workbench.cosmos_curate.curate", (
+        "cosmos-curate must run the real NVIDIA Cosmos Curator stages"
+    )
+    argv = TOOL_CATALOG["workbench.cosmos_curate.curate"].argv_template
+    assert argv[:4] == ["npa", "workbench", "cosmos-curate", "curate-augmented"]
+    assert "--curated-uri" in argv and "--report-uri" in argv
+
+    assert states["cosmos-curate"]["next"] == "curate"
+    assert states["curate"]["needs"] == ["cosmos-curate"]
+    # The review stage must actually read the curator's summary, not ignore it.
+    assert "curator_report_uri" in str(states["curate"]["run"]["shell"])
+
+
+def test_quality_gate_reads_the_evaluator_report() -> None:
+    from npa.workbench.cosmos_evaluator import RESULT_FILENAME
+
+    states = _states()
+    assert states["quality-gate"]["needs"] == ["evaluate"]
+    outputs = [output["uri"] for output in states["evaluate"]["outputs"]]
+    assert any(uri.endswith(RESULT_FILENAME) for uri in outputs), (
+        f"evaluate must publish {RESULT_FILENAME}, which grade_gate reads"
+    )
+
+
 def test_blueprint_toolrefs_exist_in_catalog() -> None:
     for name, state in _states().items():
         tool_ref = state.get("toolRef")

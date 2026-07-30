@@ -1,0 +1,385 @@
+"""Unit tests for the NVIDIA Cosmos Curator workbench tool.
+
+The upstream stages themselves are exercised by the image's golden eval (a real
+curation run); these tests cover everything around them — availability probing,
+upstream's documented pipeline argv, the output-tree ingest, variant staging, and
+the report assembly — without needing the upstream checkout.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from npa.workbench.cosmos_curate import (
+    CosmosCurateError,
+    CuratorAvailability,
+    discover_videos,
+    ingest_output,
+    result_uri_for,
+    split_pipeline_argv,
+)
+from npa.workbench.cosmos_curate import report as report_mod
+from npa.workbench.cosmos_curate import upstream as upstream_mod
+
+# One real per-clip metadata document from an upstream ClipWriterStage run
+# (npa workbench cosmos-curate curate-videos over a 1280x704 clip), trimmed to the
+# fields the ingest reads.
+UPSTREAM_META = {
+    "span_uuid": "0eefc8e4-2d58-5113-9fba-b68deda2583e",
+    "source_video": "/tmp/staged/clip-a.mp4",
+    "duration_span": [0.0, 3.0],
+    "width_source": 1280,
+    "height_source": 704,
+    "framerate_source": 24.0,
+    "clip_location": "/tmp/out/clips/0eefc8e4-2d58-5113-9fba-b68deda2583e.mp4",
+    "width": 1280,
+    "height": 704,
+    "framerate": 24.0,
+    "num_frames": 72,
+    "video_codec": "h264",
+    "num_bytes": 35265,
+    "motion_score": {"global_mean": 0.00031337200198322535, "per_patch_min_256": 0.0},
+    "windows": [{"start_frame": 0, "end_frame": 72, "qwen_caption": "A test pattern in motion."}],
+    "valid": False,
+}
+
+
+def _write_curator_output(root: Path, *, clips: int = 2) -> None:
+    (root / "clips").mkdir(parents=True)
+    (root / "metas" / "v0").mkdir(parents=True)
+    (root / "processed_videos").mkdir(parents=True)
+    for index in range(clips):
+        meta = dict(UPSTREAM_META)
+        meta["span_uuid"] = f"clip-uuid-{index}"
+        meta["duration_span"] = [float(index * 3), float(index * 3 + 3)]
+        (root / "clips" / f"clip-uuid-{index}.mp4").write_bytes(b"fake mp4")
+        (root / "metas" / "v0" / f"clip-uuid-{index}.json").write_text(
+            json.dumps(meta), encoding="utf-8"
+        )
+    (root / "processed_videos" / "clip-a.mp4.json").write_text("{}", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Availability probing
+# ---------------------------------------------------------------------------
+
+
+def test_availability_without_a_checkout_names_the_env_var() -> None:
+    availability = CuratorAvailability()
+    assert not availability.can_run_in_process
+    assert "NPA_COSMOS_CURATE_SRC" in availability.reason()
+
+
+def test_availability_without_a_usable_encoder_explains_the_encoder_requirement() -> None:
+    availability = CuratorAvailability(
+        source="/opt/cosmos-curate", importable=True, ffmpeg="/usr/bin/ffmpeg", encoders=()
+    )
+    assert not availability.can_run_in_process
+    assert "libopenh264" in availability.reason() and "h264_nvenc" in availability.reason()
+
+
+def test_availability_surfaces_an_import_failure() -> None:
+    availability = CuratorAvailability(
+        source="/opt/cosmos-curate",
+        importable=False,
+        import_error="ModuleNotFoundError: cosmos_xenna",
+        ffmpeg="/usr/bin/ffmpeg",
+        encoders=("libopenh264",),
+    )
+    assert "cosmos_xenna" in availability.reason()
+
+
+def test_availability_prefers_nvenc_only_with_a_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    availability = CuratorAvailability(
+        source="/opt/cosmos-curate",
+        importable=True,
+        ffmpeg="/usr/bin/ffmpeg",
+        encoders=("libopenh264", "h264_nvenc"),
+    )
+    monkeypatch.setattr(upstream_mod, "_has_gpu", lambda: False)
+    assert availability.encoder == "libopenh264"
+    monkeypatch.setattr(upstream_mod, "_has_gpu", lambda: True)
+    assert availability.encoder == "h264_nvenc"
+    assert availability.can_run_in_process
+    assert availability.reason() == ""
+
+
+def test_upstream_source_dir_requires_the_pipelines_package(tmp_path: Path) -> None:
+    empty = tmp_path / "not-a-checkout"
+    empty.mkdir()
+    assert upstream_mod.upstream_source_dir(environ={"NPA_COSMOS_CURATE_SRC": str(empty)}) is None
+
+    checkout = tmp_path / "checkout"
+    (checkout / "cosmos_curator" / "pipelines").mkdir(parents=True)
+    assert upstream_mod.upstream_source_dir(
+        environ={"NPA_COSMOS_CURATE_SRC": str(checkout)}
+    ) == checkout
+
+
+# ---------------------------------------------------------------------------
+# Upstream's documented container command
+# ---------------------------------------------------------------------------
+
+
+def test_split_pipeline_argv_matches_upstreams_fixed_stride_invocation() -> None:
+    argv = split_pipeline_argv(
+        input_video_path="s3://bucket/run/cosmos_augmented/",
+        output_clip_path="s3://bucket/run/curation/cosmos_curator/",
+        fixed_stride_split_duration=3,
+        fixed_stride_min_clip_length_s=1.0,
+    )
+    assert argv[:2] == ["video-pipeline", "split"]
+    assert "--input-video-path" in argv and "--output-clip-path" in argv
+    assert argv[argv.index("--splitting-algorithm") + 1] == "fixed-stride"
+    assert argv[argv.index("--fixed-stride-split-duration") + 1] == "3"
+    # Embeddings are a GPU stage; they stay off unless asked for.
+    assert "--no-generate-embeddings" in argv
+    assert "--embedding-algorithm" not in argv
+
+
+def test_split_pipeline_argv_keeps_embeddings_when_requested() -> None:
+    argv = split_pipeline_argv(
+        input_video_path="/in",
+        output_clip_path="/out",
+        generate_embeddings=True,
+        embedding_algorithm="openai",
+        captioning_algorithm="qwen",
+        limit=1,
+    )
+    assert "--no-generate-embeddings" not in argv
+    assert argv[argv.index("--embedding-algorithm") + 1] == "openai"
+    assert argv[argv.index("--captioning-algorithm") + 1] == "qwen"
+    assert argv[argv.index("--limit") + 1] == "1"
+
+
+def test_split_pipeline_argv_omits_stride_flags_for_transnetv2() -> None:
+    argv = split_pipeline_argv(
+        input_video_path="/in", output_clip_path="/out", splitting_algorithm="transnetv2"
+    )
+    assert "--fixed-stride-split-duration" not in argv
+
+
+def test_split_pipeline_argv_rejects_an_unknown_algorithm() -> None:
+    with pytest.raises(CosmosCurateError, match="fixed-stride or transnetv2"):
+        split_pipeline_argv(input_video_path="/in", output_clip_path="/out", splitting_algorithm="magic")
+
+
+def test_split_pipeline_argv_requires_both_paths() -> None:
+    with pytest.raises(CosmosCurateError, match="input and output paths"):
+        split_pipeline_argv(input_video_path="", output_clip_path="/out")
+
+
+# ---------------------------------------------------------------------------
+# Reading upstream's output tree
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_output_reads_upstream_clip_metadata(tmp_path: Path) -> None:
+    _write_curator_output(tmp_path, clips=2)
+    ingested = ingest_output(tmp_path)
+
+    assert len(ingested["clips"]) == 2
+    assert len(ingested["clip_files"]) == 2
+    assert ingested["processed_videos"] == ["clip-a.mp4.json"]
+
+    first = ingested["clips"][0]
+    assert first.clip_id == "clip-uuid-0"
+    assert first.duration_s == 3.0
+    assert (first.width, first.height) == (1280, 704)
+    assert first.num_frames == 72
+    assert first.motion_score_global_mean == pytest.approx(0.000313372, rel=1e-6)
+    assert first.caption == "A test pattern in motion."
+
+
+def test_ingest_output_is_empty_for_a_missing_tree(tmp_path: Path) -> None:
+    ingested = ingest_output(tmp_path / "nothing-here")
+    assert ingested == {"clips": [], "clip_files": [], "processed_videos": []}
+
+
+def test_ingest_output_skips_unreadable_metadata(tmp_path: Path) -> None:
+    _write_curator_output(tmp_path, clips=1)
+    (tmp_path / "metas" / "v0" / "broken.json").write_text("{not json", encoding="utf-8")
+    assert len(ingest_output(tmp_path)["clips"]) == 1
+
+
+def test_discover_videos_finds_nested_clips(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "one.mp4").write_bytes(b"x")
+    (tmp_path / "two.MOV").write_bytes(b"x")
+    (tmp_path / "notes.txt").write_text("skip me", encoding="utf-8")
+    assert [path.name for path in discover_videos(tmp_path)] == ["one.mp4", "two.MOV"]
+
+
+# ---------------------------------------------------------------------------
+# Variant staging and report assembly
+# ---------------------------------------------------------------------------
+
+
+def test_stage_variants_names_each_download_after_its_variant(tmp_path: Path) -> None:
+    augment = tmp_path / "cosmos_augmented"
+    for clip in ("clip-a", "clip b"):
+        (augment / clip).mkdir(parents=True)
+        (augment / clip / "augmented_video.mp4").write_bytes(b"fake mp4")
+    (augment / "no-video").mkdir()
+
+    staged = tmp_path / "staged"
+    warnings: list[str] = []
+    variants = report_mod._stage_variants(
+        str(augment), staged, store=object(), max_variants=0, warnings=warnings
+    )
+    assert set(variants.values()) == {"clip-a", "clip b"}
+    assert sorted(path.name for path in staged.iterdir()) == ["clip-a.mp4", "clip_b.mp4"]
+    assert any("no-video" in warning for warning in warnings)
+
+
+def test_stage_variants_honors_max_variants(tmp_path: Path) -> None:
+    augment = tmp_path / "cosmos_augmented"
+    for clip in ("clip-a", "clip-b", "clip-c"):
+        (augment / clip).mkdir(parents=True)
+        (augment / clip / "augmented_video.mp4").write_bytes(b"fake mp4")
+    variants = report_mod._stage_variants(
+        str(augment), tmp_path / "staged", store=object(), max_variants=2, warnings=[]
+    )
+    assert len(variants) == 2
+
+
+def test_curate_augmented_reports_unavailable_without_the_curator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(report_mod, "probe_availability", lambda: CuratorAvailability())
+    report = report_mod.curate_augmented(
+        augment_uri=str(tmp_path / "cosmos_augmented"),
+        curated_uri=str(tmp_path / "curated"),
+        storage=object(),
+    )
+    assert report.status == "skipped"
+    assert report.engine == "unavailable"
+    assert report.clip_count == 0
+    assert any("NPA_COSMOS_CURATE_SRC" in warning for warning in report.warnings)
+    assert report.to_dict()["schema"] == "npa.cosmos_curate.curation.v1"
+
+
+def test_curate_augmented_can_require_the_curator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.workbench.cosmos_curate import CosmosCurateUnavailable
+
+    monkeypatch.setattr(report_mod, "probe_availability", lambda: CuratorAvailability())
+    with pytest.raises(CosmosCurateUnavailable):
+        report_mod.curate_augmented(
+            augment_uri=str(tmp_path / "cosmos_augmented"),
+            curated_uri=str(tmp_path / "curated"),
+            require_curator=True,
+            storage=object(),
+        )
+
+
+def test_curate_augmented_summarizes_a_real_curator_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Report assembly against a stubbed curator run over real-shaped output."""
+
+    from npa.workbench.cosmos_curate.pipeline import CuratorRunResult
+
+    augment = tmp_path / "cosmos_augmented"
+    for clip in ("variant-0", "variant-1"):
+        (augment / clip).mkdir(parents=True)
+        (augment / clip / "augmented_video.mp4").write_bytes(b"fake mp4")
+
+    monkeypatch.setattr(
+        report_mod,
+        "probe_availability",
+        lambda: CuratorAvailability(
+            source="/opt/cosmos-curate",
+            importable=True,
+            ffmpeg="/usr/bin/ffmpeg",
+            encoders=("libopenh264",),
+        ),
+    )
+
+    def fake_curate_videos(*, input_dir: Any, output_dir: Any, **kwargs: Any) -> CuratorRunResult:
+        out = Path(output_dir)
+        (out / "clips").mkdir(parents=True)
+        (out / "metas" / "v0").mkdir(parents=True)
+        staged = sorted(Path(input_dir).glob("*.mp4"))
+        assert [path.stem for path in staged] == ["variant-0", "variant-1"]
+        for index, source in enumerate(staged):
+            meta = dict(UPSTREAM_META)
+            meta["span_uuid"] = f"clip-{index}"
+            meta["source_video"] = str(source)
+            (out / "clips" / f"clip-{index}.mp4").write_bytes(b"fake mp4")
+            (out / "metas" / "v0" / f"clip-{index}.json").write_text(
+                json.dumps(meta), encoding="utf-8"
+            )
+        return CuratorRunResult(
+            status="completed",
+            engine="cosmos-curator-stages",
+            source="/opt/cosmos-curate",
+            encoder="libopenh264",
+            input_dir=str(input_dir),
+            output_dir=str(out),
+            input_videos=len(staged),
+            clips_written=len(staged),
+            clips_filtered=1,
+            motion_filter="score-only",
+        )
+
+    monkeypatch.setattr(report_mod, "curate_videos", fake_curate_videos)
+
+    curated = tmp_path / "curated"
+    report = report_mod.curate_augmented(
+        augment_uri=str(augment),
+        curated_uri=str(curated),
+        report_uri=str(tmp_path / "report.json"),
+        storage=object(),
+    )
+    assert report.status == "completed"
+    assert report.engine == "cosmos-curator-stages"
+    assert report.variant_count == 2
+    assert report.clip_count == 2
+    assert report.filtered_count == 1
+    assert report.total_duration_s == 6.0
+    # Each clip is attributed to the variant it was cut from, not the staging path.
+    assert report.per_variant == {"variant-0": 1, "variant-1": 1}
+    # The curator's own output tree is published under curated_uri.
+    assert (curated / "clips" / "clip-0.mp4").is_file()
+    assert (curated / "metas" / "v0" / "clip-0.json").is_file()
+
+
+def test_curate_augmented_requires_variants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        report_mod,
+        "probe_availability",
+        lambda: CuratorAvailability(
+            source="/opt/cosmos-curate",
+            importable=True,
+            ffmpeg="/usr/bin/ffmpeg",
+            encoders=("libopenh264",),
+        ),
+    )
+    empty = tmp_path / "cosmos_augmented"
+    empty.mkdir()
+    with pytest.raises(CosmosCurateError, match="no augmented variant videos"):
+        report_mod.curate_augmented(
+            augment_uri=str(empty), curated_uri=str(tmp_path / "curated"), storage=object()
+        )
+
+
+def test_result_uri_for_appends_the_result_filename() -> None:
+    from npa.workbench.cosmos_curate import RESULT_FILENAME
+
+    assert result_uri_for("s3://b/run/curation/") == f"s3://b/run/curation/{RESULT_FILENAME}"
+    assert result_uri_for("s3://b/run/curation/custom.json") == "s3://b/run/curation/custom.json"
+
+
+def test_write_report_round_trips_locally(tmp_path: Path) -> None:
+    from npa.workbench.cosmos_curate import write_report
+
+    written = write_report({"clip_count": 3}, result_uri=str(tmp_path / "curation"))
+    assert json.loads(Path(written).read_text())["clip_count"] == 3

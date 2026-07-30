@@ -113,6 +113,94 @@ def test_grade_gate_missing_eval_loops_not_reads_decision(tmp_path: Path, monkey
     assert dfs.grade_gate("s3://bucket/grade/", "s3://bucket/grade/decision.json", 0.5) == "loop_back"
 
 
+def test_grade_gate_reads_the_cosmos_evaluator_report(tmp_path: Path, monkeypatch) -> None:
+    """The gate must threshold on the Cosmos Evaluator score the evaluate stage writes."""
+    from npa.workbench.cosmos_evaluator import RESULT_FILENAME
+
+    prefix_dir = tmp_path / "grade"
+    prefix_dir.mkdir()
+    (prefix_dir / RESULT_FILENAME).write_text(json.dumps({"score": 0.9, "passed": True}))
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: None,
+    )
+    assert dfs.grade_gate(str(prefix_dir), str(tmp_path / "decision.json"), 0.5) == "promote_checkpoint"
+
+
+def test_grade_gate_falls_back_to_the_older_vlm_eval_report(tmp_path: Path, monkeypatch) -> None:
+    """Runs started before the evaluate stage existed must still grade."""
+    from npa.workbench.vlm_eval import RESULT_FILENAME
+
+    prefix_dir = tmp_path / "grade"
+    prefix_dir.mkdir()
+    (prefix_dir / RESULT_FILENAME).write_text(json.dumps({"score": 0.2}))
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: None,
+    )
+    assert dfs.grade_gate(str(prefix_dir), str(tmp_path / "decision.json"), 0.5) == "loop_back"
+
+
+def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) -> None:
+    """The FiftyOne review report must carry the curator stage's summary."""
+    curator_report = tmp_path / "cosmos_curator.json"
+    curator_report.write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos_curate.curation.v1",
+                "status": "completed",
+                "engine": "cosmos-curator-stages",
+                "curated_uri": "s3://b/p/curation/cosmos_curator/",
+                "clip_count": 6,
+                "filtered_count": 1,
+                "variant_count": 2,
+                "total_duration_s": 18.0,
+                "motion_filter": "score-only",
+            }
+        )
+    )
+    monkeypatch.setattr(
+        dfs,
+        "_list_keys",
+        lambda uri: [
+            "p/cosmos_augmented/manifest.json",
+            "p/cosmos_augmented/aug-0/augmented_video.mp4",
+            "p/cosmos_augmented/aug-1/augmented_video.mp4",
+        ],
+    )
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    report = dfs.curate(
+        "s3://b/p/cosmos_augmented/",
+        str(tmp_path / "report.json"),
+        curator_report_uri=str(curator_report),
+    )
+    assert report["cosmos_curator"]["engine"] == "cosmos-curator-stages"
+    assert report["cosmos_curator"]["clip_count"] == 6
+    assert report["cosmos_curator"]["filtered_count"] == 1
+    # The review stage's own findings are untouched by the merge.
+    assert report["schema"] == "npa.fiftyone.curation.v1"
+    assert report["multiply"]["mode"] == "multi-variant"
+
+
+def test_curate_records_a_missing_curator_report_without_failing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"])
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    report = dfs.curate(
+        "s3://b/p/cosmos_augmented/",
+        str(tmp_path / "report.json"),
+        curator_report_uri=str(tmp_path / "absent.json"),
+    )
+    assert report["cosmos_curator"]["status"] == "unavailable"
+    assert report["status"] == "curated"
+
+
+def test_curate_omits_the_curator_block_when_no_report_is_passed(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"])
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    report = dfs.curate("s3://b/p/cosmos_augmented/", str(tmp_path / "report.json"))
+    assert "cosmos_curator" not in report
+
+
 def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     # Per-clip layout as emitted by publish_transfer_to_s3 (subdirs + top-level
     # manifest.json which must NOT be counted as a clip).
