@@ -2517,7 +2517,7 @@ def test_agent_deploy_failure_hint_diagnoses_ssh_unreachable() -> None:
         "Error: local-exec provisioner error\n"
         "  with null_resource.wait_for_cloud_init,\n"
         "Error running command '...': exit status 1. "
-        "Output: Waiting for SSH on 203.0.113.5:22..."
+        "Output: Waiting for SSH on 203.0.113.50:22..."
     )
     hint = _agent_deploy_failure_hint(detail)
     assert "SSH never became reachable" in hint
