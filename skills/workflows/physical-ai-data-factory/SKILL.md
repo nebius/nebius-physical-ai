@@ -209,6 +209,16 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   must match something, or upstream's `ClipTranscodingStage` cannot write clips.
   Debian/Ubuntu ffmpeg has neither; conda-forge's build carries `libopenh264`, and
   any GPU node's ffmpeg carries `h264_nvenc`.
+- **Curator needs Python >= 3.12** (upstream declares
+  `requires-python >=3.12,<3.13`). On an older interpreter the failure otherwise
+  surfaces as `cannot import name 'Self' from 'typing'` from deep inside an
+  upstream import, so the availability probe checks the version first and says so.
+  The `npa-cosmos-curate` image is 3.12; a dev box on 3.10/3.11 needs its own
+  3.12 environment (`uv venv --python 3.12`) to run the curator locally.
+- **A VLM can answer outside the options it was given.** Token Factory's VLM does
+  return `D` for a three-option question. That reads as `UNKNOWN` (a failed check
+  with no verdict about the pixels), not as a concrete wrong answer, so check
+  `vlm_answer` before drawing conclusions from a failed attribute.
 - **GPU accelerator name is cluster-specific.** The spec uses canonical
   `RTXPRO6000:1`; some clusters advertise `RTXPRO-6000-BLACKWELL-SERVER-EDITION`.
   If `sky` reports `FAILED_PRECHECKS` / no matching resources, check
