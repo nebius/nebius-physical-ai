@@ -328,7 +328,11 @@ def _guard_unmanaged_duplicate(
 
 
 def _preflight_filestore_quota(nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]) -> None:
-    enable_filestore = bool(_tfvar_value(tfvars, env, "enable_filestore", True))
+    # The Terraform default is enable_filestore = false (deploy/cluster/variables.tf),
+    # so the default FTUE / PAIDF cluster needs no Shared Filesystem SSD quota. Only
+    # check the quota when the shared filesystem is explicitly opted into and is being
+    # created (not attached via existing_filestore).
+    enable_filestore = bool(_tfvar_value(tfvars, env, "enable_filestore", False))
     existing_filestore = str(_tfvar_value(tfvars, env, "existing_filestore", "") or "").strip()
     if not enable_filestore or existing_filestore:
         return
@@ -581,7 +585,13 @@ def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict
         if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
             default_sc = item.get("metadata", {}).get("name", "")
             break
-    if default_sc != "csi-mounted-fs-path-sc":
+    # The filesystem CSI (and its `csi-mounted-fs-path-sc` default StorageClass) is
+    # only installed when the shared filesystem is enabled. With the default
+    # FTUE / PAIDF shape (enable_filestore = false), the platform block-storage
+    # StorageClass stays the default, so only enforce the filesystem CSI SC when
+    # the shared filesystem was opted into.
+    enable_filestore = bool(_tfvar_value(tfvars, os.environ, "enable_filestore", False))
+    if enable_filestore and default_sc != "csi-mounted-fs-path-sc":
         raise typer.BadParameter(f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}")
     return {
         "ready_nodes": ready_nodes,

@@ -29,6 +29,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
                 'cluster_name = "cluster-a"',
                 'gpu_nodes_count = 2',
                 'gpu_nodes_preset = "8gpu-192vcpu-1744gb"',
+                'enable_filestore = true',
                 'subnet_id = "subnet-a"',
             ]
         )
@@ -265,6 +266,7 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
                 'tenant_id = "tenant-a"',
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
+                'enable_filestore = true',
                 'filestore_disk_size_gibibytes = 1024',
             ]
         )
@@ -295,6 +297,158 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
     assert result.exit_code != 0
     assert "Shared filesystem quota is insufficient" in result.output
     assert ["terraform", "apply", "-auto-approve"] not in stream_calls
+
+
+def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path: Path) -> None:
+    """The default FTUE shape (no enable_filestore) applies with zero SFS quota.
+
+    The Shared Filesystem quota preflight must NOT run when filestore is not
+    opted into, so `npa cluster up` / `provision-if-absent` succeed with zero
+    Shared Filesystem SSD quota.
+    """
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'parent_id = "project-a"',
+                'tenant_id = "tenant-a"',
+                'region = "region-a"',
+                'cluster_name = "cluster-a"',
+            ]
+        )
+        + "\n"
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            raise AssertionError("filestore quota must not be checked when filestore is off")
+        if args[:3] == ["terraform", "output", "-json"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "kube_cluster": {
+                            "value": {"id": "mk8scluster-a", "name": "cluster-a", "endpoints": {}}
+                        }
+                    }
+                )
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert ["terraform", "apply", "-auto-approve"] in stream_calls
+
+
+def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypatch, tmp_path: Path) -> None:
+    """With filestore off, validation does not require the filesystem CSI SC.
+
+    The filesystem CSI (and its `csi-mounted-fs-path-sc` default) is only
+    installed when the shared filesystem is enabled, so validation must accept
+    the platform block-storage default StorageClass instead of failing.
+    """
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'parent_id = "project-a"',
+                'tenant_id = "tenant-a"',
+                'region = "region-a"',
+                'cluster_name = "cluster-a"',
+                'gpu_nodes_count = 1',
+                'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
+            ]
+        )
+        + "\n"
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:3] == ["terraform", "output", "-json"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "kube_cluster": {
+                            "value": {
+                                "id": "mk8scluster-a",
+                                "name": "cluster-a",
+                                "endpoints": {"public_endpoint": "https://cluster.example"},
+                            }
+                        }
+                    }
+                )
+            )
+        if args[:3] == ["kubectl", "get", "nodes"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "status": {
+                                    "conditions": [{"type": "Ready", "status": "True"}],
+                                    "allocatable": {"nvidia.com/gpu": "1"},
+                                }
+                            }
+                        ]
+                    }
+                )
+            )
+        if args[:4] == ["kubectl", "get", "pods", "-n"]:
+            return _completed(json.dumps({"items": [{"status": {"phase": "Running"}}]}))
+        if args[:3] == ["kubectl", "get", "storageclass"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {
+                                    "name": "compute-csi-default-sc",
+                                    "annotations": {
+                                        "storageclass.kubernetes.io/is-default-class": "true"
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                )
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "default StorageClass compute-csi-default-sc" in result.output
 
 
 def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
