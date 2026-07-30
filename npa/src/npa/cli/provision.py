@@ -54,13 +54,25 @@ def provision_if_absent_cmd(
     payload = result.to_dict()
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return
-    typer.echo(f"status: {result.status}")
-    typer.echo(f"project: {result.project}")
-    typer.echo(f"cluster: {result.cluster_name}")
-    typer.echo(f"kubeconfig: {result.kubeconfig_path}")
-    typer.echo(f"storage: {result.storage_bucket}")
-    for action in result.actions:
-        typer.echo(f"action: {action}")
-    for warning in result.warnings:
-        typer.echo(f"warning: {warning}")
+    else:
+        typer.echo(f"status: {result.status}")
+        typer.echo(f"project: {result.project}")
+        typer.echo(f"cluster: {result.cluster_name}")
+        typer.echo(f"kubeconfig: {result.kubeconfig_path}")
+        typer.echo(f"storage: {result.storage_bucket}")
+        for action in result.actions:
+            typer.echo(f"action: {action}")
+        for warning in result.warnings:
+            typer.echo(f"warning: {warning}")
+        if result.status == "ok" and result.kubeconfig_path and not dry_run:
+            # The kubeconfig is written outside ~/.kube/config. `npa workbench
+            # workflow submit --infra k8s/<context>` finds it on its own; kubectl
+            # and a bare `sky` need this export.
+            typer.echo(
+                f"For kubectl / sky in this shell: export KUBECONFIG={result.kubeconfig_path}"
+            )
+    if result.status != "ok":
+        # Exiting 0 on a partial run made the follow-up submit the place where the
+        # missing cluster surfaced, long after the command that was supposed to
+        # create it "succeeded".
+        raise typer.Exit(code=1)

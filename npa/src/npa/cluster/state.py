@@ -110,6 +110,26 @@ def kubeconfig_file(name: str, *, base_dir: Path | None = None) -> Path:
     return cluster_dir(name, base_dir=base_dir) / "kubeconfig"
 
 
+def existing_kubeconfig(name: str, *, base_dir: Path | None = None) -> Path | None:
+    """Return the kubeconfig npa wrote for cluster/context *name*, if there is one.
+
+    `npa cluster up` / `npa provision-if-absent` write a dedicated kubeconfig
+    under ``~/.npa/clusters/<name>/kubeconfig`` rather than merging into
+    ``~/.kube/config``, so anything that hands a context to kubectl or SkyPilot
+    has to find that file itself.
+    """
+    direct = kubeconfig_file(name, base_dir=base_dir)
+    if direct.is_file():
+        return direct
+    state = load_cluster_state(name, base_dir=base_dir)
+    saved = str(getattr(state, "kubeconfig_path", "") or "") if state else ""
+    if saved:
+        candidate = Path(saved).expanduser()
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def node_groups_dir(cluster_name: str, *, base_dir: Path | None = None) -> Path:
     return cluster_dir(cluster_name, base_dir=base_dir) / "node-groups"
 

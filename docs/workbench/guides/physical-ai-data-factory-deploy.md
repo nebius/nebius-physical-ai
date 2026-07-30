@@ -109,7 +109,9 @@ explanation.
 | `missing prerequisites: ... SkyPilot CLI is not usable` | SkyPilot never bootstrapped, or only exported in a previous shell | `npa skypilot bootstrap` (persists `skypilot.sky_bin`) |
 | `missing prerequisites: ... config.bucket is the spec placeholder` | submitting against `example-bucket` | `--var bucket=<your-bucket>` |
 | `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | `sky status -r` (SkyPilot 0.12 rejects `sky status --all`), then `sky down sky-jobs-controller-<id>`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
-| `Context <name> not found ... Available contexts: []` | the `--infra k8s/<context>` context is not in your kubeconfig (no cluster provisioned, or wrong `KUBECONFIG`) | provision one (`npa provision-if-absent --project <alias>`) or point `KUBECONFIG` at the cluster; `kubectl config get-contexts` lists what is resolvable |
+| `Kube context '<name>' ... is not available` | no cluster for that context: neither your kubeconfig nor `~/.npa/clusters/<name>/` has it | provision one (`npa provision-if-absent --project <alias>`, and read its warnings — it now exits non-zero when it could not) or point `KUBECONFIG` at the cluster you want; `kubectl config get-contexts` lists what is resolvable |
+| `Context <name> not found ... Available contexts: []` (from SkyPilot) | an older npa left `KUBECONFIG` unset for a cluster it had provisioned | upgrade npa: `submit --infra k8s/<context>` now prepends `~/.npa/clusters/<context>/kubeconfig` itself. For `kubectl`/bare `sky`, `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig` |
+| `provision-if-absent` failed on `~/.ssh/id_rsa.pub` | old default node-group key path | upgrade npa: `cluster up` now pins the first key that exists (`NPA_SSH_PUBLIC_KEY`, `id_ed25519.pub`, `id_rsa.pub`, `id_ecdsa.pub`) |
 | `No images found .../input/` | the caption stage ran with an empty `input/` | stage frames, or add `--var seed_default_input=true` |
 
 ---
@@ -282,7 +284,10 @@ npa agent bootstrap --project <alias> --name <agent-name>
 > SSHing into the new VM to wait for cloud-init. If this machine cannot reach the
 > VM's public `tcp/22` (corporate VPN / split-tunnel often block it), the deploy
 > times out and rolls the VM back with a one-line SSH-unreachable error. Deploy
-> from a host with direct network access to the VM.
+> from a host with direct network access to the VM. `npa agent preflight` and the
+> start of `deploy` probe outbound `tcp/22` and warn before a VM is created; set
+> `NPA_SSH_EGRESS_PROBE=<host>:<port>` to probe a host your network allows, or
+> `off` to skip it.
 
 > The backend and UI are **baked at bootstrap**. Any change to the agent code
 > (`cli/agent.py`, `cli/agent_ui.html`, `cli/agent_chat.py`,

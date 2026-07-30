@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+from typer.testing import CliRunner
 
 from npa import provisioning
 from npa.clients import config, credentials
+
+runner = CliRunner()
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:
@@ -87,3 +90,44 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert result.status == "ok"
     ensure_bucket.assert_called_once_with("project-1", "bucket")
     assert f"k8s:reused kubeconfig {kubeconfig}" in result.actions
+
+
+def test_provision_if_absent_cli_exits_non_zero_on_a_partial_run(mocker) -> None:
+    """Exiting 0 with warnings made the next submit the place the failure appeared."""
+    from npa.cli.main import app
+
+    mocker.patch(
+        "npa.cli.provision.provision_if_absent",
+        return_value=provisioning.ProvisionIfAbsentResult(
+            status="partial",
+            project="proj",
+            cluster_name="npa-cluster",
+            warnings=["project_id and tenant_id are required to ensure Kubernetes"],
+        ),
+    )
+
+    result = runner.invoke(app, ["provision-if-absent", "--project", "proj"])
+
+    assert result.exit_code == 1
+    assert "project_id and tenant_id are required" in result.output
+
+
+def test_provision_if_absent_cli_prints_the_kubeconfig_export(mocker) -> None:
+    """The kubeconfig is written outside ~/.kube/config, so kubectl needs the path."""
+    from npa.cli.main import app
+
+    mocker.patch(
+        "npa.cli.provision.provision_if_absent",
+        return_value=provisioning.ProvisionIfAbsentResult(
+            status="ok",
+            project="proj",
+            cluster_name="npa-cluster",
+            kubeconfig_path="/home/op/.npa/clusters/npa-cluster/kubeconfig",
+            actions=["k8s:ensured terraform cluster npa-cluster"],
+        ),
+    )
+
+    result = runner.invoke(app, ["provision-if-absent", "--project", "proj"])
+
+    assert result.exit_code == 0
+    assert "export KUBECONFIG=/home/op/.npa/clusters/npa-cluster/kubeconfig" in result.output

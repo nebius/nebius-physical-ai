@@ -330,6 +330,12 @@ def submit_cmd(
         # controller. Everything the operator still has to do is listed once,
         # each with the command that fixes it.
         spec_config = _npa_spec_config(yaml_path, substitutions)
+        # Resolve the pinned context before the preflight reports on it: npa keeps
+        # its cluster kubeconfigs outside ~/.kube/config, so a context it
+        # provisioned looks missing until KUBECONFIG points at it.
+        infra_context = _infra_kube_context(infra)
+        if infra_context and not plan_only:
+            _adopt_npa_kubeconfig(infra_context)
         if stage_src:
             staged_uri = _stage_npa_src_for_submit(
                 spec_config,
@@ -370,9 +376,31 @@ def submit_cmd(
                             f"actions={','.join(record['actions']) or 'none'}",
                             err=True,
                         )
+                        # A `partial` outcome (no project_id, no bucket, ...) used to
+                        # print its status with the reason dropped, and the submit
+                        # carried on into a launch that could not work.
+                        for warning in record.get("warnings", []) or []:
+                            typer.echo(
+                                f"deployIfAbsent[{record['profile']}]: warning: {warning}",
+                                err=True,
+                            )
             except NpaWorkflowError as exc:
                 _fail(str(exc))
                 return
+
+        # Provisioning may have just created the context (or failed to). Either way
+        # the launch cannot work without it, so stop here with the remedy rather
+        # than deep inside `sky jobs launch`.
+        if infra_context and not plan_only and not _adopt_npa_kubeconfig(infra_context):
+            _fail(
+                f"Kube context {infra_context!r} (from --infra {infra!r}) is not available: "
+                "it is not in your kubeconfig and npa has no kubeconfig for it under "
+                f"~/.npa/clusters/{infra_context}/. Provision the cluster with "
+                "`npa provision-if-absent --project <alias>` (check its output for "
+                "warnings), or point KUBECONFIG at the cluster you want and pass a "
+                "context from `kubectl config get-contexts`."
+            )
+            return
         image_overrides: dict[str, str] = {}
         # ``none`` / ``default`` clears workbench image pins so tasks use the
         # SkyPilot default image (needed when registry images fail k8s apt-ssh).
@@ -744,6 +772,41 @@ def _available_kube_contexts() -> list[str] | None:
             if name and name not in contexts:
                 contexts.append(name)
     return contexts if read_any else None
+
+
+def _adopt_npa_kubeconfig(context: str) -> bool:
+    """Make an npa-provisioned kube context usable by SkyPilot, and say whether it is.
+
+    `npa cluster up` / `npa provision-if-absent` write a dedicated kubeconfig under
+    ``~/.npa/clusters/<context>/kubeconfig`` instead of merging into
+    ``~/.kube/config``, while `sky jobs launch` reads ``KUBECONFIG`` (or
+    ``~/.kube/config``). A cluster npa had just created was therefore invisible to
+    the submit that asked for it — `Context <name> not found ... Available
+    contexts: []` — unless the operator knew to export KUBECONFIG by hand. Prepend
+    npa's kubeconfig when the context is missing from the active one.
+    """
+    if not context:
+        return False
+    available = _available_kube_contexts()
+    if available is not None and context in available:
+        return True
+
+    from npa.cluster.state import existing_kubeconfig
+
+    path = existing_kubeconfig(context)
+    if path is None:
+        return False
+    current = os.environ.get("KUBECONFIG", "").strip()
+    entries = [str(path)] + [
+        entry for entry in current.split(os.pathsep) if entry.strip() and entry != str(path)
+    ]
+    os.environ["KUBECONFIG"] = os.pathsep.join(entries)
+    typer.echo(
+        f"Using the npa kubeconfig for context {context!r}: {path} "
+        "(prepended to KUBECONFIG for this run).",
+        err=True,
+    )
+    return True
 
 
 def _spec_self_provisions(yaml_path: Path) -> bool:

@@ -128,7 +128,11 @@ npa workbench workflow submit <spec.yaml> --var bucket=<b> --infra k8s/<context>
 
 `submit` verifies these up front and prints **everything** still missing in one
 list (with the command that fixes each), so you are not discovering them one
-failed run at a time. Worked example end to end:
+failed run at a time. `provision-if-absent` writes the cluster kubeconfig to
+`~/.npa/clusters/<context>/kubeconfig` rather than merging it into
+`~/.kube/config`; `submit --infra k8s/<context>` finds that file on its own, and
+`kubectl` in your shell needs `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig`
+(the command prints the line). Worked example end to end:
 [Physical AI Data Factory runbook](docs/workbench/guides/physical-ai-data-factory-deploy.md).
 
 ---

@@ -8,6 +8,7 @@ separate run, and there was no command to produce the npa source copy at all.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -369,6 +370,103 @@ def test_spec_self_provisions_detects_deploy_if_absent_targets() -> None:
     assert _spec_self_provisions(SPEC) is False
     # An unreadable spec never turns the preflight itself into the failure.
     assert _spec_self_provisions(Path("/nonexistent/spec.yaml")) is False
+
+
+def test_adopt_npa_kubeconfig_points_kubeconfig_at_the_provisioned_cluster(
+    monkeypatch, tmp_path
+) -> None:
+    """npa keeps cluster kubeconfigs out of ~/.kube/config, so submit must find them.
+
+    Regression: after `npa provision-if-absent` created `npa-cluster`, a submit
+    with `--infra k8s/npa-cluster` still failed with `Context npa-cluster not
+    found ... Available contexts: []` because the kubeconfig npa wrote was never
+    put on KUBECONFIG.
+    """
+    import yaml
+
+    from npa.cli.workbench.workflow import _adopt_npa_kubeconfig
+    from npa.cluster import state as state_module
+
+    clusters = tmp_path / "clusters"
+    npa_kubeconfig = clusters / "npa-cluster" / "kubeconfig"
+    npa_kubeconfig.parent.mkdir(parents=True)
+    npa_kubeconfig.write_text(yaml.safe_dump({"contexts": [{"name": "npa-cluster"}]}))
+    monkeypatch.setattr(state_module, "CLUSTERS_DIR", clusters)
+    other = _write_kubeconfig(tmp_path, "other-ctx")
+    monkeypatch.setenv("KUBECONFIG", str(other))
+
+    assert _adopt_npa_kubeconfig("npa-cluster") is True
+    entries = os.environ["KUBECONFIG"].split(os.pathsep)
+    assert entries[0] == str(npa_kubeconfig)
+    assert str(other) in entries  # the operator's own contexts stay resolvable
+    assert _available_kube_contexts() == ["npa-cluster", "other-ctx"]
+
+
+def test_adopt_npa_kubeconfig_reports_a_context_npa_cannot_resolve(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli.workbench.workflow import _adopt_npa_kubeconfig
+    from npa.cluster import state as state_module
+
+    monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
+    monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
+
+    assert _adopt_npa_kubeconfig("npa-cluster") is False
+    # An already-visible context needs no adoption.
+    assert _adopt_npa_kubeconfig("other-ctx") is True
+
+
+def test_submit_fails_clearly_when_provisioning_left_no_context(
+    monkeypatch, tmp_path, mocker
+) -> None:
+    """A `partial` provision used to hand the failure to `sky jobs launch`."""
+    from npa.cluster import state as state_module
+
+    monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
+    monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+    _mock_sky_bin_ok(monkeypatch)
+    mocker.patch(
+        "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
+        return_value=[
+            {
+                "profile": "adversary-gpu",
+                "cluster_name": "npa-cluster",
+                "context": "npa-cluster",
+                "accelerators": "RTXPRO6000:1",
+                "status": "partial",
+                "actions": ["s3:skipped"],
+                "warnings": ["project_id and tenant_id are required to ensure Kubernetes"],
+                "dry_run": False,
+            }
+        ],
+    )
+    launched = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(HARDENING_SPEC),
+            "--run-id",
+            "no-context-demo",
+            "--infra",
+            "k8s/npa-cluster",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code != 0
+    # The provisioning warning is no longer swallowed ...
+    assert "project_id and tenant_id are required" in result.output
+    # ... and the submit stops with the remedy instead of launching. (Rich wraps
+    # the message, so match fragments that survive a line break.)
+    assert "Kube context" in result.output
+    assert "provision-if-absent" in result.output
+    assert not launched.called
 
 
 def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
