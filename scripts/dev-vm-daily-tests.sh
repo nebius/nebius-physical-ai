@@ -183,14 +183,17 @@ run_e2e() {
 
 run_workflow_coverage_gate() {
   local py="$1"
-  log "e2e-daily [1/4]: >= 4-step workflow image-coverage report + regression gate"
-  "$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" report || true
-  "$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" check
+  local helper="${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py"
+  log "e2e-daily [1/5]: >= 4-step workflow image-coverage report + regression gate"
+  "$py" "$helper" report || true
+  log "e2e-daily [1/5]: today's rotating comprehensive plan-set:"
+  "$py" "$helper" plan-set | while read -r spec; do log "  plan-set: ${spec}"; done
+  "$py" "$helper" check
 }
 
 run_workflow_plan_smoke() {
   local py="$1"
-  log "e2e-daily [2/4]: validate + plan every npa.workflow spec (all >= 4-step workflows, no GPU)"
+  log "e2e-daily [2/5]: validate + plan every npa.workflow spec (all >= 4-step workflows, no GPU)"
   (
     cd "${CI_REPO_DIR}/npa"
     "$py" -m pytest \
@@ -203,7 +206,7 @@ run_workflow_plan_smoke() {
 
 run_image_reachability() {
   local py="$1"
-  log "e2e-daily [3/4]: resolve + inspect every workbench image in the registry"
+  log "e2e-daily [3/5]: resolve + inspect every workbench image in the registry"
   # Resolves all CONTAINER_IMAGE_NAMES to pinned refs and inspects registry
   # presence (needs crane/skopeo/docker on the dev VM; degrades to 'unknown'
   # otherwise). Report-only by default so an intentionally unpushed image does
@@ -222,15 +225,29 @@ run_e2e_shard() {
   day="$(date -u +%j)"
   day=$((10#$day))
   shard=$(( day % shards ))
-  log "e2e-daily [4/4]: rotating S3 e2e shard ${shard} of ${shards} (day-of-year ${day})"
+  log "e2e-daily [4/5]: rotating S3 e2e shard ${shard} of ${shards} (day-of-year ${day})"
   (
     cd "${CI_REPO_DIR}/npa"
-    local nodes=()
+    local nodes=() collect_rc tmpf
+    tmpf="$(mktemp)"
     # `-o addopts=` clears the repo's default `-v` so --collect-only -q emits
     # flat `path::node` ids (not the verbose tree) for deterministic slicing.
-    mapfile -t nodes < <(NPA_INTEGRATION_E2E=1 "$py" -m pytest tests/e2e -m e2e --collect-only -q -o addopts='' 2>/dev/null | grep -E '::' | sort -u)
+    set +e
+    NPA_INTEGRATION_E2E=1 "$py" -m pytest tests/e2e -m e2e --collect-only -q -o addopts='' > "$tmpf" 2>&1
+    collect_rc=$?
+    set -e
+    # pytest exit codes: 0 = collected, 5 = no tests collected. Anything else is
+    # a real collection error — fail loudly instead of silently skipping.
+    if [[ "$collect_rc" -ne 0 && "$collect_rc" -ne 5 ]]; then
+      log "e2e collection FAILED (pytest exit ${collect_rc}); not silently skipping:"
+      tail -n 20 "$tmpf" >&2
+      rm -f "$tmpf"
+      return "$collect_rc"
+    fi
+    mapfile -t nodes < <(grep -E '::' "$tmpf" | sort -u)
+    rm -f "$tmpf"
     if [[ "${#nodes[@]}" -eq 0 ]]; then
-      log "no S3 e2e node ids collected; skipping shard"
+      log "no S3 e2e tests collected (pytest exit ${collect_rc}); nothing to shard"
       return 0
     fi
     local selected=() i

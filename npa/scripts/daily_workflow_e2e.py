@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Daily comprehensive-workflow E2E accounting for the dev-VM test runner.
 
-Used by ``scripts/dev-vm-daily-tests.sh`` (tier ``e2e-daily``). Two jobs:
+Used by ``scripts/dev-vm-daily-tests.sh`` (tier ``e2e-daily``). Subcommands:
 
-- ``report`` / ``check``: print >= 4-step workflow image coverage and fail if a
-  required image lost coverage (regression guard).
-- ``plan-set``: print the spec paths to ``plan-spec`` today (the image-covering
-  set plus a day-rotating extra) so at least one >= 4-step workflow E2E, and
-  every covered image, is exercised every day.
+- ``check``: fail if a required image lost >= 4-step workflow coverage
+  (regression guard the runner gates on).
+- ``report`` / ``plan-set``: print the coverage table / today's rotating
+  comprehensive spec set; the runner logs these for visibility.
+- ``images``: resolve every workbench image to its pinned registry ref and,
+  with ``--inspect``, check registry presence (the runner's all-image check).
+- ``gpu-case``: print today's rotating real-GPU workflow twin (the runner
+  submits it in the ``gpu-daily`` path).
 
-Pure CPU, no Nebius/registry access; the runner separately runs
-``check_workflow_images.py`` (registry reachability for every image) and the
-CLI ``plan-spec`` on the printed specs.
+All CPU-only. Note the runner does *not* call ``check_workflow_images.py`` or
+the ``plan-spec`` CLI: registry reachability is done here by ``images
+--inspect``, and every spec is validated + planned by the pytest smoke suite
+(``test_all_workflow_yamls.py`` et al.). ``plan-set`` and the coverage helpers
+in ``daily_coverage`` are operator-facing/reporting aids, exercised by the unit
+guard and logged by the runner.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import argparse
 import datetime as _dt
 import json
 import os
+import subprocess
 import sys
 
 from npa.orchestration.npa_workflow import daily_coverage as dc
@@ -105,8 +112,10 @@ def _inspect_image(image: str) -> bool | None:
 
     try:
         return inspect_image_exists(image)
-    except RuntimeError:
-        # No crane/skopeo/docker on this host; existence is unknown, not absent.
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        # No crane/skopeo/docker installed (RuntimeError), or a probe hung /
+        # timed out (subprocess.TimeoutExpired) / errored: presence is UNKNOWN,
+        # not absent. This check is report-only and must never fail the run.
         return None
 
 

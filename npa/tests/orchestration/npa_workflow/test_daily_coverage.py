@@ -53,7 +53,9 @@ def test_daily_plan_set_covers_every_covered_image() -> None:
 
 def test_rotating_spec_changes_across_days() -> None:
     summaries = dc.spec_step_summary()
-    picks = {dc.rotating_spec(day, summaries).name for day in range(len(dc.comprehensive_specs(summaries)))}
+    comp = dc.comprehensive_specs(summaries)
+    assert comp, "expected comprehensive specs to rotate over"
+    picks = {dc.rotating_spec(day, summaries).name for day in range(len(comp))}
     assert len(picks) > 1, "rotating spec should vary across days"
 
 

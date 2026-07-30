@@ -108,6 +108,9 @@ jobs:
           DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
           DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
           DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
+          # Optional: a pre-vetted known_hosts entry (recommended). When set it is
+          # used as-is; otherwise we fall back to ssh-keyscan (trust-on-first-use).
+          DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -115,8 +118,15 @@ jobs:
           chmod 600 ~/.ssh/dev_vm_key
           port="${DEV_VM_SSH_PORT:-22}"
           echo "SSH_PORT=$port" >> "$GITHUB_ENV"
-          # Pin the host key we see now so later steps use strict checking.
-          ssh-keyscan -p "$port" -H "$DEV_VM_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          if [ -n "$DEV_VM_SSH_KNOWN_HOSTS" ]; then
+            # Pre-vetted pin: no trust-on-first-use window.
+            printf '%s\n' "$DEV_VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            # Trust-on-first-use: records whatever key is presented now. Set the
+            # DEV_VM_SSH_KNOWN_HOSTS secret to remove this MITM-at-keyscan window.
+            echo "::warning::DEV_VM_SSH_KNOWN_HOSTS not set; using ssh-keyscan (trust-on-first-use)."
+            ssh-keyscan -p "$port" -H "$DEV_VM_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
           chmod 600 ~/.ssh/known_hosts
 
       - name: Copy runner script to the dev VM
@@ -147,6 +157,24 @@ jobs:
           # submit. The full `live-gpu` sky-cluster suite stays manual-only.
           NPA_DAILY_ENABLE_GPU: ${{ vars.NPA_DAILY_ENABLE_GPU }}
         run: |
+          # Defense-in-depth: these values are interpolated into a command run
+          # over SSH on a VM that holds real credentials. Reject anything outside
+          # a safe charset (blocks quote/`$`/`;` breakouts) before building it.
+          # git refs and Nebius ids/flags never legitimately contain such chars.
+          safe='^[A-Za-z0-9._/-]*$'
+          for pair in "git_ref=$REF" \
+                      "NPA_E2E_SERVERLESS_PROJECT=$NPA_E2E_SERVERLESS_PROJECT" \
+                      "NPA_E2E_PROJECT=$NPA_E2E_PROJECT" \
+                      "NPA_REGISTRY_ID=$NPA_REGISTRY_ID" \
+                      "NPA_DAILY_E2E_SHARDS=$NPA_DAILY_E2E_SHARDS" \
+                      "NPA_DAILY_ENABLE_GPU=$NPA_DAILY_ENABLE_GPU"; do
+            name="${pair%%=*}"; val="${pair#*=}"
+            if ! [[ "$val" =~ $safe ]]; then
+              echo "::error::${name} contains unsafe characters; refusing to run."
+              exit 1
+            fi
+          done
+
           # Only the live-gpu tier is allowed to arm the GPU path, and only from a
           # manual dispatch (already guarded above). The scheduled path never
           # reaches this branch with tier=live-gpu.
