@@ -9,6 +9,33 @@ a versioned heading when a release is cut.
 
 ### First-run walkthrough fixes (README → agent → Physical AI Data Factory)
 
+- **Agent deploy SSH-timeout now fails with one clear line, not a dumped bash
+  script.** When the new VM is `RUNNING` with a public IP but its `tcp/22` is
+  unreachable from the deploy host (corporate VPN / split-tunnel / firewall),
+  `null_resource.wait_for_cloud_init` used to die opaquely under `set -e`, so
+  Terraform printed the entire local-exec provisioner body. The SSH-wait now
+  emits an explicit reachability error, and `npa agent deploy` adds a concise
+  post-rollback diagnosis (`_agent_deploy_failure_hint`) distinguishing an
+  unreachable SSH port from a failed cloud-init bootstrap.
+- **`npa workbench workflow submit` preflight verifies the `--infra k8s/<context>`
+  context exists** in your kubeconfig before `sky jobs launch`. A missing context
+  (e.g. after purging a stale controller with no cluster provisioned) previously
+  failed late with a long SkyPilot stack (`Context <name> not found ... Available
+  contexts: []`); it is now one prerequisite line with the available contexts and
+  the fix.
+- **Stale-controller remedy and docs no longer suggest `sky status --all`**,
+  which SkyPilot 0.12 rejects (`Did you mean --all-users?`). They now use
+  `sky status -r` / plain `sky status`.
+- **`npa configure` object storage now defaults to yes and warns when skipped.**
+  After project discovery the prompt defaults to `[Y/n]`, and declining prints
+  that `npa agent setup` and the Physical AI Data Factory both need an S3 bucket
+  + access key — so a first run does not silently finish without the storage the
+  next steps require.
+- **Docs align on `npa agent setup`.** The Physical AI Data Factory deploy guide
+  now leads with `npa agent setup` (matching the README), keeps `fresh-setup` as
+  the scripted path, and both call out the VPN/firewall SSH-reachability caveat.
+  The README adds a note to bind a federation profile's `tenant-id`/`parent-id`
+  before `npa configure`.
 - **`npa configure` project discovery no longer pins a project-local registry.**
   When picking a project from discovery, configure saved whatever container
   registry the project happened to have; a project whose only registry is in
@@ -43,7 +70,7 @@ a versioned heading when a release is cut.
   (`--save`, default on), so a new shell no longer fails with "SkyPilot CLI
   executable is not configured".
 - **Stale SkyPilot jobs controllers explain themselves.** A controller cached
-  against a missing kubeconfig now reports the path plus `sky status --all`,
+  against a missing kubeconfig now reports the path plus `sky status -r`,
   `sky down sky-jobs-controller-<id>`, `npa provision-if-absent` and
   `--infra k8s/<context>` instead of a raw traceback.
 - **New `npa workbench workflow stage-src`** (and `submit --stage-src`) publishes

@@ -88,6 +88,14 @@ one's setup guide inline. Create them step by step:
 [NVIDIA NGC](docs/workbench/ngc-api-key.md) ·
 [Nebius Token Factory](docs/workbench/token-factory-key.md).
 
+> **Federation profile with many tenants?** If your Nebius CLI profile has no
+> `tenant-id`/`parent-id` set (common for SSO/federation logins), bind it to the
+> project you want *before* `npa configure` so discovery targets the right place
+> instead of listing every tenant:
+> `nebius config set tenant-id <id> && nebius config set parent-id <project-id>`.
+> Say **yes** to the object-storage prompt — the agent VM and the Physical AI
+> Data Factory both need an S3 bucket + access key.
+
 Full account/credential detail: [docs/quickstart.md](docs/quickstart.md).
 
 ### 3. Run your first cloud workload

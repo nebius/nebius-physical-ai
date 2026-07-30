@@ -108,7 +108,8 @@ explanation.
 | `missing prerequisites: ... NPA_SRC_S3_URI is unset` | image-less steps have no `npa` to install | `npa workbench workflow stage-src --bucket <b>`, or `submit --stage-src`, or pin `--image` |
 | `missing prerequisites: ... SkyPilot CLI is not usable` | SkyPilot never bootstrapped, or only exported in a previous shell | `npa skypilot bootstrap` (persists `skypilot.sky_bin`) |
 | `missing prerequisites: ... config.bucket is the spec placeholder` | submitting against `example-bucket` | `--var bucket=<your-bucket>` |
-| `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | `sky status --all`, then `sky down sky-jobs-controller-<id>`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
+| `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | `sky status -r` (SkyPilot 0.12 rejects `sky status --all`), then `sky down sky-jobs-controller-<id>`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
+| `Context <name> not found ... Available contexts: []` | the `--infra k8s/<context>` context is not in your kubeconfig (no cluster provisioned, or wrong `KUBECONFIG`) | provision one (`npa provision-if-absent --project <alias>`) or point `KUBECONFIG` at the cluster; `kubectl config get-contexts` lists what is resolvable |
 | `No images found .../input/` | the caption stage ran with an empty `input/` | stage frames, or add `--var seed_default_input=true` |
 
 ---
@@ -242,18 +243,37 @@ operator reference; the
 skill covers teardown/fresh-setup loops.
 
 First-time provisioning (Terraform-backed VM + long-lived `npa-agent` service
-account when IAM allows), then bake the UI/backend:
+account when IAM allows). The simplest path — matching the root README — reads
+the project ids/region from `~/.npa/config.yaml`, so you only pick a configured
+project:
 
 ```bash
-# Provision the VM the first time (creates the agent record).
+# Interactive: pick one of the projects `npa configure` saved, then deploy.
+npa agent setup --name <agent-name>
+```
+
+For scripted / non-interactive deploys, pass the ids explicitly instead:
+
+```bash
 npa agent fresh-setup \
   --project <alias> --name <agent-name> \
   --project-id <nebius-project-id> --tenant-id <nebius-tenant-id> \
   --region <region>
+```
 
+Both provision the VM and bake the UI/backend. To re-bake later (e.g. after an
+agent code change) without reprovisioning:
+
+```bash
 # Bake/refresh the UI + backend + nginx on the VM (~1 min; reuses auth/creds).
 npa agent bootstrap --project <alias> --name <agent-name>
 ```
+
+> **Deploying from behind a VPN/firewall?** `setup`/`fresh-setup` finish by
+> SSHing into the new VM to wait for cloud-init. If this machine cannot reach the
+> VM's public `tcp/22` (corporate VPN / split-tunnel often block it), the deploy
+> times out and rolls the VM back with a one-line SSH-unreachable error. Deploy
+> from a host with direct network access to the VM.
 
 > The backend and UI are **baked at bootstrap**. Any change to the agent code
 > (`cli/agent.py`, `cli/agent_ui.html`, `cli/agent_chat.py`,
