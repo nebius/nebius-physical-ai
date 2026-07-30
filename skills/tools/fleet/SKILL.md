@@ -99,10 +99,11 @@ The fleet is spec-driven and idempotent, so growing or shrinking it is targeted:
   untouched clusters are left alone (the persisted summary is merged, not
   overwritten).
 - **Remove** one or many: `npa fleet destroy --spec fleet.yaml --only-clusters
-  train` (or `--only-projects c`). Destroy is a **cascade** — every cluster in
-  the targeted projects is torn down, any VPC network the fleet created is
-  reclaimed, and each removed cluster's local state is dropped so `status`
-  reflects the removal. Omitting `--only-*` tears down the whole fleet.
+  train` (or `--only-projects c`). Destroy tears down each **spec-declared**
+  cluster that has local state, reclaims any VPC network the fleet created for
+  it, and drops the removed cluster's local state so `status` reflects the
+  removal. It does not enumerate clusters via the API, so a cluster created
+  out-of-band is not reclaimed. Omitting `--only-*` tears down the whole fleet.
 
 Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
 `destroy` also accepts `--force`).

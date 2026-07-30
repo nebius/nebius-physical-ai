@@ -423,7 +423,7 @@ def test_destroy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path))], input="n\n")
     assert result.exit_code == 1
     assert "Aborted." in result.output
-    assert "cascade" in result.output  # cascade warning is shown
+    assert "torn down" in result.output  # teardown/reclaim warning is shown
     assert called["destroy"] is False
 
 

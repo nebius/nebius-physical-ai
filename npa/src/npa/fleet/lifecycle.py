@@ -20,6 +20,7 @@ Reuses the terraform subprocess helpers from
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -34,9 +35,15 @@ from npa.cli.cluster.terraform_lifecycle import (
 from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
 from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
 
+logger = logging.getLogger(__name__)
+
 _SOLUTIONS_LIBRARY_REPO = "https://github.com/nebius/nebius-solutions-library.git"
 _K8S_TRAINING_SUBDIR = "k8s-training"
 _MODULES_SUBDIR = "modules"
+# Pinned ref cloned when no local recipe is available, matching the repo-vendored
+# copy (deploy/cluster/vendor + the single-cluster wrapper) so a fleet run from an
+# installed package doesn't silently drift onto upstream ``main`` HEAD.
+_PINNED_LIBRARY_REF = "main-v2026-05-25+local-cluster-patches"
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _FLEET_STATE = "fleet-state.json"
 
@@ -44,6 +51,14 @@ _FLEET_STATE = "fleet-state.json"
 def _log(on_status: Callable[[str], None] | None, message: str) -> None:
     if on_status is not None:
         on_status(message)
+
+
+def _project_in_scope(project: ProjectSpec, only: list[str] | None, prefix: str) -> bool:
+    """A project matches ``--only-projects`` by its key **or** its display name."""
+
+    if not only:
+        return True
+    return project.key() in only or project.display_name(prefix) in only
 
 
 # --------------------------------------------------------------------------- #
@@ -94,8 +109,8 @@ def _resolve_tenant_id(nebius_bin: str, explicit: str) -> str:
         envcfg = resolve_environment()
         if envcfg and envcfg.tenant_id:
             return envcfg.tenant_id
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("tenant_id fallback via ~/.npa failed: %s", exc)
     raise ValueError(
         "tenant_id could not be resolved from the spec, ~/.nebius/config.yaml, or ~/.npa"
     )
@@ -110,8 +125,8 @@ def _resolve_region(explicit: str) -> str:
         envcfg = resolve_environment()
         if envcfg and envcfg.region:
             return envcfg.region
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("region fallback via ~/.npa failed: %s", exc)
     raise ValueError("region could not be resolved from the spec or ~/.npa config")
 
 
@@ -203,8 +218,13 @@ def _resolve_recipe_root(
     vendored = _find_vendored_recipe_root()
     if vendored is not None:
         return vendored
-    # No vendored copy available (e.g. installed package without repo). Clone main.
-    return _resolve_recipe_root(None, ref="main", work_root=work_root, on_status=on_status)
+    # No vendored copy available (e.g. installed as a package without the repo's
+    # deploy/cluster/vendor tree). Clone the SAME pinned ref the vendored copy
+    # tracks rather than upstream HEAD, so an installed-package run stays
+    # reproducible instead of silently drifting onto ``main``.
+    return _resolve_recipe_root(
+        None, ref=_PINNED_LIBRARY_REF, work_root=work_root, on_status=on_status
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -289,9 +309,18 @@ def ensure_subnet(
 
     subnets = _list_subnets(nebius_bin, project_id, env)
     if subnets:
-        sid = str(subnets[0].get("metadata", {}).get("id") or "")
-        if sid:
-            return sid, ""
+        # Deterministic pick: prefer a subnet whose name looks like the project
+        # default, else the lowest id, so repeated runs choose the same subnet
+        # instead of relying on list order.
+        def _rank(sub: dict[str, Any]) -> tuple[int, str]:
+            meta = sub.get("metadata", {})
+            name = str(meta.get("name") or "")
+            return (0 if "default" in name else 1, str(meta.get("id") or ""))
+
+        for sub in sorted(subnets, key=_rank):
+            sid = str(sub.get("metadata", {}).get("id") or "")
+            if sid:
+                return sid, ""
     _log(on_status, f"no subnet in project {project_id[:12]}...; creating network + subnet")
     net = _run_capture(
         [
@@ -611,7 +640,7 @@ def deploy_fleet(
     project_ids: dict[str, str] = {}
 
     for project in spec.projects:
-        if only_projects and project.key() not in only_projects:
+        if not _project_in_scope(project, only_projects, prefix):
             continue
         region = project.region or fleet_region
         try:
@@ -848,12 +877,14 @@ def destroy_fleet(
     timeout_minutes: int = 120,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Destroy clusters in the fleet (best-effort, per-target).
+    """Destroy the fleet's clusters (best-effort, per-target).
 
-    Destroying is a **cascade**: every cluster in the targeted projects is torn
-    down (and any VPC network the fleet created is reclaimed). ``only_projects`` /
-    ``only_clusters`` narrow the teardown to a subset so one or many specific
-    clusters/projects can be removed without touching the rest of the fleet.
+    Tears down each cluster **declared in the spec** that has a local install dir
+    (its own terraform state), and reclaims any VPC network the fleet created.
+    ``only_projects`` / ``only_clusters`` narrow the teardown to a subset so one or
+    many specific clusters/projects can be removed without touching the rest.
+    This does not enumerate clusters via the API, so a cluster created out-of-band
+    (or under a since-edited spec) is not reclaimed here.
     """
 
     spec.validate()
@@ -862,10 +893,11 @@ def destroy_fleet(
     work_root = (work_root or _default_work_root()).expanduser()
     fleet_root = work_root / spec.name
 
+    prefix = project_prefix if project_prefix is not None else spec.project_prefix
     destroyed: list[dict[str, Any]] = []
     removed_keys: set[tuple[str, str]] = set()
     for project in spec.projects:
-        if only_projects and project.key() not in only_projects:
+        if not _project_in_scope(project, only_projects, prefix):
             continue
         for cluster in project.clusters:
             if only_clusters and cluster.name not in only_clusters:
@@ -891,15 +923,22 @@ def destroy_fleet(
             )
             _log(on_status, f"[{label}] terraform destroy")
             _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900)
-            destroy = _run_capture(
-                [terraform_bin, "destroy", "-auto-approve", "-input=false"],
-                cwd=workdir,
-                env=env,
-                timeout=timeout_minutes * 60,
-                check=False,
-            )
+            # Stream teardown output (like deploy) instead of buffering silently;
+            # a non-zero exit raises, which we catch to trigger the direct-delete
+            # fallback below.
+            try:
+                _run_stream(
+                    [terraform_bin, "destroy", "-auto-approve", "-input=false"],
+                    cwd=workdir,
+                    env=env,
+                    timeout=timeout_minutes * 60,
+                )
+                destroy_failed = False
+            except Exception as exc:  # noqa: BLE001 - fall back to direct cleanup
+                logger.debug("[%s] terraform destroy failed: %s", label, exc)
+                destroy_failed = True
             status = "destroyed"
-            if destroy.returncode != 0:
+            if destroy_failed:
                 _log(on_status, f"[{label}] terraform destroy reported errors; direct cleanup")
                 # Fall back to deleting the mk8s cluster directly by name.
                 if project_id:

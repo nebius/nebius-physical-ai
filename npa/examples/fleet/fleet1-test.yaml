@@ -26,8 +26,11 @@ defaults:
     count: 1
     platform: gpu-rtx6000
     preset: 1gpu-24vcpu-218gb
-  enable_filestore: true
-  filestore_disk_size_gibibytes: 1024
+  # Shared filesystem is off by default (each one is a 1 TiB NETWORK_SSD and
+  # consumes tenant compute.filesystem quota). Uncomment to attach one + the
+  # CSI default StorageClass:
+  # enable_filestore: true
+  # filestore_disk_size_gibibytes: 1024
 
 projects:
   - name: a   # -> project "fleet1-test-a"

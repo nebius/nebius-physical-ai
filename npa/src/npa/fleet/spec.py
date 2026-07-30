@@ -76,7 +76,10 @@ class ClusterSpec:
     # single-GPU presets such as RTX PRO 6000 1-GPU).
     enable_gpu_cluster: bool | None = None
     infiniband_fabric: str = ""
-    enable_filestore: bool = True
+    # Off by default: a shared filesystem provisions a 1 TiB NETWORK_SSD per
+    # cluster and consumes tenant compute.filesystem.count/size quota. Opt in
+    # per cluster when a shared FS + CSI default StorageClass is actually needed.
+    enable_filestore: bool = False
     existing_filestore: str = ""
     filestore_disk_size_gibibytes: int = 1024
     gpu_disk_size_gib: int = 1023
@@ -226,7 +229,7 @@ def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
         gpu_nodes=_node_pool_from(data.get("gpu_nodes"), default_platform="gpu-rtx6000"),
         enable_gpu_cluster=None if enable_gpu is None else bool(enable_gpu),
         infiniband_fabric=str(data.get("infiniband_fabric", "") or ""),
-        enable_filestore=bool(data.get("enable_filestore", True)),
+        enable_filestore=bool(data.get("enable_filestore", False)),
         existing_filestore=str(data.get("existing_filestore", "") or ""),
         filestore_disk_size_gibibytes=int(data.get("filestore_disk_size_gibibytes", 1024)),
         gpu_disk_size_gib=int(data.get("gpu_disk_size_gib", 1023)),

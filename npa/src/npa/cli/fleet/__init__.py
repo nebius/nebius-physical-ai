@@ -39,7 +39,9 @@ def _targets(spec, *, project_prefix, only_projects, only_clusters):
     prefix = project_prefix if project_prefix else spec.project_prefix
     out = []
     for project in spec.projects:
-        if only_projects and project.key() not in only_projects:
+        if only_projects and not (
+            project.key() in only_projects or project.display_name(prefix) in only_projects
+        ):
             continue
         for cluster in project.clusters:
             if only_clusters and cluster.name not in only_clusters:
@@ -60,8 +62,8 @@ def _confirm(action: str, spec, targets, *, yes: bool, cascade: bool = False) ->
         typer.echo(f"  - {display} / cluster {cluster_name}")
     if cascade:
         typer.echo(
-            "  (destroy cascades: every listed cluster and any VPC network this "
-            "fleet created will be torn down.)"
+            "  (each listed cluster with local state is torn down, along with any "
+            "VPC network this fleet created for it.)"
         )
     if not targets:
         typer.echo("  (no targets in scope) -- nothing to do.")
@@ -127,7 +129,7 @@ def deploy_cmd(
     only_projects: str = typer.Option(
         "",
         "--only-projects",
-        help="Comma-separated project keys to deploy (add one or many; subset of the spec).",
+        help="Comma-separated project keys or display names to deploy (add one or many).",
     ),
     only_clusters: str = typer.Option(
         "",
@@ -194,7 +196,7 @@ def deploy_cmd(
 def destroy_cmd(
     spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML used to deploy."),
     only_projects: str = typer.Option(
-        "", "--only-projects", help="Comma-separated project keys to destroy (remove one or many)."
+        "", "--only-projects", help="Comma-separated project keys or display names to destroy (remove one or many)."
     ),
     only_clusters: str = typer.Option(
         "", "--only-clusters", help="Comma-separated cluster names to destroy (remove one or many)."
@@ -205,7 +207,7 @@ def destroy_cmd(
     ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
-    """Destroy clusters in the fleet (cascade; best-effort, per-target)."""
+    """Destroy the fleet's spec-declared clusters (best-effort, per-target)."""
 
     from npa.fleet.lifecycle import destroy_fleet
 
