@@ -68,8 +68,16 @@ function mockAppFrame() {
   return cy.get("#viewerPaneFoxglove iframe", { timeout: 20000 });
 }
 
-function mockAppDoc() {
-  return mockAppFrame().its("0.contentDocument").should("exist");
+// Re-query the iframe on every retry: chaining through contentDocument can
+// detach the subject while the SDK is still wiring the frame up.
+function expectMockAppState(state) {
+  return mockAppFrame().should(($frame) => {
+    const doc = $frame[0].contentDocument;
+    expect(doc, "embedded app document").to.exist;
+    const el = doc.querySelector("[data-testid=mock-foxglove-state]");
+    expect(el, "embedded app state element").to.exist;
+    expect(el.getAttribute("data-state"), "embedded viewer handshake state").to.eq(state);
+  });
 }
 
 describe("NPA agent UI — embedded Foxglove viewer", () => {
@@ -93,10 +101,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     mockAppFrame().should("have.attr", "allow").and("include", "keyboard-map");
 
     // The embedded app reports ready only after the documented handshake.
-    mockAppDoc()
-      .its("body")
-      .find("[data-testid=mock-foxglove-state]", { timeout: 20000 })
-      .should("have.attr", "data-state", "ready");
+    expectMockAppState("ready");
     cy.get("#foxgloveStatus", { timeout: 20000 })
       .should("have.class", "is-ready")
       .and("contain.text", "Foxglove viewer ready");
