@@ -8,7 +8,9 @@
  * handshake and records every command the UI sends.
  */
 
-const MOCK_EMBED_SRC = "/mock-foxglove-app/";
+// The SDK requires an absolute embed URL (`new URL(src)`), exactly like a real
+// Foxglove deployment; the agent backend enforces the same rule.
+const MOCK_EMBED_SRC = `${Cypress.config("baseUrl")}/mock-foxglove-app/`;
 const MCAP_URL = "/foxglove/data/tok-session.mcap";
 
 function foxgloveConfig(overrides) {
