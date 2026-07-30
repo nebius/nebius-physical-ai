@@ -69,7 +69,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072902"
+AGENT_UI_VERSION = "2026073001"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -134,6 +134,23 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "_maybe_origin_reply",
     "build_run_origin",
     "Grounded origin facts for this run",
+)
+
+# Embedded Foxglove viewer: the real @foxglove/embed SDK, loaded on demand from
+# same-origin assets, mounted into its own viewer pane, and fed by /api/foxglove/*.
+AGENT_FOXGLOVE_CONTRACT = (
+    'id="renderModeFoxglove"',
+    'id="viewerPaneFoxglove"',
+    'id="foxgloveHost"',
+    'id="foxgloveStatus"',
+    "ensureFoxgloveViewer",
+    "setFoxgloveDataSource",
+    "refreshFoxgloveViewer",
+    "mountFoxgloveViewer",
+    "/api/foxglove/config",
+    "captureFoxgloveContext",
+    # Cross-origin embed: never claim a captured frame for this pane.
+    "cross-origin iframe",
 )
 
 AGENT_CHAT_QUEUE_CONTRACT = (
@@ -9815,6 +9832,13 @@ def verify_live_cmd(
         'id="chatDrawerClose"',
         "chat-fab",
         "transform-origin: bottom right",
+        # Embedded Foxglove viewer pane.
+        'id="renderModeFoxglove"',
+        'id="viewerPaneFoxglove"',
+        'id="foxgloveHost"',
+        "ensureFoxgloveViewer",
+        "mountFoxgloveViewer",
+        "/api/foxglove/config",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

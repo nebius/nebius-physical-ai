@@ -437,6 +437,41 @@
         min-height: 560px;
         height: 100%;
       }
+      .foxglove-host {
+        height: 100%;
+        min-height: 560px;
+        background: #0b1020;
+      }
+      .foxglove-host iframe { width: 100%; height: 100%; border: 0; }
+      .foxglove-message {
+        position: absolute;
+        inset: 0;
+        overflow: auto;
+        padding: 20px;
+        background: #0b1020;
+        color: #e2e8f0;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .foxglove-message h4 { margin: 0 0 8px; font-size: 14px; }
+      .foxglove-message code {
+        background: #16204a;
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      .foxglove-status {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 6px 12px;
+        background: rgba(11, 16, 32, 0.88);
+        color: #94a3b8;
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .foxglove-status.is-ready { color: #4ade80; }
+      .foxglove-status.is-error { color: #f87171; }
       .media-preview-host {
         height: 100%;
         min-height: 560px;
@@ -1697,6 +1732,7 @@
                   <select id="artifactTypeFilter">
                     <option value="">All types</option>
                     <option value="rerun">Rerun .rrd</option>
+                    <option value="foxglove">Foxglove .mcap/.bag</option>
                     <option value="video">Video .mp4/.webm/.mov</option>
                     <option value="json">JSON</option>
                     <option value="text">Text/logs</option>
@@ -1742,6 +1778,7 @@
               <h3>Viewer</h3>
               <div class="render-mode-tabs" role="tablist" aria-label="Artifact render mode">
                 <button type="button" class="render-mode-tab is-active" id="renderModeRerun" data-render-mode="rerun">Rerun</button>
+                <button type="button" class="render-mode-tab" id="renderModeFoxglove" data-render-mode="foxglove">Foxglove</button>
                 <button type="button" class="render-mode-tab" id="renderModeVideo" data-render-mode="video">Video</button>
                 <button type="button" class="render-mode-tab" id="renderModeImage" data-render-mode="image">Image</button>
                 <button type="button" class="render-mode-tab" id="renderModeData" data-render-mode="data">Data</button>
@@ -1775,6 +1812,11 @@
                     <p class="cover-hint" data-default-hint="Caching Rerun assets for a seamless viewer open.">Caching Rerun assets for a seamless viewer open.</p>
                   </div>
                 </div>
+              </div>
+              <div id="viewerPaneFoxglove" class="viewer-pane is-inactive-viewer">
+                <div id="foxgloveHost" class="foxglove-host"></div>
+                <div id="foxgloveMessage" class="foxglove-message" hidden></div>
+                <div id="foxgloveStatus" class="foxglove-status" role="status" aria-live="polite">Foxglove viewer idle.</div>
               </div>
               <div id="viewerPaneMedia" class="viewer-pane is-inactive-viewer">
                 <div id="artifactPreviewHost" class="media-preview-host" hidden></div>
@@ -3520,11 +3562,16 @@
       async function captureVisualContext() {
         // Capture the active viewer pane for vision feedback (Rerun / video / image / data).
         const kind = String(activeRenderMode || activeArtifactRender || "rerun");
-        const visualKind = (kind === "video" || kind === "image" || kind === "data") ? kind : "rerun";
+        const visualKind =
+          (kind === "video" || kind === "image" || kind === "data" || kind === "foxglove") ? kind : "rerun";
         let imageDataUrl = "";
         let frameQuality = "";
         let textExcerpt = "";
-        if (visualKind === "rerun") {
+        if (visualKind === "foxglove") {
+          // Cross-origin embed: describe from live viewer state, never a fake frame.
+          textExcerpt = await captureFoxgloveContext();
+          frameQuality = "cross-origin-embed";
+        } else if (visualKind === "rerun") {
           const quality = await waitForQualityRerunFrame(10000);
           imageDataUrl = quality.dataUrl || "";
           frameQuality = quality.quality || "";
@@ -3622,10 +3669,17 @@
           promptLines.push("- " + String(meta.origin));
         }
         if (textExcerpt) {
-          promptLines.push("- data_excerpt:");
+          promptLines.push(visualKind === "foxglove" ? "- foxglove_viewer_state:" : "- data_excerpt:");
           promptLines.push("```");
           promptLines.push(textExcerpt);
           promptLines.push("```");
+        }
+        if (visualKind === "foxglove") {
+          promptLines.push(
+            "",
+            "Note: the Foxglove viewer renders in a cross-origin iframe, so no frame could be captured.",
+            "Describe the loaded recording/data source and give operator feedback from the state above; do not claim to see pixels."
+          );
         }
         const blob = (meta.artifact_key + " " + meta.note + " " + meta.run_id + " " + meta.camera).toLowerCase();
         if (/gr00t|groot|isaac|omniverse|heldout|policy|rollout|genesis|cosmos|g1|trajectory|skeleton|locomotion|sonic/.test(blob)) {
@@ -4048,23 +4102,219 @@
         host.innerHTML = "";
       }
       let activeRenderMode = "rerun";
+      // Pane per render mode. The Rerun wasm iframe must stay mounted when another
+      // viewer is active, so panes are toggled by class, never removed.
+      const VIEWER_PANES = {
+        rerun: "viewerPaneRerun",
+        foxglove: "viewerPaneFoxglove",
+        media: "viewerPaneMedia",
+      };
+      function viewerPaneForMode(mode) {
+        if (mode === "rerun") return "rerun";
+        if (mode === "foxglove") return "foxglove";
+        return "media";
+      }
       function setRenderMode(mode) {
         const next = String(mode || "rerun");
-        activeRenderMode = next === "video" || next === "image" || next === "data" ? next : "rerun";
+        activeRenderMode =
+          next === "video" || next === "image" || next === "data" || next === "foxglove"
+            ? next
+            : "rerun";
         document.querySelectorAll(".render-mode-tab").forEach((btn) => {
           btn.classList.toggle("is-active", btn.getAttribute("data-render-mode") === activeRenderMode);
         });
-        const rerunPane = document.getElementById("viewerPaneRerun");
-        const mediaPane = document.getElementById("viewerPaneMedia");
-        const isRerun = activeRenderMode === "rerun";
-        if (rerunPane) {
-          rerunPane.classList.toggle("is-active-viewer", isRerun);
-          rerunPane.classList.toggle("is-inactive-viewer", !isRerun);
+        const activePane = viewerPaneForMode(activeRenderMode);
+        for (const [paneKey, elementId] of Object.entries(VIEWER_PANES)) {
+          const pane = document.getElementById(elementId);
+          if (!pane) continue;
+          const isActive = paneKey === activePane;
+          pane.classList.toggle("is-active-viewer", isActive);
+          pane.classList.toggle("is-inactive-viewer", !isActive);
         }
-        if (mediaPane) {
-          mediaPane.classList.toggle("is-active-viewer", !isRerun);
-          mediaPane.classList.toggle("is-inactive-viewer", isRerun);
+        if (activeRenderMode === "foxglove") {
+          // Load the Foxglove embed SDK on demand: nothing is fetched until an
+          // operator actually opens this tab.
+          ensureFoxgloveViewer().catch((err) => console.warn("foxglove mount failed", err));
         }
+      }
+      // ---- Foxglove embedded viewer (https://docs.foxglove.dev/docs/embed/typescript-sdk) ----
+      // The SDK mounts a cross-origin iframe pointing at the configured Foxglove
+      // deployment and is driven over postMessage. We load the real SDK from the
+      // same-origin /foxglove/ assets installed at bootstrap.
+      let foxgloveHandle = null;
+      let foxgloveConfig = null;
+      let foxgloveMountPromise = null;
+      let foxgloveLastSourceKey = "";
+      function setFoxgloveStatus(text, kind) {
+        const el = document.getElementById("foxgloveStatus");
+        if (!el) return;
+        el.textContent = String(text || "");
+        el.classList.toggle("is-ready", kind === "ready");
+        el.classList.toggle("is-error", kind === "error");
+      }
+      function showFoxgloveMessage(html) {
+        const box = document.getElementById("foxgloveMessage");
+        if (!box) return;
+        box.hidden = false;
+        box.innerHTML = html;
+      }
+      function hideFoxgloveMessage() {
+        const box = document.getElementById("foxgloveMessage");
+        if (box) {
+          box.hidden = true;
+          box.innerHTML = "";
+        }
+      }
+      function foxgloveUnavailableHtml(config) {
+        const reason = escapeHtml(String((config && config.reason) || "Foxglove viewer is unavailable."));
+        const src = escapeHtml(String((config && config.embed_src) || ""));
+        return (
+          '<h4>Foxglove viewer unavailable</h4>' +
+          '<p>' + reason + '</p>' +
+          '<p>The agent hosts the MIT-licensed <code>@foxglove/embed</code> SDK and the recording; ' +
+          'the viewer application itself runs at ' + (src ? '<code>' + src + '</code>' : 'your Foxglove deployment') +
+          ' and users sign in there (a Foxglove plan that allows embedding, or a self-hosted deployment).</p>' +
+          '<p>Configure it with <code>npa agent bootstrap --foxglove-embed-src ... --foxglove-org-slug ...</code>.</p>'
+        );
+      }
+      function foxgloveSourceKey(config) {
+        const source = (config && config.data_source) || null;
+        if (!source) return "";
+        if (source.type === "live") return "live:" + String(source.url || "");
+        return String(source.type || "") + ":" + (source.urls || []).join(",");
+      }
+      async function loadFoxgloveConfig() {
+        try {
+          foxgloveConfig = await loadJson("/api/foxglove/config");
+        } catch (err) {
+          foxgloveConfig = {
+            available: false,
+            reason: "Could not read /api/foxglove/config: " + String((err && err.message) || err),
+          };
+        }
+        return foxgloveConfig;
+      }
+      async function ensureFoxgloveViewer(options) {
+        const opts = options || {};
+        if (foxgloveMountPromise) return foxgloveMountPromise;
+        foxgloveMountPromise = (async () => {
+          const config = await loadFoxgloveConfig();
+          if (!config || !config.available) {
+            teardownFoxgloveViewer();
+            showFoxgloveMessage(foxgloveUnavailableHtml(config));
+            setFoxgloveStatus(String((config && config.reason) || "Foxglove viewer unavailable"), "error");
+            return false;
+          }
+          if (foxgloveHandle && !opts.remount) {
+            hideFoxgloveMessage();
+            await setFoxgloveDataSource(config);
+            return true;
+          }
+          const host = document.getElementById("foxgloveHost");
+          if (!host) return false;
+          hideFoxgloveMessage();
+          setFoxgloveStatus("Loading Foxglove embed SDK…");
+          try {
+            const moduleUrl = String(config.host_module_url || "/foxglove/app/npa-foxglove-host.js");
+            const mod = await import(moduleUrl);
+            teardownFoxgloveViewer();
+            foxgloveHandle = mod.mountFoxgloveViewer({
+              parent: host,
+              config,
+              origin: location.origin,
+              onReady: () => {
+                const source = (foxgloveConfig && foxgloveConfig.data_source) || null;
+                setFoxgloveStatus(
+                  source
+                    ? "Foxglove viewer ready — " + String(source.type) + " source loaded."
+                    : "Foxglove viewer ready — no recording loaded yet.",
+                  "ready"
+                );
+              },
+              onError: (message) => setFoxgloveStatus("Foxglove viewer error: " + message, "error"),
+              onDescribe: () => { describeVisual().catch(() => {}); },
+            });
+            foxgloveLastSourceKey = foxgloveSourceKey(config);
+            setFoxgloveStatus("Connecting to " + String(config.embed_src || "the Foxglove viewer") + "…");
+            return true;
+          } catch (err) {
+            const message = String((err && err.message) || err);
+            teardownFoxgloveViewer();
+            showFoxgloveMessage(
+              '<h4>Foxglove SDK failed to load</h4><p>' + escapeHtml(message) + '</p>' +
+              '<p>The agent could not load <code>' + escapeHtml(String(config.host_module_url || "")) +
+              '</code>. Re-run <code>npa agent bootstrap</code> to reinstall the SDK assets.</p>'
+            );
+            setFoxgloveStatus("Foxglove SDK failed to load: " + message, "error");
+            return false;
+          }
+        })();
+        try {
+          return await foxgloveMountPromise;
+        } finally {
+          foxgloveMountPromise = null;
+        }
+      }
+      function teardownFoxgloveViewer() {
+        if (foxgloveHandle) {
+          try { foxgloveHandle.destroy(); } catch (_err) { /* already gone */ }
+        }
+        foxgloveHandle = null;
+        foxgloveLastSourceKey = "";
+      }
+      async function setFoxgloveDataSource(config) {
+        const cfg = config || (await loadFoxgloveConfig());
+        foxgloveConfig = cfg;
+        if (!foxgloveHandle || !cfg || !cfg.available) return false;
+        const key = foxgloveSourceKey(cfg);
+        if (!key) {
+          setFoxgloveStatus("Foxglove viewer ready — no recording loaded yet.", "ready");
+          return false;
+        }
+        if (key === foxgloveLastSourceKey) return true;
+        foxgloveHandle.setDataSource(cfg);
+        foxgloveLastSourceKey = key;
+        setFoxgloveStatus("Loading recording into Foxglove…");
+        return true;
+      }
+      async function refreshFoxgloveViewer() {
+        // Called after a run/artifact load so the pane follows the active recording.
+        if (activeRenderMode !== "foxglove" && !foxgloveHandle) return false;
+        const config = await loadFoxgloveConfig();
+        if (!config || !config.available) {
+          if (activeRenderMode === "foxglove") {
+            teardownFoxgloveViewer();
+            showFoxgloveMessage(foxgloveUnavailableHtml(config));
+            setFoxgloveStatus(String(config && config.reason) || "Foxglove viewer unavailable", "error");
+          }
+          return false;
+        }
+        if (!foxgloveHandle) return await ensureFoxgloveViewer();
+        return await setFoxgloveDataSource(config);
+      }
+      async function captureFoxgloveContext() {
+        // The embedded viewer is a cross-origin iframe: the browser cannot read its
+        // pixels. Describe it from live viewer state instead of faking a frame.
+        let status = null;
+        try {
+          status = await loadJson("/api/foxglove/status");
+        } catch (_err) {
+          status = null;
+        }
+        const cfg = foxgloveConfig || {};
+        const source = (status && status.data_source) || cfg.data_source || null;
+        const lines = [
+          "- viewer: `foxglove` (embedded @foxglove/embed SDK, cross-origin iframe — no pixel capture available)",
+          "- available: `" + String((status && status.available) !== undefined ? status.available : cfg.available) + "`",
+          "- embed_src: `" + String((status && status.embed_src) || cfg.embed_src || "(unset)") + "`",
+          "- sdk_version: `" + String((status && status.sdk_version) || cfg.sdk_version || "(unknown)") + "`",
+          "- data_source: `" + String((source && source.type) || "none") + "`",
+        ];
+        if (source && source.urls && source.urls.length) lines.push("- recording: `" + String(source.urls[0]) + "`");
+        if (source && source.url) lines.push("- live_url: `" + String(source.url) + "`");
+        if (status && status.reason) lines.push("- reason: " + String(status.reason));
+        if (status && status.artifact_key) lines.push("- artifact_key: `" + String(status.artifact_key) + "`");
+        return lines.join("\n");
       }
       async function authenticatedPreviewObjectUrl(previewUrl, host) {
         const resp = await fetchWithTimeout(previewUrl, { credentials: "include" }, 60000);
@@ -4085,6 +4335,13 @@
         const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
         const downloadUrl = String((simViz && simViz.artifact_download_url) || previewUrl || "");
         const safeRender = String(render || "");
+        if (safeRender === "foxglove") {
+          // Recordings play inside the embedded Foxglove viewer, not the media pane.
+          hideArtifactPreview();
+          setRenderMode("foxglove");
+          await refreshFoxgloveViewer();
+          return;
+        }
         if (safeRender === "video") setRenderMode("video");
         else if (safeRender === "image") setRenderMode("image");
         else if (safeRender === "json" || safeRender === "text" || safeRender === "download") setRenderMode("data");
@@ -4489,9 +4746,20 @@
         const render = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
         if (render && render !== "rerun") {
           activeArtifactRender = render;
-          showRerunPlaceholder("This artifact is a " + render + " preview, not a Rerun .rrd recording. Use the preview/download below or choose Type = Rerun .rrd.", { force: true });
+          const isFoxglove = render === "foxglove";
+          showRerunPlaceholder(
+            isFoxglove
+              ? "This artifact is an MCAP/bag recording, not a Rerun .rrd — it opens in the embedded Foxglove viewer tab."
+              : "This artifact is a " + render + " preview, not a Rerun .rrd recording. Use the preview/download below or choose Type = Rerun .rrd.",
+            { force: true }
+          );
           await showArtifactPreview(simViz, render);
-          showToast("Only .rrd artifacts open in Rerun; showing " + render + " preview.", "info");
+          showToast(
+            isFoxglove
+              ? "Recording opened in the Foxglove viewer tab."
+              : "Only .rrd artifacts open in Rerun; showing " + render + " preview.",
+            "info"
+          );
           return false;
         }
         if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {
