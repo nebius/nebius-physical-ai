@@ -736,8 +736,13 @@ def test_unexpected_submit_error_tears_down_defensively_and_fails_fast(
     assert len(report.waves) == 1
 
 
-def test_empty_job_id_is_rejected_instead_of_polling_unknown(tmp_path: Path) -> None:
-    """An unparseable job id used to burn max_wait_seconds and then leak the job."""
+def test_unidentifiable_job_is_rejected_instead_of_polling_unknown(tmp_path: Path) -> None:
+    """An unidentifiable job used to burn max_wait_seconds and then leak.
+
+    With no id from the launch output AND no match by name there is nothing safe to
+    poll (`sky jobs queue` matches numeric ids), so the wave fails immediately after a
+    defensive teardown instead of sitting on UNKNOWN for the whole deadline.
+    """
 
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
@@ -756,7 +761,7 @@ def test_empty_job_id_is_rejected_instead_of_polling_unknown(tmp_path: Path) -> 
     )
 
     assert report.status == "failed"
-    assert "did not report a job id" in report.error
+    assert "could not be found by name" in report.error
     assert status_fn.calls == [], "must not poll a job it cannot identify"
     # Cancel by cluster name is still attempted so a launched-but-unnamed job dies.
     assert cancels and cancels[0]["cluster"]
