@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 # Ambient token env vars that make the bare CLI skip a real token exchange.
@@ -40,7 +41,7 @@ class NebiusTokenError(RuntimeError):
     """Raised when a fresh Nebius IAM token cannot be obtained."""
 
 
-def strip_ambient_token_env(env: dict[str, str] | None = None) -> dict[str, str]:
+def strip_ambient_token_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return a copy of ``env`` with ambient Nebius token vars removed.
 
     A stale/ambient ``NEBIUS_IAM_TOKEN`` poisons *any* nebius-authenticated
@@ -54,7 +55,7 @@ def strip_ambient_token_env(env: dict[str, str] | None = None) -> dict[str, str]
     return {k: v for k, v in source.items() if k not in AMBIENT_TOKEN_ENVS}
 
 
-def nebius_profile(env: dict[str, str] | None = None) -> str:
+def nebius_profile(env: Mapping[str, str] | None = None) -> str:
     """Return the configured Nebius CLI profile name, or ``""`` when unset."""
 
     source = os.environ if env is None else env
@@ -71,7 +72,7 @@ def mint_nebius_iam_token(
     profile: str | None = None,
     allow_env_token: bool = True,
     timeout: int = 30,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """Return a short-lived Nebius IAM token, robust to an ambient token env.
 
