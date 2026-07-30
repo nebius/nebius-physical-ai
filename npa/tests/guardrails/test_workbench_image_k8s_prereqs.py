@@ -42,7 +42,13 @@ def test_isaac_lab_grants_its_runtime_user_access_to_isaac_sim() -> None:
 
     text = (DOCKER_ROOT / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
     assert "usermod -aG isaac-sim ubuntu" in text
-    assert "chmod -R" not in text, "a recursive chmod would rewrite multi-GB layers"
+    # Check instructions only: the rationale comment names the approach it avoids.
+    instructions = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "chmod -R" not in instructions, (
+        "a recursive chmod would rewrite multi-GB Isaac layers; use group membership"
+    )
 
 
 def test_derived_prereq_dockerfile_matches_the_shipped_one() -> None:
