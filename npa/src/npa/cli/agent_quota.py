@@ -90,7 +90,7 @@ def _agent_public_ip_quota_result() -> "CheckResult":
 
 
 def _agent_check_public_ip_quota(
-    project_id: str, tenant_id: str, fallback_region: str
+    project_id: str, tenant_id: str, fallback_region: str, *, agent_exists: bool = False
 ) -> None:
     """Fail fast when the deploy region has no public-IPv4 quota headroom.
 
@@ -98,7 +98,14 @@ def _agent_check_public_ip_quota(
     project's real region and check the tenant's per-region
     ``vpc.ipv4-address.public.count`` allowance. Best-effort: any unresolved
     region or unreadable quota is a no-op so a healthy deploy is never blocked.
+
+    ``agent_exists`` skips the gate entirely: ``npa agent deploy`` is also the
+    update path, and re-applying an agent that already holds its address needs no
+    headroom. Without this, a fully-used allowance (used up by that very agent)
+    made every re-deploy abort with advice to destroy the thing being updated.
     """
+    if agent_exists:
+        return
     from npa.clients.nebius import get_project_region, get_public_ipv4_quota
 
     region = (get_project_region(project_id) or (fallback_region or "").strip()).strip()

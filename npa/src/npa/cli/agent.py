@@ -591,7 +591,8 @@ def _apply_agent_terraform(
 
 def _resolve_project_alias(project: str) -> str:
     """Resolve an agent ``--project``: explicit value, else the configured
-    ``default_project``, else the static ``DEFAULT_PROJECT_ALIAS`` fallback.
+    ``default_project``, else the only configured project, else the static
+    ``DEFAULT_PROJECT_ALIAS`` fallback.
 
     Commands default ``--project`` to "" so an omitted flag targets the operator's
     configured default project rather than a hard-coded ``us-central1`` alias
@@ -601,11 +602,19 @@ def _resolve_project_alias(project: str) -> str:
     if alias:
         return alias
     try:
-        from npa.clients.config import default_project_name
+        from npa.clients.config import default_project_name, list_projects
 
         configured = str(default_project_name() or "").strip()
+        projects = list_projects()
     except Exception:  # noqa: BLE001 - best-effort; fall back to the static default
-        configured = ""
+        return DEFAULT_PROJECT_ALIAS
+    if configured and configured in projects:
+        return configured
+    # `default_project_name()` returns the literal "default" when the config has no
+    # default_project, which names no real stanza. A single configured project is
+    # the unambiguous target (matching `npa agent setup`).
+    if len(projects) == 1:
+        return next(iter(projects))
     return configured or DEFAULT_PROJECT_ALIAS
 
 
@@ -8312,7 +8321,7 @@ def _coerce_cli_list(value: Any) -> list[str]:
 @app.command("deploy")
 @resolve_typer_defaults
 def deploy_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias to store config under."),
+    project: str = typer.Option("", "--project", help="NPA project alias to store config under (default: configured default_project)."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
@@ -8340,6 +8349,12 @@ def deploy_cmd(
     ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
+    # Same resolution as status/destroy: an omitted --project must mean the
+    # operator's configured default_project. Deploying under the static
+    # us-central1 alias while status/destroy looked at the configured default left
+    # the agent unreachable by name — and destroy then reported success on an
+    # empty state while the real VM and its public IP kept running.
+    project = _resolve_project_alias(project)
     # deploy_cmd is also called programmatically (fresh-setup, `agent setup`
     # wrappers). Coerce list-valued options so an unresolved Typer default
     # (OptionInfo) can never crash `for item in tf_var` / `list(llm_models)`.
@@ -8405,7 +8420,7 @@ def deploy_cmd(
     # surfaces deep in `terraform apply` (a raw QuotaFailure) after the network,
     # subnet and boot disk were created and must be rolled back. Best-effort: an
     # unreadable quota never blocks the deploy.
-    _agent_check_public_ip_quota(env_project_id, env_tenant_id, env_region)
+    _agent_check_public_ip_quota(env_project_id, env_tenant_id, env_region, agent_exists=bool(_agent_record(project, name).get("public_ip")))
 
     from npa.clients.nebius import NebiusError, bootstrap_agent_environment, get_iam_token
 
@@ -8638,7 +8653,7 @@ def deploy_cmd(
 @app.command("fresh-setup")
 @resolve_typer_defaults
 def fresh_setup_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias for this fresh environment."),
+    project: str = typer.Option("", "--project", help="NPA project alias for this fresh environment (default: configured default_project)."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     project_id: str = typer.Option(..., "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option(..., "--tenant-id", help="Nebius tenant ID."),
@@ -8671,6 +8686,7 @@ def fresh_setup_cmd(
     ),
 ) -> None:
     """Initialize fresh project config and deploy a new agent from scratch."""
+    project = _resolve_project_alias(project)
     existing = _agent_record(project, name)
     if existing and not replace:
         _fail(
@@ -8817,7 +8833,7 @@ def setup_cmd(
 
 @app.command("bootstrap")
 def bootstrap_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
+    project: str = typer.Option("", "--project", help="NPA project alias (default: configured default_project)."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
     ssh_key: str = typer.Option("", "--ssh-key", help="SSH private key path (defaults to agent record or NPA_SSH_KEY)."),
@@ -8842,6 +8858,7 @@ def bootstrap_cmd(
     ),
 ) -> None:
     """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform)."""
+    project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
@@ -9122,10 +9139,11 @@ def destroy_cmd(
 
 @app.command("verify-live")
 def verify_live_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
+    project: str = typer.Option("", "--project", help="NPA project alias (default: configured default_project)."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
 ) -> None:
     """Exit 0 only when live infra checks and tests pass."""
+    project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")

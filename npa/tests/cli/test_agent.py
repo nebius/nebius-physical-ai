@@ -2790,3 +2790,75 @@ def test_destroy_terraform_no_state_uses_orphan_reclaim(monkeypatch) -> None:
     agent_module._destroy_agent_terraform("p", "n", record=None)
 
     assert calls == ["ingress", "orphan"]
+
+
+def test_agent_project_option_defaults_are_consistent() -> None:
+    """deploy must resolve --project the same way status/destroy do.
+
+    Regression: deploy/fresh-setup/bootstrap/verify-live defaulted --project to the
+    static `us-central1` alias while status/destroy resolved the configured
+    default, so a `-p`-less deploy stored the agent where a later `-p`-less status
+    could not find it — and destroy then reported success on an empty state while
+    the real VM and its public IP kept running.
+    """
+    from npa.cli import agent as agent_module
+
+    import inspect
+
+    for command in (
+        agent_module.deploy_cmd,
+        agent_module.fresh_setup_cmd,
+        agent_module.bootstrap_cmd,
+        agent_module.verify_live_cmd,
+        agent_module.status_cmd,
+        agent_module.destroy_cmd,
+    ):
+        option = inspect.signature(command).parameters["project"].default
+        default = getattr(option, "default", option)
+        assert default == "", f"{command.__name__} pins --project to {default!r}"
+
+
+def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) -> None:
+    """`default_project_name()` returns "default" for an unset config, naming nothing."""
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "default")
+    monkeypatch.setattr(
+        config_module, "list_projects", lambda: {"tle-workbench": {"project_id": "p-1"}}
+    )
+
+    assert agent_module._resolve_project_alias("") == "tle-workbench"
+    assert agent_module._resolve_project_alias("explicit") == "explicit"
+
+
+def test_resolve_project_alias_uses_the_configured_default_when_present(monkeypatch) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "prod")
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {"prod": {"project_id": "p-1"}, "dev": {"project_id": "p-2"}},
+    )
+
+    assert agent_module._resolve_project_alias("") == "prod"
+
+
+def test_public_ip_quota_gate_skips_an_agent_that_already_has_its_ip(monkeypatch) -> None:
+    """Re-deploying an existing agent reuses its address, so require no headroom."""
+    from npa.cli.agent import _agent_check_public_ip_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(
+        nebius_module,
+        "get_public_ipv4_quota",
+        lambda _tid, _region: (_ for _ in ()).throw(
+            AssertionError("quota must not be queried for an existing agent")
+        ),
+    )
+
+    # Must not raise, and must not even read the quota.
+    _agent_check_public_ip_quota("project-x", "tenant-x", "us-central1", agent_exists=True)
