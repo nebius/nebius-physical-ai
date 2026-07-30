@@ -343,6 +343,7 @@ def submit_cmd(
                 sky_bin=sky_bin,
                 image=image,
                 plan_only=plan_only,
+                infra=infra,
             )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
@@ -695,18 +696,69 @@ def _stage_npa_src_for_submit(
         return ""
 
 
+def _infra_kube_context(infra: str) -> str:
+    """Return the kube context named by ``--infra k8s/<context>``, or "".
+
+    Only ``k8s``/``kubernetes`` targets that pin an explicit context are
+    returned; a bare ``k8s`` (SkyPilot uses the current context), a non-k8s
+    target, or an empty value yield "".
+    """
+    value = str(infra or "").strip()
+    if "/" not in value:
+        return ""
+    kind, _, context = value.partition("/")
+    if kind.strip().lower() not in {"k8s", "kubernetes"}:
+        return ""
+    return context.strip()
+
+
+def _available_kube_contexts() -> list[str] | None:
+    """Return context names from the active kubeconfig(s), or None if unreadable.
+
+    Reads ``KUBECONFIG`` (``:``-separated, as SkyPilot/kubectl do) or
+    ``~/.kube/config``. Returns ``None`` (not ``[]``) when no kubeconfig file can
+    be read, so the caller can skip the check rather than false-fail; an empty
+    list means "readable, but defines no contexts".
+    """
+    import yaml as _yaml
+
+    raw = os.environ.get("KUBECONFIG", "").strip()
+    paths = (
+        [Path(p) for p in raw.split(os.pathsep) if p.strip()]
+        if raw
+        else [Path.home() / ".kube" / "config"]
+    )
+    contexts: list[str] = []
+    read_any = False
+    for path in paths:
+        try:
+            if not path.is_file():
+                continue
+            data = _yaml.safe_load(path.read_text()) or {}
+        except (OSError, _yaml.YAMLError):
+            continue
+        read_any = True
+        for entry in (data.get("contexts") or []):
+            name = str((entry or {}).get("name", "") or "").strip()
+            if name and name not in contexts:
+                contexts.append(name)
+    return contexts if read_any else None
+
+
 def _submit_prerequisites(
     spec_config: dict,
     *,
     sky_bin: str,
     image: str,
     plan_only: bool,
+    infra: str = "",
 ) -> list[tuple[str, str]]:
     """Return ``[(missing, remedy)]`` for an npa.workflow submit.
 
     A first submit used to fail one prerequisite at a time — no npa source, then
-    no SkyPilot CLI, then a placeholder bucket — each as a separate run. Collect
-    them so the operator sees the whole list once.
+    no SkyPilot CLI, then a placeholder bucket, then an unresolvable kube context
+    — each as a separate run. Collect them so the operator sees the whole list
+    once.
     """
     from npa.orchestration.npa_workflow.src_staging import resolve_src_uri_from_env
 
@@ -751,6 +803,26 @@ def _submit_prerequisites(
                 "pass --var bucket=<your-bucket>",
             )
         )
+
+    # Catch an `--infra k8s/<context>` that names a context the kubeconfig does
+    # not define, up front. Otherwise `sky jobs launch` fails late with a long
+    # SkyPilot stack ("Context <name> not found ... Available contexts: []") —
+    # e.g. after a stale controller is purged but no real cluster was provisioned.
+    context = _infra_kube_context(infra)
+    if not plan_only and context:
+        available = _available_kube_contexts()
+        if available is not None and context not in available:
+            shown = ", ".join(available) if available else "none"
+            missing.append(
+                (
+                    f"kube context {context!r} (from --infra {infra!r}) is not in "
+                    f"your kubeconfig (available: {shown})",
+                    "provision a cluster (`npa provision-if-absent --project "
+                    "<alias>`) or point KUBECONFIG at the target cluster, then pass "
+                    "`--infra k8s/<context>` with a context from "
+                    "`kubectl config get-contexts`",
+                )
+            )
     return missing
 
 

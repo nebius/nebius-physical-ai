@@ -226,3 +226,108 @@ def test_run_spec_accepts_var_overrides() -> None:
     assert result.exit_code == 0, result.output
     assert "my-real-bucket" in result.stdout
     assert "example-bucket" not in result.stdout
+
+
+# ── --infra kube-context preflight ────────────────────────────────────────
+
+from npa.cli.workbench.workflow import (  # noqa: E402
+    _available_kube_contexts,
+    _infra_kube_context,
+    _submit_prerequisites,
+)
+
+
+def _write_kubeconfig(tmp_path: Path, *contexts: str) -> Path:
+    import yaml
+
+    path = tmp_path / "kubeconfig"
+    path.write_text(yaml.safe_dump({"contexts": [{"name": c} for c in contexts]}))
+    return path
+
+
+def _prereq_items(**kwargs) -> list[str]:
+    return [item for item, _remedy in _submit_prerequisites(**kwargs)]
+
+
+def _mock_sky_bin_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    import npa.orchestration.skypilot._bin as skybin
+
+    monkeypatch.setattr(skybin, "resolve_sky_bin", lambda _b: "/usr/bin/sky")
+
+
+# A registry-pinned image satisfies the npa-source requirement, isolating the
+# kube-context check.
+_PINNED_IMAGE = "cr.eu-north1.nebius.cloud/reg/npa-lerobot:tag"
+
+
+def test_infra_kube_context_extracts_only_a_pinned_k8s_context() -> None:
+    assert _infra_kube_context("k8s/prod") == "prod"
+    assert _infra_kube_context("kubernetes/np-cluster") == "np-cluster"
+    assert _infra_kube_context("k8s") == ""  # no pinned context
+    assert _infra_kube_context("nebius") == ""  # non-k8s target
+    assert _infra_kube_context("") == ""
+
+
+def test_available_kube_contexts_none_when_unreadable(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "does-not-exist"))
+    assert _available_kube_contexts() is None
+
+
+def test_available_kube_contexts_reads_names(monkeypatch, tmp_path) -> None:
+    kubeconfig = _write_kubeconfig(tmp_path, "alpha", "beta")
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+    assert _available_kube_contexts() == ["alpha", "beta"]
+
+
+def test_submit_preflight_flags_a_missing_kube_context(monkeypatch, tmp_path) -> None:
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
+    items = _prereq_items(
+        spec_config={"bucket": "real-bucket"},
+        sky_bin="",
+        image=_PINNED_IMAGE,
+        plan_only=False,
+        infra="k8s/missing-ctx",
+    )
+    assert any("kube context 'missing-ctx'" in item for item in items)
+    assert any("other-ctx" in item for item in items)  # lists what is available
+
+
+def test_submit_preflight_accepts_a_present_kube_context(monkeypatch, tmp_path) -> None:
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "prod")))
+    items = _prereq_items(
+        spec_config={"bucket": "real-bucket"},
+        sky_bin="",
+        image=_PINNED_IMAGE,
+        plan_only=False,
+        infra="k8s/prod",
+    )
+    assert not any("kube context" in item for item in items)
+
+
+def test_submit_preflight_skips_context_check_when_kubeconfig_unreadable(
+    monkeypatch, tmp_path
+) -> None:
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "does-not-exist"))
+    items = _prereq_items(
+        spec_config={"bucket": "real-bucket"},
+        sky_bin="",
+        image=_PINNED_IMAGE,
+        plan_only=False,
+        infra="k8s/anything",
+    )
+    assert not any("kube context" in item for item in items)
+
+
+def test_plan_only_skips_the_kube_context_check(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
+    items = _prereq_items(
+        spec_config={"bucket": "real-bucket"},
+        sky_bin="",
+        image=_PINNED_IMAGE,
+        plan_only=True,
+        infra="k8s/missing-ctx",
+    )
+    assert not any("kube context" in item for item in items)
