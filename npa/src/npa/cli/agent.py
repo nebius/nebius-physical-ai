@@ -29,6 +29,7 @@ from npa.cli.agent_quota import (
     _agent_check_public_ip_quota,
     _agent_public_ip_quota_result,
 )
+from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_destroy_tf_vars
 from npa.clients.config import (
     ConfigError,
     resolve_environment,
@@ -665,50 +666,6 @@ def _agent_extra_ingress_ports(
     if public_https:
         extra.append(DEFAULT_HTTPS_PORT)
     return sorted({port for port in extra if port != agent_port})
-
-
-def _agent_terraform_state_exists(project: str, name: str) -> bool:
-    tf_dir = provisioner.working_dir_path(project, name)
-    return (tf_dir / ".terraform").is_dir()
-
-
-def _resolve_destroy_tf_vars(
-    project: str,
-    name: str,
-    record: dict[str, Any] | None,
-) -> dict[str, str]:
-    state = resolve_terraform_state(project)
-    saved_env = resolve_environment(project)
-    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "eu-north1")
-    project_id = str((record or {}).get("project_id", "") or (saved_env.project_id if saved_env else ""))
-    service_account_id = str((record or {}).get("service_account_id", "")).strip()
-    if not service_account_id:
-        creds = (record or {}).get("credentials", {})
-        if isinstance(creds, dict):
-            service_account_id = str(creds.get("service_account_id", "")).strip()
-    if not service_account_id:
-        service_account_id = _resolve_agent_service_account_id(project, record or {})
-    from npa.clients.nebius import get_iam_token
-
-    iam_token = get_iam_token()
-    return {
-        "nebius_project_id": project_id,
-        "nebius_region": region,
-        "service_account_id": service_account_id,
-        "iam_token": iam_token,
-        "instance_name": f"agent-{project}-{name}",
-        "server_port": str(DEFAULT_AGENT_PORT),
-        "workbench_type": "agent",
-        "gpu_platform": "cpu-d3",
-        "gpu_preset": "8vcpu-32gb",
-        "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
-        "enable_preemptible": "false",
-        "nebius_api_key": state.access_key,
-        "nebius_secret_key": state.secret_key,
-        "s3_bucket": state.bucket,
-        "s3_endpoint": state.endpoint,
-        "extra_ingress_ports": "[]",
-    }
 
 
 def _cleanup_agent_ingress(instance_id: str) -> None:
