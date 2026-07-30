@@ -59,6 +59,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
         "structured rollout judgment returned (score + success verdict)",
     ],
+    "cosmos-curate": [
+        "real upstream Cosmos Curator stages run in-process (no Ray, no GPU)",
+        "canonical curator output written: clips/*.mp4 + metas/v0/*.json",
+        "per-clip motion score computed by upstream's MotionFilterStage",
+    ],
     "sonic": [
         "entrypoint smoke mode",
         "GPU + image-pull proofs",

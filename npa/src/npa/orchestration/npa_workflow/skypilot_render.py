@@ -21,6 +21,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     "workbench.cosmos3": "cosmos3-reason",
+    "workbench.cosmos_curate": "cosmos-curate",
+    # The evaluator's checks are CPU pixel work plus hosted Token Factory calls,
+    # which the cosmos image already carries (it is what vlm_eval grades in).
+    "workbench.cosmos_evaluator": "cosmos",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.fiftyone": "fiftyone",
@@ -40,6 +44,8 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
+    # Attribute verification generates and answers its questions on Token Factory.
+    "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.cosmos3": ("HF_TOKEN",),
     "workbench.sonic": ("HF_TOKEN", "NGC_API_KEY"),
     "workbench.groot": ("HF_TOKEN", "NGC_API_KEY"),

@@ -299,6 +299,34 @@ containers:
       timeout_seconds: 1800
       status: blocked-on-upstream
 
+  cosmos-curate:
+    image: npa-cosmos-curate
+    dockerfile: npa/docker/workbench/cosmos-curate/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        NVIDIA Cosmos Curator video curation (clip splitting, transcoding, motion
+        scoring, canonical clip metadata) over augmented physical-AI video — the
+        curation stage of the Physical AI Data Factory blueprint.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm
+      network: none (workflow entrypoint)
+      external_fetch: [pypi, conda-forge, github, s3]
+      notes: >-
+        CPU-only. Bakes a pinned upstream cosmos-curate checkout (Apache-2.0) plus
+        the dependency subset its GPU-free stages import, and a conda-forge ffmpeg
+        carrying libopenh264 because upstream's transcoding stage accepts only
+        libopenh264 or h264_nvenc. torch is the CPU wheel: the motion stage runs
+        its CPU code path when no GPU is requested.
+    golden_eval:
+      kind: container-smoke
+      command: python /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py
+      serverless_gpu: h100
+      gpu: none
+      timeout_seconds: 900
+      status: ready
+
   sonic:
     image: npa-sonic
     dockerfile: npa/docker/workbench/sonic/Dockerfile

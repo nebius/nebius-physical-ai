@@ -63,6 +63,9 @@ images:
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job
+  cosmos-curate:
+    dockerfile: cosmos-curate/Dockerfile
+    tier: interactive
   lerobot-vlm-rl:
     dockerfile: lerobot-vlm-rl/Dockerfile
     tier: job
