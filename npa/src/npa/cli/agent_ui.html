@@ -501,10 +501,15 @@
       }
       .rerun-stage h3,
       .rerun-stage .hint,
-      .rerun-stage .cta,
       .rerun-stage .status-row,
       .rerun-stage .rollout-hint {
         color: #cbd5e1;
+      }
+      /* The CTA keeps its cream banner background even on the dark viewer stage,
+         so it needs dark ink — light text on cream is unreadable (see the color
+         contrast rule at the top of this file). */
+      .rerun-stage .cta {
+        color: var(--brand-ink);
       }
       .rerun-stage-chrome {
         padding: 14px 14px 10px;
