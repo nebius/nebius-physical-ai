@@ -14,8 +14,11 @@ requires-python = ">=3.10"
 # split — the default install is fully capable. GPU/simulation wheels
 # (`genesis`/`groot`/`sonic`) stay opt-in because they run in the remote Nebius
 # images your jobs launch, not on the client, and the optional agent adapters
-# (`agent-eval`/`agent-trace`) degrade gracefully when absent. Lower bounds are
-# deliberately wide so a stale mirror does not break the install.
+# (`agent-eval`/`agent-trace`) degrade gracefully when absent. Bounds are
+# deliberately wide so a stale mirror does not break the install, except for
+# lancedb, rerun-sdk and fastapi: those three are version-pinned because their
+# APIs move between minor releases and the workbench tools are written against
+# the pinned ones.
 dependencies = [
     "typer>=0.24",
     # Imported directly (npa.cli.workflow_shim); typer >= 0.27 no longer
