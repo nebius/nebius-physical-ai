@@ -186,6 +186,65 @@ def test_configure_discovers_and_writes_multiple_projects(monkeypatch, tmp_path)
     assert not creds.get("storage")
 
 
+def test_configure_discovery_prefers_eu_north1_registry(monkeypatch, tmp_path) -> None:
+    """Discovery must not pin a project-local non-eu-north1 registry.
+
+    Regression: `_select_discovered_projects` saved whatever registry the
+    project happened to have, so a us-central1-only project got a project-local
+    registry that does NOT hold the npa-* workbench images — breaking later
+    workbench deploys with image-not-found. It must fall back to the eu-north1
+    first-party default just like the manual-entry path does.
+    """
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(
+        monkeypatch,
+        project="project-1",
+        tenant="tenant-1",
+        registry="cr.us-central1.nebius.cloud/u00xyz",
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "list_projects_in_tenant",
+        lambda tenant_id: [
+            {
+                "id": "project-1",
+                "name": "solo",
+                "tenant_id": "tenant-1",
+                "region": "us-central1",
+            }
+        ],
+    )
+
+    def _must_not_provision(*_a, **_k):
+        raise AssertionError("storage must not provision when the user opts out")
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _must_not_provision)
+
+    # select the single project, decline storage, then HF/TF/NGC (all skipped).
+    answers = "\n".join(["1", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    stanza = cfg["projects"]["solo"]
+    # The project's region is preserved (placement follows the project), but the
+    # registry falls back to the eu-north1 first-party default, not the
+    # project-local us-central1 registry.
+    assert stanza["region"] == "us-central1"
+    assert stanza["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
+    assert "us-central1" not in stanza["container_registry"]
+
+
 def _fresh_configure_paths(monkeypatch, tmp_path):
     """Point configure at empty tmp dotfiles and a ready Nebius profile."""
     from npa.clients import config as config_module

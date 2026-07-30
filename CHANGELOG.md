@@ -9,6 +9,16 @@ a versioned heading when a release is cut.
 
 ### First-run walkthrough fixes (README → agent → Physical AI Data Factory)
 
+- **`npa configure` project discovery no longer pins a project-local registry.**
+  When picking a project from discovery, configure saved whatever container
+  registry the project happened to have; a project whose only registry is in
+  another region (e.g. `us-central1`) got a project-local registry that does not
+  hold the `npa-*` workbench images, breaking later workbench deploys with
+  image-not-found. Discovery now shares the manual-entry path's logic
+  (`_preferred_container_registry`): it only adopts a discovered registry when it
+  is in eu-north1 (where the workbench images live), otherwise it falls back to
+  the eu-north1 first-party default. The project's own region is still preserved
+  (placement follows the project).
 - **`npa agent setup` no longer leaks Typer defaults into Terraform.** `setup`
   calls `fresh-setup`, which calls `deploy`, as plain Python functions, so every
   omitted option arrived as a `typer.models.OptionInfo` sentinel:

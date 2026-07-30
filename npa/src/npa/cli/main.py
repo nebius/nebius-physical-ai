@@ -223,6 +223,28 @@ def _region_from_registry_host(registry: str) -> str:
     return ""
 
 
+def _preferred_container_registry(nebius_client, project_id: str) -> str:
+    """Return the container registry to configure for *project_id*.
+
+    Prefer a discovered registry ONLY when it is in ``DEFAULT_REGION``
+    (eu-north1), where the first-party workbench images live; otherwise use the
+    first-party default. A project whose only registry is in another region
+    (e.g. a us-central1-only project) does NOT hold the ``npa-*`` workbench
+    images, so pinning that project-local registry would break later workbench
+    deploys with image-not-found. Both configure paths (manual entry and project
+    discovery) share this so they never diverge on which registry gets saved.
+    """
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
+
+    try:
+        discovered = nebius_client.discover_container_registry(project_id)
+    except Exception:  # noqa: BLE001 - registry discovery is best-effort
+        discovered = ""
+    if discovered and _region_from_registry_host(discovered) == DEFAULT_REGION:
+        return discovered
+    return DEFAULT_CONTAINER_REGISTRY
+
+
 def _create_nebius_profile(*, runner: Callable[..., object] = subprocess.run) -> bool:
     """Run the interactive `nebius profile create` flow."""
 
@@ -580,8 +602,6 @@ def _select_discovered_projects(
     Auto-derives tenant/project/region from each pick and best-effort discovers
     the container registry. npa is multi-project: the user may select several.
     """
-    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
-
     # Large Nebius accounts can expose hundreds/thousands of projects. Dumping
     # them all (and defaulting to 'all', which then discovers a registry per
     # project) is unusable, so offer a name/id filter and cap the printed list.
@@ -643,7 +663,10 @@ def _select_discovered_projects(
             alias = f"{base_alias}-{suffix}"
             suffix += 1
         used_aliases.add(alias)
-        registry = nebius_client.discover_container_registry(proj["id"]) or DEFAULT_CONTAINER_REGISTRY
+        # Prefer an eu-north1 registry (workbench images live there); a
+        # project-local registry in another region lacks the npa-* images and
+        # would break later workbench deploys. Mirrors the manual-entry path.
+        registry = _preferred_container_registry(nebius_client, proj["id"])
         stanza = {
             "project_id": proj["id"],
             "tenant_id": proj["tenant_id"],
@@ -799,7 +822,6 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     )
     from npa.clients.credentials import load_credentials, write_credentials_file
     from npa.clients import nebius as nebius_client
-    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
     typer.echo(
         "Interactive npa setup. Existing values are shown as defaults — press "
@@ -926,11 +948,7 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         if existing_registry:
             registry_default = existing_registry
         else:
-            discovered = nebius_client.discover_container_registry(project_id)
-            if discovered and _region_from_registry_host(discovered) == DEFAULT_REGION:
-                registry_default = discovered
-            else:
-                registry_default = DEFAULT_CONTAINER_REGISTRY
+            registry_default = _preferred_container_registry(nebius_client, project_id)
         region_default = (
             str(existing_stanza.get("region", ""))
             or _region_from_registry_host(registry_default)
