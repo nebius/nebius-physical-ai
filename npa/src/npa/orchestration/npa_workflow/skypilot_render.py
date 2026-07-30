@@ -717,6 +717,10 @@ def _render_docs(
                 doc,
                 sort_keys=False,
                 default_flow_style=False,
+                # Do not fold long lines: a wrapped shell command is unreadable in the
+                # rendered YAML and stops `grep`/assertions from finding the command
+                # that will actually run.
+                width=10_000,
             ).rstrip()
         )
     return "\n---\n".join(chunks) + "\n"
