@@ -197,9 +197,16 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "  done\n"
         "fi\n"
         # Make `python3` mean "the interpreter npa is installed in" for this stage.
-        # setup records it in /tmp/npa-python; a shim earlier on PATH forwards to it.
+        # setup records its absolute path (sys.executable) in /tmp/npa-python.
+        "npa_python=\"\"\n"
         "if [ -s /tmp/npa-python ] && ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
         "  npa_python=\"$(cat /tmp/npa-python)\"\n"
+        "  if [ ! -x \"$npa_python\" ]; then\n"
+        "    echo \"recorded npa interpreter is not executable: $npa_python\" >&2\n"
+        "    npa_python=\"\"\n"
+        "  fi\n"
+        "fi\n"
+        "if [ -n \"$npa_python\" ]; then\n"
         "  mkdir -p /tmp/npa-shim\n"
         "  printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$npa_python\" "
         "> /tmp/npa-shim/python3\n"
@@ -207,6 +214,8 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
         "  echo \"using npa interpreter $npa_python for this stage\" >&2\n"
         "fi\n"
+        "python3 -c 'import npa' >/dev/null 2>&1 || "
+        "echo 'warning: python3 in this shell cannot import npa' >&2\n"
         "set -u\n"
         f"{quoted}\n"
     )
@@ -318,11 +327,22 @@ def default_npa_setup() -> str:
         # PATH shim, because a task image's default `python3` may be a different
         # interpreter entirely: SkyPilot's GPU default image ships /usr/bin/python3
         # with no pip, and the Isaac Lab image's PATH python3 is Isaac's kit python.
-        "npa_python=\"$(command -v python3)\"\n"
+        # Ask the interpreter itself, never `command -v python3`: images alias python3
+        # (the Isaac Lab image aliases it to /workspace/isaaclab/_isaac_sim/python.sh),
+        # and `command -v` then prints the alias DEFINITION, which was recorded as a
+        # bogus interpreter path on the first live attempt.
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
-        "echo \"$npa_python\" > /tmp/npa-python\n"
-        "echo \"npa interpreter recorded: $npa_python\" >&2\n"
+        "npa_python=\"$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null "
+        "|| true)\"\n"
+        "if [ -x \"$npa_python\" ] && \"$npa_python\" -c 'import npa' >/dev/null 2>&1; "
+        "then\n"
+        "  echo \"$npa_python\" > /tmp/npa-python\n"
+        "  echo \"npa interpreter recorded: $npa_python\" >&2\n"
+        "else\n"
+        "  echo \"warning: could not record a usable npa interpreter "
+        "($npa_python)\" >&2\n"
+        "fi\n"
         # toolRef stages invoke the `npa` console script by name; installing into a
         # non-standard interpreter can leave it outside PATH, so link it where every
         # shell will find it.
