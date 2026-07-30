@@ -364,7 +364,15 @@ def _runtime_submit_args(
         # training script). Branch code is layered on with NPA_SRC_OVERLAY=1.
         from npa.deploy.images import container_image_for_tool
 
-        args.extend(["--image", container_image_for_tool(case.image_tool, registry=registry)])
+        image = container_image_for_tool(case.image_tool, registry=registry)
+        # Operator hook: some workbench images cannot host a SkyPilot task as built
+        # (the Isaac Lab image ships no system python3, which SkyPilot's Kubernetes
+        # runtime requires). Point this at a SkyPilot-compatible variant of the same
+        # image, e.g. NPA_E2E_IMAGE_OVERRIDE_ISAAC_LAB=<registry>/npa-isaac-lab:<tag>-sky
+        override = os.environ.get(
+            f"NPA_E2E_IMAGE_OVERRIDE_{case.image_tool.upper().replace('-', '_')}", ""
+        ).strip()
+        args.extend(["--image", override or image])
     elif os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
         args.extend(["--image", "none"])
     args.extend(_secret_env_args(case))

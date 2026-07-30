@@ -208,3 +208,13 @@ def test_slow_cases_carry_their_own_deadline() -> None:
         assert case.max_wait_seconds == 0, (
             f"{case.spec} should inherit the env deadline instead of pinning one"
         )
+
+
+def test_image_tool_override_env_name_is_derived_from_the_tool() -> None:
+    """The operator hook name must match what the runner exports."""
+
+    sweep = _case("isaac-lab-rl-sweep.yaml")
+    assert sweep is not None and sweep.image_tool == "isaac-lab"
+    expected = "NPA_E2E_IMAGE_OVERRIDE_ISAAC_LAB"
+    derived = f"NPA_E2E_IMAGE_OVERRIDE_{sweep.image_tool.upper().replace('-', '_')}"
+    assert derived == expected
