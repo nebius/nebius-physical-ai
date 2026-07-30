@@ -156,6 +156,18 @@ kubectl -n "$NAMESPACE" delete configmap "$CM_NAME" --ignore-not-found >/dev/nul
 
 if [[ "$phase" != "Succeeded" ]]; then
   echo "ERROR: image build did not succeed (phase=${phase:-unknown})" >&2
+  cat >&2 <<'HINT'
+
+If the log says UNAUTHORIZED / "authentication required", the cluster's registry
+secret has expired - Nebius IAM tokens are short-lived, so a long-lived pull secret
+goes stale. Refresh it with the same identity and retry:
+
+  TOKEN=$(npa/.venv/bin/python -c \
+    'from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token; print(mint_nebius_registry_token())')
+  kubectl create secret docker-registry <pull-secret> -n <namespace> \
+    --docker-server=<registry-host> --docker-username=iam --docker-password="$TOKEN" \
+    --dry-run=client -o yaml | kubectl apply -f -
+HINT
   exit 1
 fi
 
