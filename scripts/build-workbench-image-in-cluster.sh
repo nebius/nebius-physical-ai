@@ -109,8 +109,8 @@ spec:
     - name: kaniko
       image: ${KANIKO_IMAGE}
       args:
-        - --dockerfile=/workspace/Dockerfile
-        - --context=dir:///workspace
+        - --dockerfile=/build/Dockerfile
+        - --context=dir:///build
         - --destination=${TAG}
         - --single-snapshot
         - --verbosity=info
@@ -121,7 +121,10 @@ $(printf '%s\n' "${BUILD_ARGS[@]}")
           memory: 16Gi
       volumeMounts:
         - name: dockerfile
-          mountPath: /workspace
+          # NOT /workspace: that is the WORKDIR of some workbench images (Isaac Lab
+          # uses /workspace/isaaclab) and kaniko then fails to create it under its
+          # read-only context mount.
+          mountPath: /build
         - name: regcred
           mountPath: /kaniko/.docker
   volumes:
