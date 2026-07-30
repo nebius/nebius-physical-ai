@@ -2508,16 +2508,41 @@ def test_agent_setup_requires_configured_projects(monkeypatch, tmp_path) -> None
     assert "npa configure" in result.output
 
 
+def _wait_for_cloud_init_body() -> str:
+    """Return the real local-exec script Terraform quotes back in its error.
+
+    The body echoes every diagnostic string the script can print, so a hint that
+    matches against it classifies every failure the same way. Reading it from the
+    shipped Terraform keeps the tests below honest.
+    """
+    from npa.deploy import provisioner as provisioner_module
+
+    main_tf = (Path(provisioner_module.__file__).parent / "terraform" / "main.tf").read_text(
+        encoding="utf-8"
+    )
+    body = main_tf[main_tf.index('resource "null_resource" "wait_for_cloud_init"') :]
+    return body[: body.index("\n    EOT")]
+
+
+def _terraform_local_exec_error(output: str) -> str:
+    return (
+        "terraform apply failed (exit 1):\n"
+        "Error: local-exec provisioner error\n"
+        "  with null_resource.wait_for_cloud_init,\n"
+        f"Error running command '{_wait_for_cloud_init_body()}': exit status 1. "
+        f"Output: {output}"
+    )
+
+
 def test_agent_deploy_failure_hint_diagnoses_ssh_unreachable() -> None:
     """A wait_for_cloud_init SSH timeout gets a concise reachability diagnosis."""
     from npa.cli.agent import _agent_deploy_failure_hint
 
-    detail = (
-        "terraform apply failed (exit 1):\n"
-        "Error: local-exec provisioner error\n"
-        "  with null_resource.wait_for_cloud_init,\n"
-        "Error running command '...': exit status 1. "
-        "Output: Waiting for SSH on 203.0.113.50:22..."
+    detail = _terraform_local_exec_error(
+        "Waiting for SSH on 203.0.113.50:22...\n"
+        "ERROR: SSH to ubuntu@203.0.113.50:22 never succeeded within the boot window.\n"
+        "The VM is RUNNING with a public IP, but its SSH port is unreachable from "
+        "the machine running npa."
     )
     hint = _agent_deploy_failure_hint(detail)
     assert "SSH never became reachable" in hint
@@ -2529,9 +2554,12 @@ def test_agent_deploy_failure_hint_diagnoses_cloud_init_error() -> None:
     """A cloud-init runcmd failure is distinguished from an SSH timeout."""
     from npa.cli.agent import _agent_deploy_failure_hint
 
-    detail = (
-        "null_resource.wait_for_cloud_init ... "
-        "cloud-init finished with status 'error'; the VM bootstrap failed."
+    detail = _terraform_local_exec_error(
+        "Waiting for SSH on 203.0.113.50:22...\n"
+        "Waiting for cloud-init boot-finished...\n"
+        "Polling cloud-init status...\n"
+        "cloud-init status: error\n"
+        "ERROR: cloud-init finished with status 'error'; the VM bootstrap failed."
     )
     hint = _agent_deploy_failure_hint(detail)
     assert "cloud-init bootstrap failed" in hint
