@@ -44,3 +44,47 @@ def test_available_run_ids_use_latest_first_helper() -> None:
     load_fn = source.split("def _sim_viz_load_response")[1].split("@app.post")[0]
     assert "_sim_viz_runs(state)" in load_fn
     assert "sorted(str(key) for key in runs.keys()" not in load_fn
+
+
+def test_available_runs_expose_viewer_activity_not_as_recency() -> None:
+    """Regression: opening a days-old run in the viewer must not relabel it as recent.
+
+    The per-run viewer-load time (``rrd_updated_at``) is exposed as ``activity_at``
+    and must NOT be surfaced as ``last_modified`` — otherwise ``mergeRunsLatestFirst``
+    (client) would take the max and float a run that was merely opened today to the
+    top, labeled with today's date even though it ran days ago. The run's start
+    time is exposed separately as ``started_at``.
+    """
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    for anchor, terminator in (
+        ('@app.get("/sim-viz/status")', '@app.get("/sim-viz/runs")'),
+        ("def _sim_viz_load_response", "@app.post"),
+    ):
+        block = source.split(anchor)[1].split(terminator)[0]
+        available = block.split('payload["available_runs"] = [')[1].split("]")[0]
+        # Viewer-load time is exposed under activity_at, start under started_at,
+        # and last_modified is blank so S3 discovery owns the displayed recency.
+        assert '"activity_at": str(' in available, anchor
+        assert '"started_at": str(item.get("submitted_at")' in available, anchor
+        assert '"last_modified": ""' in available, anchor
+        # The old bug: rrd_updated_at collapsed into last_modified.
+        assert '"last_modified": str(' not in available, anchor
+
+
+def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
+    """The merged run list must date/sort by run start, then recency, then activity."""
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui = _embedded_ui_html(source)
+    assert "function effectiveRunTs(" in ui
+    # Effective timestamp prefers run start, then artifact recency, then activity.
+    assert "run.started_at || run.last_modified || run.activity_at" in ui
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split("function fillRunSelectOptionsRich")[0]
+    # Start is kept as the earliest across sources; activity/recency stay separate.
+    assert "prev.started_at" in merge_fn
+    assert "startTs < prev.started_at" in merge_fn
+    assert "prev.activity_at" in merge_fn
+    assert "prev.last_modified = artifactTs" in merge_fn
+    assert "effectiveRunTs(b).localeCompare(effectiveRunTs(a))" in merge_fn
+    # Known/available runs carry started_at + activity_at through to the merge.
+    assert "started_at: String((item && (item.started_at || item.submitted_at))" in ui
+    assert "activity_at: String((item && (item.activity_at || item.rrd_updated_at))" in ui

@@ -546,8 +546,8 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
     assert "chatForm.addEventListener(\"submit\"" in source
     assert "await apiJson(\"/api/chat\"" in source
     assert "await apiJson(\"/api/sim-viz/load-franka-demo\"" in source
-    assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
     assert "await apiJson(\"/api/sim-assets/selection\"" in source
+    # Dead camera-preview UI helper removed (G6); endpoint may still exist server-side.
     assert "setChatBusy(false)" in source
     assert "finally {" in source.split("async function processChatQueue")[1].split("function enqueueChatJob")[0]
     assert "queueChatText" in source
@@ -683,12 +683,13 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
-    assert "rrd_proxy_uri_allowed" in source
+    assert "resolve_rrd_proxy_target" in source or "rrd_proxy_uri_allowed" in source
+    assert "file_uri_path_allowed" in source
     assert "MAX_RRD_PROXY_BYTES" in source
     assert "Refusing to proxy disallowed rrd_uri host" in source
     assert "_AGENT_RRD_PROXY_EMBED" in source
-    assert "last-writer-wins" in source
-    assert "Single-tenant operator-VM model" in source
+    assert "_STATE_LOCK" in source
+    assert "Process-wide lock" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source

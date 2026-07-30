@@ -337,6 +337,87 @@ def test_list_runs_requires_positive_limit() -> None:
         list_runs("bucket", limit=0, s3=_FakeS3([]))
 
 
+def test_list_runs_started_at_uses_run_start_not_newest_write() -> None:
+    """started_at reflects when the run started; last_modified the newest write."""
+    s3 = _FakeS3(
+        [
+            {
+                "Contents": [
+                    # Run started 2026-07-25 22:26:36Z (encoded in the id); first
+                    # artifact a few seconds later, newest artifact two days on.
+                    _obj("sim2real-b/s2r-real-0725t222636z/env/data.json", ts="2026-07-25T22:26:39+00:00"),
+                    _obj("sim2real-b/s2r-real-0725t222636z/reports/sim2real.rrd", ts="2026-07-27T02:17:31+00:00"),
+                ]
+            }
+        ]
+    )
+    page = list_runs("bucket", prefix="sim2real-b", limit=50, s3=s3)
+    run = next(r for r in page.runs if r.run_id == "s2r-real-0725t222636z")
+    # Newest write is July 27; the displayed start is July 25 (id-encoded time).
+    assert run.last_modified == "2026-07-27T02:17:31+00:00"
+    assert run.started_at == "2026-07-25T22:26:36+00:00"
+    assert run.to_dict()["started_at"] == "2026-07-25T22:26:36+00:00"
+
+
+def test_list_runs_started_at_falls_back_to_earliest_write() -> None:
+    """Runs whose id has no embedded timestamp start at the earliest artifact."""
+    s3 = _FakeS3(
+        [
+            {
+                "Contents": [
+                    _obj("cat/plain-run/a.json", ts="2026-05-10T08:00:00+00:00"),
+                    _obj("cat/plain-run/b.json", ts="2026-05-12T09:00:00+00:00"),
+                ]
+            }
+        ]
+    )
+    page = list_runs("bucket", prefix="cat", limit=50, s3=s3)
+    run = next(r for r in page.runs if r.run_id == "plain-run")
+    assert run.started_at == "2026-05-10T08:00:00+00:00"
+
+
+def test_parse_run_id_timestamps_handles_full_and_yearless_forms() -> None:
+    from npa.workflows.artifacts import _parse_run_id_timestamps, _run_started_at
+
+    assert _parse_run_id_timestamps("job-20260725T222636Z") == ["2026-07-25T22:26:36+00:00"]
+    # Year-less: the hinted year plus the prior year are offered as candidates.
+    assert _parse_run_id_timestamps("s2r-real-0725t222636z", year_hint=2026) == [
+        "2026-07-25T22:26:36+00:00",
+        "2025-07-25T22:26:36+00:00",
+    ]
+    # No embedded timestamp -> nothing parsed, fall back to the earliest write.
+    assert _parse_run_id_timestamps("free-form-run-name") == []
+    assert _run_started_at("free-form-run-name", "2026-05-10T08:00:00+00:00") == "2026-05-10T08:00:00+00:00"
+
+
+def test_run_started_at_distrusts_far_off_id_date() -> None:
+    from npa.workflows.artifacts import _run_started_at
+
+    # A far-off id date (not just-before the first write) is distrusted.
+    assert (
+        _run_started_at("legacy-v20200101t000000-run", "2026-05-10T08:00:00+00:00")
+        == "2026-05-10T08:00:00+00:00"
+    )
+
+
+def test_run_started_at_picks_real_start_past_a_red_herring_timestamp() -> None:
+    from npa.workflows.artifacts import _run_started_at
+
+    # A leading red-herring timestamp (2020) plus the real year-less start; the
+    # latest candidate at/just-before the first write (2026-07-25) is chosen.
+    started = _run_started_at("legacy-v20200101t000000-s2r-0725t222636z", "2026-07-25T22:26:39+00:00")
+    assert started == "2026-07-25T22:26:36+00:00"
+
+
+def test_run_started_at_handles_year_boundary() -> None:
+    from npa.workflows.artifacts import _run_started_at
+
+    # Started 2025-12-31 23:59:00; first artifact 2026-01-01. The prior-year
+    # candidate is selected so the start isn't after the first write.
+    started = _run_started_at("run-1231t235900z", "2026-01-01T00:00:05+00:00")
+    assert started == "2025-12-31T23:59:00+00:00"
+
+
 class _PrefixAwareS3:
     """Fake S3 that honors Prefix + Delimiter over an in-memory key store."""
 

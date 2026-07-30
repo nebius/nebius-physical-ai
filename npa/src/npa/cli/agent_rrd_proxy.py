@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from pathlib import Path
 from urllib.parse import urlparse
 
 # Cap proxied .rrd bodies so a large URI cannot memory-DoS the agent process.
@@ -57,37 +58,98 @@ def rrd_proxy_uri_allowed(uri: str, *, resolve: bool = True) -> bool:
     name, and (when ``resolve``) that every DNS/address result is publicly
     routable — blocking loopback, RFC1918, link-local, and unique-local IPv6.
     """
+    allowed, _fetch_url, _host = resolve_rrd_proxy_target(uri, resolve=resolve)
+    return allowed
+
+
+def resolve_rrd_proxy_target(
+    uri: str, *, resolve: bool = True
+) -> tuple[bool, str, str]:
+    """Validate ``uri`` and return ``(allowed, fetch_url, host_header)``.
+
+    When allowed, ``fetch_url`` points at a vetted IP (DNS resolved once) so the
+    subsequent HTTP client does not re-resolve the hostname (DNS-rebinding
+    TOCTOU). Callers should send ``Host: host_header`` when fetching.
+    """
     try:
         parsed = urlparse(str(uri or "").strip())
     except Exception:  # noqa: BLE001
-        return False
+        return False, "", ""
     if parsed.scheme not in {"http", "https"}:
-        return False
+        return False, "", ""
     host = str(parsed.hostname or "").strip().lower()
     if not host:
-        return False
+        return False, "", ""
     if host in _BLOCKED_HOSTNAMES or host.endswith(".internal"):
-        return False
+        return False, "", ""
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
     # Bare IP literal — no DNS needed.
     try:
         ipaddress.ip_address(host)
-        return is_publicly_routable_ip(host)
+        if not is_publicly_routable_ip(host):
+            return False, "", ""
+        return True, str(uri).strip(), host
     except ValueError:
         pass
     if not resolve:
-        # Hostname without resolution: refuse (cannot prove public routing).
-        return False
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        return False, "", ""
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError:
-        return False
+        return False, "", ""
     if not infos:
-        return False
-    seen = False
+        return False, "", ""
+    vetted_ip = ""
     for info in infos:
         addr = str(info[4][0])
-        seen = True
         if not is_publicly_routable_ip(addr):
-            return False
-    return seen
+            return False, "", ""
+        if not vetted_ip:
+            vetted_ip = addr
+    if not vetted_ip:
+        return False, "", ""
+    # Rewrite netloc to the vetted IP; preserve path/query/fragment.
+    userinfo = ""
+    if parsed.username is not None:
+        userinfo = parsed.username
+        if parsed.password is not None:
+            userinfo += f":{parsed.password}"
+        userinfo += "@"
+    # Bracket IPv6 literals for URL netloc.
+    ip_netloc = f"[{vetted_ip}]" if ":" in vetted_ip else vetted_ip
+    if parsed.port:
+        ip_netloc = f"{ip_netloc}:{parsed.port}"
+    fetch_url = parsed._replace(netloc=f"{userinfo}{ip_netloc}").geturl()
+    return True, fetch_url, host
+
+
+def file_uri_path_allowed(uri: str, *, allowed_paths: list[str] | tuple[str, ...] | None = None) -> bool:
+    """Return True if a ``file://`` URI resolves inside one of ``allowed_paths``.
+
+    ``allowed_paths`` should be absolute directories and/or exact files (e.g.
+    RECORDINGS_DIR and RRD_PATH). Symlinks are resolved before the check.
+    """
+    raw = str(uri or "").strip()
+    if not raw.startswith("file://"):
+        return False
+    try:
+        path = Path(raw[len("file://") :]).expanduser().resolve()
+    except Exception:  # noqa: BLE001
+        return False
+    if not path.is_file():
+        return False
+    for allowed in allowed_paths or ():
+        try:
+            base = Path(allowed).expanduser().resolve()
+        except Exception:  # noqa: BLE001
+            continue
+        if base.is_file():
+            if path == base:
+                return True
+            continue
+        try:
+            path.relative_to(base)
+            return True
+        except ValueError:
+            continue
+    return False

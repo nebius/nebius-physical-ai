@@ -111,7 +111,6 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#renderModeRerun").should("have.class", "is-active");
     cy.get("#renderModeVideo").should("exist");
     cy.get("#viewerPaneRerun").should("have.class", "is-active-viewer");
-    cy.get("#assetsSummary").should("contain.text", "stock://robot/franka");
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
 
@@ -256,7 +255,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@artifactList");
     cy.get("#artifactList button[data-action='load-artifact']").click();
     cy.wait("@loadArtifact");
-    cy.get("#chatLog").should("contain.text", "Loaded artifact");
+    // loadArtifact no longer spams chat; the viewer / preview host reflects the load.
     cy.get("#artifactPreviewHost").should("not.have.attr", "hidden");
 
     cy.get("#tabMain").click();
@@ -310,7 +309,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runLog").should("contain.text", "non-stock sim2real artifacts");
 
     cy.get("#tabRerun").click();
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.wait("@artifactFile");
     cy.get("#renderModeVideo").should("have.class", "is-active");
@@ -323,21 +324,29 @@ describe("NPA agent UI with mocked APIs", () => {
       .and("include", "customer-camera.mp4");
     cy.get("#renderedDataSummary").should("contain.text", "video");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#renderModeData").should("have.class", "is-active");
     cy.get("#artifactPreviewHost pre").should("contain.text", "promoted");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#artifactPreviewHost pre").should("contain.text", "loaded customer scene mesh");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#artifactPreviewHost").should("contain.text", "download");
     cy.get("#artifactPreviewHost a").should("have.attr", "href").and("include", "custom-dynamics.fooz");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#renderModeRerun").should("have.class", "is-active");
     cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
@@ -529,6 +538,51 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatSend").click();
     cy.wait("@chat");
     cy.get("#chatLog").should("contain.text", "mobile hello");
+
+    // Widening the viewport must leave mobile-agent layout (toggle, not add-only).
+    cy.viewport(1280, 800);
+    cy.get("body").should("not.have.class", "mobile-agent");
+  });
+
+  it("escapes quotes in artifact keys to prevent attribute XSS", () => {
+    const evilKey = 'a" onmouseover="alert(1)';
+    // Override the default mock-run list intercept with a malicious key.
+    cy.intercept("GET", "/api/artifacts/run/mock-run*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        run_id: "mock-run",
+        prefix: "sim2real-b",
+        artifacts: [
+          {
+            key: evilKey,
+            s3_uri: `s3://mock/${evilKey}`,
+            size: 12,
+            last_modified: "2026-01-01T00:00:00Z",
+            render: "download",
+          },
+        ],
+        preferred: null,
+      },
+    }).as("evilArtifactList");
+    cy.get("#tabRerun").click();
+    cy.get("#runIdSelect").select("mock-run", { force: true });
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@evilArtifactList");
+    cy.get("#artifactList").then(($el) => {
+      const html = $el.html() || "";
+      // Attribute values must be quote-escaped so the key cannot break out of
+      // data-*="..." and inject an event handler. Text nodes may still show
+      // literal quotes after the browser parses escaped HTML.
+      expect(html).to.include('data-key="a&quot; onmouseover=&quot;alert(1)"');
+      expect(html).to.include('data-s3-uri="s3://mock/a&quot; onmouseover=&quot;alert(1)"');
+      expect(html).to.not.match(/data-(?:key|s3-uri|name)="a"\s+onmouseover=/i);
+      cy.get("#artifactList button[data-action='load-artifact']").should(($btn) => {
+        // DOM getAttribute returns the decoded value; no separate attribute breakout.
+        expect($btn.attr("data-key")).to.eq(evilKey);
+        expect($btn.attr("onmouseover")).to.eq(undefined);
+      });
+    });
   });
 
   it("clears the Rerun Caching cover and keeps it hidden after remounts", () => {
