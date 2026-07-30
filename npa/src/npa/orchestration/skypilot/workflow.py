@@ -290,6 +290,7 @@ def _wait_for_healthy_jobs_controller(
 
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
+    unhealthy: list[tuple[str, str]] = []
     while True:
         result = subprocess.run(
             [sky_executable, "status", "--refresh", "--output", "json"],
@@ -310,6 +311,7 @@ def _wait_for_healthy_jobs_controller(
         controllers = _jobs_controller_statuses(result.stdout)
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
+            unhealthy = []
         else:
             unhealthy = [
                 (name, status)
@@ -320,11 +322,19 @@ def _wait_for_healthy_jobs_controller(
                 return
             last_summary = ", ".join(f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy)
         if time.monotonic() >= deadline:
-            names = [name for name, _status in controllers] or ["<controller-name>"]
+            # Name the controller that is actually unhealthy: pointing `sky down`
+            # at the first of several cached controllers (or at a placeholder when
+            # none exists) tears down the wrong thing.
+            stuck = [name for name, _status in unhealthy]
+            remedy = (
+                f" If it is stuck/stale, tear it down with `sky down {stuck[0]}` "
+                "(it is recreated on the next launch)."
+                if stuck
+                else " A launch creates one, so retry the submit; if it keeps failing, "
+                "check `sky check` and your kube context."
+            )
             raise SkyPilotSubmitError(
-                "SkyPilot jobs controller not healthy before launch: "
-                f"{last_summary}. If it is stuck/stale, tear it down with "
-                f"`sky down {names[0]}` (it is recreated on the next launch)."
+                f"SkyPilot jobs controller not healthy before launch: {last_summary}.{remedy}"
             )
         time.sleep(max(interval, 0.1))
 
@@ -335,15 +345,28 @@ def _wait_for_healthy_jobs_controller(
 _STALE_CONTROLLER_SIGNALS = (
     "kubeconfig",
     "kube-config",
-    "no such file or directory",
-    "unable to connect",
-    "connection refused",
     "not found in kubeconfig",
     "invalid kube-context",
     "kubernetes context",
     "credentials not found",
     "cachedclusterunavailable",
     "clusterstatusfetchingerror",
+)
+# Transport/filesystem errors that also describe unrelated failures — an API
+# server that is not running, a missing ~/.sky config. They only point at a stale
+# controller when the same message also names a controller or a kube context;
+# alone they would send the operator to `sky down` for something else entirely.
+_AMBIGUOUS_STALE_SIGNALS = (
+    "no such file or directory",
+    "unable to connect",
+    "connection refused",
+)
+_CONTROLLER_CONTEXT_SIGNALS = (
+    "kubeconfig",
+    "kube-config",
+    "kube-context",
+    "kubernetes",
+    "sky-jobs-controller",
 )
 _KUBECONFIG_PATH_RE = re.compile(r"[\w./~-]*kubeconfig[\w./-]*")
 
@@ -360,6 +383,14 @@ def _referenced_kubeconfig_path(detail: str) -> str:
     return max(candidates, key=len) if candidates else ""
 
 
+def _looks_like_stale_controller(lowered: str) -> bool:
+    if any(signal in lowered for signal in _STALE_CONTROLLER_SIGNALS):
+        return True
+    return any(signal in lowered for signal in _AMBIGUOUS_STALE_SIGNALS) and any(
+        signal in lowered for signal in _CONTROLLER_CONTEXT_SIGNALS
+    )
+
+
 def _controller_health_remedy(detail: str) -> str:
     """Return actionable remediation text for a failed controller health check.
 
@@ -370,7 +401,7 @@ def _controller_health_remedy(detail: str) -> str:
     """
 
     lowered = str(detail or "").lower()
-    if not any(signal in lowered for signal in _STALE_CONTROLLER_SIGNALS):
+    if not _looks_like_stale_controller(lowered):
         return ""
     lines = [
         "",

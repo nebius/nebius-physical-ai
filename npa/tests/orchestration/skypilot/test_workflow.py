@@ -624,6 +624,76 @@ def test_unhealthy_controller_timeout_names_the_controller(monkeypatch) -> None:
     assert "sky down sky-jobs-controller-abc123" in str(exc.value)
 
 
+def test_unhealthy_controller_timeout_names_the_unhealthy_one(monkeypatch) -> None:
+    """With several cached controllers, don't send `sky down` at a healthy one."""
+    payload = json.dumps(
+        {
+            "clusters": [
+                {"name": "sky-jobs-controller-healthy", "status": "UP"},
+                {"name": "sky-jobs-controller-stuck", "status": "INIT"},
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_k: subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=payload, stderr=""
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as exc:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky", env={}, timeout=0, interval=0.01
+        )
+
+    message = str(exc.value)
+    assert "sky down sky-jobs-controller-stuck" in message
+    assert "sky-jobs-controller-healthy`" not in message
+
+
+def test_missing_controller_timeout_does_not_advise_tearing_one_down(monkeypatch) -> None:
+    """With no controller at all, teardown advice is nonsense — a launch creates it."""
+    payload = json.dumps({"clusters": []})
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_k: subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=payload, stderr=""
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as exc:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky", env={}, timeout=0, interval=0.01, require_existing=True
+        )
+
+    message = str(exc.value)
+    assert "no jobs-controller found" in message
+    assert "sky down" not in message
+    assert "<controller-name>" not in message
+
+
+def test_generic_connection_errors_alone_are_not_stale_controller_evidence() -> None:
+    """A dead API server also says "connection refused"; don't advise a purge."""
+    assert (
+        workflow_module._controller_health_remedy(
+            "urllib3.exceptions.NewConnectionError: [Errno 111] Connection refused"
+        )
+        == ""
+    )
+    assert (
+        workflow_module._controller_health_remedy(
+            "FileNotFoundError: [Errno 2] No such file or directory: '/home/op/.sky/config.yaml'"
+        )
+        == ""
+    )
+    # The same phrase alongside a controller/context signal still gets the remedy.
+    assert "sky down sky-jobs-controller-" in workflow_module._controller_health_remedy(
+        "Cached cluster sky-jobs-controller-64ce57a0: connection refused"
+    )
+
+
 def test_launch_failure_on_a_cached_controller_gets_the_same_remedy() -> None:
     """`sky status --refresh` exits 0 while only *warning* about dead clusters.
 
