@@ -187,11 +187,27 @@ def render_task_run_script(command: Sequence[str]) -> str:
         # GPU default image: the outer shell imports npa fine, the login shell does
         # not). Prepending the staged source tree unconditionally fixes every shell;
         # it is the same package, so it is a no-op where the install already works.
-        # `setup:` guarantees the task shell's python3 can import npa with its
-        # dependencies (see default_npa_setup). Keep a one-line diagnostic so a broken
-        # image says so plainly instead of failing deep inside a stage import.
-        "python3 -c 'import npa' >/dev/null 2>&1 || "
-        "echo 'warning: python3 in this shell cannot import npa' >&2\n"
+        # Images activate their toolchain either through docker ENV (inherited) or
+        # through profile scripts; source the latter best-effort so dropping the login
+        # shell (see scheduler.build_scheduler_task) changes nothing for them.
+        "set +u\n"
+        "if [ -d /etc/profile.d ]; then\n"
+        "  for profile in /etc/profile.d/*.sh; do\n"
+        "    [ -r \"$profile\" ] && . \"$profile\" || true\n"
+        "  done\n"
+        "fi\n"
+        # Make `python3` mean "the interpreter npa is installed in" for this stage.
+        # setup records it in /tmp/npa-python; a shim earlier on PATH forwards to it.
+        "if [ -s /tmp/npa-python ] && ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
+        "  npa_python=\"$(cat /tmp/npa-python)\"\n"
+        "  mkdir -p /tmp/npa-shim\n"
+        "  printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$npa_python\" "
+        "> /tmp/npa-shim/python3\n"
+        "  chmod +x /tmp/npa-shim/python3\n"
+        "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
+        "  echo \"using npa interpreter $npa_python for this stage\" >&2\n"
+        "fi\n"
+        "set -u\n"
         f"{quoted}\n"
     )
 
@@ -297,53 +313,26 @@ def default_npa_setup() -> str:
         "PY\n"
         "  python3 -m pip install -q -e /tmp/npa-src-overlay --no-deps\n"
         "fi\n"
-        # The contract that actually matters: the shell a stage body runs in
-        # (`bash -lc`, a LOGIN shell) must be able to import npa *with its
-        # dependencies*. That shell can resolve a different python3 than this setup
-        # shell — observed live on both SkyPilot's GPU default image (its python3 had
-        # neither npa nor numpy) and the Isaac Lab image (whose PATH python3 is
-        # Isaac's kit interpreter). Patching PATH/PYTHONPATH only moved the error, so
-        # install into that interpreter and verify through the same kind of shell.
-        "if ! bash -lc 'python3 -c \"import npa\"' >/dev/null 2>&1; then\n"
-        "  for src_dir in /tmp/npa-src-overlay /tmp/npa-src "
-        "/opt/nebius-physical-ai/npa; do\n"
-        "    [ -d \"$src_dir\" ] || continue\n"
-        "    echo \"installing npa into the task shell interpreter from $src_dir\" >&2\n"
-        "    bash -lc \"python3 -m pip install -q -e '$src_dir'\" >&2 || "
-        "bash -lc \"python3 -m pip install -q -e '$src_dir' --user\" >&2 || true\n"
-        "    bash -lc 'python3 -c \"import npa\"' >/dev/null 2>&1 && break\n"
-        "  done\n"
-        "fi\n"
-        "bash -lc 'python3 -c \"import npa\"' >/dev/null 2>&1 || "
-        "{ echo 'npa is not importable by the task shell python3' >&2; exit 1; }\n"
-        # toolRef stages invoke the `npa` console script by name, so make it reachable
-        # from that shell too (installing into a non-standard interpreter can put it
-        # outside PATH).
-        "if ! bash -lc 'command -v npa' >/dev/null 2>&1; then\n"
-        "  scripts_dir=\"$(bash -lc 'python3 -c \"import sysconfig; "
-        "print(sysconfig.get_path(\\\"scripts\\\"))\"' 2>/dev/null || true)\"\n"
+        # Record the interpreter that can actually import npa, i.e. the one pip just
+        # installed into (it has npa AND its dependencies). Stage bodies use it via a
+        # PATH shim, because a task image's default `python3` may be a different
+        # interpreter entirely: SkyPilot's GPU default image ships /usr/bin/python3
+        # with no pip, and the Isaac Lab image's PATH python3 is Isaac's kit python.
+        "npa_python=\"$(command -v python3)\"\n"
+        "python3 -c 'import npa' >/dev/null 2>&1 || "
+        "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
+        "echo \"$npa_python\" > /tmp/npa-python\n"
+        "echo \"npa interpreter recorded: $npa_python\" >&2\n"
+        # toolRef stages invoke the `npa` console script by name; installing into a
+        # non-standard interpreter can leave it outside PATH, so link it where every
+        # shell will find it.
+        "if [ ! -x /usr/local/bin/npa ]; then\n"
+        "  scripts_dir=\"$(python3 -c 'import sysconfig; "
+        "print(sysconfig.get_path(\"scripts\"))' 2>/dev/null || true)\"\n"
         "  if [ -n \"$scripts_dir\" ] && [ -x \"$scripts_dir/npa\" ]; then\n"
         "    ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || "
         "sudo -n ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || true\n"
         "  fi\n"
-        "fi\n"
-        # `pip install -e` binds npa to the interpreter that ran pip. On some images
-        # (notably SkyPilot's GPU default image) the task body resolves a DIFFERENT
-        # python3, which then fails with ModuleNotFoundError: npa for run.shell
-        # stages that import npa. Verify importability with the body's own python and
-        # fall back to the staged source tree, which works for any interpreter.
-        "if ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
-        "  for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
-        "/opt/nebius-physical-ai/npa/src; do\n"
-        "    if [ -d \"$candidate\" ]; then\n"
-        "      echo \"npa not importable by $(command -v python3); adding $candidate "
-        "to PYTHONPATH\" >&2\n"
-        "      export PYTHONPATH=\"$candidate:$PYTHONPATH\"\n"
-        "      break\n"
-        "    fi\n"
-        "  done\n"
-        "  python3 -c 'import npa' >/dev/null 2>&1 || "
-        "{ echo 'npa is not importable by python3 after setup' >&2; exit 1; }\n"
         "fi\n"
     )
 
