@@ -3,10 +3,12 @@
   "private": true,
   "description": "Cypress browser coverage for the generated NPA agent UI.",
   "scripts": {
-    "cy:mock": "cypress run --spec cypress/e2e/agent_mocked.cy.js",
-    "cy:live": "cypress run --spec cypress/e2e/agent_live.cy.js"
+    "cy:mock": "cypress run --spec cypress/e2e/agent_mocked.cy.js,cypress/e2e/agent_foxglove.cy.js",
+    "cy:live": "cypress run --spec cypress/e2e/agent_live.cy.js",
+    "cy:foxglove": "cypress run --spec cypress/e2e/agent_foxglove.cy.js"
   },
   "devDependencies": {
-    "cypress": "^15.18.0"
+    "cypress": "^15.18.0",
+    "@foxglove/embed": "0.58.0"
   }
 }
