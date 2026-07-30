@@ -180,3 +180,32 @@ def selected_submit_cases() -> list[SubmitLiveCase]:
         for case in SUBMIT_LIVE_MATRIX
         if case.tier in tiers and (not specs or case.spec in specs)
     ]
+
+
+def gpu_submit_cases(*, include_plan_only: bool = False) -> list[SubmitLiveCase]:
+    """Real-GPU-launching twins, sorted by spec for a deterministic rotation.
+
+    Excludes ``plan_only`` stub twins (they never launch a GPU) unless asked, so
+    the daily rotation only ever picks a case that actually exercises a GPU.
+    """
+
+    cases = [
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.tier in {"gpu", "multi"} and (include_plan_only or not case.plan_only)
+    ]
+    return sorted(cases, key=lambda c: c.spec)
+
+
+def rotating_gpu_submit_case(day_index: int) -> SubmitLiveCase | None:
+    """Pick one real-GPU twin for ``day_index`` (round-robins over days).
+
+    Lets the daily runner exercise a *different* real GPU workflow E2E each day
+    at bounded cost (one managed job) instead of the whole ``gpu and e2e`` blast,
+    cycling through every GPU twin over the rotation window.
+    """
+
+    cases = gpu_submit_cases()
+    if not cases:
+        return None
+    return cases[day_index % len(cases)]

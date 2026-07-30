@@ -55,3 +55,19 @@ def test_rotating_spec_changes_across_days() -> None:
     summaries = dc.spec_step_summary()
     picks = {dc.rotating_spec(day, summaries).name for day in range(len(dc.comprehensive_specs(summaries)))}
     assert len(picks) > 1, "rotating spec should vary across days"
+
+
+def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
+    from npa.orchestration.npa_workflow.submit_matrix import (
+        gpu_submit_cases,
+        rotating_gpu_submit_case,
+    )
+
+    cases = gpu_submit_cases()
+    assert cases, "expected at least one real-GPU-launching workflow twin"
+    # Never rotate onto a plan-only stub (those never launch a GPU).
+    assert all(not c.plan_only for c in cases)
+    assert all(c.tier in {"gpu", "multi"} for c in cases)
+    # Over one full cycle the rotation visits every GPU twin.
+    seen = {rotating_gpu_submit_case(day).spec for day in range(len(cases))}
+    assert seen == {c.spec for c in cases}

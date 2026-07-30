@@ -149,6 +149,16 @@ def _cmd_images(registry: str | None, do_inspect: bool, require: bool, as_json: 
     return 0
 
 
+def _cmd_gpu_case(day_index: int) -> int:
+    from npa.orchestration.npa_workflow.submit_matrix import rotating_gpu_submit_case
+
+    case = rotating_gpu_submit_case(day_index)
+    if case is None:
+        return 0
+    sys.stdout.write(f"{case.spec}\n")
+    return 0
+
+
 def _cmd_plan_set(day_index: int, null_sep: bool) -> int:
     specs = dc.daily_plan_set(day_index)
     sep = "\0" if null_sep else "\n"
@@ -171,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("--day-index", type=int, default=_day_index())
     p_plan.add_argument("--print0", action="store_true", help="NUL-separate paths")
 
+    p_gpu = sub.add_parser("gpu-case", help="print today's rotating real-GPU workflow spec")
+    p_gpu.add_argument("--day-index", type=int, default=_day_index())
+
     p_images = sub.add_parser("images", help="resolve + optionally inspect every workbench image")
     p_images.add_argument("--registry", default=os.environ.get("NPA_REGISTRY") or None)
     p_images.add_argument("--inspect", action="store_true", help="check registry presence")
@@ -184,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_check()
     if args.command == "plan-set":
         return _cmd_plan_set(args.day_index, args.print0)
+    if args.command == "gpu-case":
+        return _cmd_gpu_case(args.day_index)
     if args.command == "images":
         return _cmd_images(args.registry, args.inspect, args.require, args.json)
     parser.error(f"unknown command {args.command!r}")
