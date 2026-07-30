@@ -1,4 +1,8 @@
 locals {
+  # The vendored module gates both filesystem creation and the existing-filesystem
+  # lookup on enable_filestore, so `existing_filestore` alone would attach nothing.
+  # Supplying an existing filesystem is itself an opt-in.
+  enable_filestore     = var.enable_filestore || trimspace(var.existing_filestore) != ""
   create_subnet        = trimspace(var.subnet_id) == ""
   subnet_id            = local.create_subnet ? nebius_vpc_v1_subnet.cluster[0].id : var.subnet_id
   capacity_block_group = trimspace(var.capacity_block_group)
@@ -56,7 +60,7 @@ module "k8s_training" {
   custom_driver                   = false
   mig_strategy                    = "none"
 
-  enable_filestore               = var.enable_filestore
+  enable_filestore               = local.enable_filestore
   existing_filestore             = var.existing_filestore
   filestore_disk_size_gibibytes  = var.filestore_disk_size_gibibytes
   filestore_block_size_kibibytes = var.filestore_block_size_kibibytes

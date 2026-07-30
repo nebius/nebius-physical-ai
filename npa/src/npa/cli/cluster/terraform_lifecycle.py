@@ -20,6 +20,13 @@ _DEFAULT_TERRAFORM_SUBDIR = Path("deploy") / "cluster"
 _DEFAULT_SKYPILOT_BIN = Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky"
 _DEFAULT_FILESTORE_SIZE_GIB = 1024
 _GIB = 1024**3
+# deploy/cluster vendors nebius-solutions-library, whose k8s-rbac-bindings module
+# declares `required_version >= 1.12.0` and whose o11y module uses `ephemeral`
+# blocks (Terraform 1.10+). Terraform loads every referenced module during
+# `init`, even the ones this config disables, so an older binary fails with a
+# wall of "Unsupported Terraform Core version" / "Unsupported block type" errors
+# from vendored files the operator never wrote. Check up front instead.
+_MIN_TERRAFORM_VERSION = (1, 12, 0)
 
 
 @resolve_typer_defaults
@@ -79,14 +86,24 @@ def up_cmd(
     _apply_capacity_block_group_env(env, capacity_block_group)
 
     typer.echo(f"Terraform directory: {tf_dir}")
-    _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
+    _preflight_terraform_version(terraform_bin)
     tfvars = _read_tfvars(tf_dir)
+    _guard_tfvars_iam_token(tf_dir, tfvars)
+    _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
     _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
     _preflight_filestore_quota(nebius_bin, tfvars, env)
 
     _run_stream(
-        [terraform_bin, "apply", "-auto-approve"],
+        [
+            terraform_bin,
+            "apply",
+            "-auto-approve",
+            # -var beats terraform.tfvars, TF_VAR_* does not. Pass the flag value
+            # explicitly so `--capacity-block-group` is not silently dropped by a
+            # `capacity_block_group = ""` line in a checked-in tfvars file.
+            *_capacity_block_group_var_args(capacity_block_group),
+        ],
         cwd=tf_dir,
         env=env,
         timeout=timeout * 60,
@@ -136,6 +153,8 @@ def down_cmd(
     env = _terraform_env(nebius_bin)
     if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
         raise typer.Exit(1)
+    _preflight_terraform_version(terraform_bin)
+    _guard_tfvars_iam_token(tf_dir, _read_tfvars(tf_dir))
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     _run_stream(
         [terraform_bin, "destroy", "-auto-approve"],
@@ -272,6 +291,68 @@ def _apply_capacity_block_group_env(env: dict[str, str], capacity_block_group: s
         env["TF_VAR_capacity_block_group"] = value
 
 
+def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
+    value = capacity_block_group.strip()
+    if not value:
+        return []
+    return ["-var", f"capacity_block_group={value}"]
+
+
+def _preflight_terraform_version(terraform_bin: str) -> None:
+    """Fail early when the terraform binary is older than the vendored modules need."""
+    result = _run_capture([terraform_bin, "version", "-json"], check=False)
+    version = ""
+    if result.returncode == 0:
+        try:
+            version = str(json.loads(result.stdout or "{}").get("terraform_version") or "")
+        except json.JSONDecodeError:
+            version = ""
+    parsed = _parse_semver(version)
+    if parsed is None:
+        # Never block on an unparseable version; terraform itself will complain.
+        return
+    if parsed >= _MIN_TERRAFORM_VERSION:
+        return
+    minimum = ".".join(str(part) for part in _MIN_TERRAFORM_VERSION)
+    raise typer.BadParameter(
+        f"Terraform {version} is too old for deploy/cluster: it vendors modules that "
+        f"require Terraform >= {minimum} (and use `ephemeral` blocks). "
+        f"Install a newer Terraform (https://developer.hashicorp.com/terraform/install), "
+        f"then re-run; point NPA_TERRAFORM_BIN at it to keep the old binary on PATH."
+    )
+
+
+def _parse_semver(version: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^v?(\d+)\.(\d+)(?:\.(\d+))?", str(version or "").strip())
+    if not match:
+        return None
+    major, minor, patch = match.groups()
+    return (int(major), int(minor), int(patch or 0))
+
+
+def _guard_tfvars_iam_token(terraform_dir: Path, tfvars: dict[str, Any]) -> None:
+    """Reject an ``iam_token`` pinned in tfvars.
+
+    Terraform gives ``terraform.tfvars`` precedence over ``TF_VAR_*``, so a token
+    left in that file (the example file used to ship a placeholder) shadows the
+    fresh token ``_terraform_env`` mints — apply then fails with Unauthenticated,
+    or succeeds until the pasted token expires an hour later.
+    """
+    if "iam_token" not in tfvars:
+        return
+    files = ", ".join(
+        str(path.name)
+        for path in [terraform_dir / "terraform.tfvars", *sorted(terraform_dir.glob("*.auto.tfvars"))]
+        if path.exists()
+    )
+    raise typer.BadParameter(
+        f"Remove the `iam_token` line from {files or 'terraform.tfvars'} in {terraform_dir}: "
+        "Terraform prefers tfvars over the fresh token npa mints for every run, so a "
+        "pinned token (or the example's <nebius-iam-token> placeholder) breaks apply "
+        "with Unauthenticated. npa supplies iam_token automatically."
+    )
+
+
 def _apply_capacity_block_group_tfvars(tfvars: dict[str, Any], capacity_block_group: str) -> None:
     value = capacity_block_group.strip()
     if value:
@@ -332,7 +413,7 @@ def _preflight_filestore_quota(nebius_bin: str, tfvars: dict[str, Any], env: dic
     # so the default FTUE / PAIDF cluster needs no Shared Filesystem SSD quota. Only
     # check the quota when the shared filesystem is explicitly opted into and is being
     # created (not attached via existing_filestore).
-    enable_filestore = bool(_tfvar_value(tfvars, env, "enable_filestore", False))
+    enable_filestore = _tfvar_bool(tfvars, env, "enable_filestore", False)
     existing_filestore = str(_tfvar_value(tfvars, env, "existing_filestore", "") or "").strip()
     if not enable_filestore or existing_filestore:
         return
@@ -369,6 +450,38 @@ def _tfvar_value(tfvars: dict[str, Any], env: dict[str, str], key: str, default:
     if key in tfvars:
         return tfvars[key]
     return env.get(f"TF_VAR_{key}", default)
+
+
+def _tfvar_bool(tfvars: dict[str, Any], env: dict[str, str], key: str, default: bool) -> bool:
+    """Read a boolean tfvar, treating ``TF_VAR_x`` strings the way Terraform does.
+
+    ``TF_VAR_*`` values arrive as strings, and ``bool("false")`` is ``True``, so a
+    documented ``TF_VAR_enable_filestore=false`` opt-out would otherwise be read as
+    enabled.
+    """
+    value = _tfvar_value(tfvars, env, key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off", ""}:
+            return False
+        return default
+    return bool(value)
+
+
+def _shared_filesystem_requested(tfvars: dict[str, Any], env: dict[str, str]) -> bool:
+    """Whether the config asks for a shared filesystem (created or attached).
+
+    ``deploy/cluster`` turns ``existing_filestore`` into ``enable_filestore`` for the
+    vendored module, so either one means the filesystem CSI and its
+    ``csi-mounted-fs-path-sc`` default StorageClass are installed.
+    """
+    if _tfvar_bool(tfvars, env, "enable_filestore", False):
+        return True
+    return bool(str(_tfvar_value(tfvars, env, "existing_filestore", "") or "").strip())
 
 
 def _quota_allowance(
@@ -590,8 +703,7 @@ def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict
     # FTUE / PAIDF shape (enable_filestore = false), the platform block-storage
     # StorageClass stays the default, so only enforce the filesystem CSI SC when
     # the shared filesystem was opted into.
-    enable_filestore = bool(_tfvar_value(tfvars, os.environ, "enable_filestore", False))
-    if enable_filestore and default_sc != "csi-mounted-fs-path-sc":
+    if _shared_filesystem_requested(tfvars, os.environ) and default_sc != "csi-mounted-fs-path-sc":
         raise typer.BadParameter(f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}")
     return {
         "ready_nodes": ready_nodes,

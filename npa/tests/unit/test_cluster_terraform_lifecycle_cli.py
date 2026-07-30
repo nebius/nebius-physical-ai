@@ -47,6 +47,8 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
         return _completed()
 
     def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
@@ -131,8 +133,17 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
 
     assert result.exit_code == 0, result.output
     assert ["terraform", "init"] in stream_calls
-    assert ["terraform", "apply", "-auto-approve"] in stream_calls
-    apply_env = stream_envs[stream_calls.index(["terraform", "apply", "-auto-approve"])]
+    # -var beats terraform.tfvars; TF_VAR_* does not, so the flag has to be passed
+    # explicitly as well as exported.
+    apply_call = [
+        "terraform",
+        "apply",
+        "-auto-approve",
+        "-var",
+        "capacity_block_group=capacityblockgroup-test",
+    ]
+    assert apply_call in stream_calls
+    apply_env = stream_envs[stream_calls.index(apply_call)]
     assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
     assert any(call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"] for call in stream_calls)
     assert saved[-1].cluster_id == "mk8scluster-a"
@@ -153,6 +164,8 @@ def test_up_stops_on_unmanaged_duplicate(monkeypatch, tmp_path: Path) -> None:
         return _completed()
 
     def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
@@ -201,6 +214,8 @@ def test_up_allows_duplicate_managed_by_terraform_state(monkeypatch, tmp_path: P
     stream_calls: list[list[str]] = []
 
     def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
@@ -275,6 +290,8 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
     stream_calls: list[list[str]] = []
 
     def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
@@ -322,6 +339,8 @@ def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path
     stream_calls: list[list[str]] = []
 
     def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
@@ -381,6 +400,8 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypa
     stream_calls: list[list[str]] = []
 
     def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
@@ -470,6 +491,80 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert ["terraform", "init"] in stream_calls
     assert ["terraform", "destroy", "-auto-approve"] in stream_calls
+
+
+def test_up_rejects_terraform_older_than_the_vendored_modules(monkeypatch, tmp_path: Path) -> None:
+    """The vendored modules need >= 1.12; an old binary must fail before init."""
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.9.8"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "1.9.8 is too old" in result.output
+    assert "1.12.0" in result.output
+    assert stream_calls == []
+
+
+def test_up_rejects_an_iam_token_pinned_in_tfvars(monkeypatch, tmp_path: Path) -> None:
+    """Terraform prefers tfvars over TF_VAR_*, so a pinned token shadows the fresh one."""
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\niam_token = "<nebius-iam-token>"\n'
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "iam_token" in result.output
+    assert stream_calls == []
+
+
+def test_tfvar_bool_reads_false_strings_from_the_environment() -> None:
+    """TF_VAR_* values are strings and bool("false") is True."""
+    env = {"TF_VAR_enable_filestore": "false"}
+    assert tf_mod._tfvar_bool({}, env, "enable_filestore", True) is False
+    assert tf_mod._tfvar_bool({}, {"TF_VAR_enable_filestore": "1"}, "enable_filestore", False) is True
+    assert tf_mod._tfvar_bool({"enable_filestore": True}, {}, "enable_filestore", False) is True
+    assert tf_mod._tfvar_bool({}, {}, "enable_filestore", False) is False
+
+
+def test_shared_filesystem_requested_covers_existing_filestore() -> None:
+    """existing_filestore implies enable_filestore in deploy/cluster/main.tf."""
+    assert tf_mod._shared_filesystem_requested({"existing_filestore": "computefilesystem-a"}, {}) is True
+    assert tf_mod._shared_filesystem_requested({"existing_filestore": ""}, {}) is False
+    assert tf_mod._shared_filesystem_requested({}, {"TF_VAR_enable_filestore": "false"}, ) is False
 
 
 def test_terraform_env_refreshes_stale_token_by_default(monkeypatch) -> None:

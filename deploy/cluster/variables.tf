@@ -116,13 +116,13 @@ variable "infiniband_fabric" {
 }
 
 variable "enable_filestore" {
-  description = "Create or attach a shared filesystem (SFS) for cross-node cluster storage. Off by default: npa.workflow stages (including the Physical AI Data Factory) hand off artifacts via S3 URIs, so a small 1-GPU + 1-CPU cluster does not need it, and creating it requires Shared Filesystem SSD quota. Set true (or supply existing_filestore) to opt in when a workload needs a shared /mnt/data + the filesystem CSI default StorageClass."
+  description = "Create a shared filesystem (SFS) for cross-node cluster storage. Off by default: npa.workflow stages (including the Physical AI Data Factory) hand off artifacts via S3 URIs, so a small 1-GPU + 1-CPU cluster does not need it, and creating it requires Shared Filesystem SSD quota. Set true when a workload needs a shared /mnt/data + the filesystem CSI default StorageClass; supplying existing_filestore enables the same wiring without creating a filesystem."
   type        = bool
   default     = false
 }
 
 variable "existing_filestore" {
-  description = "Existing shared filesystem ID to attach instead of creating one."
+  description = "Existing shared filesystem ID to attach instead of creating one. Setting it implies enable_filestore."
   type        = string
   default     = ""
 }

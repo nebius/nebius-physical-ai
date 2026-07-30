@@ -31,8 +31,8 @@ These remain available as explicit opt-in via `terraform.tfvars`, `TF_VAR_*`, or
   InfiniBand training.
 - **Shared Filesystem:** set `enable_filestore = true` (optionally
   `filestore_disk_size_gibibytes`) to create one, or `existing_filestore = <id>`
-  to attach an existing one. Either promotes the filesystem CSI StorageClass to
-  the cluster default.
+  to attach an existing one (that alone implies `enable_filestore`). Either
+  promotes the filesystem CSI StorageClass to the cluster default.
 
 The vendored solution is based on upstream tag `main-v2026-05-25` with local
 patches for GPU node-group reservation policy and zero-CPU node-group omission
@@ -40,10 +40,20 @@ so raw Terraform usage stays standalone.
 
 ## Usage
 
+**Terraform >= 1.12 is required.** The vendored modules declare
+`required_version >= 1.12.0` and use `ephemeral` blocks; Terraform loads every
+referenced module during `init`, including the ones this wrapper disables, so an
+older binary fails to initialise the directory. `npa cluster up` /
+`npa cluster down` check the version first and point at the upgrade; set
+`NPA_TERRAFORM_BIN=/path/to/terraform` to use a newer binary without changing
+`PATH`.
+
 Copy `terraform.tfvars.example` to `terraform.tfvars` and replace placeholders
 with local values. `terraform.tfvars` is ignored by git. The example ships the
 small default shape and shows the larger-cluster / Shared Filesystem opt-ins in
-comments.
+comments. Leave `iam_token` commented out when driving Terraform through `npa`:
+the CLI mints a fresh token per run, and Terraform would prefer the pinned one
+in `terraform.tfvars` (so `npa cluster up` rejects that file outright).
 
 The default cluster needs **no** Shared Filesystem SSD quota, so
 `npa cluster up` / `npa provision-if-absent` succeed with zero SFS quota. Only
