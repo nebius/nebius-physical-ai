@@ -5242,6 +5242,17 @@ def _maybe_toolground_chat_reply(
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    elif intent == "foxglove_viewer":
+        # Ground the reply on the same payload the viewer pane mounts from.
+        try:
+            state["foxglove"] = foxglove_status_payload(
+                _foxglove_config(state),
+                state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}},
+            )
+            apis_used.append("foxglove/config")
+            apis_used.append("foxglove/status")
+        except Exception:
+            state["foxglove"] = {{}}
     elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
