@@ -52,8 +52,11 @@ making architecture, review, or domain judgments.
  toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workflows/physical-ai-data-factory/SKILL.md`: author, run, submit, or
  view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
- OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label →
- FiftyOne curate → Rerun visualize.
+ OSMO): annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label →
+ Cosmos Curator + FiftyOne curate → Rerun visualize. The evaluator and curator
+ are the real Apache-2.0 NVIDIA projects, wrapped as
+ `npa workbench cosmos-evaluator` and `npa workbench cosmos-curate`; see
+ `skills/NOTICE-NVIDIA-COSMOS-OSS` for which upstream code runs where.
 - `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench
  pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM),
  not an echo/manifest stub masquerading as real work.

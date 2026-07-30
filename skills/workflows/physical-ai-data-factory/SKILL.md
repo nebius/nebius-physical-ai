@@ -1,6 +1,6 @@
 ---
 name: physical-ai-data-factory
-description: Use when authoring, running, submitting, or viewing the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO) — annotate → Cosmos Transfer augment → evaluate/validate gate → re-label → FiftyOne curate → Rerun visualize — implemented as an npa.workflow that composes existing workbench tools.
+description: Use when authoring, running, submitting, or viewing the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO) — annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label → Cosmos Curator + FiftyOne curate → Rerun visualize — implemented as an npa.workflow that composes existing workbench tools.
 ---
 
 # Physical AI Data Factory (NPA-native, no OSMO)
@@ -13,6 +13,13 @@ Augmentation workflow. Design adapted from NVIDIA agent skills
 Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. Upstream licenses:
 Apache-2.0 and CC-BY-4.0. See `skills/NOTICE-NVIDIA-SKILLS`. NPA orchestrates on
 SkyPilot (not OSMO) and composes existing workbench tools.
+
+Three NVIDIA components in the pipeline are the real open-source projects, not
+NPA look-alikes: **Cosmos Transfer 2.5** augments, **Cosmos Evaluator**
+(https://github.com/nvidia-cosmos/cosmos-evaluator, Apache-2.0) grades, and
+**Cosmos Curator** (https://github.com/nvidia-cosmos/cosmos-curate, Apache-2.0)
+curates. See `skills/NOTICE-NVIDIA-COSMOS-OSS` for exactly which upstream code
+runs and where NPA substitutes its own endpoint.
 
 ## When To Use
 
@@ -33,16 +40,18 @@ is pure composition of existing toolRefs; only add real tools with tests.
 | Config Generation | `generate-configs` | `data_factory_stages.generate_configs` (run.shell) | CPU |
 | Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
 | Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` (real Cosmos Transfer 2.5 `--execute`; uploads video+frames to S3) | GPU |
-| Evaluate & Validate | `grade` loop (`attribute-verify` + `quality-gate`) | `workbench.vlm_eval.run` + `data_factory_stages.grade_gate` (reads the real VLM score) | Token Factory + CPU |
+| Evaluate & Validate | `grade` loop (`evaluate` + `quality-gate`) | `workbench.cosmos_evaluator.evaluate` (real Cosmos Evaluator: hallucination + attribute verification) + `data_factory_stages.grade_gate` | Token Factory + CPU |
 | Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
-| Curation | `curate` | `data_factory_stages.curate` (real dataset report) | CPU |
+| Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` (real Cosmos Curator stages → `clips/` + `metas/v0/`) | CPU |
+| Curation review | `curate` | `data_factory_stages.curate` (real FiftyOne Brain, merges the curator report) | CPU |
 | Visualize | `visualize` | `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU |
 | Finalize | `finalize` | `data_factory_stages.finalize` (real aggregate report) | CPU |
 
 Every stage invokes a real component (enforced by `test_real_components.py` and
 the `real-components` skill). The `augment` stage runs the real Cosmos Transfer
 2.5 model on GPU via `--execute` and publishes the generated video + extracted
-frames to `augment_uri`, which the grade / re-label / visualize stages consume.
+frames to `augment_uri`, which the grade / re-label / curate / visualize stages
+consume.
 
 **Config → augment MULTIPLY.** `generate-configs` samples N appearance combos
 (from `config.n_augmentations`); the `augment` toolRef passes `--configs-uri`, and
@@ -94,10 +103,52 @@ conditioning falls back to `edge`. Conditioned runs record `mode:
 cosmos_transfer2.5_gpu` + `input_conditioned: true` + `conditioned_input` in the
 augment `metadata.json` / `manifest.json`, which the agent's provenance panel surfaces.
 
-**Naming caveat:** the `attribute-verify` stage runs the REAL `vlm_eval` tool
-with `--backend api`; its output file is `vlm_eval_stub.json`, a LEGACY filename
-of the vlm_eval tool (`RESULT_FILENAME`), not a stubbed stage. `grade_gate`
-imports that constant instead of hardcoding the string, so it stays in sync.
+**Cosmos Evaluator grading (`evaluate` stage).** `npa workbench cosmos-evaluator
+evaluate` runs two of upstream's checks per augmented variant and writes
+`grade/cosmos_evaluator.json` (schema `npa.cosmos_evaluator.report.v1`):
+
+- *attribute verification* — upstream's protocol: an LLM writes one
+  multiple-choice question per sampled appearance attribute (guided JSON schema,
+  with upstream's tolerant text fallback), then a VLM answers it from a frame of
+  the variant. Both hops run on Token Factory, because upstream drives them
+  through a configurable OpenAI-compatible endpoint. The sampled combo is
+  upstream's `selected_variables` and `APPEARANCE_VARIABLES` is its
+  `variable_options`, so a variant that ignored its prompt fails.
+- *hallucination* — per-frame dynamic-mask comparison of the source clip against
+  the variant. CPU only. It delegates to upstream's own `HallucinationProcessor`
+  when a checkout is importable (`NPA_COSMOS_EVALUATOR_SRC`, else
+  `/opt/cosmos-evaluator`) and otherwise runs the in-repo port of the same
+  algorithm; the result's `engine` field says which ran, and the two agree to
+  ~1e-3. It only feeds the score for **input-conditioned** variants (see
+  `NPA_COSMOS_CONDITION_ON_INPUT` below) — without conditioning the two clips are
+  different scenes and the motion comparison carries no signal, so it stays
+  informational and the score is the attribute pass rate.
+
+`grade_gate` thresholds on that report's `score`. It also still accepts the older
+`vlm_eval` report (`vlm_eval_stub.json`, a LEGACY filename of the vlm_eval tool's
+`RESULT_FILENAME`, never a stubbed stage), so runs started before the `evaluate`
+stage existed keep grading. Both filenames come from the producing tool's own
+constant, so the gate cannot drift from its producer.
+
+**Cosmos Curator curation (`cosmos-curate` stage).** `npa workbench cosmos-curate
+curate-augmented` drives upstream's real stage classes in-process — no Ray
+scheduler, no GPU: `VideoDownloader` → `FixedStrideExtractorStage` →
+`ClipTranscodingStage` → `MotionVectorDecodeStage` + `MotionFilterStage` →
+`ClipWriterStage`. It writes upstream's canonical tree under `curated_clips_uri`
+(`clips/<clip-uuid>.mp4`, `metas/v0/<clip-uuid>.json` with real per-clip motion
+scores, `processed_videos/`) plus a summary at `curator_report_uri`, which the
+`curate` review stage merges into its report under `cosmos_curator`.
+
+Runs in the `npa-cosmos-curate` image, which bakes a pinned upstream checkout and
+a conda-forge ffmpeg carrying `libopenh264` — upstream's transcoding stage accepts
+only `libopenh264` or `h264_nvenc`, and Debian/Ubuntu ffmpeg builds have neither.
+Outside that image the stage records `engine: unavailable` with the exact reason
+(`npa workbench cosmos-curate engine` prints the same diagnosis) rather than
+pretending to curate, and the FiftyOne review stage still runs. Operators with the
+full curator container can instead run upstream's GPU pipeline — `npa workbench
+cosmos-curate plan-pipeline` prints the documented `video-pipeline split` command,
+which adds TransNetV2 shot detection, aesthetic filtering, embeddings, and VLM
+captioning; both paths write the same layout, so the ingest reads either.
 
 Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
 `meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`
@@ -117,8 +168,47 @@ npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
 ```
 
+Run either NVIDIA component on its own, against a run prefix or local files:
+
+```bash
+# Which engine will each resolve to here, and why?
+npa workbench cosmos-evaluator engine --output text
+npa workbench cosmos-curate    engine --output text
+
+# Grade one run's variants (writes grade/cosmos_evaluator.json).
+npa workbench cosmos-evaluator evaluate \
+  --augment-uri s3://<bucket>/physical-ai-data-factory/<run>/cosmos_augmented/ \
+  --output-uri  s3://<bucket>/physical-ai-data-factory/<run>/grade/ \
+  --input-uri   s3://<bucket>/physical-ai-data-factory/<run>/input/ \
+  --configs-uri s3://<bucket>/physical-ai-data-factory/<run>/configs/
+
+# One check at a time (both take local paths).
+npa workbench cosmos-evaluator hallucination --original-video a.mp4 --augmented-video b.mp4
+npa workbench cosmos-evaluator attribute-verify --video b.mp4 \
+  --variables '{"cloth_color": "blue"}' --options '{"cloth_color": ["blue","red","white","green"]}'
+
+# Curate one run's variants (writes the curator tree + cosmos_curator.json).
+npa workbench cosmos-curate curate-augmented \
+  --augment-uri s3://<bucket>/physical-ai-data-factory/<run>/cosmos_augmented/ \
+  --curated-uri s3://<bucket>/physical-ai-data-factory/<run>/curation/cosmos_curator/
+
+# Curate a local directory of clips.
+npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./curated
+```
+
 ## Key Operational Notes
 
+- **Neither NVIDIA component fetches code at run time.** The evaluator looks for
+  a checkout at `NPA_COSMOS_EVALUATOR_SRC` / `/opt/cosmos-evaluator` and falls
+  back to the in-repo port; the curator requires `NPA_COSMOS_CURATE_SRC` /
+  `/opt/cosmos-curate` (baked into `npa-cosmos-curate`) and reports
+  `engine: unavailable` without one. If a report says `unavailable`, read its
+  `reason` — it names the missing piece (checkout, importability, or ffmpeg
+  encoder) instead of guessing.
+- **Curator encoder gotcha.** `ffmpeg -encoders | grep -E 'libopenh264|h264_nvenc'`
+  must match something, or upstream's `ClipTranscodingStage` cannot write clips.
+  Debian/Ubuntu ffmpeg has neither; conda-forge's build carries `libopenh264`, and
+  any GPU node's ffmpeg carries `h264_nvenc`.
 - **GPU accelerator name is cluster-specific.** The spec uses canonical
   `RTXPRO6000:1`; some clusters advertise `RTXPRO-6000-BLACKWELL-SERVER-EDITION`.
   If `sky` reports `FAILED_PRECHECKS` / no matching resources, check

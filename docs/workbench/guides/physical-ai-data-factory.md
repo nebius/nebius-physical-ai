@@ -22,23 +22,42 @@ NVIDIA blueprint (OSMO) → NPA stage (toolRef / run):
 | --- | --- | --- | --- |
 | Stage 1 Config Generation | `generate-configs` | `run.shell` (sample appearance-only variables) | CPU |
 | Stage 2a Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
-| Stage 2b Augment & Multiply | `augment` | `workbench.cosmos2.transfer` | GPU (Cosmos Transfer 2.5) |
-| Evaluate & Validate | `grade` loop (`attribute-verify` + `quality-gate`) | `workbench.vlm_eval.run` + `workbench.sim2real.write_decision` | Token Factory + CPU |
+| Stage 2b Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` | GPU (Cosmos Transfer 2.5) |
+| Evaluate & Validate | `grade` loop (`evaluate` + `quality-gate`) | `workbench.cosmos_evaluator.evaluate` + `data_factory_stages.grade_gate` | Token Factory + CPU |
 | Stage 3 Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
-| Stage 4 Curation | `curate` | `workbench.fiftyone.launch_app` | CPU |
-| Finalize | `finalize` | `workbench.sim2real.finalize` | CPU |
+| Stage 4a Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` | CPU |
+| Stage 4b Curation review | `curate` | `data_factory_stages.curate` (FiftyOne Brain) | CPU |
+| Visualize | `visualize` | `data_factory_viz.build_run_rrd` | CPU |
+| Finalize | `finalize` | `data_factory_stages.finalize` | CPU |
+
+Three NVIDIA components in that table are the real open-source projects:
+
+- **Cosmos Transfer 2.5** augments (GPU diffusion, `npa-cosmos2-transfer` image).
+  It is **not** a Token Factory model.
+- **[Cosmos Evaluator](https://github.com/nvidia-cosmos/cosmos-evaluator)**
+  (Apache-2.0) grades. The `evaluate` stage runs two of upstream's checks per
+  variant: *attribute verification* (an LLM writes one multiple-choice question
+  per sampled attribute, a VLM answers it from a frame — both on Token Factory,
+  since upstream drives them through a configurable OpenAI-compatible endpoint)
+  and *hallucination* (per-frame dynamic-mask comparison against the source clip,
+  CPU only). The hallucination score only feeds the run score for
+  input-conditioned variants; otherwise the clips are different scenes and it stays
+  informational.
+- **[Cosmos Curator](https://github.com/nvidia-cosmos/cosmos-curate)**
+  (Apache-2.0) curates. The `cosmos-curate` stage drives upstream's own stages —
+  `VideoDownloader` → `FixedStrideExtractorStage` → `ClipTranscodingStage` →
+  `MotionVectorDecodeStage` + `MotionFilterStage` → `ClipWriterStage` — and writes
+  upstream's canonical `clips/` + `metas/v0/` tree with real per-clip motion
+  scores. FiftyOne then reviews that set.
+
+See `skills/NOTICE-NVIDIA-COSMOS-OSS` for exactly which upstream code runs and
+where NPA substitutes its own endpoint.
 
 **Model roles** (verified available on Nebius Token Factory):
 
-- VLM captioning + attribute verification: `Qwen/Qwen2.5-VL-72B-Instruct`
+- VLM captioning + the evaluator's attribute answering: `Qwen/Qwen2.5-VL-72B-Instruct`
 - Cosmos-family reasoning critic: `nvidia/Cosmos3-Super-Reasoner`
 - Prompt / MCQ LLM: `meta-llama/Llama-3.3-70B-Instruct`
-
-Cosmos Transfer 2.5 is **not** a Token Factory model — it is the GPU diffusion
-augmentation engine, run via the `cosmos2.transfer` tool (`--execute` on an
-`npa-cosmos2-transfer` image / GPU). The classical structural "hallucination"
-check is a CPU checker folded into the grade gate; the model-based attribute
-verification is `vlm_eval`.
 
 > **Config → augment MULTIPLY.** The `augment` stage receives the Config-Gen
 > manifest via `--configs-uri` and runs **one Cosmos Transfer 2.5 inference per
@@ -53,9 +72,23 @@ verification is `vlm_eval`.
 
 ## Runtime placement
 
-- **Token Factory (zero-GPU, hosted):** captioning, attribute verification.
+- **Token Factory (zero-GPU, hosted):** captioning, and the Cosmos Evaluator
+  attribute-verification check's LLM + VLM calls.
 - **GPU (Nebius Managed K8s):** Cosmos Transfer 2.5 augmentation only.
-- **CPU:** config sampling, structural check, curation, finalize.
+- **CPU:** config sampling, the evaluator's hallucination check, Cosmos Curator
+  curation, FiftyOne review, visualize, finalize.
+
+The `cosmos-curate` stage needs the `npa-cosmos-curate` image, which bakes a
+pinned upstream checkout and a conda-forge ffmpeg carrying `libopenh264` —
+upstream's transcoding stage accepts only `libopenh264` or `h264_nvenc`, and
+Debian/Ubuntu ffmpeg builds have neither. Without it the stage records
+`engine: unavailable` plus the reason and the FiftyOne review still runs. Check
+what an environment resolves to with:
+
+```bash
+npa workbench cosmos-evaluator engine --output text
+npa workbench cosmos-curate    engine --output text
+```
 
 ## Validate / plan / render
 
@@ -93,9 +126,15 @@ s3://<bucket>/physical-ai-data-factory/<run-id>/
   configs/             # Stage 1 sampled augmentation manifest  -> json
   labeled_original/    # Stage 2a VLM captions                  -> json
   cosmos_augmented/    # Stage 2b augmented clips + metadata    -> video / json
-  grade/               # attribute-verify report + decision     -> json
+  grade/               # Cosmos Evaluator report + decision     -> json
   labeled_augmented/   # Stage 3 VLM captions on augmented      -> json
-  curation/            # Stage 4 curation report                -> json
+  curation/
+    cosmos_curator/    # Cosmos Curator output tree             -> video / json
+      clips/           #   transcoded clips
+      metas/v0/        #   per-clip metadata + motion scores
+      processed_videos/
+    cosmos_curator.json# Cosmos Curator run summary             -> json
+    report.json        # FiftyOne review report (merges the above) -> json
   reports/sim2real.rrd # Rerun recording (input+augmented+captions) -> rerun
   reports/final.json   # finalize summary                       -> json
 ```

@@ -25,7 +25,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/byof-onboard/SKILL.md`: BYOF OSS repo onboarding (Ubuntu/Isaac base, container-verify, agent `onboard_solution`).
 - `skills/workflows/generate-npa-workflow/SKILL.md`: design new creative npa.workflow pipelines from the catalog (loops, gates, reference YAML).
 - `skills/workflows/diagram-to-npa-workflow/SKILL.md`: turn an architecture diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes/arrows/diamonds/back-edges → states, loops, gates, catalog toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
-- `skills/workflows/physical-ai-data-factory/SKILL.md`: author/run/view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label → FiftyOne curate → Rerun visualize.
+- `skills/workflows/physical-ai-data-factory/SKILL.md`: author/run/view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label → Cosmos Curator + FiftyOne curate → Rerun visualize. The evaluator and curator are the real Apache-2.0 NVIDIA projects (`npa workbench cosmos-evaluator` / `cosmos-curate`); see `skills/NOTICE-NVIDIA-COSMOS-OSS`.
 - `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM), not an echo/manifest stub.
 - `skills/workbench/sim2real-engine/SKILL.md`: canonical 14-stage Sim2Real engine map (`run_preamble` / `run_inner_loop` / `run_single_outer_iteration` / `run_finalize`) and K8s sibling job glue.
 

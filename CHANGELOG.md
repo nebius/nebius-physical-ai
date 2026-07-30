@@ -7,6 +7,37 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### NVIDIA Cosmos Evaluator + Cosmos Curator in the Physical AI Data Factory
+
+- The blueprint's evaluate/validate gate now grades with the real
+  [Cosmos Evaluator](https://github.com/nvidia-cosmos/cosmos-evaluator)
+  (Apache-2.0) instead of the generic `vlm_eval` scorer. New
+  `npa workbench cosmos-evaluator` runs two of upstream's checks per augmented
+  variant: attribute verification (upstream's LLM question generation + VLM
+  answering protocol, pointed at Nebius Token Factory) and the hallucination check
+  (dynamic-mask motion comparison against the source clip, CPU only). The
+  hallucination check delegates to upstream's own `HallucinationProcessor` when a
+  checkout is importable and otherwise runs an in-repo port of the same algorithm;
+  each result records which engine produced it, and the two agree to ~1e-3.
+- Curation now runs the real
+  [Cosmos Curator](https://github.com/nvidia-cosmos/cosmos-curate) (Apache-2.0)
+  before FiftyOne review. New `npa workbench cosmos-curate` drives upstream's own
+  stage classes in-process — no Ray scheduler, no GPU — and produces upstream's
+  canonical `clips/` + `metas/v0/` + `processed_videos/` tree with real per-clip
+  motion scores. `plan-pipeline` prints upstream's documented `video-pipeline
+  split` command for operators running the full curator container.
+- New `npa-cosmos-curate` image bakes a pinned upstream checkout, the dependency
+  subset its GPU-free stages import, and a conda-forge ffmpeg carrying
+  `libopenh264` (upstream's transcoding stage accepts only `libopenh264` or
+  `h264_nvenc`). Its golden eval is a real curation run. Where the curator cannot
+  run, the stage records `engine: unavailable` plus the reason rather than emitting
+  a report that implies curation happened.
+- `grade_gate` reads `cosmos_evaluator.json` and still accepts the older `vlm_eval`
+  report, so runs in flight keep grading. The FiftyOne review report gains a
+  `cosmos_curator` block with the curator's run-level summary.
+- Attribution: `skills/NOTICE-NVIDIA-COSMOS-OSS` records which upstream modules
+  run, which are reimplemented, and where NPA substitutes its own endpoint.
+
 ### First-time-user cold-start fixes
 
 - `npa configure --interactive` no longer exits 0 having written nothing. When it

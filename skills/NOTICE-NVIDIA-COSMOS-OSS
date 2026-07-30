@@ -1,0 +1,59 @@
+NVIDIA Cosmos open-source components used by the NPA workbench
+
+Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+
+Two NVIDIA Cosmos projects are wrapped as NPA workbench tools and invoked by the
+`physical-ai-data-factory` blueprint. Both are Apache-2.0.
+
+## Cosmos Evaluator
+
+  https://github.com/nvidia-cosmos/cosmos-evaluator            (Apache-2.0)
+
+Wrapped by `npa/src/npa/workbench/cosmos_evaluator/` and exposed as
+`npa workbench cosmos-evaluator`. Two of upstream's checks are used:
+
+  - Hallucination check (`checks/hallucination`). NPA runs upstream's own
+    `HallucinationProcessor` when an upstream checkout is importable
+    (`NPA_COSMOS_EVALUATOR_SRC`, else `/opt/cosmos-evaluator`), and otherwise runs
+    an implementation of the same published algorithm in
+    `cosmos_evaluator/hallucination.py`. Every result records which engine ran.
+    Upstream's algorithm — dynamic-mask differencing, distance-transform tolerance,
+    and the resulting hallucinated-pixel ratio — is described in that module's
+    docstring, and the two engines agree to ~1e-3 on the same clip pair.
+
+  - Attribute verification check (`checks/attribute_verification`). NPA reuses
+    upstream's system prompts, per-variable user prompt, guided-JSON response
+    schema, and answer parsing verbatim in
+    `cosmos_evaluator/attribute_verification.py`. Upstream drives both the
+    question-generation LLM and the answering VLM through a configurable
+    OpenAI-compatible endpoint; NPA configures Nebius Token Factory instead of
+    build.nvidia.com.
+
+Upstream resolves its bundled `cosmos_evaluator.yaml` through Bazel runfiles.
+NPA aliases the published `bazel-runfiles` wheel under the Bazel module path so
+the checkers import from a plain source checkout; see
+`cosmos_evaluator/upstream.py`.
+
+## Cosmos Curator
+
+  https://github.com/nvidia-cosmos/cosmos-curate                (Apache-2.0)
+  https://github.com/nvidia-cosmos/cosmos-xenna                 (Apache-2.0)
+
+Wrapped by `npa/src/npa/workbench/cosmos_curate/` and exposed as
+`npa workbench cosmos-curate`. Upstream's curation pipelines ship inside its own
+pixi-managed container and publish no wheel, so NPA bakes a pinned source checkout
+into the `npa-cosmos-curate` image and drives upstream's real stage classes
+directly — no Ray scheduler, no GPU:
+
+  VideoDownloader -> FixedStrideExtractorStage -> ClipTranscodingStage
+  -> MotionVectorDecodeStage -> MotionFilterStage -> ClipWriterStage
+
+The curation work and the output layout (`clips/`, `metas/v0/`,
+`processed_videos/`) are upstream's own; NPA only stages artifacts in and out and
+summarizes the result. `split_pipeline_argv` builds upstream's documented
+`video-pipeline split` command for operators who run the full curator container
+with its GPU stages.
+
+## Trademarks
+
+NVIDIA, Cosmos, Omniverse, NuRec, and Isaac are trademarks of NVIDIA.
