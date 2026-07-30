@@ -131,6 +131,8 @@ lerobot-vlm-rl = "0.1.1"
 # (sm_120) 2026-07-21; 0.1.1 deleted from the registry. See FIXME.md.
 loop-eval = "0.1.3-genuine-sm120"
 rerun-viewer = "0.31.4"
+# Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
+foxglove-embed = "0.58.0"
 lancedb = "0.30.3"
 detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
 nebius-cli = "0.12.192"

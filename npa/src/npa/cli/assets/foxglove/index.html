@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NPA · Foxglove embedded viewer</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: #0b1020;
+        color: #e2e8f0;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: #111935;
+        border-bottom: 1px solid #22305c;
+      }
+      header h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: 0.02em; }
+      header .spacer { flex: 1; }
+      #status { font-size: 12px; color: #94a3b8; }
+      #status.is-ready { color: #4ade80; }
+      #status.is-error { color: #f87171; }
+      #host { flex: 1; min-height: 0; position: relative; }
+      #host iframe { width: 100%; height: 100%; border: 0; }
+      #fallback { padding: 24px; max-width: 760px; }
+      #fallback code { background: #16204a; padding: 1px 5px; border-radius: 4px; }
+      #fallback ul { padding-left: 18px; }
+      a { color: #93c5fd; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>NPA · Foxglove embedded viewer</h1>
+      <span class="spacer"></span>
+      <span id="source" title="Active data source"></span>
+      <span id="status" role="status" aria-live="polite">Starting…</span>
+    </header>
+    <div id="host"></div>
+    <div id="fallback" hidden></div>
+    <script type="module">
+      import { mountFoxgloveViewer, dataSourceFromConfig } from "./app/npa-foxglove-host.js";
+
+      const params = new URLSearchParams(location.search);
+      const statusEl = document.getElementById("status");
+      const sourceEl = document.getElementById("source");
+      const hostEl = document.getElementById("host");
+      const fallbackEl = document.getElementById("fallback");
+
+      function setStatus(text, kind) {
+        statusEl.textContent = text;
+        statusEl.className = kind ? `is-${kind}` : "";
+      }
+
+      function showFallback(html) {
+        hostEl.hidden = true;
+        fallbackEl.hidden = false;
+        fallbackEl.innerHTML = html;
+      }
+
+      const mcapUrls = params.getAll("mcap").filter(Boolean);
+      const liveUrl = (params.get("ws") || "").trim();
+      const config = {
+        embed_src: (params.get("src") || "").trim(),
+        org_slug: (params.get("org") || "").trim(),
+        color_scheme: (params.get("theme") || "dark").trim(),
+        layout_storage_key: (params.get("layout") || "").trim(),
+        live_url: liveUrl,
+        data_source: mcapUrls.length
+          ? { type: "remote-file", urls: mcapUrls, autoplay: params.get("autoplay") === "1" }
+          : null,
+      };
+
+      const resolved = dataSourceFromConfig(config, { origin: location.origin });
+      sourceEl.textContent = resolved
+        ? resolved.type === "live"
+          ? `live · ${resolved.url}`
+          : `${resolved.type} · ${(resolved.urls || []).length} file(s)`
+        : "no data source";
+
+      if (!config.embed_src) {
+        // Honest degraded state: this container hosts the SDK, not the Foxglove
+        // application. Without a `src` there is nothing to embed.
+        setStatus("Not configured", "error");
+        showFallback(`
+          <h2>No embed source configured</h2>
+          <p>This service hosts the <code>@foxglove/embed</code> SDK and your data files; the
+          Foxglove application itself is hosted by Foxglove or by your self-hosted deployment.</p>
+          <p>Pass one with <code>?src=</code>, for example:</p>
+          <ul>
+            <li><code>?src=https://embed.foxglove.dev/&amp;org=my-org&amp;mcap=/data/run.mcap</code></li>
+            <li><code>?src=https://foxglove.internal.example/&amp;ws=ws://robot:8765</code></li>
+          </ul>
+          <p>Query parameters: <code>src</code>, <code>org</code>, <code>mcap</code> (repeatable),
+          <code>ws</code>, <code>layout</code>, <code>theme</code>, <code>autoplay=1</code>.</p>
+          <p>Mounted data files are listed under <a href="/data/">/data/</a>.</p>
+        `);
+      } else {
+        try {
+          mountFoxgloveViewer({
+            parent: hostEl,
+            config,
+            origin: location.origin,
+            onReady: () => setStatus("Viewer ready", "ready"),
+            onError: (message) => setStatus(`Viewer error: ${message}`, "error"),
+          });
+          setStatus("Loading embedded viewer…");
+        } catch (err) {
+          setStatus("Failed to mount viewer", "error");
+          showFallback(`<h2>Failed to mount the Foxglove viewer</h2><pre>${String(err && err.message ? err.message : err)}</pre>`);
+        }
+      }
+    </script>
+  </body>
+</html>

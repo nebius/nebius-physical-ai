@@ -97,3 +97,9 @@ images:
     tier: job
     ports: [9090]
     final_user: nobody
+  foxglove-embed:
+    dockerfile: foxglove-embed/Dockerfile
+    tier: service
+    ports: [8099]
+    final_user: nobody
+    notes: "Static host for the @foxglove/embed SDK, the shared glue module, and MCAP data (CORS + byte ranges)."
