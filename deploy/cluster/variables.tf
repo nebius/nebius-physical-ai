@@ -49,9 +49,9 @@ variable "ssh_public_key" {
 }
 
 variable "cpu_nodes_count" {
-  description = "CPU-only node count. Keep zero when the target cluster should contain only GPU worker nodes."
+  description = "CPU-only node count. Default is one small CPU node for the FTUE / Physical AI Data Factory shape (CPU stages such as annotate/curate run here; GPU stages run on the GPU node). Set to 0 for a GPU-only cluster."
   type        = number
-  default     = 0
+  default     = 1
 }
 
 variable "cpu_nodes_platform" {
@@ -67,9 +67,9 @@ variable "cpu_nodes_preset" {
 }
 
 variable "gpu_nodes_count" {
-  description = "GPU node count in the single GPU node group."
+  description = "GPU node count in the single GPU node group. Default is one node for the FTUE / Physical AI Data Factory shape. Raise it (with a multi-GPU preset and enable_gpu_cluster) for a training farm."
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "gpu_nodes_platform" {
@@ -79,9 +79,9 @@ variable "gpu_nodes_platform" {
 }
 
 variable "gpu_nodes_preset" {
-  description = "GPU node preset. The default is the 8-GPU RTX PRO 6000 preset exposed by the Nebius platform catalog."
+  description = "GPU node preset. The default is the single-GPU RTX PRO 6000 preset for the small FTUE / Physical AI Data Factory shape. For a training farm, use a multi-GPU preset such as 8gpu-192vcpu-1744gb (and set enable_gpu_cluster = true for InfiniBand)."
   type        = string
-  default     = "8gpu-192vcpu-1744gb"
+  default     = "1gpu-24vcpu-218gb"
 }
 
 variable "capacity_block_group" {
@@ -116,9 +116,9 @@ variable "infiniband_fabric" {
 }
 
 variable "enable_filestore" {
-  description = "Create or attach a shared filesystem for cluster storage."
+  description = "Create or attach a shared filesystem (SFS) for cross-node cluster storage. Off by default: npa.workflow stages (including the Physical AI Data Factory) hand off artifacts via S3 URIs, so a small 1-GPU + 1-CPU cluster does not need it, and creating it requires Shared Filesystem SSD quota. Set true (or supply existing_filestore) to opt in when a workload needs a shared /mnt/data + the filesystem CSI default StorageClass."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "existing_filestore" {
