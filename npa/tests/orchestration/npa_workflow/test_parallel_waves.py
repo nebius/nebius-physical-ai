@@ -535,10 +535,12 @@ def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
     )
 
     # The seam no longer wraps stage shells in a login shell.
-    plan = build_plan(parallel_spec, run_id="shell-1")
-    join_step = [step for step in plan.steps if step.state == "aggregate"][0]
-    task = build_scheduler_task(parallel_spec, join_step, run_id="shell-1")
+    shipped = load_spec(SHIPPED / "token-factory-parallel-fanout.yaml")
+    plan = build_plan(shipped, run_id="shell-1")
+    join_step = [step for step in plan.steps if step.shell.strip()][0]
+    task = build_scheduler_task(shipped, join_step, run_id="shell-1")
     assert task["command"][:2] == ["bash", "-c"]
+    assert "join_shards" in task["command"][2]
 
     setup = default_npa_setup()
     assert "/tmp/npa-python" in setup  # records the good interpreter
