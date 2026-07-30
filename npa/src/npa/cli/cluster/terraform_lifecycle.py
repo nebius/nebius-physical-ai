@@ -103,6 +103,7 @@ def up_cmd(
             # explicitly so `--capacity-block-group` is not silently dropped by a
             # `capacity_block_group = ""` line in a checked-in tfvars file.
             *_capacity_block_group_var_args(capacity_block_group),
+            *_ssh_public_key_var_args(tfvars, env),
         ],
         cwd=tf_dir,
         env=env,
@@ -154,10 +155,18 @@ def down_cmd(
     if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
         raise typer.Exit(1)
     _preflight_terraform_version(terraform_bin)
-    _guard_tfvars_iam_token(tf_dir, _read_tfvars(tf_dir))
+    tfvars = _read_tfvars(tf_dir)
+    _guard_tfvars_iam_token(tf_dir, tfvars)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     _run_stream(
-        [terraform_bin, "destroy", "-auto-approve"],
+        [
+            terraform_bin,
+            "destroy",
+            "-auto-approve",
+            # Variable validation runs on destroy too, so the key has to resolve
+            # here as well.
+            *_ssh_public_key_var_args(tfvars, env),
+        ],
         cwd=tf_dir,
         env=env,
         timeout=timeout * 60,
@@ -296,6 +305,39 @@ def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
     if not value:
         return []
     return ["-var", f"capacity_block_group={value}"]
+
+
+#: Node-group SSH keys, most modern first. `ssh-keygen` has defaulted to ed25519
+#: for years, and the rest of the CLI (agent deploy, the tfvars example) uses it.
+_SSH_PUBLIC_KEY_NAMES = ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub")
+
+
+def _ssh_public_key_var_args(tfvars: dict[str, Any], env: dict[str, str]) -> list[str]:
+    """Pin an SSH public key that exists on this machine.
+
+    The vendored module validates ``fileexists(ssh_public_key.path)`` against a
+    default of ``~/.ssh/id_rsa.pub``, so the zero-config path
+    (``npa provision-if-absent``, which passes no key) fails at plan time on any
+    machine that only has an ed25519 key. Resolve one here instead; an explicit
+    ``ssh_public_key`` in tfvars or ``TF_VAR_ssh_public_key`` always wins.
+    """
+    if "ssh_public_key" in tfvars or str(env.get("TF_VAR_ssh_public_key", "") or "").strip():
+        return []
+    explicit = os.environ.get("NPA_SSH_PUBLIC_KEY", "").strip()
+    candidates = (
+        [Path(explicit).expanduser()]
+        if explicit
+        else [Path.home() / ".ssh" / name for name in _SSH_PUBLIC_KEY_NAMES]
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return ["-var", f'ssh_public_key={{path="{candidate}"}}']
+    searched = ", ".join(str(path) for path in candidates)
+    raise typer.BadParameter(
+        f"No SSH public key found for the cluster node groups (looked at {searched}). "
+        "Create one with `ssh-keygen -t ed25519`, point NPA_SSH_PUBLIC_KEY at an "
+        "existing key, or set ssh_public_key in terraform.tfvars."
+    )
 
 
 def _preflight_terraform_version(terraform_bin: str) -> None:

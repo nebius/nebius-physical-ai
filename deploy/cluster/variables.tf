@@ -38,13 +38,13 @@ variable "ssh_user_name" {
 }
 
 variable "ssh_public_key" {
-  description = "SSH public key for Kubernetes node access."
+  description = "SSH public key for Kubernetes node access. `npa cluster up` pins the first key that exists on the machine (NPA_SSH_PUBLIC_KEY, then ~/.ssh/id_ed25519.pub, id_rsa.pub, id_ecdsa.pub) unless this is set explicitly; the module rejects a path that does not exist."
   type = object({
     key  = optional(string)
     path = optional(string)
   })
   default = {
-    path = "~/.ssh/id_rsa.pub"
+    path = "~/.ssh/id_ed25519.pub"
   }
 }
 

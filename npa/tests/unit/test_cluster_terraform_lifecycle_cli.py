@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.cluster import app
@@ -15,6 +16,25 @@ runner = CliRunner()
 
 def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+@pytest.fixture(autouse=True)
+def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
+    """The vendored module rejects a node-group key path that does not exist.
+
+    The isolated test HOME has no ~/.ssh, so give every up/down run a real key.
+    """
+    key = tmp_path_factory.mktemp("ssh") / "id_ed25519.pub"
+    key.write_text("ssh-ed25519 AAAAC3Nz test@example\n")
+    monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(key))
+    return key
+
+
+def _find_call(stream_calls: list[list[str]], *prefix: str) -> list[str] | None:
+    for call in stream_calls:
+        if call[: len(prefix)] == list(prefix):
+            return call
+    return None
 
 
 def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path: Path) -> None:
@@ -135,14 +155,9 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
     assert ["terraform", "init"] in stream_calls
     # -var beats terraform.tfvars; TF_VAR_* does not, so the flag has to be passed
     # explicitly as well as exported.
-    apply_call = [
-        "terraform",
-        "apply",
-        "-auto-approve",
-        "-var",
-        "capacity_block_group=capacityblockgroup-test",
-    ]
-    assert apply_call in stream_calls
+    apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
+    assert apply_call is not None
+    assert "capacity_block_group=capacityblockgroup-test" in apply_call
     apply_env = stream_envs[stream_calls.index(apply_call)]
     assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
     assert any(call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"] for call in stream_calls)
@@ -268,7 +283,7 @@ def test_up_allows_duplicate_managed_by_terraform_state(monkeypatch, tmp_path: P
     )
 
     assert result.exit_code == 0, result.output
-    assert ["terraform", "apply", "-auto-approve"] in stream_calls
+    assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
 def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path) -> None:
@@ -313,7 +328,7 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
 
     assert result.exit_code != 0
     assert "Shared filesystem quota is insufficient" in result.output
-    assert ["terraform", "apply", "-auto-approve"] not in stream_calls
+    assert _find_call(stream_calls, "terraform", "apply", "-auto-approve") is None
 
 
 def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path: Path) -> None:
@@ -372,7 +387,7 @@ def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path
     )
 
     assert result.exit_code == 0, result.output
-    assert ["terraform", "apply", "-auto-approve"] in stream_calls
+    assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
 def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypatch, tmp_path: Path) -> None:
@@ -490,7 +505,7 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert ["terraform", "init"] in stream_calls
-    assert ["terraform", "destroy", "-auto-approve"] in stream_calls
+    assert _find_call(stream_calls, "terraform", "destroy", "-auto-approve")
 
 
 def test_up_rejects_terraform_older_than_the_vendored_modules(monkeypatch, tmp_path: Path) -> None:
@@ -549,6 +564,116 @@ def test_up_rejects_an_iam_token_pinned_in_tfvars(monkeypatch, tmp_path: Path) -
     assert result.exit_code != 0
     assert "iam_token" in result.output
     assert stream_calls == []
+
+
+def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:
+    """The module rejects a key path that does not exist; ~/.ssh/id_rsa.pub often does not."""
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    key = tmp_path / "keys" / "id_ed25519.pub"
+    key.parent.mkdir()
+    key.write_text("ssh-ed25519 AAAAC3Nz test@example\n")
+    monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(key))
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:3] == ["terraform", "output", "-json"]:
+            return _completed(
+                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 0, result.output
+    apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
+    assert apply_call is not None
+    assert f'ssh_public_key={{path="{key}"}}' in apply_call
+
+
+def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(monkeypatch, tmp_path: Path) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text('ssh_public_key = { path = "~/.ssh/custom.pub" }\n')
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:3] == ["terraform", "output", "-json"]:
+            return _completed(
+                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 0, result.output
+    apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
+    assert apply_call is not None
+    assert not any(arg.startswith("ssh_public_key=") for arg in apply_call)
+
+
+def test_up_explains_a_missing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(tmp_path / "absent.pub"))
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "No SSH public key found" in result.output
+    assert "ssh-keygen -t ed25519" in result.output
+    assert _find_call(stream_calls, "terraform", "apply", "-auto-approve") is None
 
 
 def test_tfvar_bool_reads_false_strings_from_the_environment() -> None:
