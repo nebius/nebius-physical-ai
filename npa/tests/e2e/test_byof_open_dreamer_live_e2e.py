@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -134,6 +135,44 @@ def _wait_for_object(s3, bucket: str, key: str, *, deadline: float, poll: float)
     return None
 
 
+def _resolve_upload_bucket(combined: str, run_id: str, e2e_project: str | None) -> str:
+    """Return the bucket the BYOF runner actually uploaded to.
+
+    The runner resolves the project *run* bucket at runtime (which is not the
+    ``checkpoint_bucket`` that ``live_bucket`` returns), so read it straight from
+    the runner's streamed ``uploaded s3://<bucket>/byof/<run-id>/...`` lines.
+    Fall back to an explicit env override, then to ``live_bucket``.
+    """
+    match = re.search(rf"s3://([^/\s]+)/byof/{re.escape(run_id)}/", combined)
+    if match:
+        return match.group(1)
+    env_bucket = (os.environ.get("NPA_S3_BUCKET") or "").strip()
+    if env_bucket:
+        return env_bucket.removeprefix("s3://").split("/")[0]
+    return live_bucket(e2e_project)
+
+
+def _verify_run_s3(s3, bucket: str, run_id: str, smoke_artifact: str, *, deadline: float, poll: float) -> dict:
+    """Assert the run's S3 artifacts prove all 7 capabilities + the dream .rrd."""
+    prefix = f"byof/{run_id}/"
+    obj = _wait_for_object(s3, bucket, prefix + smoke_artifact, deadline=deadline, poll=poll)
+    assert obj is not None, f"results artifact never appeared: s3://{bucket}/{prefix}{smoke_artifact}"
+    results = json.loads(obj["Body"].read())
+
+    exercised = set(results.get("capabilities_exercised") or [])
+    deferred = results.get("deferred") or []
+    assert EXPECTED_CAPABILITIES.issubset(exercised), (
+        f"missing capabilities: {sorted(EXPECTED_CAPABILITIES - exercised)}; deferred={deferred}"
+    )
+    assert not deferred, f"unexpected deferred capabilities: {deferred}"
+    assert results.get("jax_device_count", 0) >= 2, results.get("jax_device_count")
+    assert results.get("data_parallel_mesh", {}).get("data", 0) >= 2, results.get("data_parallel_mesh")
+
+    rrd = s3.head_object(Bucket=bucket, Key=prefix + "open_dreamer_world_model.rrd")
+    assert rrd["ContentLength"] > 1_000_000, rrd["ContentLength"]
+    return results
+
+
 def test_open_dreamer_spec_renders_via_workflow_machinery() -> None:
     """The spec must plan/render through the real npa.workflow machinery."""
     from npa.orchestration.npa_workflow import build_plan, load_spec
@@ -179,7 +218,6 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
     repo_ref = str(config["repo_ref"])
 
     registry = resolve_container_registry(e2e_project)
-    bucket = live_bucket(e2e_project)
     run_id = "byof-open-dreamer-e2e-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     cmd = [
@@ -257,28 +295,14 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
         except ValueError:
             pass  # launcher may still be mid-flight; S3 is the source of truth
 
-    # Verify via S3: the results artifact must show all 7 capabilities, 0 deferred.
+    # Verify via S3 (the source of truth). Read the bucket the runner actually
+    # uploaded to from its output rather than guessing.
     s3 = _s3_client(e2e_project)
-    prefix = f"byof/{run_id}/"
-    results_key = prefix + smoke_artifact
+    bucket = _resolve_upload_bucket(combined, run_id, e2e_project)
     deadline = time.time() + int(os.environ.get("NPA_BYOF_OD_S3_WAIT", "18000"))
     poll = float(os.environ.get("NPA_BYOF_OD_POLL", "120"))
-    obj = _wait_for_object(s3, bucket, results_key, deadline=deadline, poll=poll)
-    assert obj is not None, f"results artifact never appeared: s3://{bucket}/{results_key}"
-    results = json.loads(obj["Body"].read())
-
-    exercised = set(results.get("capabilities_exercised") or [])
-    deferred = results.get("deferred") or []
-    assert EXPECTED_CAPABILITIES.issubset(exercised), (
-        f"missing capabilities: {sorted(EXPECTED_CAPABILITIES - exercised)}; deferred={deferred}"
-    )
-    assert not deferred, f"unexpected deferred capabilities: {deferred}"
-    assert results.get("jax_device_count", 0) >= 2, results.get("jax_device_count")
-    assert results.get("data_parallel_mesh", {}).get("data", 0) >= 2, results.get("data_parallel_mesh")
-
-    # The headline dream .rrd must exist and be non-trivial.
-    rrd = s3.head_object(Bucket=bucket, Key=prefix + "open_dreamer_world_model.rrd")
-    assert rrd["ContentLength"] > 1_000_000, rrd["ContentLength"]
+    results = _verify_run_s3(s3, bucket, run_id, smoke_artifact, deadline=deadline, poll=poll)
+    assert results.get("dream_psnr_db") is not None, results.get("dream_psnr_db")
 
     # Best-effort teardown of the (auto-stopping) cluster.
     if skypilot_bin:
@@ -290,3 +314,25 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
             env=env,
             timeout=600,
         )
+
+
+@pytest.mark.skipif(
+    not os.environ.get("NPA_BYOF_OD_VERIFY_RUN"),
+    reason="Set NPA_BYOF_OD_VERIFY_RUN=s3://<bucket>/byof/<run-id>/ to verify an existing run's artifacts.",
+)
+def test_open_dreamer_verify_existing_run(e2e_project: str | None) -> None:
+    """Verify a previously completed run's S3 artifacts prove 7/7 capabilities.
+
+    Useful to re-check a run without re-training. ``NPA_BYOF_OD_VERIFY_RUN`` may
+    be ``s3://<bucket>/byof/<run-id>/`` or just ``<bucket>/<run-id>``.
+    """
+    raw = os.environ["NPA_BYOF_OD_VERIFY_RUN"].strip().removeprefix("s3://").rstrip("/")
+    if "/byof/" in raw:
+        bucket, run_id = raw.split("/byof/", 1)
+    else:
+        bucket, run_id = raw.split("/", 1)
+    run_id = run_id.split("/")[-1]
+    smoke_artifact = str(_spec_config()["smoke_artifact_name"])
+    s3 = _s3_client(e2e_project)
+    results = _verify_run_s3(s3, bucket, run_id, smoke_artifact, deadline=time.time() + 120, poll=5)
+    assert results.get("dream_psnr_db") is not None, results
