@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from npa.workflows import data_factory_stages as dfs
 
 
@@ -373,3 +375,44 @@ def test_generate_configs_no_seed_when_flag_false(tmp_path: Path, monkeypatch) -
         seed_default_input="false",
     )
     assert result["seeded_default_input_frames"] == 0
+
+
+def test_generate_configs_records_the_seeded_count_in_the_written_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The count has to be in the artifact, not just stdout.
+
+    Regression: the manifest was uploaded before the seeding block ran, so
+    configs/manifest.json never said whether the run used synthetic frames.
+    """
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", lambda input_uri, seed="": 5)
+    configs = tmp_path / "c.json"
+
+    dfs.generate_configs(
+        str(configs),
+        n_augmentations=1,
+        seed="run-x",
+        input_uri="s3://b/physical-ai-data-factory/run-x/input/",
+        seed_default_input="true",
+    )
+
+    written = json.loads(configs.read_text(encoding="utf-8"))
+    assert written["seeded_default_input_frames"] == 5
+
+
+def test_generate_configs_fails_when_requested_seeding_fails(tmp_path: Path, monkeypatch) -> None:
+    """Requested-but-failed seeding must not defer the failure to annotate-original."""
+
+    def boom(*_a, **_k) -> int:
+        raise RuntimeError("Pillow is not installed")
+
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", boom)
+
+    with pytest.raises(RuntimeError, match="seed_default_input was requested"):
+        dfs.generate_configs(
+            str(tmp_path / "c.json"),
+            n_augmentations=1,
+            seed="s",
+            input_uri="s3://b/input/",
+            seed_default_input="true",
+        )

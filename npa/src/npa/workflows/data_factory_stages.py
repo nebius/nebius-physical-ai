@@ -221,16 +221,26 @@ def generate_configs(
         "variables": APPEARANCE_VARIABLES,
         "augmentations": combos,
     }
-    uri = configs_uri.rstrip("/") + "/manifest.json" if not configs_uri.endswith(".json") else configs_uri
-    manifest["written_uri"] = _upload_json(manifest, uri)
-    # Optionally seed default input frames so the run needs no uploaded dataset.
+    # Seed before uploading: the manifest is this stage's declared artifact, and
+    # downstream readers (the agent artifact browser, insights ingest) cannot tell
+    # a synthetic-frame demo run from a real dataset run if the count only ever
+    # reaches stdout.
     seeded = 0
     if _is_truthy(seed_default_input):
         try:
             seeded = _seed_default_input_frames(input_uri, seed=seed)
-        except Exception as exc:  # noqa: BLE001 - seeding is best-effort convenience
-            print(json.dumps({"stage": "generate_configs", "warn": f"default-input seed failed: {exc}"[:200]}))
+        except Exception as exc:  # noqa: BLE001 - re-raised with context below
+            # Explicitly requested seeding: swallowing this leaves the pipeline to
+            # die two stages later with "No images found in .../input/", the exact
+            # failure the flag exists to prevent, and buries the cause in an
+            # earlier task's log.
+            raise RuntimeError(
+                f"seed_default_input was requested but seeding {input_uri or '<unset input_uri>'} "
+                f"failed: {exc}"
+            ) from exc
     manifest["seeded_default_input_frames"] = seeded
+    uri = configs_uri.rstrip("/") + "/manifest.json" if not configs_uri.endswith(".json") else configs_uri
+    manifest["written_uri"] = _upload_json(manifest, uri)
     print(json.dumps(manifest))
     return manifest
 

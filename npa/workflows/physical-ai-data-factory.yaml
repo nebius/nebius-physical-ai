@@ -37,8 +37,9 @@ kind: Workflow
 # ─────────────────────────────────────────────────────────────────────────────
 # PREREQUISITE -- STAGE CAPTIONABLE INPUT FRAMES BEFORE YOU SUBMIT
 # ─────────────────────────────────────────────────────────────────────────────
-# The FIRST stage, annotate-original, captions IMAGE frames from input/. With an
-# empty input/ it fails fast with "No images found in .../input/" and the later
+# The first captioning stage, annotate-original, reads IMAGE frames from input/
+# (generate-configs runs before it). With an empty input/ it fails fast with
+# "No images found in .../input/" and the later
 # augment -> grade -> curate -> visualize -> finalize stages never run. So before
 # submit, upload frames to (run-id == the S3 prefix you submit with):
 #
