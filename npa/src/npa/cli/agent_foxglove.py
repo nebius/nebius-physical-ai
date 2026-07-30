@@ -1,0 +1,375 @@
+"""Foxglove embedded-viewer helpers for the NPA agent backend.
+
+Pure/deterministic helpers behind the agent's Foxglove viewer pane, embedded
+verbatim into the agent-VM ``backend.py`` the same way as ``agent_rrd_proxy`` /
+``agent_routing``. They cover:
+
+- resolving the ``/api/foxglove/config`` payload from environment + installed
+  SDK assets (never inventing a viewer that cannot load),
+- building the ``DataSource`` objects documented by the Foxglove embedding SDK
+  (https://docs.foxglove.dev/docs/embed/typescript-sdk),
+- validating recordings before they are published on the unauthenticated,
+  CORS-enabled ``/foxglove/data/`` path the cross-origin viewer iframe reads.
+
+Trust model: ``/foxglove/data/`` mirrors the existing public ``/rerun/recordings/``
+path — the embedded viewer runs on a different origin and cannot send the agent's
+basic-auth credentials — so published names are random and unguessable, only
+recognized recording formats are published, and old publications are pruned.
+
+The module deliberately has **no** intra-agent imports so it unit-tests as plain
+Python and stays safe to inline into the backend template.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import os
+import re
+import secrets
+from pathlib import Path
+from urllib.parse import urlparse
+
+# Kept in sync with npa.workbench.foxglove by npa/tests/cli/test_agent_foxglove.py
+# (this module cannot import it: it is inlined into the agent backend).
+FOXGLOVE_SDK_FILES: tuple[str, ...] = (
+    "index.js",
+    "FoxgloveViewer.js",
+    "types.js",
+    "layout.generated.js",
+)
+FOXGLOVE_SDK_MANIFEST = "npa-sdk-manifest.json"
+FOXGLOVE_DEFAULT_EMBED_SRC = "https://embed.foxglove.dev/"
+FOXGLOVE_DEFAULT_LAYOUT_KEY = "npa-agent-foxglove"
+FOXGLOVE_ARTIFACT_EXTENSIONS: tuple[str, ...] = (".mcap", ".bag", ".db3", ".ulg", ".ulog")
+MCAP_MAGIC = b"\x89MCAP0\r\n"
+
+# Public (same-origin) URLs served by nginx on the agent VM.
+FOXGLOVE_SDK_URL = "/foxglove/sdk/index.js"
+FOXGLOVE_HOST_MODULE_URL = "/foxglove/app/npa-foxglove-host.js"
+FOXGLOVE_DATA_URL_PREFIX = "/foxglove/data/"
+
+# Live data-source protocols the embedded viewer understands.
+FOXGLOVE_LIVE_PROTOCOLS: tuple[str, ...] = ("foxglove-websocket", "rosbridge-websocket")
+
+_BLOCKED_HOSTNAMES = frozenset(
+    {"localhost", "metadata", "metadata.google.internal", "metadata.internal"}
+)
+_UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def is_foxglove_artifact(key: str) -> bool:
+    """Return True when ``key`` names a recording the Foxglove viewer can open."""
+    suffix = Path(str(key or "").strip()).suffix.lower()
+    return suffix in FOXGLOVE_ARTIFACT_EXTENSIONS
+
+
+def looks_like_mcap(data: bytes | None) -> bool:
+    """Return True when ``data`` starts with the MCAP magic record."""
+    if not data:
+        return False
+    return bytes(data[: len(MCAP_MAGIC)]) == MCAP_MAGIC
+
+
+def published_data_name(key: str, *, token: str = "") -> str:
+    """Return an unguessable, traversal-safe basename for a published recording.
+
+    The published name keeps the original extension (Foxglove picks its reader
+    from it) and a short sanitized stem for operator recognition, prefixed with a
+    random token because the path is served without authentication.
+    """
+    raw = str(key or "").strip()
+    suffix = Path(raw).suffix.lower()
+    if suffix not in FOXGLOVE_ARTIFACT_EXTENSIONS:
+        suffix = ".mcap"
+    stem = _UNSAFE_NAME_RE.sub("-", Path(raw).stem).strip("-._")[:48] or "recording"
+    prefix = str(token or "").strip() or secrets.token_hex(8)
+    prefix = _UNSAFE_NAME_RE.sub("", prefix)[:32] or secrets.token_hex(8)
+    return f"{prefix}-{stem}{suffix}"
+
+
+def prune_published(data_dir: str | Path, *, keep: int = 3) -> list[str]:
+    """Delete all but the ``keep`` newest published recordings; return removals."""
+    base = Path(str(data_dir or "")).expanduser()
+    if not base.is_dir():
+        return []
+    entries = [
+        path
+        for path in base.iterdir()
+        if path.is_file() and path.suffix.lower() in FOXGLOVE_ARTIFACT_EXTENSIONS
+    ]
+    entries.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+    removed: list[str] = []
+    for path in entries[max(0, int(keep)) :]:
+        try:
+            path.unlink()
+            removed.append(path.name)
+        except OSError:
+            continue
+    return removed
+
+
+def sdk_assets_state(assets_dir: str | Path) -> dict:
+    """Return ``{ready, reason, version, integrity, source}`` for installed assets."""
+    base = Path(str(assets_dir or "")).expanduser()
+    state = {"ready": False, "reason": "", "version": "", "integrity": "", "source": ""}
+    if not base.is_dir():
+        state["reason"] = (
+            "Foxglove SDK assets are not installed on this agent VM "
+            f"({base}). Re-run `npa agent bootstrap`, or install them with "
+            "`npa workbench foxglove install-sdk`."
+        )
+        return state
+    missing = [name for name in FOXGLOVE_SDK_FILES if not (base / name).is_file()]
+    if missing:
+        state["reason"] = (
+            f"Foxglove SDK assets are incomplete ({base}): missing {', '.join(missing)}."
+        )
+        return state
+    manifest_path = base / FOXGLOVE_SDK_MANIFEST
+    if manifest_path.is_file():
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        if isinstance(payload, dict):
+            state["version"] = str(payload.get("version") or "")
+            state["integrity"] = str(payload.get("integrity") or "")
+            state["source"] = str(payload.get("source") or "")
+    state["ready"] = True
+    return state
+
+
+def live_url_allowed(url: str) -> bool:
+    """Return True when ``url`` is a safe ``ws``/``wss`` live data-source target.
+
+    Mirrors the ``.rrd`` proxy allowlist rules (no loopback / private / link-local
+    / metadata targets) so a configured live URL cannot be pointed at agent-VM
+    internals. DNS is not resolved here: the browser, not the agent, connects.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"ws", "wss"}:
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    if not host or host in _BLOCKED_HOSTNAMES or host.endswith(".internal"):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_unspecified
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+    )
+
+
+def live_data_source(url: str, *, protocol: str = "") -> dict | None:
+    """Return a Foxglove ``live`` data source, or None when ``url`` is unusable."""
+    if not live_url_allowed(url):
+        return None
+    chosen = str(protocol or "").strip()
+    if chosen not in FOXGLOVE_LIVE_PROTOCOLS:
+        chosen = FOXGLOVE_LIVE_PROTOCOLS[0]
+    return {"type": "live", "protocol": chosen, "url": str(url).strip()}
+
+
+def remote_file_data_source(
+    urls: list[str] | tuple[str, ...],
+    *,
+    autoplay: bool = False,
+    start_time: float | None = None,
+) -> dict | None:
+    """Return a Foxglove ``remote-file`` data source for one or more recordings."""
+    cleaned = [str(item).strip() for item in (urls or []) if str(item).strip()]
+    if not cleaned:
+        return None
+    source: dict = {"type": "remote-file", "urls": cleaned}
+    if autoplay:
+        source["autoplay"] = True
+    if start_time is not None:
+        source["startTime"] = start_time
+    return source
+
+
+def data_source_for_state(sim_viz: dict | None, *, origin: str = "", env: dict | None = None) -> dict | None:
+    """Return the data source for the agent's current viewer state.
+
+    A published recording wins over a configured live URL: the operator loaded it
+    explicitly. Returns None when neither is available (the UI then mounts an
+    empty viewer rather than claiming data it does not have).
+    """
+    state = sim_viz if isinstance(sim_viz, dict) else {}
+    published = str(state.get("foxglove_url") or "").strip()
+    if published:
+        urls = [_absolute(published, origin)]
+        return remote_file_data_source(urls)
+    environ = env if env is not None else os.environ
+    return live_data_source(str(environ.get("NPA_FOXGLOVE_LIVE_URL", "")).strip())
+
+
+def _absolute(url: str, origin: str) -> str:
+    raw = str(url or "").strip()
+    if not raw or "://" in raw:
+        return raw
+    base = str(origin or "").rstrip("/")
+    if not base:
+        return raw
+    return f"{base}{raw}" if raw.startswith("/") else f"{base}/{raw}"
+
+
+def _truthy(value: str, *, default: bool = True) -> bool:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
+def resolve_foxglove_config(
+    env: dict | None = None,
+    *,
+    assets_dir: str | Path,
+    origin: str = "",
+    sim_viz: dict | None = None,
+) -> dict:
+    """Return the ``/api/foxglove/config`` payload.
+
+    ``available`` is only True when the SDK assets are installed **and** an embed
+    source is configured; otherwise ``reason`` explains what the operator must do.
+    No credentials or environment secrets are ever echoed.
+    """
+    environ = env if env is not None else os.environ
+    state = sim_viz if isinstance(sim_viz, dict) else {}
+    assets = sdk_assets_state(assets_dir)
+    enabled = _truthy(str(environ.get("NPA_FOXGLOVE_ENABLED", "")), default=True)
+    embed_src = str(environ.get("NPA_FOXGLOVE_EMBED_SRC", "")).strip() or FOXGLOVE_DEFAULT_EMBED_SRC
+    org_slug = str(environ.get("NPA_FOXGLOVE_ORG_SLUG", "")).strip()
+    color_scheme = str(environ.get("NPA_FOXGLOVE_COLOR_SCHEME", "")).strip().lower()
+    if color_scheme not in {"light", "dark", "auto"}:
+        color_scheme = "dark"
+    layout_key = (
+        str(environ.get("NPA_FOXGLOVE_LAYOUT_STORAGE_KEY", "")).strip()
+        or FOXGLOVE_DEFAULT_LAYOUT_KEY
+    )
+    live_url = str(environ.get("NPA_FOXGLOVE_LIVE_URL", "")).strip()
+    if live_url and not live_url_allowed(live_url):
+        live_url = ""
+
+    reason = ""
+    if not enabled:
+        reason = "Foxglove viewer is disabled on this agent (NPA_FOXGLOVE_ENABLED=0)."
+    elif not assets["ready"]:
+        reason = assets["reason"]
+    elif not _valid_embed_src(embed_src):
+        reason = (
+            "No Foxglove embed source is configured. Set NPA_FOXGLOVE_EMBED_SRC "
+            "(or `npa agent bootstrap --foxglove-embed-src ...`) to "
+            "https://embed.foxglove.dev/ or a self-hosted Foxglove deployment."
+        )
+
+    data_source = data_source_for_state(state, origin=origin, env=environ)
+    payload = {
+        "available": not reason,
+        "reason": reason,
+        "enabled": enabled,
+        "sdk_url": FOXGLOVE_SDK_URL,
+        "host_module_url": FOXGLOVE_HOST_MODULE_URL,
+        "sdk_version": assets["version"] or str(environ.get("NPA_FOXGLOVE_SDK_VERSION", "")).strip(),
+        "sdk_integrity": assets["integrity"],
+        "sdk_source": assets["source"],
+        "sdk_ready": bool(assets["ready"]),
+        "embed_src": embed_src,
+        "org_slug": org_slug,
+        "color_scheme": color_scheme,
+        "layout_storage_key": layout_key,
+        "live_url": live_url,
+        "data_source": data_source,
+        "run_id": str(state.get("run_id") or ""),
+        "artifact_key": str(state.get("artifact_key") or ""),
+        "artifact_uri": str(state.get("artifact_uri") or ""),
+        "recording_url": _absolute(str(state.get("foxglove_url") or ""), origin),
+        "updated_at": str(state.get("foxglove_updated_at") or ""),
+        "requires_account_note": (
+            "The embedded viewer application is hosted by Foxglove (or your "
+            "self-hosted deployment); users sign in there. NPA serves only the "
+            "MIT-licensed @foxglove/embed SDK and the recording."
+        ),
+    }
+    return payload
+
+
+def _valid_embed_src(src: str) -> bool:
+    raw = str(src or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+
+
+def foxglove_status_payload(config: dict, sim_viz: dict | None = None) -> dict:
+    """Return the compact ``/api/foxglove/status`` payload for UI + chat grounding."""
+    state = sim_viz if isinstance(sim_viz, dict) else {}
+    source = config.get("data_source") if isinstance(config, dict) else None
+    return {
+        "available": bool(config.get("available")),
+        "reason": str(config.get("reason") or ""),
+        "sdk_version": str(config.get("sdk_version") or ""),
+        "embed_src": str(config.get("embed_src") or ""),
+        "org_slug": str(config.get("org_slug") or ""),
+        "foxglove_ready": bool(state.get("foxglove_ready")),
+        "run_id": str(state.get("run_id") or ""),
+        "artifact_key": str(state.get("artifact_key") or ""),
+        "artifact_render": str(state.get("artifact_render") or ""),
+        "recording_url": str(config.get("recording_url") or ""),
+        "updated_at": str(state.get("foxglove_updated_at") or ""),
+        "data_source_type": str((source or {}).get("type") or ""),
+        "data_source": source,
+    }
+
+
+def describe_foxglove_context(config: dict | None, sim_viz: dict | None = None) -> str:
+    """Return text-only viewer context for the UI's "Describe this" action.
+
+    The Foxglove viewer renders inside a cross-origin iframe, so the browser
+    cannot capture its pixels. Instead of pretending to attach a frame, the agent
+    describes exactly what is loaded and says the capture is unavailable.
+    """
+    cfg = config if isinstance(config, dict) else {}
+    state = sim_viz if isinstance(sim_viz, dict) else {}
+    source = cfg.get("data_source") or {}
+    lines = [
+        "Foxglove viewer context (no pixel capture: the embedded viewer is a "
+        "cross-origin iframe, so the browser cannot read its canvas).",
+        f"- available: `{bool(cfg.get('available'))}`",
+    ]
+    if cfg.get("reason"):
+        lines.append(f"- reason: {cfg['reason']}")
+    lines.extend(
+        [
+            f"- embed_src: `{cfg.get('embed_src') or '(unset)'}`",
+            f"- sdk_version: `{cfg.get('sdk_version') or '(unknown)'}`",
+            f"- data_source: `{source.get('type') or 'none'}`",
+        ]
+    )
+    urls = source.get("urls") if isinstance(source, dict) else None
+    if urls:
+        lines.append(f"- recording: `{urls[0]}`")
+    elif isinstance(source, dict) and source.get("url"):
+        lines.append(f"- live: `{source['url']}`")
+    if state.get("run_id"):
+        lines.append(f"- run_id: `{state['run_id']}`")
+    if state.get("artifact_key"):
+        lines.append(f"- artifact_key: `{state['artifact_key']}`")
+    return "\n".join(lines)

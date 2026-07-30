@@ -74,16 +74,17 @@ grep -q './app/npa-foxglove-host.js' /tmp/npa-fg-body || fail "host page does no
 log "host page ok"
 
 # 5. byte-range read (MCAP playback requirement)
+#    busybox wget rejects 206 responses, so the range check speaks raw HTTP.
 mkdir -p "$DATA_DIR" 2>/dev/null || true
 printf '\211MCAP0\r\nRANGE-PROBE-PAYLOAD' > "$PROBE" 2>/dev/null \
   || fail "cannot write range probe into ${DATA_DIR} (mount it writable for the smoke)"
-wget -q --header='Range: bytes=0-7' -O /tmp/npa-fg-part "${BASE}/data/$(basename "$PROBE")" \
-  || fail "range request failed"
-size="$(wc -c < /tmp/npa-fg-part | tr -d ' ')"
-[ "$size" = "8" ] || fail "range request returned ${size} bytes, expected 8 (byte ranges are broken)"
-head -c 8 "$PROBE" > /tmp/npa-fg-body
-cmp -s /tmp/npa-fg-part /tmp/npa-fg-body || fail "range request returned the wrong bytes"
-log "range ok: 8-byte partial read matches the file prefix"
+printf 'GET /data/%s HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=0-7\r\nConnection: close\r\n\r\n' \
+  "$(basename "$PROBE")" | nc 127.0.0.1 "$PORT" > /tmp/npa-fg-part || fail "range request failed"
+grep -q '206' /tmp/npa-fg-part || fail "range request did not return 206 Partial Content"
+grep -qi 'content-range: bytes 0-7/' /tmp/npa-fg-part || fail "range response is missing Content-Range"
+grep -qi 'content-length: 8' /tmp/npa-fg-part || fail "range response did not return exactly 8 bytes"
+grep -qi 'accept-ranges: bytes' /tmp/npa-fg-part || fail "server does not advertise byte ranges"
+log "range ok: 206 Partial Content with an exact 8-byte Content-Range"
 
 # 6. CORS preflight for the Range header
 printf 'OPTIONS /data/%s HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://embed.foxglove.dev\r\nAccess-Control-Request-Method: GET\r\nAccess-Control-Request-Headers: range\r\nConnection: close\r\n\r\n' \
