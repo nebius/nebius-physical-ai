@@ -527,18 +527,19 @@ def test_rendered_stages_repair_an_interpreter_mismatch(parallel_spec) -> None:
     )
 
     setup = default_npa_setup()
-    assert "python3 -c 'import npa'" in setup
-    assert "/tmp/npa-src/src" in setup
-    assert "PYTHONPATH" in setup
+    # setup records the interpreter npa (and its dependencies) were installed into.
+    assert "/tmp/npa-python" in setup
+    assert "command -v npa" in setup
 
     run_script = render_task_run_script(["npa", "workbench", "insights", "dashboard"])
-    # The repair must be in the run script too (setup and run are separate shells),
-    # and it must be UNCONDITIONAL: the outer shell can import npa while the
-    # `bash -lc` login shell the command runs in resolves a different python3.
+    # The stage body prefers that recorded interpreter via a PATH shim, because the
+    # login shell's own python3 may have neither npa nor its dependencies, and falls
+    # back to the staged source tree only when no interpreter was recorded.
+    assert "/tmp/npa-python" in run_script
+    assert "/tmp/npa-shim" in run_script
+    assert "export PATH=" in run_script
     assert "export PYTHONPATH=" in run_script
-    assert "if ! python3 -c 'import npa'" not in run_script
-    # `set -u` safe without "${...}" (rendered YAML must stay placeholder-clean, and
-    # an unset PYTHONPATH must not abort the task).
+    # `set -u` safe without "${...}" (rendered YAML must stay placeholder-clean).
     assert "set +u" in run_script and "set -u" in run_script
     assert "${" not in run_script
     assert run_script.rstrip().endswith("npa workbench insights dashboard")

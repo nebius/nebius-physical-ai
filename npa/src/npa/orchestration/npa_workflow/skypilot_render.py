@@ -187,14 +187,33 @@ def render_task_run_script(command: Sequence[str]) -> str:
         # GPU default image: the outer shell imports npa fine, the login shell does
         # not). Prepending the staged source tree unconditionally fixes every shell;
         # it is the same package, so it is a no-op where the install already works.
+        # Make `python3` mean "the interpreter that has npa installed" for the stage
+        # body. Two things can go wrong otherwise, and both were observed live on
+        # SkyPilot's GPU default image: the body runs through `bash -lc`, whose login
+        # profile can resolve a different python3 (ModuleNotFoundError: npa), and that
+        # python3 also lacks npa's dependencies (ModuleNotFoundError: numpy) — so
+        # patching PYTHONPATH alone is not enough. `setup:` records the interpreter in
+        # /tmp/npa-python; a tiny shim earlier on PATH forwards to it.
         "set +u\n"
-        "for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
+        "if ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
+        "  if [ -s /tmp/npa-python ]; then\n"
+        "    npa_python=\"$(cat /tmp/npa-python)\"\n"
+        "    mkdir -p /tmp/npa-shim\n"
+        "    printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$npa_python\" "
+        "> /tmp/npa-shim/python3\n"
+        "    chmod +x /tmp/npa-shim/python3\n"
+        "    export PATH=\"/tmp/npa-shim:$PATH\"\n"
+        "    echo \"using npa interpreter $npa_python for this stage\" >&2\n"
+        "  else\n"
+        "    for candidate in /tmp/npa-src/src /tmp/npa-src-overlay/src "
         "/opt/nebius-physical-ai/npa/src; do\n"
-        "  if [ -d \"$candidate\" ]; then\n"
-        "    export PYTHONPATH=\"$candidate:$PYTHONPATH\"\n"
-        "    break\n"
+        "      if [ -d \"$candidate\" ]; then\n"
+        "        export PYTHONPATH=\"$candidate:$PYTHONPATH\"\n"
+        "        break\n"
+        "      fi\n"
+        "    done\n"
         "  fi\n"
-        "done\n"
+        "fi\n"
         "set -u\n"
         f"{quoted}\n"
     )
@@ -303,6 +322,15 @@ def default_npa_setup() -> str:
         "fi\n"
         "command -v npa >/dev/null 2>&1 || "
         "{ echo 'npa still missing after setup' >&2; exit 1; }\n"
+        # Record the interpreter npa was installed into. The console script's shebang
+        # names it exactly, and only that interpreter has npa AND its dependencies
+        # (numpy, boto3, ...). run.shell stages use this to avoid whichever python3
+        # their login shell happens to resolve.
+        "npa_python=\"$(head -1 \"$(command -v npa)\" | sed -e 's|^#!||' -e 's| .*||')\"\n"
+        "if [ -x \"$npa_python\" ] && \"$npa_python\" -c 'import npa' >/dev/null 2>&1; then\n"
+        "  echo \"$npa_python\" > /tmp/npa-python\n"
+        "  echo \"npa interpreter recorded: $npa_python\" >&2\n"
+        "fi\n"
         # `pip install -e` binds npa to the interpreter that ran pip. On some images
         # (notably SkyPilot's GPU default image) the task body resolves a DIFFERENT
         # python3, which then fails with ModuleNotFoundError: npa for run.shell
