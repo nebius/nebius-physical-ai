@@ -195,11 +195,32 @@ def _time_fields(timestamp_ns: int) -> dict[str, int]:
     return {"sec": ts // NS_PER_S, "nsec": ts % NS_PER_S}
 
 
+# Cheap content checks so a mislabeled/corrupt file is skipped with a reason
+# instead of being shipped to the viewer as an undecodable "image".
+_IMAGE_MAGIC: dict[str, tuple[bytes, ...]] = {
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "jpeg": (b"\xff\xd8\xff",),
+    "webp": (b"RIFF",),
+    "avif": (b"\x00\x00\x00",),
+}
+
+
+def _image_magic_ok(payload: bytes, image_format: str) -> bool:
+    prefixes = _IMAGE_MAGIC.get(image_format)
+    if not prefixes:
+        return True
+    return any(payload.startswith(prefix) for prefix in prefixes)
+
+
 def _read_image(path: Path) -> tuple[bytes, str] | None:
     """Return ``(payload, format)`` for an image artifact, or None if unsupported."""
     suffix = path.suffix.lower()
     if suffix in _DIRECT_IMAGE_FORMATS:
-        return path.read_bytes(), _DIRECT_IMAGE_FORMATS[suffix]
+        payload = path.read_bytes()
+        image_format = _DIRECT_IMAGE_FORMATS[suffix]
+        if not _image_magic_ok(payload, image_format):
+            return None
+        return payload, image_format
     if suffix in _TRANSCODE_IMAGE_SUFFIXES:
         try:
             from io import BytesIO  # noqa: PLC0415

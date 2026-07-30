@@ -46,6 +46,9 @@ lancedb = [
 ]
 # Rerun viewer/recording integration (`npa rerun`, sim-viz adapters).
 viz = ["rerun-sdk==0.31.4"]
+# Foxglove embedded viewer: MCAP read/write for `npa workbench foxglove`
+# (pure-python; the browser SDK itself is fetched at build/bootstrap time).
+foxglove = ["mcap>=1.3"]
 # Blueprint Phase J: guardrails-ai output validators for the adversarial eval.
 # Injected/guarded — the pure-python validator is the default; absence degrades
 # gracefully (see npa/tests/agent_eval/adversarial.py).
@@ -58,7 +61,7 @@ agent-trace = [
     "opentelemetry-sdk>=1.20",
 ]
 # Everything the previous monolithic install provided, minus GPU extras.
-full = ["npa[data,lancedb,viz,server]"]
+full = ["npa[data,foxglove,lancedb,viz,server]"]
 server = ["fastapi~=0.136.1"]
 genesis = [
     "genesis-world",
