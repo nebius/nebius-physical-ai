@@ -47,14 +47,26 @@ def _agent_deploy_failure_hint(detail: str) -> str:
             "(or SSH in during a re-run and read "
             "/var/log/npa-agent-cloud-init.log) before retrying."
         )
+    if "never authenticated" in runtime:
+        # The wait distinguishes a closed port from a refused key; when tcp/22 did
+        # open, reachability is not the problem.
+        return (
+            "The agent VM booted and its tcp/22 was reachable, but SSH never "
+            "authenticated, so the deploy timed out and rolled the VM back. This is "
+            "the key or the login user, not the network:\n"
+            "  - does the private key next to --ssh-public-key-path match the public "
+            "key the VM was created with?\n"
+            "  - is --ssh-user right for this image (Nebius Ubuntu images use "
+            "`ubuntu`)?"
+        )
     return (
-        "The agent VM booted (RUNNING, with a public IP) but SSH never became "
-        "reachable from this machine, so the deploy timed out and rolled the VM "
-        "back. This is almost always local reachability, not the VM:\n"
+        "The agent VM booted (RUNNING, with a public IP) but its tcp/22 never "
+        "opened from this machine, so the deploy timed out and rolled the VM back. "
+        "This is almost always local reachability, not the VM:\n"
         "  - can this host reach the VM's tcp/22? (corporate VPN / split-tunnel / "
-        "firewall commonly block outbound SSH to fresh public IPs)\n"
+        "firewall commonly block outbound SSH to fresh public IPs, even when they "
+        "allow SSH to known hosts such as github.com)\n"
         "  - does the security group allow tcp/22 from your address?\n"
-        "  - does the private key match --ssh-public-key-path?\n"
         "Deploy from a host with direct network access to the VM; the full "
         "provisioner log streamed above."
     )

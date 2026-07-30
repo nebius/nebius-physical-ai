@@ -2540,15 +2540,33 @@ def test_agent_deploy_failure_hint_diagnoses_ssh_unreachable() -> None:
     from npa.cli.agent import _agent_deploy_failure_hint
 
     detail = _terraform_local_exec_error(
-        "Waiting for SSH on 203.0.113.50:22...\n"
+        "Waiting for SSH on 203.0.113.50:22 (up to ~4 minutes, progress every 30s)...\n"
+        "  still waiting (attempt 4/30): tcp/22 has not opened from this host yet\n"
         "ERROR: SSH to ubuntu@203.0.113.50:22 never succeeded within the boot window.\n"
-        "The VM is RUNNING with a public IP, but its SSH port is unreachable from "
-        "the machine running npa."
+        "tcp/22 on 203.0.113.50 never opened from this machine, so the VM's SSH port "
+        "is unreachable from here."
     )
     hint = _agent_deploy_failure_hint(detail)
-    assert "SSH never became reachable" in hint
-    assert "tcp/22" in hint
+    assert "tcp/22 never opened" in hint
+    assert "split-tunnel" in hint
+    assert "authenticated" not in hint
+
+
+def test_agent_deploy_failure_hint_separates_a_key_problem_from_the_network() -> None:
+    """The wait now distinguishes a closed port from a refused key."""
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    detail = _terraform_local_exec_error(
+        "Waiting for SSH on 203.0.113.50:22 (up to ~4 minutes, progress every 30s)...\n"
+        "  still waiting (attempt 8/30): tcp/22 is open, SSH not ready yet\n"
+        "ERROR: SSH to ubuntu@203.0.113.50:22 never succeeded within the boot window.\n"
+        "tcp/22 on 203.0.113.50 opened, but SSH never authenticated, so this is the "
+        "key or the sshd config rather than the network."
+    )
+    hint = _agent_deploy_failure_hint(detail)
+    assert "never authenticated" in hint
     assert "--ssh-public-key-path" in hint
+    assert "VPN" not in hint
 
 
 def test_agent_deploy_failure_hint_diagnoses_cloud_init_error() -> None:
@@ -2884,6 +2902,40 @@ def test_ssh_egress_check_passes_when_the_probe_connects(monkeypatch) -> None:
     assert result.status == "PASS"
     assert seen == [("ssh.example", 2222)]
     assert closed == [True]
+    # A generic host that answers proves less than it looks like it does.
+    assert "split" in result.summary
+
+
+def test_ssh_egress_check_prefers_a_recorded_nebius_agent_ip(monkeypatch) -> None:
+    """A split tunnel can allow github.com:22 and still drop a fresh cloud IP.
+
+    Regression: the check reported PASS off github.com while the operator's agent
+    VM was unreachable on 22/443/8088, and the deploy then burned the boot window
+    and rolled the VM back.
+    """
+    from npa.cli import agent_network
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+    from npa.clients import config as config_module
+
+    monkeypatch.delenv(PROBE_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {"prod": {"agents": {"agent": {"public_ip": "203.0.113.50"}}}},
+    )
+    assert agent_network.recorded_agent_ip() == "203.0.113.50"
+
+    seen: list[tuple[str, int]] = []
+
+    def _timeout(address, timeout):
+        seen.append(address)
+        raise TimeoutError("timed out")
+
+    result = _agent_ssh_egress_result(connect=_timeout)
+
+    assert seen == [("203.0.113.50", 22)]
+    assert result.status == "WARN"
+    assert "your agent VM" in result.summary
 
 
 def test_ssh_egress_check_is_quiet_without_dns(monkeypatch) -> None:
