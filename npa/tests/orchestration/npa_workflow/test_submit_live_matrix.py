@@ -218,3 +218,15 @@ def test_image_tool_override_env_name_is_derived_from_the_tool() -> None:
     expected = "NPA_E2E_IMAGE_OVERRIDE_ISAAC_LAB"
     derived = f"NPA_E2E_IMAGE_OVERRIDE_{sweep.image_tool.upper().replace('-', '_')}"
     assert derived == expected
+
+
+def test_gpu_sweep_live_case_caps_concurrency_for_cost() -> None:
+    """The live sweep must not hold four GPUs at once, and must batch."""
+
+    sweep = _case("isaac-lab-rl-sweep.yaml")
+    assert sweep is not None
+    vars_ = dict(sweep.config_vars)
+    assert vars_.get("max_concurrency") == "2"
+    # 4 members with maxConcurrency 2 means the runtime submits two JobGroups, which
+    # is also the only live coverage of the multi-batch path.
+    assert sweep.expected_parallel_tasks == 4

@@ -162,6 +162,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         image_tool="isaac-lab",
         # The Isaac Lab image is ~8 GB per node and the variants train on GPU.
         max_wait_seconds=5400,
+        # Cost control for the live tier: hold two GPUs at a time instead of four.
+        # This also exercises the multi-batch path (4 members / maxConcurrency 2).
+        config_vars=(("max_concurrency", "2"),),
         notes=(
             "Parallel GPU reference case (port of the execution:parallel SkyPilot "
             "template): four RSL-RL variants as one JobGroup + ranking barrier. "
