@@ -468,9 +468,6 @@ def build_skypilot_task_doc(
                 "or pass --image <registry>/npa-<tool>:<tag>"
             )
         envs["NPA_SRC_S3_URI"] = src_uri
-        # Exported by SkyPilot into every shell it spawns, so a `run.shell` stage can
-        # import npa even if the task body's python3 is not the one pip installed into.
-        envs["PYTHONPATH"] = "/tmp/npa-src/src"
         doc["envs"] = envs
     else:
         # Image is pinned (baked npa). Opt-in overlay: when NPA_SRC_OVERLAY=1,
@@ -485,7 +482,6 @@ def build_skypilot_task_doc(
             if src_uri:
                 envs["NPA_SRC_S3_URI"] = src_uri
                 envs["NPA_SRC_OVERLAY"] = "1"
-                envs["PYTHONPATH"] = "/tmp/npa-src-overlay/src"
                 doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
         doc,

@@ -554,8 +554,15 @@ def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
     assert "${" not in run_script  # rendered YAML must stay placeholder-clean
 
 
-def test_staged_source_is_published_through_the_task_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every shell SkyPilot spawns must see the staged import path."""
+def test_staged_source_is_not_published_as_pythonpath(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PYTHONPATH must NOT be pre-set for staged source.
+
+    Doing so was actively harmful on real GPUs: it let an interpreter without npa's
+    dependencies import npa from the source tree, so the run script's shim condition
+    ("python3 cannot import npa") was false and the stage died later on
+    `import numpy`. The staged path is only used as a last-resort fallback inside the
+    setup script.
+    """
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     spec = load_spec(SHIPPED / "token-factory-parallel-fanout.yaml")
@@ -566,4 +573,4 @@ def test_staged_source_is_published_through_the_task_env(monkeypatch: pytest.Mon
     docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
     for task in docs[1:]:
         assert task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
-        assert task["envs"]["PYTHONPATH"] == "/tmp/npa-src/src"
+        assert "PYTHONPATH" not in task["envs"]
