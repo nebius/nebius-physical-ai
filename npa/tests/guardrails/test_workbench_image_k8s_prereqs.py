@@ -24,13 +24,42 @@ DOCKER_ROOT = Path(__file__).resolve().parents[2] / "docker" / "workbench"
 SKYPILOT_HOSTED_IMAGES = ("isaac-lab",)
 
 
+#: The four ingredients a SkyPilot-hosted image needs, established by bisecting
+#: derived images against a live Kubernetes GPU cluster. Missing any one of them makes
+#: provisioning fail with `container not found ("ray-node")`.
+REQUIRED_INGREDIENTS = (
+    ("python3", "SkyPilot's k8s runtime bootstrap needs a system python3"),
+    ("rsync", "SkyPilot syncs files with rsync"),
+    ("NOPASSWD", "SkyPilot's in-pod setup shells out to sudo without a password"),
+    ("ENV PATH=/usr/bin:$PATH", "the system interpreter must precede a vendor python"),
+)
+
+
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
-def test_dockerfile_installs_skypilot_runtime_prerequisites(tool: str) -> None:
+@pytest.mark.parametrize(("token", "why"), REQUIRED_INGREDIENTS)
+def test_dockerfile_has_skypilot_runtime_prerequisites(tool: str, token: str, why: str) -> None:
     dockerfile = DOCKER_ROOT / tool / "Dockerfile"
     assert dockerfile.is_file(), dockerfile
     text = dockerfile.read_text(encoding="utf-8")
-    assert "python3" in text, f"{tool}: SkyPilot's k8s runtime needs a system python3"
-    assert "rsync" in text, f"{tool}: SkyPilot syncs files with rsync"
+    assert token in text, f"{tool}: {why}"
+
+
+@pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
+def test_skypilot_hosted_image_stays_non_root(tool: str) -> None:
+    """The prerequisites make a NON-root image schedulable; keep it that way.
+
+    An image that simply ends as root also works, but that is a needless privilege
+    escalation for every stage the workbench runs.
+    """
+
+    text = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
+    user_lines = [
+        line.strip() for line in text.splitlines() if line.strip().startswith("USER ")
+    ]
+    assert user_lines and user_lines[-1] != "USER root", (
+        f"{tool}: image must not end as root; the sudo/group/PATH ingredients exist "
+        "precisely so a non-root image can host a SkyPilot task"
+    )
 
 
 def test_isaac_lab_grants_its_runtime_user_access_to_isaac_sim() -> None:
@@ -61,7 +90,14 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one() -> None:
     derived = DOCKER_ROOT / "isaac-lab" / "Dockerfile.k8s-prereqs"
     assert derived.is_file(), derived
     text = derived.read_text(encoding="utf-8")
-    for token in ("python3", "rsync", "usermod -aG isaac-sim ubuntu", "ARG BASE_IMAGE"):
+    for token in (
+        "python3",
+        "rsync",
+        "usermod -aG isaac-sim ubuntu",
+        "NOPASSWD",
+        "ENV PATH=/usr/bin:$PATH",
+        "ARG BASE_IMAGE",
+    ):
         assert token in text, f"derived prereq Dockerfile is missing {token!r}"
 
 
