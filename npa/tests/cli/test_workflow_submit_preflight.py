@@ -331,3 +331,77 @@ def test_plan_only_skips_the_kube_context_check(monkeypatch, tmp_path) -> None:
         infra="k8s/missing-ctx",
     )
     assert not any("kube context" in item for item in items)
+
+
+# ── the context check must not block the flag that creates the context ────────
+
+HARDENING_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "adversarial-scenario-hardening.yaml"
+)
+
+
+def test_submit_preflight_skips_context_check_for_self_provisioning_specs(
+    monkeypatch, tmp_path
+) -> None:
+    """--deploy-if-absent creates the context, so its absence is the normal start."""
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
+    items = _prereq_items(
+        spec_config={"bucket": "real-bucket"},
+        sky_bin="",
+        image=_PINNED_IMAGE,
+        plan_only=False,
+        infra="k8s/npa-cluster",
+        self_provisions=True,
+    )
+    assert not any("kube context" in item for item in items)
+
+
+def test_spec_self_provisions_detects_deploy_if_absent_targets() -> None:
+    from npa.cli.workbench.workflow import _spec_self_provisions
+
+    assert _spec_self_provisions(HARDENING_SPEC) is True
+    assert _spec_self_provisions(SPEC) is False
+    # An unreadable spec never turns the preflight itself into the failure.
+    assert _spec_self_provisions(Path("/nonexistent/spec.yaml")) is False
+
+
+def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
+    monkeypatch, tmp_path, mocker
+) -> None:
+    """The preflight used to reject the context that --deploy-if-absent creates."""
+    monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+    _mock_sky_bin_ok(monkeypatch)
+    ensure_infra_present = mocker.patch(
+        "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit.prepare_npa_workflow_for_submit",
+        side_effect=RuntimeError("stop after deployIfAbsent"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(HARDENING_SPEC),
+            "--run-id",
+            "self-provision-demo",
+            "--infra",
+            "k8s/npa-cluster",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert "kube context" not in result.output
+    assert ensure_infra_present.called

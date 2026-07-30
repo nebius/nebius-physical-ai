@@ -344,6 +344,7 @@ def submit_cmd(
                 image=image,
                 plan_only=plan_only,
                 infra=infra,
+                self_provisions=deploy_if_absent and _spec_self_provisions(yaml_path),
             )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
@@ -745,6 +746,26 @@ def _available_kube_contexts() -> list[str] | None:
     return contexts if read_any else None
 
 
+def _spec_self_provisions(yaml_path: Path) -> bool:
+    """Whether the spec declares ``deployIfAbsent`` targets submit can provision.
+
+    Those specs create their own cluster (and therefore its kube context) later in
+    this same submit, so a context the kubeconfig does not have yet is not a
+    missing prerequisite.
+    """
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
+    try:
+        from npa.orchestration.npa_workflow.deploy import parse_deploy_targets
+        from npa.orchestration.npa_workflow.spec import load_spec
+
+        return bool(parse_deploy_targets(load_spec(yaml_path)))
+    except (NpaWorkflowError, OSError, ValueError):
+        # A spec this cannot load fails with a real error further down; never let
+        # the preflight's own bookkeeping be the thing that fails a submit.
+        return False
+
+
 def _submit_prerequisites(
     spec_config: dict,
     *,
@@ -752,6 +773,7 @@ def _submit_prerequisites(
     image: str,
     plan_only: bool,
     infra: str = "",
+    self_provisions: bool = False,
 ) -> list[tuple[str, str]]:
     """Return ``[(missing, remedy)]`` for an npa.workflow submit.
 
@@ -808,8 +830,11 @@ def _submit_prerequisites(
     # not define, up front. Otherwise `sky jobs launch` fails late with a long
     # SkyPilot stack ("Context <name> not found ... Available contexts: []") —
     # e.g. after a stale controller is purged but no real cluster was provisioned.
+    # Skipped for specs that provision that context themselves later in this
+    # submit (`--deploy-if-absent`, on by default), where its absence is the
+    # normal starting state rather than a missing prerequisite.
     context = _infra_kube_context(infra)
-    if not plan_only and context:
+    if not plan_only and context and not self_provisions:
         available = _available_kube_contexts()
         if available is not None and context not in available:
             shown = ", ".join(available) if available else "none"
