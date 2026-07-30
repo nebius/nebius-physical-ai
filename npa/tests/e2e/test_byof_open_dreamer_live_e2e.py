@@ -169,22 +169,24 @@ def test_open_dreamer_spec_renders_via_workflow_machinery() -> None:
 
     spec = load_spec(OPEN_DREAMER_SPEC)
     plan = build_plan(spec, run_id="od-render-check")
+    steps = plan.to_dict().get("steps") or []
+    assert len(steps) == 1, steps
+    step = steps[0]
     # The single BYOF state must resolve to the workbench.byof.repo toolRef with
     # the spec's real smoke command and 2-GPU resource profile baked into argv.
-    commands = " ".join(
-        str(part)
-        for task in getattr(plan, "scheduler_plan", {}).get("tasks", [])
-        for part in (task.get("command") or [])
-    ) if hasattr(plan, "scheduler_plan") else ""
+    assert step.get("tool_ref") == "workbench.byof.repo", step.get("tool_ref")
+    argv = " ".join(str(part) for part in (step.get("argv") or []))
+    assert "workbench byof run" in argv.replace("  ", " ")
+    assert "byof-solution-smoke-rtxpro-2gpu.yaml" in argv
+    for capability in EXPECTED_CAPABILITIES:
+        assert capability in argv, capability
+
     config = _spec_config()
     assert config.get("workload") == "solution-smoke"
     assert "byof-solution-smoke-rtxpro-2gpu.yaml" in str(config.get("resource_profile_yaml"))
     smoke = str(config.get("smoke_command") or "")
     for capability in EXPECTED_CAPABILITIES:
         assert capability in smoke, capability
-    # commands is best-effort; when present it should reference the byof toolRef.
-    if commands:
-        assert "byof" in commands
 
 
 @pytest.mark.skipif(
