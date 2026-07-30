@@ -36,6 +36,7 @@ from npa.clients.network import (
     remove_ingress_for_instance,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.cli.agent_foxglove_site import foxglove_nginx_locations
 from npa.deploy import provisioner
 from npa.deploy.provisioner import ProvisionerError
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
@@ -1772,6 +1773,7 @@ def _nginx_agent_site_body(
     rerun_port: int,
 ) -> str:
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
+    foxglove_locations = foxglove_nginx_locations()
     return f"""  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
   # Describe-this / multimodal chat posts JPEG data-URLs; default 1m rejects them (413 → browser Failed to fetch).
@@ -1830,33 +1832,7 @@ def _nginx_agent_site_body(
     gzip_types application/octet-stream;
     gzip_min_length 1024;
   }}
-  location /foxglove/data/ {{
-    # The Foxglove embedded viewer runs on a different origin and cannot send the
-    # agent's basic-auth credentials, so published recordings are readable without
-    # auth (same trust model as /rerun/recordings/, but with random file names).
-    auth_basic off;
-    alias /opt/npa-agent/foxglove/data/;
-    default_type application/octet-stream;
-    # Byte ranges carry MCAP playback; a compressed response would break them.
-    gzip off;
-    add_header Accept-Ranges bytes always;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "Range, If-Range, Content-Type" always;
-    add_header Access-Control-Expose-Headers "Accept-Ranges, Content-Range, Content-Length" always;
-    add_header Cross-Origin-Resource-Policy "cross-origin" always;
-    add_header Cache-Control "no-cache" always;
-    # A Range request is not a "simple" CORS request, so the viewer preflights it.
-    if ($request_method = OPTIONS) {{
-      return 204;
-    }}
-  }}
-  location /foxglove/ {{
-    # SDK + glue module: same-origin subresources of the authenticated UI.
-    alias /opt/npa-agent/foxglove/;
-    add_header Cache-Control "public, max-age=3600" always;
-  }}
-  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
+{foxglove_locations}  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     auth_basic off;
     rewrite ^/rerun/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{rerun_port};
@@ -3549,43 +3525,26 @@ def _sim2real_pipeline_camera_label(requested: str = "") -> str:
     return value if value and value != "workspace" else "heldout-sim"
 
 
-# Publish a recording on the CORS-enabled Foxglove data path. Returns the
-# same-origin URL path, or "" when the file is not a recognized recording (never
-# publish an arbitrary artifact on the unauthenticated path).
-def _publish_foxglove_recording(local_path: Path, key: str) -> str:
-    if not is_foxglove_artifact(key):
-        return ""
-    if Path(str(key or "")).suffix.lower() == ".mcap":
-        try:
-            with local_path.open("rb") as handle:
-                head = handle.read(len(MCAP_MAGIC))
-        except OSError:
-            return ""
-        if not looks_like_mcap(head):
-            return ""
-    try:
-        FOXGLOVE_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        name = published_data_name(key)
-        target = FOXGLOVE_DATA_DIR / name
+def _copy_artifact_preview(local_path: Path, key: str) -> str:
+    filename = _artifact_filename(key)
+    target = RECORDINGS_DIR / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if local_path.resolve() != target.resolve():
         shutil.copy2(local_path, target)
-        target.chmod(0o644)
-    except OSError:
-        return ""
-    prune_published(FOXGLOVE_DATA_DIR, keep=FOXGLOVE_KEEP_PUBLISHED)
-    if not target.is_file():
-        return ""
-    return f"{{FOXGLOVE_DATA_URL_PREFIX}}{{name}}"
+    return _artifact_preview_url(filename)
+
+
+def _publish_foxglove_recording(local_path: Path, key: str) -> str:
+    return publish_recording(
+        local_path, key, data_dir=FOXGLOVE_DATA_DIR, keep=FOXGLOVE_KEEP_PUBLISHED
+    )
 
 
 def _foxglove_config(state: dict | None = None) -> dict:
     session = state if isinstance(state, dict) else _load_state()
     sim_viz = session.get("sim_viz") if isinstance(session.get("sim_viz"), dict) else {{}}
-    return resolve_foxglove_config(
-        dict(os.environ),
-        assets_dir=FOXGLOVE_SDK_DIR,
-        origin=_agent_public_origin(),
-        sim_viz=sim_viz,
-    )
+    env, origin = dict(os.environ), _agent_public_origin()
+    return resolve_foxglove_config(env, assets_dir=FOXGLOVE_SDK_DIR, origin=origin, sim_viz=sim_viz)
 
 
 def _apply_loaded_artifact(
@@ -3664,21 +3623,11 @@ def _apply_loaded_artifact(
                 "This artifact could not be published for Foxglove (it is not a "
                 "recognized MCAP/bag recording). Download it instead."
             )
-            filename = _artifact_filename(key)
-            target = RECORDINGS_DIR / filename
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if local_path.resolve() != target.resolve():
-                shutil.copy2(local_path, target)
-            preview_url = _artifact_preview_url(filename)
+            preview_url = _copy_artifact_preview(local_path, key)
             sim_viz["artifact_preview_url"] = preview_url
             sim_viz["artifact_download_url"] = preview_url
     else:
-        filename = _artifact_filename(key)
-        target = RECORDINGS_DIR / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if local_path.resolve() != target.resolve():
-            shutil.copy2(local_path, target)
-        preview_url = _artifact_preview_url(filename)
+        preview_url = _copy_artifact_preview(local_path, key)
         sim_viz["artifact_preview_url"] = preview_url
         sim_viz["artifact_download_url"] = preview_url
         sim_viz["rrd_uri"] = ""
@@ -4052,11 +4001,9 @@ def _agent_system_prompt() -> str:
         "- GET /api/artifacts/run/{{run_id}} — list every object for a run with render hints",
         "- POST /api/sim-viz/load-artifact — load explicit s3_uri (or run_id+key) into viewer/download",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
-        "- GET /api/foxglove/config — embedded Foxglove viewer config (SDK assets, embed src, data source)",
-        "- GET /api/foxglove/status — Foxglove viewer readiness + active recording",
-        "- POST /api/foxglove/load-artifact — load an .mcap/.bag recording into the Foxglove viewer",
-        "- POST /api/foxglove/live — point the Foxglove viewer at a live ws:// data source",
-        "- POST /api/foxglove/convert-run — pack the active run's local frames/metrics/logs into MCAP",
+        "- GET /api/foxglove/config, /api/foxglove/status — embedded Foxglove viewer config + readiness",
+        "- POST /api/foxglove/load-artifact | /api/foxglove/convert-run | /api/foxglove/live —"
+        " open an .mcap/.bag recording, pack the active run's artifacts into MCAP, or attach a live ws:// source",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
@@ -7665,10 +7612,10 @@ def foxglove_load_artifact(payload: dict | None = None):
 # the CLI; returns a clear error when the optional mcap extra is not installed.
 @app.post("/foxglove/convert-run")
 def foxglove_convert_run(payload: dict | None = None):
-    body = payload if isinstance(payload, dict) else {{}}
     state = _load_state()
     sim_viz = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
-    run_id = str(body.get("run_id") or sim_viz.get("run_id") or "").strip()
+    request = convert_run_request(payload, sim_viz)
+    run_id = request["run_id"]
     if not run_id:
         raise HTTPException(status_code=400, detail="no active run to convert")
     try:
@@ -7684,15 +7631,8 @@ def foxglove_convert_run(payload: dict | None = None):
                 "so there are frames/metrics/logs to convert"
             ),
         )
-    try:
-        fps = float(body.get("fps") or 10.0)
-    except (TypeError, ValueError):
-        fps = 10.0
-    try:
-        max_frames = int(body.get("max_frames") or 0)
-    except (TypeError, ValueError):
-        max_frames = 0
-    output_path = FOXGLOVE_DATA_DIR / f"{{secrets.token_hex(8)}}-{{run_id}}.mcap"
+    name = f"{{secrets.token_hex(8)}}-{{run_id}}.mcap"
+    output_path = FOXGLOVE_DATA_DIR / name
     try:
         from npa.sdk.workbench.foxglove import convert_run
 
@@ -7700,37 +7640,23 @@ def foxglove_convert_run(payload: dict | None = None):
         summary = convert_run(
             input_path=source_dir,
             output_path=output_path,
-            fps=fps,
-            max_frames=max_frames,
+            fps=request["fps"],
+            max_frames=request["max_frames"],
             run_id=run_id,
-        )
+        ).to_dict()
+        output_path.chmod(0o644)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"MCAP conversion failed: {{exc}}")
-    try:
-        output_path.chmod(0o644)
-    except OSError:
-        pass
     prune_published(FOXGLOVE_DATA_DIR, keep=FOXGLOVE_KEEP_PUBLISHED)
-    now = _now_iso()
-    sim_viz["run_id"] = run_id
-    sim_viz["artifact_render"] = "foxglove"
-    sim_viz["artifact_key"] = f"{{run_id}}/foxglove/{{output_path.name}}"
-    sim_viz["foxglove_url"] = f"{{FOXGLOVE_DATA_URL_PREFIX}}{{output_path.name}}"
-    sim_viz["foxglove_ready"] = True
-    sim_viz["foxglove_updated_at"] = now
-    sim_viz["artifact_preview_url"] = sim_viz["foxglove_url"]
-    sim_viz["artifact_download_url"] = sim_viz["foxglove_url"]
-    sim_viz["visualization_note"] = (
-        f"Converted {{summary.frames}} frame(s), {{summary.metrics}} metric doc(s) and "
-        f"{{summary.logs}} log line(s) from run artifacts into MCAP. Frame timestamps are "
-        f"synthetic ({{summary.fps}} fps) because the source artifacts carry no capture time."
+    sim_viz = converted_recording_update(
+        sim_viz, run_id=run_id, name=name, summary=summary, now=_now_iso()
     )
     state["sim_viz"] = sim_viz
     _record_sim_viz_run(state, sim_viz)
     _save_state(state)
     return {{
         "ok": True,
-        "summary": summary.to_dict(),
+        "summary": summary,
         "sim_viz": sim_viz,
         "foxglove": foxglove_status_payload(_foxglove_config(state), sim_viz),
     }}
@@ -7739,11 +7665,10 @@ def foxglove_convert_run(payload: dict | None = None):
 # Point the embedded viewer at a live Foxglove/ROS-bridge WebSocket.
 @app.post("/foxglove/live")
 def foxglove_live(payload: dict | None = None):
-    body = payload if isinstance(payload, dict) else {{}}
-    url = str(body.get("url") or "").strip()
-    protocol = str(body.get("protocol") or "").strip()
-    source = live_data_source(url, protocol=protocol)
-    if source is None:
+    state = _load_state()
+    sim_viz = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
+    result = live_source_update(payload, sim_viz, now=_now_iso())
+    if result is None:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -7751,16 +7676,12 @@ def foxglove_live(payload: dict | None = None):
                 "link-local and metadata targets are refused)"
             ),
         )
+    source, sim_viz = result
     os.environ["NPA_FOXGLOVE_LIVE_URL"] = source["url"]
-    state = _load_state()
-    sim_viz = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
-    # A live source replaces any published recording for the viewer session.
-    sim_viz["foxglove_url"] = ""
-    sim_viz["foxglove_ready"] = True
-    sim_viz["foxglove_updated_at"] = _now_iso()
     state["sim_viz"] = sim_viz
     _save_state(state)
-    return {{"ok": True, "data_source": source, "foxglove": foxglove_status_payload(_foxglove_config(state), sim_viz)}}
+    payload = foxglove_status_payload(_foxglove_config(state), sim_viz)
+    return {{"ok": True, "data_source": source, "foxglove": payload}}
 
 
 @app.post("/sim-viz/load-franka-demo")

@@ -109,6 +109,116 @@ def prune_published(data_dir: str | Path, *, keep: int = 3) -> list[str]:
     return removed
 
 
+def publish_recording(
+    local_path: str | Path,
+    key: str,
+    *,
+    data_dir: str | Path,
+    keep: int = 3,
+) -> str:
+    """Publish a recording on the public data path; return its same-origin URL.
+
+    Returns "" when the artifact is not a recognized recording (never publish an
+    arbitrary file on the unauthenticated path) or the copy fails.
+    """
+    import shutil
+
+    source = Path(str(local_path or "")).expanduser()
+    if not is_foxglove_artifact(key) or not source.is_file():
+        return ""
+    if Path(str(key)).suffix.lower() == ".mcap":
+        try:
+            with source.open("rb") as handle:
+                if not looks_like_mcap(handle.read(len(MCAP_MAGIC))):
+                    return ""
+        except OSError:
+            return ""
+    base = Path(str(data_dir or "")).expanduser()
+    name = published_data_name(key)
+    target = base / name
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        target.chmod(0o644)
+    except OSError:
+        return ""
+    prune_published(base, keep=keep)
+    return f"{FOXGLOVE_DATA_URL_PREFIX}{name}" if target.is_file() else ""
+
+
+def convert_run_request(payload: dict | None, sim_viz: dict | None) -> dict:
+    """Normalize a ``/api/foxglove/convert-run`` body into safe parameters."""
+    body = payload if isinstance(payload, dict) else {}
+    state = sim_viz if isinstance(sim_viz, dict) else {}
+    try:
+        fps = float(body.get("fps") or 10.0)
+    except (TypeError, ValueError):
+        fps = 10.0
+    try:
+        max_frames = int(body.get("max_frames") or 0)
+    except (TypeError, ValueError):
+        max_frames = 0
+    return {
+        "run_id": str(body.get("run_id") or state.get("run_id") or "").strip(),
+        "fps": fps if fps > 0 else 10.0,
+        "max_frames": max(0, max_frames),
+    }
+
+
+def converted_recording_update(
+    sim_viz: dict | None,
+    *,
+    run_id: str,
+    name: str,
+    summary: dict,
+    now: str,
+) -> dict:
+    """Return the sim_viz update for a freshly converted MCAP recording."""
+    state = dict(sim_viz) if isinstance(sim_viz, dict) else {}
+    url = f"{FOXGLOVE_DATA_URL_PREFIX}{name}"
+    state.update(
+        {
+            "run_id": run_id,
+            "artifact_render": "foxglove",
+            "artifact_key": f"{run_id}/foxglove/{name}",
+            "foxglove_url": url,
+            "foxglove_ready": True,
+            "foxglove_updated_at": now,
+            "artifact_preview_url": url,
+            "artifact_download_url": url,
+            "rrd_uri": "",
+            "rerun_ready": False,
+            "visualization_note": (
+                f"Converted {summary.get('frames', 0)} frame(s), "
+                f"{summary.get('metrics', 0)} metric doc(s) and "
+                f"{summary.get('logs', 0)} log line(s) from run artifacts into MCAP. "
+                f"Frame timestamps are synthetic ({summary.get('fps', 0)} fps) because the "
+                "source artifacts carry no capture time."
+            ),
+        }
+    )
+    return state
+
+
+def live_source_update(
+    payload: dict | None, sim_viz: dict | None, *, now: str
+) -> tuple[dict, dict] | None:
+    """Validate a live-source request and return ``(source, updated_sim_viz)``.
+
+    Returns None when the URL is not an allowed public ws/wss target. A live
+    source replaces any published recording for the viewer session.
+    """
+    body = payload if isinstance(payload, dict) else {}
+    source = live_data_source(
+        str(body.get("url") or "").strip(), protocol=str(body.get("protocol") or "").strip()
+    )
+    if source is None:
+        return None
+    state = dict(sim_viz) if isinstance(sim_viz, dict) else {}
+    state.update({"foxglove_url": "", "foxglove_ready": True, "foxglove_updated_at": now})
+    return source, state
+
+
 def sdk_assets_state(assets_dir: str | Path) -> dict:
     """Return ``{ready, reason, version, integrity, source}`` for installed assets."""
     base = Path(str(assets_dir or "")).expanduser()
