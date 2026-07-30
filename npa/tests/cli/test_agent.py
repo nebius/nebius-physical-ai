@@ -2057,6 +2057,7 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
         "terraform",
         "ssh_public_key",
         "ssh_private_key",
+        "ssh_egress",
         "token_factory",
     }
 
@@ -2844,6 +2845,72 @@ def test_resolve_project_alias_uses_the_configured_default_when_present(monkeypa
     )
 
     assert agent_module._resolve_project_alias("") == "prod"
+
+
+def test_ssh_egress_check_warns_when_outbound_ssh_is_blocked(monkeypatch) -> None:
+    """Deploy waits for the new VM's tcp/22 from this host, then rolls it back."""
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "ssh.example:22")
+
+    def _timeout(address, timeout):
+        raise TimeoutError("timed out")
+
+    result = _agent_ssh_egress_result(connect=_timeout)
+
+    assert result.status == "WARN"
+    assert "tcp/22" in result.summary
+    assert "VPN" in result.remedy
+
+
+def test_ssh_egress_check_passes_when_the_probe_connects(monkeypatch) -> None:
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "ssh.example:2222")
+    closed: list[bool] = []
+
+    class _Socket:
+        def close(self) -> None:
+            closed.append(True)
+
+    seen: list[tuple[str, int]] = []
+
+    def _connect(address, timeout):
+        seen.append(address)
+        return _Socket()
+
+    result = _agent_ssh_egress_result(connect=_connect)
+
+    assert result.status == "PASS"
+    assert seen == [("ssh.example", 2222)]
+    assert closed == [True]
+
+
+def test_ssh_egress_check_is_quiet_without_dns(monkeypatch) -> None:
+    """No DNS says nothing about SSH egress, so it must not warn."""
+    import socket
+
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "ssh.example:22")
+
+    def _no_dns(address, timeout):
+        raise socket.gaierror("Name or service not known")
+
+    assert _agent_ssh_egress_result(connect=_no_dns).status == "PASS"
+
+
+def test_ssh_egress_check_can_be_disabled(monkeypatch) -> None:
+    from npa.cli.agent_network import PROBE_ENV_VAR, _agent_ssh_egress_result
+
+    monkeypatch.setenv(PROBE_ENV_VAR, "off")
+
+    def _must_not_run(address, timeout):  # pragma: no cover - must not run
+        raise AssertionError("the probe must not open a socket when disabled")
+
+    result = _agent_ssh_egress_result(connect=_must_not_run)
+    assert result.status == "PASS"
+    assert "skipped" in result.summary
 
 
 def test_public_ip_quota_gate_skips_an_agent_that_already_has_its_ip(monkeypatch) -> None:

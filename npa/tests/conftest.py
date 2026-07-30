@@ -99,6 +99,9 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # The agent preflight's outbound-tcp/22 probe is a real network call; unit
+    # tests must not make one (tests of the probe itself inject a connector).
+    monkeypatch.setenv("NPA_SSH_EGRESS_PROBE", "off")
 
     import npa.cli.cluster.terraform_lifecycle
     import npa.cli.skypilot

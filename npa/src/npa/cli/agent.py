@@ -29,6 +29,7 @@ from npa.cli.agent_quota import (
     _agent_check_public_ip_quota,
     _agent_public_ip_quota_result,
 )
+from npa.cli.agent_network import _agent_ssh_egress_result
 from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_destroy_tf_vars
 from npa.clients.config import (
     ConfigError,
@@ -8290,6 +8291,7 @@ def preflight_cmd(
     if not skip_nebius:
         results.append(_agent_nebius_auth_result())
         results.append(_agent_public_ip_quota_result())
+    results.append(_agent_ssh_egress_result())
     results.append(_agent_token_factory_result())
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
@@ -8411,9 +8413,13 @@ def deploy_cmd(
     for result in prereq_results:
         if result.status == "FAIL":
             _fail(f"{result.summary} {result.remedy}".strip())
-    if tf_key_result.status == "WARN":
-        typer.echo(f"  Warning: {tf_key_result.summary}", err=True)
-        typer.echo(f"           {tf_key_result.remedy}", err=True)
+    # The deploy waits for the new VM's tcp/22 from this machine, so say up front
+    # when this host cannot open outbound SSH at all — otherwise that shows up as a
+    # five-minute wait and a rollback of a perfectly healthy VM.
+    for warn_result in (tf_key_result, _agent_ssh_egress_result()):
+        if warn_result.status == "WARN":
+            typer.echo(f"  Warning: {warn_result.summary}", err=True)
+            typer.echo(f"           {warn_result.remedy}", err=True)
 
     # Fail fast when the project's region has no public-IPv4 headroom. The agent
     # VM needs exactly one public IP; without this check the shortfall only
