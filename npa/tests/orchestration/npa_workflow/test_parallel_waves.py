@@ -513,12 +513,14 @@ def test_shipped_specs_render_without_placeholders(
         assert len(group_docs) - 1 == len(wave.steps)
 
 
-def test_rendered_stages_repair_an_interpreter_mismatch(parallel_spec) -> None:
-    """A run.shell stage must be able to import npa even if pip used another python.
+def test_setup_guarantees_npa_in_the_task_shell(parallel_spec) -> None:
+    """The stage body's shell must import npa WITH its dependencies.
 
-    Regression guard for the live GPU-image failure (`ModuleNotFoundError: npa` in
-    the barrier task): `pip install -e` binds npa to the interpreter that ran pip,
-    while the task body may resolve a different `python3`.
+    Regression guard for two live failures on real GPUs: SkyPilot's GPU default image
+    resolved a python3 that had neither npa nor numpy, and the Isaac Lab image's PATH
+    python3 is Isaac's kit interpreter (so the `npa` console script landed outside
+    PATH). Patching PATH/PYTHONPATH only moved the error; setup must install into and
+    verify through the same kind of shell the command runs in (`bash -lc`).
     """
 
     from npa.orchestration.npa_workflow.skypilot_render import (
@@ -527,20 +529,18 @@ def test_rendered_stages_repair_an_interpreter_mismatch(parallel_spec) -> None:
     )
 
     setup = default_npa_setup()
-    # setup records the interpreter npa (and its dependencies) were installed into.
-    assert "/tmp/npa-python" in setup
-    assert "command -v npa" in setup
+    # Verified through a login shell, not this shell.
+    assert "bash -lc 'python3 -c \"import npa\"'" in setup
+    # Installs into that interpreter when it cannot import npa.
+    assert "python3 -m pip install -q -e" in setup
+    assert "/tmp/npa-src-overlay" in setup and "/tmp/npa-src" in setup
+    # Fails loudly rather than leaving a stage to die on an import.
+    assert "npa is not importable by the task shell python3" in setup
+    # toolRef stages call the console script by name, so it is linked into PATH.
+    assert "command -v npa" in setup and "/usr/local/bin/npa" in setup
 
     run_script = render_task_run_script(["npa", "workbench", "insights", "dashboard"])
-    # The stage body prefers that recorded interpreter via a PATH shim, because the
-    # login shell's own python3 may have neither npa nor its dependencies, and falls
-    # back to the staged source tree only when no interpreter was recorded.
-    assert "/tmp/npa-python" in run_script
-    assert "/tmp/npa-shim" in run_script
-    assert "export PATH=" in run_script
-    assert "export PYTHONPATH=" in run_script
-    # `set -u` safe without "${...}" (rendered YAML must stay placeholder-clean).
-    assert "set +u" in run_script and "set -u" in run_script
+    assert "cannot import npa" in run_script  # diagnostic only, no PATH magic
     assert "${" not in run_script
     assert run_script.rstrip().endswith("npa workbench insights dashboard")
 
