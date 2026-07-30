@@ -24,6 +24,7 @@ import httpx
 import typer
 
 from npa.cli._typer_defaults import resolve_option_default, resolve_typer_defaults
+from npa.cli.agent_errors import _agent_deploy_failure_hint
 from npa.cli.agent_quota import (
     _agent_check_public_ip_quota,
     _agent_public_ip_quota_result,
@@ -8527,10 +8528,15 @@ def deploy_cmd(
             env_region=env_region,
         )
     except ProvisionerError as exc:
+        hint = _agent_deploy_failure_hint(str(exc))
         try:
             _destroy_agent_terraform(project, name)
         except ProvisionerError as cleanup_exc:
             typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if hint:
+            # Print the concise diagnosis last (the raw Terraform output already
+            # streamed above), so it is the final thing the operator sees.
+            _fail(hint)
         _fail(f"Terraform deploy failed: {exc}")
 
     public_ip = str(tf_outputs.get("vm_ip", ""))

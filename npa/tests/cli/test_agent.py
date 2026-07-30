@@ -2508,6 +2508,43 @@ def test_agent_setup_requires_configured_projects(monkeypatch, tmp_path) -> None
     assert "npa configure" in result.output
 
 
+def test_agent_deploy_failure_hint_diagnoses_ssh_unreachable() -> None:
+    """A wait_for_cloud_init SSH timeout gets a concise reachability diagnosis."""
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    detail = (
+        "terraform apply failed (exit 1):\n"
+        "Error: local-exec provisioner error\n"
+        "  with null_resource.wait_for_cloud_init,\n"
+        "Error running command '...': exit status 1. "
+        "Output: Waiting for SSH on 203.0.113.5:22..."
+    )
+    hint = _agent_deploy_failure_hint(detail)
+    assert "SSH never became reachable" in hint
+    assert "tcp/22" in hint
+    assert "--ssh-public-key-path" in hint
+
+
+def test_agent_deploy_failure_hint_diagnoses_cloud_init_error() -> None:
+    """A cloud-init runcmd failure is distinguished from an SSH timeout."""
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    detail = (
+        "null_resource.wait_for_cloud_init ... "
+        "cloud-init finished with status 'error'; the VM bootstrap failed."
+    )
+    hint = _agent_deploy_failure_hint(detail)
+    assert "cloud-init bootstrap failed" in hint
+    assert "SSH never became reachable" not in hint
+
+
+def test_agent_deploy_failure_hint_empty_for_unrelated_errors() -> None:
+    from npa.cli.agent import _agent_deploy_failure_hint
+
+    assert _agent_deploy_failure_hint("terraform apply failed: quota exceeded") == ""
+    assert _agent_deploy_failure_hint("") == ""
+
+
 def test_agent_check_public_ip_quota_fails_when_exhausted(monkeypatch) -> None:
     """Deploy aborts early with guidance when the region's public-IP quota is full."""
     from npa.cli.agent import _agent_check_public_ip_quota

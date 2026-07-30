@@ -193,14 +193,26 @@ resource "null_resource" "wait_for_cloud_init" {
       user="${var.ssh_user}"
       ssh_cmd=(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i "$key_path" "$user@$host")
 
-      echo "Waiting for SSH on $host..."
+      echo "Waiting for SSH on $host:22..."
+      ssh_ok=0
       for _ in $(seq 1 60); do
         if "$${ssh_cmd[@]}" "true" >/dev/null 2>&1; then
+          ssh_ok=1
           break
         fi
         sleep 5
       done
-      "$${ssh_cmd[@]}" "true" >/dev/null 2>&1
+      if [ "$ssh_ok" -ne 1 ]; then
+        # Emit a clear, actionable message instead of letting `set -e` kill the
+        # script silently (which makes Terraform dump the whole provisioner body).
+        echo "ERROR: SSH to $user@$host:22 never succeeded within the boot window." >&2
+        echo "The VM is RUNNING with a public IP, but its SSH port is unreachable from the machine running npa." >&2
+        echo "This is almost always local reachability, not the VM. Check:" >&2
+        echo "  - can this host reach $host:22? (corporate VPN / split-tunnel / firewall often block outbound SSH to fresh public IPs)" >&2
+        echo "  - does the security group allow tcp/22 from your address?" >&2
+        echo "  - does the private key ($key_path) match --ssh-public-key-path?" >&2
+        exit 1
+      fi
 
       echo "Waiting for cloud-init boot-finished..."
       for _ in $(seq 1 120); do
