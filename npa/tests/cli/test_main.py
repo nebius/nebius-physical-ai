@@ -247,6 +247,158 @@ def test_configure_discovery_prefers_eu_north1_registry(monkeypatch, tmp_path) -
     assert "us-central1" not in stanza["container_registry"]
 
 
+def test_configure_rerun_updates_the_existing_alias_for_a_project(monkeypatch, tmp_path) -> None:
+    """A re-run must update the stanza this project already has, not add a new one.
+
+    Regression: the discovery path always derived the alias from the Nebius
+    project name and repointed `default_project` at it, so a config whose alias
+    was `prod` gained a second `tle-workbench` stanza — one without the
+    `workbenches` endpoints or `terraform_state` pointer the deploy paths read.
+    """
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "eu-north1",
+                        "terraform_state": {"bucket": "tfstate-prod"},
+                        "workbenches": {"b200": {"endpoint": "http://vm:8080"}},
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    monkeypatch.setattr(
+        nebius_module,
+        "list_projects_in_tenant",
+        lambda tenant_id: [
+            {
+                "id": "project-1",
+                "name": "tle-workbench",
+                "tenant_id": "tenant-1",
+                "region": "eu-north1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("opted out of storage")),
+    )
+
+    answers = "\n".join(["1", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["default_project"] == "prod"
+    assert set(cfg["projects"]) == {"prod"}
+    assert cfg["projects"]["prod"]["terraform_state"] == {"bucket": "tfstate-prod"}
+    assert cfg["projects"]["prod"]["workbenches"]["b200"]["endpoint"] == "http://vm:8080"
+
+
+def test_configure_never_writes_a_project_into_another_projects_alias(
+    monkeypatch, tmp_path
+) -> None:
+    """A derived alias that collides with a different project must not merge into it."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {
+                        "project_id": "project-old",
+                        "tenant_id": "tenant-1",
+                        "terraform_state": {"bucket": "tfstate-old"},
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-new", tenant="tenant-1")
+    monkeypatch.setattr(
+        nebius_module,
+        "list_projects_in_tenant",
+        lambda tenant_id: [
+            {
+                "id": "project-new",
+                "name": "prod",  # same slug as the existing alias, different project
+                "tenant_id": "tenant-1",
+                "region": "eu-north1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("opted out of storage")),
+    )
+
+    answers = "\n".join(["1", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    # The old stanza keeps its own project and Terraform state.
+    assert cfg["projects"]["prod"]["project_id"] == "project-old"
+    assert cfg["projects"]["prod"]["terraform_state"] == {"bucket": "tfstate-old"}
+    new_alias = cfg["default_project"]
+    assert new_alias != "prod"
+    assert cfg["projects"][new_alias]["project_id"] == "project-new"
+    assert "terraform_state" not in cfg["projects"][new_alias]
+
+
+def test_configure_token_factory_key_without_a_nebius_profile(monkeypatch, tmp_path) -> None:
+    """Storing only the Token Factory key must not report that nothing was written."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    # No authenticated Nebius CLI profile: the laptop-only inference case.
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: False)
+
+    result = runner.invoke(
+        app,
+        ["configure", "--interactive", "--token-factory-key", "v1.test-key"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Nothing was written under ~/.npa." not in result.output
+    assert yaml.safe_load(creds_path.read_text())["tokens"][
+        "NEBIUS_TOKEN_FACTORY_KEY"
+    ] == "v1.test-key"
+
+
 def _fresh_configure_paths(monkeypatch, tmp_path):
     """Point configure at empty tmp dotfiles and a ready Nebius profile."""
     from npa.clients import config as config_module

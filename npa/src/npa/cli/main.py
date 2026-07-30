@@ -590,17 +590,98 @@ def _parse_selection(raw: str, count: int) -> list[int]:
     return picked
 
 
+def _existing_alias_for_project(
+    existing_projects: dict[str, dict[str, Any]],
+    default_alias: str,
+    project_id: str,
+) -> str:
+    """Return the alias already configured for *project_id*, preferring the default."""
+    if not project_id:
+        return ""
+    matches = [
+        alias
+        for alias, stanza in (existing_projects or {}).items()
+        if str((stanza or {}).get("project_id", "") or "") == project_id
+    ]
+    if not matches:
+        return ""
+    if default_alias in matches:
+        return default_alias
+    return sorted(matches)[0]
+
+
+def _unclaimed_alias(
+    candidate: str,
+    project_id: str,
+    existing_projects: dict[str, dict[str, Any]],
+    used: set[str],
+) -> str:
+    """Return *candidate* (or a numbered variant) that no other project claims.
+
+    ``write_config`` deep-merges, so writing a project into an alias that already
+    describes a *different* project produces a mixed stanza — the new project id
+    next to the old project's terraform_state, workbench endpoints and registry.
+    """
+    alias = candidate
+    suffix = 2
+    while alias in used or _alias_holds_other_project(existing_projects, alias, project_id):
+        alias = f"{candidate}-{suffix}"
+        suffix += 1
+    return alias
+
+
+def _alias_holds_other_project(
+    existing_projects: dict[str, dict[str, Any]],
+    alias: str,
+    project_id: str,
+) -> bool:
+    existing_id = str(((existing_projects or {}).get(alias) or {}).get("project_id", "") or "")
+    return bool(existing_id) and existing_id != project_id
+
+
+def _warn_repointed_alias(
+    alias: str, stanza: dict[str, Any], project_id: str
+) -> None:
+    """Warn when an alias is repointed at a new project but keeps per-project state.
+
+    Config is deep-merged, so ``terraform_state`` (the old project's remote-state
+    bucket and access key) and ``workbenches`` (endpoints of VMs in the old
+    project) survive under the alias and would be used for the new project.
+    """
+    previous = str((stanza or {}).get("project_id", "") or "")
+    if not previous or previous == project_id:
+        return
+    stale = [key for key in ("terraform_state", "workbenches") if (stanza or {}).get(key)]
+    typer.echo(
+        f"\nWarning: project alias '{alias}' pointed at {previous} and now points at "
+        f"{project_id}."
+        + (
+            f" Its saved {' and '.join(stale)} still describe {previous}; remove those "
+            f"keys from ~/.npa/config.yaml (or use a new alias) unless they apply to "
+            f"{project_id} too."
+            if stale
+            else ""
+        ),
+        err=True,
+    )
+
+
 def _select_discovered_projects(
     projects: list[dict[str, str]],
     ask: Callable[..., str],
     nebius_client: Any,
     *,
     current_project_id: str = "",
+    existing_projects: dict[str, dict[str, Any]] | None = None,
+    existing_default_alias: str = "",
 ) -> tuple[list[tuple[str, dict[str, str]]], str]:
     """Present discovered projects and return ``([(alias, stanza)...], default_alias)``.
 
     Auto-derives tenant/project/region from each pick and best-effort discovers
     the container registry. npa is multi-project: the user may select several.
+    Aliases reuse the stanza a project already has in ``~/.npa/config.yaml`` so a
+    re-run updates it in place instead of stranding the workbench endpoints and
+    Terraform state saved under the old alias.
     """
     # Large Nebius accounts can expose hundreds/thousands of projects. Dumping
     # them all (and defaulting to 'all', which then discovers a registry per
@@ -654,14 +735,17 @@ def _select_discovered_projects(
 
     selected: list[tuple[str, dict[str, str]]] = []
     used_aliases: set[str] = set()
+    configured = existing_projects or {}
     for idx in chosen:
         proj = shown[idx]
-        alias = _slugify_alias(proj.get("name", ""), proj["id"])
-        base_alias = alias
-        suffix = 2
-        while alias in used_aliases:
-            alias = f"{base_alias}-{suffix}"
-            suffix += 1
+        alias = _existing_alias_for_project(
+            configured, existing_default_alias, proj["id"]
+        ) or _unclaimed_alias(
+            _slugify_alias(proj.get("name", ""), proj["id"]),
+            proj["id"],
+            configured,
+            used_aliases,
+        )
         used_aliases.add(alias)
         # Prefer an eu-north1 registry (workbench images live there); a
         # project-local registry in another region lacks the npa-* images and
@@ -810,8 +894,15 @@ def _offer_profile_binding(
     return False
 
 
-def _run_interactive_configure(*, provision: bool = True) -> None:
-    """Prompt for credentials/config and write the NPA dotfiles."""
+def _run_interactive_configure(
+    *, provision: bool = True, already_written: str = ""
+) -> None:
+    """Prompt for credentials/config and write the NPA dotfiles.
+
+    ``already_written`` names what a caller persisted before this flow started
+    (currently ``--token-factory-key``), so the bail-out paths below never claim
+    that nothing was saved.
+    """
 
     from npa.clients.config import (
         CONFIG_PATH,
@@ -841,9 +932,13 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             "  - Install and authenticate the Nebius CLI "
             "(https://docs.nebius.com/cli/install), then re-run `npa configure`.\n"
             "  - Re-run `npa configure --no-provision` to enter existing S3 "
-            "credentials manually.\n"
-            "Nothing was written under ~/.npa."
+            "credentials manually."
         )
+        if already_written:
+            # The requested write succeeded; only the rest of setup is pending.
+            typer.echo(f"{already_written} was saved; nothing else was written under ~/.npa.")
+            raise typer.Exit(code=0)
+        typer.echo("Nothing was written under ~/.npa.")
         raise typer.Exit(code=1)
 
     # Hidden input needs a controlling terminal. On piped stdin (scripted setup,
@@ -881,6 +976,10 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     existing_projects = list_projects()
     existing_default_alias = default_project_name()
     existing_stanza = existing_projects.get(existing_default_alias, {}) or {}
+    # Sample the file mode before anything is written: write_config() chmods
+    # config.yaml to 0600, so a check after the write can never see the loose
+    # mode this warning exists for.
+    permissions_warning = config_permissions_warning()
 
     # Prefer discovering accessible projects via the Nebius CLI so the user picks
     # from a list instead of hand-typing tenant + project ids (and region). npa
@@ -920,6 +1019,8 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             ask,
             nebius_client,
             current_project_id=nebius_client.current_project_id(),
+            existing_projects=existing_projects,
+            existing_default_alias=existing_default_alias,
         )
 
     if discovered_selection:
@@ -1124,31 +1225,52 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             if value
         }
         # Local name for later `-p <alias>` flags. Derived automatically (no
-        # prompt): reuse the existing default alias so a re-run updates the same
-        # stanza, else the Nebius project's own name (matching what the
+        # prompt): reuse the alias this project already has so a re-run updates
+        # the same stanza, else the Nebius project's own name (matching what the
         # discovery path derives), else the region. A region-shaped alias
         # (`us-central1`) reads like a region field sitting next to the real
-        # `region:` key, so it is only the last resort.
+        # `region:` key, so it is only the last resort. An alias that already
+        # describes a different project is never reused — config is deep-merged,
+        # so that would splice the new project id into the old project's
+        # terraform_state and workbench endpoints.
         # Multi-project users rename via ~/.npa/config.yaml.
-        if existing_default_alias and existing_default_alias != "default":
+        alias = _existing_alias_for_project(
+            existing_projects, existing_default_alias, project_id
+        )
+        if not alias and existing_default_alias not in ("", "default"):
+            # Typing a new project id at the prompt (its default is the saved one)
+            # is an explicit request to repoint this alias, so keep the alias — but
+            # say which of its saved values still describe the previous project.
             alias = existing_default_alias
-        else:
+            _warn_repointed_alias(
+                alias, existing_projects.get(alias) or {}, project_id
+            )
+        if not alias:
             project_name = ""
             try:
                 project_name = nebius_client.get_project_name(project_id)
             except Exception:  # noqa: BLE001 - alias derivation is best-effort
                 project_name = ""
-            alias = (
+            alias = _unclaimed_alias(
                 _slugify_alias(project_name, project_id)
                 if project_name
-                else (region or "default")
+                else (region or "default"),
+                project_id,
+                existing_projects,
+                set(),
             )
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True
 
-    permissions_warning = config_permissions_warning()
     if permissions_warning:
-        typer.echo(f"\nWarning: {permissions_warning}", err=True)
+        note = (
+            "config.yaml was readable by other users and holds Terraform backend "
+            "S3 keys under projects.<alias>.terraform_state; npa has tightened it "
+            "to 0600. Rotate those keys if the file was exposed."
+            if wrote_config
+            else permissions_warning
+        )
+        typer.echo(f"\nWarning: {note}", err=True)
 
     typer.echo(f"\nWrote {credentials_path} (chmod 600).")
     if wrote_config:
@@ -1268,11 +1390,13 @@ def _configure_impl(
     provision: bool = True,
     token_factory_key: str = "",
 ) -> None:
+    already_written = ""
     if token_factory_key.strip():
         # Store the key, then continue with the rest of configure. Returning here
         # left users thinking configure finished when no project/S3/HF/NGC/config
         # had been written.
         _store_token_factory_key(token_factory_key.strip())
+        already_written = "The Nebius Token Factory API key"
     if show:
         typer.echo(_SETUP_GUIDANCE)
         return
@@ -1281,15 +1405,20 @@ def _configure_impl(
         typer.echo(_SETUP_GUIDANCE)
         return
     try:
-        _run_interactive_configure(provision=provision)
+        _run_interactive_configure(provision=provision, already_written=already_written)
     except (EOFError, typer.Abort):
         # Cancelling mid-flow (Ctrl-C / Ctrl-D / no more input) previously exited
         # 0 having written nothing under ~/.npa, so the next cloud command failed
         # mysteriously. Fail loudly instead so the missing setup is obvious.
         typer.echo("")
+        written = (
+            f"{already_written} was saved, but setup was cancelled before the rest "
+            "of ~/.npa was written."
+            if already_written
+            else "Setup was cancelled before anything was written under ~/.npa."
+        )
         typer.echo(
-            "Setup was cancelled before anything was written under ~/.npa. "
-            "Re-run `npa configure` in a terminal to finish, or run "
+            f"{written} Re-run `npa configure` in a terminal to finish, or run "
             "`npa configure --show` for the file layout to create it by hand."
         )
         raise typer.Exit(code=1)
