@@ -551,6 +551,12 @@ def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
     assert "/etc/profile.d" in run_script  # activation preserved without a login shell
     assert "/tmp/npa-shim" in run_script  # interpreter shim
     assert "export PATH=" in run_script
+    # The shim must be UNCONDITIONAL: the stage command runs in its own `bash -c`,
+    # which can resolve python3 differently than this script's shell (live: the run
+    # shell expanded the Isaac image's python3 alias and imported npa, while the
+    # stage's shell got the raw kit python and failed).
+    assert "if [ -s /tmp/npa-python ]; then" in run_script
+    assert "! python3 -c 'import npa'" not in run_script
     assert "${" not in run_script  # rendered YAML must stay placeholder-clean
 
 

@@ -198,8 +198,14 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "fi\n"
         # Make `python3` mean "the interpreter npa is installed in" for this stage.
         # setup records its absolute path (sys.executable) in /tmp/npa-python.
+        # UNCONDITIONAL: never gate this on whether *this* shell can import npa. The
+        # stage command runs in its own `bash -c`, which resolves python3 differently
+        # (live: SkyPilot's run shell expanded the Isaac image's `python3` alias and
+        # imported npa fine, while the stage's non-login shell got the raw kit python
+        # and failed). The shim is a no-op when the recorded interpreter is already
+        # what python3 means.
         "npa_python=\"\"\n"
-        "if [ -s /tmp/npa-python ] && ! python3 -c 'import npa' >/dev/null 2>&1; then\n"
+        "if [ -s /tmp/npa-python ]; then\n"
         "  npa_python=\"$(cat /tmp/npa-python)\"\n"
         "  if [ ! -x \"$npa_python\" ]; then\n"
         "    echo \"recorded npa interpreter is not executable: $npa_python\" >&2\n"
