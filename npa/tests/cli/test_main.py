@@ -184,6 +184,8 @@ def test_configure_discovers_and_writes_multiple_projects(monkeypatch, tmp_path)
     # No storage stanza was written (opted out).
     creds = yaml.safe_load(creds_path.read_text())
     assert not creds.get("storage")
+    # Opting out warns that the agent / Physical AI Data Factory need storage.
+    assert "Physical AI Data Factory" in result.output
 
 
 def test_configure_discovery_prefers_eu_north1_registry(monkeypatch, tmp_path) -> None:

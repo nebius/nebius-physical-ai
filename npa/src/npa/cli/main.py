@@ -979,14 +979,18 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     if discovered_selection and provision:
         want_storage = ask(
             "Set up object storage (S3 bucket + access key) now? "
-            "(needed for data/checkpoint workflows; you can add it later) [y/N]",
-            default="N",
+            "The agent VM, workflow submits (`stage-src`) and the Physical AI "
+            "Data Factory all need it; you can add it later. [Y/n]",
+            default="Y",
         )
-        if want_storage.lower() not in ("y", "yes"):
+        if want_storage.lower() not in ("", "y", "yes"):
             provision = False
             storage = {}
             typer.echo(
-                "  Skipping object storage. Re-run `npa configure` later to add it."
+                "  Skipping object storage. Note: `npa agent setup` and "
+                "`npa workbench workflow submit` (Physical AI Data Factory) need "
+                "an S3 bucket + access key — re-run `npa configure` to add it before "
+                "using them."
             )
 
     existing_has_storage = bool(
