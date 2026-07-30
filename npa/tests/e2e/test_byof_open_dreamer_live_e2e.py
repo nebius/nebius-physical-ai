@@ -20,6 +20,10 @@ Gating (all required):
   NPA_BYOF_TEST_IMAGE=<ref>       prebuilt Open Dreamer image to reuse
                                   (avoids an in-test docker build)
 
+Prerequisite: the ``minecraft_vpt`` dataset must be staged under the project's
+run bucket at ``datasets/minecraft_vpt_128_64/`` (the smoke pulls it from the
+``S3_OUTPUT_PREFIX`` bucket, which the test pins via ``--output-root``).
+
 The BYOF runner uses a synchronous ``sky launch``, so it blocks for the whole
 multi-hour run and returns the final status; do not SIGKILL it mid-run.
 
@@ -33,7 +37,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -135,61 +138,15 @@ def _wait_for_object(s3, bucket: str, key: str, *, deadline: float, poll: float)
     return None
 
 
-def _candidate_buckets(combined: str, run_id: str, e2e_project: str | None) -> list[str]:
-    """Ordered, de-duped list of buckets the run's artifacts might live in.
-
-    The BYOF runner resolves the project *run* bucket inside the pod at runtime
-    (not necessarily the ``checkpoint_bucket`` ``live_bucket`` returns), so prefer
-    buckets parsed from the runner's streamed ``s3://<bucket>/byof/<run-id>/``
-    lines, then fall back to env / project-config candidates.
-    """
-    candidates: list[str] = []
-
-    def _add(value: str) -> None:
-        b = (value or "").strip().removeprefix("s3://").split("/", 1)[0].strip()
-        if b and b not in candidates:
-            candidates.append(b)
-
-    for match in re.findall(rf"s3://([^/\s]+)/byof/{re.escape(run_id)}/", combined):
-        _add(match)
-    _add(os.environ.get("NPA_S3_BUCKET", ""))
-    try:
-        _add(live_bucket(e2e_project))
-    except Exception:  # noqa: BLE001 - best-effort fallback
-        pass
-    try:
-        from npa.clients.config import resolve_project_storage
-
-        storage = resolve_project_storage(e2e_project)
-        _add(getattr(storage, "bucket", "") or "")
-        _add(getattr(storage, "checkpoint_bucket", "") or "")
-    except Exception:  # noqa: BLE001
-        pass
-    return candidates
-
-
-def _verify_run_s3(s3, buckets, run_id: str, smoke_artifact: str, *, deadline: float, poll: float) -> dict:
+def _verify_run_s3(s3, bucket: str, key_prefix: str, smoke_artifact: str, *, deadline: float, poll: float) -> dict:
     """Assert the run's S3 artifacts prove all 7 capabilities + the dream .rrd.
 
-    ``buckets`` may be a single bucket name or an ordered list of candidates; the
-    first candidate that holds the results artifact wins.
+    ``key_prefix`` is the full object-key prefix (ending in ``/``) that the run
+    uploaded under, e.g. ``oss-solutions/open-dreamer/<run-id>/``.
     """
-    if isinstance(buckets, str):
-        buckets = [buckets]
-    key = f"byof/{run_id}/{smoke_artifact}"
-    found_bucket = ""
-    obj = None
-    while time.time() < deadline and obj is None:
-        for bucket in buckets:
-            try:
-                obj = s3.get_object(Bucket=bucket, Key=key)
-                found_bucket = bucket
-                break
-            except Exception:  # noqa: BLE001 - not present in this bucket yet
-                continue
-        if obj is None:
-            time.sleep(poll)
-    assert obj is not None, f"results artifact never appeared in {buckets}: byof/{run_id}/{smoke_artifact}"
+    key_prefix = key_prefix.rstrip("/") + "/"
+    obj = _wait_for_object(s3, bucket, key_prefix + smoke_artifact, deadline=deadline, poll=poll)
+    assert obj is not None, f"results artifact never appeared: s3://{bucket}/{key_prefix}{smoke_artifact}"
     results = json.loads(obj["Body"].read())
 
     exercised = set(results.get("capabilities_exercised") or [])
@@ -201,7 +158,7 @@ def _verify_run_s3(s3, buckets, run_id: str, smoke_artifact: str, *, deadline: f
     assert results.get("jax_device_count", 0) >= 2, results.get("jax_device_count")
     assert results.get("data_parallel_mesh", {}).get("data", 0) >= 2, results.get("data_parallel_mesh")
 
-    rrd = s3.head_object(Bucket=found_bucket, Key=f"byof/{run_id}/open_dreamer_world_model.rrd")
+    rrd = s3.head_object(Bucket=bucket, Key=key_prefix + "open_dreamer_world_model.rrd")
     assert rrd["ContentLength"] > 1_000_000, rrd["ContentLength"]
     return results
 
@@ -253,6 +210,16 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
     registry = resolve_container_registry(e2e_project)
     run_id = "byof-open-dreamer-e2e-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
+    # Pin the output bucket to a test-resolvable one so verification is
+    # deterministic (the pod otherwise resolves a tenant run bucket at runtime
+    # that the test can't rediscover). The runner appends ``/<run-id>/``. The
+    # ``minecraft_vpt`` dataset must already be staged under this bucket's
+    # ``datasets/minecraft_vpt_128_64/`` prefix (the smoke pulls it from
+    # ``S3_OUTPUT_PREFIX``'s bucket).
+    out_bucket = live_bucket(e2e_project)
+    output_root = f"s3://{out_bucket}/oss-solutions/open-dreamer"
+    key_prefix = f"oss-solutions/open-dreamer/{run_id}/"
+
     cmd = [
         sys.executable,
         str(BYOF_RUNNER),
@@ -270,6 +237,7 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
         "--capability-name", capability_name,
         "--smoke-artifact-name", smoke_artifact,
         "--run-id", run_id,
+        "--output-root", output_root,
         "--wait-timeout", os.environ.get("NPA_BYOF_OD_WAIT", "21600"),
         "--poll-interval", "60",
         "--no-cleanup",
@@ -321,21 +289,20 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
         # through to S3 verification. TimeoutExpired.stdout/stderr may be bytes.
         combined = _text(exc.stdout) + "\n" + _text(exc.stderr)
 
+    # Best-effort: surface the runner summary for debugging (non-fatal — the
+    # runner may return before the job finishes, and the last JSON blob can be a
+    # nested sub-summary; S3 is the authoritative gate below).
     if "{" in combined:
         try:
-            summary = _parse_last_json_blob(combined)
-            assert summary.get("status") in {"ok", None} or summary.get("run"), summary
+            _parse_last_json_blob(combined)
         except ValueError:
-            pass  # launcher may still be mid-flight; S3 is the source of truth
+            pass
 
-    # Verify via S3 (the source of truth). Poll every candidate bucket the run
-    # might have uploaded to (parsed from the runner output first).
+    # Verify via S3 (the source of truth) at the deterministic output prefix.
     s3 = _s3_client(e2e_project)
-    buckets = _candidate_buckets(combined, run_id, e2e_project)
-    assert buckets, "could not resolve any candidate output bucket"
     deadline = time.time() + int(os.environ.get("NPA_BYOF_OD_S3_WAIT", "18000"))
     poll = float(os.environ.get("NPA_BYOF_OD_POLL", "120"))
-    results = _verify_run_s3(s3, buckets, run_id, smoke_artifact, deadline=deadline, poll=poll)
+    results = _verify_run_s3(s3, out_bucket, key_prefix, smoke_artifact, deadline=deadline, poll=poll)
     assert results.get("dream_psnr_db") is not None, results.get("dream_psnr_db")
 
     # Best-effort teardown of the (auto-stopping) cluster.
@@ -352,21 +319,18 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
 
 @pytest.mark.skipif(
     not os.environ.get("NPA_BYOF_OD_VERIFY_RUN"),
-    reason="Set NPA_BYOF_OD_VERIFY_RUN=s3://<bucket>/byof/<run-id>/ to verify an existing run's artifacts.",
+    reason="Set NPA_BYOF_OD_VERIFY_RUN=s3://<bucket>/<prefix>/<run-id>/ to verify an existing run's artifacts.",
 )
 def test_open_dreamer_verify_existing_run(e2e_project: str | None) -> None:
     """Verify a previously completed run's S3 artifacts prove 7/7 capabilities.
 
-    Useful to re-check a run without re-training. ``NPA_BYOF_OD_VERIFY_RUN`` may
-    be ``s3://<bucket>/byof/<run-id>/`` or just ``<bucket>/<run-id>``.
+    Useful to re-check a run without re-training. ``NPA_BYOF_OD_VERIFY_RUN`` is the
+    full run prefix, e.g. ``s3://<bucket>/byof/<run-id>/`` or
+    ``s3://<bucket>/oss-solutions/open-dreamer/<run-id>/``.
     """
     raw = os.environ["NPA_BYOF_OD_VERIFY_RUN"].strip().removeprefix("s3://").rstrip("/")
-    if "/byof/" in raw:
-        bucket, run_id = raw.split("/byof/", 1)
-    else:
-        bucket, run_id = raw.split("/", 1)
-    run_id = run_id.split("/")[-1]
+    bucket, key_prefix = raw.split("/", 1)
     smoke_artifact = str(_spec_config()["smoke_artifact_name"])
     s3 = _s3_client(e2e_project)
-    results = _verify_run_s3(s3, [bucket], run_id, smoke_artifact, deadline=time.time() + 120, poll=5)
+    results = _verify_run_s3(s3, bucket, key_prefix, smoke_artifact, deadline=time.time() + 120, poll=5)
     assert results.get("dream_psnr_db") is not None, results
