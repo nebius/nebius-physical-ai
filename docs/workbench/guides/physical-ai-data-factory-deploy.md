@@ -227,6 +227,15 @@ npa provision-if-absent --project <alias> --dry-run --output-format json
 npa provision-if-absent --project <alias>            # real
 ```
 
+The default cluster it provisions is the small FTUE shape — **1× GPU node
+(`gpu-rtx6000`, `1gpu-24vcpu-218gb`) + 1× CPU node (`cpu-d3`, `4vcpu-16gb`),
+Shared Filesystem OFF**. The Data Factory passes stage I/O over S3 URIs, so it
+needs **no** Shared Filesystem (and no SFS SSD quota). For a training farm or a
+shared `/mnt/data`, opt in via `deploy/cluster` tfvars/flags (see
+[`deploy/cluster/README.md`](../../../deploy/cluster/README.md): `gpu_nodes_count`
+/ multi-GPU `gpu_nodes_preset` / `enable_gpu_cluster`, and `enable_filestore` or
+`existing_filestore`).
+
 The container registry must be reachable for the workbench images. Point
 `NPA_REGISTRY` (or the project `registry_id`) at your registry, e.g.
 `cr.<region>.nebius.cloud/<registry-id>`.

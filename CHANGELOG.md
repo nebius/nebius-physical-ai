@@ -7,6 +7,28 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Default Managed Kubernetes cluster is now a small FTUE / PAIDF shape
+
+- **`deploy/cluster` defaults shrank from a 2×8-GPU farm to 1 GPU + 1 CPU node,
+  and Shared Filesystem is now off by default.** `npa provision-if-absent` /
+  `npa cluster up` (which inherit the Terraform `variables.tf` defaults) now
+  create `gpu_nodes_count = 1` on `gpu-rtx6000` with the `1gpu-24vcpu-218gb`
+  preset plus one small `cpu-d3` / `4vcpu-16gb` node, and `enable_filestore =
+  false`. npa.workflow stages (including the Physical AI Data Factory) hand off
+  artifacts over S3 URIs, so the default cluster needs no cross-node `/mnt/data`
+  and **no Shared Filesystem SSD quota** — the default provision succeeds with
+  zero SFS quota.
+- The CLI Shared-Filesystem quota preflight and the post-apply default-
+  StorageClass validation now key off `enable_filestore`: the quota check is
+  skipped and the platform block-storage StorageClass is accepted when the
+  shared filesystem is not opted into (it still enforces the filesystem CSI
+  StorageClass when `enable_filestore = true`).
+- **Larger GPU presets / multi-node InfiniBand and Shared Filesystem remain
+  explicit opt-ins** via `deploy/cluster` tfvars/`TF_VAR_*`/`-var`
+  (`gpu_nodes_count`, a multi-GPU `gpu_nodes_preset`, `enable_gpu_cluster`,
+  `enable_filestore`, `existing_filestore`) — documented in
+  `deploy/cluster/README.md` and `terraform.tfvars.example`.
+
 ### First-run walkthrough fixes (README → agent → Physical AI Data Factory)
 
 - **Agent deploy SSH-timeout now fails with one clear line, not a dumped bash
