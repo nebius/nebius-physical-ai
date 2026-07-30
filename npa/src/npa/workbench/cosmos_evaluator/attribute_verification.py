@@ -31,7 +31,7 @@ import subprocess
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 from npa.workbench.cosmos_evaluator.upstream import CosmosEvaluatorError
 
@@ -329,7 +329,7 @@ def answer_question(
         temperature=0.0,
         max_tokens=max_tokens,
     )
-    return parse_answer_letter(text)
+    return parse_answer_letter(text, offered=options.keys())
 
 
 def question_user_prompt(*, variable: str, value: str, options: Sequence[str]) -> str:
@@ -458,17 +458,29 @@ def normalize_question(
     }
 
 
-def parse_answer_letter(text: str) -> str:
-    """Upstream's answer parsing: a standalone A-D, else ``UNKNOWN``."""
+def parse_answer_letter(text: str, *, offered: Iterable[str] | None = None) -> str:
+    """Upstream's answer parsing: a standalone A-D, else ``UNKNOWN``.
+
+    ``offered`` restricts the answer to the letters the question actually listed.
+    Upstream always scans for A-D, so a three-option question answered "D" is read
+    as a concrete wrong answer; that is indistinguishable from a model that
+    ignored the options, and a live Token Factory VLM does return it. Rejecting an
+    unoffered letter as ``UNKNOWN`` keeps a malformed answer from reading as
+    evidence about the pixels.
+    """
 
     if not text:
         return "UNKNOWN"
+    allowed = {str(letter).strip().upper() for letter in offered} if offered else set(ANSWER_LETTERS)
+    allowed &= set(ANSWER_LETTERS)
+    if not allowed:
+        return "UNKNOWN"
     upper = text.upper()
-    match = re.search(r"\b([A-D])\b", upper)
-    if match:
-        return match.group(1)
+    for match in re.finditer(r"\b([A-D])\b", upper):
+        if match.group(1) in allowed:
+            return match.group(1)
     stripped = upper.strip()
-    return stripped if stripped in ANSWER_LETTERS else "UNKNOWN"
+    return stripped if stripped in allowed else "UNKNOWN"
 
 
 def _default_client() -> Any:

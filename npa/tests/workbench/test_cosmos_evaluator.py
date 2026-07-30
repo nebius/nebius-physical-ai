@@ -221,6 +221,29 @@ def test_parse_answer_letter(reply: str, expected: str) -> None:
     assert av.parse_answer_letter(reply) == expected
 
 
+def test_parse_answer_letter_rejects_a_letter_the_question_never_offered() -> None:
+    """A live VLM does answer "D" to a three-option question; that is not an answer."""
+
+    assert av.parse_answer_letter("D", offered=["A", "B", "C"]) == "UNKNOWN"
+    assert av.parse_answer_letter("D", offered=["A", "B", "C", "D"]) == "D"
+
+
+def test_parse_answer_letter_skips_past_an_unoffered_letter() -> None:
+    assert av.parse_answer_letter("Not D, it is B.", offered=["A", "B"]) == "B"
+
+
+def test_answer_question_constrains_the_answer_to_the_offered_options() -> None:
+    client = FakeTokenFactory(["D"])
+    answer = av.answer_question(
+        client=client,
+        question="What colour?",
+        options={"A": "red", "B": "blue", "C": "green"},
+        data_url="data:image/png;base64,AAA=",
+        model="vlm",
+    )
+    assert answer == "UNKNOWN"
+
+
 def test_generate_question_uses_upstream_guided_json_schema() -> None:
     client = FakeTokenFactory([_question_json("cloth_color", "blue", "red")])
     av.generate_question(
@@ -452,3 +475,32 @@ def test_write_report_round_trips_locally(tmp_path: Path) -> None:
 
     written = write_report({"score": 0.75}, result_uri=str(tmp_path / "grade"))
     assert json.loads(Path(written).read_text())["score"] == 0.75
+
+
+def test_local_run_needs_no_object_storage_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A local --augment-uri must not require an S3 endpoint to be configured."""
+    from npa.workbench.cosmos_evaluator import evaluate_run
+
+    for name in ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+
+    augment = tmp_path / "cosmos_augmented"
+    _write_variant(augment, "clip-a", {"cloth_color": "blue"}, conditioned=False)
+    client = FakeTokenFactory([_question_json("cloth_color", "blue", "red"), "A"])
+
+    result = evaluate_run(
+        augment_uri=str(augment),
+        output_uri=str(tmp_path / "grade"),
+        client=client,
+    )
+    assert result.clip_count == 1
+    written = write_report_helper(result, tmp_path)
+    assert json.loads(Path(written).read_text())["clip_count"] == 1
+
+
+def write_report_helper(result: Any, tmp_path: Path) -> str:
+    from npa.workbench.cosmos_evaluator.evaluate import write_report
+
+    return write_report(result.to_dict(), result_uri=str(tmp_path / "grade"))

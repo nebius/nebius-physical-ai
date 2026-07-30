@@ -82,6 +82,34 @@ def test_availability_without_a_usable_encoder_explains_the_encoder_requirement(
     assert "libopenh264" in availability.reason() and "h264_nvenc" in availability.reason()
 
 
+def test_availability_names_the_python_version_gap() -> None:
+    """Upstream needs >=3.12; an older interpreter otherwise fails deep in an import."""
+
+    availability = CuratorAvailability(
+        source="/opt/cosmos-curate",
+        importable=False,
+        import_error="ImportError: cannot import name 'Self' from 'typing'",
+        ffmpeg="/usr/bin/ffmpeg",
+        encoders=("libopenh264",),
+        python_version="3.10.12",
+    )
+    assert not availability.can_run_in_process
+    reason = availability.reason()
+    assert "Python >= 3.12" in reason and "3.10.12" in reason
+
+
+def test_availability_accepts_a_new_enough_python() -> None:
+    availability = CuratorAvailability(
+        source="/opt/cosmos-curate",
+        importable=True,
+        ffmpeg="/usr/bin/ffmpeg",
+        encoders=("libopenh264",),
+        python_version="3.12.8",
+    )
+    assert availability.python_ok
+    assert availability.can_run_in_process
+
+
 def test_availability_surfaces_an_import_failure() -> None:
     availability = CuratorAvailability(
         source="/opt/cosmos-curate",
@@ -383,3 +411,18 @@ def test_write_report_round_trips_locally(tmp_path: Path) -> None:
 
     written = write_report({"clip_count": 3}, result_uri=str(tmp_path / "curation"))
     assert json.loads(Path(written).read_text())["clip_count"] == 3
+
+
+def test_local_run_needs_no_object_storage_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A local --augment-uri must not require an S3 endpoint to be configured."""
+    for name in ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(report_mod, "probe_availability", lambda: CuratorAvailability())
+
+    report = report_mod.curate_augmented(
+        augment_uri=str(tmp_path / "cosmos_augmented"),
+        curated_uri=str(tmp_path / "curated"),
+    )
+    assert report.engine == "unavailable"

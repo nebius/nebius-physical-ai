@@ -306,9 +306,10 @@ def _rewrite_source(clip: CuratedClip, *, variants: dict[str, str], curated_uri:
 
 
 def _storage() -> Any:
-    from npa.clients.storage import StorageClient
+    # Deferred: a run over local paths must not need object-storage credentials.
+    from npa.clients.storage import LazyStorageClient
 
-    return StorageClient.from_environment()
+    return LazyStorageClient()
 
 
 def _now() -> str:

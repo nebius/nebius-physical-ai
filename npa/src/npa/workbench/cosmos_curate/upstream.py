@@ -48,6 +48,11 @@ LOCAL_JOB_ENV = "COSMOS_CURATOR_LOCAL_DOCKER_JOB"
 CPU_ENCODER = "libopenh264"
 GPU_ENCODER = "h264_nvenc"
 
+# Upstream declares requires-python >=3.12,<3.13 and its modules use 3.12 typing
+# features, so an older interpreter fails deep in an import with a confusing
+# message ("cannot import name 'Self' from 'typing'") rather than at the boundary.
+MIN_PYTHON = (3, 12)
+
 
 class CosmosCurateError(RuntimeError):
     """Raised when a Cosmos Curator request cannot be satisfied."""
@@ -67,6 +72,17 @@ class CuratorAvailability:
     ffmpeg: str = ""
     encoders: tuple[str, ...] = field(default_factory=tuple)
     pipeline_cli: str = ""
+    python_version: str = ""
+
+    @property
+    def python_ok(self) -> bool:
+        if not self.python_version:
+            return True
+        try:
+            parts = tuple(int(part) for part in self.python_version.split(".")[:2])
+        except ValueError:
+            return True
+        return parts >= MIN_PYTHON
 
     @property
     def encoder(self) -> str:
@@ -80,7 +96,7 @@ class CuratorAvailability:
 
     @property
     def can_run_in_process(self) -> bool:
-        return bool(self.source) and self.importable and bool(self.encoder)
+        return bool(self.source) and self.python_ok and self.importable and bool(self.encoder)
 
     def reason(self) -> str:
         """Human-readable explanation of why in-process curation cannot run."""
@@ -89,6 +105,12 @@ class CuratorAvailability:
             return (
                 f"no Cosmos Curator checkout found; set {SRC_ENV} to a clone of {UPSTREAM_REPO} "
                 f"(or bake one at {DEFAULT_SRC_CANDIDATES[0]})"
+            )
+        if not self.python_ok:
+            wanted = ".".join(str(part) for part in MIN_PYTHON)
+            return (
+                f"Cosmos Curator needs Python >= {wanted} (upstream declares "
+                f"requires-python >=3.12,<3.13); this interpreter is {self.python_version}"
             )
         if not self.importable:
             return f"Cosmos Curator at {self.source} is not importable: {self.import_error}"
@@ -112,6 +134,7 @@ class CuratorAvailability:
             "encoders": list(self.encoders),
             "encoder": self.encoder,
             "pipeline_cli": self.pipeline_cli,
+            "python_version": self.python_version,
             "can_run_in_process": self.can_run_in_process,
             "reason": self.reason(),
         }
@@ -173,8 +196,23 @@ def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvail
     ffmpeg = shutil.which("ffmpeg") or ""
     encoders = ffmpeg_encoders(ffmpeg=ffmpeg)
     pipeline_cli = shutil.which("video-pipeline") or ""
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     if root is None:
-        return CuratorAvailability(ffmpeg=ffmpeg, encoders=encoders, pipeline_cli=pipeline_cli)
+        return CuratorAvailability(
+            ffmpeg=ffmpeg,
+            encoders=encoders,
+            pipeline_cli=pipeline_cli,
+            python_version=python_version,
+        )
+    if sys.version_info[:2] < MIN_PYTHON:
+        # Report the version gap instead of the confusing import error it causes.
+        return CuratorAvailability(
+            source=str(root),
+            ffmpeg=ffmpeg,
+            encoders=encoders,
+            pipeline_cli=pipeline_cli,
+            python_version=python_version,
+        )
 
     importable = True
     import_error = ""
@@ -194,4 +232,5 @@ def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvail
         ffmpeg=ffmpeg,
         encoders=encoders,
         pipeline_cli=pipeline_cli,
+        python_version=python_version,
     )
