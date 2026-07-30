@@ -314,6 +314,68 @@ def workflow_task_statuses(
     return parse_task_statuses(result.stdout, job_id)
 
 
+def find_job_ids_by_name(
+    job_name: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 300,
+) -> list[str]:
+    """Return the managed-job ids whose ``job_name`` matches, newest first.
+
+    Used to verify (or recover) the job id parsed from ``sky jobs launch`` output.
+    Trusting the parsed number alone is unsafe: a flaky API server can leave stale
+    text in the stream, and polling the wrong id makes the driver abandon a job that
+    is still running — observed live, with four GPUs left burning.
+    """
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    result = subprocess.run(
+        [
+            str(ensure_skypilot_version(runtime_config.sky_bin)),
+            "jobs",
+            "queue",
+            "--all",
+            "--output",
+            "json",
+        ],
+        env=sky_environment(runtime_config.isolated_config_dir),
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return parse_job_ids_by_name(result.stdout, job_name)
+
+
+def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
+    """Extract managed-job ids for ``job_name`` from queue JSON, newest first."""
+
+    payload = _json_payload_from_output(output)
+    if payload is None:
+        return []
+    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    ids: list[int] = []
+    for job in jobs or []:
+        if not isinstance(job, dict):
+            continue
+        if str(job.get("job_name") or "") != job_name:
+            continue
+        raw = str(job.get("job_id") or job.get("id") or "")
+        if raw.isdigit() and int(raw) not in ids:
+            ids.append(int(raw))
+    return [str(value) for value in sorted(ids, reverse=True)]
+
+
 def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
     """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
 

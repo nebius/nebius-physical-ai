@@ -207,6 +207,7 @@ class SkyPilotWaveExecutor:
         status_fn: Callable[..., Any] | None = None,
         timeline_fn: Callable[..., list[dict[str, Any]]] | None = None,
         canceller: Callable[..., Any] | None = None,
+        name_lookup_fn: Callable[[str], list[str]] | None = None,
         sleeper: Callable[[float], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         logger: Callable[[str], None] | None = None,
@@ -220,6 +221,7 @@ class SkyPilotWaveExecutor:
         self._status_fn = status_fn
         self._timeline_fn = timeline_fn
         self._canceller = canceller
+        self._name_lookup_fn = name_lookup_fn
         self._sleep = sleeper or time.sleep
         self._clock = clock
         self._log = logger or (lambda message: None)
@@ -523,17 +525,9 @@ class SkyPilotWaveExecutor:
             path = Path(tmp) / f"{job_name}.skypilot.yaml"
             path.write_text(yaml_text, encoding="utf-8")
             result = self._submit(path, job_name)
-        job_id = str(getattr(result, "job_id", "") or "").strip()
-        if not job_id:
-            # Falling back to the job *name* used to look like a graceful default,
-            # but `sky jobs queue` matches numeric ids, so status would stay UNKNOWN
-            # until max_wait_seconds elapsed while the job kept running — and the
-            # cancel-by-name would miss it too. Fail fast instead (the wave is
-            # cancelled by name on the way out).
-            raise NpaWorkflowError(
-                f"wave {attempt.key}: SkyPilot did not report a job id for "
-                f"{job_name!r}; refusing to poll a job we cannot identify"
-            )
+        job_id = self._resolve_job_id(
+            job_name, str(getattr(result, "job_id", "") or "").strip(), attempt
+        )
         attempt.job_id = job_id
         status = str(getattr(result, "status", "SUBMITTED") or "SUBMITTED").upper()
         attempt.sky_status = status
@@ -598,6 +592,51 @@ class SkyPilotWaveExecutor:
                     f"{self.options.max_wait_seconds}s (last={last}, job_id={job_id})"
                 )
             self._sleep(self.options.poll_seconds)
+
+    def _resolve_job_id(self, job_name: str, parsed: str, attempt: WaveAttempt) -> str:
+        """Trust the launched job NAME, not the id scraped from launch output.
+
+        A flaky API server can leave a stale ``Job submitted, ID: N`` in the stream:
+        live, the driver parsed a cancelled job's id, declared the wave CANCELLED, and
+        walked away from the real job — four GPUs kept running. So the parsed id is
+        cross-checked against the job name, and recovered from it when it disagrees.
+        """
+
+        names = self._job_ids_by_name(job_name)
+        if names:
+            if parsed and parsed in names:
+                return parsed
+            resolved = names[0]
+            if parsed:
+                self._log(
+                    f"wave {attempt.key}: launch output reported job_id={parsed}, but "
+                    f"{job_name!r} is job_id={resolved}; using the name lookup"
+                )
+                attempt.status_errors.append(
+                    f"stale job id from launch output: {parsed} != {resolved}"
+                )
+            return resolved
+        if parsed:
+            # Name lookup unavailable (e.g. the queue query failed); the parsed id is
+            # all we have, and polling it is better than abandoning the job.
+            return parsed
+        raise NpaWorkflowError(
+            f"wave {attempt.key}: SkyPilot reported no job id for {job_name!r} and the "
+            "job could not be found by name; refusing to poll a job we cannot identify"
+        )
+
+    def _job_ids_by_name(self, job_name: str) -> list[str]:
+        lookup = self._name_lookup_fn
+        if lookup is None:
+            from npa.orchestration.skypilot.workflow import (
+                find_job_ids_by_name as lookup,
+            )
+
+        try:
+            return [str(item) for item in lookup(job_name)]
+        except Exception as exc:  # noqa: BLE001 - fall back to the parsed id
+            self._log(f"job-id lookup by name failed for {job_name}: {exc}")
+            return []
 
     def _observe_concurrency(self, job_id: str, attempt: WaveAttempt) -> None:
         """Record how many member tasks are RUNNING at this instant."""

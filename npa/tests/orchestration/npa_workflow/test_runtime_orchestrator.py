@@ -268,6 +268,7 @@ def _executor(
     store: MemoryStore | None = None,
     sleeps: list[float] | None = None,
     cancels: list[dict[str, Any]] | None = None,
+    name_lookup_fn: Any | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
     ledger = RuntimeLedger(
@@ -289,6 +290,8 @@ def _executor(
             {"task_id": 0, "task_name": "t", "status": "SUCCEEDED", "job_id": job_id}
         ],
         canceller=(lambda **kwargs: cancels.append(kwargs)) if cancels is not None else None,
+        # Default: the launched name resolves to the id the fake submitter reported.
+        name_lookup_fn=name_lookup_fn if name_lookup_fn is not None else (lambda name: []),
         sleeper=(sleeps.append if sleeps is not None else (lambda _seconds: None)),
         clock=_fake_clock(),
     )
@@ -955,3 +958,87 @@ def test_trigger_is_bounded_by_the_run_deadline(tmp_path: Path) -> None:
 
     assert report.status == "failed"
     assert "after waiting 3s" in report.error
+
+
+# --------------------------------------------------- job-id trust (live bug fix)
+
+
+def test_stale_job_id_from_launch_output_is_corrected_by_name(tmp_path: Path) -> None:
+    """Live bug: a stale parsed id made the driver abandon a running 4-GPU job.
+
+    The launch output reported a cancelled job's id, so the driver polled that id,
+    saw CANCELLED, declared the wave failed and walked away while the real job kept
+    running. The job NAME is authoritative.
+    """
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+
+    class StaleIdSubmitter(FakeSubmitter):
+        def __call__(self, path: Path, job_name: str, **kwargs: Any) -> FakeResult:
+            super().__call__(path, job_name, **kwargs)
+            return FakeResult(job_id="140")  # stale id from a cancelled job
+
+    polled: list[str] = []
+
+    def status_fn(job_id: str, **_: Any) -> FakeResult:
+        polled.append(job_id)
+        # The stale id is a cancelled job; the real one succeeds.
+        return FakeResult(status="CANCELLED" if job_id == "140" else "SUCCEEDED")
+
+    executor = _executor(
+        spec,
+        submitter=StaleIdSubmitter(),
+        status_fn=status_fn,
+        name_lookup_fn=lambda name: ["141"],
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-stale-id", executor=executor, options=executor.options
+    )
+
+    assert report.status == "succeeded"
+    assert "140" not in polled, "must not poll the stale id"
+    assert report.waves[0]["job_id"] == "141"
+    assert any("stale job id" in err for err in report.waves[0]["status_errors"])
+    del submitter
+
+
+def test_empty_job_id_is_recovered_from_the_job_name(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+
+    class NoIdSubmitter(FakeSubmitter):
+        def __call__(self, path: Path, job_name: str, **kwargs: Any) -> FakeResult:
+            super().__call__(path, job_name, **kwargs)
+            return FakeResult(job_id="")
+
+    executor = _executor(
+        spec, submitter=NoIdSubmitter(), name_lookup_fn=lambda name: ["77"]
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-recover-id", executor=executor, options=executor.options
+    )
+    assert report.status == "succeeded"
+    assert report.waves[0]["job_id"] == "77"
+
+
+def test_no_job_id_and_no_name_match_fails_the_wave(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+
+    class NoIdSubmitter(FakeSubmitter):
+        def __call__(self, path: Path, job_name: str, **kwargs: Any) -> FakeResult:
+            super().__call__(path, job_name, **kwargs)
+            return FakeResult(job_id="")
+
+    executor = _executor(
+        spec,
+        submitter=NoIdSubmitter(),
+        cancels=cancels,
+        name_lookup_fn=lambda name: [],
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-no-id", executor=executor, options=executor.options
+    )
+    assert report.status == "failed"
+    assert "could not be found by name" in report.error
+    assert cancels, "must still attempt a teardown by cluster name"

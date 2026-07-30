@@ -566,3 +566,20 @@ def test_workflow_task_statuses_returns_empty_on_command_failure(mocker) -> None
     )
 
     assert workflow_mod.workflow_task_statuses("75") == []
+
+
+def test_parse_job_ids_by_name_returns_newest_first() -> None:
+    from npa.orchestration.skypilot.workflow import parse_job_ids_by_name
+
+    payload = """
+    [
+      {"job_id": 140, "job_name": "wave-01", "task_name": "a", "status": "CANCELLED"},
+      {"job_id": 141, "job_name": "wave-01", "task_name": "a", "status": "RUNNING"},
+      {"job_id": 141, "job_name": "wave-01", "task_name": "b", "status": "RUNNING"},
+      {"job_id": 142, "job_name": "other", "task_name": "a", "status": "RUNNING"}
+    ]
+    """
+    assert parse_job_ids_by_name(payload, "wave-01") == ["141", "140"]
+    assert parse_job_ids_by_name(payload, "other") == ["142"]
+    assert parse_job_ids_by_name(payload, "missing") == []
+    assert parse_job_ids_by_name("not json", "wave-01") == []
