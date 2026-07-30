@@ -44,6 +44,12 @@ EXCLUDED_DIR_NAMES = frozenset(
 #: File suffixes that are build artifacts rather than source.
 EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".pyd", ".so", ".log")
 
+#: Suffixes and names that must never reach a bucket or a worker. Only applied to
+#: the directory-walk fallback: everything .gitignore keeps out of the repo (local
+#: state, keys, env files) is invisible to the git listing used first.
+SENSITIVE_SUFFIXES = (".pem", ".key", ".tfstate", ".tfvars", ".kubeconfig")
+SENSITIVE_NAMES = frozenset({".env", "auth.env", "credentials.yaml", "credentials.yml"})
+
 
 class SrcStagingError(RuntimeError):
     """Raised when the npa package source cannot be located or uploaded."""
@@ -76,14 +82,58 @@ def _is_excluded(relative: Path) -> bool:
     return relative.name.endswith(EXCLUDED_SUFFIXES)
 
 
+def _is_sensitive(relative: Path) -> bool:
+    if relative.name in SENSITIVE_NAMES:
+        return True
+    return relative.name.endswith(SENSITIVE_SUFFIXES)
+
+
+def _git_tracked_files(root: Path) -> list[Path] | None:
+    """Return git-tracked files under *root*, or ``None`` when it is not a checkout."""
+
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    tracked = [Path(name) for name in result.stdout.split("\0") if name]
+    return tracked or None
+
+
 def iter_source_files(root: Path) -> Iterable[Path]:
-    """Yield the package files worth uploading, relative to *root*."""
+    """Yield the package files worth uploading, relative to *root*.
+
+    Prefers the git index: a directory walk uploads whatever else the working tree
+    happens to hold — including the local state and secrets ``.gitignore`` exists
+    to keep out of the repo (``*.tfvars``, ``*.tfstate``, ``*.pem``, ``.env``,
+    ``credentials.yaml``) — into a shared bucket and onto every worker. The walk
+    remains the fallback for a source tree that is not a checkout, and drops those
+    names explicitly.
+    """
+
+    tracked = _git_tracked_files(root)
+    if tracked is not None:
+        for relative in sorted(tracked):
+            if _is_excluded(relative):
+                continue
+            if (root / relative).is_file():
+                yield relative
+        return
 
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         relative = path.relative_to(root)
-        if _is_excluded(relative):
+        if _is_excluded(relative) or _is_sensitive(relative):
             continue
         yield relative
 
@@ -154,14 +204,21 @@ def stage_npa_source(
     if not (root / "pyproject.toml").is_file():
         raise SrcStagingError(f"{root} does not look like the npa package (no pyproject.toml)")
 
-    if client is None:
-        client = _storage_client(
-            endpoint_url=endpoint_url,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-        )
-
     destination = f"s3://{bucket_name}/{key_prefix}/"
+    if client is None:
+        try:
+            client = _storage_client(
+                endpoint_url=endpoint_url,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced as SrcStagingError below
+            raise SrcStagingError(
+                f"Cannot reach object storage to stage the npa source to {destination}: "
+                f"{exc}. Set the S3 endpoint and keys with `npa configure` (or pass "
+                "--s3-endpoint / AWS_* env vars)."
+            ) from exc
+
     if on_status:
         on_status(f"staging {root} -> {destination}")
 
@@ -175,15 +232,25 @@ def stage_npa_source(
     def _upload(relative: Path) -> None:
         client.upload_file(str(root / relative), f"{destination}{relative.as_posix()}")
 
-    if max_workers and max_workers > 1 and len(files) > 1:
-        from concurrent.futures import ThreadPoolExecutor
+    # Both callers only handle SrcStagingError; an unconfigured bucket, expired
+    # keys or AccessDenied would otherwise surface as a bare "Unexpected error"
+    # with none of the staging guidance.
+    try:
+        if max_workers and max_workers > 1 and len(files) > 1:
+            from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=min(max_workers, len(files))) as pool:
-            for _ in pool.map(_upload, files):
-                pass
-    else:
-        for relative in files:
-            _upload(relative)
+            with ThreadPoolExecutor(max_workers=min(max_workers, len(files))) as pool:
+                for _ in pool.map(_upload, files):
+                    pass
+        else:
+            for relative in files:
+                _upload(relative)
+    except Exception as exc:  # noqa: BLE001 - surfaced as SrcStagingError
+        raise SrcStagingError(
+            f"Failed to stage the npa source to {destination}: {exc}. Check that the "
+            "bucket exists and that the S3 credentials from `npa configure` can write "
+            "to it."
+        ) from exc
     uploaded = len(files)
     if on_status:
         on_status(f"staged {uploaded} files")

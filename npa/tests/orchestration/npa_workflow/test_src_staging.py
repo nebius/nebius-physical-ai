@@ -91,6 +91,76 @@ def test_stage_npa_source_normalizes_bucket_and_prefix(tmp_path: Path) -> None:
     assert all(dest.startswith("s3://my-bucket/custom/src/") for _l, dest in client.uploads)
 
 
+def test_iter_source_files_prefers_the_git_index(tmp_path: Path) -> None:
+    """A dirty working tree must not push local state or secrets into the bucket."""
+    import subprocess
+
+    root = _fake_package(tmp_path / "npa")
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "test"],
+        ["add", "pyproject.toml", "src"],
+        ["commit", "-q", "-m", "init"],
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    # Untracked local state of exactly the kind .gitignore keeps out of the repo.
+    (root / "terraform.tfvars").write_text('iam_token = "secret"\n', encoding="utf-8")
+    (root / "credentials.yaml").write_text("tokens: {HF_TOKEN: hf_x}\n", encoding="utf-8")
+    (root / "scratch.py").write_text("print('local')\n", encoding="utf-8")
+
+    files = {path.as_posix() for path in iter_source_files(root)}
+
+    assert files == {"pyproject.toml", "src/npa/__init__.py", "src/npa/cli.py"}
+
+
+def test_iter_source_files_walk_fallback_skips_secrets(tmp_path: Path) -> None:
+    """Outside a checkout there is no index to trust, so deny secrets by name."""
+    root = _fake_package(tmp_path / "npa")
+    (root / "terraform.tfvars").write_text("x = 1\n", encoding="utf-8")
+    (root / "credentials.yaml").write_text("tokens: {}\n", encoding="utf-8")
+    (root / "id_ed25519.key").write_text("private\n", encoding="utf-8")
+    (root / "cluster.kubeconfig").write_text("apiVersion: v1\n", encoding="utf-8")
+
+    files = {path.as_posix() for path in iter_source_files(root)}
+
+    assert files == {"pyproject.toml", "src/npa/__init__.py", "src/npa/cli.py"}
+
+
+def test_stage_npa_source_wraps_upload_failures(tmp_path: Path) -> None:
+    """Callers only handle SrcStagingError; an AccessDenied must not escape raw."""
+
+    class FailingClient:
+        def upload_file(self, local_file: str, bucket_uri: str) -> str:
+            raise RuntimeError("An error occurred (AccessDenied) when calling PutObject")
+
+    root = _fake_package(tmp_path / "npa")
+
+    with pytest.raises(SrcStagingError) as excinfo:
+        stage_npa_source(bucket="my-bucket", source_root=root, client=FailingClient())
+
+    assert "AccessDenied" in str(excinfo.value)
+    assert "s3://my-bucket/npa-src/npa/" in str(excinfo.value)
+
+
+def test_stage_npa_source_wraps_storage_configuration_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unconfigured endpoint is a staging error, not an unexpected crash."""
+    from npa.orchestration.npa_workflow import src_staging
+
+    def _boom(**_kwargs):
+        raise RuntimeError("Storage endpoint URL is not configured")
+
+    monkeypatch.setattr(src_staging, "_storage_client", _boom)
+    root = _fake_package(tmp_path / "npa")
+
+    with pytest.raises(SrcStagingError) as excinfo:
+        stage_npa_source(bucket="my-bucket", source_root=root)
+
+    assert "npa configure" in str(excinfo.value)
+
+
 def test_stage_npa_source_requires_a_bucket(tmp_path: Path) -> None:
     root = _fake_package(tmp_path / "npa")
 
