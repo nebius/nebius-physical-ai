@@ -74,6 +74,7 @@ flowchart TB
     lancedb["lancedb: FastAPI + vector query"]
     det_train["detection-training: health + system-info"]
     rerun["rerun-viewer: rerun SDK"]
+    foxglove["foxglove-embed: SDK + glue + MCAP range serving"]
   end
   subgraph gpu_gated["GPU-gated smokes"]
     lerobot["lerobot: train + eval PushT"]
@@ -115,6 +116,7 @@ flowchart TB
 | `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
 | `loop-eval` | `0.1.3-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
 | `rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
+| `foxglove-embed` | `0.58.0` | server-smoke | health + pinned SDK version; real `@foxglove/embed` (FoxgloveViewer + embed handshake); NPA glue module; host page; `/data` 206 byte range; Range CORS preflight | none | ready |
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
 ``npa/tests/smoke/test_golden_eval_capabilities.py``).
@@ -233,6 +235,7 @@ pipeline. Key safety notes are condensed below.
 | `envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
 | `reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
 | `loop-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |
+| `foxglove-embed` | Foxglove embedded-viewer host: SDK assets + MCAP/bag serving | `server-smoke` | none | ready |
 
 ## Safety review highlights
 
@@ -240,9 +243,11 @@ pipeline. Key safety notes are condensed below.
   `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`, `loop-eval`) run as the unprivileged `ubuntu`
   user. `isaac-lab` and `sonic` inherit `root` from the `nvcr.io/nvidia/isaac-lab`
   base; `lancedb` and `detection-training` run as `root` from the PyTorch base.
+  `foxglove-embed` runs as `nobody` on a digest-pinned caddy base.
   These are candidates for a non-root hardening pass.
 - **Network exposure** — services that open ports (`lerobot` :8080, `cosmos`
-  :8080, `lancedb` :8686, `detection-training` :8790, `fiftyone` :5151) must be
+  :8080, `lancedb` :8686, `detection-training` :8790, `fiftyone` :5151,
+  `foxglove-embed` :8099) must be
   deployed in the `workbench` namespace behind controlled access, never bound to
   public ingress without auth. `lancedb` and `detection-training` ship a token
   auth mode and warn loudly when started with `auth_mode=none` (the golden eval
