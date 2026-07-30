@@ -327,21 +327,34 @@ def default_npa_setup() -> str:
         # PATH shim, because a task image's default `python3` may be a different
         # interpreter entirely: SkyPilot's GPU default image ships /usr/bin/python3
         # with no pip, and the Isaac Lab image's PATH python3 is Isaac's kit python.
-        # Ask the interpreter itself, never `command -v python3`: images alias python3
-        # (the Isaac Lab image aliases it to /workspace/isaaclab/_isaac_sim/python.sh),
-        # and `command -v` then prints the alias DEFINITION, which was recorded as a
-        # bogus interpreter path on the first live attempt.
+        # Record a python COMMAND that can import npa, so stage bodies can be pointed
+        # at it. Three candidates are tried in order, because each of them is the right
+        # answer on some real image:
+        #   1. sys.executable - correct on normal images;
+        #   2. the alias target - the Isaac Lab image aliases python3 to
+        #      /workspace/isaaclab/_isaac_sim/python.sh, and its embedded kit python
+        #      cannot import its own site-packages unless launched through that
+        #      wrapper (live run: "could not record a usable npa interpreter");
+        #   3. `type -P python3` - the PATH binary, ignoring any alias.
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
-        "npa_python=\"$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null "
-        "|| true)\"\n"
-        "if [ -x \"$npa_python\" ] && \"$npa_python\" -c 'import npa' >/dev/null 2>&1; "
-        "then\n"
+        "npa_python=\"\"\n"
+        "alias_target=\"$(alias python3 2>/dev/null | sed -e \"s/^alias python3=//\" "
+        "-e \"s/^'//\" -e \"s/'$//\")\"\n"
+        "for candidate in \"$(python3 -c 'import sys; print(sys.executable)' "
+        "2>/dev/null || true)\" \"$alias_target\" \"$(type -P python3 2>/dev/null "
+        "|| true)\"; do\n"
+        "  if [ -n \"$candidate\" ] && [ -x \"$candidate\" ] && "
+        "\"$candidate\" -c 'import npa' >/dev/null 2>&1; then\n"
+        "    npa_python=\"$candidate\"\n"
+        "    break\n"
+        "  fi\n"
+        "done\n"
+        "if [ -n \"$npa_python\" ]; then\n"
         "  echo \"$npa_python\" > /tmp/npa-python\n"
         "  echo \"npa interpreter recorded: $npa_python\" >&2\n"
         "else\n"
-        "  echo \"warning: could not record a usable npa interpreter "
-        "($npa_python)\" >&2\n"
+        "  echo 'warning: no python command outside this shell could import npa' >&2\n"
         "fi\n"
         # toolRef stages invoke the `npa` console script by name; installing into a
         # non-standard interpreter can leave it outside PATH, so link it where every
