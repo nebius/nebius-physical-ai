@@ -170,10 +170,10 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#renderModeFoxglove").click();
     cy.wait("@foxgloveConfig");
 
-    cy.get("#foxgloveMessage")
-      .should("not.have.attr", "hidden")
-      .and("contain.text", "Foxglove viewer unavailable")
-      .and("contain.text", "not installed");
+    // `not.have.attr` yields an undefined subject, so assert separately.
+    cy.get("#foxgloveMessage").should("not.have.attr", "hidden");
+    cy.get("#foxgloveMessage").should("contain.text", "Foxglove viewer unavailable");
+    cy.get("#foxgloveMessage").should("contain.text", "not installed");
     cy.get("#foxgloveStatus").should("have.class", "is-error");
     cy.get("#viewerPaneFoxglove iframe").should("not.exist");
   });
