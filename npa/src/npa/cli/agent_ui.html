@@ -1794,6 +1794,7 @@
                   <button id="openRerun" class="btn" type="button">Open in Rerun</button>
                   <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button>
                   <button id="describeVisual" class="btn btn-primary" type="button" title="Capture the current viewer and ask the agent for feedback">Describe this</button>
+                  <button id="foxgloveConvertRun" class="btn" type="button" title="Pack this run's local frames, metrics and logs into an MCAP recording for the Foxglove viewer">Convert run → MCAP</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
                 </div>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
@@ -2229,6 +2230,7 @@
           });
         });
         setRenderMode("rerun");
+        bindClick("foxgloveConvertRun", convertRunToMcap);
         const mobileToggle = document.getElementById("mobilePanelsToggle");
         if (mobileToggle) {
           mobileToggle.addEventListener("click", () => {
@@ -4291,6 +4293,38 @@
         }
         if (!foxgloveHandle) return await ensureFoxgloveViewer();
         return await setFoxgloveDataSource(config);
+      }
+      async function convertRunToMcap() {
+        // Real conversion on the agent VM (npa.sdk.workbench.foxglove), then the
+        // produced MCAP is published and loaded into the embedded viewer.
+        const runId = String(activeRunId || "").trim();
+        setStatus("Converting run artifacts to MCAP…");
+        showToast("Converting run artifacts to MCAP…", "info");
+        try {
+          const data = await apiJson("/api/foxglove/convert-run", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(runId ? { run_id: runId } : {}),
+          });
+          const summary = (data && data.summary) || {};
+          activeArtifactRender = "foxglove";
+          setRenderMode("foxglove");
+          hideArtifactPreview();
+          updateRenderedDataSummary(data && data.sim_viz);
+          await refreshFoxgloveViewer();
+          showToast(
+            "MCAP ready: " + String(summary.message_count || 0) + " messages (" +
+              String(summary.frames || 0) + " frames).",
+            "success"
+          );
+          setStatus("Ready");
+          return true;
+        } catch (err) {
+          const message = String((err && err.message) || err);
+          showToast("MCAP conversion failed: " + message, "error");
+          setStatus("Ready");
+          return false;
+        }
       }
       async function captureFoxgloveContext() {
         // The embedded viewer is a cross-origin iframe: the browser cannot read its

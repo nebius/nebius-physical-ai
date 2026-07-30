@@ -149,6 +149,8 @@ AGENT_FOXGLOVE_CONTRACT = (
     "mountFoxgloveViewer",
     "/api/foxglove/config",
     "captureFoxgloveContext",
+    "convertRunToMcap",
+    "/api/foxglove/convert-run",
     # Cross-origin embed: never claim a captured frame for this pane.
     "cross-origin iframe",
 )
@@ -4054,6 +4056,7 @@ def _agent_system_prompt() -> str:
         "- GET /api/foxglove/status — Foxglove viewer readiness + active recording",
         "- POST /api/foxglove/load-artifact — load an .mcap/.bag recording into the Foxglove viewer",
         "- POST /api/foxglove/live — point the Foxglove viewer at a live ws:// data source",
+        "- POST /api/foxglove/convert-run — pack the active run's local frames/metrics/logs into MCAP",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
@@ -7655,6 +7658,82 @@ def foxglove_load_artifact(payload: dict | None = None):
         sim_viz = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
         result["foxglove"] = foxglove_status_payload(_foxglove_config(state), sim_viz)
     return result
+
+
+# Convert the active run's downloaded artifacts into a real MCAP recording and
+# load it into the viewer. Uses the same npa.sdk.workbench.foxglove code path as
+# the CLI; returns a clear error when the optional mcap extra is not installed.
+@app.post("/foxglove/convert-run")
+def foxglove_convert_run(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    state = _load_state()
+    sim_viz = state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}}
+    run_id = str(body.get("run_id") or sim_viz.get("run_id") or "").strip()
+    if not run_id:
+        raise HTTPException(status_code=400, detail="no active run to convert")
+    try:
+        run_id = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    source_dir = Path("/opt/npa-agent/runs") / run_id
+    if not source_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no local artifacts for run {{run_id}}; load the run's artifacts first "
+                "so there are frames/metrics/logs to convert"
+            ),
+        )
+    try:
+        fps = float(body.get("fps") or 10.0)
+    except (TypeError, ValueError):
+        fps = 10.0
+    try:
+        max_frames = int(body.get("max_frames") or 0)
+    except (TypeError, ValueError):
+        max_frames = 0
+    output_path = FOXGLOVE_DATA_DIR / f"{{secrets.token_hex(8)}}-{{run_id}}.mcap"
+    try:
+        from npa.sdk.workbench.foxglove import convert_run
+
+        FOXGLOVE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        summary = convert_run(
+            input_path=source_dir,
+            output_path=output_path,
+            fps=fps,
+            max_frames=max_frames,
+            run_id=run_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"MCAP conversion failed: {{exc}}")
+    try:
+        output_path.chmod(0o644)
+    except OSError:
+        pass
+    prune_published(FOXGLOVE_DATA_DIR, keep=FOXGLOVE_KEEP_PUBLISHED)
+    now = _now_iso()
+    sim_viz["run_id"] = run_id
+    sim_viz["artifact_render"] = "foxglove"
+    sim_viz["artifact_key"] = f"{{run_id}}/foxglove/{{output_path.name}}"
+    sim_viz["foxglove_url"] = f"{{FOXGLOVE_DATA_URL_PREFIX}}{{output_path.name}}"
+    sim_viz["foxglove_ready"] = True
+    sim_viz["foxglove_updated_at"] = now
+    sim_viz["artifact_preview_url"] = sim_viz["foxglove_url"]
+    sim_viz["artifact_download_url"] = sim_viz["foxglove_url"]
+    sim_viz["visualization_note"] = (
+        f"Converted {{summary.frames}} frame(s), {{summary.metrics}} metric doc(s) and "
+        f"{{summary.logs}} log line(s) from run artifacts into MCAP. Frame timestamps are "
+        f"synthetic ({{summary.fps}} fps) because the source artifacts carry no capture time."
+    )
+    state["sim_viz"] = sim_viz
+    _record_sim_viz_run(state, sim_viz)
+    _save_state(state)
+    return {{
+        "ok": True,
+        "summary": summary.to_dict(),
+        "sim_viz": sim_viz,
+        "foxglove": foxglove_status_payload(_foxglove_config(state), sim_viz),
+    }}
 
 
 # Point the embedded viewer at a live Foxglove/ROS-bridge WebSocket.
