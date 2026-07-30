@@ -20,8 +20,11 @@ Gating (all required):
   NPA_BYOF_TEST_IMAGE=<ref>       prebuilt Open Dreamer image to reuse
                                   (avoids an in-test docker build)
 
+The BYOF runner uses a synchronous ``sky launch``, so it blocks for the whole
+multi-hour run and returns the final status; do not SIGKILL it mid-run.
+
 Tunables:
-  NPA_BYOF_OD_LAUNCH_TIMEOUT (default 4200s) launcher subprocess cap
+  NPA_BYOF_OD_LAUNCH_TIMEOUT (default 18000s) launcher subprocess cap (>= run time)
   NPA_BYOF_OD_S3_WAIT        (default 18000s) max wait for the S3 results artifact
   NPA_BYOF_OD_POLL           (default 120s)   S3 poll interval
 """
@@ -218,7 +221,19 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
     if skypilot_bin:
         env["PATH"] = f"{Path(skypilot_bin).parent}:{env.get('PATH', '')}"
 
-    launch_timeout = int(os.environ.get("NPA_BYOF_OD_LAUNCH_TIMEOUT", "4200"))
+    # The BYOF runner uses a synchronous `sky launch`, so it blocks for the whole
+    # multi-hour run and returns the final status. Bound it generously (default
+    # 5h) and NEVER SIGKILL mid-run in the normal case — a mid-run kill can
+    # disrupt the cluster before it uploads. S3 remains the source of truth.
+    launch_timeout = int(os.environ.get("NPA_BYOF_OD_LAUNCH_TIMEOUT", "18000"))
+
+    def _text(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", "replace")
+        return str(value)
+
     try:
         proc = subprocess.run(
             cmd,
@@ -229,16 +244,13 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
             timeout=launch_timeout,
             env=env,
         )
-        launched = True
-        combined = proc.stdout + "\n" + proc.stderr
+        combined = _text(proc.stdout) + "\n" + _text(proc.stderr)
     except subprocess.TimeoutExpired as exc:
-        # The solution-smoke launcher caps its own polling at ~1h; a longer
-        # wall clock just means the K8s job is still running. That is fine: the
-        # job uploads to S3 on its own and we verify via S3 below.
-        launched = True
-        combined = (exc.stdout or "") + "\n" + (exc.stderr or "")
+        # Exceeded the (generous) cap; the cluster may still be finishing. Fall
+        # through to S3 verification. TimeoutExpired.stdout/stderr may be bytes.
+        combined = _text(exc.stdout) + "\n" + _text(exc.stderr)
 
-    if launched and "{" in combined:
+    if "{" in combined:
         try:
             summary = _parse_last_json_blob(combined)
             assert summary.get("status") in {"ok", None} or summary.get("run"), summary
