@@ -78,17 +78,55 @@ where NPA substitutes its own endpoint.
 - **CPU:** config sampling, the evaluator's hallucination check, Cosmos Curator
   curation, FiftyOne review, visualize, finalize.
 
-The `cosmos-curate` stage needs the `npa-cosmos-curate` image, which bakes a
-pinned upstream checkout and a conda-forge ffmpeg carrying `libopenh264` —
-upstream's transcoding stage accepts only `libopenh264` or `h264_nvenc`, and
-Debian/Ubuntu ffmpeg builds have neither. Without it the stage records
-`engine: unavailable` plus the reason and the FiftyOne review still runs. Check
-what an environment resolves to with:
+Each NVIDIA tool has its own workbench image, both CPU-only and both mode-based
+(`engine`, `smoke`, plus the tool's own commands):
+
+| Image | Stage | Needs |
+| --- | --- | --- |
+| `npa-cosmos-evaluator` | `evaluate` | `NEBIUS_TOKEN_FACTORY_KEY` (attribute verification only) |
+| `npa-cosmos-curate` | `cosmos-curate` | conda-forge ffmpeg with `libopenh264`, baked in |
+
+Without the curator image the stage records `engine: unavailable` plus the reason
+and the FiftyOne review still runs. Check what an environment resolves to with:
 
 ```bash
 npa workbench cosmos-evaluator engine --output text
 npa workbench cosmos-curate    engine --output text
 ```
+
+## Model weights are never baked into the images
+
+Upstream's *code* is Apache-2.0 and redistributable; its *weights* are not ours to
+ship. So neither image contains any, a build-time check in each Dockerfile fails if
+one appears, and both upstream checkouts are fetched with `GIT_LFS_SKIP_SMUDGE=1`
+so Git-LFS payloads never enter a layer.
+
+- **The evaluator needs no weights at all.** Its hallucination check is classical
+  computer vision and its attribute verification calls a hosted VLM, so the image's
+  golden eval runs with `--network none`. Upstream's objects/obstacle check would
+  need an EULA-gated SegFormer ONNX plus a CWIP checkpoint; those stay as LFS
+  pointers and the check is not wired. Using it means accepting upstream's EULA and
+  fetching the weights yourself.
+- **The curator's GPU stages do need weights**, so they are downloaded at run time
+  with your own Hugging Face token into a volume that persists across runs:
+
+```bash
+docker run --rm -e HF_TOKEN=... -v curator-weights:/config/models \
+  <registry>/npa-cosmos-curate:0.1.0 fetch-models --models split-annotate
+docker run --rm -v curator-weights:/config/models \
+  <registry>/npa-cosmos-curate:0.1.0 models --output text
+```
+
+`--models` takes a capability set (`split-transnetv2`, `embed-internvideo2`,
+`embed-cosmos-embed1`, `filter-aesthetic`, `caption-qwen`, `dataset-t5`, or
+`split-annotate` for upstream's `video-pipeline split` defaults) or a raw upstream
+model key. The model ids and their pinned revisions come from upstream's own
+registry (`cosmos_curator/configs/all_models.json`) and the download is upstream's
+own `huggingface_hub` call, so a pin moves only when the pinned checkout does.
+
+Every curator model is a Hugging Face repo, so `HF_TOKEN` is what fetches weights;
+`NGC_API_KEY` is what pulls NVIDIA *containers*. `npa workbench cosmos-curate
+models` reports which of the two is visible along with what is already on disk.
 
 ## Validate / plan / render
 

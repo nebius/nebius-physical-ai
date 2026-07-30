@@ -77,11 +77,12 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/cosmos-curate \
       /opt/cosmos-curate/venv \
       /opt/cosmos-curator \
-      /opt/ffmpeg \
       /opt/npa/src/npa \
       /opt/npa/docker/workbench/cosmos-curate
 
-# ffmpeg + ffprobe with libopenh264, from conda-forge's LGPL build.
+# ffmpeg + ffprobe with libopenh264, from conda-forge's LGPL build. The prefix must
+# not exist yet: micromamba refuses to create an environment over a non-conda
+# directory, so FFMPEG_PREFIX is deliberately absent from the install -d list above.
 RUN set -eux; \
     cd /tmp; \
     curl -sSL "https://micro.mamba.pm/api/micromamba/linux-64/${MICROMAMBA_VERSION}" \

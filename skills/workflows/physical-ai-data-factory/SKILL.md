@@ -150,6 +150,59 @@ cosmos-curate plan-pipeline` prints the documented `video-pipeline split` comman
 which adds TransNetV2 shot detection, aesthetic filtering, embeddings, and VLM
 captioning; both paths write the same layout, so the ingest reads either.
 
+## Containers And Model Weights
+
+Both NVIDIA tools are containerized as workbench images, and **neither image
+carries model weights**. That is a licensing boundary, not an optimization:
+upstream's *code* is Apache-2.0 and redistributable, its *weights* are not ours to
+ship. A build-time check in each Dockerfile fails if a weight file is present, a
+guardrail test (`npa/tests/docker/test_cosmos_oss_images.py`) fails if a Dockerfile
+grows a build-time download, and both checkouts are fetched with
+`GIT_LFS_SKIP_SMUDGE=1` so upstream's Git-LFS payloads never enter a layer.
+
+| Image | Tier | Weights | Credential at run time |
+| --- | --- | --- | --- |
+| `npa-cosmos-evaluator` | job, CPU | none needed | `NEBIUS_TOKEN_FACTORY_KEY`, for attribute verification only |
+| `npa-cosmos-curate` | job, CPU | none baked; GPU stages fetch on demand | `HF_TOKEN`, for `fetch-models` |
+
+**The evaluator needs no weights at all.** The hallucination check is classical
+computer vision, and attribute verification calls a hosted VLM instead of loading
+one — so its golden eval runs with `--network none`. Upstream's *objects/obstacle*
+check would need an EULA-gated SegFormer ONNX and a CWIP checkpoint; those stay as
+LFS pointers and that check is not wired. Anyone who needs it must accept
+upstream's EULA and fetch the weights themselves.
+
+**The curator's GPU stages do need weights**, so the image fetches them at run time
+with the operator's own Hugging Face token, into a `/config/models` volume that
+survives across runs:
+
+```bash
+docker run --rm -e HF_TOKEN=... -v curator-weights:/config/models \
+  <registry>/npa-cosmos-curate:0.1.0 fetch-models --models split-annotate
+docker run --rm -v curator-weights:/config/models \
+  <registry>/npa-cosmos-curate:0.1.0 models --output text
+```
+
+Model sets name a capability, and each set's membership mirrors the
+`model_id_names` of the upstream model class that stage instantiates:
+`split-transnetv2`, `embed-internvideo2`, `embed-cosmos-embed1`,
+`filter-aesthetic`, `caption-qwen`, `dataset-t5`, and `split-annotate` (what
+upstream's `video-pipeline split` needs with default flags). The model ids **and
+their pinned revisions come from upstream's own registry**
+(`cosmos_curator/configs/all_models.json`), and the download is upstream's own
+`huggingface_hub` call, so a pin moves only when the checkout does — never because
+NPA hardcoded one. `fetch-models` skips anything already complete, records
+per-model failures instead of aborting the batch (a gated repo shows up as its own
+403), and refuses outright with an actionable message when no token is set.
+
+NGC versus HF: every curator model is a Hugging Face repo, so `HF_TOKEN` is the
+credential that fetches weights. `NGC_API_KEY` is what pulls NVIDIA *containers*
+(and what upstream's own NVCF path uses); `models` reports whether each is visible
+so an operator can tell which one is missing.
+
+Both images are mode-based (`engine`, `smoke`, plus each tool's commands), so one
+image serves the workflow stage, the golden eval, and interactive debugging.
+
 Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
 `meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`
 (Cosmos-family critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
