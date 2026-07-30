@@ -240,12 +240,25 @@ def default_npa_setup() -> str:
     return (
         "set -e\n"
         "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+        # Debian/Ubuntu >= 24.04 mark the system interpreter externally managed
+        # (PEP 668), so a plain `pip install` fails with
+        # "error: externally-managed-environment". A task container is disposable, so
+        # retry with --break-system-packages and then --user before giving up. Live:
+        # this is what the Isaac Lab image hit once its system python3 came first on
+        # PATH, and any Ubuntu 24.04 based image would hit it too.
+        "npa_pip_install() {\n"
+        "  target=\"$1\"\n"
+        "  shift\n"
+        "  python3 -m pip install -q \"$target\" \"$@\" \\\n"
+        "    || python3 -m pip install -q \"$target\" \"$@\" --break-system-packages \\\n"
+        "    || python3 -m pip install -q \"$target\" \"$@\" --user\n"
+        "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
-        "    python3 -m pip install -q -e /opt/nebius-physical-ai/npa\n"
+        "    npa_pip_install -e /opt/nebius-physical-ai/npa\n"
         "  else\n"
         "    if [ ! -d /tmp/npa-src ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
-        "      python3 -m pip install -q boto3\n"
+        "      npa_pip_install boto3\n"
         "      python3 - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
@@ -281,7 +294,7 @@ def default_npa_setup() -> str:
         "PY\n"
         "    fi\n"
         "    if [ -d /tmp/npa-src ]; then\n"
-        "      python3 -m pip install -q -e /tmp/npa-src\n"
+        "      npa_pip_install -e /tmp/npa-src\n"
         "    else\n"
         "      echo 'npa CLI not found; set NPA_SRC_S3_URI or use a workbench image' >&2\n"
         "      exit 1\n"
@@ -292,7 +305,7 @@ def default_npa_setup() -> str:
         # baked workbench image so branch code (e.g. a new augment prompt path)
         # actually runs on GPU without rebuilding the image. Default off (no-op).
         "if [ \"$NPA_SRC_OVERLAY\" = \"1\" ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
-        "  python3 -m pip install -q boto3\n"
+        "  npa_pip_install boto3\n"
         "  python3 - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
@@ -326,7 +339,7 @@ def default_npa_setup() -> str:
         "        break\n"
         "    token = resp.get('NextContinuationToken')\n"
         "PY\n"
-        "  python3 -m pip install -q -e /tmp/npa-src-overlay --no-deps\n"
+        "  npa_pip_install -e /tmp/npa-src-overlay --no-deps\n"
         "fi\n"
         # Record the interpreter that can actually import npa, i.e. the one pip just
         # installed into (it has npa AND its dependencies). Stage bodies use it via a

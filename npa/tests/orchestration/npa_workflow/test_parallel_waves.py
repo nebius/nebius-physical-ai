@@ -580,3 +580,24 @@ def test_staged_source_is_not_published_as_pythonpath(monkeypatch: pytest.Monkey
     for task in docs[1:]:
         assert task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
         assert "PYTHONPATH" not in task["envs"]
+
+
+def test_setup_survives_pep668_managed_interpreters() -> None:
+    """Installs must work on images whose system python is externally managed.
+
+    Live: once the Isaac Lab image had a system python3 first on PATH (needed so
+    SkyPilot can host the task at all), `pip install` failed with
+    "error: externally-managed-environment" on Ubuntu 24.04. A task container is
+    disposable, so the install retries with --break-system-packages and then --user.
+    """
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+    assert "npa_pip_install()" in setup
+    assert "--break-system-packages" in setup
+    assert "--user" in setup
+    # Every install goes through the helper (no bare `pip install -e` left behind).
+    assert "python3 -m pip install -q -e /tmp/npa-src\n" not in setup
+    assert "npa_pip_install -e /tmp/npa-src" in setup
+    assert "npa_pip_install -e /opt/nebius-physical-ai/npa" in setup
