@@ -574,3 +574,79 @@ def _write_pick_place_rollout(root: Path) -> Path:
         draw.line((20, 72, x_pos + 8, y_pos + 16), fill=(55, 80, 140), width=3)
         image.save(root / f"frame-{index:03d}.png")
     return root
+
+
+class _FakeResp:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+
+class _FakeClient:
+    """Minimal httpx.Client stand-in: fail `fail_times`, then answer 200."""
+
+    calls = 0
+    fail_times = 0
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def get(self, url, headers=None):
+        type(self).calls += 1
+        if type(self).calls <= type(self).fail_times:
+            raise __import__("httpx").ConnectError("Connection refused")
+        return _FakeResp(200)
+
+
+def test_wait_for_backend_ready_retries_then_succeeds(monkeypatch) -> None:
+    _FakeClient.calls = 0
+    _FakeClient.fail_times = 3
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    slept: list[float] = []
+    # Deterministic clock so the loop is bounded regardless of wall time.
+    ticks = iter(range(0, 10000, 1))
+    vlm_eval.wait_for_backend_ready(
+        backend="self-hosted",
+        endpoint_url="http://127.0.0.1:8000/v1",
+        api_key_env="VLM_EVAL_API_KEY",
+        ready_timeout_s=100.0,
+        sleep=lambda d: slept.append(d),
+        now=lambda: next(ticks),
+    )
+    assert _FakeClient.calls == 4  # 3 refused + 1 success
+    assert slept  # backed off between attempts
+
+
+def test_wait_for_backend_ready_noop_for_api_and_stub(monkeypatch) -> None:
+    def _boom(*a, **k):  # pragma: no cover - must never be called
+        raise AssertionError("must not probe a hosted/stub backend")
+
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _boom)
+    vlm_eval.wait_for_backend_ready(backend="api", endpoint_url="", api_key_env="X")
+    vlm_eval.wait_for_backend_ready(backend="stub", endpoint_url="", api_key_env="X")
+
+
+def test_wait_for_backend_ready_times_out(monkeypatch) -> None:
+    _FakeClient.calls = 0
+    _FakeClient.fail_times = 10_000
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    clock = {"t": 0.0}
+
+    def _now() -> float:
+        clock["t"] += 5.0
+        return clock["t"]
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="not ready"):
+        vlm_eval.wait_for_backend_ready(
+            backend="self-hosted",
+            endpoint_url="http://127.0.0.1:8000/v1",
+            api_key_env="VLM_EVAL_API_KEY",
+            ready_timeout_s=20.0,
+            sleep=lambda d: None,
+            now=_now,
+        )

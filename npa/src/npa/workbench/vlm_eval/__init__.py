@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 import httpx
@@ -34,6 +35,11 @@ DEFAULT_ENDPOINT_URL = "http://127.0.0.1:8000/v1"
 DEFAULT_FRAME_SELECTION = "keyframes"
 DEFAULT_MAX_FRAMES = 4
 DEFAULT_TIMEOUT_S = 120.0
+# A self-hosted vLLM server cold-starts and loads weights for minutes; the eval
+# client must wait for it to become reachable instead of failing on the first
+# connection-refused. Override with NPA_VLM_READY_TIMEOUT_S.
+DEFAULT_READY_TIMEOUT_S = 600.0
+READY_TIMEOUT_ENV = "NPA_VLM_READY_TIMEOUT_S"
 DEFAULT_API_KEY_ENV = "VLM_EVAL_API_KEY"
 DEFAULT_RUBRIC = (
     "Score whether the rollout completes the requested physical task. "
@@ -222,6 +228,16 @@ def benchmark_vlm_eval(
         raise VlmEvalError("--max-frames must be positive")
     if timeout_s <= 0:
         raise VlmEvalError("--timeout-s must be positive")
+
+    # Wait once for a self-hosted vLLM server to warm up before the sweep, so the
+    # first benchmark case doesn't fail on connection-refused during cold start.
+    if not (use_fixture_scores or effective_backend == "stub"):
+        wait_for_backend_ready(
+            backend=effective_backend,
+            endpoint_url=endpoint_url,
+            api_key_env=api_key_env,
+            timeout_s=timeout_s,
+        )
 
     config_results: list[VlmBenchmarkConfigResult] = []
     for model, (rubric_name, rubric_text), threshold in product(
@@ -415,6 +431,15 @@ def evaluate_vlm(
                 rubric=effective_rubric,
                 frame_selection=frame_selection,
                 frame_count=len(frames),
+            )
+            # Self-hosted vLLM may still be loading weights when we reach here;
+            # wait for it to answer before the (single) scoring request so a
+            # cold start is a bounded wait, not an immediate hard failure.
+            wait_for_backend_ready(
+                backend=backend,
+                endpoint_url=endpoint_url,
+                api_key_env=api_key_env,
+                timeout_s=timeout_s,
             )
             structured = _call_openai_compatible(
                 backend=backend,
@@ -1053,6 +1078,66 @@ def _build_prompt(
             '{"success": boolean, "score": number between 0 and 1, "rationale": string}',
             "The score is the only downstream contract; make it repeatable and calibrated.",
         ]
+    )
+
+
+def _ready_timeout_s() -> float:
+    raw = os.environ.get(READY_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_READY_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_READY_TIMEOUT_S
+    return value if value > 0 else DEFAULT_READY_TIMEOUT_S
+
+
+def wait_for_backend_ready(
+    *,
+    backend: str,
+    endpoint_url: str,
+    api_key_env: str,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    ready_timeout_s: float | None = None,
+    sleep: "Any" = time.sleep,
+    now: "Any" = time.monotonic,
+) -> None:
+    """Block until a self-hosted OpenAI-compatible backend answers ``/models``.
+
+    A self-hosted vLLM server started alongside the eval job needs minutes to
+    load weights; polling its model list turns a transient connection-refused /
+    503 during warmup into a bounded wait instead of an immediate hard failure.
+    Hosted (``api``) and ``stub`` backends are always ready, so this is a no-op.
+    """
+
+    if backend != "self-hosted":
+        return
+    base = _resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url)
+    models_url = base.rstrip("/") + "/models"
+    headers: dict[str, str] = {}
+    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    deadline = now() + (ready_timeout_s if ready_timeout_s is not None else _ready_timeout_s())
+    probe_timeout = min(timeout_s, 30.0)
+    delay = 2.0
+    last_error = "no attempt made"
+    while now() < deadline:
+        try:
+            with httpx.Client(timeout=probe_timeout) as client:
+                response = client.get(models_url, headers=headers)
+            if response.status_code == 200:
+                return
+            last_error = f"HTTP {response.status_code}"
+        except httpx.HTTPError as exc:
+            last_error = str(exc) or exc.__class__.__name__
+        sleep(delay)
+        delay = min(delay * 1.5, 15.0)
+    raise VlmEvalError(
+        f"VLM backend not ready at {models_url} after "
+        f"{ready_timeout_s if ready_timeout_s is not None else _ready_timeout_s():.0f}s "
+        f"(last: {last_error})"
     )
 
 

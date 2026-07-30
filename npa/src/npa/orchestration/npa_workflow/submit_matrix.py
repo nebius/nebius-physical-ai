@@ -20,6 +20,10 @@ class SubmitLiveCase:
     secret_envs: tuple[str, ...] = ()
     requires_token_factory: bool = False
     plan_only: bool = False
+    #: Consume-only twin that needs an artifact produced by a *prior* workflow
+    #: (e.g. an exported policy). It cannot run standalone, so the bounded daily
+    #: GPU rotation skips it; the self-contained chained twin covers it instead.
+    requires_external_artifact: bool = False
     notes: str = ""
 
 
@@ -81,6 +85,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-eval.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        requires_external_artifact=True,
+        notes=(
+            "Consume-only: evaluates an exported ONNX policy from a prior "
+            "sonic-export. Not runnable standalone; sonic-export-eval covers "
+            "SONIC eval self-contained, so the daily GPU rotation skips this."
+        ),
     ),
     SubmitLiveCase(
         "cosmos3-reason.yaml",
@@ -182,17 +192,24 @@ def selected_submit_cases() -> list[SubmitLiveCase]:
     ]
 
 
-def gpu_submit_cases(*, include_plan_only: bool = False) -> list[SubmitLiveCase]:
+def gpu_submit_cases(
+    *, include_plan_only: bool = False, include_external_artifact: bool = False
+) -> list[SubmitLiveCase]:
     """Real-GPU-launching twins, sorted by spec for a deterministic rotation.
 
-    Excludes ``plan_only`` stub twins (they never launch a GPU) unless asked, so
-    the daily rotation only ever picks a case that actually exercises a GPU.
+    Excludes ``plan_only`` stub twins (they never launch a GPU) and
+    ``requires_external_artifact`` consume-only twins (they cannot run standalone
+    and always fail without a prior workflow's output), unless asked, so the
+    daily rotation only ever picks a case that actually exercises a GPU and can
+    succeed on its own.
     """
 
     cases = [
         case
         for case in SUBMIT_LIVE_MATRIX
-        if case.tier in {"gpu", "multi"} and (include_plan_only or not case.plan_only)
+        if case.tier in {"gpu", "multi"}
+        and (include_plan_only or not case.plan_only)
+        and (include_external_artifact or not case.requires_external_artifact)
     ]
     return sorted(cases, key=lambda c: c.spec)
 

@@ -67,8 +67,12 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
 
     cases = gpu_submit_cases()
     assert cases, "expected at least one real-GPU-launching workflow twin"
-    # Never rotate onto a plan-only stub (those never launch a GPU).
+    # Never rotate onto a plan-only stub (those never launch a GPU) or a
+    # consume-only twin that needs a prior workflow's artifact (always fails
+    # standalone, e.g. sonic-eval).
     assert all(not c.plan_only for c in cases)
+    assert all(not c.requires_external_artifact for c in cases)
+    assert "sonic-eval.yaml" not in {c.spec for c in cases}
     assert all(c.tier in {"gpu", "multi"} for c in cases)
     # Over one full cycle the rotation visits every GPU twin.
     seen = {rotating_gpu_submit_case(day).spec for day in range(len(cases))}
