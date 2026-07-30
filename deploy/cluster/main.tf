@@ -44,7 +44,7 @@ module "k8s_training" {
   cpu_nodes_public_ips            = false
   gpu_nodes_public_ips            = false
   cpu_nodes_preemptible           = false
-  gpu_nodes_preemptible           = false
+  gpu_nodes_preemptible           = var.gpu_nodes_preemptible
   cpu_nodes_fixed_count           = var.cpu_nodes_count
   cpu_nodes_platform              = var.cpu_nodes_platform
   cpu_nodes_preset                = var.cpu_nodes_preset

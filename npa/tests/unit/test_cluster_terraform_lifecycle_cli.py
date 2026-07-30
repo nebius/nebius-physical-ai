@@ -421,6 +421,8 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypa
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
             return _completed('{"items":[]}')
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            return _completed(json.dumps({"spec": {"limit": "8"}, "status": {"usage": "0"}}))
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
@@ -564,6 +566,185 @@ def test_up_rejects_an_iam_token_pinned_in_tfvars(monkeypatch, tmp_path: Path) -
     assert result.exit_code != 0
     assert "iam_token" in result.output
     assert stream_calls == []
+
+
+def test_up_stops_before_apply_when_the_gpu_quota_is_zero(monkeypatch, tmp_path: Path) -> None:
+    """A GPU quota of 0 becomes QuotaFailure + a silent Terraform retry loop."""
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'parent_id = "project-a"',
+                'tenant_id = "tenant-a"',
+                'region = "us-central1"',
+                'cluster_name = "cluster-a"',
+                "gpu_nodes_count = 1",
+                'gpu_nodes_platform = "gpu-rtx6000"',
+                'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
+            ]
+        )
+        + "\n"
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            return _completed(json.dumps({"spec": {"limit": "0"}, "status": {"usage": "0"}}))
+        if args[:4] == ["nebius", "capacity", "resource-advice", "list"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "region": "us-central1",
+                                    "compute_instance": {
+                                        "platform": "gpu-rtx6000",
+                                        "preset": {"name": "1gpu-24vcpu-218gb"},
+                                    },
+                                },
+                                "status": {
+                                    "on_demand": {
+                                        "availability_level": "AVAILABILITY_LEVEL_LIMIT_REACHED"
+                                    },
+                                    "preemptible": {
+                                        "availability_level": "AVAILABILITY_LEVEL_HIGH",
+                                        "available": 44,
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "GPU quota is insufficient" in result.output
+    assert "gpu_nodes_preemptible" in result.output
+    assert _find_call(stream_calls, "terraform", "apply", "-auto-approve") is None
+
+
+def test_up_skips_the_gpu_quota_gate_for_preemptible_nodes(monkeypatch, tmp_path: Path) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'parent_id = "project-a"',
+                'tenant_id = "tenant-a"',
+                'region = "us-central1"',
+                "gpu_nodes_count = 1",
+                'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
+                "gpu_nodes_preemptible = true",
+            ]
+        )
+        + "\n"
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:3] == ["terraform", "output", "-json"]:
+            return _completed(
+                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+            )
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            raise AssertionError("preemptible nodes must not consult the on-demand quota")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
+
+
+def test_up_explains_what_may_exist_after_an_interrupt(monkeypatch, tmp_path: Path) -> None:
+    """Ctrl-C used to leave a running cluster with no kubeconfig and no guidance."""
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ntenant_id = "tenant-a"\nregion = "us-central1"\n'
+        'cluster_name = "npa-cluster"\n'
+    )
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        raise AssertionError(args)
+
+    def fake_stream(args, **kwargs):
+        if args[:2] == ["terraform", "apply"]:
+            raise KeyboardInterrupt
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "was interrupted" in result.output
+    assert "npa cluster down" in result.output
+    assert "npa cluster up" in result.output
+
+
+def test_node_group_status_keeps_failure_text() -> None:
+    """QuotaFailure is not in the documented schema, so pass it through verbatim."""
+    line = tf_mod._format_node_group_status(
+        {
+            "state": "PROVISIONING",
+            "target_node_count": "1",
+            "ready_node_count": "0",
+            "error_message": "QuotaFailure: compute.instance.gpu.rtx6000 limit reached",
+        }
+    )
+
+    assert "PROVISIONING (0/1 ready)" in line
+    assert "QuotaFailure" in line
 
 
 def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:

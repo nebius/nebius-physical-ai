@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -93,22 +94,31 @@ def up_cmd(
     _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
     _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
     _preflight_filestore_quota(nebius_bin, tfvars, env)
+    _preflight_gpu_capacity(nebius_bin, tfvars, env)
 
-    _run_stream(
-        [
-            terraform_bin,
-            "apply",
-            "-auto-approve",
-            # -var beats terraform.tfvars, TF_VAR_* does not. Pass the flag value
-            # explicitly so `--capacity-block-group` is not silently dropped by a
-            # `capacity_block_group = ""` line in a checked-in tfvars file.
-            *_capacity_block_group_var_args(capacity_block_group),
-            *_ssh_public_key_var_args(tfvars, env),
-        ],
-        cwd=tf_dir,
-        env=env,
-        timeout=timeout * 60,
-    )
+    apply_args = [
+        terraform_bin,
+        "apply",
+        "-auto-approve",
+        # -var beats terraform.tfvars, TF_VAR_* does not. Pass the flag value
+        # explicitly so `--capacity-block-group` is not silently dropped by a
+        # `capacity_block_group = ""` line in a checked-in tfvars file.
+        *_capacity_block_group_var_args(capacity_block_group),
+        *_ssh_public_key_var_args(tfvars, env),
+    ]
+    # Terraform prints only `Still creating...` while a node group retries, so a
+    # cloud-side failure (QuotaFailure, no capacity) is invisible for as long as
+    # the operator is willing to wait. Report node-group state alongside it.
+    watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
+    watcher.start()
+    try:
+        _run_stream(apply_args, cwd=tf_dir, env=env, timeout=timeout * 60)
+    except (typer.BadParameter, KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
+        watcher.stop()
+        _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
+        raise
+    finally:
+        watcher.stop()
     outputs = _terraform_outputs(terraform_bin, tf_dir, env)
     cluster = _cluster_output(outputs)
     cluster_id = str(cluster.get("id") or "")
@@ -486,6 +496,152 @@ def _preflight_filestore_quota(nebius_bin: str, tfvars: dict[str, Any], env: dic
             f"requested {requested_bytes} bytes in {region}. "
             "Provide existing_filestore or raise Shared Filesystem SSD quota before running apply."
         )
+
+
+def _preflight_gpu_capacity(nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]) -> None:
+    """Fail before apply when the tenant's GPU quota cannot cover the node group."""
+    from npa.cli.cluster.capacity import gpu_capacity_error
+
+    gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
+    if gpu_nodes <= 0:
+        return
+    platform = str(_tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or "").strip()
+    preset = str(_tfvar_value(tfvars, env, "gpu_nodes_preset", "") or "").strip()
+    tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
+    region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
+    if not tenant_id or not region:
+        typer.echo(
+            "Skipping GPU quota preflight: tenant_id or region is not set in tfvars or env.",
+            err=True,
+        )
+        return
+    message = gpu_capacity_error(
+        lambda args: _run_capture(args, env=env, check=False),
+        nebius_bin=nebius_bin,
+        tenant_id=tenant_id,
+        region=region,
+        platform=platform,
+        preset=preset,
+        required_gpus=gpu_nodes * _gpus_per_node(preset),
+        preemptible=_tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False),
+    )
+    if message:
+        raise typer.BadParameter(message)
+
+
+class _NodeGroupWatcher:
+    """Print Managed-Kubernetes node-group state while ``terraform apply`` runs.
+
+    Terraform's own output is just `Still creating...`, so a node group that
+    Nebius refuses (QuotaFailure, no capacity) looks identical to one that is
+    provisioning normally. Polling is entirely best-effort: any error inside the
+    thread is swallowed so it can never affect the apply.
+    """
+
+    def __init__(self, nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str], *, interval: float = 45.0):
+        self._nebius_bin = nebius_bin
+        self._project_id = str(_tfvar_value(tfvars, env, "parent_id", "") or "").strip()
+        self._cluster_name = str(tfvars.get("cluster_name") or "npa-cluster")
+        self._env = env
+        self._interval = interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._seen: dict[str, str] = {}
+
+    def start(self) -> None:
+        if not self._project_id:
+            return
+        self._thread = threading.Thread(target=self._run, name="npa-node-group-watch", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                self._poll()
+            except Exception:  # noqa: BLE001 - observability must never break apply
+                return
+
+    def _poll(self) -> None:
+        cluster_id = self._cluster_id()
+        if not cluster_id:
+            return
+        result = _run_capture(
+            [self._nebius_bin, "mk8s", "node-group", "list", "--parent-id", cluster_id, "--format", "json"],
+            env=self._env,
+            check=False,
+        )
+        if result.returncode != 0:
+            return
+        for item in (json.loads(result.stdout or "{}") or {}).get("items", []):
+            name = str((item.get("metadata") or {}).get("name", "") or "")
+            status = item.get("status") or {}
+            line = _format_node_group_status(status)
+            if name and self._seen.get(name) != line:
+                self._seen[name] = line
+                typer.echo(f"  node group {name}: {line}", err=True)
+
+    def _cluster_id(self) -> str:
+        result = _run_capture(
+            [self._nebius_bin, "mk8s", "cluster", "list", "--parent-id", self._project_id, "--format", "json"],
+            env=self._env,
+            check=False,
+        )
+        if result.returncode != 0:
+            return ""
+        for item in (json.loads(result.stdout or "{}") or {}).get("items", []):
+            metadata = item.get("metadata") or {}
+            if str(metadata.get("name", "")) == self._cluster_name:
+                return str(metadata.get("id", "") or "")
+        return ""
+
+
+def _format_node_group_status(status: dict[str, Any]) -> str:
+    """Summarize node-group status, keeping any failure text Nebius reports."""
+    state = str(status.get("state", "") or "UNKNOWN")
+    counts = (
+        f"{status.get('ready_node_count', '?')}/{status.get('target_node_count', '?')} ready"
+    )
+    # The failure shape is not part of the documented schema (QuotaFailure arrives
+    # as a message/condition), so surface anything that looks like one verbatim.
+    details = [
+        f"{key}={value}"
+        for key, value in sorted(status.items())
+        if value
+        and any(token in key.lower() for token in ("error", "failure", "message", "condition", "reason"))
+    ]
+    return ", ".join([f"{state} ({counts})", *details])
+
+
+def _echo_apply_recovery(tf_dir: Path, tfvars: dict[str, Any], interrupted: bool) -> None:
+    """Say what may exist in the cloud after a failed or interrupted apply.
+
+    An interrupted `cluster up` leaves a real cluster running with no local
+    kubeconfig, which reads as "nothing happened" until the bill arrives.
+    """
+    cluster_name = str(tfvars.get("cluster_name") or "npa-cluster")
+    reason = "interrupted" if interrupted else "failed"
+    typer.echo("", err=True)
+    typer.echo(
+        f"terraform apply was {reason}. Cluster {cluster_name!r} may exist (partially) "
+        "in the project, and no kubeconfig was written yet. Either:",
+        err=True,
+    )
+    typer.echo(
+        f"  - resume: re-run `npa cluster up --terraform-dir {tf_dir}` (idempotent; it "
+        "finishes what was created and writes the kubeconfig), or",
+        err=True,
+    )
+    typer.echo(
+        f"  - tear it down: `npa cluster down --terraform-dir {tf_dir} --force`.",
+        err=True,
+    )
+    typer.echo(
+        "  - check what exists now: `nebius mk8s cluster list --parent-id <project-id>`.",
+        err=True,
+    )
 
 
 def _tfvar_value(tfvars: dict[str, Any], env: dict[str, str], key: str, default: Any) -> Any:

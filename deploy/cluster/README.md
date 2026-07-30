@@ -29,6 +29,11 @@ These remain available as explicit opt-in via `terraform.tfvars`, `TF_VAR_*`, or
   (e.g. `gpu_nodes_preset = "8gpu-192vcpu-1744gb"`), and set
   `enable_gpu_cluster = true` (with `infiniband_fabric`) for multi-node
   InfiniBand training.
+- **Preemptible GPU nodes:** `gpu_nodes_preemptible = true` draws on the
+  preemptible capacity pool instead of on-demand. `npa cluster up` checks the
+  tenant's GPU quota before `terraform apply` and, when it is exhausted, reports
+  what `nebius capacity resource-advice list` says is free (on-demand,
+  preemptible, reserved) so this is a concrete next step rather than a guess.
 - **Shared Filesystem:** set `enable_filestore = true` (optionally
   `filestore_disk_size_gibibytes`) to create one, or `existing_filestore = <id>`
   to attach an existing one (that alone implies `enable_filestore`). Either

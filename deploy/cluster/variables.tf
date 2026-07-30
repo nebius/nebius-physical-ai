@@ -84,6 +84,12 @@ variable "gpu_nodes_preset" {
   default     = "1gpu-24vcpu-218gb"
 }
 
+variable "gpu_nodes_preemptible" {
+  description = "Run the GPU node group on preemptible VMs. Off by default (preemptible nodes can be reclaimed at any time), but it draws on a different capacity pool: when the tenant's on-demand GPU quota is exhausted (`npa cluster up` reports the quota and what `nebius capacity resource-advice list` says is free), this is often the only way to get a GPU node."
+  type        = bool
+  default     = false
+}
+
 variable "capacity_block_group" {
   description = "Optional capacity block group ID used as a strict GPU node-group reservation selector. Leave empty for on-demand capacity."
   type        = string

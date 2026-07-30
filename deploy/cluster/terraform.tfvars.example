@@ -20,6 +20,12 @@ gpu_nodes_count    = 1
 gpu_nodes_platform = "gpu-rtx6000"
 gpu_nodes_preset   = "1gpu-24vcpu-218gb"
 
+# Preemptible GPU nodes draw on a different capacity pool than on-demand. Set
+# this when the tenant's on-demand GPU quota is exhausted (`npa cluster up`
+# reports the quota and what `nebius capacity resource-advice list` has free);
+# preemptible nodes can be reclaimed at any time.
+gpu_nodes_preemptible = false
+
 enable_filestore   = false
 existing_filestore = ""
 
