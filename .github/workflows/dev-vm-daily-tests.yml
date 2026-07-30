@@ -32,6 +32,7 @@ on:
           - unit
           - e2e
           - e2e-daily
+          - gpu-daily
           - e2e-serverless
           - live-gpu
       git_ref:
@@ -141,6 +142,10 @@ jobs:
           # Registry id enables the daily all-image reachability check on the dev VM.
           NPA_REGISTRY_ID: ${{ vars.NPA_REGISTRY_ID }}
           NPA_DAILY_E2E_SHARDS: ${{ vars.NPA_DAILY_E2E_SHARDS }}
+          # Set the NPA_DAILY_ENABLE_GPU repo variable to "1" to have the daily
+          # e2e-daily tier also run ONE rotating, self-cleaning real-GPU workflow
+          # submit. The full `live-gpu` sky-cluster suite stays manual-only.
+          NPA_DAILY_ENABLE_GPU: ${{ vars.NPA_DAILY_ENABLE_GPU }}
         run: |
           # Only the live-gpu tier is allowed to arm the GPU path, and only from a
           # manual dispatch (already guarded above). The scheduled path never
@@ -156,6 +161,7 @@ jobs:
             NPA_E2E_PROJECT='${NPA_E2E_PROJECT}' \
             NPA_REGISTRY_ID='${NPA_REGISTRY_ID}' \
             NPA_DAILY_E2E_SHARDS='${NPA_DAILY_E2E_SHARDS}' \
+            NPA_DAILY_ENABLE_GPU='${NPA_DAILY_ENABLE_GPU}' \
             bash /tmp/npa-dev-vm-daily-tests.sh '${TIER}' '${REF}'"
 
           ssh -p "$SSH_PORT" \

@@ -33,6 +33,7 @@ Optional repository **variables** (not secrets) forwarded to the run:
 | `NPA_E2E_PROJECT` | Override the S3 e2e project alias (harness auto-selects `eu-north1` otherwise) |
 | `NPA_REGISTRY_ID` | Nebius registry id, passed through for image resolution/inspection |
 | `NPA_DAILY_E2E_SHARDS` | Days to spread the S3 e2e suite over (default 7) |
+| `NPA_DAILY_ENABLE_GPU` | Set to `1` to have `e2e-daily` also run one rotating real-GPU workflow submit |
 
 The dev VM must already have `git`, `python3`, and `make`, plus a reachable git
 remote and valid `~/.npa` credentials. The runner script uses a dedicated CI
@@ -54,9 +55,10 @@ The runner script accepts a tier and a git ref: `dev-vm-daily-tests.sh [tier]
 | --- | --- | --- |
 | `unit` | Fast unit suite (`make test`) + ruff lint | No infra, no spend |
 | `e2e` | `unit` plus the whole real-infra S3 e2e suite (`-m e2e`) | Real S3 buckets; self-cleaning and budget-bounded (see [e2e.md](e2e.md)) |
-| `e2e-daily` | **Scheduled default.** Comprehensive-workflow coverage gate + plans every `npa.workflow` spec + inspects every workbench image in the registry + a **different rotating shard** of the S3 e2e suite each day (see below) | CPU + a fraction of the S3 e2e suite; self-cleaning |
+| `e2e-daily` | **Scheduled default.** Comprehensive-workflow coverage gate + plans every `npa.workflow` spec + inspects every workbench image in the registry + a **different rotating shard** of the S3 e2e suite each day + (when `NPA_DAILY_ENABLE_GPU=1`) one rotating real-GPU workflow submit (see below) | CPU + a fraction of the S3 e2e suite; optional single self-cleaning GPU job |
+| `gpu-daily` | ONE rotating real-GPU workflow-submit E2E — a different GPU twin each day via a self-cleaning Nebius managed job (`cancel-on-timeout`) | Real GPU spend, bounded to one managed job |
 | `e2e-serverless` | Serverless endpoint/job e2e (`-m e2e_serverless`) | Real serverless spend; requires `NPA_E2E_SERVERLESS_PROJECT`; self-terminating (see [e2e-serverless.md](e2e-serverless.md)) |
-| `live-gpu` | Delegates to `scripts/live-e2e.sh` (`-m "gpu and e2e"`) | **Opt-in, manual only** — real GPU clusters with verified teardown |
+| `live-gpu` | Delegates to `scripts/live-e2e.sh` (the full `-m "gpu and e2e"` sky-cluster suite) | **Opt-in, manual only** — real GPU clusters with verified teardown |
 
 The **scheduled** run uses the tier in the workflow `env.SCHEDULED_TEST_TIER`
 (default `e2e-daily`). Manual dispatch chooses any tier from a dropdown.
@@ -97,6 +99,35 @@ that set by extending or authoring a comprehensive workflow, never grow it to
 hide a regression. Every image — including the exempt ones — is still checked
 for registry presence daily by step 3.
 
+## Real GPU E2E (bounded + rotating)
+
+Real GPU e2e is a first-class part of the daily run. Because unattended runs
+must not leak GPU spend, it is implemented as **one self-cleaning managed-job
+submit per day**, not the whole `gpu and e2e` suite:
+
+- `daily_workflow_e2e.py gpu-case` picks today's GPU workflow twin from
+  `submit_matrix.gpu_submit_cases()` (12 real-GPU-launching twins; `plan_only`
+  stubs are excluded), rotating by day-of-year so every twin is exercised over
+  the window.
+- The runner submits just that twin via the sanctioned
+  `test_npa_workflow_submit_live_reaches_terminal` path with a bounded wait and
+  `NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1`, so a stuck job is cancelled
+  rather than left running. Registry + accelerator remap come from the dev VM's
+  `~/.npa/live-e2e.env` (e.g. `H100:1=RTXPRO6000:1`).
+- Enable it in the daily schedule with the `NPA_DAILY_ENABLE_GPU=1` repo
+  variable; run it on demand any time with the `gpu-daily` tier.
+
+Bound the wait with `NPA_DAILY_GPU_MAX_WAIT_SECONDS` (default 2400),
+`NPA_DAILY_GPU_POLL_SECONDS` (30), and `NPA_DAILY_GPU_PYTEST_TIMEOUT` (2600).
+
+**Validated live on the dev VM (2026-07-30):** `gpu:vlm-eval-single.yaml`
+submitted Nebius managed job `npa-wf-gpu-vlm-eval-single-*` onto
+`1x RTXPRO-6000-BLACKWELL-SERVER-EDITION` (cluster `npa-rtxpro-mk8s`), reached a
+terminal state, and self-cleaned with no leftover cluster. That run surfaced a
+real product issue (self-hosted vLLM server not ready → `VLM backend request
+failed: [Errno 111] Connection refused`) — exactly the kind of signal the daily
+GPU rotation is meant to catch.
+
 ## Fresh checkout and separate process
 
 Each run uses a **dedicated, isolated** checkout (`NPA_CI_REPO_DIR`, default
@@ -109,18 +140,18 @@ group, decoupled from the invoking SSH TTY.
 
 ## GPU guardrail
 
-The GPU-spending `live-gpu` tier must **never** run unattended on a schedule: it
-provisions real GPU clusters and can leak spend overnight
-([live-e2e.md](live-e2e.md)). Two independent guards enforce this:
+Two distinct GPU paths, with different safety postures:
 
-1. The workflow refuses to dispatch `live-gpu` from a `schedule` event and caps
-   the scheduled tier at `env.SCHEDULED_TEST_TIER`.
-2. The runner script only runs the `live-gpu` tier when
-   `NPA_DAILY_ALLOW_LIVE_GPU=1`, which the workflow sets only for a manual
-   `live-gpu` dispatch.
-
-Even in the `live-gpu` tier the work is delegated to `scripts/live-e2e.sh`,
-which keeps its existing pre-run and post-run SkyPilot teardown verification.
+- **Bounded daily GPU** (`gpu-daily`, or the GPU phase of `e2e-daily` when
+  `NPA_DAILY_ENABLE_GPU=1`): ONE rotating managed-job submit per day, bounded
+  wait, `cancel-on-timeout`, self-cleaning. This is safe to run on a schedule
+  and is the operator-authorized way to keep real GPU coverage daily.
+- **Full `live-gpu` suite** (`scripts/live-e2e.sh`, the entire
+  `-m "gpu and e2e"` set launching many sky clusters): still **manual only** and
+  must **never** run unattended on a schedule. Two guards enforce this: the
+  workflow refuses to dispatch `live-gpu` from a `schedule` event, and the
+  runner only runs it when `NPA_DAILY_ALLOW_LIVE_GPU=1` (set solely for a manual
+  `live-gpu` dispatch). It keeps its own pre/post SkyPilot teardown verification.
 
 ## Run it by hand on the dev VM
 

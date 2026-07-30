@@ -25,15 +25,20 @@
 #
 # USAGE
 #   dev-vm-daily-tests.sh [tier] [git-ref]
-#     tier     one of: unit | e2e | e2e-daily | e2e-serverless | live-gpu
-#              (default: unit)
+#     tier     one of: unit | e2e | e2e-daily | gpu-daily | e2e-serverless
+#              | live-gpu   (default: unit)
 #     git-ref  branch, tag, or sha to test                       (default: main)
 #
 #   e2e-daily is the scheduled default: every day it runs the >= 4-step
 #   comprehensive workflow E2E coverage gate + plans every npa.workflow spec,
 #   checks that every workbench image is reachable in the registry, and runs a
 #   DIFFERENT rotating shard of the real S3 e2e suite (so the whole suite is
-#   covered over NPA_DAILY_E2E_SHARDS days).
+#   covered over NPA_DAILY_E2E_SHARDS days). When NPA_DAILY_ENABLE_GPU=1 it also
+#   submits ONE rotating real-GPU workflow E2E (a self-cleaning managed job).
+#
+#   gpu-daily runs just that one rotating real-GPU workflow submit (a different
+#   GPU twin each day). The full `gpu and e2e` sky-cluster suite stays on the
+#   manual-only `live-gpu` tier.
 #
 # ENV
 #   NPA_CI_REPO_DIR        dedicated CI checkout dir  (default: $HOME/npa-ci-daily)
@@ -50,7 +55,11 @@
 #                          (default: 7)
 #   NPA_REGISTRY_ID        Nebius registry id for the daily all-image reachability
 #                          check (unset => that check is skipped with a warning)
-#   NPA_DAILY_ALLOW_LIVE_GPU=1  required to run the live-gpu tier
+#   NPA_DAILY_ENABLE_GPU=1 run one rotating real-GPU workflow submit as part of
+#                          the e2e-daily tier (default off). gpu-daily always runs it.
+#   NPA_DAILY_GPU_MAX_WAIT_SECONDS / _POLL_SECONDS / NPA_DAILY_GPU_PYTEST_TIMEOUT
+#                          bound the GPU submit wait (defaults 2400 / 30 / 2600)
+#   NPA_DAILY_ALLOW_LIVE_GPU=1  required to run the full live-gpu suite tier
 #   NPA_DAILY_PIP_EXTRAS   pip extras to install      (default: dev,adapter)
 #
 set -Eeuo pipefail
@@ -239,6 +248,42 @@ run_e2e_shard() {
   )
 }
 
+run_gpu_daily() {
+  local py="$1"
+  local day spec
+  day="$(date -u +%j)"
+  day=$((10#$day))
+  spec="$("$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" gpu-case --day-index "$day" 2>/dev/null | tr -d '[:space:]')"
+  if [[ -z "$spec" ]]; then
+    log "GPU e2e: no real-GPU workflow twin available; skipping"
+    return 0
+  fi
+  log "GPU e2e: today's rotating real-GPU workflow submit = ${spec} (day-of-year ${day})"
+  # Registry + accelerator remap (e.g. H100:1=RTXPRO6000:1) and SkyPilot creds
+  # live in the operator's env files on the dev VM.
+  set -a
+  # shellcheck source=/dev/null
+  [[ -f "${HOME}/.npa/live-e2e.env" ]] && . "${HOME}/.npa/live-e2e.env"
+  set +a
+  # shellcheck source=/dev/null
+  [[ -f "${HOME}/bin/npa-cloud-env.sh" ]] && . "${HOME}/bin/npa-cloud-env.sh"
+  export NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN:-${HOME}/.npa/skypilot-venv/bin/sky}"
+  # One managed job, self-cleaning, cancel-on-timeout so no GPU leaks unattended.
+  (
+    cd "${CI_REPO_DIR}/npa"
+    NPA_INTEGRATION_E2E=1 \
+    NPA_E2E_NPA_WORKFLOW_SUBMIT=1 \
+    NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS="gpu,multi" \
+    NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS="$spec" \
+    NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS="${NPA_DAILY_GPU_MAX_WAIT_SECONDS:-2400}" \
+    NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS="${NPA_DAILY_GPU_POLL_SECONDS:-30}" \
+    NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1 \
+      "$py" -m pytest \
+        'tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal' \
+        -o addopts= -q -s --timeout="${NPA_DAILY_GPU_PYTEST_TIMEOUT:-2600}"
+  )
+}
+
 run_e2e_daily() {
   local py="$1"
   log "Tier=e2e-daily: comprehensive >= 4-step workflow coverage + all-image check + rotating S3 e2e subset"
@@ -246,6 +291,15 @@ run_e2e_daily() {
   run_workflow_plan_smoke "$py"
   run_image_reachability "$py"
   run_e2e_shard "$py"
+  # Bounded real-GPU e2e is opt-in on the schedule: one rotating managed-job
+  # workflow submit per day when the operator sets NPA_DAILY_ENABLE_GPU=1. The
+  # full `gpu and e2e` sky-cluster suite stays on the manual `live-gpu` tier.
+  if [[ "${NPA_DAILY_ENABLE_GPU:-0}" == "1" ]]; then
+    log "e2e-daily [5/5]: bounded rotating real-GPU workflow submit (NPA_DAILY_ENABLE_GPU=1)"
+    run_gpu_daily "$py"
+  else
+    log "e2e-daily [5/5]: GPU e2e disabled (set NPA_DAILY_ENABLE_GPU=1 to run one rotating real-GPU workflow submit/day)"
+  fi
 }
 
 run_e2e_serverless() {
@@ -273,8 +327,8 @@ main() {
 
   # Validate inputs before any expensive clone/venv work.
   case "$TEST_TIER" in
-    unit | e2e | e2e-daily | e2e-serverless | live-gpu) ;;
-    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | e2e-serverless | live-gpu)" ;;
+    unit | e2e | e2e-daily | gpu-daily | e2e-serverless | live-gpu) ;;
+    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | gpu-daily | e2e-serverless | live-gpu)" ;;
   esac
   if [[ "$TEST_TIER" == "live-gpu" && "${NPA_DAILY_ALLOW_LIVE_GPU:-0}" != "1" ]]; then
     die "live-gpu tier requires NPA_DAILY_ALLOW_LIVE_GPU=1; it must never run on a schedule (docs/testing/live-e2e.md)"
@@ -298,9 +352,10 @@ main() {
     unit) run_unit "$PY" ;;
     e2e) run_e2e "$PY" ;;
     e2e-daily) run_e2e_daily "$PY" ;;
+    gpu-daily) run_gpu_daily "$PY" ;;
     e2e-serverless) run_e2e_serverless "$PY" ;;
     live-gpu) run_live_gpu ;;
-    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | e2e-serverless | live-gpu)" ;;
+    *) die "unknown tier '${TEST_TIER}' (expected: unit | e2e | e2e-daily | gpu-daily | e2e-serverless | live-gpu)" ;;
   esac
 
   log "Daily dev-VM tests completed: tier=${TEST_TIER} ref=${GIT_REF}"
