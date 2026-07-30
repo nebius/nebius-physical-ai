@@ -525,8 +525,12 @@ config:
   wait_timeout: 21600
   poll_interval: 60
 
-  output_root: s3://{{config.bucket}}/oss-solutions/open-dreamer/{{run.id}}
-  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  # Base output root only — the BYOF runner (run_byof_container_verify) appends
+  # `/{{run.id}}/` to `--output-root` when it renders S3_OUTPUT_PREFIX, so this
+  # must NOT already include the run id (otherwise artifacts land under a
+  # doubled `.../<run-id>/<run-id>/` prefix that summary_uri never points at).
+  output_root: s3://{{config.bucket}}/oss-solutions/open-dreamer
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
 resources:
   gpu:
     cloud: kubernetes
