@@ -565,3 +565,62 @@ def test_spec_cpu_stages_do_not_request_a_gpu(monkeypatch) -> None:
         )
         assert "accelerators" not in doc["resources"], name
         assert "config" not in doc, f"{name} should not carry GPU pod_config"
+
+
+def test_renderer_installs_the_nurec_runtime_deps_the_vendor_image_lacks() -> None:
+    """The NRE container carries none of the tool's runtime dependencies.
+
+    Live failures walked through them one at a time: `huggingface-cli` missing
+    (job 230 fetch), then nvidia-ncore for the rig derivation, rerun-sdk for the
+    recording (only an optional `viz` extra of npa), and ffmpeg for
+    `nre render --export-video`.
+    """
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_setup_for_tool,
+    )
+
+    setup = render_setup_for_tool(
+        "workbench.nurec.fetch", config={}, options=SkypilotRenderOptions()
+    )
+
+    assert "huggingface_hub" in setup
+    assert "nvidia-ncore" in setup
+    assert "rerun-sdk==" in setup
+    assert "ffmpeg" in setup
+    # Installed into the interpreter npa itself went into, so a second npa-less
+    # python winning on PATH cannot silently break the stage.
+    assert "/tmp/npa-python" in setup
+    # PEP 668 fallbacks, because the image is Ubuntu 24.04.
+    assert "--break-system-packages" in setup
+    # And the install is verified rather than assumed.
+    assert "import ncore, rerun" in setup
+
+
+def test_renderer_nurec_rerun_pin_matches_the_packaged_extra() -> None:
+    """The setup pin and npa's `viz` extra must not drift apart.
+
+    Read as text rather than parsed: tomllib is 3.11+ and the repo still supports
+    3.10 (npa declares tomli only as a <3.11 marker dependency).
+    """
+    from npa.orchestration.npa_workflow.skypilot_render import NUREC_RERUN_PIN
+
+    pyproject = (REPO_ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
+    viz_line = next(
+        line for line in pyproject.splitlines() if line.strip().startswith("viz = [")
+    )
+
+    assert NUREC_RERUN_PIN in viz_line, f"{NUREC_RERUN_PIN} not in: {viz_line}"
+
+
+def test_renderer_does_not_add_nurec_deps_to_other_tools() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_setup_for_tool,
+    )
+
+    setup = render_setup_for_tool(
+        "workbench.vlm_eval.run", config={}, options=SkypilotRenderOptions()
+    )
+
+    assert "nvidia-ncore" not in setup

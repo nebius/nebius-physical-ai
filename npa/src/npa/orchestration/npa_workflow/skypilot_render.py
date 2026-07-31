@@ -420,6 +420,19 @@ def default_npa_setup() -> str:
     )
 
 
+def _nurec_rerun_pin() -> str:
+    """Return npa's pinned rerun-sdk requirement, so the two cannot drift."""
+    try:
+        from npa.orchestration.npa_workflow import _rerun_pin  # type: ignore[attr-defined]
+
+        return str(_rerun_pin)
+    except Exception:  # noqa: BLE001 - fall back to the documented pin
+        return "rerun-sdk==0.31.4"
+
+
+NUREC_RERUN_PIN = _nurec_rerun_pin()
+
+
 def render_setup_for_tool(
     tool_ref: str,
     *,
@@ -451,6 +464,32 @@ def render_setup_for_tool(
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
             "  exit 1\n"
             "fi\n"
+        )
+    if tool_ref.startswith("workbench.nurec"):
+        # These stages run inside NVIDIA's NRE container -- a VENDOR image, so it
+        # carries none of the tool's runtime dependencies: no Hugging Face CLI
+        # (dataset download), no nvidia-ncore (the rig->world pose derivation NRE
+        # requires), no rerun-sdk (the run recording; it is only an optional `viz`
+        # extra of npa), and no ffmpeg (`nre render --export-video`). The image also
+        # ships no `unzip`, which is why the tool extracts with stdlib zipfile.
+        # Installing into the interpreter npa was installed into (recorded by
+        # default_npa_setup) avoids a second, npa-less python winning on PATH.
+        parts.append(
+            "set -e\n"
+            "if ! command -v ffmpeg >/dev/null 2>&1; then\n"
+            "  export DEBIAN_FRONTEND=noninteractive\n"
+            "  apt-get update -qq || true\n"
+            "  apt-get install -y -qq --no-install-recommends ffmpeg || true\n"
+            "fi\n"
+            "npa_nurec_py=python3\n"
+            "if [ -s /tmp/npa-python ]; then npa_nurec_py=\"$(cat /tmp/npa-python)\"; fi\n"
+            "npa_nurec_pip() {\n"
+            "  \"$npa_nurec_py\" -m pip install -q \"$@\" \\\n"
+            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" --break-system-packages \\\n"
+            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" --user\n"
+            "}\n"
+            f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
+            "\"$npa_nurec_py\" -c 'import ncore, rerun; print(\"nurec runtime deps ready\")'\n"
         )
     return "".join(parts)
 
