@@ -15,6 +15,7 @@ cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
 cosmos3  Cosmos3 reasoning workflow contracts.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
+foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
 isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
@@ -26,7 +27,6 @@ scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a p
 Isaac Lab RL backend; deterministic default).
 dataset  Dataset-of-record: ingest, validate, curate, and query production sensor data.
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
-foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 vlm-eval  VLM evaluation for sim-to-real pipeline gating.
 token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
@@ -50,6 +50,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
 | `cosmos3` | Cosmos3 reasoning workflow contracts. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
+| `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
 | `isaac-lab` | Isaac Lab simulation workbench deployment, training, and evaluation. |
@@ -60,7 +61,6 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable |
 | `dataset` | Dataset-of-record: ingest, validate, curate, and query production sensor data. |
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
-| `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `vlm-eval` | VLM evaluation for sim-to-real pipeline gating. |
 | `token-factory` | Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible). |
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |

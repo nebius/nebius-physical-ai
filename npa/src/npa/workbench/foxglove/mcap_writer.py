@@ -374,7 +374,7 @@ def write_run_mcap(
                 if frame.timestamp_ns is not None
                 else base_ns + index * step_ns
             )
-            message = {
+            message: dict[str, Any] = {
                 "timestamp": _time_fields(timestamp_ns),
                 "frame_id": frame.camera,
                 "data": base64.b64encode(payload).decode("ascii"),
@@ -508,7 +508,8 @@ def _default_start_ns(
 ) -> int:
     """Anchor the synthetic clock on the earliest artifact mtime (real wall time)."""
     candidates: list[float] = []
-    for item in (*frames, *metrics, *logs):
+    sources: list[FrameInput | MetricsInput | LogInput] = [*frames, *metrics, *logs]
+    for item in sources:
         try:
             candidates.append(item.path.stat().st_mtime)
         except OSError:

@@ -27,6 +27,7 @@ import json
 import os
 import re
 import secrets
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -311,7 +312,12 @@ def remote_file_data_source(
     return source
 
 
-def data_source_for_state(sim_viz: dict | None, *, origin: str = "", env: dict | None = None) -> dict | None:
+def data_source_for_state(
+    sim_viz: dict | None,
+    *,
+    origin: str = "",
+    env: Mapping[str, str] | None = None,
+) -> dict | None:
     """Return the data source for the agent's current viewer state.
 
     A published recording wins over a configured live URL: the operator loaded it
@@ -345,7 +351,7 @@ def _truthy(value: str, *, default: bool = True) -> bool:
 
 
 def resolve_foxglove_config(
-    env: dict | None = None,
+    env: Mapping[str, str] | None = None,
     *,
     assets_dir: str | Path,
     origin: str = "",

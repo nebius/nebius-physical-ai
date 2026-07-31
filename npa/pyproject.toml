@@ -162,6 +162,18 @@ src = ["src", "tests"]
 # accident.
 select = ["E4", "E7", "E9", "F"]
 
+# Advisory type-check config (CI: `mypy src/npa --ignore-missing-imports`).
+# mcap 1.4.0 makes mypy's module discovery report the same file under two module
+# names ("mcap" and "mcap.__init__"), which aborts the whole run. The library is
+# an optional, lazily imported dependency, so skip following it.
+[tool.mypy]
+exclude = ["(^|/)\\.venv/"]
+
+[[tool.mypy.overrides]]
+module = ["mcap", "mcap.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
