@@ -712,6 +712,102 @@ def test_deploy_only_clusters_targets_a_single_cluster(tmp_path, monkeypatch) ->
     assert res["deployed"] == 1
 
 
+def test_deploy_help_documents_concurrency() -> None:
+    result = runner.invoke(app, ["fleet", "deploy", "--help"])
+    assert result.exit_code == 0
+    assert "--concurrency" in result.output
+
+
+def _mock_deploy_fleet_boundary(monkeypatch, tmp_path):
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "t")
+    monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
+    monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "k")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
+    monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
+    monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("proj-1", False))
+    return L
+
+
+def test_deploy_fleet_parallel_runs_all_targets_and_prewarms_once(tmp_path, monkeypatch) -> None:
+    import threading
+
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    prewarm = {"n": 0}
+    monkeypatch.setattr(L, "_prewarm_plugin_cache", lambda *a, **k: prewarm.__setitem__("n", prewarm["n"] + 1))
+    ran: list[str] = []
+    log_paths: list = []
+    lock = threading.Lock()
+
+    def fake_one(**kwargs):
+        with lock:
+            ran.append(kwargs["cluster"].name)
+            log_paths.append(kwargs.get("log_path"))
+        return {
+            "project_key": kwargs["project"].key(),
+            "cluster_name": kwargs["cluster"].name,
+            "status": "deployed",
+            "cluster_id": "id",
+        }
+
+    monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
+    res = L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=2)
+    assert sorted(ran) == ["c1", "c2"]  # both targets applied
+    assert res["deployed"] == 2
+    assert prewarm["n"] == 1  # plugin cache pre-warmed exactly once for parallel
+    assert all(lp is not None for lp in log_paths)  # parallel -> per-cluster log files
+
+
+def test_deploy_fleet_sequential_skips_prewarm_and_streams(tmp_path, monkeypatch) -> None:
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    prewarm = {"n": 0}
+    monkeypatch.setattr(L, "_prewarm_plugin_cache", lambda *a, **k: prewarm.__setitem__("n", prewarm["n"] + 1))
+    log_paths: list = []
+
+    def fake_one(**kwargs):
+        log_paths.append(kwargs.get("log_path"))
+        return {"project_key": "a", "cluster_name": kwargs["cluster"].name, "status": "deployed"}
+
+    monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
+    L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=1)
+    assert prewarm["n"] == 0  # no pre-warm when sequential
+    assert log_paths == [None, None]  # sequential -> stream to stdout, no log file
+
+
+def test_destroy_fleet_parallel_runs_all_and_prunes(tmp_path, monkeypatch) -> None:
+    import threading
+
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    ran: list[str] = []
+    lock = threading.Lock()
+
+    def fake_destroy_one(**kwargs):
+        with lock:
+            ran.append(kwargs["cluster"].name)
+        return {"project_key": "a", "cluster_name": kwargs["cluster"].name, "status": "destroyed"}
+
+    pruned = {}
+    monkeypatch.setattr(L, "_destroy_one_cluster", fake_destroy_one)
+    monkeypatch.setattr(L, "_prune_fleet_state", lambda fr, keys: pruned.update({"keys": keys}))
+    L.destroy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=2)
+    assert sorted(ran) == ["c1", "c2"]
+    assert pruned["keys"] == {("a", "c1"), ("a", "c2")}
+
+
+def test_run_to_log_writes_and_raises(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    log = tmp_path / "deploy.log"
+    L._run_to_log(["true"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, timeout=30, log_path=log)
+    assert log.exists() and "$ true" in log.read_text()
+    with pytest.raises(RuntimeError, match="command failed"):
+        L._run_to_log(["false"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, timeout=30, log_path=log)
+
+
 def test_upsert_and_prune_fleet_state_roundtrip(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 

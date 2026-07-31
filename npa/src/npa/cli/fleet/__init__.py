@@ -144,6 +144,13 @@ def deploy_cmd(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt (non-interactive create)."
     ),
+    concurrency: int = typer.Option(
+        1,
+        "--concurrency",
+        "-j",
+        help="Apply this many clusters in parallel (each has isolated state). "
+        "Parallel runs stream per-cluster output to <install_dir>/deploy.log.",
+    ),
     timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform apply timeout in minutes."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
@@ -169,6 +176,7 @@ def deploy_cmd(
         only_projects=only,
         only_clusters=only_c,
         continue_on_error=continue_on_error,
+        concurrency=max(1, concurrency),
         timeout_minutes=timeout,
         on_status=lambda msg: typer.echo(f"  - {msg}"),
     )
@@ -202,6 +210,9 @@ def destroy_cmd(
         "", "--only-clusters", help="Comma-separated cluster names to destroy (remove one or many)."
     ),
     timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform destroy timeout in minutes."),
+    concurrency: int = typer.Option(
+        1, "--concurrency", "-j", help="Destroy this many clusters in parallel (isolated state)."
+    ),
     yes: bool = typer.Option(
         False, "--yes", "-y", "--force", help="Skip the confirmation prompt (non-interactive removal)."
     ),
@@ -226,6 +237,7 @@ def destroy_cmd(
         only_projects=only,
         only_clusters=only_c,
         timeout_minutes=timeout,
+        concurrency=max(1, concurrency),
         on_status=lambda msg: typer.echo(f"  - {msg}"),
     )
     if output == "json":

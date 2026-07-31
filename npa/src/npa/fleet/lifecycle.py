@@ -19,10 +19,12 @@ Reuses the terraform subprocess helpers from
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -466,6 +468,71 @@ def _prepare_install_dir(
     return workdir
 
 
+def _run_to_log(
+    args: list[str], *, cwd: Path, env: dict[str, str], timeout: int, log_path: Path
+) -> None:
+    """Run *args* streaming combined stdout/stderr to *log_path*; raise on failure.
+
+    Used in parallel deploys so each cluster's terraform output goes to its own
+    file instead of interleaving on the shared stdout.
+    """
+
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(f"\n$ {' '.join(args)}\n")
+        fh.flush()
+        proc = subprocess.run(
+            args, cwd=cwd, env=env, stdout=fh, stderr=subprocess.STDOUT, timeout=timeout, check=False
+        )
+    if proc.returncode != 0:
+        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(args)} (see {log_path})")
+
+
+def _tf_run(
+    args: list[str], *, cwd: Path, env: dict[str, str], timeout: int, log_path: Path | None
+) -> None:
+    """terraform runner: stream to stdout (sequential) or to a per-cluster log."""
+
+    if log_path is not None:
+        _run_to_log(args, cwd=cwd, env=env, timeout=timeout, log_path=log_path)
+    else:
+        _run_stream(args, cwd=cwd, env=env, timeout=timeout)
+
+
+def _prewarm_plugin_cache(
+    recipe_root: Path,
+    *,
+    region: str,
+    cluster: ClusterSpec,
+    ssh_public_key: str,
+    work_root: Path,
+    terraform_bin: str,
+    nebius_bin: str,
+    on_status: Callable[[str], None] | None,
+) -> None:
+    """Populate a shared terraform plugin cache with a single ``init`` before fan-out.
+
+    Concurrent ``terraform init`` writes to a shared ``TF_PLUGIN_CACHE_DIR`` can
+    corrupt provider binaries (a real failure hit in testing). Pre-warming the
+    cache as the sole writer means the parallel per-cluster inits only *read* it.
+    """
+
+    cache_dir = Path(os.environ.get("TF_PLUGIN_CACHE_DIR") or (work_root / ".tf-plugin-cache"))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # Set process-wide so every per-cluster env (via _terraform_env -> os.environ)
+    # inherits the same warm cache.
+    os.environ["TF_PLUGIN_CACHE_DIR"] = str(cache_dir)
+    workdir = _prepare_install_dir(
+        work_root / ".prewarm",
+        recipe_root=recipe_root,
+        region=region,
+        cluster=cluster,
+        ssh_public_key=ssh_public_key,
+        on_status=None,
+    )
+    _log(on_status, f"pre-warming terraform provider cache at {cache_dir}")
+    _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=_terraform_env(nebius_bin), timeout=900)
+
+
 def _cluster_tf_env(
     nebius_bin: str,
     *,
@@ -609,6 +676,7 @@ def deploy_fleet(
     only_clusters: list[str] | None = None,
     timeout_minutes: int = 120,
     continue_on_error: bool = True,
+    concurrency: int = 1,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Deploy every ``(project, cluster)`` target in *spec*. Returns fleet metadata.
@@ -616,6 +684,14 @@ def deploy_fleet(
     ``only_projects`` / ``only_clusters`` narrow the action to a subset so callers
     can add one or many specific projects/clusters without touching the rest of a
     fleet (deploy is idempotent: existing clusters reconcile in place).
+
+    ``concurrency`` > 1 applies that many clusters in parallel (each has its own
+    isolated terraform state, so there is no cross-cluster lock contention). The
+    provider plugin cache is pre-warmed once to avoid concurrent-init corruption,
+    and each cluster streams to its own ``<install_dir>/deploy.log``. Parallel
+    deploys assume one cluster per project subnet (concurrent creates in a shared
+    network can race on the same CIDR pool) -- give each cluster its own
+    ``subnet_id`` (or its own project) when packing several into one project.
     """
 
     spec.validate()
@@ -637,8 +713,18 @@ def deploy_fleet(
 
     cli_env = _nebius_cli_env()
     results: list[dict[str, Any]] = []
-    project_ids: dict[str, str] = {}
 
+    base_meta = {
+        "name": spec.name,
+        "tenant_id": tenant_id,
+        "region": fleet_region,
+        "project_prefix": prefix,
+        "k8s_training_source": str(recipe_root),
+    }
+
+    # Phase 1 (sequential, cheap): resolve/create each in-scope project and build
+    # the flat list of (project, cluster) targets to apply.
+    targets: list[dict[str, Any]] = []
     for project in spec.projects:
         if not _project_in_scope(project, only_projects, prefix):
             continue
@@ -658,45 +744,81 @@ def deploy_fleet(
             _log(on_status, f"project {project.key()} FAILED to resolve: {exc}")
             if not continue_on_error:
                 raise
-            results.append(
-                {"project_key": project.key(), "status": "error", "error": str(exc)}
-            )
+            results.append({"project_key": project.key(), "status": "error", "error": str(exc)})
             continue
-        project_ids[project.key()] = project_id
-
         for cluster in project.clusters:
             if only_clusters and cluster.name not in only_clusters:
                 continue
-            entry = _deploy_one_cluster(
-                spec=spec,
-                project=project,
-                cluster=cluster,
-                project_id=project_id,
-                project_created=created,
-                region=region,
-                tenant_id=tenant_id,
-                ssh_public_key=ssh_public_key,
-                fleet_root=fleet_root,
-                recipe_root=recipe_root,
-                terraform_bin=terraform_bin,
-                nebius_bin=nebius_bin,
-                timeout_minutes=timeout_minutes,
-                on_status=on_status,
+            targets.append(
+                {
+                    "project": project,
+                    "cluster": cluster,
+                    "project_id": project_id,
+                    "created": created,
+                    "region": region,
+                }
             )
+
+    parallel = concurrency > 1 and len(targets) > 1
+    if parallel:
+        _prewarm_plugin_cache(
+            recipe_root,
+            region=targets[0]["region"],
+            cluster=targets[0]["cluster"],
+            ssh_public_key=ssh_public_key,
+            work_root=work_root,
+            terraform_bin=terraform_bin,
+            nebius_bin=nebius_bin,
+            on_status=on_status,
+        )
+
+    def _run_target(t: dict[str, Any]) -> dict[str, Any]:
+        log_path = None
+        if parallel:
+            log_path = fleet_root / t["project"].key() / t["cluster"].name / "deploy.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        return _deploy_one_cluster(
+            spec=spec,
+            project=t["project"],
+            cluster=t["cluster"],
+            project_id=t["project_id"],
+            project_created=t["created"],
+            region=t["region"],
+            tenant_id=tenant_id,
+            ssh_public_key=ssh_public_key,
+            fleet_root=fleet_root,
+            recipe_root=recipe_root,
+            terraform_bin=terraform_bin,
+            nebius_bin=nebius_bin,
+            timeout_minutes=timeout_minutes,
+            on_status=on_status,
+            log_path=log_path,
+        )
+
+    # Phase 2: apply -- sequentially (live stdout) or in a bounded thread pool.
+    if parallel:
+        _log(
+            on_status,
+            f"applying {len(targets)} cluster(s) with concurrency={concurrency} "
+            "(per-cluster output in <install_dir>/deploy.log)",
+        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = [pool.submit(_run_target, t) for t in targets]
+            for fut in concurrent.futures.as_completed(futures):
+                results.append(fut.result())  # _deploy_one_cluster captures its own errors
+    else:
+        for t in targets:
+            entry = _run_target(t)
             results.append(entry)
             if entry.get("status") == "error" and not continue_on_error:
+                _upsert_fleet_state(fleet_root, base_meta, results)
                 raise RuntimeError(entry.get("error") or "cluster deploy failed")
 
-    base_meta = {
-        "name": spec.name,
-        "tenant_id": tenant_id,
-        "region": fleet_region,
-        "project_prefix": prefix,
-        "k8s_training_source": str(recipe_root),
-    }
     result = {**base_meta, "clusters": results, **_recount(results)}
     # Persist a merged view so a targeted deploy doesn't clobber untouched clusters.
     _upsert_fleet_state(fleet_root, base_meta, results)
+    if not continue_on_error and result["failed"]:
+        raise RuntimeError(f"{result['failed']} cluster(s) failed")
     return result
 
 
@@ -716,6 +838,7 @@ def _deploy_one_cluster(
     nebius_bin: str,
     timeout_minutes: int,
     on_status: Callable[[str], None] | None,
+    log_path: Path | None = None,
 ) -> dict[str, Any]:
     project_key = project.key()
     install_dir = fleet_root / project_key / cluster.name
@@ -763,18 +886,19 @@ def _deploy_one_cluster(
             "status": "provisioning",
         }
         _write_env_sidecar(install_dir, sidecar)
-        _log(on_status, f"[{label}] terraform init")
-        _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900)
+        _log(on_status, f"[{label}] terraform init" + (f" (-> {log_path})" if log_path else ""))
+        _tf_run([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900, log_path=log_path)
         _log(
             on_status,
             f"[{label}] terraform apply (cpu={cluster.cpu_count()} gpu={cluster.gpu_count()} "
             f"{cluster.gpu_nodes.preset if cluster.gpu_nodes else ''})",
         )
-        _run_stream(
+        _tf_run(
             [terraform_bin, "apply", "-auto-approve", "-input=false"],
             cwd=workdir,
             env=env,
             timeout=timeout_minutes * 60,
+            log_path=log_path,
         )
         outputs = _terraform_outputs(terraform_bin, workdir, env)
         cluster_id = _cluster_id_from_outputs(outputs)
@@ -875,6 +999,7 @@ def destroy_fleet(
     only_projects: list[str] | None = None,
     only_clusters: list[str] | None = None,
     timeout_minutes: int = 120,
+    concurrency: int = 1,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Destroy the fleet's clusters (best-effort, per-target).
@@ -883,8 +1008,9 @@ def destroy_fleet(
     (its own terraform state), and reclaims any VPC network the fleet created.
     ``only_projects`` / ``only_clusters`` narrow the teardown to a subset so one or
     many specific clusters/projects can be removed without touching the rest.
-    This does not enumerate clusters via the API, so a cluster created out-of-band
-    (or under a since-edited spec) is not reclaimed here.
+    ``concurrency`` > 1 tears down that many clusters in parallel (each has its own
+    state, so there is no lock contention). This does not enumerate clusters via
+    the API, so a cluster created out-of-band is not reclaimed here.
     """
 
     spec.validate()
@@ -894,86 +1020,121 @@ def destroy_fleet(
     fleet_root = work_root / spec.name
 
     prefix = project_prefix if project_prefix is not None else spec.project_prefix
-    destroyed: list[dict[str, Any]] = []
-    removed_keys: set[tuple[str, str]] = set()
-    for project in spec.projects:
-        if not _project_in_scope(project, only_projects, prefix):
-            continue
-        for cluster in project.clusters:
-            if only_clusters and cluster.name not in only_clusters:
-                continue
-            install_dir = fleet_root / project.key() / cluster.name
-            label = f"{project.key()}/{cluster.name}"
-            if not install_dir.exists():
-                _log(on_status, f"[{label}] no install dir; skipping")
-                destroyed.append({"project_key": project.key(), "cluster_name": cluster.name, "status": "absent"})
-                continue
-            saved = _load_env_sidecar(install_dir) or {}
-            tenant_id = str(saved.get("tenant_id") or spec.tenant_id)
-            project_id = str(saved.get("project_id") or "")
-            region = str(saved.get("region") or spec.region)
-            subnet_id = str(saved.get("subnet_id") or "")
-            workdir = install_dir / _K8S_TRAINING_SUBDIR
-            env = _cluster_tf_env(
-                nebius_bin,
-                tenant_id=tenant_id,
-                project_id=project_id,
-                region=region,
-                subnet_id=subnet_id,
-            )
-            _log(on_status, f"[{label}] terraform destroy")
-            _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900)
-            # Stream teardown output (like deploy) instead of buffering silently;
-            # a non-zero exit raises, which we catch to trigger the direct-delete
-            # fallback below.
-            try:
-                _run_stream(
-                    [terraform_bin, "destroy", "-auto-approve", "-input=false"],
-                    cwd=workdir,
-                    env=env,
-                    timeout=timeout_minutes * 60,
-                )
-                destroy_failed = False
-            except Exception as exc:  # noqa: BLE001 - fall back to direct cleanup
-                logger.debug("[%s] terraform destroy failed: %s", label, exc)
-                destroy_failed = True
-            status = "destroyed"
-            if destroy_failed:
-                _log(on_status, f"[{label}] terraform destroy reported errors; direct cleanup")
-                # Fall back to deleting the mk8s cluster directly by name.
-                if project_id:
-                    cid = _find_cluster_id_by_name(
-                        nebius_bin, project_id, str(saved.get("cluster_name") or cluster.name), env
-                    )
-                    if cid:
-                        _run_capture(
-                            [nebius_bin, "mk8s", "cluster", "delete", "--id", cid],
-                            env=env,
-                            check=False,
-                            timeout=timeout_minutes * 60,
-                        )
-                status = "destroyed-with-fallback"
-            # Reclaim the VPC network + subnet this fleet created (only when we
-            # created them; a reused pre-existing subnet has no created_network_id
-            # and is left untouched). The recipe treats subnet_id as an existing
-            # input, so terraform never deletes it -- without this, repeated
-            # deploy/destroy cycles on fresh projects leak a network+subnet each
-            # time. Runs after the cluster is gone so the subnet is unused.
-            created_network_id = str(saved.get("created_network_id") or "")
-            if created_network_id and project_id:
-                _reclaim_created_network(
-                    nebius_bin, project_id, created_network_id, subnet_id, env, on_status, label
-                )
-            # Remove the whole per-cluster install dir (state + sidecar + recipe
-            # copy) so the removed cluster no longer appears in `status`.
-            shutil.rmtree(install_dir, ignore_errors=True)
-            removed_keys.add((project.key(), cluster.name))
-            destroyed.append(
-                {"project_key": project.key(), "cluster_name": cluster.name, "status": status}
-            )
+    targets: list[tuple[ProjectSpec, ClusterSpec]] = [
+        (project, cluster)
+        for project in spec.projects
+        if _project_in_scope(project, only_projects, prefix)
+        for cluster in project.clusters
+        if not (only_clusters and cluster.name not in only_clusters)
+    ]
+
+    parallel = concurrency > 1 and len(targets) > 1
+
+    def _run(target: tuple[ProjectSpec, ClusterSpec]) -> dict[str, Any]:
+        project, cluster = target
+        log_path = None
+        if parallel:
+            log_path = fleet_root / project.key() / cluster.name / "destroy.log"
+            if log_path.parent.exists():
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+        return _destroy_one_cluster(
+            spec=spec,
+            project=project,
+            cluster=cluster,
+            fleet_root=fleet_root,
+            terraform_bin=terraform_bin,
+            nebius_bin=nebius_bin,
+            timeout_minutes=timeout_minutes,
+            on_status=on_status,
+            log_path=log_path,
+        )
+
+    if parallel:
+        _log(on_status, f"destroying {len(targets)} cluster(s) with concurrency={concurrency}")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+            destroyed = [f.result() for f in concurrent.futures.as_completed(
+                [pool.submit(_run, t) for t in targets]
+            )]
+    else:
+        destroyed = [_run(t) for t in targets]
+
+    removed_keys = {
+        (d["project_key"], d["cluster_name"]) for d in destroyed if d.get("status") != "absent"
+    }
     if removed_keys:
         _prune_fleet_state(fleet_root, removed_keys)
     return {"name": spec.name, "clusters": destroyed}
+
+
+def _destroy_one_cluster(
+    *,
+    spec: FleetSpec,
+    project: ProjectSpec,
+    cluster: ClusterSpec,
+    fleet_root: Path,
+    terraform_bin: str,
+    nebius_bin: str,
+    timeout_minutes: int,
+    on_status: Callable[[str], None] | None,
+    log_path: Path | None = None,
+) -> dict[str, Any]:
+    install_dir = fleet_root / project.key() / cluster.name
+    label = f"{project.key()}/{cluster.name}"
+    if not install_dir.exists():
+        _log(on_status, f"[{label}] no install dir; skipping")
+        return {"project_key": project.key(), "cluster_name": cluster.name, "status": "absent"}
+    saved = _load_env_sidecar(install_dir) or {}
+    project_id = str(saved.get("project_id") or "")
+    subnet_id = str(saved.get("subnet_id") or "")
+    workdir = install_dir / _K8S_TRAINING_SUBDIR
+    env = _cluster_tf_env(
+        nebius_bin,
+        tenant_id=str(saved.get("tenant_id") or spec.tenant_id),
+        project_id=project_id,
+        region=str(saved.get("region") or spec.region),
+        subnet_id=subnet_id,
+    )
+    _log(on_status, f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""))
+    _tf_run([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900, log_path=log_path)
+    try:
+        _tf_run(
+            [terraform_bin, "destroy", "-auto-approve", "-input=false"],
+            cwd=workdir,
+            env=env,
+            timeout=timeout_minutes * 60,
+            log_path=log_path,
+        )
+        destroy_failed = False
+    except Exception as exc:  # noqa: BLE001 - fall back to direct cleanup
+        logger.debug("[%s] terraform destroy failed: %s", label, exc)
+        destroy_failed = True
+    status = "destroyed"
+    if destroy_failed:
+        _log(on_status, f"[{label}] terraform destroy reported errors; direct cleanup")
+        if project_id:
+            cid = _find_cluster_id_by_name(
+                nebius_bin, project_id, str(saved.get("cluster_name") or cluster.name), env
+            )
+            if cid:
+                _run_capture(
+                    [nebius_bin, "mk8s", "cluster", "delete", "--id", cid],
+                    env=env,
+                    check=False,
+                    timeout=timeout_minutes * 60,
+                )
+        status = "destroyed-with-fallback"
+    # Reclaim the VPC network + subnet this fleet created (only when we created
+    # them; a reused pre-existing subnet has no created_network_id and is left
+    # untouched). Runs after the cluster is gone so the subnet is unused.
+    created_network_id = str(saved.get("created_network_id") or "")
+    if created_network_id and project_id:
+        _reclaim_created_network(
+            nebius_bin, project_id, created_network_id, subnet_id, env, on_status, label
+        )
+    # Remove the whole per-cluster install dir so the cluster no longer appears
+    # in `status`.
+    shutil.rmtree(install_dir, ignore_errors=True)
+    return {"project_key": project.key(), "cluster_name": cluster.name, "status": status}
 
 
 def _reclaim_created_network(

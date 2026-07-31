@@ -135,9 +135,15 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   creates a `<cluster>-net` + `<cluster>-subnet`; `destroy` reclaims exactly
   those (subnet then network). A *reused* pre-existing subnet is left untouched,
   and created *projects* are never deleted.
-- **Serial deploys**: clusters are deployed sequentially, each with its own
-  `--timeout` (minutes) apply. A large fleet is `N ×` apply wall-clock; size
-  `--timeout` and expectations accordingly.
+- **Parallelism** (`--concurrency N` / `-j N`, default 1 = sequential): applies/
+  destroys N clusters at once. Each cluster has isolated terraform state, so there
+  is no lock contention; the provider plugin cache is pre-warmed once (a single
+  `init`) to avoid concurrent-init corruption, and each cluster streams to its own
+  `<install_dir>/deploy.log` (or `destroy.log`). Wall-clock drops from `sum` to
+  ~`max` of the applies. Parallel runs assume one cluster per project subnet —
+  concurrent creates in a shared network race on the same `/16` CIDR pool, so give
+  each cluster its own `subnet_id` (or its own project) when packing several into
+  one project. Cap N to stay under Nebius API rate limits / GPU quota.
 - **Stale IAM token**: a stale ambient `NEBIUS_IAM_TOKEN` shadows the profile
   exec-plugin; npa strips it for `nebius`/`terraform` calls unless
   `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token).
