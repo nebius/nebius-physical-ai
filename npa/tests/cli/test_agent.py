@@ -25,11 +25,25 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
-def _agent_ui_bundle() -> str:
-    """agent.py source plus rendered UI HTML (UI lives in agent_ui.html)."""
-    from npa.cli import agent as agent_module
+def _agent_source() -> str:
+    """Source of the agent deploy path: agent.py plus its sibling modules.
 
-    return Path(agent_module.__file__).read_text(encoding="utf-8") + "\n" + rendered_agent_ui_html()
+    The nginx site body and the embedded viewer layout live in
+    `npa.cli.agent_assets` (agent.py is under a size ratchet), so assertions
+    about what the bootstrap emits have to look at both.
+    """
+    from npa.cli import agent as agent_module
+    from npa.cli import agent_assets
+
+    return "\n".join(
+        Path(module.__file__).read_text(encoding="utf-8")
+        for module in (agent_module, agent_assets)
+    )
+
+
+def _agent_ui_bundle() -> str:
+    """Agent deploy source plus rendered UI HTML (UI lives in agent_ui.html)."""
+    return _agent_source() + "\n" + rendered_agent_ui_html()
 
 
 
@@ -430,9 +444,8 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
 
 
 def test_bootstrap_enables_public_https_nginx() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "ssl_certificate /etc/nginx/ssl/npa-agent.crt" in source
     assert "DEFAULT_HTTPS_PORT" in source
     assert "Customer URL: use" in source
@@ -440,9 +453,8 @@ def test_bootstrap_enables_public_https_nginx() -> None:
 
 
 def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "location /rerun/recordings/" in source
     assert "auth_basic off" in source
     assert "alias /opt/npa-agent/recordings/" in source
@@ -452,10 +464,142 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
     assert "auth_basic off;" in rerun_asset_location
 
 
-def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
+def test_bootstrap_embeds_lichtblick_viewer() -> None:
+
+    source = _agent_source()
+    # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
+    assert "location /lichtblick/recordings/" in source
+    assert "location /lichtblick/ {{" in source
+    assert "proxy_pass http://127.0.0.1:{lichtblick_port}/;" in source
+    # backend: sim-viz status carries the Lichtblick embed fields.
+    assert 'LICHTBLICK_RECORDING_HTTP_PATH = "/lichtblick/recordings/sim2real.mcap"' in source
+    assert "def _lichtblick_iframe_url" in source
+    assert '"lichtblick_ready": False,' in source
+    assert '"lichtblick_iframe_url": "/lichtblick/",' in source
+    assert "def _publish_mcap_recording" in source
+    assert 'elif render == "mcap":' in source
+    # best-effort viewer sidecar unit.
+    assert "npa-lichtblick.service" in source
+    # verify() probes the embed plumbing.
+    assert "lichtblick embed probe" in source
+    # Region-agnostic image acquisition: the sidecar pulls from whichever mirror
+    # registry (eu-north1 or us-central1) is reachable, not a locally-built image.
+    assert "lichtblick_pull_candidates" in source
+    assert "for lb_cand in {lichtblick_pull_candidates}" in source
+    assert "npa-lichtblick image acquired from" in source
+
+
+def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
+    """The MCAP alias is unauthenticated, so it must not be CORS-readable.
+
+    A run's MCAP carries camera frames, VLM critiques and reward signals, and the
+    location runs with ``auth_basic off`` (wasm/worker fetches cannot carry basic
+    auth). A wildcard ``Access-Control-Allow-Origin`` would let any page a viewer
+    visits read those recordings off this host; the embed is same-origin and needs
+    no CORS grant at all.
+    """
+
+
+    source = _agent_source()
+    recordings_location = source.split("location /lichtblick/recordings/ {{", 1)[1].split(
+        "location = /lichtblick/ {{", 1
+    )[0]
+    # Compare directives only: the block's comment names these headers to explain
+    # why they are absent, so a bare substring check would match the prose.
+    directives = [
+        line.strip()
+        for line in recordings_location.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert "auth_basic off;" in directives
+    granted = [line for line in directives if "Access-Control" in line]
+    assert not granted, f"recordings must grant no CORS access, got {granted}"
+    assert 'add_header Cross-Origin-Resource-Policy "same-origin" always;' in directives
+
+
+def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
+    """Because the recordings alias grants no CORS, the viewer's fetch must be
+    same-origin even when the backend built ds.url from a configured public
+    origin that differs from the origin the page was loaded from."""
+
+    source = _agent_ui_bundle()
+    assert "function pinLichtblickDsToSameOrigin" in source
+    assert "window.location.origin" in source
+    # The iframe URL always flows through the rewrite.
+    assert "return pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+
+
+def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
+    """The layout wipe evicts a pre-injection layout; it must not run every mount.
+
+    Wiping on each (re)mount also discards a layout the user arranged inside the
+    embed, so the wipe is gated on a per-UI-version seed marker.
+    """
+
+    source = _agent_ui_bundle()
+    assert "function lichtblickNeedsLayoutSeed" in source
+    assert "function markLichtblickLayoutSeeded" in source
+    # The wipe is reachable only behind the seed check.
+    mount = source.split("function mountLichtblickIframe", 1)[1].split(
+        "async function ensureLichtblickForActiveRun", 1
+    )[0]
+    assert "if (lichtblickNeedsLayoutSeed()) {" in mount
+    reset_calls = mount.count("resetLichtblickLayoutStorage()")
+    assert reset_calls == 1, f"expected one guarded wipe, found {reset_calls}"
+
+
+def test_bootstrap_injects_lichtblick_default_layout() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
+    # The viewer document is exact-matched so nginx can inject a default layout via
+    # the upstream-provided placeholder, so the point cloud + camera show on load.
+    assert "location = /lichtblick/ {{" in source
+    assert "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';" in source
+    assert "def _lichtblick_default_layout_json" in source
+
+    layout = json.loads(agent_module._lichtblick_default_layout_json())
+    panels = layout["configById"]
+    three_d = next(v for k, v in panels.items() if k.startswith("3D!"))
+    assert three_d["topics"]["/heldout/points"]["visible"] is True
+    assert three_d["followTf"] == "sim2real"
+    image = next(v for k, v in panels.items() if k.startswith("Image!"))
+    assert image["imageMode"]["imageTopic"] == "/camera"
+
+
+def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
+    source = _agent_ui_bundle()
+    assert 'id="renderModeLichtblick"' in source
+    assert 'data-render-mode="lichtblick"' in source
+    assert 'id="lichtblickFrame"' in source
+    assert 'id="viewerPaneLichtblick"' in source
+    assert 'bindClick("openLichtblick"' in source
+    assert 'bindClick("loadLichtblickViewer"' in source
+    assert "function applyLichtblickSimViz" in source
+    assert "function mountLichtblickIframe" in source
+    assert "View in Lichtblick" in source
+
+
+def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
+    # Clicking the Lichtblick tab / reload finds and loads the run's .mcap directly,
+    # and the artifact type filter exposes an 'mcap' option so it is discoverable.
+    source = _agent_ui_bundle()
+    assert "function ensureLichtblickForActiveRun" in source
+    assert '<option value="mcap">' in source
+    assert 'ensureLichtblickForActiveRun()' in source
+
+
+def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
+
+    source = _agent_source()
+    # .ppm/.bmp/.tiff are transcoded to PNG on serve so the browser can render them.
+    assert "needs_image_transcode(safe_name)" in source
+    assert 'media_type="image/png"' in source
+
+
+def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
+
+    source = _agent_source()
     assert "_franka_demo_joint_angles" in source
     assert "frame_count = 90" in source
     assert "world/camera_frustums/{{name}}" in source
@@ -464,9 +608,8 @@ def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
 
 
 def test_agent_artifact_discovery_requires_s3_components() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "list_runs(" in source
     assert "list_artifacts(" in source
     assert "download_s3_uri(" in source
@@ -599,9 +742,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
 
 
 def test_watch_intent_uses_live_sim_viz_status() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert 'elif intent in {"sim2real_status", "watch_sim"}:' in source
     assert "live_status = sim_viz_status()" in source
     assert 'state["sim_viz"] = dict(live_status)' in source
@@ -640,8 +782,8 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
     assert "chatForm.addEventListener(\"submit\"" in source
     assert "await apiJson(\"/api/chat\"" in source
     assert "await apiJson(\"/api/sim-viz/load-franka-demo\"" in source
-    assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
     assert "await apiJson(\"/api/sim-assets/selection\"" in source
+    # Dead camera-preview UI helper removed (G6); endpoint may still exist server-side.
     assert "setChatBusy(false)" in source
     assert "finally {" in source.split("async function processChatQueue")[1].split("function enqueueChatJob")[0]
     assert "queueChatText" in source
@@ -684,14 +826,13 @@ def test_bootstrap_embeds_cameras_panel() -> None:
 
 
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
-    from npa.cli import agent as agent_module
     from npa.genesis.scene_assets import (
         CAMERA_PLACEMENT_STOCK_EE_MOUNTED,
         CAMERA_PLACEMENT_STOCK_WORKSPACE,
         DEFAULT_CAMERA_NAMES,
     )
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     for name in DEFAULT_CAMERA_NAMES:
         assert f'"name": "{name}"' in source
     assert CAMERA_PLACEMENT_STOCK_WORKSPACE in source
@@ -777,12 +918,13 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
-    assert "rrd_proxy_uri_allowed" in source
+    assert "resolve_rrd_proxy_target" in source or "rrd_proxy_uri_allowed" in source
+    assert "file_uri_path_allowed" in source
     assert "MAX_RRD_PROXY_BYTES" in source
     assert "Refusing to proxy disallowed rrd_uri host" in source
     assert "_AGENT_RRD_PROXY_EMBED" in source
-    assert "last-writer-wins" in source
-    assert "Single-tenant operator-VM model" in source
+    assert "_STATE_LOCK" in source
+    assert "Process-wide lock" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
@@ -954,9 +1096,8 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
     These live inside the bootstrap template string (not importable module
     attributes), so this is a source-text regression guard.
     """
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # The DF recording detector is defined and keyed on the app id.
     assert "def _is_data_factory_recording(key: str) -> bool:" in source
     assert 'DATA_FACTORY_APP_ID = "physical-ai-data-factory"' in source
@@ -991,9 +1132,8 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
 
 
 def test_bootstrap_run_history_uses_run_id_index() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert '"sim_viz_runs": []' not in source
     assert 'if not isinstance(runs, dict):' in source
     assert 'runs[run_id] = snapshot' in source
@@ -1002,9 +1142,8 @@ def test_bootstrap_run_history_uses_run_id_index() -> None:
 
 
 def test_bootstrap_ui_strips_url_credentials() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "location.username" in source
     assert "location.password" in source
     assert "history.replaceState" in source
@@ -1030,9 +1169,8 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     """Default (no-prefix) run discovery must scan the bucket generically
     (enumerate category folders under every root from S3), NOT hardcode any
     workflow path, and drop the agent's own infra roots from the listing."""
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # Generic scan across all bucket roots AND every accessible bucket; no
     # hardcoded workflow prefixes. The no-prefix endpoint calls the multi-bucket
     # cached wrapper (which discovers via list_all_runs per bucket under the hood).
@@ -1048,9 +1186,8 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     categories under the run root) so any run shows real artifact-backed stages
     instead of the generic sim2real 'not_run' template — no path/prefix required.
     """
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # Backend resolves the run generically across categories (no prefix needed).
     assert "def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = \"\")" in source
     assert "find_run_artifacts(" in source
@@ -1583,9 +1720,8 @@ def test_apis_for_intent_includes_status_paths() -> None:
 
 
 def test_bootstrap_embeds_recordings_endpoint() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert '@app.get("/sim-viz/recordings")' in source
     assert "sim_viz_recordings" in source
     assert '"/opt/npa-agent/recordings"' in source
@@ -1667,31 +1803,27 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
 
 
 def test_bootstrap_recordings_api_in_system_prompt() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "sim-viz/recordings" in source
     assert "available .rrd recording" in source
 
 
 def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "npa-agent-bootstrap-{secrets.token_hex" in source
 
 
 def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "pip install fastapi uvicorn httpx pyyaml boto3" in source
 
 
 def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "storage.eu-north1.nebius.cloud/cli/install.sh" in source
     assert "--token-file /mnt/cloud-metadata/token" in source
     assert 'nebius_profile = "cursor-sa"' in source
@@ -1793,9 +1925,8 @@ def test_resolve_agent_storage_credentials_prefers_record() -> None:
 
 
 def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "EnvironmentFile=-/opt/npa-agent/nebius.env" in source
     assert "_write_agent_nebius_env" in source
     assert "bootstrap_agent_environment" in source
@@ -1834,7 +1965,7 @@ def test_creds_from_terraform_state(monkeypatch) -> None:
 def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_AGENT_CHAT_EMBED" in source
     assert '.replace(_AGENT_CHAT_EMBED, agent_chat_source)' in source
     raw = agent_module._embedded_agent_chat_source()
@@ -1845,9 +1976,8 @@ def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
 
 
 def test_bootstrap_embeds_skill_context_and_api_accounting() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_resolve_skill_context" in source
     assert "_skill_index_candidates" in source
     assert "apis_suggested" in source
@@ -1856,9 +1986,8 @@ def test_bootstrap_embeds_skill_context_and_api_accounting() -> None:
 
 
 def test_bootstrap_embeds_scoped_state_s3_persistence() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_state_s3_key" in source
     assert "NPA_AGENT_STATE_S3_PREFIX" in source
     assert "NPA_AGENT_SESSION_SCOPE" in source
@@ -1867,9 +1996,8 @@ def test_bootstrap_embeds_scoped_state_s3_persistence() -> None:
 
 
 def test_bootstrap_embeds_provider_resilience_fallback() -> None:
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "_chat_with_resilience" in source
     assert "_provider_chat" in source
     assert "NPA_AGENT_LLM_PROVIDER" in source
@@ -1896,7 +2024,7 @@ def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
 def test_bootstrap_embeds_cost_aware_routing() -> None:
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # Placeholder is declared, substituted, and consumed by the chat handler.
     assert "_AGENT_ROUTING_EMBED" in source
     assert ".replace(_AGENT_ROUTING_EMBED, agent_routing_source)" in source
@@ -2229,9 +2357,8 @@ def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
 def test_run_details_surface_per_stage_workflow_logs() -> None:
     """Run details must surface real per-stage execution (command/returncode/status)
     from the npa.workflow run manifest so operators can view logs of each stage."""
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "def _workflow_run_steps(" in source
     assert "/npa-workflow/manifest.json" in source
     assert '"workflow_steps": workflow_steps' in source
@@ -2242,9 +2369,8 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
 def test_artifact_file_transcodes_non_web_images_to_png() -> None:
     """Non-web images (.ppm sim camera frames, .bmp, .tiff) must be transcoded to
     PNG by the artifact file endpoint so they are viewable in the Rerun/Image panes."""
-    from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "needs_image_transcode(safe_name)" in source
     assert 'format="PNG"' in source
     assert 'media_type="image/png"' in source

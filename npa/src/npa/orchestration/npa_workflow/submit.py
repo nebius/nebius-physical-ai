@@ -60,6 +60,16 @@ def merge_config_overrides(
 _merge_config_overrides = merge_config_overrides
 
 
+def load_spec_for_submit(
+    yaml_path: Path,
+    *,
+    config_overrides: Mapping[str, str] | None = None,
+) -> NpaWorkflowSpec:
+    """Load a spec and apply ``--var`` config overrides (shared by both submit paths)."""
+
+    return _merge_config_overrides(load_spec(yaml_path), config_overrides)
+
+
 def _resolve_assume_decision(spec: NpaWorkflowSpec, assume_decision: str) -> str:
     if assume_decision.strip():
         return assume_decision.strip()

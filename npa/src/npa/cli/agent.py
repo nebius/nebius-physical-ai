@@ -15,10 +15,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from npa.workflows.sim2real_health import CheckResult
+from typing import Any
 
 import httpx
 import typer
@@ -29,8 +26,18 @@ from npa.cli.agent_quota import (
     _agent_check_public_ip_quota,
     _agent_public_ip_quota_result,
 )
+from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
+    _lichtblick_default_layout_json,
+    _nginx_agent_site_body,
+)
 from npa.cli.agent_iam import report_destroyed_agent_iam
 from npa.cli.agent_inventory import agent_list_cmd
+from npa.cli.agent_preflight import (
+    _agent_hard_prereq_results,
+    _agent_nebius_auth_result,
+    _agent_token_factory_result,
+    _render_agent_checks,
+)
 from npa.cli.agent_network import _agent_ssh_egress_result
 from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_destroy_tf_vars
 from npa.clients.config import (
@@ -48,6 +55,7 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
+from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
@@ -61,6 +69,7 @@ app.command("list")(agent_list_cmd)
 DEFAULT_AGENT_PORT = 8088
 DEFAULT_BACKEND_PORT = 8787
 DEFAULT_RERUN_PORT = 9090
+DEFAULT_LICHTBLICK_PORT = 8081
 DEFAULT_PROJECT_ALIAS = "us-central1"
 DEFAULT_AGENT_NAME = "agent"
 # The public agent VM is CPU-only (gpu_platform="cpu-d3" below). Use a
@@ -84,7 +93,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072402"
+AGENT_UI_VERSION = "2026072902"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -292,6 +301,8 @@ _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
+_AGENT_STATE_EMBED = "__NPA_AGENT_STATE_EMBED__"
+_AGENT_S3_GUARD_EMBED = "__NPA_AGENT_S3_GUARD_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
 _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
@@ -337,6 +348,28 @@ def _embedded_agent_rrd_proxy_source() -> str:
     import re
 
     path = Path(__file__).with_name("agent_rrd_proxy.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_state_source() -> str:
+    """Return agent_state.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_state.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_s3_guard_source() -> str:
+    """Return agent_s3_guard.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_s3_guard.py")
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -873,139 +906,6 @@ def _resolve_deploy_llm_credentials() -> tuple[str, str]:
 def _terraform_binary() -> str:
     """Return the terraform binary path/name, honoring NPA_TERRAFORM_BIN."""
     return (os.environ.get("NPA_TERRAFORM_BIN") or shutil.which("terraform") or "").strip()
-
-
-def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
-    """Cheap, side-effect-free Route C prerequisites (terraform + SSH keys).
-
-    These are checked before any cloud IAM side effects or Terraform apply so a
-    missing binary or key surfaces up front instead of mid-run (after which a
-    transient SSH failure would auto-roll-back a freshly provisioned VM).
-    """
-    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
-
-    results: list[Any] = []
-
-    terraform = _terraform_binary()
-    if terraform:
-        results.append(
-            CheckResult(name="terraform", status=PASS, summary=f"terraform found ({terraform}).")
-        )
-    else:
-        results.append(
-            CheckResult(
-                name="terraform",
-                status=FAIL,
-                summary="terraform binary not found on PATH.",
-                remedy="Install it: https://developer.hashicorp.com/terraform/install",
-            )
-        )
-
-    pub_path = Path(ssh_public_key_path).expanduser()
-    if pub_path.is_file():
-        results.append(
-            CheckResult(name="ssh_public_key", status=PASS, summary=f"SSH public key present ({pub_path}).")
-        )
-    else:
-        priv_hint = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
-        results.append(
-            CheckResult(
-                name="ssh_public_key",
-                status=FAIL,
-                summary=f"SSH public key not found: {pub_path}",
-                remedy=(
-                    f"Generate a keypair (`ssh-keygen -t ed25519 -f {priv_hint}`) "
-                    "or pass --ssh-public-key-path to an existing key."
-                ),
-            )
-        )
-
-    # The deploy flow uses the private key alongside the public key (pub path
-    # minus the .pub suffix) to bootstrap the VM over SSH. If --ssh-public-key-path
-    # is given without a .pub suffix, this resolves to the same path as the public
-    # key check above, which at worst yields a slightly redundant message.
-    priv_str = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
-    priv_path = Path(priv_str)
-    if priv_path.is_file():
-        results.append(
-            CheckResult(name="ssh_private_key", status=PASS, summary=f"SSH private key present ({priv_path}).")
-        )
-    else:
-        results.append(
-            CheckResult(
-                name="ssh_private_key",
-                status=FAIL,
-                summary=f"SSH private key not found: {priv_path}",
-                remedy="The private key next to the public key is required to bootstrap the VM over SSH.",
-            )
-        )
-
-    return results
-
-
-def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
-    """Token Factory key check (WARN): the headline chat feature needs it.
-
-    Pass a pre-resolved ``tf_key`` to avoid re-reading credentials when the
-    caller already has them.
-    """
-    from npa.workflows.sim2real_health import CheckResult, PASS, WARN
-
-    if tf_key is None:
-        tf_key, _ = _resolve_deploy_llm_credentials()
-    if tf_key:
-        return CheckResult(
-            name="token_factory", status=PASS, summary="Token Factory API key is configured."
-        )
-    return CheckResult(
-        name="token_factory",
-        status=WARN,
-        summary="Token Factory API key not found; agent chat will return 503 until it is set.",
-        remedy=(
-            "Get a key (starts with 'v1.') at https://tokenfactory.nebius.com/ and run "
-            "`npa configure --token-factory-key <key>`, then re-run `npa agent bootstrap`."
-        ),
-    )
-
-
-def _agent_nebius_auth_result() -> CheckResult:
-    """Live Nebius auth check (FAIL): deploy needs an authenticated profile to provision."""
-    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
-
-    try:
-        from npa.clients.nebius import get_iam_token
-
-        token = get_iam_token()
-    except Exception as exc:  # noqa: BLE001 - any auth/CLI error means "not ready"
-        return CheckResult(
-            name="nebius_profile",
-            status=FAIL,
-            summary="No authenticated Nebius CLI profile.",
-            remedy="Install/authenticate the Nebius CLI and run `npa configure`.",
-            details=(str(exc),),
-        )
-    if token:
-        return CheckResult(
-            name="nebius_profile", status=PASS, summary="Nebius CLI profile is authenticated."
-        )
-    return CheckResult(
-        name="nebius_profile",
-        status=FAIL,
-        summary="Nebius IAM token unavailable.",
-        remedy="Run `npa configure` / `nebius profile create` to authenticate.",
-    )
-
-
-def _render_agent_checks(results: list[CheckResult], *, output_json: bool) -> bool:
-    """Render agent preflight CheckResults; return True when any FAIL is present.
-
-    Uses the shared report renderer so agent and workbench-health preflight
-    output stay aligned.
-    """
-    from npa.workflows.sim2real_health import format_check_report, has_failure
-
-    typer.echo(format_check_report(results, output_json=output_json))
-    return has_failure(results)
 
 
 def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str]:
@@ -1715,101 +1615,12 @@ def _agent_public_login_form_html(auth_user: str) -> str:
     </script>"""
 
 
-def _nginx_agent_site_body(
-    *,
-    backend_port: int,
-    rerun_port: int,
-) -> str:
-    """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
-    return f"""  auth_basic "NPA Agent";
-  auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
-  # Describe-this / multimodal chat posts JPEG data-URLs; default 1m rejects them (413 → browser Failed to fetch).
-  client_max_body_size 32m;
-  location = /healthz {{
-    auth_basic off;
-    default_type application/json;
-    return 200 '{{"ok":true,"service":"npa-agent","welcome":"/welcome","ui":"/","ui_version":"{AGENT_UI_VERSION}"}}';
-  }}
-  location = /welcome {{
-    auth_basic off;
-    alias /opt/npa-agent/welcome.html;
-    default_type text/html;
-    add_header Cache-Control "no-store" always;
-  }}
-  location = /login-help.html {{
-    auth_basic off;
-    alias /opt/npa-agent/login-help.html;
-    default_type text/html;
-    add_header Cache-Control "no-store" always;
-  }}
-  location /api/ {{
-    proxy_pass http://127.0.0.1:{backend_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 900s;
-    proxy_send_timeout 900s;
-    client_max_body_size 32m;
-  }}
-  location /assets/api/ {{
-    rewrite ^/assets/api/(.*)$ /$1 break;
-    proxy_pass http://127.0.0.1:{backend_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 900s;
-    proxy_send_timeout 900s;
-    client_max_body_size 32m;
-  }}
-  location /rerun/recordings/ {{
-    auth_basic off;
-    alias /opt/npa-agent/recordings/;
-    default_type application/octet-stream;
-    add_header Cache-Control "no-cache" always;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-    add_header Cross-Origin-Resource-Policy "cross-origin" always;
-    # .rrd carries msgpack + metadata that still gzips usefully; the frame
-    # payloads are now JPEG-encoded so the win is modest but the transfer is
-    # smaller and TTFB unaffected (nginx streams as it compresses).
-    gzip on;
-    gzip_types application/octet-stream;
-    gzip_min_length 1024;
-  }}
-  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
-    auth_basic off;
-    rewrite ^/rerun/(.*)$ /$1 break;
-    proxy_pass http://127.0.0.1:{rerun_port};
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    gzip on;
-    gzip_types application/wasm application/javascript text/javascript image/svg+xml;
-    gzip_min_length 256;
-    add_header Cache-Control "public, max-age=31536000, immutable" always;
-  }}
-  location /rerun/ {{
-    auth_basic off;
-    proxy_pass http://127.0.0.1:{rerun_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    add_header Cache-Control "public, max-age=3600" always;
-  }}
-  location / {{
-    root /opt/npa-agent;
-    index ui.html;
-    try_files /ui.html =404;
-    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
-    add_header Pragma "no-cache" always;
-  }}"""
+# Placeholder token the Lichtblick web bundle ships in its index.html inline
+# script: ``LICHTBLICK_SUITE_DEFAULT_LAYOUT = [/*...PLACEHOLDER*/][0];``. Replacing
+# the comment with a layout object is the upstream-supported self-hosting hook, so
+# the embedded viewer opens with the sim2real point cloud + camera already shown
+# (Lichtblick otherwise hides point-cloud topics and picks no image topic).
+LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
 
 
 def _bootstrap_agent_stack(
@@ -1864,6 +1675,8 @@ def _bootstrap_agent_stack(
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
+    agent_state_source = _embedded_agent_state_source()
+    agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
     agent_provenance_source = _embedded_agent_provenance_source()
     llm_models = _normalize_llm_models(list(llm_models))
@@ -1897,6 +1710,18 @@ server {{
 """
     nebius_profile = "cursor-sa"
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
+    lichtblick_port = DEFAULT_LICHTBLICK_PORT
+    lichtblick_image = str(
+        os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
+    )
+    # Region-agnostic image acquisition: the Lichtblick image is mirrored to both
+    # the eu-north1 and us-central1 registries, so a fresh VM in any region pulls
+    # from whichever registry is reachable instead of depending on a locally-built
+    # image. Candidates = primary + mirror registry (see deploy.images).
+    lichtblick_pull_candidates = " ".join(
+        shlex.quote(ref)
+        for ref in container_image_candidates("lichtblick", preferred_region=region)
+    )
     setup_script = f"""set -euo pipefail
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates
@@ -1974,7 +1799,15 @@ RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
 
+{_AGENT_STATE_EMBED}
+
+{_AGENT_S3_GUARD_EMBED}
+
+{_AGENT_RRD_PROXY_EMBED}
+
 RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
+MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
+LICHTBLICK_RECORDING_HTTP_PATH = "/lichtblick/recordings/sim2real.mcap"
 
 
 def _agent_public_origin() -> str:
@@ -2008,6 +1841,33 @@ def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
     recording = _rerun_recording_url()
     # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
     return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
+
+
+def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
+    origin = _agent_public_origin()
+    path = LICHTBLICK_RECORDING_HTTP_PATH
+    url = f"{{origin}}{{path}}" if origin else path
+    if cache_bust:
+        url = f"{{url}}?t={{int(time.time() * 1000)}}"
+    return url
+
+
+def _lichtblick_iframe_url(*, mcap_url: str = "") -> str:
+    # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
+    # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
+    source = mcap_url or _lichtblick_recording_url()
+    return f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
+
+
+def _publish_mcap_recording(source: Path) -> Path:
+    source = Path(source)
+    if not source.is_file():
+        return MCAP_RECORDING_PATH
+    MCAP_RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MCAP_RECORDING_PATH.with_suffix(".mcap.tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(MCAP_RECORDING_PATH)
+    return MCAP_RECORDING_PATH
 
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
@@ -2071,6 +1931,10 @@ DEFAULT_SIM_VIZ = {{
     "camera": "workspace",
     "rerun_ready": False,
     "rerun_iframe_url": "/rerun/",
+    "mcap_uri": "",
+    "mcap_updated_at": "",
+    "lichtblick_ready": False,
+    "lichtblick_iframe_url": "/lichtblick/",
 }}
 SIM2REAL_STAGE_TEMPLATE = [
     ("submit", "Submit request"),
@@ -2188,20 +2052,22 @@ def _default_state() -> dict:
         "state_version": 2,
     }}
 
-def _load_state() -> dict:
-    # Single-tenant operator-VM model: lock-free read-modify-write on STATE_PATH
-    # (+ best-effort S3 mirror). Concurrent writers are last-writer-wins — fine
-    # for one operator UI, not safe if this ever becomes a multi-client service.
-    data = None
-    if STATE_PATH.exists():
-        try:
-            payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                data = payload
-        except Exception:
-            data = None
-    if data is None:
-        data = _load_state_from_s3()
+_STATE_LOCK = threading.RLock()
+_STATE_STORE: StateStore | None = None
+
+
+def _get_state_store() -> StateStore:
+    global _STATE_STORE
+    if _STATE_STORE is None:
+        _STATE_STORE = StateStore(
+            STATE_PATH,
+            default_factory=_default_state,
+            after_save=_save_state_to_s3,
+        )
+    return _STATE_STORE
+
+
+def _normalize_loaded_state(data: dict | None) -> dict:
     if not isinstance(data, dict):
         return _default_state()
     merged = _default_state()
@@ -2226,12 +2092,42 @@ def _load_state() -> dict:
         merged["active_chat_session_id"] = "default"
     return merged
 
-def _save_state(state: dict) -> None:
-    # See _load_state: no file lock — last writer wins under concurrent requests.
+
+def _load_state_unlocked() -> dict:
+    # Caller must hold _STATE_LOCK / store.lock for read-modify-write.
+    store = _get_state_store()
+    data = store.load()
+    if not isinstance(data, dict) or not data:
+        data = _load_state_from_s3()
+    return _normalize_loaded_state(data)
+
+
+def _save_state_unlocked(state: dict) -> None:
+    # Caller must hold _STATE_LOCK / store.lock.
     state["updated_at"] = _now_iso()
     state["state_version"] = int(state.get("state_version") or 2)
-    STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
-    _save_state_to_s3(state)
+    _get_state_store().save(state)
+
+
+def _load_state() -> dict:
+    # Process-wide lock so concurrent Starlette threadpool handlers cannot
+    # clobber confirm tokens / chat history / sim-viz selection.
+    with _STATE_LOCK:
+        return _load_state_unlocked()
+
+
+def _save_state(state: dict) -> None:
+    with _STATE_LOCK:
+        _save_state_unlocked(state)
+
+
+def _mutate_state(fn):
+    # Atomic load → mutate → save under the process-wide lock.
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        result = fn(state)
+        _save_state_unlocked(state)
+        return result
 
 
 def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
@@ -2941,6 +2837,8 @@ def _agent_s3_buckets(s3, settings) -> list:
     # which bucket a workflow wrote to (never rely on copying runs into one
     # bucket). Primary (configured) bucket first, then optional configured extras
     # (NPA_AGENT_S3_BUCKETS), then everything ListBuckets returns.
+    # NOTE: use only for discovery. Operator-supplied s3_uri must use
+    # _configured_agent_s3_buckets / _assert_s3_uri_in_agent_bucket instead.
     primary = str(settings.get("bucket") or "")
     override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
     extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
@@ -2949,6 +2847,27 @@ def _agent_s3_buckets(s3, settings) -> list:
     except Exception:
         buckets = [primary] if primary else []
     return buckets or ([primary] if primary else [])
+
+
+def _configured_agent_s3_buckets(settings) -> set:
+    return configured_agent_s3_buckets(
+        str((settings or {{}}).get("bucket") or ""),
+        str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
+    )
+
+
+def _assert_s3_uri_in_agent_bucket(uri: str, settings) -> None:
+    # Bucket-only gate (configured primary + explicit NPA_AGENT_S3_BUCKETS).
+    # Prefix is intentionally not enforced: runs live under multiple category
+    # roots inside the same configured bucket.
+    ok, reason = s3_uri_in_configured_buckets(
+        uri,
+        primary=str((settings or {{}}).get("bucket") or ""),
+        extras_csv=str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
+        prefix="",
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason or "s3_uri bucket is not the configured agent bucket")
 
 
 def _chat_memory_tenant() -> str:
@@ -3026,12 +2945,23 @@ def _normalize_chat_history(raw: object) -> list[dict]:
     return normalize_messages_for_storage(raw)
 
 
+_PLACEHOLDER_CHAT_TITLES = frozenset({{"", "new chat", "new chat session"}})
+
+
+def _is_placeholder_chat_title(title: str) -> bool:
+    return str(title or "").strip().lower() in _PLACEHOLDER_CHAT_TITLES
+
+
 def _normalize_chat_session(session_id: str, payload: object | None = None) -> dict:
     now = _now_iso()
     data = payload if isinstance(payload, dict) else {{}}
     resolved_id = _sanitize_chat_session_id(str(data.get("id") or session_id or "default"))
     history = _normalize_chat_history(data.get("chat_history") or data.get("messages") or [])
-    title = str(data.get("title") or "").strip() or _chat_session_title(history, "New chat")
+    raw_title = str(data.get("title") or "").strip()
+    if _is_placeholder_chat_title(raw_title):
+        title = _chat_session_title(history, "New chat")
+    else:
+        title = raw_title or _chat_session_title(history, "New chat")
     created_at = str(data.get("created_at") or now)
     updated_at = str(data.get("updated_at") or now)
     return {{
@@ -3125,7 +3055,8 @@ def _save_chat_session(state: dict, session: dict, *, active: bool = True) -> di
     return normalized
 
 
-def _get_chat_session(state: dict, session_id: str = "") -> dict:
+def _lookup_chat_session(state: dict, session_id: str = "") -> dict | None:
+    # Read-only lookup: never fabricate a placeholder session.
     sessions = _local_chat_sessions(state)
     target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
     remote = _load_chat_session_from_s3(target)
@@ -3135,10 +3066,53 @@ def _get_chat_session(state: dict, session_id: str = "") -> dict:
         return remote
     if target in sessions:
         return sessions[target]
+    return None
+
+
+def _get_chat_session(state: dict, session_id: str = "") -> dict:
+    sessions = _local_chat_sessions(state)
+    target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
+    found = _lookup_chat_session(state, target)
+    if found is not None:
+        return found
     session = _normalize_chat_session(target, {{"id": target, "title": "New chat", "chat_history": []}})
     sessions[target] = session
     state["chat_sessions"] = sessions
     return session
+
+
+def _append_chat_turn(session_id: str, history_base: list, assistant_msg: dict | None = None, *, title_hint: str = "") -> dict:
+    # Re-read session under the state lock and append — never overwrite from a
+    # stale snapshot taken before a long LLM/tool call (B2).
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        session = _get_chat_session(state, session_id)
+        current = normalize_messages_for_storage(session.get("chat_history") or [])
+        incoming = normalize_messages_for_storage(history_base or [])
+        merged = list(current)
+        if incoming:
+            last_in = incoming[-1]
+            tip_match = (
+                merged
+                and merged[-1].get("role") == last_in.get("role")
+                and merged[-1].get("content") == last_in.get("content")
+            )
+            if not tip_match:
+                if len(incoming) > len(merged):
+                    merged = list(incoming)
+                elif last_in not in merged:
+                    merged.append(last_in)
+        if assistant_msg and isinstance(assistant_msg, dict) and str(assistant_msg.get("content") or "").strip():
+            merged.append({{"role": "assistant", "content": str(assistant_msg.get("content"))}})
+        merged = merged[-80:]
+        prior_title = str(session.get("title") or "")
+        if _is_placeholder_chat_title(prior_title) or not prior_title:
+            title = _chat_session_title(merged, title_hint or "New chat")
+        else:
+            title = prior_title
+        session.update({{"id": session_id, "title": title, "chat_history": merged}})
+        # _save_chat_session → _save_state re-acquires RLock (safe).
+        return _save_chat_session(state, session, active=True)
 
 
 def _list_chat_sessions(state: dict) -> list[dict]:
@@ -3395,6 +3369,19 @@ def _apply_loaded_artifact(
                 "held-out simulation camera stream; any 3D Franka/world entities are "
                 "reference proxy context, not custom hardware footage."
             )
+    elif render == "mcap":
+        _publish_mcap_recording(local_path)
+        mcap_url = _lichtblick_recording_url()
+        sim_viz["mcap_uri"] = f"file://{{MCAP_RECORDING_PATH}}"
+        sim_viz["mcap_updated_at"] = now
+        sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+        sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+        sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
+        sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
+        sim_viz["visualization_note"] = (
+            "Sim2Real MCAP loaded into the embedded Lichtblick (Foxglove-compatible) "
+            "viewer: rollout camera, VLM critiques, and reward/advantage signals."
+        )
     else:
         filename = _artifact_filename(key)
         target = RECORDINGS_DIR / filename
@@ -3578,8 +3565,10 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     active = _wire_active_sim2real_recording(state, camera=camera)
     if active is not None:
         return active
-    selection = _stock_franka_selection()
-    state["selection"] = selection
+    # Preserve operator-posted custom URIs; only fill stock defaults when empty.
+    current = state.get("selection") if isinstance(state.get("selection"), dict) else {{}}
+    if not current:
+        state["selection"] = _stock_franka_selection()
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
@@ -3919,8 +3908,6 @@ def _chat_with_resilience(
 
 {_AGENT_VISUAL_FEEDBACK_EMBED}
 
-{_AGENT_RRD_PROXY_EMBED}
-
 {_AGENT_STAGES_EMBED}
 
 {_AGENT_PROVENANCE_EMBED}
@@ -4001,11 +3988,9 @@ def _sim_viz_runs(state: dict) -> list[dict]:
     )
 
 def _resolve_workflow_yaml(payload: dict) -> str:
-    yaml_text = str(payload.get("yaml") or "").strip()
-    if yaml_text:
-        return yaml_text
-    draft = _workflow_draft_from_state(_load_state())
-    return str(draft.get("yaml") or "").strip()
+    # Do not fall back to the shared stored draft — empty/omitted yaml must 400
+    # so validate/plan cannot leak another tab's draft.
+    return str(payload.get("yaml") or "").strip()
 
 def _agent_npa_ready() -> tuple[bool, str]:
     if not NPA_CLI.exists():
@@ -4179,15 +4164,23 @@ def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
         raise HTTPException(status_code=409, detail=reason)
-    proc = subprocess.run(
-        [str(NPA_CLI), *args],
-        cwd=str(NPA_SOURCE_ROOT),
-        env=_agent_command_env(),
-        text=True,
-        capture_output=True,
-        timeout=timeout_s,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [str(NPA_CLI), *args],
+            cwd=str(NPA_SOURCE_ROOT),
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"NPA command timed out after {{timeout_s}}s: {{args}}",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail=f"NPA command failed to start: {{exc}}") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         raise HTTPException(status_code=502, detail=detail or f"NPA command failed: {{args}}")
@@ -4592,19 +4585,15 @@ def _write_soperator_temp_spec(spec_text: str) -> Path:
 
 
 def _soperator_spec_text_from_payload(body: dict) -> str:
+    # Network-reachable: never accept local file paths (LFI). Specs must be
+    # supplied inline as YAML text or a mapping.
     spec_text = str(body.get("spec_yaml") or body.get("yaml") or "").strip()
     if spec_text:
         return spec_text
     spec = body.get("spec")
     if isinstance(spec, dict):
         return yaml.safe_dump(spec, sort_keys=False)
-    spec_path = str(body.get("spec_path") or "").strip()
-    if spec_path:
-        path = Path(spec_path).expanduser()
-        if not path.is_file():
-            raise HTTPException(status_code=400, detail=f"soperator spec file not found: {{spec_path}}")
-        return path.read_text(encoding="utf-8")
-    raise HTTPException(status_code=400, detail="Provide spec_yaml, yaml, spec, or spec_path")
+    raise HTTPException(status_code=400, detail="Provide spec_yaml, yaml, or spec")
 
 
 def _soperator_validate_payload(body: dict) -> dict:
@@ -5054,7 +5043,15 @@ def _maybe_toolground_chat_reply(
                 " chat returns YAML only after both validation and planning succeed."
             )
             return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "validation": validation, "plan": plan}}, intent
-        reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
+        drop_note = str(draft.get("dropped_stages_note") or "").strip()
+        reply = format_workflow_chat_reply(
+            yaml_text,
+            validation,
+            template=template,
+            plan=plan,
+            runnable=runnable,
+            dropped_stages_note=drop_note,
+        )
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
     if intent in {{
         "onboard_solution",
@@ -5211,7 +5208,7 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     if numeric_reply is not None:
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": numeric_reply,
             "reasoning": None,
             "grounded": True,
@@ -5223,7 +5220,7 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     skill_names, _ = _resolve_skill_context(user_text=last_user, intent=intent)
     payload = {{
         "ok": True,
-        "model": model,
+        "model": "grounded",
         "reply": tool_reply,
         "reasoning": None,
         "grounded": True,
@@ -5268,7 +5265,14 @@ def chat(payload: dict):
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
-    model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    # Normalize UI "Auto" / explicit "auto" to empty so cost-tier routing runs.
+    _raw_model = str(payload.get("model") or "").strip()
+    if _raw_model.lower() in {{"", "auto"}}:
+        explicit_model_override = ""
+        model = ""
+    else:
+        explicit_model_override = _raw_model
+        model = _raw_model
     visual_context = payload.get("visual_context") if isinstance(payload.get("visual_context"), dict) else {{}}
     visual_kind = normalize_visual_kind(
         str(visual_context.get("kind") or visual_context.get("visual_kind") or "")
@@ -5320,7 +5324,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": origin_reply,
             "reasoning": None,
             "grounded": True,
@@ -5365,7 +5369,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": reply,
             "reasoning": None,
             "grounded": True,
@@ -5396,7 +5400,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": meta_reply,
             "reasoning": None,
             "grounded": True,
@@ -5506,7 +5510,7 @@ def chat(payload: dict):
             _save_state(state)
             response = {{
                 "ok": bool(action_result.get("ok")),
-                "model": model,
+                "model": "grounded",
                 "reply": action_reply,
                 "reasoning": None,
                 "grounded": False,
@@ -5547,7 +5551,7 @@ def chat(payload: dict):
             _save_state(state)
             return {{
                 "ok": True,
-                "model": model,
+                "model": "grounded",
                 "reply": sem_reply,
                 "reasoning": None,
                 "grounded": grounded_zero,
@@ -5587,7 +5591,7 @@ def chat(payload: dict):
             _save_state(state)
             return {{
                 "ok": True,
-                "model": model,
+                "model": "grounded",
                 "reply": reply,
                 "reasoning": None,
                 "grounded": True,
@@ -5608,7 +5612,7 @@ def chat(payload: dict):
     tier = classify_tier(last_user, intent=intent, messages=llm_messages)
     if visual_turn and tier != TIER_VISION:
         tier = TIER_REASONING
-    explicit_model = str(payload.get("model") or "").strip()
+    explicit_model = explicit_model_override
     budget_ok, _ = enforce_input_budget(last_user)
     skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
     if visual_turn and "agent-visual-feedback" not in skill_names:
@@ -5689,19 +5693,15 @@ def chat(payload: dict):
     if not reply and reasoning:
         reply = reasoning
         reasoning = None
-    state = _load_state()
-    session = _get_chat_session(state, session_id)
-    history = list(merged_history)
-    if reply:
-        history.append({{"role": "assistant", "content": reply}})
-    session.update(
-        {{
-            "id": session_id,
-            "title": str(session.get("title") or _chat_session_title(history)),
-            "chat_history": history[-80:],
-        }}
+    if not str(reply or "").strip():
+        reply = "Model returned no content."
+        reasoning = None
+    # Re-read session history under the lock and append (do not clobber concurrent turns).
+    session = _append_chat_turn(
+        session_id,
+        merged_history,
+        {{"role": "assistant", "content": reply}},
     )
-    session = _save_chat_session(state, session, active=True)
     return {{
         "ok": True,
         "model": selected_model,
@@ -6577,7 +6577,9 @@ def create_chat_session(payload: dict | None = None):
 @app.get("/chat/sessions/{{session_id}}")
 def get_chat_session(session_id: str):
     state = _load_state()
-    session = _get_chat_session(state, session_id)
+    session = _lookup_chat_session(state, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"chat session not found: {{session_id}}")
     return {{"ok": True, "session": session}}
 
 
@@ -6698,12 +6700,23 @@ def sim_viz_status(run_id: str = ""):
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # activity_at is when this run was last loaded/visualized in the agent
+            # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
+            # separately so the client never relabels a days-old run as recent just
+            # because it was opened today. Real recency (last_modified) is supplied
+            # by S3 artifact discovery; left blank here so viewer activity cannot
+            # override it in the merged, date-sorted run list.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # When the run started (its submit time). Used for the displayed date;
+            # S3 discovery supplies started_at for runs it can see, and the client
+            # keeps the earliest of the two.
+            "started_at": str(item.get("submitted_at") or "").strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
@@ -6771,12 +6784,17 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # See sim_viz_status: activity_at is viewer-load time, not artifact
+            # recency; last_modified stays blank so S3 discovery owns the date.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # Run start (submit time) for the displayed date; see sim_viz_status.
+            "started_at": str(item.get("submitted_at") or "").strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
@@ -6810,6 +6828,7 @@ def sim_viz_load_run(payload: dict | None = None):
     # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
     if requested_rrd_uri:
         s3, _settings = _agent_s3_client()
+        _assert_s3_uri_in_agent_bucket(requested_rrd_uri, _settings)
         bucket, key = parse_s3_uri(requested_rrd_uri)
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
@@ -6880,12 +6899,24 @@ def sim_viz_load_run(payload: dict | None = None):
     if not isinstance(runs, dict):
         runs = {{}}
     selected = runs.get(run_id)
-    if not isinstance(selected, dict):
-        selected = {{}}
+    sim2real_runs = state.get("sim2real_runs") if isinstance(state.get("sim2real_runs"), dict) else {{}}
+    # Never invent phantom run ids — require a known sim-viz or sim2real run.
+    if not isinstance(selected, dict) or not selected:
+        if run_id not in sim2real_runs:
+            raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
+        selected = {{"run_id": run_id}}
+    else:
+        selected = dict(selected)
     rrd_uri = str(body.get("rrd_uri") or "").strip()
     if rrd_uri:
+        if rrd_uri.startswith("file://") and not file_uri_path_allowed(
+            rrd_uri, allowed_paths=(str(RECORDINGS_DIR), str(RRD_PATH))
+        ):
+            raise HTTPException(status_code=400, detail="file:// rrd_uri is outside the recordings allowlist")
+        if rrd_uri.startswith("s3://"):
+            _assert_s3_uri_in_agent_bucket(rrd_uri, _agent_s3_settings())
         selected["rrd_uri"] = rrd_uri
-    if camera:
+    if requested_camera:
         selected["camera"] = camera
     stage = str(body.get("stage") or "").strip()
     if stage:
@@ -6893,8 +6924,6 @@ def sim_viz_load_run(payload: dict | None = None):
     mode = str(body.get("mode") or "").strip().lower()
     if mode in {{"static", "live"}}:
         selected["mode"] = mode
-    if not selected:
-        raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
     selected["run_id"] = run_id
     selected["rrd_updated_at"] = _now_iso()
     state["sim_viz"] = selected
@@ -7199,11 +7228,9 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
         s3, settings = _agent_s3_client()
         if requested_uri:
             obj_bucket, obj_key = parse_s3_uri(requested_uri)
-            # Restrict caller-supplied URIs to the agent's accessible bucket set
-            # (the same buckets discovery serves from) so this cannot be used to
-            # exfiltrate arbitrary objects the agent's S3 creds happen to read.
-            if obj_bucket not in _agent_s3_buckets(s3, settings):
-                raise HTTPException(status_code=403, detail="bucket not in the accessible set")
+            # Restrict caller-supplied URIs to the configured agent bucket(s) only
+            # (never ListBuckets / every credential-readable bucket).
+            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
             uri = requested_uri
         else:
             obj_key = _safe_artifact_key(requested_key)
@@ -7247,10 +7274,8 @@ def sim_viz_load_artifact(payload: dict | None = None):
         s3, settings = _agent_s3_client()
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
-            # Same accessible-bucket allow-list as /artifacts/download: never load
-            # an arbitrary object outside the buckets the agent already serves.
-            if bucket not in _agent_s3_buckets(s3, settings):
-                raise HTTPException(status_code=403, detail="bucket not in the accessible set")
+            # Configured agent bucket only — blocks arbitrary-bucket exfil.
+            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
             run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri
@@ -7338,18 +7363,21 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
     sim_viz = _sim_viz_for_run(state, run_id=run_id)
     uri = str(sim_viz.get("rrd_uri") or "").strip()
     if uri.startswith("file://"):
-        file_path = Path(uri[len("file://"):])
+        if not file_uri_path_allowed(uri, allowed_paths=(str(RECORDINGS_DIR), str(RRD_PATH))):
+            raise HTTPException(status_code=400, detail="Refusing to serve file:// rrd_uri outside recordings allowlist")
+        file_path = Path(uri[len("file://"):]).expanduser().resolve()
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     if uri.startswith("http://") or uri.startswith("https://"):
-        # Server-side fetch of session rrd_uri — hardened allowlist + size cap
-        # (see embedded agent_rrd_proxy.rrd_proxy_uri_allowed / MAX_RRD_PROXY_BYTES).
-        if not rrd_proxy_uri_allowed(uri):
+        # Resolve DNS once and fetch the vetted IP (DNS-rebinding TOCTOU guard).
+        allowed, fetch_url, host_header = resolve_rrd_proxy_target(uri)
+        if not allowed:
             raise HTTPException(status_code=400, detail="Refusing to proxy disallowed rrd_uri host")
         try:
             chunks: list[bytes] = []
             total = 0
-            with httpx.stream("GET", uri, timeout=20.0) as proxied:
+            headers = {{"Host": host_header}} if host_header else {{}}
+            with httpx.stream("GET", fetch_url, timeout=20.0, headers=headers) as proxied:
                 proxied.raise_for_status()
                 for chunk in proxied.iter_bytes(1024 * 1024):
                     total += len(chunk)
@@ -7484,7 +7512,9 @@ def set_sim_assets_selection(payload: dict):
     if preset == "franka":
         cam = str((state.get("camera_selection") or ["workspace"])[0])
         viz = _wire_franka_demo(state, camera=cam)
-        return {{"ok": True, "selection": selection, "sim_viz": viz}}
+        # Return the persisted selection (post-wire) so response matches state.
+        persisted = state.get("selection") if isinstance(state.get("selection"), dict) else selection
+        return {{"ok": True, "selection": persisted, "sim_viz": viz}}
     _save_state(state)
     return {{"ok": True, "selection": selection}}
 
@@ -7569,12 +7599,33 @@ def provision_infra(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     project = _agent_project_alias(str(body.get("project") or ""))
     cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
-    dry_run = bool(body.get("dry_run", False))
+    # Default dry_run=True — real Terraform apply requires an explicit confirm token.
+    dry_run = bool(body.get("dry_run", True))
     validate = bool(body.get("validate", True))
     skip_s3 = bool(body.get("skip_s3", True))
+    if not dry_run:
+        confirm_token = str(body.get("confirm_token") or "").strip()
+        digest = "provision_infra:" + project + ":" + cluster_name
+        if not confirm_token:
+            token = _issue_agent_confirm_token(
+                {{"action": "provision_infra", "project": project, "cluster_name": cluster_name}},
+                digest,
+            )
+            return {{
+                "ok": False,
+                "needs_confirmation": True,
+                "confirm_token": token,
+                "proposed_action": {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "dry_run": False}},
+                "error": "Real infra provision requires confirm_token",
+                "project": project,
+                "cluster_name": cluster_name,
+            }}
+        session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+        if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
+            raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
     result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
     status = _agent_k8s_backends(project)
-    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status}}
+    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run}}
 
 
 @app.post("/infra/soperator/validate")
@@ -7692,7 +7743,8 @@ def submit_npa_workflow(payload: dict):
         raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
     project = _agent_project_alias(str(body.get("project") or ""))
     cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
-    allow_provision = bool(body.get("allow_provision", True))
+    # Submit is plan-only by default: never auto-provision real infra.
+    allow_provision = bool(body.get("allow_provision", False))
     dry_run = bool(body.get("dry_run", False))
     validate_infra = bool(body.get("validate_infra", True))
     infra_before = _agent_k8s_backends(project)
@@ -7700,6 +7752,28 @@ def submit_npa_workflow(payload: dict):
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
     provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
     if allow_provision and (dry_run or not infra_before.get("has_infra")):
+        # Real (non-dry-run) provision requires the confirm-token gate.
+        if not dry_run and not infra_before.get("has_infra"):
+            confirm_token = str(body.get("confirm_token") or "").strip()
+            digest = "provision_infra:" + project + ":" + cluster_name
+            if not confirm_token:
+                token = _issue_agent_confirm_token(
+                    {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "via": "workflows/submit"}},
+                    digest,
+                )
+                blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+                blocked["needs_confirmation"] = True
+                blocked["confirm_token"] = token
+                blocked["proposed_action"] = {{
+                    "action": "provision_infra",
+                    "project": project,
+                    "cluster_name": cluster_name,
+                    "dry_run": False,
+                }}
+                return blocked
+            session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+            if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
+                raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
         provision = _provision_agent_infra(
             project,
             cluster_name,
@@ -7831,18 +7905,44 @@ def submit_sim2real(payload: dict | None = None):
     script = Path("/opt/npa-agent/run-live-sim2real.sh")
     live_submit = None
     if script.is_file():
-        proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
-        if proc.returncode == 0:
-            try:
-                live_submit = json.loads((proc.stdout or "{{}}").strip().splitlines()[-1])
-                state["latest_submit"]["submit_mode"] = "live-k8s"
-                state["latest_submit"]["live_submit"] = live_submit
-                _save_state(state)
-                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
-            except Exception:
-                live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
+        try:
+            proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
+        except subprocess.TimeoutExpired as exc:
+            live_submit = {{"ok": False, "error": f"live sim2real submit timed out after 30s: {{exc}}"}}
+            state["latest_submit"]["live_submit"] = live_submit
+            details["result"] = "failed"
+            details["logs"].append({{"timestamp": _now_iso(), "level": "error", "message": live_submit["error"]}})
+            runs_detail[run_id] = details
+            state["sim2real_runs"] = runs_detail
+            _save_state(state)
+            return JSONResponse(
+                status_code=502,
+                content={{
+                    "ok": False,
+                    "error": live_submit["error"],
+                    "run_id": run_id,
+                    "selection": selection,
+                    "env": env_block,
+                    "run": details,
+                    "sim_viz": sim_viz,
+                    "submit_mode": "live-k8s-timeout",
+                    "live_submit": live_submit,
+                }},
+            )
+        except OSError as exc:
+            live_submit = {{"ok": False, "error": f"live sim2real submit failed to start: {{exc}}"}}
         else:
-            live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
+            if proc.returncode == 0:
+                try:
+                    live_submit = json.loads((proc.stdout or "{{}}").strip().splitlines()[-1])
+                    state["latest_submit"]["submit_mode"] = "live-k8s"
+                    state["latest_submit"]["live_submit"] = live_submit
+                    _save_state(state)
+                    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
+                except Exception:
+                    live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
+            else:
+                live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
     _save_state(state)
     thread = threading.Thread(
         target=_run_sim2real_pipeline_background,
@@ -8145,6 +8245,30 @@ StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 UNIT
+# Lichtblick (Foxglove-compatible MCAP viewer) sidecar — best-effort: the agent UI
+# embeds it at /lichtblick/ and co-serves the run MCAP at /lichtblick/recordings/.
+# Requires docker + the npa-lichtblick image on the VM; degrades gracefully if absent.
+# The sidecar serves only the viewer bundle: the MCAP itself is served by nginx from
+# the recordings alias below (so it needs no mount into the container), and the file
+# is pre-created so that location returns an empty 200 rather than 404 before a run
+# is loaded.
+sudo mkdir -p /opt/npa-agent/recordings
+sudo touch /opt/npa-agent/recordings/sim2real.mcap
+cat <<'UNIT' | sudo tee /etc/systemd/system/npa-lichtblick.service >/dev/null
+[Unit]
+Description=NPA Lichtblick MCAP viewer sidecar
+After=network.target docker.service
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f npa-lichtblick
+ExecStart=/usr/bin/docker run --rm --name npa-lichtblick -p 127.0.0.1:{lichtblick_port}:8080 {lichtblick_image}
+ExecStop=-/usr/bin/docker rm -f npa-lichtblick
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+[Install]
+WantedBy=multi-user.target
+UNIT
 sudo htpasswd -bc /etc/nginx/.npa-agent-htpasswd {shlex.quote(auth_user)} {shlex.quote(auth_password)}
 {https_ssl_setup}
 cat <<'NGINX' | sudo tee /etc/nginx/sites-available/npa-agent >/dev/null
@@ -8162,6 +8286,24 @@ sudo systemctl reset-failed npa-agent-backend npa-rerun nginx || true
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
+# Region-agnostic Lichtblick image acquisition: pull from whichever mirror
+# registry (eu-north1 or us-central1) is reachable and retag to the sidecar's
+# image, so a fresh VM in any region works without a locally-built image. Falls
+# back to any local image. Best-effort — never blocks the deploy.
+for lb_cand in {lichtblick_pull_candidates}; do
+  lb_host="${{lb_cand%%/*}}"
+  if command -v nebius >/dev/null 2>&1; then
+    lb_tok="$(nebius iam get-access-token 2>/dev/null || true)"
+    [ -n "$lb_tok" ] && printf '%s' "$lb_tok" | sudo docker login "$lb_host" -u iam --password-stdin >/dev/null 2>&1 || true
+  fi
+  if sudo docker pull "$lb_cand" >/dev/null 2>&1; then
+    sudo docker tag "$lb_cand" {lichtblick_image} >/dev/null 2>&1 || true
+    echo "npa-lichtblick image acquired from $lb_host"
+    break
+  fi
+done
+# Best-effort Lichtblick sidecar (never blocks deploy if docker/image are absent).
+sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick sidecar not started (docker/image unavailable; /lichtblick/ embed degrades gracefully)"
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
@@ -8177,6 +8319,8 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
+        .replace(_AGENT_STATE_EMBED, agent_state_source)
+        .replace(_AGENT_S3_GUARD_EMBED, agent_s3_guard_source)
         .replace(_AGENT_STAGES_EMBED, agent_stages_source)
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
@@ -9445,6 +9589,21 @@ def verify_live_cmd(
             continue
     if not rerun_static_ok:
         _fail("rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)")
+
+    # Lichtblick embed probe (informational): the recordings alias serves the co-served
+    # MCAP same-origin, and /lichtblick/ proxies the viewer sidecar. The sidecar is
+    # best-effort (docker/image), so this never fails the run — it reports embed status.
+    for lichtblick_path in ("/lichtblick/recordings/sim2real.mcap", "/lichtblick/"):
+        try:
+            lb_resp = httpx.get(
+                f"{agent_base}{lichtblick_path}",
+                auth=(auth_user, auth_password),
+                timeout=15.0,
+                verify=tls_verify,
+            )
+            typer.echo(f"lichtblick embed probe {lichtblick_path} -> {lb_resp.status_code}")
+        except httpx.HTTPError as exc:
+            typer.echo(f"lichtblick embed probe {lichtblick_path} -> error: {exc}")
 
     from npa.agent_rerun_bundle_check import (
         check_rerun_bundle_load_budget,

@@ -17,11 +17,94 @@ from npa.workflows.sim2real.registry_auth import (
 
 
 def test_mint_nebius_registry_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
     monkeypatch.setattr(
         "npa.workflows.sim2real.registry_auth.subprocess.run",
         lambda *args, **kwargs: MagicMock(returncode=0, stdout="token-abc\n", stderr=""),
     )
     assert mint_nebius_registry_token() == "token-abc"
+
+
+def test_mint_nebius_registry_token_prefers_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-pod contexts may have the token but not the ``nebius`` CLI."""
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "env-token")
+
+    def _fail_run(*args, **kwargs):  # pragma: no cover - must not be called
+        raise AssertionError("nebius CLI must not be invoked when env token is set")
+
+    monkeypatch.setattr("npa.workflows.sim2real.registry_auth.subprocess.run", _fail_run)
+    assert mint_nebius_registry_token() == "env-token"
+
+
+def test_sibling_refresh_is_best_effort_on_mint_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing in-pod ``nebius`` CLI must not crash the orchestrator."""
+    from npa.workflows.sim2real import engine
+
+    def _raise(*images, **kwargs):
+        raise RuntimeError("Could not mint Nebius registry token")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.ensure_registry_pull_secret_for_images",
+        _raise,
+    )
+    config = Sim2RealLoopConfig(run_id="run-best-effort", k8s_context="ctx")
+    # Must not raise.
+    engine._refresh_registry_pull_secret_for_sibling_job(
+        "cr.us-central1.nebius.cloud/reg/npa-lerobot-vlm-rl:1.0",
+        config=config,
+        namespace="default",
+    )
+
+
+def test_apply_secret_reports_missing_kubectl_as_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An in-pod orchestrator often has no kubectl; that must stay in contract.
+
+    Callers treat this refresh as best-effort and catch ``RuntimeError``, so a
+    bare ``FileNotFoundError`` from ``subprocess.run`` would escape them and abort
+    the run instead of degrading to an ImagePullBackOff on the sibling.
+    """
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda **kwargs: "fresh-token",
+    )
+
+    def _no_kubectl(cmd, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "kubectl")
+
+    monkeypatch.setattr("npa.workflows.sim2real.registry_auth.subprocess.run", _no_kubectl)
+    with pytest.raises(RuntimeError, match="registry pull secret"):
+        ensure_nebius_registry_pull_secret(registry_server="cr.eu-north1.nebius.cloud")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [FileNotFoundError(2, "No such file or directory", "kubectl"), ValueError("boom")],
+)
+def test_sibling_refresh_never_aborts_the_run(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """The refresh is advertised as best-effort, so no failure type may propagate."""
+
+    from npa.workflows.sim2real import engine
+
+    def _raise(*images, **kwargs):
+        raise error
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.ensure_registry_pull_secret_for_images",
+        _raise,
+    )
+    config = Sim2RealLoopConfig(run_id="run-best-effort-any", k8s_context="ctx")
+    engine._refresh_registry_pull_secret_for_sibling_job(
+        "cr.us-central1.nebius.cloud/reg/npa-lerobot-vlm-rl:1.0",
+        config=config,
+        namespace="default",
+    )
 
 
 def test_docker_config_json_uses_iam_username() -> None:

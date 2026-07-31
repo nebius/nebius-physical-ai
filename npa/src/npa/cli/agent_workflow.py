@@ -1800,6 +1800,9 @@ _STEP_COUNT_RE = re.compile(
     r"\b(\d+)[\s-]?step\b|\b(one|two|three|four|five|six)[\s-]?step\b", re.IGNORECASE
 )
 _WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+_WORKFLOW_NAME_RE = re.compile(
+    r"(?i)\b(?:name\s+it|named|called|name\s*[:=])\s+[\"'`]?([a-zA-Z][a-zA-Z0-9_.-]{0,63})[\"'`]?"
+)
 _AUTHOR_STOPWORDS = frozenset(
     {
         "write", "me", "a", "an", "the", "step", "steps", "npa", "yaml", "spec",
@@ -1810,18 +1813,53 @@ _AUTHOR_STOPWORDS = frozenset(
 )
 
 
+def _slugify_workflow_name(raw: str) -> str:
+    text = str(raw or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return text[:64]
+
+
+def extract_workflow_name(goal: str) -> str:
+    """Extract an explicit workflow name from goal text (e.g. 'name it cosmos-video-aug')."""
+    match = _WORKFLOW_NAME_RE.search(str(goal or ""))
+    if not match:
+        return ""
+    return _slugify_workflow_name(match.group(1))
+
+
+def _infer_stage_count_from_goal(goal: str) -> int:
+    """Infer how many stages the operator described (arrows / then / commas)."""
+    text = str(goal or "").strip()
+    if not text:
+        return 0
+    # Prefer arrow-separated pipelines: "generate → augment → ingest"
+    if re.search(r"[→⟶➨]|->", text):
+        parts = re.split(r"\s*(?:[→⟶➨]|->)\s*", text)
+        stages = [p.strip() for p in parts if p.strip()]
+        if len(stages) >= 2:
+            return max(1, min(len(stages), 6))
+    # "A then B then C"
+    then_parts = re.split(r"\bthen\b", text, flags=re.IGNORECASE)
+    if len(then_parts) >= 3:
+        return max(1, min(len(then_parts), 6))
+    return 0
+
+
 def _desired_step_count(goal: str, default: int = 2) -> int:
     match = _STEP_COUNT_RE.search(str(goal or ""))
-    if not match:
-        return default
-    if match.group(1):
-        try:
-            value = int(match.group(1))
-        except (TypeError, ValueError):
-            value = default
-    else:
-        value = _WORD_NUM.get((match.group(2) or "").lower(), default)
-    return max(1, min(value, 6))
+    if match:
+        if match.group(1):
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                value = default
+        else:
+            value = _WORD_NUM.get((match.group(2) or "").lower(), default)
+        return max(1, min(value, 6))
+    inferred = _infer_stage_count_from_goal(goal)
+    if inferred:
+        return inferred
+    return default
 
 
 def _author_goal_keywords(goal: str) -> list[str]:
@@ -1979,11 +2017,29 @@ def author_workflow_from_goal(
     catalog = frozenset(str(t) for t in (tool_refs or []))
     if not catalog:
         return {"ok": False, "runnable": False, "yaml": "", "error": "no toolRefs available in the live catalog", "tool_refs": []}
+    # Prefer explicit N-step / arrow / then counts. Only raise to matched-tool
+    # count when the operator did not pin an explicit step count.
     n_steps = _desired_step_count(goal)
+    explicit_step_count = bool(_STEP_COUNT_RE.search(str(goal or "")))
+    _, pre_matched = _select_author_tool_refs(goal, catalog, min(6, max(n_steps, 6)))
+    if (not explicit_step_count) and len(pre_matched) > n_steps:
+        n_steps = max(1, min(len(pre_matched), 6))
     selected, matched = _select_author_tool_refs(goal, catalog, n_steps)
     if not selected:
         return {"ok": False, "runnable": False, "yaml": "", "error": "could not select any toolRef from the catalog", "tool_refs": []}
-    resolved_name = str(name or "").strip() or "authored-workflow"
+    resolved_name = (
+        str(name or "").strip()
+        or extract_workflow_name(goal)
+        or "authored-workflow"
+    )
+    resolved_name = _slugify_workflow_name(resolved_name) or "authored-workflow"
+    described = _infer_stage_count_from_goal(goal) or n_steps
+    dropped_note = ""
+    if described > len(selected):
+        dropped_note = (
+            f"Requested about {described} stages but composed {len(selected)} "
+            f"(catalog match / 1–6 bound); some requested stages may be missing."
+        )
     config_keys = _config_tokens_for(selected)
 
     matched_set = set(matched)
@@ -2022,6 +2078,9 @@ def author_workflow_from_goal(
         "matched_tool_refs": matched,
         "padded_tool_refs": padded,
         "states": validation.get("states") or [],
+        "name": resolved_name,
+        "dropped_stages_note": dropped_note,
+        "desired_steps": n_steps,
     }
 
 
@@ -2168,6 +2227,7 @@ def format_workflow_chat_reply(
     template: str = "two-step",
     plan: dict[str, Any] | None = None,
     runnable: bool | None = None,
+    dropped_stages_note: str = "",
 ) -> str:
     """Markdown reply for chat when a workflow YAML is generated."""
     name = str(validation.get("name") or "unnamed")
@@ -2189,9 +2249,18 @@ def format_workflow_chat_reply(
             "Physical AI Data Factory: annotate → Cosmos Transfer augment & multiply "
             "(fan out scenarios across GPUs) → VLM grade loop → curate → Rerun visualize"
         ),
+        "two-step": "2-step Sim2Real pipeline",
     }
     t = str(template or "two-step").strip().lower()
-    desc = _desc_map.get(t, "2-step Sim2Real pipeline")
+    state_list = [str(s) for s in states] if isinstance(states, list) else []
+    if t == "catalog-composed" or t not in _desc_map:
+        if state_list:
+            arrow = "→".join(state_list[:6])
+            desc = f"{len(state_list)}-step pipeline: {arrow}"
+        else:
+            desc = "catalog-composed pipeline"
+    else:
+        desc = _desc_map[t]
     lines = [
         f"**Generated {API_VERSION} spec** ({desc}):",
         f"- **name**: `{name}`",
@@ -2208,6 +2277,11 @@ def format_workflow_chat_reply(
         yaml_text.rstrip(),
         "```",
     ]
+    drop_note = str(dropped_stages_note or "").strip()
+    if not drop_note and isinstance(validation, dict):
+        drop_note = str(validation.get("dropped_stages_note") or "").strip()
+    if drop_note:
+        lines.insert(6, f"- **note**: {drop_note}")
     if not validation.get("ok"):
         err = str(validation.get("error") or "validation failed")
         lines.insert(6, f"- **error**: `{err}`")

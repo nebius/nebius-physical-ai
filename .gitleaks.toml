@@ -55,4 +55,10 @@ paths = [
 # gitleaks 8.28 allowlists support commits/paths/regexes/stopwords (not fingerprints).
 commits = [
     '''89e7be8d1d902d880b5327f234ed22f84ff6cd3e''',
+    # Historical: the first draft of EVIDENCE.md (live-run records for the
+    # npa.workflow runtime tier) pasted the operational lerobot-* artifact bucket
+    # into the S3 URIs it quotes. It was redacted to <artifact-bucket> two commits
+    # later; a working-tree scan of HEAD reports no leaks. Allowlisted instead of
+    # rewriting a pushed branch's history.
+    '''6937efd3d693c4d7d5bb7afa6c6bf79c98281790''',
 ]

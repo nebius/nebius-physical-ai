@@ -53,6 +53,40 @@ PY
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /opt/npa/docker/workbench/isaac-lab /workspace/isaaclab/npa-runs
 
+# --- Schedulable-on-Kubernetes prerequisites -----------------------------------
+#
+# Without these the image cannot host a SkyPilot task at all: provisioning dies with
+#   KubernetesError: Failed to get ssh user for pod ...: container not found ("ray-node")
+# because the container exits during SkyPilot's runtime bootstrap. Verified on
+# npa-rtxpro-mk8s by bisecting a derived image one ingredient at a time; ALL FOUR are
+# required, and the last two are the ones that are easy to miss:
+#
+#   1. a system python3 (+ rsync/curl/ssh client) - the NVIDIA base ships none, only
+#      /isaac-sim/python.sh;
+#   2. /isaac-sim readable by the runtime user - it is mode 750 isaac-sim:isaac-sim, so
+#      the user joins that GROUP (a recursive chown/chmod would rewrite multi-GB layers);
+#   3. passwordless sudo for the runtime user - SkyPilot's in-pod setup shells out to
+#      sudo, and Debian's default %sudo rule prompts for a password (this alone kept a
+#      non-root image failing while an otherwise identical root image worked);
+#   4. the system interpreter FIRST on PATH - otherwise python3 resolves to Isaac's kit
+#      interpreter, which cannot import its own site-packages outside python.sh.
+#
+# Training is unaffected: `npa workbench isaac-lab train` and npa.workflows.rl_sweep
+# still run through ISAAC_LAB_PYTHON (/isaac-sim/python.sh). The image stays non-root.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (getent group isaac-sim >/dev/null 2>&1 && usermod -aG isaac-sim ubuntu || true) \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && python3 --version
+
+# SkyPilot's bootstrap must find the SYSTEM interpreter, not Isaac's kit python (which
+# the base image puts earlier on PATH and which cannot import its own site-packages
+# outside /isaac-sim/python.sh).
+ENV PATH=/usr/bin:$PATH
+
 WORKDIR /workspace/isaaclab
 USER ubuntu
 ENTRYPOINT ["/bin/bash"]
