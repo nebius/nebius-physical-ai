@@ -52,15 +52,21 @@ profile, because the accepted capability requires a genuine 2-GPU mesh.
 
 ## Capabilities
 
-Hard gates (both must pass for registry admission):
+Hard gates (all must pass; the driver `raise SystemExit`s if any is missing from
+`capabilities_exercised`, so a green smoke means the dream actually ran):
 
 - `jax_two_gpu_data_parallel_mesh` — `build_parallel("data")` yields
   `{data: 2, model: 1}` over `>=2` `jax.devices()`. Fails on a single GPU.
 - `dreamer4_tokenizer_train_two_gpu` — real `scripts/train_tokenizer.py` trains
   the causal video tokenizer sharded data-parallel across the mesh to
   **legibility** (lower `mae_p_max`, more steps, `lpips_weight=0`).
+- `dreamer4_action_conditioned_dream_rollout` — the marquee payoff:
+  `dreamer.sampler.sample_video` gives the dynamics model context frames + future
+  actions and dreams future gameplay; reports dream PSNR against ground truth.
+  Gating it transitively gates the whole loop (dataloader → tokenizer → latent →
+  dynamics → dream).
 
-Also exercised (the full Dreamer 4 loop, headlined by the dream rollout):
+Also exercised (the rest of the Dreamer 4 loop):
 
 - `minecraft_vpt_video_dataloader` — real `dreamer.data.build_iterator`
   `minecraft_vpt` MP4 path (decord decode + VPT action parse) with device
@@ -72,9 +78,6 @@ Also exercised (the full Dreamer 4 loop, headlined by the dream rollout):
 - `dreamer4_dynamics_train_two_gpu` — `scripts/train_dynamics.py`
   action-conditioned latent dynamics trained on those Minecraft latents (the
   core Dreamer world-model loop).
-- `dreamer4_action_conditioned_dream_rollout` — `dreamer.sampler.sample_video`
-  gives the dynamics model context frames + future actions and dreams future
-  gameplay; reports dream PSNR against the ground truth.
 - `world_model_rerun_visualization` — emits `open_dreamer_world_model.rrd` with
   synchronized `world/observation` (GT), `world/dream` (predicted),
   `world/gt_decoded` (tokenizer ceiling), and `world/tokenizer_reconstruction`

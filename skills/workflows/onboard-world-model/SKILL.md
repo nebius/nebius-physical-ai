@@ -48,7 +48,8 @@ viewable `.rrd` into the agent's Rerun viewer, self-serve."
 
 Map the repo's real entrypoints onto this loop and encode each stage as a
 solution-specific capability id (use the repo's own names; do not force a shared
-taxonomy). Two **hard gates** must pass for admission; the rest headline the run.
+taxonomy). Three **hard gates** must pass for admission; the rest headline the
+run.
 
 | Stage | Capability (rename per repo) | Real component to invoke |
 | --- | --- | --- |
@@ -57,13 +58,16 @@ taxonomy). Two **hard gates** must pass for admission; the rest headline the run
 | Tokenizer/encoder train (**hard gate**) | `<fw>_tokenizer_train_two_gpu` | the real tokenizer/VAE training entrypoint, sharded, to legibility |
 | Offline latent tokenization | `<fw>_latent_tokenization` | encode episodes → latent records + latent stats (mean/std) |
 | Dynamics train | `<fw>_dynamics_train_two_gpu` | the action-conditioned latent dynamics training loop (the core world model) |
-| Action-conditioned rollout | `<fw>_action_conditioned_dream_rollout` | sampler: context frames + future actions → predicted frames; report PSNR vs GT |
+| Action-conditioned rollout (**hard gate**) | `<fw>_action_conditioned_dream_rollout` | sampler: context frames + future actions → predicted frames; report PSNR vs GT |
 | Visualization | `world_model_rerun_visualization` | emit a Rerun `.rrd` with synchronized GT / dream / decoded-ceiling / recon streams |
 
 The driver must `raise SystemExit` if the hard-gate capabilities are missing from
 `capabilities_exercised`, so a single-GPU fallback cannot masquerade as a
-multi-GPU run. Emit one JSON per capability + a combined results JSON (the
-`smoke_artifact_name`) under `$NPA_SMOKE_OUTPUT_DIR`.
+multi-GPU run **and** a green smoke means the marquee dream actually ran (not just
+that training started). Gating the action-conditioned rollout transitively gates
+the whole loop, since it depends on every upstream stage. Emit one JSON per
+capability + a combined results JSON (the `smoke_artifact_name`) under
+`$NPA_SMOKE_OUTPUT_DIR`.
 
 ## Containerization Recipe (generic)
 

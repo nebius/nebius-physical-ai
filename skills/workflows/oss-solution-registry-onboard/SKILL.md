@@ -247,16 +247,19 @@ accepted capability requires a genuine **>=2 GPU** device mesh, so it uses the
 `byof-solution-smoke-rtxpro-2gpu.yaml` resource profile
 (`RTXPRO-6000-BLACKWELL-SERVER-EDITION:2`) instead of the single-GPU profile.
 
-Hard-gate capabilities (both must pass):
+Hard-gate capabilities (all must pass; the driver `raise SystemExit`s if any is
+missing, so a green smoke means the dream actually ran):
 
 - `jax_two_gpu_data_parallel_mesh` (`dreamer.parallel.build_parallel("data")`
   builds a `{data: 2, model: 1}` mesh over `jax.devices()`; fails on <2 GPUs)
 - `dreamer4_tokenizer_train_two_gpu` (real `scripts/train_tokenizer.py`
   entrypoint trains the causal video tokenizer sharded across the mesh on a
   **real Minecraft/VPT** video subset to legibility)
+- `dreamer4_action_conditioned_dream_rollout` (the marquee payoff:
+  `dreamer.sampler.sample_video` dreams future gameplay from context frames +
+  future actions; reports dream PSNR — transitively gates the whole loop)
 
-Also exercised in the same smoke (the full Dreamer 4 loop, headlined by the
-dream rollout):
+Also exercised in the same smoke:
 
 - `minecraft_vpt_video_dataloader` (real `dreamer.data.build_iterator`
   `minecraft_vpt` MP4 path — decord decode + VPT action parse — with device
@@ -267,9 +270,6 @@ dream rollout):
 - `dreamer4_dynamics_train_two_gpu` (action-conditioned latent dynamics trained
   on those Minecraft latents via `scripts/train_dynamics.py`; the core Dreamer
   world-model loop)
-- `dreamer4_action_conditioned_dream_rollout` (`dreamer.sampler.sample_video`
-  dreams future gameplay from context frames + future actions; reports dream
-  PSNR against ground truth)
 - `world_model_rerun_visualization` (emits `open_dreamer_world_model.rrd` with
   synchronized `world/observation` (GT), `world/dream` (predicted),
   `world/gt_decoded` (tokenizer ceiling), and `world/tokenizer_reconstruction`

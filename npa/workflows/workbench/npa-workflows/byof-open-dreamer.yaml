@@ -199,11 +199,16 @@ config:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         if LOCAL_DATASET:
             src = Path(LOCAL_DATASET)
-            for p in sorted(src.glob("shard-*.array_record")):
+            for p in sorted(src.glob("*.array_record")):
                 dst = DATA_DIR / p.name
                 if not dst.exists():
-                    dst.write_bytes(p.read_bytes())
-            return len(list(DATA_DIR.glob("shard-*.array_record")))
+                    # Symlink (fall back to copy) so we do not double the dataset
+                    # on disk; the array_record reader opens by path.
+                    try:
+                        dst.symlink_to(p)
+                    except OSError:
+                        dst.write_bytes(p.read_bytes())
+            return len(list(DATA_DIR.glob("*.array_record")))
         # Download from the run bucket, derived from S3_OUTPUT_PREFIX.
         prefix = os.environ["S3_OUTPUT_PREFIX"]
         parsed = urlparse(prefix)
@@ -229,7 +234,7 @@ config:
                 break
         for k in keys:
             s3.download_file(bucket, k, str(DATA_DIR / Path(k).name))
-        return len(list(DATA_DIR.glob("shard-*.array_record")))
+        return len(list(DATA_DIR.glob("*.array_record")))
 
 
     def main():
@@ -264,6 +269,14 @@ config:
             results["deferred"].append({"capability": "minecraft_vpt_dataset", "blocker": f"{type(exc).__name__}: {exc}"})
         results["dataset"] = {"shards": nshards, "dir": str(DATA_DIR)}
         have_data = nshards > 0
+        if not have_data and not any(
+            isinstance(d, dict) and d.get("capability") == "minecraft_vpt_dataset"
+            for d in results["deferred"]):
+            # Make a missing/misnamed dataset a clear failure rather than a
+            # confusing downstream "tokenizer hard-gate failed".
+            results["deferred"].append({"capability": "minecraft_vpt_dataset",
+                "blocker": f"no *.array_record shards found under {DATASET_KEY} "
+                           "(bucket derived from S3_OUTPUT_PREFIX)"})
 
         dcommon = [
             "dataset=minecraft_vpt", f"dataset.array_record_path={DATA_DIR}", f"dataset.index_max={nshards}",
@@ -502,7 +515,15 @@ config:
 
         (OUT / "open_dreamer_world_model_2gpu.json").write_text(json.dumps(results, indent=2))
         print(json.dumps(results, indent=2))
-        required = ["jax_two_gpu_data_parallel_mesh", "dreamer4_tokenizer_train_two_gpu"]
+        # Hard-gate the marquee payoff too: the action-conditioned dream rollout
+        # depends on the whole loop (dataloader -> tokenizer -> latent -> dynamics
+        # -> dream), so gating it makes a green smoke actually mean "the dream
+        # ran", not just "training started".
+        required = [
+            "jax_two_gpu_data_parallel_mesh",
+            "dreamer4_tokenizer_train_two_gpu",
+            "dreamer4_action_conditioned_dream_rollout",
+        ]
         missing = [c for c in required if c not in results["capabilities_exercised"]]
         if missing:
             raise SystemExit(f"open-dreamer hard-gate capabilities failed: {missing}")
