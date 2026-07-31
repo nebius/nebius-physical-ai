@@ -27,6 +27,7 @@ Apache-2.0 AND CC-BY-4.0). See ``skills/NOTICE-NVIDIA-SKILLS``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -131,6 +132,8 @@ NON_RT_CORE_GPU_TOKENS = (
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 
 RunCallable = Callable[..., "subprocess.CompletedProcess[str]"]
+
+_logger = logging.getLogger(__name__)
 
 
 class NurecError(RuntimeError):
@@ -1555,8 +1558,10 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     metrics[key] = float(value)
             return metrics
-    except Exception:  # noqa: BLE001 - fall through to the textual scan
-        pass
+    except ImportError:
+        _logger.debug("PyYAML unavailable; falling back to a flat metrics scan")
+    except ValueError as exc:
+        _logger.debug("metrics.yaml is not valid YAML (%s); using a flat scan", exc)
     for line in text.splitlines():
         if ":" not in line:
             continue

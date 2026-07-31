@@ -1,7 +1,9 @@
 # Partner Skills Roadmap (NVIDIA Physical AI / Omniverse)
 
-Status: **roadmap / design**. None of the capabilities below are implemented in
-the NPA workbench yet, and none of these skills have been validated end-to-end.
+Status: **partially landed**. `neural-reconstruction` (NuRec/NRE) and
+`video-data-augmentation` (as the `physical-ai-data-factory` blueprint) are
+implemented and validated end-to-end on Nebius + SkyPilot. The remaining
+capabilities below are still roadmap / design.
 This document captures the onboarding analysis so it is not lost; each skill
 should be added to `.agents/skills/` and `.claude/skills/` only **when its
 workbench solution lands**, and only **with tests** (see "Gating" below).
@@ -54,7 +56,7 @@ router to upstream" precedent.
 
 | Skill | Capability | Upstream | License | Lands when |
 | --- | --- | --- | --- | --- |
-| `neural-reconstruction` | NuRec/NRE: sensor recordings → renderable USDZ; NCore conversion; 3DGS; gRPC sensor sim; PhysicalAI HF datasets | `physical-ai-neural-reconstruction` → https://github.com/NVIDIA/nurec-skills | Apache-2.0 | A NuRec/NRE workbench tool or a checked-in SkyPilot YAML that runs NRE containers on Nebius exists and is validated |
+| `neural-reconstruction` | **LANDED.** NuRec/NRE: NCore V4 capture → 3DGUT Gaussian training → renderable USDZ → rig-offset novel views → Rerun recording. Ships `npa/src/npa/workbench/nurec/`, `npa workbench nurec`, `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml`, and `skills/workflows/neural-reconstruction/SKILL.md`. gRPC sensor sim (`serve-grpc`) and `nre-tools` aux data are not wired in yet. | `physical-ai-neural-reconstruction` → https://github.com/NVIDIA/nurec-skills (+ https://github.com/NVIDIA/ncore) | Apache-2.0 | ✅ Validated on a real Nebius RTX PRO 6000 Blackwell run |
 | `cad-to-simready` | CAD/source-asset → SimReady USD via Omniverse Content Agents (convert, material/physics assignment, conformance, validation, packaging) | `omniverse-cad-to-simready` → https://github.com/nvidia-omniverse/content-agents | Apache-2.0 | Content Agents can be deployed on Nebius and a validated conversion path exists |
 
 ### Tier B — useful but peripheral USD tooling (defer)
@@ -88,7 +90,7 @@ upstream; NPA re-expresses the relevant one on SkyPilot.
 | --- | --- | --- | --- | --- |
 | `physical-ai-video-data-augmentation` (VDA) | annotate → augment → evaluate → re-label; Cosmos Transfer 2.5 + SeedVR2 SR + VLM/LLM NIMs; flows `auto_labeling` / `augmentation_and_al` / `e2e` / `e2e_super_resolution` | **High — it is the upstream of our blueprint** | `physical-ai-data-factory.yaml` is the NPA-native (SkyPilot, **no OSMO**) implementation of this exact loop. Directly informs stage graph, model roles (Qwen VL / LLM, Cosmos Transfer 2.5, cosmos-reason), the promote/loop gate, and side-by-side evidence. | Reference spec for the shipped blueprint; roadmap item → **partially implemented** |
 | `physical-ai-infrastructure-setup-and-resilient-scaling` | K8s (MicroK8s/AKS) + OSMO + NIM Operator setup, verify gates, resilient scaling, don't-over-deploy endpoints, model-cache warmup | **Medium-high (ops concepts)** | Maps onto Nebius Managed K8s + SkyPilot + vLLM/Token Factory serving. Adopt the verify-gate discipline, "deploy only referenced endpoints", and cache-warmup ideas. Skip the OSMO/Azure plumbing. | Ops guidance; overlaps `nebius-infra` + `skypilot-workflows` |
-| `physical-ai-neural-reconstruction` (NuRec/NRE) | sensor logs → NCore V4 → 3DGS train → renderable USDZ → novel-view / gRPC sensor sim | **Medium (adjacent, upstream data source)** | Not used by the video-augmentation blueprint today. Valuable as a *real-data source*: reconstruct real drives/robot logs into re-renderable scenes, then feed rendered views as pipeline input (better than synthetic test clips). RT-core render → L40S / RTX PRO 6000. | Roadmap Tier A (router); land only with impl + tests |
+| `physical-ai-neural-reconstruction` (NuRec/NRE) | sensor logs → NCore V4 → 3DGS train → renderable USDZ → novel-view / gRPC sensor sim | **Medium (adjacent, upstream data source)** | Not used by the video-augmentation blueprint today. Valuable as a *real-data source*: reconstruct real captures into re-renderable scenes, then feed rendered views as pipeline input (better than synthetic test clips). RT-core render → L40S / RTX PRO 6000. | **Implemented** as `neural-reconstruction` (tool + CLI + SkyPilot workflow + skill + tests) |
 | `physical-ai-defect-image-generation` (DIG) | AOI defect SDG via Cosmos AnomalyGen (Cosmos-Predict2) for PCBA / metal / glass; Day-0 / Day-1 | **Low-medium (adjacent domain)** | Different domain (defect images, not video augmentation) but the same Cosmos-SDG + evaluate pattern. Not consumed by the video pipeline; a sibling SDG blueprint. | Roadmap Tier C; separate blueprint |
 
 Practical techniques worth adopting into the NPA blueprint from VDA (all
@@ -105,8 +107,26 @@ SkyPilot-native, no OSMO):
   Cosmos Transfer 2.5 (augment), cosmos-reason (critic). We serve these on Token
   Factory / vLLM instead of in-cluster NIMs.
 
-Gating unchanged: NuRec and DIG stay roadmap-only until a Nebius + SkyPilot
-implementation lands with tests. VDA is the one now materially implemented.
+Gating: DIG stays roadmap-only until a Nebius + SkyPilot implementation lands
+with tests. VDA and **NuRec are now materially implemented**.
+
+### NuRec implementation notes worth carrying forward
+
+Discovered by running the real container on a Nebius RT-core GPU, not from docs:
+
+- `nvcr.io/nvidia/nre/nre` answers **402 Payment Required** for a standard NGC
+  key; the `-ga` General Availability repositories are the pullable ones.
+- NRE's NCore data source requires a `("rig", "world")` pose-graph edge, and
+  NVIDIA's own COLMAP → NCore converter stores per-camera `<camera> → world`
+  poses with no rig node — so *every* COLMAP-derived NCore sequence fails to load
+  until that edge is derived (`npa/src/npa/workbench/nurec/ncore_rig.py`).
+- The object-centric recipe ships a placeholder `dataset.lidar_ids:
+  [dummy_lidar]`; on real data NRE aborts unless the sequence's own sensor ids are
+  substituted.
+- The vendor image ships no `sudo`, which breaks SkyPilot's Kubernetes runtime
+  setup until a shim is supplied via `pod_config`.
+- `nre-ga 26.04` writes USDZ artifacts to `<run>/artifacts/<step>.usdz`, not the
+  documented `<run>/usd-out/last.usdz`.
 
 ## NPA-Native Target Architecture (Tier C build notes)
 
@@ -129,6 +149,9 @@ Before a skill in this roadmap moves into `.agents/skills/` and `.claude/skills/
 1. The underlying capability runs on Nebius + SkyPilot (a checked-in workflow
    YAML, runner, or workbench tool), or — for pure routers — a validated upstream
    fetch + run path on a Nebius GPU.
+   *Met by `neural-reconstruction`:
+   `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml` plus its declarative
+   twin, validated on a real RTX PRO 6000 Blackwell run.*
 2. A test mirrors `test_cosmos3_agent_skills_are_discoverable_and_well_formed`:
    asserts frontmatter (`name`, `description`), a "Source And Attribution"
    section, and the `NOTICE-NVIDIA-SKILLS` reference.

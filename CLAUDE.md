@@ -54,6 +54,11 @@ making architecture, review, or domain judgments.
  view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
  OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label →
  FiftyOne curate → Rerun visualize.
+- `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural
+ reconstruction on Nebius — NCore V4 capture (including deriving the
+ `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable
+ USDZ → rig-offset novel views → `reports/sim2real.rrd`. RT-core GPU only
+ (L40S / RTX PRO 6000, never H100/H200).
 - `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench
  pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM),
  not an echo/manifest stub masquerading as real work.
@@ -65,7 +70,7 @@ create a new split skill tree.
 
 ### Partner Capability Roadmap
 
-Onboarding NVIDIA Physical AI / Omniverse capabilities (NuRec, CAD-to-SimReady, USD tooling, defect-image SDG, video data augmentation, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`. Those are not yet implemented in the workbench; add each as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
+Onboarding NVIDIA Physical AI / Omniverse capabilities (CAD-to-SimReady, USD tooling, defect-image SDG, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`; those are not yet implemented in the workbench. **NuRec/NRE has landed** (`skills/workflows/neural-reconstruction/SKILL.md`), as has video data augmentation (`skills/workflows/physical-ai-data-factory/SKILL.md`). Add each remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
 
 ## Project Instructions
 
