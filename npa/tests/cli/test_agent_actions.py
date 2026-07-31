@@ -436,3 +436,103 @@ def test_run_chat_action_loop_gpu_tool_needs_confirmation_without_token():
     assert result["needs_confirmation"] is True
     assert result["stopped_reason"] == A.STOP_NEEDS_CONFIRMATION
     assert result["proposed_action"]["tool"] == "sim2real_submit"
+
+
+# ── Planner robustness against reasoning-model output ────────────────────────
+# Regression coverage for a live failure observed against Token Factory
+# ``Qwen/Qwen3-32B`` (the cheap planner tier): the model emits a ``<think>`` block
+# that contains a JSON-looking snippet, then the real decision object. A greedy
+# ``{.*}`` match spanned both and failed to parse, so the loop aborted with
+# ``no_plan`` and discarded the observations it had already gathered.
+
+_REASONING_REPLY_WITH_BRACES = """<think>
+Okay, the operator wants to know which runs used 4 GPUs. So the parameters would be:
+
+{
+  "metric_name": "gpus",
+  "threshold_op": "eq",
+  "threshold_value": 4
+}
+
+Let's proceed with that.
+</think>
+
+{"thought": "Query the gpus metric.", "tool": "insights_query", "args": {"metric_name": "gpus", "threshold_op": "eq", "threshold_value": 4}}"""
+
+
+def test_extract_json_object_ignores_braces_inside_reasoning_trace():
+    parsed = A._extract_json_object(_REASONING_REPLY_WITH_BRACES)
+    assert parsed is not None
+    assert parsed["tool"] == "insights_query"
+    assert parsed["args"]["threshold_value"] == 4
+
+
+def test_extract_json_object_prefers_the_decision_object():
+    text = '{"metric_name": "gpus"}\nfinal answer:\n{"thought": "t", "final": "done"}'
+    assert A._extract_json_object(text) == {"thought": "t", "final": "done"}
+
+
+def test_strip_reasoning_trace_handles_truncated_think():
+    assert A.strip_reasoning_trace("<think>still thinking about {x}") == ""
+    assert A.strip_reasoning_trace("<think>t</think> {\"a\": 1}") == '{"a": 1}'
+
+
+def test_balanced_json_spans_respects_strings_and_escapes():
+    spans = A._balanced_json_spans('{"a": "}"} tail {"b": 2}')
+    assert spans == ['{"a": "}"}', '{"b": 2}']
+
+
+def test_planner_retries_once_on_unparseable_reply():
+    calls = {"n": 0}
+
+    def _call(messages, *, tier="cheap"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"choices": [{"message": {"content": "sorry, prose only"}}], "usage": {}}
+        return _completion({"final": "recovered after the nudge"})
+
+    result = A.run_action_loop("x", tools={}, model_call=_call)
+    assert calls["n"] == 2, "planner must be re-asked exactly once"
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["reply"] == "recovered after the nudge"
+
+
+def test_unparseable_plan_reports_empty_store_as_no_runs_found():
+    """An empty result set must be answered truthfully, never as a bare failure."""
+    calls = {"n": 0}
+
+    def _call(messages, *, tier="cheap"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _completion({"tool": "insights_query", "args": {"metric_name": "gpus"}})
+        return {"choices": [{"message": {"content": "prose, not json"}}], "usage": {}}
+
+    tools = {"insights_query": lambda args: {"backend": "jsonl", "count": 0, "records": []}}
+    result = A.run_action_loop("which runs used 4 gpus", tools=tools, model_call=_call)
+    assert result["stopped_reason"] == A.STOP_NO_PLAN
+    assert "no runs found" in result["reply"]
+    assert "insights_query" in result["tools_used"]
+    # The corrective re-ask is bounded to one extra call for the whole loop.
+    assert [s.get("retried") for s in result["steps"] if s.get("phase") == "plan"] == [True]
+
+
+def test_summarize_observations_reports_only_what_tools_returned():
+    summary = A.summarize_observations(
+        [
+            {"tool": "insights_query", "result": {"count": 2, "records": [{"run_id": "run-a"}, {"run_id": "run-b"}]}},
+            {"tool": "insights_dashboard", "result": {"total_records": 0, "runs": []}},
+            {"tool": "health", "result": {"error": "boom"}},
+        ]
+    )
+    assert "run-a" in summary and "run-b" in summary
+    assert "no runs found" in summary
+    assert "boom" in summary
+    assert A.summarize_observations([]) == ""
+
+
+def test_max_steps_reply_includes_observation_summary():
+    planner = _scripted_planner([{"tool": "insights_query", "args": {}}])
+    tools = {"insights_query": lambda args: {"count": 0, "records": []}}
+    result = A.run_action_loop("x", tools=tools, model_call=planner, max_steps=2)
+    assert result["stopped_reason"] == A.STOP_MAX_STEPS
+    assert "no runs found" in result["reply"]
