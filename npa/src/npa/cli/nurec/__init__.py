@@ -436,7 +436,12 @@ def render_cmd(
         help="frame-end-timestamp or contiguous-output-index.",
     ),
     renderer: str = typer.Option(
-        DEFAULT_RENDERER, "--renderer", help="default, gsplat, or nrend."
+        DEFAULT_RENDERER,
+        "--renderer",
+        help=(
+            "default (the artifact's trained renderer), gsplat, or nrend. nrend "
+            "needs the nrend model dict embedded in the USDZ."
+        ),
     ),
     frame_step: int = typer.Option(DEFAULT_FRAME_STEP, "--frame-step", help="Frame step size."),
     rig_translation_offset: str = typer.Option(

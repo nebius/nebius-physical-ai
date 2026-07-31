@@ -121,6 +121,7 @@ envs:
   NPA_NUREC_RIG_ROTATION_OFFSET: "0,0,0"
   NPA_NUREC_RENDER_IMAGE_SCALE: "0.5"
   NPA_NUREC_RENDER_FRAME_STEP: "1"
+  NPA_NUREC_RENDERER: "default"
 
   # --- Local scratch (all under /tmp) ---------------------------------------
   NPA_NUREC_CACHE: "/tmp/npa-nurec-cache"
@@ -244,6 +245,7 @@ run: |
     --camera-id "${CAMERA}" \
     --image-scale "${NPA_NUREC_RENDER_IMAGE_SCALE}" \
     --frame-step "${NPA_NUREC_RENDER_FRAME_STEP}" \
+    --renderer "${NPA_NUREC_RENDERER}" \
     --rig-translation-offset "${NPA_NUREC_RIG_TRANSLATION_OFFSET}" \
     --rig-rotation-offset "${NPA_NUREC_RIG_ROTATION_OFFSET}" \
     --output-uri "${RUN}/novel_views/" \

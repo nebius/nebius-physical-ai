@@ -87,7 +87,11 @@ NO_LIDAR_SENTINEL = "none"
 DEFAULT_IMAGE_SCALE = 1.0
 DEFAULT_IMAGE_FORMAT = "png"
 DEFAULT_FRAME_NAMING = "contiguous-output-index"
-DEFAULT_RENDERER = "nrend"
+# `default` uses the artifact's own trained renderer and always works. `nrend`
+# (the fast C++/CUDA path) needs the nrend model dictionary embedded in the USDZ,
+# which the object-centric recipe deliberately disables
+# (options/nrend: disabled), so it is an opt-in rather than the default.
+DEFAULT_RENDERER = "default"
 DEFAULT_FRAME_STEP = 1
 DEFAULT_VIDEO_FPS = 30.0
 DEFAULT_VIDEO_CRF = 20
