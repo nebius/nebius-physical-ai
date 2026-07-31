@@ -75,6 +75,9 @@ const SIM_VIZ = {
   rrd_updated_at: "2026-07-07T03:33:00Z",
   rerun_ready: true,
   rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=workspace",
+  mcap_uri: "file:///opt/npa-agent/recordings/sim2real.mcap",
+  lichtblick_ready: true,
+  lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
   // Intentionally not alphabetical — UI must keep latest-first order.
   available_run_ids: ["submitted-run", "mock-run"],
   available_runs: [
@@ -105,6 +108,9 @@ const NON_STOCK_SIM_VIZ = {
   artifact_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
   artifact_preview_url: "/rerun/recordings/sim2real.rrd",
   artifact_download_url: "/rerun/recordings/sim2real.rrd",
+  mcap_uri: `file:///opt/npa-agent/recordings/sim2real.mcap`,
+  lichtblick_ready: true,
+  lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
 };
 
 const RUN_DETAILS = {
@@ -187,6 +193,13 @@ const NON_STOCK_ARTIFACTS = [
     render: "rerun",
     inline: true,
     size: 8192,
+  },
+  {
+    key: `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.mcap`,
+    render: "mcap",
+    inline: true,
+    size: 16384,
   },
   {
     key: `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`,
@@ -292,6 +305,8 @@ const STATIC_BUTTON_IDS = [
   "artifactLoadRunArtifacts",
   "openRerun",
   "loadRerunViewer",
+  "openLichtblick",
+  "loadLichtblickViewer",
   "describeVisual",
 ];
 
@@ -323,6 +338,9 @@ const FIELD_IDS = [
   "simCamera",
   "renderedDataSummary",
   "rerunFrame",
+  "lichtblickFrame",
+  "renderModeLichtblick",
+  "viewerPaneLichtblick",
   "artifactPreviewHost",
   "tabMain",
   "tabRerun",
@@ -346,6 +364,7 @@ function renderForArtifactKey(key) {
     return artifact.render;
   }
   if (String(key || "").endsWith(".rrd")) return "rerun";
+  if (String(key || "").endsWith(".mcap")) return "mcap";
   if (String(key || "").match(/\.(mp4|webm|mov)$/)) return "video";
   if (String(key || "").match(/\.(png|jpg|jpeg|gif|webp)$/)) return "image";
   if (String(key || "").endsWith(".json")) return "json";
@@ -359,6 +378,22 @@ function simVizForArtifact(key) {
   const previewPath = `/api/artifacts/file/${encodeURIComponent(key.replaceAll("/", "__"))}`;
   if (render === "rerun") {
     return { ...base, artifact_render: render, artifact_key: key, artifact_uri: `s3://mock/${key}` };
+  }
+  if (render === "mcap") {
+    return {
+      ...base,
+      rrd_uri: "",
+      rerun_ready: false,
+      rerun_iframe_url: "/rerun/",
+      artifact_render: render,
+      artifact_key: key,
+      artifact_uri: `s3://mock/${key}`,
+      mcap_uri: "file:///opt/npa-agent/recordings/sim2real.mcap",
+      lichtblick_ready: true,
+      lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
+      artifact_preview_url: "/lichtblick/recordings/sim2real.mcap",
+      artifact_download_url: "/lichtblick/recordings/sim2real.mcap",
+    };
   }
   return {
     ...base,
@@ -734,6 +769,98 @@ function installAgentApiMocks() {
   }).as("runDetails");
 }
 
+// --- MCAP substance helpers (shared by smoke + live Lichtblick specs) ---------
+// An uncompressed MCAP stores channel topics/schema names and JSON messages
+// verbatim, so we can assert the viewer is fed real camera data straight from the
+// served bytes without a full MCAP parser.
+
+function mcapCameraTopicCount(binaryBody) {
+  return (String(binaryBody || "").match(/\/camera/g) || []).length;
+}
+
+function mcapHasCompressedImage(binaryBody) {
+  return String(binaryBody || "").indexOf("foxglove.CompressedImage") >= 0;
+}
+
+function mcapHasHeldoutCamera(binaryBody) {
+  return String(binaryBody || "").indexOf("/heldout/camera/") >= 0;
+}
+
+function mcapHasPointCloud(binaryBody) {
+  const text = String(binaryBody || "");
+  return text.indexOf("foxglove.PointCloud") >= 0 && text.indexOf("/heldout/points") >= 0;
+}
+
+function mcapHasFrameTransform(binaryBody) {
+  const text = String(binaryBody || "");
+  return text.indexOf("foxglove.FrameTransform") >= 0 && text.indexOf("/tf") >= 0;
+}
+
+// The 3D panel only offers its "rgba-fields" colour mode when the cloud declares
+// ALL of red/green/blue/alpha; without alpha it re-colours the cloud with a fallback
+// colormap instead of the captured RGB. Assert the served cloud declares the full
+// set the injected default layout asks for.
+function mcapPointCloudColorFields(binaryBody) {
+  const text = String(binaryBody || "");
+  const start = text.indexOf('"point_stride"');
+  if (start < 0) return [];
+  const message = text.slice(start, start + 4000);
+  return ["red", "green", "blue", "alpha"].filter((name) =>
+    new RegExp('"name":\\s*"' + name + '"').test(message)
+  );
+}
+
+function mcapPointCloudHasRgbaFields(binaryBody) {
+  return mcapPointCloudColorFields(binaryBody).length === 4;
+}
+
+function firstMcapPngPayload(binaryBody) {
+  // json.dumps emits ", " / ": " separators, so allow optional whitespace.
+  const match = String(binaryBody || "").match(
+    /"data":\s*"([A-Za-z0-9+/=]+)"\s*,\s*"format":\s*"png"/
+  );
+  return match ? match[1] : null;
+}
+
+// Decode a base64 PNG payload and return {width,height,mean} using an offscreen
+// canvas. Catches BOTH regressions: 32x32 solid stubs (tiny dims) and the
+// PNG-row-filter corruption that turned real renders into dark noise (low mean).
+function decodePngStats(base64Payload) {
+  return new Cypress.Promise((resolve, reject) => {
+    try {
+      const binary = atob(base64Payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "image/png" });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let sum = 0;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+          count += 1;
+        }
+        URL.revokeObjectURL(url);
+        resolve({ width: img.naturalWidth, height: img.naturalHeight, mean: sum / Math.max(1, count) });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("PNG decode failed"));
+      };
+      img.src = url;
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 Cypress.Commands.add("installAgentApiMocks", installAgentApiMocks);
 Cypress.Commands.add("visitMockAgent", () => {
   installAgentApiMocks();
@@ -760,13 +887,22 @@ export {
   ASSETS,
   CAMERAS,
   COMPLEX_WORKFLOW_YAML,
+  decodePngStats,
   DF_INPUT_ONLY_ARTIFACTS,
   DF_INPUT_ONLY_RUN_ID,
   DF_MOCK_ARTIFACTS,
   DF_MOCK_RUN_ID,
   FIELD_IDS,
+  firstMcapPngPayload,
   GENERIC_WORKFLOW_RUN_DETAILS,
   GENERIC_WORKFLOW_YAML,
+  mcapCameraTopicCount,
+  mcapHasCompressedImage,
+  mcapHasFrameTransform,
+  mcapHasHeldoutCamera,
+  mcapHasPointCloud,
+  mcapPointCloudColorFields,
+  mcapPointCloudHasRgbaFields,
   NON_STOCK_ARTIFACTS,
   NON_STOCK_RUN_ID,
   SIM_VIZ,

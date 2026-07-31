@@ -21,10 +21,16 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
   `npa/src/npa/orchestration/npa_workflow/catalog.py`.
 - **apiVersion:** `npa.workflow/v0.0.1` only (beta).
 - **kind:** `Workflow`
-- **States:** declarative nodes with `run` (shell/argv), `toolRef`, or `sequence`.
+- **States:** declarative nodes with `run` (shell/argv), `toolRef`, `sequence`, or `parallel`.
 - **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval.
 - **Predicates:** closed set: `promote_checkpoint`, `loop_back`.
 - **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
+- **Parallel:** `parallel: [<leaf members>]` + optional `maxConcurrency`; the group's
+  `next` state is the barrier. Members may not declare `next`/`transitions`.
+- **Params:** `params: {k: v}` is a per-state config overlay — how sweep members share
+  one `toolRef` and still differ.
+- **Trigger:** `trigger: {uri, pollSeconds, maxPolls, minObjects}` makes the runtime
+  driver wait for data before that state runs (the state must also do work).
 - **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.
@@ -85,8 +91,12 @@ Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
 2. Keep **terminal: true** on leaf completion states.
 3. Use `--assume-decision` when planning specs with `transitions`.
 4. `npa workbench workflow submit <npa.workflow.yaml>` plans the graph, renders
-   a serial SkyPilot multi-doc YAML, and submits it. The spec does not call
-   `engine.py` per workflow. Parallel fan-out stays on raw SkyPilot YAMLs.
+   a serial SkyPilot multi-doc YAML, and submits it (one-shot; unchanged).
+   For a spec with a `parallel:` group, or a loop that must **early-exit on the
+   real decision artifact**, add `--runtime`: the runtime orchestrator submits
+   each wave, polls it to a terminal state, reads `config.decision_uri` from S3,
+   and replans (parallel groups become SkyPilot JobGroups). Preview the wave
+   shape offline with `plan-spec --waves`. See repo-root `DESIGN.md`.
 5. Cross-stage data uses S3 URIs in `config` — tools are stateless.
 6. Group config: runtime knobs first, then `*_uri` keys under `config.prefix`.
 7. A `run.shell` state may import an npa module for logic that needs the package
@@ -118,6 +128,9 @@ Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
 | `cosmos-synth-fanout-curation.yaml` | Cosmos Transfer 2.5 synthetic fan-out → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 | `physical-ai-data-factory.yaml` | NVIDIA Physical AI Data Factory (no OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label → FiftyOne curate → Rerun visualize; toolRefs + `run.shell` glue; dynamic gate |
+| `token-factory-parallel-fanout.yaml` | Zero-GPU `parallel:` fan-out (JobGroup) + join barrier (`--runtime`) |
+| `token-factory-gate-loop.yaml` | Zero-GPU runtime gate loop: real early-exit + `goto` branch (`--runtime`) |
+| `isaac-lab-rl-sweep.yaml` | Parallel GPU sweep with `params:` overlays + ranking barrier (`--runtime`) |
 
 ## Verify
 

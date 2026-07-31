@@ -466,4 +466,5 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     # baked image so branch code runs on GPU without an image rebuild. Default off.
     assert 'if [ "$NPA_SRC_OVERLAY" = "1" ]' in setup
     assert "/tmp/npa-src-overlay" in setup
-    assert "pip install -q -e /tmp/npa-src-overlay --no-deps" in setup
+    # Installs route through the PEP 668-tolerant helper (see npa_pip_install).
+    assert "npa_pip_install -e /tmp/npa-src-overlay --no-deps" in setup

@@ -2015,6 +2015,36 @@ def test_full_loop_writes_rerun_recording_by_default(tmp_path: Path) -> None:
     assert rrd.exists() and rrd.stat().st_size > 0
     components = {c["name"]: c for c in report["components"]}
     assert components["stage_14_rerun_viz"]["tier"] == "WORKS"
+    # The finalize stage natively emits a Lichtblick/Foxglove MCAP of the same
+    # rollout data alongside the .rrd (NPA_SIM2REAL_MCAP default on).
+    mcap_info = viz["mcap"]
+    assert mcap_info["status"] == "written"
+    assert mcap_info["camera_message_count"] > 0
+    mcap = tmp_path / "reports" / "sim2real.mcap"
+    assert mcap.exists() and mcap.stat().st_size > 0
+    assert components["stage_14_rerun_viz"]["artifacts"].get("mcap") == str(mcap)
+
+
+def test_full_loop_mcap_disabled_toggle(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_MCAP", "0")
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-mcap-off",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+
+    report = run_full_loop(config)
+
+    assert report["visualization"]["mcap"]["status"] == "disabled"
+    assert not (tmp_path / "reports" / "sim2real.mcap").exists()
 
 
 def test_full_loop_rerun_disabled_toggle(tmp_path: Path) -> None:

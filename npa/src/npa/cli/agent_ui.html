@@ -433,7 +433,8 @@
         z-index: 0;
       }
       .viewer-pane.is-inactive-viewer .rerun-frame-shell,
-      .viewer-pane.is-inactive-viewer #rerunFrame {
+      .viewer-pane.is-inactive-viewer #rerunFrame,
+      .viewer-pane.is-inactive-viewer #lichtblickFrame {
         min-height: 560px;
         height: 100%;
       }
@@ -483,7 +484,8 @@
           radial-gradient(circle at 20% 0%, rgba(229, 255, 79, 0.08), transparent 35%),
           linear-gradient(180deg, #0f172a 0%, #020617 100%);
       }
-      #rerunFrame {
+      #rerunFrame,
+      #lichtblickFrame {
         display: block;
         width: 100%;
         height: 100%;
@@ -1697,6 +1699,7 @@
                   <select id="artifactTypeFilter">
                     <option value="">All types</option>
                     <option value="rerun">Rerun .rrd</option>
+                    <option value="mcap">MCAP (Lichtblick)</option>
                     <option value="video">Video .mp4/.webm/.mov</option>
                     <option value="json">JSON</option>
                     <option value="text">Text/logs</option>
@@ -1742,6 +1745,7 @@
               <h3>Viewer</h3>
               <div class="render-mode-tabs" role="tablist" aria-label="Artifact render mode">
                 <button type="button" class="render-mode-tab is-active" id="renderModeRerun" data-render-mode="rerun">Rerun</button>
+                <button type="button" class="render-mode-tab" id="renderModeLichtblick" data-render-mode="lichtblick">Lichtblick</button>
                 <button type="button" class="render-mode-tab" id="renderModeVideo" data-render-mode="video">Video</button>
                 <button type="button" class="render-mode-tab" id="renderModeImage" data-render-mode="image">Image</button>
                 <button type="button" class="render-mode-tab" id="renderModeData" data-render-mode="data">Data</button>
@@ -1756,8 +1760,11 @@
                 <div class="btn-row">
                   <button id="openRerun" class="btn" type="button">Open in Rerun</button>
                   <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button>
+                  <button id="openLichtblick" class="btn" type="button" title="Open the sim2real MCAP in the embedded Lichtblick viewer">Open in Lichtblick</button>
+                  <button id="loadLichtblickViewer" class="btn" type="button" title="Reload the Lichtblick MCAP recording">Reload Lichtblick data</button>
                   <button id="describeVisual" class="btn btn-primary" type="button" title="Capture the current viewer and ask the agent for feedback">Describe this</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
+                  <a id="openFullLichtblick" class="btn" href="/lichtblick/" target="_blank" rel="noopener">Open full Lichtblick</a>
                 </div>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
               </div>
@@ -1773,6 +1780,15 @@
                   <div id="rerunBundleCover" class="rerun-bundle-cover" hidden aria-live="polite">
                     <p class="cover-title">Preparing viewer…</p>
                     <p class="cover-hint" data-default-hint="Caching Rerun assets for a seamless viewer open.">Caching Rerun assets for a seamless viewer open.</p>
+                  </div>
+                </div>
+              </div>
+              <div id="viewerPaneLichtblick" class="viewer-pane is-inactive-viewer">
+                <div class="rerun-frame-shell">
+                  <iframe id="lichtblickFrame" title="lichtblick" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+                  <div id="lichtblickPlaceholder" class="rerun-placeholder lichtblick-placeholder" hidden>
+                    <p><strong>Lichtblick</strong> (Foxglove-compatible MCAP viewer)</p>
+                    <p class="hint">Load a run with a <code>reports/sim2real.mcap</code> to play its camera, VLM critiques, and reward signals here.</p>
                   </div>
                 </div>
               </div>
@@ -2183,7 +2199,13 @@
         }
         document.querySelectorAll(".render-mode-tab[data-render-mode]").forEach((btn) => {
           btn.addEventListener("click", () => {
-            setRenderMode(String(btn.getAttribute("data-render-mode") || "rerun"));
+            const mode = String(btn.getAttribute("data-render-mode") || "rerun");
+            setRenderMode(mode);
+            // Clicking the Lichtblick tab should load the active run's MCAP, not just
+            // reveal an empty viewer (the .mcap is 1-of-many artifacts, easy to miss).
+            if (mode === "lichtblick") {
+              ensureLichtblickForActiveRun().catch((err) => console.warn("lichtblick autoload failed", err));
+            }
           });
         });
         setRenderMode("rerun");
@@ -2237,6 +2259,8 @@
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
+        bindClick("openLichtblick", openLichtblickTab, "Open Lichtblick");
+        bindClick("loadLichtblickViewer", () => reloadLichtblickViewer(), "Reload Lichtblick data");
         bindClick("workflowStatus", showWorkflowStatus, "Workflow status");
         bindClick("loadRunData", loadRunData, "Load run data");
         const chatInput = document.getElementById("chatInput");
@@ -3732,6 +3756,10 @@
       let rerunIframeLoaded = false;
       let rerunBootInProgress = false;
       let mountedRerunRunKey = "";
+      let lichtblickIframeLoaded = false;
+      let currentLichtblickSimViz = null;
+      let lastSimVizStatus = null;
+      let rerunEnsureInFlight = null;
       let activeRunId = "";
       let activeArtifactRender = "";
       let lastRerunBlobStatus = "pending";
@@ -4048,23 +4076,227 @@
         host.innerHTML = "";
       }
       let activeRenderMode = "rerun";
+      function updateSimvizCta(simViz) {
+        // The CTA banner is shared across viewer tabs, so its copy must track the
+        // active render mode. Previously it always used Rerun wording, so the
+        // Lichtblick tab showed "No run-specific Rerun recording yet" — the bug
+        // in the reported screenshot. Keep each mode's message self-consistent.
+        const cta = document.getElementById("simvizCta");
+        if (!cta) return;
+        const status = simViz || lastSimVizStatus || {};
+        if (activeRenderMode === "lichtblick") {
+          const ready = Boolean(status.lichtblick_ready || status.mcap_uri);
+          // Always set Lichtblick-appropriate copy so the shared banner never
+          // retains stale Rerun wording from a previous tab, even when hidden.
+          cta.textContent = ready
+            ? "Lichtblick (MCAP) recording loaded: camera and reward/advantage signals " +
+              "play in the panels below. The GPU 3D point cloud is on /heldout/points — " +
+              "enable that topic in the 3D panel (Lichtblick hides point clouds by " +
+              "default). The Rerun tab shows the same 3D point cloud automatically."
+            : "No run-specific Lichtblick (MCAP) recording yet. Load a run with a " +
+              "reports/sim2real.mcap to play its camera, reward/advantage signals, and " +
+              "GPU 3D point cloud (topic /heldout/points) here.";
+          cta.hidden = false;
+          return;
+        }
+        if (activeRenderMode !== "rerun") {
+          // Media panes (video/image/data) render inline; no Rerun/Lichtblick CTA.
+          cta.hidden = true;
+          return;
+        }
+        const ready = Boolean(status.rerun_ready || status.rrd_uri);
+        cta.hidden = ready && rerunIframeLoaded;
+        if (!ready) {
+          cta.textContent =
+            "No run-specific Rerun recording yet. Use the Run status/logs panel below " +
+            "for stage progress and result.";
+        }
+      }
       function setRenderMode(mode) {
         const next = String(mode || "rerun");
-        activeRenderMode = next === "video" || next === "image" || next === "data" ? next : "rerun";
+        activeRenderMode = ["video", "image", "data", "lichtblick"].includes(next) ? next : "rerun";
         document.querySelectorAll(".render-mode-tab").forEach((btn) => {
           btn.classList.toggle("is-active", btn.getAttribute("data-render-mode") === activeRenderMode);
         });
         const rerunPane = document.getElementById("viewerPaneRerun");
+        const lichtblickPane = document.getElementById("viewerPaneLichtblick");
         const mediaPane = document.getElementById("viewerPaneMedia");
         const isRerun = activeRenderMode === "rerun";
-        if (rerunPane) {
-          rerunPane.classList.toggle("is-active-viewer", isRerun);
-          rerunPane.classList.toggle("is-inactive-viewer", !isRerun);
+        const isLichtblick = activeRenderMode === "lichtblick";
+        const isMedia = !isRerun && !isLichtblick;
+        const togglePane = (pane, active) => {
+          if (!pane) return;
+          pane.classList.toggle("is-active-viewer", active);
+          pane.classList.toggle("is-inactive-viewer", !active);
+        };
+        togglePane(rerunPane, isRerun);
+        togglePane(lichtblickPane, isLichtblick);
+        togglePane(mediaPane, isMedia);
+        if (isLichtblick) {
+          mountLichtblickIframe(currentLichtblickSimViz || {});
         }
-        if (mediaPane) {
-          mediaPane.classList.toggle("is-active-viewer", !isRerun);
-          mediaPane.classList.toggle("is-inactive-viewer", isRerun);
+        updateSimvizCta(lastSimVizStatus);
+      }
+      // --- Lichtblick (Foxglove-compatible MCAP viewer) embed ---------------
+      // /lichtblick/recordings/ serves the MCAP unauthenticated and grants no CORS,
+      // so the viewer's fetch has to be same-origin. The backend may build ds.url
+      // from a configured public origin (NPA_AGENT_PUBLIC_*) that differs from the
+      // origin this page was actually loaded from (e.g. the https:// name vs. the
+      // plain HTTP port), so rewrite the recording URL onto the current origin and
+      // keep its path/query. Also keeps Accept-Ranges readable, which Lichtblick
+      // requires to stream the MCAP by range.
+      function pinLichtblickDsToSameOrigin(rawUrl) {
+        if (!rawUrl) return "";
+        try {
+          const origin = window.location.origin;
+          const viewer = new URL(rawUrl, origin);
+          const ds = viewer.searchParams.get("ds.url");
+          if (ds) {
+            const recording = new URL(ds, origin);
+            if (recording.origin !== origin) {
+              viewer.searchParams.set("ds.url", origin + recording.pathname + recording.search);
+            }
+          }
+          // Preserve the backend's relative form so the embed stays origin-agnostic.
+          if (/^https?:\/\//i.test(rawUrl)) return viewer.toString();
+          return viewer.pathname + viewer.search + viewer.hash;
+        } catch (_e) {
+          return rawUrl;
         }
+      }
+      function lichtblickIframeUrlFor(simViz) {
+        // Prefer the backend-computed URL (same-origin nginx proxy or sidecar port);
+        // fall back to the co-served viewer root so the embed still mounts.
+        const url = String((simViz && simViz.lichtblick_iframe_url) || "").trim();
+        return pinLichtblickDsToSameOrigin(url) || "/lichtblick/";
+      }
+      function applyLichtblickSimViz(simViz) {
+        currentLichtblickSimViz = simViz || {};
+        const ready = Boolean(simViz && (simViz.lichtblick_ready || simViz.mcap_uri));
+        const full = document.getElementById("openFullLichtblick");
+        if (full) full.setAttribute("href", lichtblickIframeUrlFor(simViz));
+        const placeholder = document.getElementById("lichtblickPlaceholder");
+        if (placeholder) placeholder.hidden = ready;
+        // If the Lichtblick pane is already the active viewer, keep it in sync.
+        if (activeRenderMode === "lichtblick") mountLichtblickIframe(simViz);
+      }
+      // Lichtblick persists the last layout in IndexedDB (lichtblick-layouts) and the
+      // selected layout id in localStorage (studio.profile-data). It only applies our
+      // injected default layout (3D point cloud + camera) when NO layout is saved, so a
+      // returning browser keeps showing the stale built-in default (empty 3D). The embed
+      // is same-origin, so clear that persisted layout to guarantee our default — and the
+      // GPU point cloud — actually render.
+      //
+      // Seed it once per UI version rather than on every mount. The wipe only needs to
+      // evict a layout saved BEFORE our default existed; once seeded, whatever is stored
+      // is either our default or a layout the user arranged themselves inside the embed,
+      // and wiping on every run switch would silently discard their arrangement. A UI
+      // redeploy bumps the version tag and re-seeds, so a changed default still lands.
+      // If localStorage is unavailable we fall back to always resetting, keeping the
+      // "3D panel must not be empty" guarantee.
+      const LICHTBLICK_LAYOUT_SEED_KEY = "npa.lichtblick.layout-seed";
+      function lichtblickLayoutSeedTag() {
+        const meta = document.querySelector("meta[name='npa-ui-version']");
+        return String((meta && meta.getAttribute("content")) || "0");
+      }
+      function lichtblickNeedsLayoutSeed() {
+        try {
+          return window.localStorage.getItem(LICHTBLICK_LAYOUT_SEED_KEY) !== lichtblickLayoutSeedTag();
+        } catch (_e) {
+          return true;
+        }
+      }
+      function markLichtblickLayoutSeeded() {
+        try {
+          window.localStorage.setItem(LICHTBLICK_LAYOUT_SEED_KEY, lichtblickLayoutSeedTag());
+        } catch (_e) { /* ignore */ }
+      }
+      function resetLichtblickLayoutStorage() {
+        try { window.localStorage.removeItem("studio.profile-data"); } catch (_e) { /* ignore */ }
+        try { window.localStorage.removeItem("studio.layout"); } catch (_e) { /* ignore */ }
+        return new Promise((resolve) => {
+          let settled = false;
+          const finish = () => { if (!settled) { settled = true; resolve(); } };
+          try {
+            const req = window.indexedDB.deleteDatabase("lichtblick-layouts");
+            req.onsuccess = finish;
+            req.onerror = finish;
+            req.onblocked = finish;
+          } catch (_e) { finish(); }
+          setTimeout(finish, 1500);
+        });
+      }
+      let lichtblickResetInFlight = null;
+      function mountLichtblickIframe(simViz) {
+        const iframe = document.getElementById("lichtblickFrame");
+        if (!iframe) return;
+        const placeholder = document.getElementById("lichtblickPlaceholder");
+        const ready = Boolean(simViz && (simViz.lichtblick_ready || simViz.mcap_uri));
+        const src = lichtblickIframeUrlFor(simViz);
+        if (iframe.getAttribute("src") !== src) {
+          if (lichtblickNeedsLayoutSeed()) {
+            // Neutralize the frame so Lichtblick releases its IndexedDB handle, wipe the
+            // pre-injection layout so the injected default wins, then mount the source.
+            try { iframe.setAttribute("src", "about:blank"); } catch (_e) { /* ignore */ }
+            lichtblickResetInFlight = resetLichtblickLayoutStorage().then(() => {
+              markLichtblickLayoutSeeded();
+              iframe.setAttribute("src", src);
+            });
+          } else {
+            // Already seeded: keep whatever layout is stored (ours, or the user's own
+            // arrangement) and just point the viewer at the new recording.
+            iframe.setAttribute("src", src);
+          }
+        }
+        lichtblickIframeLoaded = true;
+        if (placeholder) placeholder.hidden = ready;
+      }
+      async function ensureLichtblickForActiveRun() {
+        // Load the active run's reports/sim2real.mcap into the embed. The .mcap is one
+        // of many artifacts (easy to miss in the list), so the Lichtblick tab/reload
+        // finds and loads it directly instead of showing an empty viewer.
+        if (currentLichtblickSimViz && currentLichtblickSimViz.lichtblick_ready) {
+          mountLichtblickIframe(currentLichtblickSimViz);
+          return;
+        }
+        const pick = (id) => { const el = document.getElementById(id); return el ? String(el.value || "").trim() : ""; };
+        const rid = String(activeRunId || "").trim() || pick("runIdSelect") || pick("runIdInput");
+        if (!rid) {
+          mountLichtblickIframe(currentLichtblickSimViz || {});
+          setStatus("Select a run to view its MCAP in Lichtblick.");
+          return;
+        }
+        setStatus("Loading MCAP for " + rid + "…");
+        let data = null;
+        try {
+          data = await loadJson("/api/artifacts/run/" + encodeURIComponent(rid));
+        } catch (err) {
+          mountLichtblickIframe(currentLichtblickSimViz || {});
+          setStatus("Could not list artifacts for " + rid);
+          return;
+        }
+        const arts = (data && data.artifacts) || [];
+        const mcap =
+          arts.find((a) => String(a && a.render) === "mcap") ||
+          arts.find((a) => String((a && a.key) || "").toLowerCase().endsWith(".mcap"));
+        if (mcap && mcap.key) {
+          await loadArtifact({ run_id: rid, key: String(mcap.key), s3_uri: String(mcap.s3_uri || "") });
+        } else {
+          mountLichtblickIframe(currentLichtblickSimViz || {});
+          setStatus("No sim2real.mcap artifact for " + rid + " (run the pipeline with NPA_SIM2REAL_MCAP on).");
+        }
+      }
+      async function openLichtblickTab() {
+        setRenderMode("lichtblick");
+        await ensureLichtblickForActiveRun();
+        const url = lichtblickIframeUrlFor(currentLichtblickSimViz || {});
+        if (url && url !== "/lichtblick/") window.open(url, "_blank", "noopener");
+        return false;
+      }
+      async function reloadLichtblickViewer() {
+        setRenderMode("lichtblick");
+        await ensureLichtblickForActiveRun();
+        setStatus("Reloaded Lichtblick data");
       }
       async function authenticatedPreviewObjectUrl(previewUrl, host) {
         const resp = await fetchWithTimeout(previewUrl, { credentials: "include" }, 60000);
@@ -4085,6 +4317,14 @@
         const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
         const downloadUrl = String((simViz && simViz.artifact_download_url) || previewUrl || "");
         const safeRender = String(render || "");
+        if (safeRender === "mcap" || safeRender === "lichtblick") {
+          // MCAP renders in the embedded Lichtblick pane, not the media/host preview;
+          // handle it here too so refresh()/status re-applies keep the Lichtblick view.
+          hideArtifactPreview();
+          setRenderMode("lichtblick");
+          mountLichtblickIframe(simViz);
+          return;
+        }
         if (safeRender === "video") setRenderMode("video");
         else if (safeRender === "image") setRenderMode("image");
         else if (safeRender === "json" || safeRender === "text" || safeRender === "download") setRenderMode("data");
@@ -5034,8 +5274,8 @@
           const s3uri = String(item.s3_uri || "");
           const basename = key.split("/").pop() || key;
           const isPreferred = preferredKey && preferredKey === key;
-          const actionLabel = render === "rerun" ? "View in Rerun" : (render === "video" ? "Play" : "Load");
-          const primary = (render === "rerun" || render === "video") ? " btn-primary" : "";
+          const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : (render === "video" ? "Play" : "Load"));
+          const primary = (render === "rerun" || render === "mcap" || render === "video") ? " btn-primary" : "";
           return (
             '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '">' +
             '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
@@ -5304,6 +5544,7 @@
         } else {
           node.textContent = "Rendering: no run artifact loaded yet.";
         }
+        applyLichtblickSimViz(simViz);
       }
       async function downloadArtifact(runId, key, s3uri, name) {
         // Every artifact is directly downloadable: stream it from S3 through the
@@ -5373,6 +5614,10 @@
             rerunIframeLoaded = false;
             await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
           }
+        } else if (render === "mcap" || render === "lichtblick") {
+          hideArtifactPreview();
+          setRenderMode("lichtblick");
+          mountLichtblickIframe(simViz);
         } else {
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
           await showArtifactPreview(simViz, render);
@@ -5539,7 +5784,16 @@
       }
       async function refresh() {
         try {
-          const session = await loadJson("/api/session");
+          const statusPath = activeRunId
+            ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
+            : "/api/sim-viz/status";
+          // Fetch independent state in parallel to cut UI-load and per-action latency
+          // (was three sequential round-trips: session -> sim-assets -> sim-viz status).
+          const [session, assets, simViz] = await Promise.all([
+            loadJson("/api/session"),
+            loadJson("/api/sim-assets"),
+            loadJson(statusPath),
+          ]);
           if (session && session.llm) {
             const currentModel = String(
               (session.llm.model || session.llm.default_model || session.llm.default || "")
@@ -5558,11 +5812,6 @@
               setWorkflowYaml(draftYaml, session.workflow_draft.validation || {});
             }
           }
-          const assets = await loadJson("/api/sim-assets");
-          const statusPath = activeRunId
-            ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
-            : "/api/sim-viz/status";
-          const simViz = await loadJson(statusPath);
           activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
           updateRunSelector(simViz);
           await loadRunDetails(activeRunId);
@@ -5572,14 +5821,9 @@
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
           updateRenderedDataSummary(simViz);
           activeArtifactRender = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
-          const cta = document.getElementById("simvizCta");
           const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
-          if (cta) {
-            cta.hidden = ready && rerunIframeLoaded;
-            if (!ready) {
-              cta.textContent = "No run-specific Rerun recording yet. Use the Run status/logs panel below for stage progress and result.";
-            }
-          }
+          lastSimVizStatus = simViz || lastSimVizStatus;
+          updateSimvizCta(simViz);
           if (activeArtifactRender && activeArtifactRender !== "rerun") {
             // Keep the Rerun iframe mounted under the media pane; authenticated blob
             // preview handles basic-auth so <video>/<img> can play without 401s.
@@ -6145,6 +6389,17 @@
         }
       }
       async function ensureFrankaRerunLoaded() {
+        // Dedup concurrent callers (background boot mount + a Viewer-tab click) so the
+        // wasm viewer is never mounted twice.
+        if (rerunEnsureInFlight) return rerunEnsureInFlight;
+        rerunEnsureInFlight = _ensureFrankaRerunLoadedInner();
+        try {
+          return await rerunEnsureInFlight;
+        } finally {
+          rerunEnsureInFlight = null;
+        }
+      }
+      async function _ensureFrankaRerunLoadedInner() {
         // Mobile browsers can't run the Rerun wasm 3D viewer — never mount it;
         // show a notice that points to the Voxel51 data view instead.
         if (isMobileLayout()) {
@@ -6212,15 +6467,28 @@
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
           } else {
-            // Finish asset warm + session work first, then mount under the cover.
-            await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
+            // UI is usable once session + refresh + artifact discovery finish, so mark
+            // Ready before the heavy Rerun wasm warm+mount (Chat/Lichtblick are usable
+            // immediately). The Rerun cover logic still runs synchronously below so its
+            // clear-when-canvas-ready behavior stays deterministic.
+            await Promise.all([refreshPromise, artifactsPromise]);
+            setStatus("Ready");
+            showToast("Workbench ready", "success");
+            // Pre-warm the Lichtblick SPA bundle so opening it later only swaps the data
+            // source (no first-load app download). Best-effort; needs the sidecar.
+            const lb = document.getElementById("lichtblickFrame");
+            if (lb && (!lb.getAttribute("src") || lb.getAttribute("src") === "about:blank")) {
+              lb.setAttribute("src", "/lichtblick/");
+            }
+            await warmPromise;
             const mountMode = await ensureFrankaRerunLoaded();
             const iframe = document.getElementById("rerunFrame");
-            if (mountMode === "placeholder") {
-              // Nothing mounted (viewer just shows artifacts) — drop the cover now.
+            if (["media", "pending-run", "placeholder", "mobile"].includes(mountMode)) {
+              // No Rerun canvas to wait for (non-Rerun artifact, run not ready, no run,
+              // or mobile) — clear the cover now instead of stalling on it for 45s.
               hideRerunBundleCover();
             } else if (!safeHideRerunBundleCover(iframe)) {
-              // Background uncover waits for non-blank canvas — never flash Rerun splash.
+              // Background uncover waits for a non-blank canvas — never flash Rerun splash.
               showRerunBundleCover("Opening viewer…", "Almost ready…");
               scheduleRerunBundleUncover(iframe).catch(() => {
                 safeHideRerunBundleCover(iframe, { force: true });
@@ -6231,8 +6499,6 @@
                 }
               }, 45000);
             }
-            setStatus("Ready");
-            showToast(mountMode === "demo" ? "Franka demo ready in Rerun" : "Workbench ready", "success");
           }
         } catch (err) {
           console.warn("franka auto-load failed", err);
@@ -6284,6 +6550,13 @@
           rerunViewerLooksDisplayReady,
           rerunViewerShowsBundleSplash,
           rerunViewerHasNonBlankCanvas,
+          applyLichtblickSimViz,
+          mountLichtblickIframe,
+          lichtblickIframeUrlFor,
+          pinLichtblickDsToSameOrigin,
+          lichtblickNeedsLayoutSeed,
+          markLichtblickLayoutSeeded,
+          LICHTBLICK_LAYOUT_SEED_KEY,
         };
         try {
           wireUi();

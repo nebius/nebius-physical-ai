@@ -15,9 +15,12 @@ from typing import Any
 # or `container_registry` in ~/.npa/config.yaml.
 DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
 DEFAULT_CONTAINER_REGISTRY = f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
-# Backup registry (us-central1) used for failover when the primary is
-# unavailable. Override with NPA_BACKUP_REGISTRY.
-BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/registry-u00gwj4vqcp98k7ph6"
+# Mirror registry (us-central1) used for region-agnostic failover: every tool
+# image is mirrored to both this and the primary (eu-north1) registry, so a pull
+# succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
+# cannot reach the cross-region eu-north1 registry, and vice versa. A registry
+# path is a public locator, not a credential. Override with NPA_BACKUP_REGISTRY.
+BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
@@ -39,9 +42,40 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
     "loop-eval": "npa-loop-eval",
     "rerun-viewer": "npa-rerun-viewer",
+    "lichtblick": "npa-lichtblick",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
 }
+
+# Tools whose built image bakes NVIDIA Omniverse Kit (Isaac Sim) binaries. Isaac
+# Sim's source is Apache-2.0, but the shipped binary bundles the Omniverse Kit
+# SDK + NVIDIA assets (NVIDIA-proprietary). They are fine to pull inside the
+# owning org (internal-R&D use) and to build-your-own via your own NGC/EULA, but
+# they must NEVER be published to a public/anonymous registry — that would make
+# us the third-party redistributor of Omniverse Kit (needs an NVIDIA AI
+# Enterprise license). Kept in sync with
+# npa/docker/workbench/packaging-contract.yaml (redistribution: restricted) by
+# npa/tests/deploy/test_public_publish.py. ``sonic`` covers all sonic variants
+# (0.1.2, 0.1.2-k8s-runtime) and the derived ``npa-sonic-mujoco`` image.
+OMNIVERSE_RESTRICTED_TOOLS = frozenset({"isaac-lab", "sonic", "groot"})
+
+# Images built FROM a restricted tool image, so they inherit the baked Omniverse
+# Kit and the same no-public-redistribution rule. They are not separate
+# CONTAINER_IMAGE_NAMES entries (they are variants of their parent tool), so they
+# never reach publicly_publishable_tools(); they are listed here so operator-facing
+# output can name every excluded image without hardcoding it at the call site.
+OMNIVERSE_RESTRICTED_DERIVED_IMAGES = frozenset({"sonic-mujoco"})
+
+# Public mirror registry for the OSS-redistributable image subset. Nebius CR does
+# NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
+# grant, so making images pullable by any Nebius tenant (or anyone) means
+# mirroring the publicly_publishable_tools() set to a public-capable registry.
+# GHCR is the default (public, anonymous pull, native to the GitHub org). A
+# registry path is a public locator, not a credential. Override with
+# NPA_PUBLIC_REGISTRY; consumers in any tenant pull the OSS images by setting
+# NPA_REGISTRY to this value.
+PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
+DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
 SUPPORTED_TOOL_VERSIONS = {
     # Default LeRobot pin. Selectable additional versions: see
@@ -73,6 +107,8 @@ SUPPORTED_TOOL_VERSIONS = {
     # from the registry.
     "loop-eval": "0.1.3-genuine-sm120",
     "rerun-viewer": "0.31.4",
+    # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
+    "lichtblick": "1.26.0",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     "nebius-cli": "0.12.192",
@@ -243,11 +279,16 @@ def container_image_candidates(
     tag: str | None = None,
     gpu_target: str | None = None,
     image_variant: str | None = None,
+    preferred_region: str | None = None,
 ) -> list[str]:
-    """Return image refs to try in order: primary first, then the backup registry.
+    """Return image refs to try in order across both mirror registries.
 
-    Callers that support pull failover should iterate these. When the primary is
-    explicitly overridden, the backup is still appended unless it is identical.
+    Callers that support pull failover should iterate these so a pull works
+    region-agnostically: every image is mirrored to both registries, and a caller
+    that cannot reach one region (cross-region 403, or an identity without read on
+    the other project's registry) falls through to the other. ``preferred_region``
+    reorders so the caller's local-region registry (``cr.<region>.nebius.cloud``)
+    is tried first, avoiding a guaranteed-denied cross-region attempt.
     """
     primary = container_image_for_tool(
         tool, registry=registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
@@ -260,7 +301,43 @@ def container_image_candidates(
         )
         if backup != primary:
             candidates.append(backup)
+    region = (preferred_region or "").strip().lower()
+    if region:
+        host_prefix = f"cr.{region}.nebius.cloud/"
+        local = [ref for ref in candidates if ref.startswith(host_prefix)]
+        other = [ref for ref in candidates if not ref.startswith(host_prefix)]
+        candidates = local + other
     return candidates
+
+
+def public_container_registry() -> str:
+    """Return the public mirror registry: ``NPA_PUBLIC_REGISTRY`` or the default."""
+    return os.environ.get(PUBLIC_CONTAINER_REGISTRY_ENV, "").strip() or DEFAULT_PUBLIC_CONTAINER_REGISTRY
+
+
+def is_publicly_redistributable(tool: str) -> bool:
+    """Whether a tool image may be published to a public/anonymous registry.
+
+    ``False`` for images that bake NVIDIA Omniverse Kit (Isaac Sim); those are
+    licensed for internal-R&D / build-your-own use only (see
+    ``OMNIVERSE_RESTRICTED_TOOLS``).
+    """
+    return tool not in OMNIVERSE_RESTRICTED_TOOLS
+
+
+def omniverse_restricted_image_names() -> list[str]:
+    """Return every image name excluded from public registries (tools + variants)."""
+    return sorted(OMNIVERSE_RESTRICTED_TOOLS | OMNIVERSE_RESTRICTED_DERIVED_IMAGES)
+
+
+def publicly_publishable_tools() -> list[str]:
+    """Return the workbench tools that are OSS-redistributable to a public registry.
+
+    Excludes the Omniverse-Kit-bearing tools (``isaac-lab``, ``sonic``,
+    ``groot``); publishing those publicly would redistribute NVIDIA-proprietary
+    Omniverse Kit to third parties.
+    """
+    return sorted(tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool))
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:

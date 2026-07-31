@@ -1,0 +1,146 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Zero-GPU reference for REAL runtime control flow.
+#
+# `refine` is a bounded loop (`loop.max` iterations, `until: promote_checkpoint`)
+# whose body captions a batch with Token Factory, scores it with the hosted VLM,
+# and writes a decision artifact from the REAL score (`grade_gate` compares the
+# score against `config.grade_threshold`).
+#
+#   * With --runtime the orchestrator submits each stage, waits for it to reach a
+#     terminal state, reads s3://.../gate/decision.json, and EARLY-EXITS the loop
+#     the moment the gate promotes. `route` then reads the same decision artifact
+#     and branches (goto) to `publish` or `escalate`.
+#   * Without --runtime nothing changes: the flat plan is rendered with
+#     --assume-decision (promote_checkpoint = one iteration, loop_back = the full
+#     budget), exactly as before.
+#
+# Two live runs of this one spec prove both halves:
+#   --var grade_threshold=0.0   -> promote on iteration 1 (early exit -> publish)
+#   --var grade_threshold=1.01  -> loop_back every iteration (full budget -> escalate)
+
+metadata:
+  name: token-factory-gate-loop
+  description: >
+    Runtime gate loop (zero GPU) — caption a batch, score it with the hosted VLM,
+    write a threshold decision from the real score, and either early-exit the
+    bounded loop and publish, or exhaust the budget and escalate.
+
+config:
+  bucket: example-bucket
+  prefix: "token-factory-gate-loop/{{run.id}}"
+  workflow_name: token-factory-gate-loop
+
+  max_iterations: 3
+  # Score >= grade_threshold promotes; anything else loops back.
+  grade_threshold: "0.5"
+  vlm_backend: api
+  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  max_images: "4"
+  max_tokens: "128"
+
+  images_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/"
+  captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/captions/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json"
+  run_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  insights_store_uri: "s3://{{config.bucket}}/{{config.prefix}}/insights/"
+  dashboard_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/promoted/"
+  shortfall_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/shortfall/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: refine
+
+states:
+  refine:
+    description: Bounded refine loop — caption, score, gate; exit as soon as it promotes.
+    loop:
+      max: "{{config.max_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - caption-batch
+      - score-batch
+      - quality-gate
+    next: route
+
+  caption-batch:
+    description: Caption the batch with the hosted Token Factory vision model.
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    outputs:
+      - uri: "{{config.captions_uri}}captions.json"
+        schema: npa.token_factory.captions.v1
+
+  score-batch:
+    description: Score the batch with the real VLM eval tool (hosted API backend).
+    needs: [caption-batch]
+    toolRef: workbench.vlm_eval.run
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.workbench.rollout_set.v1
+    outputs:
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+        schema: npa.workbench.vlm_eval.report.v1
+
+  quality-gate:
+    description: >
+      Real gate — read the VLM score and write promote_checkpoint / loop_back.
+      The enclosing loop reads this artifact from S3 after every iteration
+      (loop.until: promote_checkpoint), so a promoting score ends the run early.
+    writesDecision: true
+    needs: [score-batch]
+    resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import grade_gate;
+        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', '{{config.grade_threshold}}')"
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+
+  route:
+    description: >
+      Aggregate the run's artifacts, then branch on the same decision artifact:
+      promote_checkpoint publishes the rollup, loop_back (budget exhausted)
+      escalates with a shortfall report.
+    needs: [refine]
+    toolRef: workbench.insights.ingest_run
+    resources: cpu
+    outputs:
+      - uri: "{{config.insights_store_uri}}"
+        schema: npa.insights.store.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: publish
+      - when: loop_back
+        goto: escalate
+
+  publish:
+    description: Promoted — render the rollup dashboard for the accepted batch.
+    needs: [route]
+    toolRef: workbench.insights.dashboard
+    resources: cpu
+    outputs:
+      - uri: "{{config.dashboard_uri}}"
+        schema: npa.insights.dashboard.v1
+    terminal: true
+
+  escalate:
+    description: Budget exhausted — render the same rollup under a shortfall prefix.
+    needs: [route]
+    toolRef: workbench.insights.dashboard
+    resources: cpu
+    params:
+      dashboard_uri: "{{config.shortfall_uri}}"
+    outputs:
+      - uri: "{{config.shortfall_uri}}"
+        schema: npa.insights.dashboard.v1
+    terminal: true
