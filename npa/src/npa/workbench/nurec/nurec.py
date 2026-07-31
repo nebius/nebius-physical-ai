@@ -210,6 +210,8 @@ class NurecConfig:
     nre_run_id: str = DEFAULT_NRE_RUN_ID
     config_name: str = DEFAULT_CONFIG_NAME
     ffmpeg_exe: str = ""
+    poses_component_group: str = ""
+    reference_camera: str = ""
     mode: str = DEFAULT_MODE
     max_epochs: int = DEFAULT_MAX_EPOCHS
     world_size: int = DEFAULT_WORLD_SIZE
@@ -241,6 +243,8 @@ class NurecConfig:
         nre_run_id: str = "",
         config_name: str = "",
         ffmpeg_exe: str = "",
+        poses_component_group: str = "",
+        reference_camera: str = "",
         mode: str = "",
         max_epochs: int | None = None,
         world_size: int | None = None,
@@ -285,6 +289,10 @@ class NurecConfig:
                 config_name or env.get("NPA_NUREC_CONFIG_NAME", "") or DEFAULT_CONFIG_NAME
             ),
             ffmpeg_exe=ffmpeg_exe or env.get("NPA_NUREC_FFMPEG_EXE", ""),
+            poses_component_group=(
+                poses_component_group or env.get("NPA_NUREC_POSES_COMPONENT_GROUP", "")
+            ),
+            reference_camera=reference_camera or env.get("NPA_NUREC_REFERENCE_CAMERA", ""),
             mode=mode or env.get("NPA_NUREC_MODE", "") or DEFAULT_MODE,
             max_epochs=(
                 max_epochs
@@ -432,6 +440,10 @@ def build_nre_train_args(
     # surprising, expensive default.
     if config.max_epochs > 0:
         args.append(f"trainer.max_epochs={config.max_epochs}")
+    # A derived pose set lives in its own NCore component instance; NRE selects it
+    # with this override (see npa.workbench.nurec.ncore_rig).
+    if config.poses_component_group:
+        args.append(f"dataset.poses_component_group={config.poses_component_group}")
     if config.precision:
         args.append(f"trainer.precision={config.precision}")
     if config.camera_ids:
@@ -662,6 +674,9 @@ class NurecFetchResult:
     camera_ids: tuple[str, ...] = ()
     lidar_ids: tuple[str, ...] = ()
     colmap_dir: str = ""
+    poses_component_group: str = ""
+    reference_camera: str = ""
+    rig_derivation: dict[str, Any] = field(default_factory=dict)
     output_uri: str = ""
     errors: tuple[str, ...] = ()
 
@@ -678,6 +693,9 @@ class NurecFetchResult:
             "camera_ids": list(self.camera_ids),
             "lidar_ids": list(self.lidar_ids),
             "colmap_dir": self.colmap_dir,
+            "poses_component_group": self.poses_component_group,
+            "reference_camera": self.reference_camera,
+            "rig_derivation": dict(self.rig_derivation),
             "output_uri": self.output_uri,
             "errors": list(self.errors),
         }
@@ -1045,9 +1063,16 @@ def fetch_nurec_dataset(
     runner: RunCallable | None = None,
     force: bool = False,
     with_colmap: bool = False,
+    derive_rig: bool = True,
     timeout: float | None = None,
 ) -> NurecFetchResult:
-    """Download and unpack the real NCore V4 shards for the configured scene."""
+    """Download and unpack the real NCore V4 shards for the configured scene.
+
+    When ``derive_rig`` is set (the default) and the sequence has no
+    ``rig -> world`` edge, a derived sequence carrying one is written and returned
+    as ``ncore_json`` — without it NRE 26.04 cannot load a COLMAP-derived capture
+    at all (see :mod:`npa.workbench.nurec.ncore_rig`).
+    """
     env = dict(environ if environ is not None else os.environ)
     run = runner or subprocess.run
     cache = config.resolved_cache_dir
@@ -1172,18 +1197,56 @@ def fetch_nurec_dataset(
 
     cameras, lidars = ncore_sensor_ids(ncore_json)
     shards = list(scene_dir.rglob("*.itar"))
+
+    resolved_json = ncore_json
+    poses_group = ""
+    reference_camera = ""
+    rig_derivation: dict[str, Any] = {}
+    if derive_rig:
+        from npa.workbench.nurec.ncore_rig import derive_rig_poses
+
+        rig_result = derive_rig_poses(
+            ncore_json,
+            output_dir=cache / "ncore-rig" / scene_dir.name,
+            reference_camera=config.reference_camera,
+        )
+        rig_derivation = rig_result.as_dict()
+        if not rig_result.ok:
+            return NurecFetchResult(
+                ok=False,
+                dataset_id=config.dataset_id,
+                scene=config.scene,
+                variant=config.variant,
+                scene_dir=str(scene_dir),
+                ncore_json=str(ncore_json),
+                shard_count=len(shards),
+                bytes_downloaded=bytes_downloaded,
+                camera_ids=cameras,
+                lidar_ids=lidars,
+                colmap_dir=colmap_dir,
+                rig_derivation=rig_derivation,
+                errors=rig_result.errors,
+            )
+        if not rig_result.already_present:
+            resolved_json = Path(rig_result.output_meta)
+            poses_group = rig_result.poses_component_group
+            reference_camera = rig_result.reference_camera
+
     return NurecFetchResult(
         ok=True,
         dataset_id=config.dataset_id,
         scene=config.scene,
         variant=config.variant,
         scene_dir=str(scene_dir),
-        ncore_json=str(ncore_json),
+        ncore_json=str(resolved_json),
         shard_count=len(shards),
         bytes_downloaded=bytes_downloaded,
         camera_ids=cameras,
         lidar_ids=lidars,
         colmap_dir=colmap_dir,
+        poses_component_group=poses_group,
+        reference_camera=reference_camera,
+        rig_derivation=rig_derivation,
     )
 
 
@@ -1359,10 +1422,7 @@ def reconstruct_scene(
         )
 
     run_dir = resolve_nre_run_dir(out_dir, config.nre_run_id)
-    usdz = _first_existing(
-        run_dir / "usd-out" / "last.usdz",
-        *sorted(run_dir.rglob("*.usdz")),
-    )
+    usdz = latest_usdz(run_dir)
     parsed = _first_existing(run_dir / "config" / "parsed.yaml", *sorted(run_dir.rglob("parsed.yaml")))
     metrics_path = _first_existing(
         run_dir / "val" / "metrics.yaml", *sorted(run_dir.rglob("metrics.yaml"))
@@ -1442,6 +1502,26 @@ def resolve_nre_run_dir(out_dir: Path | str, preferred: str = DEFAULT_NRE_RUN_ID
     if not runs:
         return candidate
     return max(runs, key=lambda path: path.stat().st_mtime)
+
+
+def latest_usdz(run_dir: Path | str) -> Path | None:
+    """Return the most recent renderable USDZ artifact in an NRE run directory.
+
+    Upstream docs describe ``<run>/usd-out/last.usdz``, but nre-ga 26.04 actually
+    writes one artifact per checkpoint as ``<run>/artifacts/<step>.usdz``. Both
+    layouts are handled, and the NEWEST artifact wins — picking the first match
+    alphabetically would ship the 1000-step preview instead of the trained scene.
+    """
+    root = Path(run_dir)
+    documented = root / "usd-out" / "last.usdz"
+    if documented.is_file():
+        return documented
+    if not root.is_dir():
+        return None
+    candidates = [path for path in root.rglob("*.usdz") if path.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: (path.stat().st_mtime, path.name))
 
 
 def _first_existing(*candidates: Path | None) -> Path | None:

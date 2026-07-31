@@ -210,6 +210,20 @@ def fetch_cmd(
         "--with-colmap/--no-with-colmap",
         help="Also download the COLMAP copy of the capture (poses + sparse cloud).",
     ),
+    derive_rig: bool = typer.Option(
+        True,
+        "--derive-rig/--no-derive-rig",
+        help=(
+            "Derive the rig->world pose edge NRE requires when the sequence has "
+            "none (object-centric captures). Without it NRE cannot load the data."
+        ),
+    ),
+    reference_camera: str = typer.Option(
+        "",
+        "--reference-camera",
+        envvar="NPA_NUREC_REFERENCE_CAMERA",
+        help="Camera whose trajectory becomes the rig trajectory. Default: the longest.",
+    ),
     force: bool = typer.Option(
         False, "--force", help="Re-download and re-extract even when the cache is populated."
     ),
@@ -228,8 +242,11 @@ def fetch_cmd(
         variant=variant,
         cache_dir=cache_dir,
         hf_token_env=hf_token_env,
+        reference_camera=reference_camera,
     )
-    result = fetch_nurec_dataset(config, force=force, with_colmap=with_colmap)
+    result = fetch_nurec_dataset(
+        config, force=force, with_colmap=with_colmap, derive_rig=derive_rig
+    )
     payload = result.as_dict()
     if result.ok and output_uri:
         manifest = config.resolved_cache_dir / "manifest.json"
@@ -265,6 +282,12 @@ def reconstruct_cmd(
     ),
     mode: str = typer.Option(
         "", "--mode", envvar="NPA_NUREC_MODE", help=f"train, val, or trainval (default {DEFAULT_MODE})."
+    ),
+    poses_component_group: str = typer.Option(
+        "",
+        "--poses-component-group",
+        envvar="NPA_NUREC_POSES_COMPONENT_GROUP",
+        help="NCore poses component group to select (e.g. the derived rig group).",
     ),
     out_dir: Path | None = typer.Option(
         None, "--out-dir", envvar="NPA_NUREC_OUT", help="NRE output root."
@@ -347,6 +370,7 @@ def reconstruct_cmd(
         out_dir=out_dir,
         config_name=config_name,
         mode=mode,
+        poses_component_group=poses_component_group,
         max_epochs=max_epochs,
         world_size=world_size,
         precision=precision,
@@ -619,15 +643,12 @@ def _discover_ncore_json(config: NurecConfig) -> str:
 
 
 def _discover_usdz(config: NurecConfig) -> str:
-    """Find the USDZ the reconstruct stage produced under the NRE output root."""
-    from npa.workbench.nurec.nurec import resolve_nre_run_dir
+    """Find the newest USDZ the reconstruct stage produced under the NRE output root."""
+    from npa.workbench.nurec.nurec import latest_usdz, resolve_nre_run_dir
 
     run_dir = resolve_nre_run_dir(config.resolved_out_dir, config.nre_run_id)
-    preferred = run_dir / "usd-out" / "last.usdz"
-    if preferred.is_file():
-        return str(preferred)
-    candidates = sorted(run_dir.rglob("*.usdz")) if run_dir.is_dir() else []
-    return str(candidates[-1]) if candidates else ""
+    found = latest_usdz(run_dir)
+    return str(found) if found else ""
 
 
 def _publish_reconstruction(result: Any, output_uri: str) -> str:
