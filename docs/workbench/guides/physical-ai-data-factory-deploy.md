@@ -239,7 +239,7 @@ npa provision-if-absent --project <alias>            # real
 ```
 
 The default cluster it provisions is the small FTUE shape — **1× GPU node
-(`gpu-rtx6000`, `1gpu-24vcpu-218gb`) + 1× CPU node (`cpu-d3`, `4vcpu-16gb`),
+(`gpu-rtx6000`, `1gpu-24vcpu-218gb`) + 1× CPU node (`cpu-d3`, `8vcpu-32gb`),
 Shared Filesystem OFF**. The Data Factory passes stage I/O over S3 URIs, so it
 needs **no** Shared Filesystem (and no SFS SSD quota). For a training farm or a
 shared `/mnt/data`, opt in via `deploy/cluster` tfvars/flags (see

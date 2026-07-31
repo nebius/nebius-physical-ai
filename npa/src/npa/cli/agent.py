@@ -8496,6 +8496,16 @@ def deploy_cmd(
         "--no-public-https",
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
+    wait_ssh: bool = typer.Option(
+        True,
+        "--wait-ssh/--no-wait-ssh",
+        help=(
+            "Wait for the new VM's SSH and cloud-init before finishing (default). "
+            "--no-wait-ssh keeps the VM when this machine cannot reach a fresh "
+            "public IP on tcp/22 (VPN / split tunnel): it still bootstraps, but "
+            "npa cannot verify it, so check https://<ip>/healthz yourself."
+        ),
+    ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
     # Same resolution as status/destroy: an omitted --project must mean the
@@ -8623,6 +8633,7 @@ def deploy_cmd(
         "ssh_user": ssh_user,
         "ssh_public_key_path": ssh_public_key_path,
         "enable_preemptible": "false",
+        "wait_for_ssh": "true" if wait_ssh else "false",
     }
     for item in tf_var:
         if "=" not in item:

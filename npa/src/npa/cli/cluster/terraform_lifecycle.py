@@ -839,20 +839,48 @@ _TERMINAL_NODE_GROUP_MARKERS = (
 )
 
 
+#: Status keys whose contents are diagnostics worth printing. Once one matches,
+#: every string underneath it counts: Nebius reports the real reason as
+#: ``status.events[].last_occurrence``, whose own key says nothing.
+_DIAGNOSTIC_KEY_TOKENS = ("error", "failure", "message", "condition", "reason", "state", "event")
+
+
+def _status_texts(value: Any, *, key: str = "", inherited: bool = False) -> list[str]:
+    """Return diagnostic strings from a node-group status, nested ones included.
+
+    Scanning only top-level keys missed every QuotaFailure — the message the whole
+    watcher exists to surface — because it arrives inside ``events[]``.
+    """
+    keep = inherited or any(token in key.lower() for token in _DIAGNOSTIC_KEY_TOKENS)
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for child_key, child in value.items():
+            texts.extend(_status_texts(child, key=str(child_key), inherited=keep))
+        return texts
+    if isinstance(value, list):
+        texts = []
+        for child in value:
+            texts.extend(_status_texts(child, key=key, inherited=keep))
+        return texts
+    # Only strings: counts and timestamps under an events entry are not reasons.
+    if keep and isinstance(value, str) and value.strip():
+        return [value]
+    return []
+
+
 def terminal_node_group_failure(status: dict[str, Any]) -> str:
-    """Return the refusal text when *status* shows a failure retrying cannot fix."""
-    for key, value in (status or {}).items():
-        if not value or not any(
-            token in str(key).lower()
-            for token in ("error", "failure", "message", "condition", "reason", "state")
-        ):
-            continue
-        text = str(value)
-        lowered = text.lower()
-        for marker in _TERMINAL_NODE_GROUP_MARKERS:
-            if marker in lowered:
-                return text
-    return ""
+    """Return the refusal text when *status* shows a failure retrying cannot fix.
+
+    Several fields can match (an event's ``type`` as well as its
+    ``last_occurrence``); report the most descriptive one, since it is what the
+    operator has to act on.
+    """
+    matches = [
+        text
+        for text in _status_texts(status or {})
+        if any(marker in text.lower() for marker in _TERMINAL_NODE_GROUP_MARKERS)
+    ]
+    return max(matches, key=len) if matches else ""
 
 
 class _NodeGroupWatcher:
@@ -958,15 +986,11 @@ def _format_node_group_status(status: dict[str, Any]) -> str:
     counts = (
         f"{status.get('ready_node_count', '?')}/{status.get('target_node_count', '?')} ready"
     )
-    # The failure shape is not part of the documented schema (QuotaFailure arrives
-    # as a message/condition), so surface anything that looks like one verbatim.
-    details = [
-        f"{key}={value}"
-        for key, value in sorted(status.items())
-        if value
-        and any(token in key.lower() for token in ("error", "failure", "message", "condition", "reason"))
-    ]
-    return ", ".join([f"{state} ({counts})", *details])
+    # The failure shape is not part of the documented schema — QuotaFailure arrives
+    # under status.events[].last_occurrence — so surface every nested diagnostic
+    # string verbatim rather than guessing at a field name.
+    details = [text for text in _status_texts({k: v for k, v in status.items() if k != "state"})]
+    return ", ".join([f"{state} ({counts})", *dict.fromkeys(details)])
 
 
 def _echo_apply_recovery(tf_dir: Path, tfvars: dict[str, Any], interrupted: bool) -> None:

@@ -174,3 +174,9 @@ variable "fiftyone_version" {
   type        = string
   default     = "1.15.0"
 }
+
+variable "wait_for_ssh" {
+  description = "Wait for the VM's SSH and cloud-init before finishing the apply. Set false when this machine cannot reach a fresh public IP on tcp/22 (corporate VPN / split tunnel): the VM still bootstraps, but the deploy cannot verify it and rolls nothing back."
+  type        = bool
+  default     = true
+}

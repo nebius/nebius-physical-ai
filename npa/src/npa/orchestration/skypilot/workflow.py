@@ -574,6 +574,8 @@ def _controller_health_remedy(detail: str) -> str:
             "`sky status` (SkyPilot 0.12 has no `--all` for `sky status`).",
             "  - purge the stale controller: `sky down sky-jobs-controller-<id>` "
             "(it is recreated on the next launch).",
+            "  - if `sky status -r` still reports nothing useful, the API server is "
+            "holding the stale state: `sky api stop && sky api start`, then retry.",
             "  - target a specific context explicitly with "
             "`npa workbench workflow submit ... --infra k8s/<context>`.",
         ]

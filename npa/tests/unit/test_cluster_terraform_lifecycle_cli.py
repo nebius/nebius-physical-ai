@@ -836,6 +836,46 @@ def test_duplicate_cluster_guard_offers_adoption(monkeypatch, tmp_path: Path) ->
     assert "mk8scluster-live" in result.output
 
 
+def test_terminal_node_group_failure_reads_nested_events() -> None:
+    """Nebius reports QuotaFailure under status.events[].last_occurrence.
+
+    Regression: only top-level status keys were scanned, so the real reason never
+    printed and the apply was never cancelled — the watcher looked like it worked
+    while missing every actual refusal.
+    """
+    status = {
+        "state": "PROVISIONING",
+        "target_node_count": "1",
+        "ready_node_count": "0",
+        "events": [
+            {
+                "type": "QuotaFailure",
+                "last_occurrence": (
+                    "QuotaFailure: quota exceeded for compute.instance.gpu.rtx6000 in us-central1"
+                ),
+                "count": 12,
+            }
+        ],
+    }
+
+    assert "quota exceeded" in tf_mod.terminal_node_group_failure(status)
+    line = tf_mod._format_node_group_status(status)
+    assert "PROVISIONING (0/1 ready)" in line
+    assert "QuotaFailure: quota exceeded" in line
+
+
+def test_node_group_status_ignores_benign_nested_fields() -> None:
+    status = {
+        "state": "RUNNING",
+        "target_node_count": "2",
+        "ready_node_count": "2",
+        "events": [{"type": "Scaled", "last_occurrence": "node group scaled to 2"}],
+    }
+
+    assert tf_mod.terminal_node_group_failure(status) == ""
+    assert "scaled to 2" in tf_mod._format_node_group_status(status)
+
+
 def test_terminal_node_group_failure_detects_a_refusal() -> None:
     """QuotaFailure/no-capacity cannot be waited out; slow provisioning can."""
     assert (

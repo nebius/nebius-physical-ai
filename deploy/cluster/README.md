@@ -8,7 +8,9 @@ small FTUE / Physical AI Data Factory cluster**, not a training farm:
 
 - **1× GPU node** (`gpu-rtx6000`, preset `1gpu-24vcpu-218gb`) — a single RTX PRO
   6000 GPU.
-- **1× small CPU node** (`cpu-d3`, preset `4vcpu-16gb`) for CPU stages.
+- **1× CPU node** (`cpu-d3`, preset `8vcpu-32gb`) for CPU stages — big enough to
+  schedule the shipped workflows' CPU requests (the Physical AI Data Factory asks
+  for 4 CPU / 16Gi, which a 4vcpu-16gb node cannot fit after kubelet reserve).
 - NVIDIA GPU Operator through the upstream solution.
 - Nebius Network Operator through the upstream solution.
 - **Shared Filesystem OFF by default** (`enable_filestore = false`). npa.workflow

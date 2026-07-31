@@ -61,9 +61,9 @@ variable "cpu_nodes_platform" {
 }
 
 variable "cpu_nodes_preset" {
-  description = "CPU-only node preset."
+  description = "CPU-only node preset. Must leave room for the CPU stages of the shipped workflows after kubelet/system reserve: the Physical AI Data Factory asks for cpus=4 / memory=16Gi, which a 4vcpu-16gb node (about 3.9 CPU / 15Gi allocatable) can never schedule. Matches npa's own DEFAULT_CPU_NODE_GROUP_PRESET."
   type        = string
-  default     = "4vcpu-16gb"
+  default     = "8vcpu-32gb"
 }
 
 variable "gpu_nodes_count" {

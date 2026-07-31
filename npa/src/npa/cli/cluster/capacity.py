@@ -144,9 +144,13 @@ def gpu_quota_headroom(
         ],
     )
     limit = _int_or_none((payload.get("spec") or {}).get("limit"))
-    usage = _int_or_none((payload.get("status") or {}).get("usage"))
-    if limit is None or usage is None:
+    if limit is None:
         return None
+    # Nebius omits `status.usage` entirely for a quota with nothing allocated —
+    # which is exactly the `limit: "0"` case this gate exists for. Treating the
+    # missing field as "unreadable" made the check fail open and let the apply
+    # hang on `Still creating...` until the Terraform timeout.
+    usage = _int_or_none((payload.get("status") or {}).get("usage")) or 0
     return usage, limit
 
 

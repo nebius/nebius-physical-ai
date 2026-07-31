@@ -44,7 +44,7 @@ a versioned heading when a release is cut.
   and Shared Filesystem is now off by default.** `npa provision-if-absent` /
   `npa cluster up` (which inherit the Terraform `variables.tf` defaults) now
   create `gpu_nodes_count = 1` on `gpu-rtx6000` with the `1gpu-24vcpu-218gb`
-  preset plus one small `cpu-d3` / `4vcpu-16gb` node, and `enable_filestore =
+  preset plus one `cpu-d3` / `8vcpu-32gb` node, and `enable_filestore =
   false`. npa.workflow stages (including the Physical AI Data Factory) hand off
   artifacts over S3 URIs, so the default cluster needs no cross-node `/mnt/data`
   and **no Shared Filesystem SSD quota** — the default provision succeeds with

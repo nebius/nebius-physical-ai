@@ -120,6 +120,58 @@ def test_quota_in_use_by_other_workloads_is_still_a_failure() -> None:
     assert "allows 2 GPU(s) with 2 in use (0 free)" in message
 
 
+def test_unused_quota_of_zero_is_not_treated_as_unreadable() -> None:
+    """Nebius omits `status.usage` when nothing is allocated.
+
+    Regression: `limit: "0"` with no usage field made the gate return "unreadable"
+    and fail open, so the apply started and hung on `Still creating...` until the
+    Terraform timeout — the exact case the gate exists for.
+    """
+    payload = json.dumps(
+        {
+            "metadata": {"name": "compute.instance.gpu.rtx6000"},
+            "spec": {"limit": "0", "region": "us-central1"},
+            "status": {"state": "STATE_ACTIVE", "unit": "count"},  # no `usage`
+        }
+    )
+
+    assert capacity.gpu_quota_headroom(
+        _capture(payload),
+        nebius_bin="nebius",
+        tenant_id="tenant-a",
+        region="us-central1",
+        quota_name="compute.instance.gpu.rtx6000",
+    ) == (0, 0)
+
+    message = capacity.gpu_capacity_error(
+        _capture(payload, _advice(on_demand_level="AVAILABILITY_LEVEL_LIMIT_REACHED", preemptible_available=44)),
+        nebius_bin="nebius",
+        tenant_id="tenant-a",
+        region="us-central1",
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        required_gpus=1,
+    )
+    assert message
+    assert "allows 0 GPU(s) with 0 in use (0 free)" in message
+
+
+def test_a_quota_response_without_a_limit_is_still_unreadable() -> None:
+    """No limit at all means no opinion; the gate must not invent one."""
+    payload = json.dumps({"metadata": {}, "status": {"usage": "1"}})
+
+    assert (
+        capacity.gpu_quota_headroom(
+            _capture(payload),
+            nebius_bin="nebius",
+            tenant_id="tenant-a",
+            region="us-central1",
+            quota_name="compute.instance.gpu.rtx6000",
+        )
+        is None
+    )
+
+
 def test_headroom_passes_quietly() -> None:
     assert (
         capacity.gpu_capacity_error(

@@ -177,6 +177,10 @@ resource "nebius_compute_v1_instance" "workbench" {
 # ── Wait for cloud-init to finish ─────────────────────────────────────────
 
 resource "null_resource" "wait_for_cloud_init" {
+  # Skipped with wait_for_ssh = false, for a machine that cannot open outbound
+  # tcp/22 to a fresh public IP (corporate VPN / split tunnel). The VM still
+  # finishes cloud-init on its own; the deploy just stops verifying it over SSH.
+  count      = var.wait_for_ssh ? 1 : 0
   depends_on = [nebius_compute_v1_instance.workbench]
 
   triggers = {

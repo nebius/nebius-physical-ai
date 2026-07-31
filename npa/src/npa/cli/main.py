@@ -110,7 +110,9 @@ ngc:
 storage:
   aws_access_key_id: <your-s3-access-key-id>
   aws_secret_access_key: <your-s3-secret-access-key>
-  endpoint_url: https://storage.eu-north1.nebius.cloud
+  # Region-specific: use your project's region, which `npa configure` fills in
+  # (the "Current configuration" block below shows what is actually saved).
+  endpoint_url: https://storage.<your-region>.nebius.cloud
   bucket: s3://<your-bucket>/
 ssh:
   host: <your-byovm-host>

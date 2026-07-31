@@ -477,3 +477,30 @@ def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) 
 @pytest.mark.parametrize("flag", ["--purge-iam", "--keep-iam"])
 def test_agent_destroy_iam_flags_are_both_accepted(flag: str) -> None:
     assert flag in runner.invoke(app, ["agent", "destroy", "--help"]).output
+
+
+# ── an escape hatch for hosts that cannot reach a fresh public IP ────────────
+
+
+def test_deploy_offers_a_no_wait_ssh_escape_hatch() -> None:
+    """A locked-down laptop otherwise burns a VM create + rollback every attempt."""
+    help_text = runner.invoke(app, ["agent", "deploy", "--help"]).output
+
+    assert "--no-wait-ssh" in help_text
+    assert "split" in help_text or "VPN" in help_text
+
+
+def test_wait_for_ssh_gates_the_terraform_wait_resource() -> None:
+    """The flag has to reach Terraform, not just the help text."""
+    from npa.deploy import provisioner as provisioner_module
+
+    main_tf = (Path(provisioner_module.__file__).parent / "terraform" / "main.tf").read_text(
+        encoding="utf-8"
+    )
+    variables_tf = (
+        Path(provisioner_module.__file__).parent / "terraform" / "variables.tf"
+    ).read_text(encoding="utf-8")
+
+    assert 'variable "wait_for_ssh"' in variables_tf
+    body = main_tf[main_tf.index('resource "null_resource" "wait_for_cloud_init"') :]
+    assert "count      = var.wait_for_ssh ? 1 : 0" in body[: body.index("provisioner")]

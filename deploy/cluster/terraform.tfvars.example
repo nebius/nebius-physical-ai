@@ -14,7 +14,7 @@ ssh_public_key = {
 # no shared /mnt/data (and no Shared Filesystem SSD quota) is required.
 cpu_nodes_count    = 1
 cpu_nodes_platform = "cpu-d3"
-cpu_nodes_preset   = "4vcpu-16gb"
+cpu_nodes_preset   = "8vcpu-32gb"
 
 gpu_nodes_count    = 1
 gpu_nodes_platform = "gpu-rtx6000"
