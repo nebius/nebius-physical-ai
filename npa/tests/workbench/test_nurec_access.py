@@ -318,3 +318,38 @@ def test_catalog_entries_call_the_real_cli_flags() -> None:
                 assert token in options, f"{name}: {token} is not a real option of {verb}"
         checked += 1
     assert checked >= 6, "expected every nurec verb to be catalogued"
+
+
+# ---------------------------------------------------------------------------------
+# live-infra registration (checked in the normal suite, not gated behind e2e)
+# ---------------------------------------------------------------------------------
+def test_nurec_case_is_registered_in_the_live_submit_matrix() -> None:
+    """The gpu-tier matrix entry must exist even where a live run is not runnable."""
+    from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
+
+    case = next(
+        (item for item in SUBMIT_LIVE_MATRIX if item.spec == "nurec-reconstruct.yaml"), None
+    )
+    assert case is not None, "nurec-reconstruct.yaml is missing from SUBMIT_LIVE_MATRIX"
+    assert case.tier == "gpu"
+    assert "NGC_API_KEY" in case.secret_envs, "the nre-ga container needs an NGC key"
+    assert "HF_TOKEN" in case.secret_envs, "the PhysicalAI capture needs an HF token"
+    # A ~14 GB image pull plus 30k training steps needs more than the tier default.
+    assert case.max_wait_seconds >= 3600
+
+
+def test_live_e2e_test_exists_and_asserts_the_definition_of_done() -> None:
+    live = (
+        REPO_ROOT / "npa" / "tests" / "e2e" / "test_nurec_reconstruct_live_e2e.py"
+    )
+    assert live.is_file()
+    text = live.read_text(encoding="utf-8")
+
+    # Markers so the case is selectable with the rest of the GPU/SkyPilot tier.
+    assert "pytest.mark.gpu" in text
+    assert "pytest.mark.e2e_skypilot" in text
+    # And it must assert the artifacts the capability promises.
+    for suffix in ("reports/sim2real.rrd", "reconstruction/last.usdz", "novel_views"):
+        assert suffix in text, suffix
+    assert "recording_has_run_entities" in text
+    assert "is_stock_demo_recording" in text
