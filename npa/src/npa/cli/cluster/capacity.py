@@ -78,11 +78,13 @@ def _availability(entry: dict[str, Any], key: str) -> str:
     section = (entry.get("status") or {}).get(key) or {}
     level = str(section.get("availability_level", "") or "").strip()
     level = level.removeprefix("AVAILABILITY_LEVEL_") or "UNKNOWN"
-    available = section.get("available")
-    if available is None:
-        available = section.get("limit")
-    count = _int_or_none(available)
-    return f"{level}" if count is None else f"{level} (available {count})"
+    # Nebius reports `available` for the preemptible pool and `limit` for
+    # on-demand; conflating them reads as "LIMIT_REACHED (available 2)".
+    available = _int_or_none(section.get("available"))
+    if available is not None:
+        return f"{level} (available {available})"
+    limit = _int_or_none(section.get("limit"))
+    return f"{level} (limit {limit})" if limit is not None else level
 
 
 def capacity_summary(entry: dict[str, Any]) -> str:

@@ -98,7 +98,7 @@ def test_exhausted_quota_reports_the_numbers_and_the_preemptible_option() -> Non
     assert "requests 1" in message
     assert "QuotaFailure" in message
     # The live capacity numbers make the remedy concrete.
-    assert "on-demand LIMIT_REACHED" in message
+    assert "on-demand LIMIT_REACHED (limit 0)" in message
     assert "preemptible HIGH (available 44)" in message
     assert "gpu_nodes_preemptible = true" in message
     assert "resource-advice list" in message
