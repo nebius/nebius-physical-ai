@@ -473,6 +473,55 @@ def summarize_observations(observations: Sequence[Mapping[str, Any]]) -> str:
     )
 
 
+# Fields that identify a metric record well enough for the planner to act on it
+# (pick a run, compare a pair) without carrying every URI/lineage blob.
+_RECORD_SUMMARY_FIELDS = (
+    "run_id",
+    "metric_name",
+    "value",
+    "unit",
+    "workflow",
+    "stage",
+    "tool",
+    "labels",
+)
+
+
+def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[str, Any] | None:
+    """Shrink a record-bearing observation while keeping its structure intact.
+
+    Dropping to a flat text preview is what breaks the planner: it can no longer
+    read run ids out of the result, so it either stalls or invents a placeholder
+    id. Keeping the identifying fields of as many records as fit preserves the
+    grounding the next tool call needs.
+    """
+    records = observation.get("records")
+    if not isinstance(records, list) or not records:
+        return None
+    base = {key: value for key, value in observation.items() if key != "records"}
+    summarized = [
+        {field: record.get(field) for field in _RECORD_SUMMARY_FIELDS if field in record}
+        for record in records
+        if isinstance(record, Mapping)
+    ]
+    if not summarized:
+        return None
+    kept = len(summarized)
+    while kept > 0:
+        candidate = dict(base)
+        candidate["records"] = summarized[:kept]
+        if kept < len(summarized):
+            candidate["records_omitted"] = len(summarized) - kept
+        candidate["records_summarized"] = True
+        try:
+            if len(json.dumps(candidate, sort_keys=True)) <= limit:
+                return candidate
+        except (TypeError, ValueError):
+            return None
+        kept //= 2
+    return None
+
+
 def _observe(observation: Any, *, limit: int = 4000) -> Any:
     """Bound the size of a tool observation fed back into the planner."""
     try:
@@ -481,6 +530,10 @@ def _observe(observation: Any, *, limit: int = 4000) -> Any:
         text = str(observation)
     if len(text) <= limit:
         return observation
+    if isinstance(observation, Mapping):
+        summarized = _summarize_records(observation, limit=limit)
+        if summarized is not None:
+            return summarized
     return {"truncated": True, "preview": text[:limit]}
 
 

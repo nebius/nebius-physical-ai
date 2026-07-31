@@ -536,3 +536,56 @@ def test_max_steps_reply_includes_observation_summary():
     result = A.run_action_loop("x", tools=tools, model_call=planner, max_steps=2)
     assert result["stopped_reason"] == A.STOP_MAX_STEPS
     assert "no runs found" in result["reply"]
+
+
+# ── Observation bounding must not destroy grounding ──────────────────────────
+# Live failure: "which runs regressed on corruption_rate" queried 10 records, the
+# observation exceeded the size budget, and the whole result collapsed into a
+# {"truncated": true, "preview": "<json prefix>"} string. The planner could no
+# longer read any run id, invented the placeholder "<second_run_id>", and spun to
+# max_steps. The tool correctly refused the placeholder -- but the turn was lost.
+
+
+def _fat_record(run_id: str) -> dict:
+    return {
+        "run_id": run_id,
+        "metric_name": "corruption_rate",
+        "value": 0.3,
+        "unit": "",
+        "workflow": "insights-smoke",
+        "stage": "validate",
+        "tool": "dataset",
+        "labels": {},
+        "artifact_uri": "s3://bucket/" + "x" * 400,
+        "lineage": {"input_uris": ["s3://bucket/" + "y" * 400]},
+        "timestamp": "2026-07-31T19:01:21Z",
+    }
+
+
+def test_oversized_record_observation_keeps_run_ids_visible():
+    observation = {
+        "backend": "jsonl",
+        "count": 10,
+        "records": [_fat_record(f"run-{i}") for i in range(10)],
+    }
+    observed = A._observe(observation, limit=1200)
+    assert observed.get("records_summarized") is True
+    assert observed["count"] == 10
+    assert observed["records"], "at least one record must survive"
+    kept = [r["run_id"] for r in observed["records"]]
+    assert kept[0] == "run-0"
+    # Identifying fields survive; the bulky provenance blobs do not.
+    assert "artifact_uri" not in observed["records"][0]
+    assert observed["records"][0]["metric_name"] == "corruption_rate"
+    assert len(json.dumps(observed)) <= 1200
+
+
+def test_oversized_non_record_observation_still_falls_back_to_preview():
+    observed = A._observe({"blob": "z" * 9000}, limit=500)
+    assert observed["truncated"] is True
+    assert observed["preview"].startswith('{"blob"')
+
+
+def test_small_observation_is_passed_through_unchanged():
+    observation = {"backend": "jsonl", "count": 1, "records": [{"run_id": "r"}]}
+    assert A._observe(observation) is observation
