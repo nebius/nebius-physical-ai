@@ -174,7 +174,47 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 
 ---
 
-## 4. Submit the Physical AI Data Factory workflow
+## 4. Build and push the two Cosmos OSS images
+
+Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`
+(already published), while `evaluate` and `cosmos-curate` need images this repo
+builds. Build and push both once per branch:
+
+```bash
+REGISTRY="$(npa configure --show 2>/dev/null | grep -o 'cr\.[^ ]*' | head -1)"   # or your NPA_REGISTRY
+printf '%s' "$(nebius iam get-access-token)" \
+  | docker login "${REGISTRY%%/*}" -u iam --password-stdin
+
+docker buildx create --name npa-cosmos-oss --driver docker-container   # scoped cache
+for tool in cosmos-evaluator cosmos-curate; do
+  docker buildx build --builder npa-cosmos-oss --push \
+    -f "npa/docker/workbench/$tool/Dockerfile" \
+    -t "$REGISTRY/npa-$tool:0.1.0" npa
+done
+docker buildx rm npa-cosmos-oss
+```
+
+Neither image carries model weights. The evaluator needs none; the curator's GPU
+stages fetch theirs at run time with your Hugging Face token:
+
+```bash
+docker run --rm -e HF_TOKEN="$HF_TOKEN" -v curator-weights:/config/models \
+  "$REGISTRY/npa-cosmos-curate:0.1.0" fetch-models --models split-annotate
+```
+
+Confirm all three images are pullable before spending GPU time — a missing one
+surfaces late, as a stage failure:
+
+```bash
+for ref in npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z \
+           npa-cosmos-evaluator:0.1.0 npa-cosmos-curate:0.1.0; do
+  docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"
+done
+```
+
+---
+
+## 5. Submit the Physical AI Data Factory workflow
 
 The blueprint lives at the promoted top-level path. Validate → plan → submit from
 there:
@@ -187,12 +227,29 @@ npa workbench workflow plan-spec   "$SPEC" \
   --run-id demo --assume-decision promote_checkpoint --json
 ```
 
-Stage input clips/frames under the run prefix your agent reads, e.g.:
+Stage input clips/frames under the run prefix your agent reads. If the agent's
+base prefix is `checkpoints`, publish there directly so the run appears without a
+copy:
 
 ```
-s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/input/
+s3://<your-artifact-bucket>/checkpoints/physical-ai-data-factory/<run-id>/input/
   video_0.mp4        # H.264/H.265, 720p-1080p, 5-15 s
-  frame_0000.png ... # extracted frames for the VLM stages
+  video_0_frame_01.png ... # extracted frames for the VLM stages
+```
+
+The CPU `run.shell` stages have no workbench image, so they install `npa` from
+`NPA_SRC_S3_URI`. Stage the package **outside** the run prefix — the agent's
+artifact browser lists everything under a run, and a few hundred `.py` files there
+bury the stage outputs:
+
+```bash
+SRC_SHA="$(git rev-parse --short HEAD)"
+export NPA_SRC_S3_URI="s3://<your-artifact-bucket>/npa-src/${SRC_SHA}/npa"
+# Upload the whole installable tree, not just *.py: pyproject force-includes
+# package data (solutions.toml, image manifests, golden_evals.yaml, agent_ui.html)
+# and an editable install fails outright if any of them is missing.
+aws s3 sync npa/src "$NPA_SRC_S3_URI/src" --exclude '*/__pycache__/*'
+aws s3 cp  npa/pyproject.toml "$NPA_SRC_S3_URI/pyproject.toml"
 ```
 
 Submit a real run (dynamic gate → pass `--assume-decision`):
@@ -201,19 +258,37 @@ Submit a real run (dynamic gate → pass `--assume-decision`):
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
   --var bucket=<your-artifact-bucket> \
+  --var prefix="checkpoints/physical-ai-data-factory/<run-id>" \
+  --registry "$REGISTRY" \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
-  --secret-env AWS_SECRET_ACCESS_KEY
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --output-format json
 ```
 
-For a plan-only preflight without launching a GPU job, add `--plan-only` (set
-`NPA_SRC_S3_URI=s3://<bucket>/npa-src/` or `--image` so the CPU tool steps
-render, same as the other Token Factory specs).
+For a plan-only preflight without launching a GPU job, add `--plan-only`, and read
+back the `image_id` lines to confirm the three images are pinned:
+
+```bash
+npa workbench workflow submit "$SPEC" --run-id preflight --plan-only \
+  --assume-decision promote_checkpoint --registry "$REGISTRY" \
+  --var bucket=<your-artifact-bucket> | grep -E 'image_id|accelerators'
+```
+
+> **If your shell sources `~/.npa/live-e2e.env`, `unset
+> NPA_E2E_CLEAR_WORKBENCH_IMAGES` first.** The submit CLI honors it by clearing
+> *every* image pin, which silently drops the Cosmos Transfer GPU image, the
+> evaluator, and the curator — the run then "succeeds" having done none of the real
+> work. The plan-only `image_id` check above catches this.
+
+Also `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN`: the Nebius provider prefers an
+ambient (often expired) token over the fresh CLI one.
 
 ---
 
-## 5. Multi-GPU fan-out (`RTXPRO6000:N`)
+## 6. Multi-GPU fan-out (`RTXPRO6000:N`)
 
 The `augment` stage runs **one Cosmos Transfer 2.5 diffusion per sampled scenario
 variant**. Request `N` GPUs and the stage fans the `N` variants across them (one
@@ -250,7 +325,7 @@ appearance) with `NPA_COSMOS_CONDITION_ON_INPUT=1`.
 
 ---
 
-## 6. Real FiftyOne curation (run in the `npa-fiftyone` image)
+## 7. Real FiftyOne curation (run in the `npa-fiftyone` image)
 
 The `curate` stage runs **real FiftyOne Brain curation** (uniqueness +
 duplicate/near-dup detection + a PCA visualization) over the augmented set. Real
@@ -277,7 +352,7 @@ guide's curation section).
 
 ---
 
-## 7. View results in the NPA agent
+## 8. View results in the NPA agent
 
 The agent discovers runs from its artifact bucket. If the agent's base prefix is
 `checkpoints`, the run lands at
@@ -306,7 +381,7 @@ POST /api/sim-viz/load-run        # {"run_id": "<run-id>"}
 
 ---
 
-## 8. Where to go next
+## 9. Where to go next
 
 - Conceptual blueprint, stage-by-stage mapping, and S3 layout:
   [physical-ai-data-factory.md](physical-ai-data-factory.md).
