@@ -1,8 +1,14 @@
 """Live-submit matrix for npa.workflow twins.
 
-Shared by e2e tests and the operator runner. SkyPilot-only exceptions
-(parallel sweeps, burst, sim-to-real monolithic, etc.) are intentionally
-absent — see ``npa/workflows/workbench/npa-workflows/README.md``.
+Shared by e2e tests and the operator runner. SkyPilot-only exceptions (burst,
+sim-to-real monolithic, etc.) are intentionally absent — see
+``npa/workflows/workbench/npa-workflows/README.md``.
+
+Parallel sweeps are no longer such an exception: ``isaac-lab-rl-sweep.yaml`` is an
+``npa.workflow`` spec in this matrix, verified live on four GPUs. The raw SkyPilot
+template it was ported from is retained as a reference example (and is still
+referenced by docs, a runner script and its own test); retiring it is a separate
+change.
 """
 
 from __future__ import annotations
@@ -21,6 +27,25 @@ class SubmitLiveCase:
     requires_token_factory: bool = False
     plan_only: bool = False
     notes: str = ""
+    #: Submit through the runtime orchestrator (``submit --runtime``) instead of
+    #: the one-shot serial path. Required for specs with a ``parallel:`` group or
+    #: a loop that must early-exit on the real decision artifact.
+    runtime: bool = False
+    #: Config overrides applied at submit time (``--var k=v``), e.g. to drive a
+    #: gate threshold in one live run.
+    config_vars: tuple[tuple[str, str], ...] = ()
+    #: Expected number of concurrent tasks in the spec's largest parallel wave
+    #: (0 when the spec has no fan-out); asserted from the live job timeline.
+    expected_parallel_tasks: int = 0
+    #: Workbench tool whose image every task of this spec needs (resolved against
+    #: the live registry at submit time). Set for specs whose stages run inside a
+    #: baked image instead of the default SkyPilot image + staged npa source.
+    image_tool: str = ""
+    #: Per-wave deadline for this case, in seconds. 0 = use
+    #: ``NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS``. Set it when one case is
+    #: much slower than the rest (a 8 GB image pull plus GPU training) so the whole
+    #: runtime tier does not have to run with the slowest case's deadline.
+    max_wait_seconds: int = 0
 
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
@@ -43,6 +68,43 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "cpu",
         secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         requires_token_factory=True,
+    ),
+    SubmitLiveCase(
+        "token-factory-parallel-fanout.yaml",
+        "cpu",
+        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        requires_token_factory=True,
+        runtime=True,
+        expected_parallel_tasks=3,
+        notes=(
+            "Cheapest live PARALLEL path: three caption shards launch as one "
+            "SkyPilot JobGroup, then an insights barrier. Needs --runtime."
+        ),
+    ),
+    SubmitLiveCase(
+        "token-factory-gate-loop.yaml",
+        "cpu",
+        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        requires_token_factory=True,
+        runtime=True,
+        config_vars=(("grade_threshold", "0.0"),),
+        notes=(
+            "Cheapest live RUNTIME-GATE path: the loop reads the real decision "
+            "artifact and early-exits on iteration 1 with grade_threshold=0.0 "
+            "(raise it above the achievable score to run the full budget)."
+        ),
+    ),
+    SubmitLiveCase(
+        "token-factory-trigger-watch.yaml",
+        "cpu",
+        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        requires_token_factory=True,
+        runtime=True,
+        notes=(
+            "Trigger/watch reference: the driver polls the inbox prefix and only "
+            "submits the stage once data lands. The live harness seeds the inbox "
+            "AFTER the run starts, so the wait is real."
+        ),
     ),
     SubmitLiveCase(
         "retargeting.yaml",
@@ -108,6 +170,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
         notes="retarget → train → mjlab",
+    ),
+    SubmitLiveCase(
+        "isaac-lab-rl-sweep.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        expected_parallel_tasks=4,
+        image_tool="isaac-lab",
+        # The Isaac Lab image is ~8 GB per node and the variants train on GPU.
+        max_wait_seconds=5400,
+        # Cost control for the live tier: hold two GPUs at a time instead of four.
+        # This also exercises the multi-batch path (4 members / maxConcurrency 2).
+        config_vars=(("max_concurrency", "2"),),
+        notes=(
+            "Parallel GPU reference case (port of the execution:parallel SkyPilot "
+            "template): four RSL-RL variants as one JobGroup + ranking barrier. "
+            "Needs --runtime and the Isaac Lab image (run branch code on top with "
+            "NPA_SRC_OVERLAY=1); cap GPUs with --var max_concurrency=N."
+        ),
     ),
     SubmitLiveCase(
         "bdd100k-pipeline.yaml",
@@ -180,3 +261,26 @@ def selected_submit_cases() -> list[SubmitLiveCase]:
         for case in SUBMIT_LIVE_MATRIX
         if case.tier in tiers and (not specs or case.spec in specs)
     ]
+
+
+def runtime_submit_cases() -> list[SubmitLiveCase]:
+    """Selected cases that must be driven by the runtime orchestrator.
+
+    These are the specs with a ``parallel:`` group or a loop that has to
+    early-exit on the real decision artifact; they are submitted with
+    ``submit --runtime``.
+    """
+
+    return [case for case in selected_submit_cases() if case.runtime and not case.plan_only]
+
+
+def one_shot_submit_cases() -> list[SubmitLiveCase]:
+    """Selected cases for the classic one-shot submit path.
+
+    Runtime cases are excluded on purpose: submitting them one-shot would render
+    the flattened serial plan, which is valid but proves nothing about
+    concurrency or early-exit — and would run a GPU sweep serially. They are
+    still covered by the plan-only matrix and by the runtime live test.
+    """
+
+    return [case for case in selected_submit_cases() if not case.runtime]

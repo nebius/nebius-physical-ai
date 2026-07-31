@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep
+from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep  # noqa: F401
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 
@@ -181,6 +181,48 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
         "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+        # Interpreter-independent import path for npa. `pip install -e` binds npa to
+        # whichever python ran pip, and the command below runs through `bash -lc`,
+        # whose login profile can resolve a DIFFERENT python3 (observed on SkyPilot's
+        # GPU default image: the outer shell imports npa fine, the login shell does
+        # not). Prepending the staged source tree unconditionally fixes every shell;
+        # it is the same package, so it is a no-op where the install already works.
+        # Images activate their toolchain either through docker ENV (inherited) or
+        # through profile scripts; source the latter best-effort so dropping the login
+        # shell (see scheduler.build_scheduler_task) changes nothing for them.
+        "set +u\n"
+        "if [ -d /etc/profile.d ]; then\n"
+        "  for profile in /etc/profile.d/*.sh; do\n"
+        "    [ -r \"$profile\" ] && . \"$profile\" || true\n"
+        "  done\n"
+        "fi\n"
+        # Make `python3` mean "the interpreter npa is installed in" for this stage.
+        # setup records its absolute path (sys.executable) in /tmp/npa-python.
+        # UNCONDITIONAL: never gate this on whether *this* shell can import npa. The
+        # stage command runs in its own `bash -c`, which resolves python3 differently
+        # (live: SkyPilot's run shell expanded the Isaac image's `python3` alias and
+        # imported npa fine, while the stage's non-login shell got the raw kit python
+        # and failed). The shim is a no-op when the recorded interpreter is already
+        # what python3 means.
+        "npa_python=\"\"\n"
+        "if [ -s /tmp/npa-python ]; then\n"
+        "  npa_python=\"$(cat /tmp/npa-python)\"\n"
+        "  if [ ! -x \"$npa_python\" ]; then\n"
+        "    echo \"recorded npa interpreter is not executable: $npa_python\" >&2\n"
+        "    npa_python=\"\"\n"
+        "  fi\n"
+        "fi\n"
+        "if [ -n \"$npa_python\" ]; then\n"
+        "  mkdir -p /tmp/npa-shim\n"
+        "  printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$npa_python\" "
+        "> /tmp/npa-shim/python3\n"
+        "  chmod +x /tmp/npa-shim/python3\n"
+        "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
+        "  echo \"using npa interpreter $npa_python for this stage\" >&2\n"
+        "fi\n"
+        "python3 -c 'import npa' >/dev/null 2>&1 || "
+        "echo 'warning: python3 in this shell cannot import npa' >&2\n"
+        "set -u\n"
         f"{quoted}\n"
     )
 
@@ -198,12 +240,25 @@ def default_npa_setup() -> str:
     return (
         "set -e\n"
         "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+        # Debian/Ubuntu >= 24.04 mark the system interpreter externally managed
+        # (PEP 668), so a plain `pip install` fails with
+        # "error: externally-managed-environment". A task container is disposable, so
+        # retry with --break-system-packages and then --user before giving up. Live:
+        # this is what the Isaac Lab image hit once its system python3 came first on
+        # PATH, and any Ubuntu 24.04 based image would hit it too.
+        "npa_pip_install() {\n"
+        "  target=\"$1\"\n"
+        "  shift\n"
+        "  python3 -m pip install -q \"$target\" \"$@\" \\\n"
+        "    || python3 -m pip install -q \"$target\" \"$@\" --break-system-packages \\\n"
+        "    || python3 -m pip install -q \"$target\" \"$@\" --user\n"
+        "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
-        "    python3 -m pip install -q -e /opt/nebius-physical-ai/npa\n"
+        "    npa_pip_install -e /opt/nebius-physical-ai/npa\n"
         "  else\n"
         "    if [ ! -d /tmp/npa-src ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
-        "      python3 -m pip install -q boto3\n"
+        "      npa_pip_install boto3\n"
         "      python3 - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
@@ -239,7 +294,7 @@ def default_npa_setup() -> str:
         "PY\n"
         "    fi\n"
         "    if [ -d /tmp/npa-src ]; then\n"
-        "      python3 -m pip install -q -e /tmp/npa-src\n"
+        "      npa_pip_install -e /tmp/npa-src\n"
         "    else\n"
         "      echo 'npa CLI not found; set NPA_SRC_S3_URI or use a workbench image' >&2\n"
         "      exit 1\n"
@@ -250,7 +305,7 @@ def default_npa_setup() -> str:
         # baked workbench image so branch code (e.g. a new augment prompt path)
         # actually runs on GPU without rebuilding the image. Default off (no-op).
         "if [ \"$NPA_SRC_OVERLAY\" = \"1\" ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
-        "  python3 -m pip install -q boto3\n"
+        "  npa_pip_install boto3\n"
         "  python3 - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
@@ -284,10 +339,53 @@ def default_npa_setup() -> str:
         "        break\n"
         "    token = resp.get('NextContinuationToken')\n"
         "PY\n"
-        "  python3 -m pip install -q -e /tmp/npa-src-overlay --no-deps\n"
+        "  npa_pip_install -e /tmp/npa-src-overlay --no-deps\n"
         "fi\n"
-        "command -v npa >/dev/null 2>&1 || "
-        "{ echo 'npa still missing after setup' >&2; exit 1; }\n"
+        # Record the interpreter that can actually import npa, i.e. the one pip just
+        # installed into (it has npa AND its dependencies). Stage bodies use it via a
+        # PATH shim, because a task image's default `python3` may be a different
+        # interpreter entirely: SkyPilot's GPU default image ships /usr/bin/python3
+        # with no pip, and the Isaac Lab image's PATH python3 is Isaac's kit python.
+        # Record a python COMMAND that can import npa, so stage bodies can be pointed
+        # at it. Three candidates are tried in order, because each of them is the right
+        # answer on some real image:
+        #   1. sys.executable - correct on normal images;
+        #   2. the alias target - the Isaac Lab image aliases python3 to
+        #      /workspace/isaaclab/_isaac_sim/python.sh, and its embedded kit python
+        #      cannot import its own site-packages unless launched through that
+        #      wrapper (live run: "could not record a usable npa interpreter");
+        #   3. `type -P python3` - the PATH binary, ignoring any alias.
+        "python3 -c 'import npa' >/dev/null 2>&1 || "
+        "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
+        "npa_python=\"\"\n"
+        "alias_target=\"$(alias python3 2>/dev/null | sed -e \"s/^alias python3=//\" "
+        "-e \"s/^'//\" -e \"s/'$//\")\"\n"
+        "for candidate in \"$(python3 -c 'import sys; print(sys.executable)' "
+        "2>/dev/null || true)\" \"$alias_target\" \"$(type -P python3 2>/dev/null "
+        "|| true)\"; do\n"
+        "  if [ -n \"$candidate\" ] && [ -x \"$candidate\" ] && "
+        "\"$candidate\" -c 'import npa' >/dev/null 2>&1; then\n"
+        "    npa_python=\"$candidate\"\n"
+        "    break\n"
+        "  fi\n"
+        "done\n"
+        "if [ -n \"$npa_python\" ]; then\n"
+        "  echo \"$npa_python\" > /tmp/npa-python\n"
+        "  echo \"npa interpreter recorded: $npa_python\" >&2\n"
+        "else\n"
+        "  echo 'warning: no python command outside this shell could import npa' >&2\n"
+        "fi\n"
+        # toolRef stages invoke the `npa` console script by name; installing into a
+        # non-standard interpreter can leave it outside PATH, so link it where every
+        # shell will find it.
+        "if [ ! -x /usr/local/bin/npa ]; then\n"
+        "  scripts_dir=\"$(python3 -c 'import sysconfig; "
+        "print(sysconfig.get_path(\"scripts\"))' 2>/dev/null || true)\"\n"
+        "  if [ -n \"$scripts_dir\" ] && [ -x \"$scripts_dir/npa\" ]; then\n"
+        "    ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || "
+        "sudo -n ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || true\n"
+        "  fi\n"
+        "fi\n"
     )
 
 
@@ -533,7 +631,12 @@ def render_skypilot_yaml(
     run_id: str,
     options: SkypilotRenderOptions | None = None,
 ) -> str:
-    """Return multi-document SkyPilot YAML text for a planned npa.workflow."""
+    """Return multi-document SkyPilot **pipeline** YAML for a planned npa.workflow.
+
+    This is the default, unchanged path: a flat serial chain. Concurrent fan-out
+    is rendered by :func:`render_skypilot_job_group_yaml`, which is a separate
+    entry point so that "serial" stays the only mode this function will ever emit.
+    """
 
     opts = options or SkypilotRenderOptions()
     if opts.execution != "serial":
@@ -542,14 +645,103 @@ def render_skypilot_yaml(
         )
     if not plan.steps:
         raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
+    return _render_docs(spec, plan.steps, run_id=run_id, options=opts, execution="serial")
 
+
+def render_skypilot_job_group_yaml(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions | None = None,
+    name: str = "",
+) -> str:
+    """Return a SkyPilot **JobGroup** YAML (``execution: parallel``) for one wave.
+
+    SkyPilot >= 0.12 treats a multi-document YAML whose header sets
+    ``execution: parallel`` as a JobGroup: every task shares one managed ``job_id``
+    but launches its **own cluster concurrently**. ``primary_tasks`` is intentionally
+    omitted, which marks every task primary, so the group only reaches a terminal
+    state once all members do — that is the barrier the downstream ``needs:`` state
+    waits on.
+    """
+
+    opts = options or SkypilotRenderOptions()
+    if not steps:
+        raise NpaWorkflowRenderError(
+            f"workflow {spec.name!r} rendered an empty parallel group"
+        )
+    if len(steps) < 2:
+        raise NpaWorkflowRenderError(
+            "a SkyPilot JobGroup needs at least two tasks; render single-task waves "
+            "with the serial pipeline renderer"
+        )
+    return _render_docs(
+        spec,
+        steps,
+        run_id=run_id,
+        options=opts,
+        execution="parallel",
+        name=name or spec.name,
+    )
+
+
+def render_skypilot_steps_yaml(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions | None = None,
+    execution: str = "serial",
+    name: str = "",
+) -> str:
+    """Render one runtime wave: a serial pipeline or a parallel JobGroup."""
+
+    if execution == "parallel" and len(steps) > 1:
+        return render_skypilot_job_group_yaml(
+            spec, steps, run_id=run_id, options=options, name=name
+        )
+    opts = options or SkypilotRenderOptions()
+    if opts.execution != "serial":
+        raise NpaWorkflowRenderError(
+            f"npa.workflow/v0.0.1 renderer only supports execution=serial, got {opts.execution!r}"
+        )
+    if not steps:
+        raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
+    return _render_docs(
+        spec, steps, run_id=run_id, options=opts, execution="serial", name=name or spec.name
+    )
+
+
+def _render_docs(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+    execution: str,
+    name: str = "",
+) -> str:
     header = {
-        "name": spec.name,
-        "execution": "serial",
+        "name": name or spec.name,
+        "execution": execution,
     }
     docs: list[dict[str, Any]] = [header]
-    for step in plan.steps:
-        docs.append(build_skypilot_task_doc(spec, step, run_id=run_id, options=opts))
+    seen: set[str] = set()
+    for step in steps:
+        doc = build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+        task_name = str(doc.get("name") or "")
+        # Serial pipelines may legitimately repeat a task name (an unrolled loop
+        # body re-runs the same state), so only JobGroups — whose tasks run at the
+        # same time on distinct clusters — require unique names.
+        if execution == "parallel":
+            if task_name in seen:
+                raise NpaWorkflowRenderError(
+                    f"duplicate SkyPilot task name {task_name!r} in parallel group "
+                    f"of workflow {spec.name!r}"
+                )
+            seen.add(task_name)
+        docs.append(doc)
 
     chunks: list[str] = []
     for doc in docs:
@@ -558,6 +750,10 @@ def render_skypilot_yaml(
                 doc,
                 sort_keys=False,
                 default_flow_style=False,
+                # Do not fold long lines: a wrapped shell command is unreadable in the
+                # rendered YAML and stops `grep`/assertions from finding the command
+                # that will actually run.
+                width=10_000,
             ).rstrip()
         )
     return "\n---\n".join(chunks) + "\n"

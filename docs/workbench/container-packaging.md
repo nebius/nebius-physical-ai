@@ -63,6 +63,86 @@ Strongly recommended for `service` images:
 - Bind to an explicit address; do not assume public `0.0.0.0` without auth
 - Token auth when the service is network-reachable (LanceDB pattern)
 
+## Redistribution (who may pull, and how widely)
+
+The workbench is open source, and images should be pullable widely — but "widely"
+has a license boundary that the contract encodes in a `redistribution` field per
+image (`public` | `restricted`), enforced by
+`npa/tests/docker/test_packaging_contract.py`.
+
+- **`public`** — OSS-redistributable. Code is under OSI-approved licenses
+  (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the CUDA/PyTorch base images
+  (`nvidia/cuda`, `pytorch/pytorch` on Docker Hub) are freely redistributable,
+  and any gated model weights (Cosmos, GR00T N1, Cosmos-Reason) are pulled at
+  **runtime** by the operator, never baked into the image. These may be published
+  to a public/anonymous registry.
+- **`restricted`** — bakes **NVIDIA Omniverse Kit (Isaac Sim)** binaries
+  (`isaac-lab`, `sonic`, `sonic-mujoco`, `groot`). The Isaac Sim *source* is
+  Apache-2.0, but the shipped binary bundles the Omniverse Kit SDK + NVIDIA
+  assets, which are NVIDIA-proprietary (the `isaacsim` PyPI package's own license
+  field reads *"NVIDIA Proprietary Software"*).
+
+  The compliant way customers get these is **build-your-own**: each deployment
+  builds the image into its **own** registry (`build.sh --registry
+  cr.<region>.nebius.cloud/<your-registry-id> --push`, `NPA_REGISTRY_ID` is
+  per-operator), pulling the `nvcr.io/nvidia/isaac-lab` base / `isaacsim` wheels
+  with the operator's **own NGC credentials + EULA acceptance**
+  (`OMNI_KIT_ACCEPT_EULA=YES`). NVIDIA therefore delivers Omniverse Kit to each
+  operator under that operator's own acceptance, and we ship only the Dockerfile
+  + orchestration — not the proprietary binaries. This is why using their own
+  NGC/HF tokens keeps customers compliant.
+
+  The **one** thing that is *not* allowed is hosting these images **prebuilt on a
+  public/anonymous registry**: a pull from such a registry needs no NGC token and
+  bypasses the EULA gate, which would make us the third-party redistributor of
+  Omniverse Kit (that needs an NVIDIA AI Enterprise license). So keep the
+  `restricted` set off any public registry.
+
+Model weights are a separate axis and are never baked into any image: Cosmos,
+GR00T N1, and Cosmos-Reason weights (and VLMs) are downloaded at **runtime**
+using the customer's own HF/NGC token, so the customer accepts each model
+license (e.g. the NVIDIA Open Model License) directly. We never redistribute
+weights.
+
+Access model today (both regions): each workbench registry
+(`cr.eu-north1.nebius.cloud/…` primary, `cr.us-central1.nebius.cloud/…` mirror)
+is **already readable org/tenant-wide** — the tenant `viewers`/`editors` groups
+hold `viewer`/`editor`, which cascades to image pull — so developers inside the
+owning org can pull every image, including the `restricted` ones (internal R&D
+use).
+
+**Pulling from any Nebius tenant / publicly.** Nebius Container Registry cannot
+express "any Nebius tenant can pull": it has **no anonymous/public mode** and
+**no `allAuthenticatedUsers` / cross-tenant grant**. Every pull needs an
+authenticated identity, tenants are strictly isolated, and the only way to admit
+an out-of-tenant identity is to invite that specific account into the owning
+tenant and add it to a group — which does not scale to "anyone from any tenant."
+The only way to make the images pullable by every Nebius tenant (which is also
+pullable by anyone) is therefore to **mirror to a public-capable registry** —
+GHCR (`ghcr.io`, the default), Docker Hub, or Quay.
+
+Only the `public`-classified subset may be mirrored. Use the license-guarded
+publisher, which copies exactly `publicly_publishable_tools()` (16 images) and
+hard-refuses the Omniverse-Kit images:
+
+```bash
+# defaults to $NPA_PUBLIC_REGISTRY, else ghcr.io/nebius/nebius-physical-ai
+python -m npa.deploy.publish_public --dry-run
+python -m npa.deploy.publish_public --target ghcr.io/<org>/<repo>
+```
+
+or the `Publish public images` GitHub Actions workflow (manual dispatch,
+dry-run by default). **Consumers in any tenant** then pull the OSS images by
+pointing the resolver at the public mirror:
+
+```bash
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
+```
+
+Never add the `restricted` images to a public target — that redistributes NVIDIA
+Omniverse Kit to third parties (needs an NVIDIA AI Enterprise license). Those
+stay build-your-own (each operator builds with their own NGC credentials + EULA).
+
 ## Feature exposure
 
 | Access mode | Contract |

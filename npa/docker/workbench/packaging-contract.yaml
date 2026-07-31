@@ -33,67 +33,138 @@ security:
     - "(?i)(api[_-]?key|secret[_-]?key|password)\\s*=\\s*['\\\"][^'\\\"]+['\\\"]"
     - "(?i)BEGIN (RSA |OPENSSH )?PRIVATE KEY"
 
+# Redistribution eligibility. This classifies whether a built image may be
+# distributed BEYOND the owning Nebius org (e.g. published to a public/anonymous
+# registry, shipped to a customer, or served to third parties). Read access
+# WITHIN the owning org is always permitted; that is not what this gates.
+# Enforced by npa/tests/docker/test_packaging_contract.py.
+redistribution:
+  # Substrings that, if present in a Dockerfile's INSTRUCTIONS, mean the image
+  # bakes NVIDIA Omniverse Kit (Isaac Sim) binaries and therefore must be
+  # "restricted". Comment lines are stripped before matching: prose that merely
+  # names Isaac Sim (e.g. isaac-lab/Dockerfile's "# Tag: nvcr.io/nvidia/isaac-lab"
+  # header) does not bake anything, and must not force an image to "restricted".
+  # Every real baker still matches on an instruction (FROM/ARG base, a pip
+  # install, or an ENV *_ACCEPT_EULA), and images that inherit a restricted parent
+  # without a marker of their own are caught by the parent-inheritance check in
+  # npa/tests/docker/test_packaging_contract.py.
+  omniverse_markers:
+    - "isaacsim"
+    - "isaaclab[isaacsim"
+    - "nvcr.io/nvidia/isaac-lab"
+    - "OMNI_KIT_ACCEPT_EULA"
+    - "ISAACSIM_ACCEPT_EULA"
+  classes:
+    public:
+      description: >
+        OSS-redistributable. Code is under OSI-approved licenses (Apache-2.0 /
+        BSD-3 / MIT / MPL-2.0); the CUDA/PyTorch base images (docker.io
+        nvidia/cuda, pytorch/pytorch) are freely redistributable; any gated model
+        weights are downloaded at runtime by the operator (never baked in). May
+        be published to a public registry.
+    restricted:
+      description: >
+        Bakes NVIDIA Omniverse Kit (Isaac Sim) binaries. The Isaac Sim SOURCE is
+        Apache-2.0, but the shipped binary bundles the Omniverse Kit SDK + NVIDIA
+        assets, which are NVIDIA-proprietary (the isaacsim PyPI package lists its
+        license as "NVIDIA Proprietary Software"). Compliant distribution: each
+        deployment BUILDS these into its own registry (build.sh --registry
+        <your-registry> --push), pulling the nvcr.io base / isaacsim wheels with
+        the operator's OWN NGC credentials + EULA acceptance (OMNI_KIT_ACCEPT_EULA)
+        — so NVIDIA delivers Omniverse Kit to each operator under their own
+        acceptance and we ship only the Dockerfile. Internal-org pulls are
+        licensed internal-R&D use. The one thing that is NOT allowed: hosting
+        these PREBUILT on a public/anonymous registry, which strips the NGC/EULA
+        gate and makes us the third-party redistributor (that would require an
+        NVIDIA AI Enterprise license). So: never publish these to a public
+        registry.
+      reason: bundles-omniverse-kit
+
 # Relative to npa/docker/workbench/
 images:
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service
     ports: [8080]
+    redistribution: public
   lerobot-policy:
     dockerfile: lerobot-policy/Dockerfile
     tier: service
     ports: [8080]
+    redistribution: public
   lancedb:
     dockerfile: lancedb/Dockerfile
     tier: service
     ports: [8686]
+    redistribution: public
   detection-training:
     dockerfile: detection-training/Dockerfile
     tier: service
     ports: [8790]
+    redistribution: public
   sonic:
     dockerfile: sonic/Dockerfile
     tier: job
+    redistribution: restricted
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
     tier: job
+    redistribution: restricted
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
+    redistribution: public
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job
+    redistribution: public
   lerobot-vlm-rl:
     dockerfile: lerobot-vlm-rl/Dockerfile
     tier: job
+    redistribution: public
   genesis:
     dockerfile: genesis/Dockerfile
     tier: interactive
+    redistribution: public
   isaac-lab:
     dockerfile: isaac-lab/Dockerfile
     tier: interactive
+    redistribution: restricted
   fiftyone:
     dockerfile: fiftyone/Dockerfile
     tier: interactive
     ports: [5151]
+    redistribution: public
   cosmos:
     dockerfile: cosmos/Dockerfile
     tier: interactive
     ports: [8080]
     notes: "Server is built into the image; promote to service when default CMD starts it."
+    redistribution: public
   groot:
     dockerfile: groot/Dockerfile
     tier: interactive
     ports: [8080]
     notes: "EXPOSE 8080 without default server CMD; promote to service when ready."
+    redistribution: restricted
   retargeting:
     dockerfile: retargeting/Dockerfile
     tier: interactive
+    redistribution: public
   sim2real-envgen:
     dockerfile: sim2real-envgen/Dockerfile
     tier: interactive
+    redistribution: public
   rerun-viewer:
     dockerfile: rerun-viewer/Dockerfile
     tier: job
     ports: [9090]
     final_user: nobody
+    redistribution: public
+  lichtblick:
+    dockerfile: lichtblick/Dockerfile
+    tier: service
+    ports: [8080]
+    final_user: nobody
+    notes: "Lichtblick (MPL-2.0) OSS Foxglove-compatible static web viewer; caddy file-server default CMD + HEALTHCHECK."
+    redistribution: public

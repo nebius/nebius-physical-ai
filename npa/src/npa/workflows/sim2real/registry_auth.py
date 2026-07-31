@@ -14,17 +14,17 @@ from npa.clients.nebius_auth import mint_nebius_iam_token, strip_ambient_token_e
 def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
     """Return a short-lived IAM token for ``cr.*.nebius.cloud`` pulls.
 
-    Thin wrapper around the canonical :func:`npa.clients.nebius_auth.mint_nebius_iam_token`
-    so registry-pull refreshes work even when an ambient ``NEBIUS_IAM_TOKEN`` is
-    exported. Any workflow needing a token should use that helper directly.
-
-    Pull secrets deliberately pass ``allow_env_token=False``: falling back to the
-    ambient ``NEBIUS_IAM_TOKEN`` here could re-embed the same stale/wrong-identity
-    token into the K8s secret that this refresh exists to fix, re-introducing the
-    ``403`` / ``ErrImagePull`` failure one step later. Fail loudly instead.
+    Delegates to the canonical :func:`npa.clients.nebius_auth.mint_nebius_iam_token`,
+    which performs a fresh profile-scoped exchange first (ambient token stripped,
+    so a stale/wrong-identity ``NEBIUS_IAM_TOKEN`` can't be re-embedded into the
+    very pull secret this refresh exists to fix — the ``403`` / ``ErrImagePull``
+    failure), and only falls back to an injected ``NEBIUS_IAM_TOKEN`` when the
+    ``nebius`` CLI is unavailable/fails — the in-pod case (token injected, no CLI
+    on PATH). Raises ``NebiusTokenError`` (a ``RuntimeError``) if no token can be
+    obtained, which best-effort callers catch.
     """
 
-    return mint_nebius_iam_token(nebius_cli=nebius_cli, allow_env_token=False)
+    return mint_nebius_iam_token(nebius_cli=nebius_cli)
 
 
 def _registry_server_from_image(image: str) -> str:
@@ -89,15 +89,24 @@ def ensure_nebius_registry_pull_secret(
     env = strip_ambient_token_env(os.environ)
     if kubeconfig:
         env["KUBECONFIG"] = kubeconfig
-    proc = subprocess.run(
-        cmd,
-        input=json.dumps(payload),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=json.dumps(payload),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        # In-pod orchestrators frequently have no kubectl on PATH, which raises
+        # FileNotFoundError. Callers treat this refresh as best-effort and catch
+        # RuntimeError, so keep every expected failure inside that contract
+        # instead of letting an OSError escape and kill the run.
+        raise RuntimeError(
+            f"failed to apply registry pull secret {secret_name}: {exc}"
+        ) from exc
     if proc.returncode != 0:
         detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
         raise RuntimeError(f"failed to apply registry pull secret {secret_name}: {detail}")

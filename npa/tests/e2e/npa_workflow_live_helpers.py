@@ -48,6 +48,7 @@ DYNAMIC_SPECS = frozenset(
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
+        "token-factory-gate-loop.yaml",
     }
 )
 
@@ -60,14 +61,17 @@ __all__ = [
     "assume_decision_for",
     "assert_cli_ok",
     "assert_no_credential_leakage",
+    "concurrency_overlaps",
     "live_bucket",
     "live_credential_markers",
     "materialize_live_spec",
     "parse_json_output",
     "parse_json_payload",
+    "parse_runtime_json",
     "resolve_spec_path",
     "seed_live_workflow_inputs",
     "selected_submit_cases",
+    "write_runtime_evidence",
 ]
 
 _LEAK_PATTERNS = (
@@ -128,6 +132,23 @@ def seed_live_workflow_inputs(
             Body=buf.getvalue(),
             ContentType="image/png",
         )
+        return
+
+    if spec_name == "token-factory-parallel-fanout.yaml":
+        # One small image per shard prefix so all three fan-out members have real
+        # Token Factory work to do concurrently.
+        for shard in ("shard-a", "shard-b", "shard-c"):
+            _seed_images(client, bucket=bucket, prefix=f"{marker}/images/{shard}/", count=2)
+        return
+
+    if spec_name == "token-factory-trigger-watch.yaml":
+        # Deliberately NOT seeded here: the whole point of the trigger pattern is that
+        # the run waits for data that is not there yet. Use seed_trigger_inbox_later().
+        return
+
+    if spec_name == "token-factory-gate-loop.yaml":
+        # The loop captions and scores the same small batch every iteration.
+        _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
         return
 
     if spec_name == "token-factory-generate.yaml":
@@ -191,6 +212,104 @@ def seed_live_workflow_inputs(
             # This twin also reasons over a captured scene before judging.
             _seed_scene_frame(client, bucket=bucket, marker=marker)
         return
+
+
+def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
+    """Upload ``count`` small deterministic PNGs under ``prefix``."""
+
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover
+        pytest.fail(f"Pillow required to seed image fixtures: {exc}")
+    for index in range(max(1, count)):
+        image = Image.new("RGB", (320, 240), (30, 30, 30))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([0, 190, 320, 240], fill=(90, 70, 50))
+        draw.rectangle([40 + index * 30, 120, 120 + index * 30, 190], fill=(200, 60, 60))
+        draw.rectangle([240, 120, 300, 190], fill=(40, 200, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{prefix}frame_{index:03d}.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+
+
+def seed_trigger_inbox_later(
+    *,
+    bucket: str,
+    run_id: str,
+    spec_name: str,
+    delay_seconds: float = 45.0,
+    e2e_project: str | None = None,
+    count: int = 2,
+):
+    """Drop frames into a trigger's inbox after ``delay_seconds``.
+
+    Returns the started timer. Seeding late is what makes the live trigger test
+    meaningful: the driver must poll an empty prefix, wait, and only then submit.
+    """
+
+    import threading
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+
+    def _seed() -> None:
+        client = s3_client_for_project(e2e_project, allow_host_creds=True)
+        _seed_images(client, bucket=bucket, prefix=f"{marker}/inbox/", count=count)
+
+    timer = threading.Timer(delay_seconds, _seed)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def concurrency_overlaps(tasks: Iterable[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Return task-name pairs whose [start_at, end_at] intervals overlap.
+
+    This is the live proof that a ``parallel:`` group really ran concurrently:
+    SkyPilot records per-task ``start_at`` / ``end_at`` for every member of a
+    JobGroup, so overlapping intervals cannot be produced by a serial chain.
+    """
+
+    # SkyPilot leaves ``start_at`` unset for JobGroup members on some versions;
+    # ``submitted_at`` is always recorded, so use it as the interval start.
+    rows = [
+        (
+            str(task.get("task_name") or task.get("task_id")),
+            float(task.get("start_at") or task.get("submitted_at") or 0.0),
+            float(task.get("end_at") or 0.0),
+        )
+        for task in tasks
+        if task.get("start_at") or task.get("submitted_at")
+    ]
+    overlaps: list[tuple[str, str]] = []
+    for index, (name_a, start_a, end_a) in enumerate(rows):
+        for name_b, start_b, end_b in rows[index + 1 :]:
+            latest_start = max(start_a, start_b)
+            earliest_end = min(end_a or float("inf"), end_b or float("inf"))
+            if earliest_end > latest_start:
+                overlaps.append((name_a, name_b))
+    return overlaps
+
+
+def write_runtime_evidence(name: str, payload: Any) -> Path:
+    """Persist a runtime run's JSON summary for EVIDENCE.md (never contains secrets)."""
+
+    log_dir = Path(
+        os.environ.get("NPA_LIVE_E2E_LOG_DIR", "")
+        or (Path.home() / "npa-live-e2e-logs")
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"runtime-{name}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
 
 
 def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client) -> None:
@@ -409,8 +528,8 @@ def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
             raw = raw[:-2]
         elif raw.lower().endswith("g"):
             raw = raw[:-1]
-        relaxed = f"{prefix}{raw}+{suffix}"
-        return relaxed if line.endswith("\n") or not line.endswith("\n") else relaxed
+        # Keep the original line ending; `suffix` already carries it when present.
+        return f"{prefix}{raw}+{suffix}"
 
     def flush_profile() -> None:
         nonlocal profile_lines, profile_has_accel
@@ -503,8 +622,29 @@ def assert_no_credential_leakage(
 
 
 def assert_cli_ok(result: Result, *, forbidden: Iterable[str] | None = None) -> None:
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0, _cli_failure_detail(result)
     assert_no_credential_leakage(result.output, extra_forbidden=forbidden)
+
+
+def _cli_failure_detail(result: Result) -> str:
+    """Include the swallowed CliRunner exception; output alone hides real crashes."""
+
+    parts = [f"exit_code={result.exit_code}", result.output or "(no output)"]
+    exception = getattr(result, "exception", None)
+    if exception is not None and not isinstance(exception, SystemExit):
+        import traceback
+
+        parts.append(
+            "".join(
+                traceback.format_exception(
+                    type(exception), exception, exception.__traceback__
+                )
+            )
+        )
+    stderr = getattr(result, "stderr", None)
+    if stderr:
+        parts.append(f"stderr:\n{stderr}")
+    return "\n".join(parts)
 
 
 def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None) -> Any:
@@ -514,5 +654,23 @@ def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None)
 
 def parse_json_payload(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
     payload = parse_json_output(result, forbidden=forbidden)
+    assert isinstance(payload, dict)
+    return payload
+
+
+def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
+    """Parse the JSON summary of a ``submit --runtime`` run.
+
+    The runtime driver streams ``[runtime] ...`` progress to stderr, and
+    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, so the JSON
+    document has to be sliced out of the combined stream.
+    """
+
+    assert_cli_ok(result, forbidden=forbidden)
+    text = result.output or ""
+    start = text.find("\n{")
+    start = 0 if text.lstrip().startswith("{") else (start + 1 if start >= 0 else -1)
+    assert start >= 0, f"no JSON summary in runtime output:\n{text[-4000:]}"
+    payload = json.loads(text[start:])
     assert isinstance(payload, dict)
     return payload

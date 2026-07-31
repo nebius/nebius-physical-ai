@@ -33,6 +33,8 @@ class PlanStep:
     resources_profile: dict[str, Any] = field(default_factory=dict)
     outputs: list[dict[str, str]] = field(default_factory=list)
     inputs: list[dict[str, str]] = field(default_factory=list)
+    #: Name of the ``parallel:`` group this step belongs to ("" for serial steps).
+    group: str = ""
 
 
 @dataclass
@@ -61,6 +63,7 @@ class ExecutionPlan:
                     "resources_profile": step.resources_profile,
                     "outputs": step.outputs,
                     "inputs": step.inputs,
+                    "group": step.group,
                 }
                 for step in self.steps
             ],
@@ -132,7 +135,17 @@ def run_workflow(
     decision_reader: Any | None = None,
     artifact_checker: Any | None = None,
     state_store: RunStateStore | None = None,
+    step_executor: Any | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Plan or execute a workflow.
+
+    ``step_executor`` swaps out *where* a step runs without changing the traversal:
+    the default runs the step locally with ``subprocess``; the runtime tier
+    (``runtime.SkyPilotWaveExecutor``) submits it to SkyPilot and waits for a
+    terminal status. ``trigger_waiter`` blocks before a state whose ``trigger:``
+    prefix has not produced data yet.
+    """
     assume = _resolve_assume(spec, assume_decision)
     ctx = _make_context(spec, run_id=run_id)
     store = state_store
@@ -168,6 +181,8 @@ def run_workflow(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 results_out=results,
             )
             status = "completed"
@@ -254,6 +269,26 @@ def _expand_state(
     state = spec.states[state_name]
     _guard_plan_size(spec, plan)
 
+    if state.parallel:
+        # Plan-time preview flattens a parallel group into declared order, exactly
+        # like `sequence:`. The concurrent shape lives in the wave plan
+        # (`waves.build_wave_plan`) and is executed by the runtime tier; keeping the
+        # static plan serial means `--plan-only` output (and every existing
+        # plan-only guardrail) is unchanged for serial and parallel specs alike.
+        for member in state.parallel:
+            _append_state_step(
+                spec,
+                spec.states[member],
+                ctx,
+                plan,
+                loop_label=state.name,
+                group=state.name,
+            )
+            _guard_plan_size(spec, plan)
+        if state.next:
+            _expand_state(spec, state.next, ctx, plan, assume_decision=assume_decision)
+        return
+
     if state.sequence:
         if state.loop:
             max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
@@ -339,6 +374,31 @@ def _expand_state(
         )
 
 
+def state_config(state: StateSpec, ctx: RunContext) -> dict[str, Any]:
+    """Return the config mapping used to resolve one state's tokens.
+
+    ``params`` on a state is a *config overlay* scoped to that state, so N members
+    of a ``parallel:`` sweep can share one ``toolRef`` argv template and still
+    differ (learning rate, output prefix, ...). Overlay values may themselves use
+    ``{{config.*}}`` / ``{{run.*}}`` tokens, resolved against the base config.
+    """
+
+    if not state.params:
+        return ctx.config
+    overlay = dict(ctx.config)
+    for key, value in state.params.items():
+        if isinstance(value, str):
+            overlay[key] = resolve_tokens(
+                value,
+                config=ctx.config,
+                run=ctx.run,
+                state_outputs=ctx.state_outputs,
+            )
+        else:
+            overlay[key] = value
+    return overlay
+
+
 def _guard_plan_size(spec: NpaWorkflowSpec, plan: ExecutionPlan) -> None:
     limit = _execution_step_limit(spec)
     if len(plan.steps) >= limit:
@@ -374,13 +434,39 @@ def _append_state_step(
     *,
     iteration: int | None = None,
     loop_label: str = "",
+    group: str = "",
 ) -> None:
+    plan.steps.append(
+        build_step(
+            spec,
+            state,
+            ctx,
+            iteration=iteration,
+            loop_label=loop_label,
+            group=group,
+        )
+    )
+    _record_state_outputs(state, ctx, plan.steps[-1])
+
+
+def build_step(
+    spec: NpaWorkflowSpec,
+    state: StateSpec,
+    ctx: RunContext,
+    *,
+    iteration: int | None = None,
+    loop_label: str = "",
+    group: str = "",
+) -> PlanStep:
+    """Materialize one planned step (tokens resolved, params overlay applied)."""
+
     argv, shell, tool_ref = _resolved_run(state, ctx)
+    config = state_config(state, ctx)
     outputs = [
         {
             "uri": resolve_tokens(
                 artifact.uri,
-                config=ctx.config,
+                config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
             ),
@@ -389,21 +475,19 @@ def _append_state_step(
         for artifact in state.outputs
         if artifact.uri
     ]
-    plan.steps.append(
-        PlanStep(
-            state=state.name,
-            iteration=iteration,
-            loop_label=loop_label,
-            argv=argv,
-            shell=shell,
-            tool_ref=tool_ref,
-            resources=state.resources,
-            resources_profile=_resources_profile(spec, state.resources),
-            outputs=outputs,
-            inputs=_resolved_inputs(state, ctx),
-        )
+    return PlanStep(
+        state=state.name,
+        iteration=iteration,
+        loop_label=loop_label,
+        argv=argv,
+        shell=shell,
+        tool_ref=tool_ref,
+        resources=state.resources,
+        resources_profile=_resources_profile(spec, state.resources),
+        outputs=outputs,
+        inputs=_resolved_inputs(state, ctx),
+        group=group,
     )
-    _record_state_outputs(state, ctx, plan.steps[-1])
 
 
 def _resources_profile(spec: NpaWorkflowSpec, profile: str) -> dict[str, Any]:
@@ -412,11 +496,12 @@ def _resources_profile(spec: NpaWorkflowSpec, profile: str) -> dict[str, Any]:
 
 
 def _resolved_inputs(state: StateSpec, ctx: RunContext) -> list[dict[str, str]]:
+    config = state_config(state, ctx)
     return [
         {
             "uri": resolve_tokens(
                 artifact.uri,
-                config=ctx.config,
+                config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
             ),
@@ -457,6 +542,8 @@ def _execute_state_machine(
     on_step: Callable[[PlanStep], None] | None,
     decision_reader: Any | None,
     artifact_checker: Any | None,
+    step_executor: Any | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
     loop_label: str = "",
     follow_transitions: bool = True,
     results_out: list[dict[str, Any]] | None = None,
@@ -465,6 +552,42 @@ def _execute_state_machine(
     _guard_execution_depth(spec, depth)
     state = spec.states[state_name]
     results: list[dict[str, Any]] = results_out if results_out is not None else []
+
+    if state.parallel:
+        group_records = _run_parallel_group(
+            spec,
+            state,
+            ctx,
+            require_inputs=require_inputs,
+            on_step=on_step,
+            artifact_checker=artifact_checker,
+            step_executor=step_executor,
+            trigger_waiter=trigger_waiter,
+        )
+        results.extend(group_records)
+        failed = [item for item in group_records if item.get("status") == "failed"]
+        if failed:
+            # Surface the ROOT cause (first failure), not the cascade of members
+            # that were skipped once the barrier could no longer be satisfied.
+            raise NpaWorkflowError(
+                str(failed[0].get("error") or f"parallel group {state.name} failed")
+            )
+        if state.next:
+            _execute_state_machine(
+                spec,
+                state.next,
+                ctx,
+                assume_decision=assume_decision,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                decision_reader=decision_reader,
+                artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
+                results_out=results,
+                depth=depth + 1,
+            )
+        return results
 
     if state.sequence:
         if state.loop:
@@ -482,6 +605,8 @@ def _execute_state_machine(
                         on_step=on_step,
                         decision_reader=decision_reader,
                         artifact_checker=artifact_checker,
+                        step_executor=step_executor,
+                        trigger_waiter=trigger_waiter,
                         loop_label=state.name,
                         follow_transitions=False,
                         results_out=results,
@@ -509,6 +634,8 @@ def _execute_state_machine(
                     on_step=on_step,
                     decision_reader=decision_reader,
                     artifact_checker=artifact_checker,
+                    step_executor=step_executor,
+                    trigger_waiter=trigger_waiter,
                     results_out=results,
                     depth=depth + 1,
                 )
@@ -524,6 +651,8 @@ def _execute_state_machine(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 loop_label=state.name,
                 follow_transitions=False,
                 results_out=results,
@@ -539,6 +668,8 @@ def _execute_state_machine(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 results_out=results,
                 depth=depth + 1,
             )
@@ -557,6 +688,8 @@ def _execute_state_machine(
                 require_inputs=require_inputs,
                 on_step=on_step,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
             )
             results.append(record)
             if record.get("status") == "failed":
@@ -577,6 +710,8 @@ def _execute_state_machine(
                 on_step=on_step,
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
+                step_executor=step_executor,
+                trigger_waiter=trigger_waiter,
                 results_out=results,
                 depth=depth + 1,
             )
@@ -590,6 +725,8 @@ def _execute_state_machine(
         require_inputs=require_inputs,
         on_step=on_step,
         artifact_checker=artifact_checker,
+        step_executor=step_executor,
+        trigger_waiter=trigger_waiter,
     )
     results.append(record)
     if record.get("status") == "failed":
@@ -615,10 +752,85 @@ def _execute_state_machine(
             on_step=on_step,
             decision_reader=decision_reader,
             artifact_checker=artifact_checker,
+            step_executor=step_executor,
+            trigger_waiter=trigger_waiter,
             results_out=results,
             depth=depth + 1,
         )
     return results
+
+
+def _run_parallel_group(
+    spec: NpaWorkflowSpec,
+    state: StateSpec,
+    ctx: RunContext,
+    *,
+    require_inputs: bool,
+    on_step: Callable[[PlanStep], None] | None,
+    artifact_checker: Any | None,
+    step_executor: Any | None,
+    trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Run every member of a ``parallel:`` group and barrier on all of them.
+
+    With an executor the whole group is handed over in one call so it can be
+    launched concurrently (SkyPilot JobGroup, bounded by ``maxConcurrency``).
+    Without one (local ``--execute``) members run in declared order, which keeps
+    the local interpreter dependency-free.
+    """
+
+    members = [spec.states[name] for name in state.parallel]
+    steps: list[PlanStep] = [
+        build_step(spec, member, ctx, loop_label=state.name, group=state.name)
+        for member in members
+    ]
+    for step in steps:
+        if require_inputs and step.inputs:
+            require_input_artifacts(
+                [item["uri"] for item in step.inputs], checker=artifact_checker
+            )
+        if on_step is not None:
+            on_step(step)
+
+    if step_executor is None:
+        records: list[dict[str, Any]] = []
+        for member, step in zip(members, steps):
+            try:
+                wait_for_trigger(member, ctx, waiter=trigger_waiter)
+                record = _dispatch_step(step, None)
+            except NpaWorkflowError as exc:
+                records.append(
+                    {
+                        "state": step.state,
+                        "iteration": step.iteration,
+                        "group": state.name,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+                continue
+            record.setdefault("group", state.name)
+            _record_state_outputs(member, ctx, step)
+            records.append(record)
+        return records
+
+    for member in members:
+        wait_for_trigger(member, ctx, waiter=trigger_waiter)
+    max_concurrency = len(steps)
+    if state.max_concurrency is not None:
+        max_concurrency = max(1, resolve_config_int(state.max_concurrency, ctx.config))
+    records = list(
+        step_executor.execute_parallel(
+            steps,
+            group=state.name,
+            max_concurrency=max_concurrency,
+        )
+    )
+    for member, step, record in zip(members, steps, records):
+        record.setdefault("group", state.name)
+        if record.get("status") != "failed":
+            _record_state_outputs(member, ctx, step)
+    return records
 
 
 def _run_single_state(
@@ -631,6 +843,8 @@ def _run_single_state(
     require_inputs: bool,
     on_step: Callable[[PlanStep], None] | None,
     artifact_checker: Any | None,
+    step_executor: Any | None = None,
+    trigger_waiter: Callable[[StateSpec, str, "RunContext"], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     plan = ExecutionPlan(
         workflow=spec.name,
@@ -654,7 +868,8 @@ def _run_single_state(
     if on_step is not None:
         on_step(step)
     try:
-        record = _execute_step(step, execute=True)
+        wait_for_trigger(state, ctx, waiter=trigger_waiter)
+        record = _dispatch_step(step, step_executor)
     except NpaWorkflowError as exc:
         record = {
             "state": step.state,
@@ -667,12 +882,41 @@ def _run_single_state(
     return record
 
 
+def _dispatch_step(step: PlanStep, step_executor: Any | None) -> dict[str, Any]:
+    """Run one step locally, or hand it to an injected executor (runtime tier)."""
+
+    if step_executor is None:
+        # Module-level lookup keeps monkeypatching `_execute_step` working.
+        return _execute_step(step, execute=True)
+    return step_executor.execute(step)
+
+
+def wait_for_trigger(
+    state: StateSpec,
+    ctx: RunContext,
+    *,
+    waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Block on a state's ``trigger:`` prefix before its work runs."""
+
+    if state.trigger is None or waiter is None:
+        return None
+    uri = resolve_tokens(
+        state.trigger.uri,
+        config=state_config(state, ctx),
+        run=ctx.run,
+        state_outputs=ctx.state_outputs,
+    )
+    return waiter(state, uri, ctx)
+
+
 def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, str]:
+    config = state_config(state, ctx)
     if state.tool_ref:
         argv = [
             resolve_tokens(
                 token,
-                config=ctx.config,
+                config=config,
                 run=ctx.run,
                 state_outputs=ctx.state_outputs,
             )
@@ -683,12 +927,12 @@ def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, st
         return [], "", ""
     shell = resolve_tokens(
         state.run.shell,
-        config=ctx.config,
+        config=config,
         run=ctx.run,
         state_outputs=ctx.state_outputs,
     )
     argv = [
-        resolve_tokens(token, config=ctx.config, run=ctx.run, state_outputs=ctx.state_outputs)
+        resolve_tokens(token, config=config, run=ctx.run, state_outputs=ctx.state_outputs)
         for token in state.run.argv
     ]
     return argv, shell, ""

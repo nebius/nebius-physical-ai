@@ -1,0 +1,43 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-isaac-lab image.
+#
+# This is the same change the main isaac-lab/Dockerfile now applies, expressed as a
+# derived build so an operator can fix an existing tag without pulling (or rebuilding
+# from) the ~8 GB NVIDIA base:
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-isaac-lab:2.3.2.post1 \
+#     --tag  <registry>/npa-isaac-lab:2.3.2.post1-sky1 \
+#     --dockerfile npa/docker/workbench/isaac-lab/Dockerfile.k8s-prereqs
+#
+# Why it is needed: SkyPilot's Kubernetes runtime bootstrap requires a system python3
+# (plus rsync) inside the container. The NVIDIA Isaac base ships none — its interpreter
+# is /isaac-sim/python.sh — and /isaac-sim is mode 750 isaac-sim:isaac-sim, unreadable
+# by the `ubuntu` user the image runs as. Without this, provisioning fails with
+# "Failed to get ssh user for pod ...: container not found (ray-node)".
+#
+# All four ingredients are required (verified by bisecting derived images live):
+# system python3, /isaac-sim group access, passwordless sudo for the runtime user, and
+# the system interpreter first on PATH. Group membership avoids rewriting multi-GB
+# layers; the image stays non-root. Training still runs through ISAAC_LAB_PYTHON.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (getent group isaac-sim >/dev/null 2>&1 && usermod -aG isaac-sim ubuntu || true) \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && python3 --version
+
+# SkyPilot's bootstrap must find the SYSTEM interpreter, not Isaac's kit python (which
+# the base image puts earlier on PATH and which cannot import its own site-packages
+# outside /isaac-sim/python.sh).
+ENV PATH=/usr/bin:$PATH
+
+WORKDIR /workspace/isaaclab
+USER ubuntu
+ENTRYPOINT ["/bin/bash"]

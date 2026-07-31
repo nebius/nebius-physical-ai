@@ -110,6 +110,50 @@ def submit_cmd(
             "but do not submit."
         ),
     ),
+    runtime: bool = typer.Option(
+        False,
+        "--runtime/--no-runtime",
+        help=(
+            "For npa.workflow specs: drive the run with the runtime orchestrator "
+            "(submit each wave, poll to terminal, read the real decision artifact "
+            "from S3, then replan). Required for parallel fan-out and for real "
+            "runtime early-exit; the default one-shot path renders the flattened "
+            "serial plan with --assume-decision."
+        ),
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume/--no-resume",
+        help="With --runtime: replay waves already recorded as succeeded for this run id.",
+    ),
+    poll_seconds: int = typer.Option(
+        30,
+        "--poll-seconds",
+        help="With --runtime: seconds between managed-job status polls.",
+    ),
+    max_wait_seconds: int = typer.Option(
+        3600,
+        "--max-wait-seconds",
+        help="With --runtime: per-wave deadline before the job is cancelled.",
+    ),
+    cancel_on_timeout: bool = typer.Option(
+        True,
+        "--cancel-on-timeout/--no-cancel-on-timeout",
+        help="With --runtime: cancel the managed job (and its cluster) on timeout.",
+    ),
+    retries: int = typer.Option(
+        0,
+        "--retries",
+        help="With --runtime: retry a failed wave this many times before failing the run.",
+    ),
+    max_concurrency: int = typer.Option(
+        0,
+        "--max-concurrency",
+        help=(
+            "With --runtime: cap concurrent tasks per parallel group "
+            "(0 keeps each group's declared maxConcurrency)."
+        ),
+    ),
     deploy_if_absent: bool = typer.Option(
         True,
         "--deploy-if-absent/--no-deploy-if-absent",
@@ -346,24 +390,49 @@ def submit_cmd(
             image_overrides["*"] = ""
         elif image_value:
             image_overrides["*"] = image_value
+
+        npa_render_options = SkypilotRenderOptions(
+            registry=registry,
+            image_overrides=image_overrides,
+            aws_endpoint_url=s3_endpoint
+            or os.environ.get("AWS_ENDPOINT_URL")
+            or os.environ.get("NEBIUS_S3_ENDPOINT")
+            or "https://storage.eu-north1.nebius.cloud",
+            gpu_target=gpu_target,
+            image_variant=image_variant,
+            # Never mint/print live registry tokens for --plan-only.
+            materialize_registry_secrets=not plan_only,
+        )
+
+        if runtime and not plan_only:
+            _run_npa_workflow_runtime(
+                yaml_path,
+                run_id=resolved_run_id,
+                assume_decision=assume_decision,
+                config_overrides=substitutions,
+                render_options=npa_render_options,
+                secret_envs=secret_env,
+                controller_backend=controller_backend.value,
+                infra=infra,
+                isolated_config_dir=isolated_config_dir,
+                submit_timeout=submit_timeout,
+                poll_seconds=poll_seconds,
+                max_wait_seconds=max_wait_seconds,
+                cancel_on_timeout=cancel_on_timeout,
+                retries=retries,
+                max_concurrency=max_concurrency,
+                resume=resume,
+                output_format=output_format,
+            )
+            return
+
         try:
             prepared_npa = prepare_npa_workflow_for_submit(
                 yaml_path,
                 run_id=resolved_run_id,
                 assume_decision=assume_decision,
                 config_overrides=substitutions,
-                render_options=SkypilotRenderOptions(
-                    registry=registry,
-                    image_overrides=image_overrides,
-                    aws_endpoint_url=s3_endpoint
-                    or os.environ.get("AWS_ENDPOINT_URL")
-                    or os.environ.get("NEBIUS_S3_ENDPOINT")
-                    or "https://storage.eu-north1.nebius.cloud",
-                    gpu_target=gpu_target,
-                    image_variant=image_variant,
-                    # Never mint/print live registry tokens for --plan-only.
-                    materialize_registry_secrets=not plan_only,
-                ),
+                render_options=npa_render_options,
             )
         except NpaWorkflowError as exc:
             _fail(str(exc))
@@ -544,6 +613,91 @@ def submit_cmd(
         typer.echo(f"job_id: {result.job_id}")
     if workflow_state is not None:
         typer.echo(f"run_prefix_uri: {workflow_state.uri}")
+
+
+def _run_npa_workflow_runtime(
+    yaml_path: Path,
+    *,
+    run_id: str,
+    assume_decision: str,
+    config_overrides: dict[str, str],
+    render_options,
+    secret_envs: list[str],
+    controller_backend: str,
+    infra: str,
+    isolated_config_dir: Path | None,
+    submit_timeout: int,
+    poll_seconds: int,
+    max_wait_seconds: int,
+    cancel_on_timeout: bool,
+    retries: int,
+    max_concurrency: int,
+    resume: bool,
+    output_format: "OutputFormat",
+) -> None:
+    """Drive an npa.workflow spec through the runtime orchestrator tier."""
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.runtime import (
+        RuntimeOptions,
+        run_workflow_runtime,
+        secret_env_names,
+    )
+    from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+
+    try:
+        spec = load_spec_for_submit(yaml_path, config_overrides=config_overrides)
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
+
+    options = RuntimeOptions(
+        poll_seconds=poll_seconds,
+        max_wait_seconds=max_wait_seconds,
+        retries=max(0, retries),
+        cancel_on_timeout=cancel_on_timeout,
+        max_concurrency=max(0, max_concurrency),
+        secret_envs=secret_env_names(secret_envs),
+        submit_timeout=submit_timeout,
+        infra=infra,
+        controller_backend=controller_backend,
+        isolated_config_dir=isolated_config_dir,
+        resume=resume,
+    )
+    try:
+        report = run_workflow_runtime(
+            spec,
+            run_id=run_id,
+            render_options=render_options,
+            options=options,
+            assume_decision=assume_decision,
+            logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
+        )
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
+
+    payload = report.to_dict()
+    if output_format == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"status: {report.status}")
+        typer.echo(f"run_id: {report.run_id}")
+        typer.echo(f"waves: {len(report.waves)}")
+        for wave in report.waves:
+            states = ",".join(wave.get("states") or [])
+            typer.echo(
+                f"  {wave.get('key')}: {wave.get('status')} "
+                f"[{wave.get('kind')}] states={states} job_id={wave.get('job_id')}"
+            )
+        for decision in report.decisions:
+            typer.echo(f"decision: {decision.get('decision')} <- {decision.get('uri')}")
+        if report.run_prefix_uri:
+            typer.echo(f"run_prefix_uri: {report.run_prefix_uri}")
+        if report.error:
+            typer.echo(f"error: {report.error}")
+    if report.status != "succeeded":
+        raise typer.Exit(1)
 
 
 def _default_submit_run_id(yaml_path: Path) -> str:
@@ -1482,6 +1636,14 @@ def plan_spec_cmd(
         "--assume-decision",
         help="Plan branch after decide states (promote_checkpoint or loop_back).",
     ),
+    waves: bool = typer.Option(
+        False,
+        "--waves",
+        help=(
+            "Show the runtime wave shape (serial steps and parallel fan-out groups "
+            "with their concurrency batches) instead of the flat step list."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON plan."),
 ) -> None:
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
@@ -1495,6 +1657,26 @@ def plan_spec_cmd(
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
+
+    if waves:
+        from npa.orchestration.npa_workflow.waves import wave_plan_from_plan
+
+        wave_plan = wave_plan_from_plan(spec, plan, run_id=resolved_run_id)
+        if json_output:
+            typer.echo(json.dumps(wave_plan.to_dict(), indent=2, sort_keys=True))
+            return
+        typer.echo(f"workflow: {wave_plan.workflow}")
+        typer.echo(f"waves: {len(wave_plan.waves)}")
+        for wave in wave_plan.waves:
+            states = ", ".join(step.state for step in wave.steps)
+            suffix = (
+                f" maxConcurrency={wave.max_concurrency} batches={len(wave.batches())}"
+                if wave.kind == "parallel"
+                else ""
+            )
+            typer.echo(f"  {wave.index:02d}. [{wave.kind}] {wave.name}: {states}{suffix}")
+        return
+
     if json_output:
         typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
         return

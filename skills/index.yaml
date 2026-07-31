@@ -210,6 +210,16 @@ skills:
       - type: cli_help
         args: ["workbench", "fiftyone", "load-dataset", "--help"]
         contains: "dataset"
+  - name: lichtblick
+    category: tools
+    when_to_use: "Deploy, launch, or review the Lichtblick web viewer — an open-source (MPL-2.0), Foxglove-compatible MCAP / ROS-bag / robotics log viewer for artifacts staged from S3."
+    path: skills/tools/lichtblick/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "lichtblick", "serve", "--help"]
+        contains: "input-path"
+      - type: file_exists
+        path: npa/docker/workbench/lichtblick/Dockerfile
   - name: genesis
     category: tools
     when_to_use: "Genesis simulation, RL teacher training, visual demo generation, and EGL behavior."
@@ -496,6 +506,9 @@ skills:
           - npa/workflows/workbench/npa-workflows/cosmos-synth-fanout-curation.yaml
           - npa/workflows/physical-ai-data-factory.yaml
           - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
+          - npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml
+          - npa/workflows/workbench/npa-workflows/token-factory-gate-loop.yaml
+          - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."
