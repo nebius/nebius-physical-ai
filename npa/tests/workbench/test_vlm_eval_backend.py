@@ -577,12 +577,24 @@ def _write_pick_place_rollout(root: Path) -> Path:
 
 
 class _FakeResp:
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, payload) -> None:
         self.status_code = status_code
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self):
+        return self._payload
+
+
+_OK_PAYLOAD = {
+    "choices": [{"message": {"content": '{"success": true, "score": 0.9, "rationale": "ok"}'}}]
+}
 
 
 class _FakeClient:
-    """Minimal httpx.Client stand-in: fail `fail_times`, then answer 200."""
+    """Minimal httpx.Client stand-in: fail `fail_times` ConnectErrors, then 200."""
 
     calls = 0
     fail_times = 0
@@ -596,57 +608,61 @@ class _FakeClient:
     def __exit__(self, *exc) -> None:
         return None
 
-    def get(self, url, headers=None):
+    def post(self, url, headers=None, json=None):
         type(self).calls += 1
         if type(self).calls <= type(self).fail_times:
             raise __import__("httpx").ConnectError("Connection refused")
-        return _FakeResp(200)
+        return _FakeResp(200, _OK_PAYLOAD)
 
 
-def test_wait_for_backend_ready_retries_then_succeeds(monkeypatch) -> None:
-    _FakeClient.calls = 0
-    _FakeClient.fail_times = 3
-    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
-    slept: list[float] = []
-    # Deterministic clock so the loop is bounded regardless of wall time.
-    ticks = iter(range(0, 10000, 1))
-    vlm_eval.wait_for_backend_ready(
-        backend="self-hosted",
+def _call_single(backend: str):
+    return vlm_eval._call_openai_compatible(
+        backend=backend,
+        model="m",
         endpoint_url="http://127.0.0.1:8000/v1",
         api_key_env="VLM_EVAL_API_KEY",
-        ready_timeout_s=100.0,
-        sleep=lambda d: slept.append(d),
-        now=lambda: next(ticks),
+        prompt="p",
+        frames=[],
+        timeout_s=5.0,
     )
+
+
+def test_self_hosted_retries_connect_errors_then_succeeds(monkeypatch) -> None:
+    # Cold-start warmup: transient connection-refused must be retried, not fatal.
+    _FakeClient.calls = 0
+    _FakeClient.fail_times = 3
+    monkeypatch.setenv("NPA_VLM_READY_TIMEOUT_S", "100")
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(vlm_eval.time, "sleep", lambda _d: None)
+    result = _call_single("self-hosted")
     assert _FakeClient.calls == 4  # 3 refused + 1 success
-    assert slept  # backed off between attempts
+    assert result.score == 0.9
 
 
-def test_wait_for_backend_ready_noop_for_api_and_stub(monkeypatch) -> None:
-    def _boom(*a, **k):  # pragma: no cover - must never be called
-        raise AssertionError("must not probe a hosted/stub backend")
-
-    monkeypatch.setattr(vlm_eval.httpx, "Client", _boom)
-    vlm_eval.wait_for_backend_ready(backend="api", endpoint_url="", api_key_env="X")
-    vlm_eval.wait_for_backend_ready(backend="stub", endpoint_url="", api_key_env="X")
-
-
-def test_wait_for_backend_ready_times_out(monkeypatch) -> None:
+def test_api_backend_does_not_retry_connect_error(monkeypatch) -> None:
+    # Hosted API is expected up: a connect error fails fast with the old message.
     _FakeClient.calls = 0
     _FakeClient.fail_times = 10_000
+    monkeypatch.setenv("VLM_EVAL_API_KEY", "test-key")  # get past api-key check
     monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(vlm_eval.time, "sleep", lambda _d: None)
+    with pytest.raises(vlm_eval.VlmEvalError, match="request failed"):
+        _call_single("api")
+    assert _FakeClient.calls == 1  # no retry
+
+
+def test_self_hosted_readiness_times_out_with_clear_message(monkeypatch) -> None:
+    _FakeClient.calls = 0
+    _FakeClient.fail_times = 10_000
+    monkeypatch.setenv("NPA_VLM_READY_TIMEOUT_S", "20")
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(vlm_eval.time, "sleep", lambda _d: None)
     clock = {"t": 0.0}
 
     def _now() -> float:
         clock["t"] += 5.0
         return clock["t"]
 
+    monkeypatch.setattr(vlm_eval.time, "monotonic", _now)
     with pytest.raises(vlm_eval.VlmEvalError, match="not ready"):
-        vlm_eval.wait_for_backend_ready(
-            backend="self-hosted",
-            endpoint_url="http://127.0.0.1:8000/v1",
-            api_key_env="VLM_EVAL_API_KEY",
-            ready_timeout_s=20.0,
-            sleep=lambda d: None,
-            now=_now,
-        )
+        _call_single("self-hosted")

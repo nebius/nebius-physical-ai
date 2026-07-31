@@ -229,16 +229,6 @@ def benchmark_vlm_eval(
     if timeout_s <= 0:
         raise VlmEvalError("--timeout-s must be positive")
 
-    # Wait once for a self-hosted vLLM server to warm up before the sweep, so the
-    # first benchmark case doesn't fail on connection-refused during cold start.
-    if not (use_fixture_scores or effective_backend == "stub"):
-        wait_for_backend_ready(
-            backend=effective_backend,
-            endpoint_url=endpoint_url,
-            api_key_env=api_key_env,
-            timeout_s=timeout_s,
-        )
-
     config_results: list[VlmBenchmarkConfigResult] = []
     for model, (rubric_name, rubric_text), threshold in product(
         model_values,
@@ -431,15 +421,6 @@ def evaluate_vlm(
                 rubric=effective_rubric,
                 frame_selection=frame_selection,
                 frame_count=len(frames),
-            )
-            # Self-hosted vLLM may still be loading weights when we reach here;
-            # wait for it to answer before the (single) scoring request so a
-            # cold start is a bounded wait, not an immediate hard failure.
-            wait_for_backend_ready(
-                backend=backend,
-                endpoint_url=endpoint_url,
-                api_key_env=api_key_env,
-                timeout_s=timeout_s,
             )
             structured = _call_openai_compatible(
                 backend=backend,
@@ -1092,55 +1073,6 @@ def _ready_timeout_s() -> float:
     return value if value > 0 else DEFAULT_READY_TIMEOUT_S
 
 
-def wait_for_backend_ready(
-    *,
-    backend: str,
-    endpoint_url: str,
-    api_key_env: str,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
-    ready_timeout_s: float | None = None,
-    sleep: "Any" = time.sleep,
-    now: "Any" = time.monotonic,
-) -> None:
-    """Block until a self-hosted OpenAI-compatible backend answers ``/models``.
-
-    A self-hosted vLLM server started alongside the eval job needs minutes to
-    load weights; polling its model list turns a transient connection-refused /
-    503 during warmup into a bounded wait instead of an immediate hard failure.
-    Hosted (``api``) and ``stub`` backends are always ready, so this is a no-op.
-    """
-
-    if backend != "self-hosted":
-        return
-    base = _resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url)
-    models_url = base.rstrip("/") + "/models"
-    headers: dict[str, str] = {}
-    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    deadline = now() + (ready_timeout_s if ready_timeout_s is not None else _ready_timeout_s())
-    probe_timeout = min(timeout_s, 30.0)
-    delay = 2.0
-    last_error = "no attempt made"
-    while now() < deadline:
-        try:
-            with httpx.Client(timeout=probe_timeout) as client:
-                response = client.get(models_url, headers=headers)
-            if response.status_code == 200:
-                return
-            last_error = f"HTTP {response.status_code}"
-        except httpx.HTTPError as exc:
-            last_error = str(exc) or exc.__class__.__name__
-        sleep(delay)
-        delay = min(delay * 1.5, 15.0)
-    raise VlmEvalError(
-        f"VLM backend not ready at {models_url} after "
-        f"{ready_timeout_s if ready_timeout_s is not None else _ready_timeout_s():.0f}s "
-        f"(last: {last_error})"
-    )
-
-
 def _call_openai_compatible(
     *,
     backend: str,
@@ -1173,21 +1105,62 @@ def _call_openai_compatible(
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
     }
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            response = client.post(url, headers=headers, json=request)
-            response.raise_for_status()
-            data = response.json()
-    except httpx.HTTPError as exc:
-        raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise VlmEvalError("VLM backend returned non-JSON response") from exc
+    data = _post_with_readiness_retry(
+        url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
+    )
 
     try:
         message = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmEvalError("VLM backend response missing choices[0].message.content") from exc
     return parse_structured_response(str(message))
+
+
+def _post_with_readiness_retry(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    backend: str,
+    timeout_s: float,
+) -> Any:
+    """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
+
+    A self-hosted vLLM server started alongside the eval job needs minutes to
+    load weights; retry transient connection failures with backoff up to the
+    readiness deadline so a cold start is a bounded wait, not an instant
+    connection-refused. Hosted (``api``) backends are expected to be up and fail
+    fast. This lives in the request path so callers that stub
+    ``_call_openai_compatible`` in tests never incur the wait.
+    """
+
+    is_self_hosted = backend == "self-hosted"
+    ready_timeout = _ready_timeout_s()
+    deadline = time.monotonic() + (ready_timeout if is_self_hosted else 0.0)
+    delay = 2.0
+    last_conn_error = ""
+    while True:
+        try:
+            with httpx.Client(timeout=timeout_s) as client:
+                response = client.post(url, headers=headers, json=request)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            last_conn_error = str(exc) or exc.__class__.__name__
+            if is_self_hosted and time.monotonic() < deadline:
+                time.sleep(delay)
+                delay = min(delay * 1.5, 15.0)
+                continue
+            if is_self_hosted:
+                raise VlmEvalError(
+                    f"VLM backend not ready at {url} after {ready_timeout:.0f}s "
+                    f"(last: {last_conn_error})"
+                ) from exc
+            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise VlmEvalError("VLM backend returned non-JSON response") from exc
 
 
 def _resolve_endpoint_url(*, backend: str, endpoint_url: str) -> str:
