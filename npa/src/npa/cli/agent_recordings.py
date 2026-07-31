@@ -29,6 +29,13 @@ RUN_ENTITY_MARKERS: tuple[bytes, ...] = (
     b"/scores",
     b"/signals",
     b"outer_loop",
+    # Neural-reconstruction (NuRec/NRE) run entities: rig-offset novel views
+    # rendered from the trained Gaussians, NRE's validation renders, and the
+    # Gaussian quality summary. None of these appear in the stock demo recording.
+    b"novel_view",
+    b"reconstruction/",
+    b"gaussians",
+    b"nurec",
 )
 
 # Markers characteristic of the stock Franka/demo recording (scene geometry only).
