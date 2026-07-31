@@ -535,6 +535,57 @@ submit raised, and the driver did exactly what it now must:
 
 Before this PR that path recorded a failure and walked away.
 
+### 5.7 `trigger:` / watch pattern, proven live
+
+The last unit-only item on the Phase-2 list. `token-factory-trigger-watch.yaml`
+declares a `caption-inbox` state whose `trigger:` watches an S3 prefix that does
+**not exist** when the run starts; the test seeds two PNGs into it 60 s later.
+
+```bash
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=token-factory-trigger-watch.yaml \
+NPA_E2E_TRIGGER_SEED_DELAY=60 \
+  npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_runtime_live_reaches_terminal \
+    -q -s --timeout=2400
+# 1 passed in 220.06s
+```
+
+Ledger `runtime-npa-wf-cpu-token-factory-trigger-watch-c684d15b.json`:
+
+```json
+"watermarks": {
+  "caption-inbox": {
+    "uri": "s3://<bucket>/npa-workflow-e2e/npa-wf-cpu-token-factory-trigger-watch-c684d15b/token-factory-trigger-watch/inbox/",
+    "polls": 5, "objects": 2,
+    "observed_at": "2026-07-31T02:52:48Z",
+    "sample": ["...inbox/frame_000.png", "...inbox/frame_001.png"]
+  }
+}
+"waves": [{"states": ["caption-inbox"], "status": "succeeded", "job_id": "178",
+           "started_at": "2026-07-31T02:52:49Z", "ended_at": "2026-07-31T02:55:24Z"}]
+```
+
+The causal ordering is the proof, and it is the thing a mock cannot give you:
+**five polls elapsed against an empty prefix, the objects were observed at
+02:52:48Z, and the wave was submitted at 02:52:49Z** — one second later. No
+SkyPilot job existed until the trigger fired, so the driver genuinely waited on
+external data rather than racing it. `sky jobs queue` confirms exactly one job
+(`178 ... SUCCEEDED`) for this run.
+
+Cost: one 2-CPU Kubernetes pod for ~2.5 min plus ~2 hosted caption calls —
+rounding error against the §7 total, which is unchanged at single-digit
+GPU-minutes.
+
+One process note worth keeping: the first two attempts of this run died instantly
+with `NameError: seed_trigger_inbox_later`. An earlier refactor had removed a
+neighbouring symbol from the import block, so my edit's anchor never matched and
+the import was silently never added. Collection passed because the name is only
+referenced *inside* the test body. `ruff` (F821) flags this in under a second and
+now runs clean over `npa/tests/e2e/` and the orchestration trees; that check
+belongs before every live launch, since a live run is an expensive way to
+discover a missing import.
+
 ## 6. Mandated harness commands
 
 ### 6.1 `test_npa_workflow_submit_live_e2e.py` (cpu tier)
@@ -619,24 +670,17 @@ usage. No cluster was provisioned for this work; no cluster was left running (§
 
 Now much shorter — the two GPU items that headed this list are verified in §5.
 
-1. **The `trigger:` / watch pattern is unit-tested only — live proof attempted, not
-   completed.** It now has a shipped spec (`token-factory-trigger-watch.yaml`, in
-   `SUBMIT_LIVE_MATRIX`) and a live test that seeds the inbox ~45 s *after* the run
-   starts and asserts the recorded watermark shows >= 2 polls. The live run was
-   launched but its session was interrupted before a verdict, so nothing is claimed
-   here; re-run with
-   `NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=token-factory-trigger-watch.yaml`.
-2. **Wave retry is unit-tested only.** No live wave failed *transiently* and then
+1. **Wave retry is unit-tested only.** No live wave failed *transiently* and then
    succeeded on a retry (the live failures were deterministic, so retries would not
    have helped).
-3. **Timeout-cancellation is unit-tested only** — no live wave exceeded its
+2. **Timeout-cancellation is unit-tested only** — no live wave exceeded its
    deadline. The closely-related *abort*-cancellation path did fire live (§5.4).
-4. **Bounded-concurrency batching ran live only with `maxConcurrency == group size`**
+3. **Bounded-concurrency batching ran live only with `maxConcurrency == group size`**
    (one batch). The multi-batch path is unit-tested.
-5. **Only the `cpu` and `multi` tiers of the live matrix were executed**; the `gpu`
+4. **Only the `cpu` and `multi` tiers of the live matrix were executed**; the `gpu`
    one-shot twins (SONIC, Cosmos3, vlm-eval) are pre-existing cases unrelated to this
    change and were covered plan-only.
-6. **The derived `npa-isaac-lab:...-sky` image is an operator artifact, not a repo
+5. **The derived `npa-isaac-lab:...-sky` image is an operator artifact, not a repo
    deliverable.** The Dockerfile is recorded in §5.2 and the override hook is
    committed, but this PR does not add an image build to the repo's image manifest;
    making the shipped Isaac image SkyPilot-hostable is a follow-up.
@@ -680,12 +724,12 @@ re-minted with the same identity (§5.2).
 | 2 | The serial-only guard is lifted behind an **explicit** parallel path; serial stays the default | `a8419888` | `render_skypilot_yaml` keeps its guard and its **byte-identical output** (its body now delegates to a shared doc builder — see DESIGN §3); `test_render_rejects_parallel_execution` passes verbatim; §2 shows `--plan-only` still emits `execution: serial` for all 23 twins; §4.3 diffs the plan output against the base commit |
 | 3 | Barrier: a downstream `needs:` state waits for all parallel predecessors | `b55d081f` (wave boundary in the runtime tier) | §3.2 — barrier submitted 94.6 s after the last member ended; §5.1 — 84 s after |
 | 4 | Bounded concurrency respected | `4ab46d20` (`maxConcurrency` + batching), `b55d081f` (`execute_parallel` chunking) | unit: `test_wave_plan_groups_parallel_members`, `test_runtime_launches_parallel_group_as_job_group_with_barrier` (2+1 batches), `test_runtime_max_concurrency_option_is_a_cap_not_an_override`, `test_slow_cases_carry_their_own_deadline`; live: single-batch only (§8.4) |
-| 5 | `isaac-lab-rl-sweep.yaml` ported to a real npa.workflow parallel spec | `0cd3cc40` (spec + `rl_sweep` stages) | §2 wave preview (4-task JobGroup + barrier); **not run live** — §5.2 / §8.1 |
+| 5 | `isaac-lab-rl-sweep.yaml` ported to a real npa.workflow parallel spec | `0cd3cc40` (spec + `rl_sweep` stages) | **live** — §5.2 (four variants trained concurrently on four GPUs, barrier ranked them) |
 | 6 | Runtime tier above `build_scheduler_task`: plan → submit → poll → read S3 decision → replan | `b55d081f` | §4.1/§4.2 ledgers: per-wave `job_id`, `sky_status`, decision reads |
 | 7 | Consumes the existing decision contract, no new gate mechanism | `b55d081f` (`RecordingDecisionReader` over `decisions.refresh_context_decision`) | §4.1 `gate/decision.json` written by the existing `grade_gate`, read back by the engine |
 | 8 | Bounded loops with **real** early-exit | `b55d081f`, `0cd3cc40` | §4 — 5 waves / 1 iteration (threshold 0.0) vs 11 waves / 3 iterations (threshold 1.01), same spec |
 | 9 | Data-dependent branching (`goto`) | `b55d081f` | §4 — `route` → `publish` vs `route` → `escalate` decided by the artifact; unit `test_runtime_branch_follows_transition_goto` |
-| 10 | Trigger / watch-loop pattern | `4ab46d20` (spec field), `b55d081f` (`s3_trigger_waiter`) | unit `test_trigger_waits_for_objects_then_runs`, `test_trigger_gives_up_after_max_polls`; **not run live** — §8.2 |
+| 10 | Trigger / watch-loop pattern | `4ab46d20` (spec field), `b55d081f` (`s3_trigger_waiter`) | **live** — §5.7 (run `npa-wf-cpu-token-factory-trigger-watch-c684d15b`, 5 polls on an empty prefix, job submitted 1 s after the watermark) |
 | 11 | `--assume-decision` plan-only path preserved as the offline fallback | (unchanged code) | §4.3 — plan JSON identical to base commit `d129ee90` for 3 dynamic specs × 2 assumptions |
 | 12 | Every existing plan-only test and the shown-catalog guardrail still pass | all | §1 (full offline suite, guardrails 50), §2 (23 plan-only matrix cases); drift guards `test_shipped_fanout_spec_wave_shape`, `test_shipped_sweep_spec_wave_shape`, `test_shipped_gate_loop_plan_matches_the_assumed_decision`, `test_shipped_specs_render_without_placeholders` |
 | 13 | Job failure/retry, idempotency and resume built on `run_state.py` | `b55d081f` (`RuntimeLedger`, `npa.workflow.runtime.v1`) | §3.4 — live `--resume` replayed both waves, **zero** new jobs; unit tests for retry/timeout/exhaustion |
