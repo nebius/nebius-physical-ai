@@ -25,6 +25,45 @@ def test_build_var_args_preserves_key_values() -> None:
     ]
 
 
+def test_secrets_go_through_a_var_file_not_the_process_table(tmp_path: Path) -> None:
+    """`ps` is world-readable, so `-var iam_token=...` leaked the deploy's token."""
+    tf_vars = {
+        "iam_token": "t1.token-value",
+        "nebius_secret_key": "SK_SECRET",
+        "nebius_api_key": "AK_SECRET",
+        "tf_api_key": "v1.token-factory",
+        "instance_name": "agent-prod-agent",
+        "ssh_public_key_path": "/home/op/.ssh/id_ed25519.pub",
+    }
+
+    with provisioner._var_args(tf_path := tmp_path, tf_vars) as args:
+        joined = " ".join(args)
+        assert "t1.token-value" not in joined
+        assert "SK_SECRET" not in joined
+        assert "AK_SECRET" not in joined
+        assert "v1.token-factory" not in joined
+        # Non-secret vars stay visible, which keeps `-var` debugging useful.
+        assert "-var" in args and "instance_name=agent-prod-agent" in args
+        # A path that merely contains "key" is not a secret.
+        assert "ssh_public_key_path=/home/op/.ssh/id_ed25519.pub" in args
+
+        var_file = next(path for path in tf_path.iterdir() if path.name.endswith(".tfvars.json"))
+        assert json.loads(var_file.read_text())["iam_token"] == "t1.token-value"
+        assert var_file.stat().st_mode & 0o077 == 0
+        # Not `*.auto.tfvars.json`: it must apply only to the command that passes it.
+        assert not var_file.name.endswith(".auto.tfvars.json")
+        assert f"-var-file={var_file}" in args
+
+    # Removed once the command finishes.
+    assert not list(tmp_path.glob("*.tfvars.json"))
+
+
+def test_var_file_is_skipped_when_nothing_is_sensitive(tmp_path: Path) -> None:
+    with provisioner._var_args(tmp_path, {"instance_name": "agent"}) as args:
+        assert args == ["-var", "instance_name=agent"]
+        assert not list(tmp_path.glob("*.tfvars.json"))
+
+
 def test_prepare_working_dir_copies_tf_files_and_writes_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

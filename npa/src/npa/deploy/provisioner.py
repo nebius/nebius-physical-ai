@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 # The Nebius Terraform provider prefers an ambient NEBIUS_IAM_TOKEN over the
 # explicit `token = var.iam_token` in the provider block. A stale/expired token
@@ -143,6 +144,55 @@ def _build_var_args(tf_vars: dict[str, str]) -> list[str]:
     for key, value in tf_vars.items():
         args.extend(["-var", f"{key}={value}"])
     return args
+
+
+#: Variable names whose values must not reach the process table. `ps` is readable
+#: by every local user, so `-var iam_token=...` / `-var nebius_secret_key=...`
+#: leaked the deploy's IAM token and the state bucket's S3 keys for the duration
+#: of the apply. Those values go through a 0600 var-file instead.
+_SENSITIVE_VAR_HINTS = ("token", "secret", "password", "api_key", "_key")
+_SENSITIVE_VAR_FILE = "npa-sensitive.tfvars.json"
+
+
+def _is_sensitive_var(name: str) -> bool:
+    lowered = str(name or "").lower()
+    if lowered.endswith("_key_path") or lowered.endswith("_path"):
+        return False
+    return any(hint in lowered for hint in _SENSITIVE_VAR_HINTS)
+
+
+def _split_sensitive_vars(tf_vars: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    sensitive = {
+        key: value
+        for key, value in tf_vars.items()
+        if _is_sensitive_var(key) and str(value or "") != ""
+    }
+    plain = {key: value for key, value in tf_vars.items() if key not in sensitive}
+    return sensitive, plain
+
+
+@contextmanager
+def _var_args(tf_dir: Path, tf_vars: dict[str, str]) -> Iterator[list[str]]:
+    """Yield terraform var arguments, keeping secret values out of argv.
+
+    The file is written 0600 inside the per-deploy working directory (itself
+    0700) and removed when the command finishes. It is deliberately *not* named
+    ``*.auto.tfvars.json``, so it only applies to the command that passes it.
+    """
+    sensitive, plain = _split_sensitive_vars(tf_vars)
+    if not sensitive:
+        yield _build_var_args(plain)
+        return
+    path = Path(tf_dir) / _SENSITIVE_VAR_FILE
+    path.write_text(json.dumps(sensitive, sort_keys=True), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:  # pragma: no cover - unusual filesystems
+        pass
+    try:
+        yield [f"-var-file={path}", *_build_var_args(plain)]
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def _runtime_value(runtime: Any) -> str:
@@ -315,9 +365,8 @@ def plan(
 ) -> str:
     """Run terraform plan, return human-readable summary."""
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
-    args = ["plan", "-input=false", "-no-color"]
-    args.extend(_build_var_args(tf_vars or {}))
-    result = _run(args, cwd=tf_dir, capture=True)
+    with _var_args(tf_dir, tf_vars or {}) as var_args:
+        result = _run(["plan", "-input=false", "-no-color", *var_args], cwd=tf_dir, capture=True)
     return result.stdout
 
 
@@ -329,9 +378,10 @@ def apply(
 ) -> dict[str, Any]:
     """Run terraform apply -auto-approve, return outputs dict."""
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
-    args = ["apply", "-auto-approve", "-input=false"]
-    args.extend(_build_var_args(tf_vars or {}))
-    result = _run(args, cwd=tf_dir, stream=stream)
+    with _var_args(tf_dir, tf_vars or {}) as var_args:
+        result = _run(
+            ["apply", "-auto-approve", "-input=false", *var_args], cwd=tf_dir, stream=stream
+        )
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         detail = f":\n{stderr}" if stderr else ""
@@ -352,8 +402,8 @@ def destroy(
     if targets:
         for target in targets:
             args.extend(["-target", target])
-    args.extend(_build_var_args(tf_vars or {}))
-    result = _run(args, cwd=tf_dir, stream=stream)
+    with _var_args(tf_dir, tf_vars or {}) as var_args:
+        result = _run([*args, *var_args], cwd=tf_dir, stream=stream)
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         detail = f":\n{stderr}" if stderr else ""

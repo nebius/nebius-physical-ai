@@ -288,11 +288,20 @@ npa agent bootstrap --project <alias> --name <agent-name>
 > **Deploying from behind a VPN/firewall?** `setup`/`fresh-setup` finish by
 > SSHing into the new VM to wait for cloud-init. If this machine cannot reach the
 > VM's public `tcp/22` (corporate VPN / split-tunnel often block it), the deploy
-> times out and rolls the VM back with a one-line SSH-unreachable error. Deploy
-> from a host with direct network access to the VM. `npa agent preflight` and the
-> start of `deploy` probe outbound `tcp/22` and warn before a VM is created; set
-> `NPA_SSH_EGRESS_PROBE=<host>:<port>` to probe a host your network allows, or
-> `off` to skip it.
+> times out (~4 minutes, with progress lines) and rolls the VM back with a
+> one-line SSH-unreachable error. Deploy from a host with direct network access to
+> the VM. `npa agent preflight` and the start of `deploy` probe outbound `tcp/22`
+> and warn before a VM is created — against a recorded agent IP when you have one,
+> otherwise a public host, which a split tunnel can allow while still dropping a
+> fresh Nebius IP. Set `NPA_SSH_EGRESS_PROBE=<host>:<port>` to probe a host your
+> network allows, or `off` to skip it.
+
+> **Credential exposure on the agent VM.** The S3 access key and secret staged
+> onto the VM are written into its cloud-init user data, which anyone with read
+> access to the project can retrieve (`nebius compute instance get`). npa keeps
+> those values out of the local process table (secret Terraform variables go
+> through a 0600 var-file, not `-var`), but treat keys staged onto an agent VM as
+> project-readable and rotate them when you destroy it. Tracked in `FIXME.md`.
 
 > The backend and UI are **baked at bootstrap**. Any change to the agent code
 > (`cli/agent.py`, `cli/agent_ui.html`, `cli/agent_chat.py`,

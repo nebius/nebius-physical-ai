@@ -13,6 +13,25 @@ work lives).
 
 ## Active
 
+### High
+
+#### [H] Agent VM S3 credentials are readable from its cloud-init user data
+
+- **Surfaced by**: third README-path walkthrough report on 2026-07-30.
+- **Status**: Active. The argv half is fixed (`npa.deploy.provisioner` passes
+  secret Terraform variables through a 0600 var-file instead of `-var`, so they
+  no longer appear in `ps`); the user-data half is not.
+- **Current issue**: `npa agent deploy` bakes the S3 access key and secret into
+  the VM's `cloud_init_user_data`, which anyone with read access to the project
+  can retrieve with `nebius compute instance get`. The IAM token was already
+  removed from the VM (the attached `npa-agent` service account self-mints one),
+  but the S3 keys still ride along in plaintext.
+- **Next step**: have the VM obtain S3 credentials at boot through its attached
+  service account (mint or read an access key with the token it already
+  self-mints) instead of receiving them in user data; until then, treat the keys
+  staged onto an agent VM as project-readable and rotate them when the VM is
+  destroyed.
+
 ### Medium
 
 #### [M] Add standalone LeRobot library validation test
