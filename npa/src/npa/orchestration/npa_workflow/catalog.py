@@ -120,6 +120,27 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.trigger_uri}}",
             "--output-uri",
             "{{config.augment_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.cosmos2.transfer_execute": ToolEntry(
+        name="workbench.cosmos2.transfer_execute",
+        description="Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video + frames to S3.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "{{config.trigger_uri}}",
+            "--output-uri",
+            "{{config.augment_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--configs-uri",
+            "{{config.configs_uri}}",
+            "--execute",
         ],
     ),
     "workbench.sim2real_envgen.raw_shard": ToolEntry(
@@ -483,6 +504,78 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "Path('/tmp/npa-dataset-rejection.json').write_text(json.dumps(payload));"
                 "print(json.dumps(payload))"
             ),
+        ],
+    ),
+    "workbench.insights.record": ToolEntry(
+        name="workbench.insights.record",
+        description=(
+            "Record metric emissions + lineage edges (from an upstream metrics "
+            "JSON) into the append-only insights store keyed by run id."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "record",
+            "--input-path",
+            "{{config.metrics_input_uri}}",
+            "--output-path",
+            "{{config.insights_store_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.insights.ingest_run": ToolEntry(
+        name="workbench.insights.ingest_run",
+        description=(
+            "Non-invasively scan an S3 run prefix for known tool manifests/reports "
+            "and extract their metrics + provenance into the insights store."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "ingest-run",
+            "--input-path",
+            "{{config.run_prefix_uri}}",
+            "--output-path",
+            "{{config.insights_store_uri}}",
+            "--workflow",
+            "{{config.workflow_name}}",
+            "--workflow-run",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.insights.compare": ToolEntry(
+        name="workbench.insights.compare",
+        description="Compare a metric set between two runs; flag regressed/improved.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "compare",
+            "--input-path",
+            "{{config.insights_store_uri}}",
+            "--base-run",
+            "{{config.base_run}}",
+            "--candidate-run",
+            "{{config.candidate_run}}",
+            "--output-path",
+            "{{config.comparison_uri}}",
+        ],
+    ),
+    "workbench.insights.dashboard": ToolEntry(
+        name="workbench.insights.dashboard",
+        description="Emit a dashboard rollup JSON + self-contained static HTML report.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "insights",
+            "dashboard",
+            "--input-path",
+            "{{config.insights_store_uri}}",
+            "--output-path",
+            "{{config.dashboard_uri}}",
         ],
     ),
     "workbench.lancedb.import_bdd100k": ToolEntry(

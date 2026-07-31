@@ -39,6 +39,16 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 `NEBIUS_TOKEN_FACTORY_KEY`. Matrix source of truth:
 `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`.
 
+## Flagship blueprint
+
+The **NVIDIA Physical AI Data Factory** blueprint (annotate → Cosmos augment →
+evaluate/validate gate → re-label → FiftyOne curate → Rerun visualize; no OSMO)
+is promoted to the top of the workflow tree for prominence:
+[`npa/workflows/physical-ai-data-factory.yaml`](../../physical-ai-data-factory.yaml).
+It is still an `npa.workflow/v0.0.1` spec and is discovered alongside the specs
+below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide:
+`docs/workbench/guides/physical-ai-data-factory-deploy.md`.
+
 ## Spec catalog
 
 | Spec | Notes |

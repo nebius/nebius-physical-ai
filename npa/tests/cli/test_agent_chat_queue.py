@@ -58,8 +58,11 @@ def test_viewer_chat_drawer_contract() -> None:
     assert "skipUserAppend: true" in describe
     # Describe stays in viewer-focus instead of forcing Chat tab takeover.
     assert 'activateMainTab("chat"' not in describe
-    # From Viewer, Chat tab opens drawer; Full chat expands to Chat tab.
-    assert 'next === "chat" && activeMainTab === "rerun"' in ui
+    # The Main tab never auto-pops the chat drawer; only the chat button does.
+    # (Old pop-out logic keyed on the "chat" tab name must be gone.)
+    assert 'next === "chat" && activeMainTab === "rerun"' not in ui
+    assert "never pops the drawer out" in ui
+    assert 'id="chatDrawerToggle"' in ui
     assert "openFullChatTab" in ui
     # Bottom-right online-chat widget (collapsible FAB + panel), mobile-safe.
     assert "Online-chat widget: bottom-right FAB" in ui

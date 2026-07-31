@@ -13,6 +13,7 @@ import pytest
 from typer.testing import Result
 
 from npa.clients.config import resolve_project_storage
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
     SubmitLiveCase,
@@ -21,6 +22,15 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+
+
+def resolve_spec_path(name: str) -> Path:
+    """Resolve a live-submit spec by name across every blueprint root."""
+
+    path = resolve_npa_workflow_spec(name)
+    if path is None:
+        pytest.fail(f"spec {name!r} not found in any npa.workflow spec root")
+    return path
 
 ALL_GOLDEN_SPECS = sorted(
     [
@@ -37,6 +47,7 @@ DYNAMIC_SPECS = frozenset(
         "sim2real-vlm-rl.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
+        "physical-ai-data-factory.yaml",
     }
 )
 
@@ -54,6 +65,7 @@ __all__ = [
     "materialize_live_spec",
     "parse_json_output",
     "parse_json_payload",
+    "resolve_spec_path",
     "seed_live_workflow_inputs",
     "selected_submit_cases",
 ]
@@ -285,7 +297,7 @@ def materialize_live_spec(
 ) -> Path:
     """Copy a golden spec with the live bucket and a unique e2e prefix."""
 
-    text = (SPECS_DIR / name).read_text(encoding="utf-8")
+    text = resolve_spec_path(name).read_text(encoding="utf-8")
     text = text.replace("bucket: example-bucket", f"bucket: {bucket}")
     marker = f"npa-workflow-e2e/{run_id}"
     # Keep per-spec prefix tokens but anchor runs under a shared e2e root.

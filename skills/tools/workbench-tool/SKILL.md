@@ -37,3 +37,12 @@ Kubernetes namespace split:
 ## Cross-Tool Data Flow
 
 Tools communicate through S3, never by directly calling each other for data transfer. All tool commands must support `--input-path` and `--output-path` so pipelines can pass S3 URIs across stages.
+
+Exception / gotcha: a few tools historically use `--input-uri` / `--output-uri`
+instead (e.g. `npa workbench cosmos2 transfer`, `cosmos3 reason`). When you wire a
+tool into an npa.workflow `toolRef` (`npa/src/npa/orchestration/npa_workflow/catalog.py`),
+the argv template MUST match that tool's **actual** CLI option names and include
+required flags (e.g. `--run-id`). A mismatch passes `validate-spec`/`plan-spec`
+but crashes on real submit with an unknown-option error. Verify against the CLI
+signature, and keep `catalog.py` and `docs/workbench/npa-workflow-tool-catalog.md`
+in sync. Prefer standardizing new tools on `--input-path`/`--output-path`.

@@ -10,6 +10,7 @@ __all__ = [
     "fiftyone",
     "genesis",
     "groot",
+    "insights",
     "isaac_lab",
     "lancedb",
     "lerobot",

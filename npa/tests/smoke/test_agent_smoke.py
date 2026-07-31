@@ -18,10 +18,7 @@ UI_BUTTON_IDS = (
     "chatActionCosmos",
     "chatActionWatch",
     "newChatSession",
-    "loadFrankaRerun",
     "openRerun",
-    "applySelection",
-    "submitWorkflow",
     "workflowStatus",
 )
 
@@ -31,7 +28,7 @@ UI_WIRING_MARKERS = (
     "function showToast(",
     "initNpaAgentUi",
     "DOMContentLoaded",
-    'id="tabChat"',
+    'id="tabMain"',
     'id="tabRerun"',
     'id="stagesPanel"',
     "<h3>Stages</h3>",

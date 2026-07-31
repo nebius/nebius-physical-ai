@@ -471,6 +471,37 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source
     assert "safe-area-inset-bottom" in source
+    # Mobile tabs must show their own content: the viewer (layout-rerun) on the
+    # Rerun tab and run selection (Stages) on the Main tab — not hidden behind a
+    # global "Panels" toggle. Only the desktop YAML panel stays collapsed.
+    assert "body.mobile-agent .layout-rerun { grid-template-columns: 1fr; }" in source
+    assert "body.mobile-agent .workflow-panel { display: none; }" in source
+    assert "body.mobile-agent #panelChat .chat-panel" in source
+    assert "body.mobile-agent.mobile-show-panels .layout-rerun" not in source
+    # Mobile: don't mount the unsupported Rerun wasm viewer — route to Voxel51.
+    assert "function isMobileLayout()" in source
+    assert "function showMobileRerunNotice(" in source
+    assert "3D Rerun viewer needs a desktop browser" in source
+    assert "#panelVoxel.is-inactive { display: none; }" in source
+    # Voxel51 auto-loads the latest run so the tab always shows content.
+    assert '/api/artifacts/runs?limit=1' in source
+    # Multi-bucket discovery: the agent searches every accessible bucket (never
+    # relies on copying a run into one bucket).
+    assert "def _agent_s3_buckets(" in source
+    assert "list_accessible_buckets" in source
+    assert "list_runs_cached_multi" in source
+    assert "find_run_artifacts_across_buckets" in source
+    # Modern refresh + iOS/desktop friendliness (cascade override layer):
+    assert "Modern refresh (2026)" in source
+    assert "-webkit-font-smoothing: antialiased" in source
+    assert "env(safe-area-inset-top)" in source  # iOS notch handling on the top bar
+    assert "prefers-reduced-motion" in source
+    assert "focus-visible" in source
+    # iOS: >=16px inputs on small screens so focusing a field never triggers zoom.
+    assert "font-size: 16px;" in source
+    # Brand tokens are preserved by the refresh layer.
+    assert "--brand: #e5ff4f;" in source
+    assert "border-bottom: 4px solid var(--brand)" in source
 
 
 def test_watch_intent_uses_live_sim_viz_status() -> None:
@@ -503,19 +534,20 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
         "chatActionS3",
         "chatActionCosmos",
         "chatActionWatch",
-        "loadFrankaRerun",
         "openRerun",
-        "applySelection",
-        "submitWorkflow",
         "workflowStatus",
     ):
         assert f'bindClick("{control_id}"' in source
+    # The Selection / Scene-mode section was removed (viewer just shows run
+    # artifacts now); its controls must no longer be wired or present.
+    for removed_id in ("loadFrankaRerun", "applySelection", "submitWorkflow"):
+        assert f'bindClick("{removed_id}"' not in source
     assert 'id="chatForm"' in source
     assert "chatForm.addEventListener(\"submit\"" in source
     assert "await apiJson(\"/api/chat\"" in source
     assert "await apiJson(\"/api/sim-viz/load-franka-demo\"" in source
-    assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
     assert "await apiJson(\"/api/sim-assets/selection\"" in source
+    # Dead camera-preview UI helper removed (G6); endpoint may still exist server-side.
     assert "setChatBusy(false)" in source
     assert "finally {" in source.split("async function processChatQueue")[1].split("function enqueueChatJob")[0]
     assert "queueChatText" in source
@@ -539,7 +571,7 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "stock_workspace" in source
     assert "stock_ee_mounted" in source
     assert "frustumSvg" in source
-    assert 'id="tabChat"' in source
+    assert 'id="tabMain"' in source
     assert 'id="tabRerun"' in source
     assert "layout-rerun" in source
     assert "activateMainTab" in source
@@ -587,8 +619,13 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "_generate_franka_demo_rrd" in source
     assert "_log_franka_robot_geometry" in source
     assert "robot/franka/links" in source
-    assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
+    # Selection / Scene-mode section removed from the viewer tab.
+    assert 'id="sceneMode"' not in source
+    assert 'id="robotPreset">' not in source
+    assert "Apply stock selection" not in source
+    assert "Load active Sim2Real in Rerun" not in source
+    assert '<label class="pill"><input id="propCube"' not in source
     assert "class=\"panel rerun-panel rerun-stage\"" in source or 'class="panel rerun-panel rerun-stage"' in source
     assert ".layout-rerun {{" in source or ".layout-rerun {" in source
     assert "cameras-panel" not in source
@@ -646,12 +683,13 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
-    assert "rrd_proxy_uri_allowed" in source
+    assert "resolve_rrd_proxy_target" in source or "rrd_proxy_uri_allowed" in source
+    assert "file_uri_path_allowed" in source
     assert "MAX_RRD_PROXY_BYTES" in source
     assert "Refusing to proxy disallowed rrd_uri host" in source
     assert "_AGENT_RRD_PROXY_EMBED" in source
-    assert "last-writer-wins" in source
-    assert "Single-tenant operator-VM model" in source
+    assert "_STATE_LOCK" in source
+    assert "Process-wide lock" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
@@ -713,6 +751,38 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
+    # Every artifact must be directly downloadable: streaming download endpoint
+    # + a per-artifact Download button wired to it.
+    assert '@app.get("/artifacts/download")' in source
+    assert "data-action=\"download-artifact\"" in source or "data-action='download-artifact'" in source
+    assert "async function downloadArtifact(" in source
+    assert "/api/artifacts/download?" in source
+    # Clicking a stage describes it and inlines its artifacts/info/configs.
+    assert '@app.get("/artifacts/stage/{{run_id:path}}")' in source
+    assert "async function showStageDetail(" in source
+    assert '/api/artifacts/stage/' in source
+    assert 'id="stageDetail"' in source
+    assert "data-stage-label=" in source
+    # Voxel51 / FiftyOne dataset tab.
+    assert '@app.get("/fiftyone/dataset/{{run_id:path}}")' in source
+    assert "build_fiftyone_dataset" in source
+    assert 'id="tabVoxel"' in source
+    assert 'id="panelVoxel"' in source
+    assert 'data-tab="voxel51"' in source
+    assert "async function loadVoxelDataset(" in source
+    assert "/api/fiftyone/dataset/" in source
+    assert 'id="voxelGrid"' in source
+    # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
+    # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
+    # blank when active. Assert panelRerun is fully closed before panelVoxel opens.
+    _rr = source.index('id="panelRerun"')
+    _vx = source.index('id="panelVoxel"')
+    _between = source[_rr:_vx]
+    assert _between.count("<div") == _between.count("</div>"), (
+        "#panelVoxel appears nested inside #panelRerun (div-balance off)"
+    )
+    # Loading/viewing an artifact must NOT post a chat message anymore.
+    assert 'Loaded artifact `" + String(simViz.artifact_key' not in source
     assert 'Select a run or enter a run_id first' in source
     assert 'No S3 artifacts found for <code>' in source
     assert "Runs &amp; artifacts" in source or "Runs & artifacts" in source
@@ -724,6 +794,107 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     embedded = agent_module._embedded_agent_artifacts_source()
     assert "list_runs" in embedded
     assert "list_artifacts" in embedded
+
+
+def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
+    """The run finder must let operators find runs by NAME/ID (client-side
+    filter), not by an S3 path/category. Discovery is always generic.
+    """
+    source = _agent_ui_bundle()
+    # Field is a run name/ID finder, not an "Artifact prefix" path.
+    assert 'Find run (name or ID)' in source
+    assert "type part of a run name or ID" in source
+    assert "Artifact prefix" not in source
+    # It filters the discovered run list client-side (no path prefix to the server).
+    assert "function runFilterValue()" in source
+    assert "const runFilter = runFilterValue().toLowerCase();" in source
+    assert 'runFilterInput.addEventListener("input"' in source
+    # Discovery is generic (no ?prefix= path); the old prefix-path helper is gone.
+    # The picker loads the full run list by default (not just the newest 100) so
+    # older runs show without the operator having to guess a search fragment.
+    assert "const ARTIFACT_RUN_LIST_LIMIT = 2000;" in source
+    assert '"/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT' in source
+    # Typing in the box also triggers a SERVER-side search so runs beyond the
+    # newest page (by name/ID) are findable, not just client-side filtering.
+    assert "&q=" in source
+    assert "refreshArtifactRuns(value)" in source
+    assert "discoverFromPrefix" not in source
+    assert "artifactPrefixValue" not in source
+
+
+def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
+    """The stages/artifact browser must let you choose a workflow-progress step.
+
+    A Stage selector filters the artifact list by pipeline stage, and clicking a
+    stage row in the Run Monitor timeline scopes the artifact browser to it. The
+    UI lives in agent_ui.html, so assert against the rendered UI bundle.
+    """
+    source = _agent_ui_bundle()
+    # Stage selector in the artifact browser.
+    assert 'id="artifactStageFilter"' in source
+    assert "function artifactStageFilterValue()" in source
+    assert "function deriveArtifactStage(key, runId, wrapper)" in source
+    assert "function populateArtifactStageFilter(artifacts, runId)" in source
+    assert "populateArtifactStageFilter(artifacts, runId);" in source
+    # Deeply-nested runs (<run>/<workflow-name>/<stage>/...) expose real stages.
+    assert "function runStageWrapper(artifacts, runId)" in source
+    # Stage participates in filtering and re-renders on change.
+    assert "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;" in source
+    assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
+    # Timeline stage rows are tagged and clickable to drive the stage filter.
+    assert "stage_key: stageKey," in source
+    assert 'data-stage-key="' in source
+    assert '.stage-item[data-stage-key]' in source
+    # The filter's stage derivation must match the timeline/backend compound keys
+    # (e.g. eval/heldout) so clicking a stage filters instead of yielding nothing.
+    assert 'if (first === "eval" && parts[1]) return "eval/" + parts[1];' in source
+    # Workflow status resolves the run generically (no path prefix required).
+    assert 'const status = await loadJson("/api/workflows/sim2real/status");' in source
+
+
+def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
+    """A physical-ai-data-factory .rrd must be recognised as its own recording
+    type (in the embedded agent bootstrap) so the Rerun viewer shows
+    augmented-frame guidance, not the Sim2Real held-out-camera / Franka note —
+    both applications write reports/sim2real.rrd.
+
+    These live inside the bootstrap template string (not importable module
+    attributes), so this is a source-text regression guard.
+    """
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # The DF recording detector is defined and keyed on the app id.
+    assert "def _is_data_factory_recording(key: str) -> bool:" in source
+    assert 'DATA_FACTORY_APP_ID = "physical-ai-data-factory"' in source
+    # Path-boundary match (segment), not a bare substring.
+    assert '(DATA_FACTORY_APP_ID + "/") in str(key or' in source
+    # The DF-specific branch (note + preview_entity) is present and precedes S2R.
+    assert "if _is_data_factory_recording(key):" in source
+    assert 'sim_viz["preview_entity"] = "augmented"' in source
+    assert "Physical AI Data Factory recording loaded." in source
+    # The Sim2Real camera label must NOT be applied to DF recordings.
+    assert "_is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)" in source
+
+
+def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
+    """Discovered runs must be choosable to visualize, and the Rerun viewer must
+    remain present.
+
+    Regression guard: runs discovered under a custom artifact prefix (e.g.
+    physical-ai-data-factory) must be surfaced in the run selector by unioning
+    server-side known runs with discovered runs (latest-first), not clobbering.
+    """
+    source = _agent_ui_bundle()
+    # Rerun viewer + run selector still present.
+    assert 'id="rerunFrame"' in source
+    assert 'id="panelRerun"' in source
+    assert 'id="runIdSelect"' in source
+    # Generic discovery feeds the discovered-runs set (server-search unions in).
+    assert "discoveredArtifactRuns = runs;" in source
+    # The run selector is a UNION of known + discovered runs (does not clobber).
+    assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
+    assert "fillRunSelectOptionsRich(document.getElementById(\"runIdSelect\")" in source
 
 
 def test_bootstrap_run_history_uses_run_id_index() -> None:
@@ -762,11 +933,57 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert "JSON.stringify(assets.selection" not in source
 
 
+def test_default_run_discovery_is_generic_not_hardcoded() -> None:
+    """Default (no-prefix) run discovery must scan the bucket generically
+    (enumerate category folders under every root from S3), NOT hardcode any
+    workflow path, and drop the agent's own infra roots from the listing."""
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Generic scan across all bucket roots AND every accessible bucket; no
+    # hardcoded workflow prefixes. The no-prefix endpoint calls the multi-bucket
+    # cached wrapper (which discovers via list_all_runs per bucket under the hood).
+    assert "list_runs_cached_multi(" in source
+    assert "exclude=_discovery_exclude_roots()" in source
+    assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
+    # Per-run lookup falls back to a generic cross-category, cross-bucket find.
+    assert "find_run_artifacts_across_buckets(" in source
+
+
+def test_run_details_resolves_run_generically_by_id() -> None:
+    """Stage determination must resolve a run generically by id (across all
+    categories under the run root) so any run shows real artifact-backed stages
+    instead of the generic sim2real 'not_run' template — no path/prefix required.
+    """
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Backend resolves the run generically across categories (no prefix needed).
+    assert "def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = \"\")" in source
+    assert "find_run_artifacts(" in source
+    # Frontend loads run details / run by id WITHOUT a path prefix.
+    ui = _agent_ui_bundle()
+    assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
+    assert "body: JSON.stringify({ run_id: runId })" in ui
+    assert "prefix: artifactPrefixValue()" not in ui
+
+
+def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
+    """The chat log ships a jump-to-latest arrow wired to scroll to the end."""
+    source = _agent_ui_bundle()
+    assert 'id="chatScrollBottom"' in source
+    assert 'class="chat-log-wrap"' in source
+    assert "function scrollChatToBottom(" in source
+    assert "function updateChatScrollButton(" in source
+    # Wired: scroll listener toggles the arrow; click jumps to the end.
+    assert 'chatLogEl.addEventListener("scroll", updateChatScrollButton' in source
+    assert "scrollChatToBottom(true)" in source
+
+
 def test_bootstrap_system_prompt_no_localhost() -> None:
 
     source = _agent_ui_bundle()
     assert "Never suggest localhost" in source
-    assert "Load active Sim2Real in Rerun" in source
     assert "/api/sim-viz/load-franka-demo" in source
     assert "localhost:8080" not in source.split("_agent_system_prompt")[1].split("return")[0]
 
@@ -979,7 +1196,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
                 '<body>'
-                '<div id="tabChat"></div><div id="tabRerun"></div>'
+                '<div id="tabMain"></div><div id="tabRerun"></div>'
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
@@ -1912,3 +2129,36 @@ def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
     )
     record = {"project_id": "project-u00zhx4tpr00xh99b28n52"}
     assert _resolve_agent_service_account_id("rtxpro", record) == "serviceaccount-u00s24wzj2wk8z9tqq"
+
+
+def test_run_details_surface_per_stage_workflow_logs() -> None:
+    """Run details must surface real per-stage execution (command/returncode/status)
+    from the npa.workflow run manifest so operators can view logs of each stage."""
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "def _workflow_run_steps(" in source
+    assert "/npa-workflow/manifest.json" in source
+    assert '"workflow_steps": workflow_steps' in source
+    # Enriched logs include the per-stage command lines.
+    assert "workflow_steps = _workflow_run_steps(" in source
+
+
+def test_artifact_file_transcodes_non_web_images_to_png() -> None:
+    """Non-web images (.ppm sim camera frames, .bmp, .tiff) must be transcoded to
+    PNG by the artifact file endpoint so they are viewable in the Rerun/Image panes."""
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "needs_image_transcode(safe_name)" in source
+    assert 'format="PNG"' in source
+    assert 'media_type="image/png"' in source
+
+
+def test_stages_tab_run_search_uses_server_search() -> None:
+    """The Stages-tab run search must also query the server (not just filter the
+    fetched page) so runs older than the newest page are findable there too."""
+    source = _agent_ui_bundle()
+    assert "stagesSearchTimer" in source
+    # Both run-search boxes wire the debounced server search.
+    assert source.count("await refreshArtifactRuns(value)") >= 2

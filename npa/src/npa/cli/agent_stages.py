@@ -47,8 +47,8 @@ def run_owns_workflow_stage_overlay(state: dict[str, Any], run_id: str) -> bool:
     return False
 
 
-def artifact_stage_key(key: str, run_id: str, prefix: str) -> str:
-    """Return the first path segment (or known compound key) under a run prefix."""
+def _scoped_after_run(key: str, run_id: str, prefix: str) -> str:
+    """Return the path under ``<prefix>/<run_id>/`` (or ``<run_id>/``)."""
     value = str(key or "").strip("/")
     for lead in (str(prefix or "").strip("/"), ""):
         scoped = value
@@ -57,6 +57,56 @@ def artifact_stage_key(key: str, run_id: str, prefix: str) -> str:
         if run_id and scoped.startswith(run_id + "/"):
             scoped = scoped[len(run_id) + 1 :]
             break
+    return scoped
+
+
+def run_stage_wrapper(keys: list[str], run_id: str, prefix: str) -> str:
+    """Common workflow-name wrapper dir(s) between the run and its real stages.
+
+    Some workflows nest artifacts as ``<run_id>/<workflow-name>/<stage>/...``
+    (e.g. ``.../<run>/tokenfactory-cosmos-gate/augment/frame.png``), so the first
+    segment after the run id is a wrapper, not a stage — deriving stages from it
+    collapses the whole pipeline into one row. This returns the leading seg
+    (possibly multi-level) that ALL keys share AND that still has a deeper
+    directory for every key, so it is safe to strip. The actual stage level —
+    whose children are files — is never stripped, so flat ``<run>/<stage>/file``
+    layouts are unaffected.
+    """
+    scoped = [s for s in (_scoped_after_run(k, run_id, prefix) for k in keys if k) if s]
+    if not scoped:
+        return ""
+    wrapper_parts: list[str] = []
+    tails = scoped
+    while True:
+        firsts = {t.split("/", 1)[0] for t in tails}
+        if len(firsts) != 1:
+            break
+        seg = next(iter(firsts))
+        new_tails: list[str] = []
+        strip_ok = True
+        for tail in tails:
+            rest = tail[len(seg) + 1 :] if tail.startswith(seg + "/") else ""
+            if "/" not in rest:  # seg is the stage (its children are files) → stop
+                strip_ok = False
+                break
+            new_tails.append(rest)
+        if not strip_ok:
+            break
+        wrapper_parts.append(seg)
+        tails = new_tails
+    return "/".join(wrapper_parts)
+
+
+def artifact_stage_key(key: str, run_id: str, prefix: str, wrapper: str = "") -> str:
+    """Return the first path segment (or known compound key) under a run prefix.
+
+    ``wrapper`` (see :func:`run_stage_wrapper`) strips common workflow-name
+    nesting so the stage is the real pipeline stage, not a wrapper directory.
+    """
+    scoped = _scoped_after_run(key, run_id, prefix)
+    wrap = str(wrapper or "").strip("/")
+    if wrap and scoped.startswith(wrap + "/"):
+        scoped = scoped[len(wrap) + 1 :]
     parts = [part for part in scoped.split("/") if part]
     if not parts:
         return "artifacts"
@@ -107,6 +157,10 @@ def build_artifact_backed_stages(
     """
     stages: list[dict[str, Any]] = []
     used_keys: set[str] = set()
+    # Strip common workflow-name nesting so runs stored as
+    # <run>/<workflow-name>/<stage>/... expose their real pipeline stages instead
+    # of collapsing into a single wrapper row.
+    wrapper = run_stage_wrapper(keys, run_id, prefix)
     if workflow_stage_defs:
         for stage_id, label, patterns in workflow_stage_defs:
             matched = [
@@ -116,10 +170,14 @@ def build_artifact_backed_stages(
             count = len(matched)
             if count == 0 and not overlay_unmatched:
                 continue
+            # stage_key: the artifact stage of a matched key so the UI timeline row
+            # is clickable and scopes the artifact browser to it (empty when unmatched).
+            stage_key = artifact_stage_key(matched[0], run_id, prefix, wrapper) if matched else ""
             stages.append(
                 {
                     "id": stage_id,
                     "label": label,
+                    "stage_key": stage_key,
                     "status": "succeeded" if count else "pending",
                     "started_at": "",
                     "finished_at": "",
@@ -132,7 +190,7 @@ def build_artifact_backed_stages(
             )
     grouped: dict[str, list[str]] = {}
     for key in keys:
-        stage_key = artifact_stage_key(key, run_id, prefix)
+        stage_key = artifact_stage_key(key, run_id, prefix, wrapper)
         grouped.setdefault(stage_key, []).append(key)
     for stage_key, matched in sorted(grouped.items()):
         if workflow_stage_defs and all(key in used_keys for key in matched):
@@ -142,6 +200,7 @@ def build_artifact_backed_stages(
             {
                 "id": _slug(stage_key, fallback="artifacts"),
                 "label": artifact_stage_label(stage_key),
+                "stage_key": stage_key,
                 "status": "succeeded",
                 "started_at": "",
                 "finished_at": "",

@@ -142,6 +142,9 @@
         min-height: 560px;
         height: calc(100dvh - 220px);
       }
+      /* The Voxel51 panel has no wasm/drawer to keep alive, so fully remove it
+         when inactive (avoids any absolute-overlay layout quirks on mobile). */
+      #panelVoxel.is-inactive { display: none; }
       .layout { display: grid; gap: 14px; }
       .layout-rerun {
         grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
@@ -192,6 +195,52 @@
         max-height: calc(100dvh - 140px);
         overflow: auto;
       }
+      .artifact-provenance:empty { display: none; }
+      .artifact-provenance {
+        margin-top: 8px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+      .artifact-provenance .prov-head {
+        font-weight: 600;
+        color: #334155;
+        margin-bottom: 6px;
+      }
+      .artifact-provenance .prov-banner {
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin-bottom: 6px;
+        line-height: 1.35;
+      }
+      .artifact-provenance .prov-ok {
+        background: #ecfdf5;
+        border: 1px solid #6ee7b7;
+        color: #065f46;
+      }
+      .artifact-provenance .prov-warn {
+        background: #fffbeb;
+        border: 1px solid #fcd34d;
+        color: #92400e;
+      }
+      .artifact-provenance .prov-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        align-items: baseline;
+        padding: 5px 6px;
+        border-top: 1px solid var(--border);
+      }
+      .artifact-provenance .prov-row:first-of-type { border-top: 0; }
+      .artifact-provenance .prov-clickable { cursor: pointer; border-radius: 6px; }
+      .artifact-provenance .prov-clickable:hover { background: #f1f5f9; }
+      .artifact-provenance .prov-stage { font-weight: 600; color: #0f172a; }
+      .artifact-provenance .prov-count { color: #2563eb; }
+      .artifact-provenance .prov-comp { color: #475569; }
+      .artifact-provenance .prov-runtime { color: #64748b; font-style: italic; }
+      .artifact-provenance .prov-detail { flex-basis: 100%; color: #64748b; }
       .artifact-list {
         margin-top: 8px;
         min-height: 140px;
@@ -244,6 +293,22 @@
         font-size: 11px;
         word-break: break-all;
       }
+      .artifact-thumb {
+        margin-top: 8px;
+        max-width: 260px;
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f8fafc;
+        cursor: pointer;
+        aspect-ratio: 4 / 3;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .artifact-thumb:hover { box-shadow: var(--shadow); }
+      .artifact-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .artifact-thumb .hint { font-size: 12px; color: var(--muted); }
       .plan-host {
         margin-top: 10px;
         border: 1px solid var(--border);
@@ -560,6 +625,21 @@
         border-radius: 10px; padding: 10px; margin-bottom: 10px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       }
+      .chat-log-wrap { position: relative; }
+      .chat-scroll-bottom {
+        position: absolute; right: 16px; bottom: 18px;
+        width: 38px; height: 38px; border-radius: 999px; padding: 0;
+        display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+        /* Dark navy chip with a white glyph: high contrast on the light chat log
+           (the brand color is bright lime, which hides a white icon). */
+        background: var(--sidebar, #0d2a3d); color: #ffffff;
+        border: 2px solid #ffffff;
+        box-shadow: 0 6px 16px rgba(13,42,61,0.45); opacity: 0.97;
+        transition: background .15s ease, transform .15s ease; z-index: 20;
+      }
+      .chat-scroll-bottom:hover { background: var(--sidebar-2, #17405d); opacity: 1; transform: translateY(-1px); }
+      .chat-scroll-bottom svg { display: block; }
+      .chat-scroll-bottom[hidden] { display: none; }
       .msg-row {
         display: flex;
         margin: 8px 0;
@@ -754,6 +834,12 @@
         border-bottom: 1px solid var(--border);
       }
       body.viewer-focus #panelChat .chat-toolbar .hint { display: none; }
+      body.viewer-focus #panelChat .chat-log-wrap {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
       body.viewer-focus #panelChat .chat-log {
         flex: 1 1 auto;
         min-height: 160px;
@@ -947,6 +1033,117 @@
       .stage-status.not_run { background: #f8fafc; color: #4b6476; border: 1px solid var(--border); }
       .stage-label { font-weight: 700; color: var(--text); }
       .stage-summary { color: var(--muted); margin-top: 2px; line-height: 1.35; }
+      .stage-item.is-selected { background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb; }
+      .stage-detail:empty { display: none; }
+      .stage-detail {
+        margin: 8px 0 0 0;
+        padding: 10px 12px;
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 8px;
+        background: #f8fafc;
+        font-size: 13px;
+      }
+      .stage-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+      .stage-detail-desc { color: #334155; line-height: 1.4; margin: 4px 0 8px; }
+      .stage-detail-info { margin: 6px 0; }
+      .stage-detail-info details { margin: 4px 0; }
+      .stage-detail-info summary { cursor: pointer; }
+      .stage-detail-info pre {
+        max-height: 220px; overflow: auto; background: #0f172a; color: #dbeafe;
+        border-radius: 6px; padding: 8px; font-size: 12px; margin: 4px 0 0;
+      }
+      .stage-detail-artifacts { margin-top: 6px; }
+      .stage-detail-row {
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        padding: 4px 0; border-top: 1px solid var(--border, #e2e8f0);
+      }
+      .stage-detail-row code { color: #0f172a; }
+      .stage-thumbs {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
+        margin: 8px 0;
+      }
+      .stage-thumb {
+        position: relative;
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f8fafc;
+        cursor: pointer;
+        aspect-ratio: 4 / 3;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .stage-thumb:hover { box-shadow: var(--shadow); }
+      .stage-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .stage-thumb .hint { font-size: 12px; color: var(--muted); }
+      .stage-thumb-name {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        font-size: 10px; line-height: 1.3; color: #fff;
+        background: rgba(15, 23, 42, 0.62);
+        padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .stage-thumb-badge {
+        font-size: 12px; font-weight: 700; color: #0f172a;
+        background: var(--brand, #e5ff4f); border-radius: 999px; padding: 2px 10px;
+      }
+      @media (max-width: 640px) { .stage-thumbs { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); } }
+      .voxel-panel { min-height: calc(100dvh - 170px); }
+      .voxel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+      .voxel-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+      .voxel-fields { font-size: 12px; color: var(--muted); margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      .voxel-fields:empty { display: none; }
+      .voxel-viz:empty { display: none; }
+      .voxel-viz {
+        margin: 4px 0 12px; padding: 10px 12px;
+        border: 1px solid var(--border, #e2e8f0); border-radius: 12px; background: #fbfdff;
+      }
+      .voxel-viz-title { font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px; }
+      .voxel-viz svg { width: 100%; height: 170px; display: block; }
+      .voxel-viz .dot-kept { fill: #16a34a; }
+      .voxel-viz .dot-redundant { fill: #d97706; }
+      .voxel-viz .dot-label { font-size: 9px; fill: #64748b; }
+      .voxel-viz-legend { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 12px; }
+      .voxel-viz-legend .k { color: #16a34a; font-weight: 700; }
+      .voxel-viz-legend .r { color: #d97706; font-weight: 700; }
+      .voxel-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      }
+      .voxel-card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius, 12px);
+        background: var(--surface);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: var(--shadow-sm, 0 1px 3px rgba(13,42,61,0.08));
+        transition: box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease);
+      }
+      .voxel-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+      .voxel-card[data-group="input"] { opacity: 0.96; }
+      .voxel-thumb {
+        aspect-ratio: 4 / 3;
+        background: #0f172a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .voxel-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .voxel-meta { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+      .voxel-title { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+      .voxel-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+      .voxel-tag {
+        font-size: 11px; background: var(--surface-soft); border: 1px solid var(--border);
+        border-radius: 999px; padding: 2px 8px; color: var(--text);
+      }
+      .voxel-tag em { color: var(--muted); font-style: normal; font-weight: 700; letter-spacing: 0.04em; }
+      .voxel-caption { font-size: 12px; color: var(--muted); line-height: 1.4; }
+      @media (max-width: 640px) { .voxel-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
       .run-log {
         margin: 8px 0 0 0;
         max-height: 180px;
@@ -1133,18 +1330,18 @@
         width: 100%;
         justify-content: center;
       }
-      body.mobile-agent .workflow-panel,
-      body.mobile-agent .stages-panel,
-      body.mobile-agent .layout-rerun {
-        display: none;
-      }
-      body.mobile-agent.mobile-show-panels .workflow-panel,
-      body.mobile-agent.mobile-show-panels .stages-panel {
-        display: block;
-      }
-      body.mobile-agent.mobile-show-panels .layout-rerun {
-        display: grid;
-      }
+      /* Tabbed mobile: each tab shows its own content. The Stages panel (run
+         selection + pipeline) shows on the Main tab and the viewer + runs/artifacts
+         rail (.layout-rerun) shows on the Rerun tab, so mobile users can pick runs
+         and see artifacts. Only the desktop-oriented YAML authoring panel stays
+         collapsed by default; the "Panels" toggle reveals it. */
+      body.mobile-agent .workflow-panel { display: none; }
+      body.mobile-agent.mobile-show-panels .workflow-panel { display: block; }
+      body.mobile-agent .layout-rerun { grid-template-columns: 1fr; }
+      body.mobile-agent .rerun-rail { max-height: none; }
+      /* On the Main tab, don't let the chat panel eat the whole screen — leave the
+         Stages / run-selection panel reachable right below the fold. */
+      body.mobile-agent #panelChat .chat-panel { min-height: 52dvh; }
       body.mobile-agent .main-tabs {
         padding: 8px 10px 0;
         gap: 6px;
@@ -1225,6 +1422,129 @@
         resize: vertical;
         background: #fafbff;
       }
+
+      /* ===== Modern refresh (2026): refined tokens, touch targets, iOS safe-areas =====
+         Cascade override layer — enhances look/feel without changing markup or the
+         brand tokens above. Softer elevation, smoother interactions, larger touch
+         targets, accessible focus rings, and iOS notch/home-indicator safe-areas. */
+      :root {
+        --radius-sm: 8px;
+        --radius: 12px;
+        --radius-lg: 16px;
+        --ease: cubic-bezier(0.4, 0, 0.2, 1);
+        --shadow-sm: 0 1px 2px rgba(13, 42, 61, 0.06), 0 1px 3px rgba(13, 42, 61, 0.08);
+        --shadow: 0 6px 18px rgba(13, 42, 61, 0.10);
+        --shadow-lg: 0 18px 40px rgba(13, 42, 61, 0.18);
+        --focus-ring: 0 0 0 3px rgba(23, 64, 93, 0.30);
+      }
+      * { -webkit-tap-highlight-color: transparent; }
+      body {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+      }
+      /* Momentum scrolling + refined scrollbars on scroll surfaces */
+      .chat-log, .artifact-list, .rerun-rail, .run-log, .stage-detail,
+      .stage-detail-info pre, .workflow-panel textarea, .chat-input textarea {
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+      }
+      .chat-log::-webkit-scrollbar, .artifact-list::-webkit-scrollbar,
+      .rerun-rail::-webkit-scrollbar, .run-log::-webkit-scrollbar,
+      .stage-detail::-webkit-scrollbar { width: 10px; height: 10px; }
+      .chat-log::-webkit-scrollbar-thumb, .artifact-list::-webkit-scrollbar-thumb,
+      .rerun-rail::-webkit-scrollbar-thumb, .run-log::-webkit-scrollbar-thumb,
+      .stage-detail::-webkit-scrollbar-thumb {
+        background: rgba(23, 64, 93, 0.22);
+        border-radius: 999px;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+      }
+      .chat-log::-webkit-scrollbar-thumb:hover,
+      .artifact-list::-webkit-scrollbar-thumb:hover { background: rgba(23, 64, 93, 0.4); background-clip: padding-box; }
+
+      /* Accessible keyboard focus ring */
+      a:focus-visible, button:focus-visible, .btn:focus-visible, .quick-pill:focus-visible,
+      .main-tab:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+        outline: none;
+        box-shadow: var(--focus-ring);
+      }
+
+      /* Panels: softer, layered elevation with a gentle hover lift */
+      .panel { border-radius: var(--radius-lg); transition: box-shadow 180ms var(--ease), transform 180ms var(--ease); }
+      .panel:hover { box-shadow: var(--shadow-lg); }
+      .subsection { border-radius: var(--radius); }
+
+      /* Buttons: comfortable targets + micro-interactions */
+      .btn {
+        min-height: 40px;
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        font-weight: 700;
+        transition: background 140ms var(--ease), border-color 140ms var(--ease),
+          transform 90ms var(--ease), box-shadow 140ms var(--ease);
+      }
+      .btn:hover { box-shadow: var(--shadow-sm); }
+      .btn:active { transform: translateY(1px) scale(0.99); }
+      .btn-primary { box-shadow: 0 4px 12px rgba(215, 248, 47, 0.35); }
+      .btn-primary:hover { box-shadow: 0 6px 16px rgba(215, 248, 47, 0.45); }
+
+      /* Pills + tabs: smooth state changes */
+      .quick-pill { transition: background 140ms var(--ease), transform 90ms var(--ease), box-shadow 140ms var(--ease); }
+      .quick-pill:active { transform: translateY(1px); }
+      .main-tab { transition: background 140ms var(--ease), color 140ms var(--ease); }
+
+      /* Inputs: consistent radius, comfortable height, clear focus */
+      .field select, .field input, .chat-input textarea, .workflow-panel textarea,
+      .stages-run-picker select, .stages-run-picker input {
+        transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+      }
+      .field select, .field input { min-height: 44px; border-radius: 10px; font-size: 14px; }
+      .field select:focus, .field input:focus,
+      .stages-run-picker select:focus, .stages-run-picker input:focus {
+        border-color: var(--sidebar-2); box-shadow: var(--focus-ring); outline: none;
+      }
+
+      /* Chat bubbles + cards: subtle depth and hover affordance */
+      .bubble { box-shadow: var(--shadow-sm); }
+      .artifact-card { transition: background 140ms var(--ease); }
+      .artifact-card:hover { background: var(--surface-soft); }
+      .stage-item { transition: background 120ms var(--ease); }
+      .stage-item[data-stage-key]:hover { background: var(--surface-soft); }
+
+      /* Long keys/paths wrap instead of causing horizontal scroll */
+      code, .artifact-card-path, .stage-detail-row code { overflow-wrap: anywhere; word-break: break-word; }
+
+      /* Toasts: elevated + rounded */
+      .toast { box-shadow: var(--shadow-lg); border-radius: var(--radius); }
+
+      /* iOS notch: pad the top bar under the status bar (brand underline preserved) */
+      .topbar { padding-top: max(18px, env(safe-area-inset-top)); }
+
+      /* Respect reduced-motion preferences */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.001ms !important;
+          transition-duration: 0.001ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+
+      /* Small screens: bigger tap targets, iOS-safe 16px inputs (no focus zoom),
+         and gutters that respect the home-indicator / rounded-corner safe-areas. */
+      @media (max-width: 640px) {
+        .btn, .quick-pill, .main-tab { min-height: 44px; }
+        .field select, .field input, .chat-input textarea, .workflow-panel textarea,
+        #workflowYaml, input, select, textarea { font-size: 16px; }
+        .panel { border-radius: var(--radius); }
+        .page {
+          padding-left: max(12px, env(safe-area-inset-left));
+          padding-right: max(12px, env(safe-area-inset-right));
+        }
+      }
+      body.mobile-agent .btn, body.mobile-agent .quick-pill { min-height: 44px; }
+      body.mobile-agent .field select, body.mobile-agent .field input,
+      body.mobile-agent .chat-input textarea, body.mobile-agent #workflowYaml,
+      body.mobile-agent input, body.mobile-agent select, body.mobile-agent textarea { font-size: 16px; }
     </style>
   </head>
   <body>
@@ -1237,8 +1557,9 @@
         <span class="badge badge-ok">Secure basic-auth session</span>
       </header>
       <nav class="main-tabs" role="tablist" aria-label="Workbench views">
-        <button id="tabChat" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="chat">Chat</button>
+        <button id="tabMain" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="main">Main</button>
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
+        <button id="tabVoxel" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelVoxel" data-tab="voxel51">Voxel51</button>
       </nav>
       <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
         <span class="chat-fab-icon" aria-hidden="true">
@@ -1249,7 +1570,7 @@
         <span id="chatQueueBadge">0</span>
       </button>
       <main class="page">
-        <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabChat" aria-hidden="false">
+        <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabMain" aria-hidden="false">
         <section class="panel chat-panel">
           <div class="chat-panel-head">
             <div>
@@ -1285,7 +1606,12 @@
               <button id="mobileChatAuthBtn" class="btn btn-primary" type="button">Unlock chat</button>
             </div>
           </div>
-          <div id="chatLog" class="chat-log"></div>
+          <div class="chat-log-wrap">
+            <div id="chatLog" class="chat-log"></div>
+            <button id="chatScrollBottom" class="chat-scroll-bottom" type="button" title="Jump to latest message" aria-label="Scroll to end of chat" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 16.5a1 1 0 0 1-.71-.29l-6-6A1 1 0 0 1 6.7 8.8L12 14.09l5.3-5.3a1 1 0 0 1 1.4 1.42l-6 6a1 1 0 0 1-.7.29z"/></svg>
+            </button>
+          </div>
           <form id="chatForm" class="chat-composer chat-input" autocomplete="off">
             <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?" rows="2" enterkeyhint="send"></textarea>
             <button id="chatSend" class="btn btn-primary" type="submit">Send</button>
@@ -1338,6 +1664,7 @@
           <div id="runDetails" class="run-details">
             <div id="runSummary" class="run-summary"></div>
             <div id="stageList" class="stage-list" aria-label="Workflow stages"></div>
+            <div id="stageDetail" class="stage-detail" aria-live="polite" data-testid="stage-detail"></div>
             <pre id="runLog" class="run-log">No run selected.</pre>
           </div>
         </section>
@@ -1362,8 +1689,8 @@
               </div>
               <div class="field-row" style="margin-top:8px;">
                 <div class="field">
-                  <label for="artifactPrefix">Artifact prefix</label>
-                  <input id="artifactPrefix" type="text" placeholder="optional/path/prefix" />
+                  <label for="artifactPrefix">Find run (name or ID)</label>
+                  <input id="artifactPrefix" type="search" placeholder="type part of a run name or ID (optional)" />
                 </div>
                 <div class="field">
                   <label for="artifactTypeFilter">Type</label>
@@ -1388,6 +1715,14 @@
                   </select>
                 </div>
               </div>
+              <div class="field-row" style="margin-top:8px;">
+                <div class="field">
+                  <label for="artifactStageFilter">Stage (workflow progress)</label>
+                  <select id="artifactStageFilter">
+                    <option value="">All stages</option>
+                  </select>
+                </div>
+              </div>
               <div class="btn-row" style="margin-top:8px;">
                 <button id="artifactRefreshRuns" class="btn" type="button">Discover runs</button>
                 <button id="loadRunData" class="btn btn-primary" type="button">Load run</button>
@@ -1395,52 +1730,8 @@
                 <button id="workflowStatus" class="btn" type="button">Workflow status</button>
               </div>
               <div id="artifactDiscoverStatus" class="hint" style="margin-top:8px;">No runs discovered yet.</div>
+              <div id="artifactProvenance" class="artifact-provenance" aria-live="polite"></div>
               <div id="artifactList" class="artifact-list" aria-live="polite"></div>
-            </div>
-            <div class="subsection">
-              <h4>Selection</h4>
-              <div class="field-row">
-                <div class="field">
-                  <label for="sceneMode">Scene mode</label>
-                  <select id="sceneMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="byo_mesh">byo_mesh</option>
-                    <option value="scene_spec">scene_spec</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="robotPreset">Robot preset</label>
-                  <select id="robotPreset">
-                    <option value="franka" selected>stock_franka</option>
-                    <option value="ur5e">preset:ur5e</option>
-                  </select>
-                </div>
-              </div>
-              <div class="field-row" style="margin-top:8px;">
-                <div class="field">
-                  <label for="cameraMode">Camera mode</label>
-                  <select id="cameraMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="custom">custom</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="simBackend">Sim backend</label>
-                  <select id="simBackend">
-                    <option value="isaac" selected>isaac</option>
-                    <option value="genesis">genesis</option>
-                  </select>
-                </div>
-              </div>
-              <div class="pill-list" style="margin-top:8px;">
-                <label class="pill"><input id="propCube" type="checkbox" checked> cube</label>
-              </div>
-              <div id="assetsSummary" class="hint" style="margin-top:8px;"></div>
-              <div class="btn-row" style="margin-top:8px;">
-                <button id="applySelection" class="btn" type="button">Apply stock selection</button>
-                <button id="loadFrankaRerun" class="btn" type="button">Load active Sim2Real in Rerun</button>
-                <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
-              </div>
             </div>
             <select id="cameraSelect" hidden aria-hidden="true">
               <option value="workspace" selected>workspace</option>
@@ -1492,6 +1783,30 @@
           </section>
         </div>
         </div>
+        <div id="panelVoxel" class="tab-panel is-inactive" role="tabpanel" aria-labelledby="tabVoxel" aria-hidden="true">
+          <section class="panel voxel-panel">
+            <div class="voxel-head">
+              <div>
+                <h3>Voxel51 dataset</h3>
+                <p class="hint">FiftyOne-style view of this run's components — input frames and each augmented scenario variant with its appearance tags, caption, and grade.</p>
+              </div>
+              <div class="btn-row" style="margin:0;">
+                <button id="voxelRefresh" class="btn" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="field-row" style="grid-template-columns: 1fr auto; align-items:end;">
+              <div class="field">
+                <label for="voxelRunInput">Run</label>
+                <input id="voxelRunInput" type="search" placeholder="active run (or paste a run ID)" autocomplete="off" />
+              </div>
+              <button id="voxelLoadRun" class="btn btn-primary" type="button">Load dataset</button>
+            </div>
+            <div id="voxelSummary" class="voxel-summary" aria-live="polite"></div>
+            <div id="voxelFields" class="voxel-fields"></div>
+            <div id="voxelViz" class="voxel-viz" aria-live="polite"></div>
+            <div id="voxelGrid" class="voxel-grid" aria-live="polite"></div>
+          </section>
+        </div>
       </main>
     </div>
     <noscript><p style="padding:16px;background:#fff3cd;">JavaScript is required for the NPA Agent workbench. Enable JS and reload.</p></noscript>
@@ -1512,8 +1827,10 @@
         return narrow || (coarse && mobileUa);
       }
       function applyMobileLayout() {
-        if (!detectMobileLayout()) return;
-        document.body.classList.add("mobile-agent");
+        document.body.classList.toggle("mobile-agent", detectMobileLayout());
+      }
+      function isMobileLayout() {
+        return document.body.classList.contains("mobile-agent");
       }
       let mobileAuthTokenCache = "";
       function mobileAuthHeader() {
@@ -1606,13 +1923,19 @@
       applyMobileLayout();
       window.addEventListener("resize", applyMobileLayout);
       const chatHistory = [];
+      const MAX_CLIENT_CHAT_TURNS = 40;
+      function trimClientChatHistory() {
+        if (chatHistory.length > MAX_CLIENT_CHAT_TURNS) {
+          chatHistory.splice(0, chatHistory.length - MAX_CLIENT_CHAT_TURNS);
+        }
+      }
       let activeChatSessionId = "default";
       let chatSendInFlight = false;
       const chatQueue = [];
       let chatQueueDrain = null;
       let describeInFlight = false;
       let thinkingNode = null;
-      let activeMainTab = "chat";
+      let activeMainTab = "main";
       let chatDrawerOpen = false;
       function updateChatQueueBadge() {
         const badge = document.getElementById("chatQueueBadge");
@@ -1661,7 +1984,7 @@
       }
       function openFullChatTab() {
         setChatDrawerOpen(false);
-        activateMainTab("chat").catch((err) => console.warn("open full chat failed", err));
+        activateMainTab("main").catch((err) => console.warn("open full chat failed", err));
       }
       async function processChatQueue() {
         // Single-flight drain: concurrent enqueueChatJob callers await the same promise
@@ -1698,29 +2021,26 @@
       }
       async function activateMainTab(name, options) {
         const opts = options || {};
-        const tab = String(name || "chat").trim() === "rerun" ? "rerun" : "chat";
+        const raw = String(name || "main").trim();
+        const tab = (raw === "rerun" || raw === "voxel51") ? raw : "main";
         const switching = activeMainTab !== tab;
         activeMainTab = tab;
-        const chatPanel = document.getElementById("panelChat");
-        const rerunPanel = document.getElementById("panelRerun");
-        const tabChat = document.getElementById("tabChat");
-        const tabRerun = document.getElementById("tabRerun");
-        // Keep both panels mounted (opacity toggle only). display:none / visibility:hidden
-        // would unload or defer the Rerun wasm viewer bundle on every Chat↔Rerun switch.
-        if (chatPanel) {
-          chatPanel.classList.toggle("is-active", tab === "chat");
-          chatPanel.classList.toggle("is-inactive", tab !== "chat");
-          chatPanel.setAttribute("aria-hidden", tab === "chat" ? "false" : "true");
-          chatPanel.hidden = false;
+        // Keep all panels mounted (opacity toggle only). display:none / visibility:hidden
+        // would unload or defer the Rerun wasm viewer bundle on every tab switch.
+        const panelIds = { main: "panelChat", rerun: "panelRerun", voxel51: "panelVoxel" };
+        const tabIds = { main: "tabMain", rerun: "tabRerun", voxel51: "tabVoxel" };
+        for (const key of Object.keys(panelIds)) {
+          const panel = document.getElementById(panelIds[key]);
+          if (panel) {
+            const on = key === tab;
+            panel.classList.toggle("is-active", on);
+            panel.classList.toggle("is-inactive", !on);
+            panel.setAttribute("aria-hidden", on ? "false" : "true");
+            panel.hidden = false;
+          }
+          const tabBtn = document.getElementById(tabIds[key]);
+          if (tabBtn) tabBtn.setAttribute("aria-selected", key === tab ? "true" : "false");
         }
-        if (rerunPanel) {
-          rerunPanel.classList.toggle("is-active", tab === "rerun");
-          rerunPanel.classList.toggle("is-inactive", tab !== "rerun");
-          rerunPanel.setAttribute("aria-hidden", tab === "rerun" ? "false" : "true");
-          rerunPanel.hidden = false;
-        }
-        if (tabChat) tabChat.setAttribute("aria-selected", tab === "chat" ? "true" : "false");
-        if (tabRerun) tabRerun.setAttribute("aria-selected", tab === "rerun" ? "true" : "false");
         document.body.classList.toggle("viewer-focus", tab === "rerun");
         if (tab !== "rerun") {
           setChatDrawerOpen(false);
@@ -1735,6 +2055,13 @@
           }
         } else if (tab === "rerun" && switching && rerunIframeLoaded) {
           setStatus("Rerun ready");
+        }
+        if (tab === "voxel51" && switching) {
+          try {
+            await loadVoxelDataset();
+          } catch (err) {
+            console.warn("voxel dataset load failed", err);
+          }
         }
       }
       function setStatus(text) {
@@ -1789,21 +2116,52 @@
             sendChat().catch((err) => showToast(String(err), "error"));
           });
         }
+        const chatLogEl = document.getElementById("chatLog");
+        if (chatLogEl) {
+          chatLogEl.addEventListener("scroll", updateChatScrollButton, { passive: true });
+        }
+        const chatScrollBottomBtn = document.getElementById("chatScrollBottom");
+        if (chatScrollBottomBtn) {
+          chatScrollBottomBtn.addEventListener("click", () => scrollChatToBottom(true));
+        }
+        updateChatScrollButton();
         document.querySelectorAll(".main-tab[data-tab]").forEach((btn) => {
           btn.addEventListener("click", () => {
-            const next = String(btn.getAttribute("data-tab") || "chat");
-            // From Viewer (Rerun/Video/Image/Data), Chat tab opens the drawer instead
-            // of tearing focus away from the active render pane.
-            if (next === "chat" && activeMainTab === "rerun") {
-              if (chatDrawerOpen) openFullChatTab();
-              else openChatDrawer();
-              return;
+            const next = String(btn.getAttribute("data-tab") || "main");
+            // Clicking a main tab always switches tabs. The chat collapsible only
+            // opens via the chat button (chatDrawerToggle), never by clicking the
+            // Main tab — so returning to Main never pops the drawer out.
+            if (next === "voxel51") {
+              const vin = document.getElementById("voxelRunInput");
+              if (vin && !vin.value && activeRunId) vin.value = activeRunId;
             }
             activateMainTab(next).catch((err) => {
               console.warn("tab switch failed", err);
             });
           });
         });
+        const voxelRefreshBtn = document.getElementById("voxelRefresh");
+        if (voxelRefreshBtn) {
+          voxelRefreshBtn.addEventListener("click", () => {
+            loadVoxelDataset().catch((err) => showToast("Voxel51 refresh failed: " + String(err), "error"));
+          });
+        }
+        const voxelLoadRunBtn = document.getElementById("voxelLoadRun");
+        if (voxelLoadRunBtn) {
+          voxelLoadRunBtn.addEventListener("click", () => {
+            const vin = document.getElementById("voxelRunInput");
+            loadVoxelDataset(vin ? vin.value : "").catch((err) => showToast("Voxel51 load failed: " + String(err), "error"));
+          });
+        }
+        const voxelRunInputEl = document.getElementById("voxelRunInput");
+        if (voxelRunInputEl) {
+          voxelRunInputEl.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              loadVoxelDataset(voxelRunInputEl.value).catch((err) => showToast("Voxel51 load failed: " + String(err), "error"));
+            }
+          });
+        }
         const chatDrawerToggle = document.getElementById("chatDrawerToggle");
         if (chatDrawerToggle) {
           chatDrawerToggle.addEventListener("click", () => {
@@ -1874,14 +2232,11 @@
         bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
         bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
-        bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
         bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
         bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
-        bindClick("applySelection", applySelection, "Apply stock selection");
-        bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
         bindClick("workflowStatus", showWorkflowStatus, "Workflow status");
         bindClick("loadRunData", loadRunData, "Load run data");
         const chatInput = document.getElementById("chatInput");
@@ -1949,8 +2304,21 @@
         }, "Load run for stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
         if (stagesRunInput) {
+          let stagesSearchTimer = null;
           stagesRunInput.addEventListener("input", () => {
+            // Immediate client-side filter…
             filterStagesRunSelect(String(stagesRunInput.value || ""));
+            // …plus a debounced SERVER search so runs older than the newest page
+            // are surfaced by name/ID (then re-filtered into this select).
+            const value = String(stagesRunInput.value || "").trim();
+            if (stagesSearchTimer) clearTimeout(stagesSearchTimer);
+            if (!value) return;
+            stagesSearchTimer = setTimeout(async () => {
+              try {
+                await refreshArtifactRuns(value);
+                filterStagesRunSelect(String(stagesRunInput.value || ""));
+              } catch (_err) { /* keep client-side view on search failure */ }
+            }, 350);
           });
           stagesRunInput.addEventListener("keydown", (event) => {
             if (event.key !== "Enter") return;
@@ -1975,7 +2343,7 @@
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
-        for (const id of ["artifactTypeFilter", "artifactSort"]) {
+        for (const id of ["artifactStageFilter", "artifactTypeFilter", "artifactSort"]) {
           const node = document.getElementById(id);
           if (node) {
             node.addEventListener("change", async () => {
@@ -1984,6 +2352,36 @@
               await loadArtifactsForSelectedRun();
             });
           }
+        }
+        // "Find run (name or ID)" box: filters the discovered run list as you type
+        // (client-side, by run name/ID). Enter re-discovers all runs then filters.
+        // No path/category is ever required to find a run.
+        const runFilterInput = document.getElementById("artifactPrefix");
+        if (runFilterInput) {
+          let runSearchTimer = null;
+          runFilterInput.addEventListener("input", () => {
+            // Immediate client-side filter of what's already loaded…
+            applyMergedRunSelectors(activeRunId);
+            // …plus a debounced server-side search so runs older than the newest
+            // page (beyond the fetch limit) are surfaced by name/ID too.
+            const value = runFilterValue();
+            if (runSearchTimer) clearTimeout(runSearchTimer);
+            if (!value) return;
+            runSearchTimer = setTimeout(async () => {
+              try {
+                await refreshArtifactRuns(value);
+              } catch (_err) { /* keep the client-side view on search failure */ }
+            }, 350);
+          });
+          runFilterInput.addEventListener("keydown", async (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            try {
+              await refreshArtifactRuns(runFilterValue());
+            } catch (err) {
+              showToast("Discover runs failed: " + String((err && err.message) || err), "error");
+            }
+          });
         }
         const robotPreset = document.getElementById("robotPreset");
         if (robotPreset) {
@@ -2009,7 +2407,9 @@
         return String(text || "")
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
       }
       function renderInlineMarkdownLite(text) {
         let value = escapeHtml(text);
@@ -2144,6 +2544,24 @@
         document.body.removeChild(ta);
         return Boolean(ok);
       }
+      function updateChatScrollButton() {
+        const log = document.getElementById("chatLog");
+        const btn = document.getElementById("chatScrollBottom");
+        if (!log || !btn) return;
+        // Show the jump-to-latest arrow only when scrolled up from the bottom.
+        const distanceFromBottom = log.scrollHeight - log.scrollTop - log.clientHeight;
+        btn.hidden = distanceFromBottom <= 40;
+      }
+      function scrollChatToBottom(smooth) {
+        const log = document.getElementById("chatLog");
+        if (!log) return;
+        if (log.scrollTo) {
+          log.scrollTo({ top: log.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+        } else {
+          log.scrollTop = log.scrollHeight;
+        }
+        updateChatScrollButton();
+      }
       function appendChat(role, text, opts) {
         const options = opts || {};
         const rawText = String(text || "");
@@ -2184,6 +2602,7 @@
         row.appendChild(card);
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
+        updateChatScrollButton();
         return row;
       }
       function showThinkingBubble() {
@@ -2489,11 +2908,12 @@
               appendChat("user", opts.displayText || payloadText);
             }
             chatHistory.push({ role: "user", content: payloadText });
+            trimClientChatHistory();
             showThinkingBubble();
           }
           try {
             const messages = jobMessages || (stillActive
-              ? chatHistory
+              ? chatHistory.slice(-MAX_CLIENT_CHAT_TURNS)
               : [{ role: "user", content: payloadText }]);
             const body = {
               messages,
@@ -2526,6 +2946,7 @@
             if (reply) {
               appendChat("assistant", reply);
               chatHistory.push({ role: "assistant", content: reply });
+              trimClientChatHistory();
               refreshChatSessions(activeChatSessionId).catch(() => { /* best-effort */ });
             } else {
               appendChat("error", "empty reply from model");
@@ -2565,6 +2986,7 @@
       }
       function setChatInput(text) {
         const input = document.getElementById("chatInput");
+        if (!input) return;
         input.value = text;
         input.focus();
         if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
@@ -3160,6 +3582,19 @@
           capture: imageDataUrl ? "frame" : (textExcerpt ? "text" : "metadata-only"),
           has_image: Boolean(imageDataUrl),
         };
+        // Grounded pipeline provenance: which stage produced this visual and the
+        // components/models behind the data, read from the run's real artifacts.
+        if (meta.run_id) {
+          try {
+            const prov = await loadJson("/api/artifacts/provenance/" + encodeURIComponent(meta.run_id));
+            if (prov && prov.summary) meta.provenance = String(prov.summary).slice(0, 800);
+            // Grounded original-input resolution (source frames if stored; else the
+            // earliest stored visuals + augment engine + what the VLM labeled).
+            if (prov && prov.origin && prov.origin.summary) {
+              meta.origin = String(prov.origin.summary).slice(0, 700);
+            }
+          } catch (_provErr) { /* best-effort context */ }
+        }
         // Keep prompt construction aligned with agent_visual_feedback.describe_user_prompt.
         const promptLines = [
           "[npa-visual-feedback] Describe this " + visualKind + " viewer and give operator feedback.",
@@ -3174,6 +3609,18 @@
         if (meta.camera) promptLines.push("- camera: `" + meta.camera + "`");
         if (meta.artifact_key) promptLines.push("- artifact: `" + meta.artifact_key + "`");
         if (meta.note) promptLines.push("- note: " + meta.note.slice(0, 280));
+        if (meta.provenance) {
+          promptLines.push("");
+          promptLines.push("Pipeline provenance (where this data came from + components that produced it):");
+          for (const part of String(meta.provenance).split("; ")) {
+            if (part.trim()) promptLines.push("- " + part.trim());
+          }
+        }
+        if (meta.origin) {
+          promptLines.push("");
+          promptLines.push("Original input (grounded in the run's real artifacts — what the earliest/original data actually was):");
+          promptLines.push("- " + String(meta.origin));
+        }
         if (textExcerpt) {
           promptLines.push("- data_excerpt:");
           promptLines.push("```");
@@ -3195,7 +3642,7 @@
           "",
           "Instructions: Inspect attached pixels when present. Dense RGB, tiled envs, robot meshes, colored skeletons/wireframes on a dark grid, or synthetic cameras are not blank.",
           "Only call a frame blank when it is uniform black/white/gray with no structure.",
-          "Reply with: What I see → Likely meaning → Operator feedback → Next actions."
+          "Reply with: What I see → Where it comes from (pipeline stage + components/models from the provenance; if an Original input block is given, state what the original/earliest input actually was or that no separate original was stored — do not guess) → Likely meaning → Operator feedback → Next actions."
         );
         return {
           kind: visualKind,
@@ -3297,7 +3744,9 @@
       const RERUN_BLOB_SUCCESS = "SUCCESS";
       const RERUN_MOUNT_SUCCESS = "SUCCESS";
       window.addEventListener("message", (event) => {
-        if (event && event.data === "READY") {
+        // Only accept same-origin READY signals (ignore cross-origin spoofing).
+        if (!event || event.origin !== window.location.origin) return;
+        if (event.data === "READY" || (event.data && event.data.type === "rerunViewerAppReady")) {
           rerunViewerAppReady = true;
         }
       });
@@ -3556,6 +4005,37 @@
         const iframe = document.getElementById("rerunFrame");
         if (placeholder) placeholder.hidden = true;
         if (iframe) iframe.hidden = false;
+      }
+      function showMobileRerunNotice(runId) {
+        // Rerun's wasm 3D viewer is not supported in mobile browsers. Instead of
+        // showing its "not supported" screen, guide to the Voxel51 tab (frames,
+        // augmented variants, captions, grade) and the artifact list.
+        const placeholder = document.getElementById("rerunPlaceholder");
+        const iframe = document.getElementById("rerunFrame");
+        if (iframe) { iframe.hidden = true; iframe.removeAttribute("src"); }
+        rerunIframeLoaded = false;
+        mountedRerunRunKey = "";
+        if (placeholder) {
+          placeholder.hidden = false;
+          placeholder.innerHTML =
+            '<p><strong>3D Rerun viewer needs a desktop browser.</strong></p>' +
+            '<p class="hint">On mobile, view this run\'s input frames, augmented scenario ' +
+            'variants, captions and grade in the <strong>Voxel51</strong> tab — or open an ' +
+            'individual image/video from the Runs &amp; artifacts list above.</p>' +
+            '<div class="btn-row" style="justify-content:center;margin-top:10px;">' +
+            '<button class="btn btn-primary" type="button" id="rerunToVoxel">Open Voxel51</button>' +
+            '</div>';
+          const toVoxel = document.getElementById("rerunToVoxel");
+          if (toVoxel) {
+            toVoxel.addEventListener("click", () => {
+              const vin = document.getElementById("voxelRunInput");
+              const rid = String(runId || activeRunId || "").trim();
+              if (vin && rid) vin.value = rid;
+              activateMainTab("voxel51").catch((err) => console.warn("voxel open failed", err));
+            });
+          }
+        }
+        setStatus("Ready");
       }
       function hideArtifactPreview() {
         const host = document.getElementById("artifactPreviewHost");
@@ -3999,6 +4479,11 @@
         }
       }
       async function loadRerunViewer(camera) {
+        // Mobile can't run the Rerun wasm viewer — show the notice + Voxel51 route.
+        if (isMobileLayout()) {
+          showMobileRerunNotice(activeRunId);
+          return false;
+        }
         const cam = String(camera || selectedCamera());
         let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
         const render = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
@@ -4177,7 +4662,9 @@
       async function loadJson(path) {
         return await apiJson(path);
       }
-      function artifactPrefixValue() {
+      function runFilterValue() {
+        // Client-side filter over the discovered run list by run name / ID.
+        // (Not an S3 path — runs are found generically by id server-side.)
         const input = document.getElementById("artifactPrefix");
         return String((input && input.value) || "").trim();
       }
@@ -4189,13 +4676,97 @@
         const input = document.getElementById("artifactSort");
         return String((input && input.value) || "preferred").trim();
       }
-      function sortAndFilterArtifacts(artifacts, preferred) {
+      function artifactStageFilterValue() {
+        const input = document.getElementById("artifactStageFilter");
+        return String((input && input.value) || "").trim();
+      }
+      function scopedAfterRun(key, runId) {
+        let scoped = String(key || "");
+        const rid = String(runId || "");
+        const marker = "/" + rid + "/";
+        const idx = scoped.indexOf(marker);
+        if (idx >= 0) {
+          // Real keys with a discovery prefix: <prefix>/<runId>/<...>
+          scoped = scoped.slice(idx + marker.length);
+        } else if (rid && scoped.startsWith(rid + "/")) {
+          // Empty-prefix keys: <runId>/<...>
+          scoped = scoped.slice(rid.length + 1);
+        }
+        return scoped.replace(/^\/+/, "");
+      }
+      function runStageWrapper(artifacts, runId) {
+        // Mirror agent_stages.run_stage_wrapper: strip common workflow-name
+        // nesting (<run>/<workflow-name>/<stage>/...) so the real stages surface.
+        const scoped = (Array.isArray(artifacts) ? artifacts : [])
+          .map((it) => scopedAfterRun((it && it.key) || "", runId))
+          .filter(Boolean);
+        if (!scoped.length) return "";
+        const parts = [];
+        let tails = scoped;
+        while (true) {
+          const firsts = new Set(tails.map((t) => t.split("/")[0]));
+          if (firsts.size !== 1) break;
+          const seg = tails[0].split("/")[0];
+          const next = [];
+          let ok = true;
+          for (const t of tails) {
+            const rest = t.startsWith(seg + "/") ? t.slice(seg.length + 1) : "";
+            if (rest.indexOf("/") < 0) { ok = false; break; }
+            next.push(rest);
+          }
+          if (!ok) break;
+          parts.push(seg);
+          tails = next;
+        }
+        return parts.join("/");
+      }
+      function deriveArtifactStage(key, runId, wrapper) {
+        let scoped = scopedAfterRun(key, runId);
+        const wrap = String(wrapper || "").replace(/^\/+|\/+$/g, "");
+        if (wrap && scoped.startsWith(wrap + "/")) {
+          scoped = scoped.slice(wrap.length + 1);
+        }
+        const parts = scoped.split("/").filter(Boolean);
+        const first = parts[0] || "artifacts";
+        // Must match the timeline/backend stage-key (artifactStageKey /
+        // agent_stages.artifact_stage_key) so a clicked compound stage (e.g.
+        // eval/heldout) filters correctly instead of yielding zero artifacts.
+        if (first === "reports") return "reports";
+        if (first === "eval" && parts[1]) return "eval/" + parts[1];
+        if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) {
+          return first + "/" + parts[1];
+        }
+        return first;
+      }
+      function populateArtifactStageFilter(artifacts, runId) {
+        const select = document.getElementById("artifactStageFilter");
+        if (!select) return;
+        const current = String(select.value || "").trim();
+        const wrapper = runStageWrapper(artifacts, runId);
+        const counts = new Map();
+        for (const item of Array.isArray(artifacts) ? artifacts : []) {
+          const stage = deriveArtifactStage(item.key, runId, wrapper);
+          counts.set(stage, (counts.get(stage) || 0) + 1);
+        }
+        const stages = Array.from(counts.keys()).sort();
+        const total = (Array.isArray(artifacts) ? artifacts : []).length;
+        select.innerHTML = '<option value="">All stages (' + total + ')</option>' +
+          stages.map((s) => '<option value="' + escapeHtml(s) + '">' +
+            escapeHtml(s) + " (" + counts.get(s) + ")" + '</option>').join("");
+        // Preserve the previous selection if it still exists for this run.
+        select.value = stages.includes(current) ? current : "";
+      }
+      function sortAndFilterArtifacts(artifacts, preferred, runId) {
         const filter = artifactTypeFilterValue();
+        const stageFilter = artifactStageFilterValue();
         const sortMode = artifactSortValue();
         const preferredKey = String((preferred && preferred.key) || "");
         const typeRank = { rerun: 0, video: 1, image: 2, json: 3, text: 4, download: 5 };
+        const stageWrapper = runStageWrapper(artifacts, runId);
         const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {
-          return !filter || String(item.render || "download") === filter;
+          if (filter && String(item.render || "download") !== filter) return false;
+          if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;
+          return true;
         });
         items.sort((a, b) => {
           const ar = String(a.render || "download");
@@ -4224,20 +4795,34 @@
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
       let mergedRunsCache = [];
+      // Load the whole run list into the picker by default so every run shows
+      // without the operator having to guess a search fragment. The server still
+      // supports (q=) search for buckets larger than this, and the "Find run" /
+      // Stages search boxes union those server matches on top.
+      const ARTIFACT_RUN_LIST_LIMIT = 2000;
       function selectedRunIdFromUi() {
         const select = document.getElementById("runIdSelect");
         const stages = document.getElementById("stagesRunSelect");
         const runInput = document.getElementById("runIdInput");
         const stagesInput = document.getElementById("stagesRunInput");
-        const typed = String((runInput && runInput.value) || (stagesInput && stagesInput.value) || "").trim();
+        // Prefer the input that currently has focus when both are filled; otherwise
+        // any non-empty typed/pasted value wins so "type id → click Load" works
+        // after focus moves to the button.
+        let typed = "";
+        if (document.activeElement === stagesInput) {
+          typed = String((stagesInput && stagesInput.value) || "").trim();
+        } else if (document.activeElement === runInput) {
+          typed = String((runInput && runInput.value) || "").trim();
+        } else {
+          typed = String((runInput && runInput.value) || (stagesInput && stagesInput.value) || "").trim();
+        }
         const selected = String(
           (select && select.value) || (stages && stages.value) || activeRunId || ""
         ).trim();
-        // Prefer an explicit paste/search when present; otherwise the consolidated dropdown.
-        if (document.activeElement === runInput || document.activeElement === stagesInput) {
+        if (typed) {
           return resolveStagesRunChoice(typed, selected);
         }
-        return selected || typed;
+        return selected;
       }
       function resolveStagesRunChoice(typed, selected) {
         const query = String(typed || "").trim();
@@ -4253,6 +4838,13 @@
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
       }
+      // Effective run timestamp for display + sort: when the run STARTED
+      // (started_at). Falls back to artifact recency (last_modified), then viewer
+      // activity, only when no start time is known. This keeps the picker date on
+      // the run's start — not the newest artifact write or when it was last opened.
+      function effectiveRunTs(run) {
+        return String((run && (run.started_at || run.last_modified || run.activity_at)) || "");
+      }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
         const ingest = (run, source) => {
@@ -4260,13 +4852,24 @@
           if (!runId) return;
           const prev = map.get(runId) || {
             run_id: runId,
+            started_at: "",
             last_modified: "",
+            activity_at: "",
             has_viewable: false,
             artifact_count: 0,
             source: source,
           };
-          const ts = String((run && (run.last_modified || run.rrd_updated_at || run.updated_at || run.submitted_at)) || "");
-          if (ts && ts > String(prev.last_modified || "")) prev.last_modified = ts;
+          // Run start: keep the EARLIEST across sources (submit time / earliest
+          // artifact write). This is the displayed date.
+          const startTs = String((run && (run.started_at || run.submitted_at)) || "");
+          if (startTs && (!prev.started_at || startTs < prev.started_at)) prev.started_at = startTs;
+          // Artifact recency: when the run's objects were last written in S3.
+          const artifactTs = String((run && run.last_modified) || "");
+          if (artifactTs && artifactTs > String(prev.last_modified || "")) prev.last_modified = artifactTs;
+          // Viewer activity: when the run was last loaded/visualized in the agent.
+          // Tracked separately so it never inflates the run's displayed date.
+          const activityTs = String((run && (run.activity_at || run.rrd_updated_at || run.updated_at || run.submitted_at)) || "");
+          if (activityTs && activityTs > String(prev.activity_at || "")) prev.activity_at = activityTs;
           if (run && run.has_viewable) prev.has_viewable = true;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
           if (run && run.stage) prev.stage = String(run.stage || "");
@@ -4276,7 +4879,7 @@
         for (const run of Array.isArray(knownRuns) ? knownRuns : []) ingest(run, "known");
         for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
         return [...map.values()].sort((a, b) => {
-          const cmp = String(b.last_modified || "").localeCompare(String(a.last_modified || ""));
+          const cmp = effectiveRunTs(b).localeCompare(effectiveRunTs(a));
           if (cmp !== 0) return cmp;
           return String(b.run_id || "").localeCompare(String(a.run_id || ""));
         });
@@ -4296,7 +4899,8 @@
           const bits = [runId];
           if (run && run.has_viewable) bits.push("viewable");
           if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
-          if (run && run.last_modified) bits.push(String(run.last_modified).slice(0, 19));
+          const shownTs = effectiveRunTs(run);
+          if (shownTs) bits.push(shownTs.slice(0, 19));
           opt.textContent = bits.length > 1 ? (runId + " · " + bits.slice(1).join(" · ")) : runId;
           if (runId === current || (!current && runId === previous)) opt.selected = true;
           select.appendChild(opt);
@@ -4332,7 +4936,17 @@
         const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
         mergedRunsCache = merged;
         const chosen = String(current || activeRunId || "").trim();
-        fillRunSelectOptionsRich(document.getElementById("runIdSelect"), merged, chosen);
+        // Filter the Rerun-tab run picker by the "Find run (name or ID)" box.
+        const runFilter = runFilterValue().toLowerCase();
+        const runList = runFilter
+          ? merged.filter((run) => String((run && run.run_id) || "").toLowerCase().includes(runFilter))
+          : merged;
+        fillRunSelectOptionsRich(document.getElementById("runIdSelect"), runList, chosen);
+        const status = document.getElementById("artifactDiscoverStatus");
+        if (status && runFilter) {
+          status.textContent = String(runList.length) + " of " + String(merged.length) +
+            " run" + (merged.length === 1 ? "" : "s") + " match [" + runFilter + "]";
+        }
         const stagesInput = document.getElementById("stagesRunInput");
         const stagesQuery = String((stagesInput && stagesInput.value) || "").trim();
         if (stagesQuery) {
@@ -4343,11 +4957,22 @@
         syncRunChooserFields(chosen);
         return merged;
       }
-      async function refreshArtifactRuns() {
-        const prefix = artifactPrefixValue();
-        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix) + "&limit=100") : "?limit=100";
-        const data = await apiJson("/api/artifacts/runs" + query);
-        discoveredArtifactRuns = Array.isArray(data.runs) ? data.runs : [];
+      async function refreshArtifactRuns(query) {
+        // Discover runs generically across the whole bucket. When a search query
+        // is given, ask the SERVER to search ALL runs by name/ID (not just the
+        // newest page) so old runs beyond the default limit are still findable,
+        // and union the matches into the discovered list.
+        const q = String(query || "").trim();
+        const url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
+        const data = await apiJson(url);
+        const runs = Array.isArray(data.runs) ? data.runs : [];
+        if (q) {
+          const byId = new Map((discoveredArtifactRuns || []).map((r) => [String((r && r.run_id) || ""), r]));
+          for (const r of runs) byId.set(String((r && r.run_id) || ""), r);
+          discoveredArtifactRuns = [...byId.values()];
+        } else {
+          discoveredArtifactRuns = runs;
+        }
         // API already returns latest-first; keep that order when merging.
         const merged = applyMergedRunSelectors(activeRunId);
         const status = document.getElementById("artifactDiscoverStatus");
@@ -4359,17 +4984,22 @@
         }
         return true;
       }
-      async function loadArtifactsForSelectedRun() {
-        const runId = selectedRunIdFromUi();
+      async function loadArtifactsForSelectedRun(explicitRunId) {
+        // explicitRunId is optional; guard against event objects passed by
+        // click handlers (bindClick calls fn(event)).
+        const runId = (typeof explicitRunId === "string" && explicitRunId.trim())
+          ? explicitRunId.trim()
+          : selectedRunIdFromUi();
         if (!runId) throw new Error("Select a run or enter a run_id first");
         syncRunChooserFields(runId);
-        const prefix = artifactPrefixValue();
-        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix)) : "";
-        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + query);
+        // No path prefix: the server locates the run by id across the whole run root.
+        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId));
         const list = document.getElementById("artifactList");
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         if (!artifacts.length) {
+          const prov = document.getElementById("artifactProvenance");
+          if (prov) prov.innerHTML = "";
           list.innerHTML =
             "<p>No S3 artifacts found for <code>" + escapeHtml(runId) + "</code>.</p>" +
             "<p>This run may predate S3 upload support, may belong to a destroyed VM, or may have used a different artifact prefix.</p>" +
@@ -4377,12 +5007,14 @@
           return true;
         }
         renderArtifactDerivedRunDetails(runId, artifacts);
+        populateArtifactStageFilter(artifacts, runId);
+        renderArtifactProvenance(runId, artifacts).catch(() => false);
         const preferred = data && data.preferred ? data.preferred : null;
-        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred);
+        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred, runId);
         if (!displayArtifacts.length) {
           list.innerHTML =
-            "<p>No artifacts of selected type for <code>" + escapeHtml(runId) + "</code>.</p>" +
-            "<p>Clear the Type filter to show all " + String(artifacts.length) + " artifacts.</p>";
+            "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Stage/Type.</p>" +
+            "<p>Clear the Stage and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
           return true;
         }
         const counts = artifacts.reduce((acc, item) => {
@@ -4412,9 +5044,19 @@
             '<div class="artifact-card-meta">size=' + escapeHtml(String(item.size || 0)) +
             ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
             '<div class="artifact-card-path"><code>' + escapeHtml(key) + '</code></div>' +
+            // Inline image preview so browsing a stage (e.g. Source frames) shows
+            // the actual data, not just filenames. Lazy-loaded via the auth proxy.
+            (render === "image" && s3uri
+              ? '<div class="artifact-thumb" data-thumb-uri="' + escapeHtml(s3uri) +
+                '" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) +
+                '"><span class="hint">&hellip;</span></div>'
+              : "") +
             '<div style="margin-top:6px;"><button class="btn' + primary + '" type="button" data-action="load-artifact" data-run-id="' +
             escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
-            '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button></div>' +
+            '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button>' +
+            ' <button class="btn" type="button" data-action="download-artifact" data-run-id="' +
+            escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+            '" data-name="' + escapeHtml(basename) + '">Download</button></div>' +
             '</div>'
           );
         }).join("");
@@ -4429,13 +5071,44 @@
             await loadArtifact(payload);
           });
         });
-        if (preferred && String(preferred.render || "") === "rerun") {
-          appendChat("assistant", "Auto-loading preferred Rerun recording for `" + runId + "`.");
+        list.querySelectorAll("button[data-action='download-artifact']").forEach((btn) => {
+          btn.addEventListener("click", (event) => {
+            event.preventDefault();
+            downloadArtifact(
+              String(btn.getAttribute("data-run-id") || "").trim(),
+              String(btn.getAttribute("data-key") || "").trim(),
+              String(btn.getAttribute("data-s3-uri") || "").trim(),
+              String(btn.getAttribute("data-name") || "").trim()
+            );
+          });
+        });
+        // Lazy-load inline image thumbnails via the authenticated download proxy so
+        // browsing a stage shows the actual images; clicking one opens it full.
+        list.querySelectorAll(".artifact-thumb[data-thumb-uri]").forEach((node) => {
+          const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
+          if (uri) {
+            const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri);
+            authenticatedPreviewObjectUrl(url, null).then((src) => {
+              node.innerHTML = '<img alt="artifact" src="' + src + '" />';
+            }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
+          }
+          node.addEventListener("click", (event) => {
+            event.preventDefault();
+            loadArtifact({
+              run_id: String(node.getAttribute("data-run-id") || "").trim(),
+              key: String(node.getAttribute("data-key") || "").trim(),
+              s3_uri: uri,
+            }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
+          });
+        });
+        if (preferred && String(preferred.render || "") === "rerun" && !isMobileLayout()) {
           await loadArtifact({
             run_id: runId,
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
           });
+          renderArtifactDerivedRunDetails(runId, artifacts);
+        } else {
           renderArtifactDerivedRunDetails(runId, artifacts);
         }
         return true;
@@ -4451,7 +5124,12 @@
           const runMarker = "/" + runId + "/";
           let scoped = String(key || "");
           const idx = scoped.indexOf(runMarker);
-          if (idx >= 0) scoped = scoped.slice(idx + runMarker.length);
+          if (idx >= 0) {
+            scoped = scoped.slice(idx + runMarker.length);
+          } else if (runId && scoped.startsWith(runId + "/")) {
+            // Empty-prefix keys carry the run id as the leading segment.
+            scoped = scoped.slice(String(runId).length + 1);
+          }
           const parts = scoped.split("/").filter(Boolean);
           const first = parts[0] || "artifacts";
           if (first === "reports") return "reports";
@@ -4486,6 +5164,7 @@
         const stages = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([stageKey, count]) => {
           return {
             id: stageKey.replace(/[^a-zA-Z0-9._-]+/g, "-"),
+            stage_key: stageKey,
             label: artifactStageLabel(stageKey),
             status: "succeeded",
             summary: String(count) + " artifact" + (count === 1 ? "" : "s") + " found under `" + stageKey + "`.",
@@ -4516,6 +5195,98 @@
           },
         });
       }
+      function selectArtifactStage(stageKey, runId) {
+        const select = document.getElementById("artifactStageFilter");
+        if (!select) return;
+        const want = String(stageKey || "");
+        const match = Array.from(select.options).find((opt) => opt.value === want);
+        if (!match) return;
+        select.value = want;
+        // Reload the SAME run's artifacts (explicit id: paste-loaded runs are not
+        // in the dropdown, so re-deriving from the UI could pick the wrong run).
+        loadArtifactsForSelectedRun(String(runId || "").trim()).catch(() => false);
+      }
+      async function renderArtifactProvenance(runId, artifacts) {
+        // Honest, per-stage provenance for the loaded run: which pipeline stages
+        // produced artifacts, how many, the producing component/model, and — for
+        // the Augment stage — whether the pixels came from the REAL Cosmos
+        // Transfer 2.5 GPU model or a CPU appearance stand-in. Grounded in the
+        // run's real artifacts/manifests via /api/artifacts/provenance.
+        const host = document.getElementById("artifactProvenance");
+        if (!host) return false;
+        const list = Array.isArray(artifacts) ? artifacts : [];
+        const stagesPresent = new Set(
+          list.map((it) => deriveArtifactStage((it && it.key) || "", runId, runStageWrapper(list, runId)))
+        );
+        let prov = null;
+        try {
+          prov = await apiJson("/api/artifacts/provenance/" + encodeURIComponent(runId));
+        } catch (_err) {
+          prov = null;
+        }
+        const components = (prov && Array.isArray(prov.components)) ? prov.components : [];
+        // Honesty banner: real Cosmos GPU augment vs CPU stand-in vs no augment.
+        // Only meaningful for Data Factory runs — detect them by their
+        // pipeline-specific stages (exclude "reports", shared with sim2real).
+        const DF_STAGES = ["input", "configs", "labeled_original", "cosmos_augmented", "grade", "labeled_augmented", "curation"];
+        const isDataFactory = DF_STAGES.some((s) => stagesPresent.has(s));
+        let banner = "";
+        const augment = components.find((c) => String(c && c.stage || "") === "Augment");
+        const augEngine = augment ? String(augment.engine || "") : "";
+        const augDetail = augment ? String(augment.detail || "") : "";
+        if (!isDataFactory) {
+          banner = "";
+        } else if (!stagesPresent.has("cosmos_augmented")) {
+          banner =
+            '<div class="prov-banner prov-warn">This run has <strong>no augmented output</strong>' +
+            " — only raw pipeline inputs are present. The Cosmos Transfer augment stage has not" +
+            " produced results, so any video shown here is the <strong>source input</strong>, not a" +
+            " Data Factory result.</div>";
+        } else if (augEngine === "cosmos_transfer_2.5_gpu") {
+          banner =
+            '<div class="prov-banner prov-ok">Augment is a <strong>real Cosmos Transfer 2.5</strong>' +
+            " render on GPU" + (augDetail ? " — " + escapeHtml(augDetail) : "") + ".</div>";
+        } else if (augEngine) {
+          banner =
+            '<div class="prov-banner prov-warn">Augment used a <strong>CPU appearance stand-in</strong>' +
+            " (not the real Cosmos Transfer 2.5 GPU model)" + (augDetail ? " — " + escapeHtml(augDetail) : "") +
+            ". This is a placeholder visual, not a production augmentation.</div>";
+        }
+        if (!components.length && !banner) {
+          host.innerHTML = "";
+          return false;
+        }
+        const rows = components.map((c) => {
+          const stageName = escapeHtml(String(c.stage || ""));
+          const stageKey = String(c.stage_key || "");
+          const count = Number(c.artifact_count || 0);
+          const comp = escapeHtml(String(c.component || ""));
+          const model = c.model ? " · " + escapeHtml(String(c.model)) : "";
+          const runtime = c.runtime ? escapeHtml(String(c.runtime)) : "";
+          const detail = c.detail ? '<div class="prov-detail">' + escapeHtml(String(c.detail)) + "</div>" : "";
+          const clickable = stageKey && stagesPresent.has(stageKey);
+          const attrs = clickable
+            ? ' role="button" tabindex="0" data-stage="' + escapeHtml(stageKey) + '" title="Show only this stage\u2019s artifacts"'
+            : "";
+          return '<div class="prov-row' + (clickable ? " prov-clickable" : "") + '"' + attrs + ">" +
+            '<span class="prov-stage">' + stageName + "</span>" +
+            '<span class="prov-count">' + count + " artifact" + (count === 1 ? "" : "s") + "</span>" +
+            '<span class="prov-comp">' + comp + model + "</span>" +
+            (runtime ? '<span class="prov-runtime">' + runtime + "</span>" : "") +
+            detail + "</div>";
+        }).join("");
+        host.innerHTML =
+          '<div class="prov-head">Pipeline stages (click a stage to browse its artifacts)</div>' +
+          banner + rows;
+        for (const row of host.querySelectorAll(".prov-clickable")) {
+          const go = () => selectArtifactStage(row.getAttribute("data-stage"), runId);
+          row.addEventListener("click", go);
+          row.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); go(); }
+          });
+        }
+        return true;
+      }
       function updateRenderedDataSummary(simViz) {
         const node = document.getElementById("renderedDataSummary");
         if (!node) return;
@@ -4532,6 +5303,37 @@
             (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
         } else {
           node.textContent = "Rendering: no run artifact loaded yet.";
+        }
+      }
+      async function downloadArtifact(runId, key, s3uri, name) {
+        // Every artifact is directly downloadable: stream it from S3 through the
+        // agent and save it under its real filename, independent of render type
+        // and without mutating the viewer state.
+        const params = new URLSearchParams();
+        if (s3uri) {
+          params.set("s3_uri", s3uri);
+        } else {
+          if (runId) params.set("run_id", runId);
+          params.set("key", key);
+        }
+        const fallbackName = (String(key || "").split("/").pop()) || "artifact.bin";
+        const saveName = String(name || fallbackName).trim() || fallbackName;
+        const url = "/api/artifacts/download?" + params.toString();
+        try {
+          showToast("Downloading " + saveName + "…", "info");
+          const resp = await fetchWithTimeout(url, { credentials: "include" }, 180000);
+          if (!resp.ok) throw new Error("download failed (" + String(resp.status) + ")");
+          const blob = await resp.blob();
+          const objUrl = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = objUrl;
+          anchor.download = saveName;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (_err) { /* ignore */ } }, 10000);
+        } catch (err) {
+          showToast("Download failed: " + String((err && err.message) || err), "error");
         }
       }
       async function loadArtifact(payload) {
@@ -4551,6 +5353,16 @@
         const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
         if (loadedRunId) activeRunId = loadedRunId;
         updateRenderedDataSummary(simViz);
+        // Mobile: the 3D Rerun wasm viewer isn't supported — open the run's data in
+        // the Voxel51 tab instead of mounting the (unsupported) viewer.
+        if (render === "rerun" && isMobileLayout()) {
+          const vin = document.getElementById("voxelRunInput");
+          if (vin && loadedRunId) vin.value = loadedRunId;
+          await activateMainTab("voxel51");
+          await loadVoxelDataset(loadedRunId);
+          await refresh();
+          return true;
+        }
         await activateMainTab("rerun", { skipEnsure: true });
         if (render === "rerun") {
           setRenderMode("rerun");
@@ -4565,12 +5377,165 @@
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
           await showArtifactPreview(simViz, render);
         }
-        appendChat(
-          "assistant",
-          "Loaded artifact `" + String(simViz.artifact_key || body.key || "") + "` with render `" + render + "`."
-        );
+        // Loading/viewing an artifact must not spam the chat log; the viewer +
+        // rendered-data summary already reflect the loaded artifact.
         await refresh();
         return true;
+      }
+      let voxelDatasetRun = "";
+      async function loadVoxelDataset(runIdArg) {
+        const grid = document.getElementById("voxelGrid");
+        const summaryHost = document.getElementById("voxelSummary");
+        const fieldsHost = document.getElementById("voxelFields");
+        const input = document.getElementById("voxelRunInput");
+        let runId = String(runIdArg || (input && input.value) || activeRunId || "").trim();
+        // No run chosen yet: auto-pick the most recent discovered run so the tab
+        // always shows content instead of an empty prompt.
+        if (!runId) {
+          if (grid) grid.innerHTML = '<p class="hint">Finding the latest run…</p>';
+          try {
+            const runsData = await loadJson("/api/artifacts/runs?limit=1");
+            const runs = (runsData && (runsData.runs || runsData.run_ids)) || [];
+            const first = runs[0];
+            runId = String((first && (first.run_id || first)) || "").trim();
+          } catch (_err) { /* fall through to the prompt below */ }
+        }
+        if (input && runId) input.value = runId;
+        if (!runId) {
+          if (summaryHost) summaryHost.innerHTML = "";
+          if (fieldsHost) fieldsHost.innerHTML = "";
+          if (grid) grid.innerHTML = '<p class="hint">No runs discovered yet. Paste a run ID above and tap Load dataset.</p>';
+          return;
+        }
+        if (grid) grid.innerHTML = '<p class="hint">Loading dataset for <code>' + escapeHtml(runId) + '</code>…</p>';
+        let data = null;
+        try {
+          data = await loadJson("/api/fiftyone/dataset/" + encodeURIComponent(runId));
+        } catch (err) {
+          if (grid) grid.innerHTML = '<p class="preview-error">Dataset load failed: ' + escapeHtml(String((err && err.message) || err)) + "</p>";
+          return;
+        }
+        voxelDatasetRun = runId;
+        const summary = (data && data.summary) || {};
+        const fields = Array.isArray(data && data.fields) ? data.fields : [];
+        const samples = Array.isArray(data && data.samples) ? data.samples : [];
+        if (summaryHost) {
+          const grade = (summary.grade_score === null || summary.grade_score === undefined) ? "n/a" : String(summary.grade_score);
+          summaryHost.innerHTML =
+            '<span class="pill">run <strong>' + escapeHtml(runId) + "</strong></span>" +
+            '<span class="pill">variants <strong>' + escapeHtml(String(summary.variant_count || summary.augmented_count || 0)) + "</strong></span>" +
+            '<span class="pill">multiply <strong>' + escapeHtml(String(summary.multiply_mode || "-")) + "</strong></span>" +
+            '<span class="pill">grade <strong>' + escapeHtml(grade) + "</strong></span>" +
+            '<span class="pill">decision <strong>' + escapeHtml(String(summary.grade_decision || "-")) + "</strong></span>" +
+            '<span class="pill">input frames <strong>' + escapeHtml(String(summary.input_count || 0)) + "</strong></span>" +
+            (summary.curation_engine ? '<span class="pill">curation <strong>' + escapeHtml(String(summary.curation_engine)) + "</strong></span>" : "") +
+            ((summary.curated_kept !== null && summary.curated_kept !== undefined) ? '<span class="pill">kept <strong>' + escapeHtml(String(summary.curated_kept)) + "</strong></span>" : "") +
+            (summary.near_duplicate_count ? '<span class="pill">near-dupes <strong>' + escapeHtml(String(summary.near_duplicate_count)) + "</strong></span>" : "") +
+            ((summary.uniqueness && (summary.uniqueness.mean !== null && summary.uniqueness.mean !== undefined)) ? '<span class="pill">uniqueness μ <strong>' + escapeHtml(String(summary.uniqueness.mean)) + "</strong></span>" : "");
+        }
+        if (fieldsHost) {
+          fieldsHost.innerHTML = fields.length
+            ? "<strong>Fields:</strong> " + fields.map((f) => '<span class="pill">' + escapeHtml(String(f)) + "</span>").join(" ")
+            : "";
+        }
+        // FiftyOne Brain 2D embedding (PCA) scatter of the augmented variants,
+        // coloured by keep/redundant, so the curation view isn't just a grid.
+        const vizHost = document.getElementById("voxelViz");
+        if (vizHost) {
+          const viz = Array.isArray(data && data.visualization) ? data.visualization : [];
+          const pts = viz
+            .map((v) => ({ id: String((v && v.id) || ""), p: Array.isArray(v && v.point) ? v.point : [] }))
+            .filter((v) => v.p.length >= 2 && isFinite(Number(v.p[0])) && isFinite(Number(v.p[1])));
+          if (pts.length >= 2) {
+            const flagById = {};
+            for (const s of samples) {
+              if (s && s.group === "augmented") {
+                flagById[String(s.id)] = {
+                  redundant: Array.isArray(s.curation_flags) && s.curation_flags.includes("redundant"),
+                  uniq: s.uniqueness,
+                };
+              }
+            }
+            const xs = pts.map((v) => Number(v.p[0])), ys = pts.map((v) => Number(v.p[1]));
+            const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+            const W = 300, H = 150, pad = 14;
+            const sx = (x) => (maxX - minX < 1e-9) ? W / 2 : pad + (x - minX) / (maxX - minX) * (W - 2 * pad);
+            const sy = (y) => (maxY - minY < 1e-9) ? H / 2 : H - pad - (y - minY) / (maxY - minY) * (H - 2 * pad);
+            const dots = pts.map((v) => {
+              const f = flagById[v.id] || {};
+              const cls = f.redundant ? "dot-redundant" : "dot-kept";
+              const short = v.id.length > 10 ? v.id.slice(-4) : v.id;
+              const uniqTxt = (f.uniq === null || f.uniq === undefined) ? "" : (" u=" + Number(f.uniq).toFixed(2));
+              return '<circle class="' + cls + '" cx="' + sx(Number(v.p[0])).toFixed(1) + '" cy="' + sy(Number(v.p[1])).toFixed(1) +
+                '" r="6"><title>' + escapeHtml(v.id + uniqTxt) + "</title></circle>" +
+                '<text class="dot-label" x="' + (sx(Number(v.p[0])) + 8).toFixed(1) + '" y="' + (sy(Number(v.p[1])) + 3).toFixed(1) + '">' + escapeHtml(short) + "</text>";
+            }).join("");
+            vizHost.innerHTML =
+              '<div class="voxel-viz-title">FiftyOne Brain embedding (PCA) — ' + String(pts.length) + " variants</div>" +
+              '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="PCA embedding scatter">' + dots + "</svg>" +
+              '<div class="voxel-viz-legend"><span class="k">&#9679; kept</span><span class="r">&#9679; redundant</span></div>';
+          } else {
+            vizHost.innerHTML = "";
+          }
+        }
+        if (!grid) return;
+        if (!samples.length) {
+          grid.innerHTML = '<p class="hint">No samples found for this run.</p>';
+          return;
+        }
+        grid.innerHTML = samples.map((s, i) => {
+          const tags = (s && s.tags && typeof s.tags === "object") ? s.tags : {};
+          const tagHtml = Object.keys(tags).map((k) => '<span class="voxel-tag"><em>' + escapeHtml(k) + "</em> " + escapeHtml(String(tags[k])) + "</span>").join("");
+          const caption = String((s && s.caption) || "");
+          const group = String((s && s.group) || "");
+          const label = String((s && s.label) || (s && s.id) || ("sample " + i));
+          // Prefer bucket-qualified s3:// URIs so thumbnails/view/download resolve
+          // the correct bucket (runs may live in any accessible bucket).
+          const thumbUri = String((s && s.thumbnail_uri) || "");
+          const viewUri = String((s && s.video_uri) || thumbUri);
+          const hasUniq = s && s.uniqueness !== null && s.uniqueness !== undefined;
+          const flags = Array.isArray(s && s.curation_flags) ? s.curation_flags : [];
+          let curBadge = "";
+          if (hasUniq) {
+            curBadge += '<span class="voxel-tag" title="FiftyOne Brain uniqueness"><em>uniq</em> ' + escapeHtml(Number(s.uniqueness).toFixed(3)) + "</span>";
+            if (s.curated === true) curBadge += '<span class="voxel-tag" title="kept by FiftyOne curation"><em>kept</em></span>';
+            else if (s.curated === false) curBadge += '<span class="voxel-tag" title="dropped as near-duplicate"><em>dropped</em></span>';
+            if (flags.includes("redundant")) curBadge += '<span class="voxel-tag" title="low-uniqueness, flagged for review"><em>redundant</em></span>';
+          }
+          return (
+            '<div class="voxel-card" data-group="' + escapeHtml(group) + '">' +
+            '<div class="voxel-thumb" data-thumb-uri="' + escapeHtml(thumbUri) + '"><span class="hint">…</span></div>' +
+            '<div class="voxel-meta">' +
+            '<div class="voxel-title"><strong>' + escapeHtml(label) + '</strong><span class="pill">' + escapeHtml(group) + "</span></div>" +
+            (curBadge ? '<div class="voxel-tags">' + curBadge + "</div>" : "") +
+            (tagHtml ? '<div class="voxel-tags">' + tagHtml + "</div>" : "") +
+            (caption ? '<div class="voxel-caption">' + escapeHtml(caption) + "</div>" : "") +
+            '<div class="btn-row" style="margin:6px 0 0;">' +
+            '<button class="btn" type="button" data-vx-action="view" data-s3-uri="' + escapeHtml(viewUri) + '">View</button>' +
+            '<button class="btn" type="button" data-vx-action="download" data-s3-uri="' + escapeHtml(thumbUri) + '" data-name="' + escapeHtml(label) + '">Download</button>' +
+            "</div></div></div>"
+          );
+        }).join("");
+        for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-uri]")) {
+          const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
+          if (!uri) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
+          const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri);
+          authenticatedPreviewObjectUrl(url, null).then((src) => {
+            node.innerHTML = '<img alt="sample" src="' + src + '" />';
+          }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
+        }
+        grid.querySelectorAll("button[data-vx-action='view']").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            loadArtifact({ run_id: voxelDatasetRun, s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim() });
+          });
+        });
+        grid.querySelectorAll("button[data-vx-action='download']").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            downloadArtifact(voxelDatasetRun, "", String(btn.getAttribute("data-s3-uri") || "").trim(), String(btn.getAttribute("data-name") || "").trim());
+          });
+        });
       }
       async function refresh() {
         try {
@@ -4623,17 +5588,22 @@
             hideArtifactPreview();
           }
           if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {
-            showRerunPlaceholder("Waiting for .rrd data. Click Load Franka in Rerun or submit Sim2Real.");
+            showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
           } else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {
-            showRerunPlaceholder("Rerun is ready. Click Reload Rerun data or Load Franka in Rerun.");
+            showRerunPlaceholder("Select a run and load its artifacts to view them here.");
           }
+          // The Selection controls were removed; only sync them if still present.
           const robotPreset = document.getElementById("robotPreset");
-          if (assets.selection && assets.selection.robot_preset) {
+          if (robotPreset && assets.selection && assets.selection.robot_preset) {
             robotPreset.value = String(assets.selection.robot_preset);
           }
-          document.getElementById("simBackend").value = String((assets.selection && assets.selection.sim_backend) || "isaac");
+          const simBackendEl = document.getElementById("simBackend");
+          if (simBackendEl) {
+            simBackendEl.value = String((assets.selection && assets.selection.sim_backend) || "isaac");
+          }
           const props = Array.isArray(assets.selection && assets.selection.props) ? assets.selection.props.map(String) : [];
-          document.getElementById("propCube").checked = props.includes("cube");
+          const propCubeEl = document.getElementById("propCube");
+          if (propCubeEl) propCubeEl.checked = props.includes("cube");
           const select = document.getElementById("cameraSelect");
           if (select) {
             const activeName = String(simViz.camera || select.value || "workspace");
@@ -4681,10 +5651,6 @@
           <text x="8" y="152" font-size="11" fill="#334155">${String(camera.name || "")}</text>
         </svg>`;
       }
-      function renderCameraCards(list, activeName, simViz) {
-        // Cameras panel removed from UI; keep helper for API-driven camera metadata.
-        return;
-      }
       function renderAssetsSummary(assets) {
         const selection = (assets && assets.selection) || {};
         const resolved = (assets && assets.resolved_uris) || {};
@@ -4694,7 +5660,9 @@
         const backend = String(selection.sim_backend || "isaac");
         const props = Array.isArray(selection.props) ? selection.props : [];
         const propsText = props.length ? props.join(", ") : "none";
-        document.getElementById("assetsSummary").innerHTML =
+        const assetsSummaryEl = document.getElementById("assetsSummary");
+        if (!assetsSummaryEl) return;  // Selection panel removed — nothing to render.
+        assetsSummaryEl.innerHTML =
           "<div><span class='pill'>scene: " + escapeHtml(scene) + "</span></div>" +
           "<div style='margin-top:6px;'><span class='pill'>robot: " + escapeHtml(robot) + "</span></div>" +
           "<div style='margin-top:6px;'><span class='pill'>cameras: " + escapeHtml(cameras) + "</span></div>" +
@@ -4703,25 +5671,26 @@
           "<div style='margin-top:6px;'>resolved scene URI: <code>" + escapeHtml(String(resolved.scene_spec_uri || scene)) + "</code></div>";
       }
       function selectionPayloadFromUi() {
-        const robotPreset = String(document.getElementById("robotPreset").value || "franka");
-        const sceneMode = String(document.getElementById("sceneMode").value || "stock");
-        const cameraMode = String(document.getElementById("cameraMode").value || "stock");
-        const backend = String(document.getElementById("simBackend").value || "isaac");
+        // The Selection / Scene-mode controls were removed (the viewer just shows
+        // run artifacts now). Fall back to stock defaults so any remaining callers
+        // keep working without those DOM elements.
+        const val = (id, dflt) => {
+          const el = document.getElementById(id);
+          return String((el && el.value) || dflt);
+        };
+        const robotPreset = val("robotPreset", "franka");
+        const sceneMode = val("sceneMode", "stock");
+        const cameraMode = val("cameraMode", "stock");
+        const backend = val("simBackend", "isaac");
+        const cubeEl = document.getElementById("propCube");
         return {
           scene_spec_uri: sceneMode === "stock" ? "stock://scene/default" : "",
           robot_spec_uri: robotPreset === "franka" ? "stock://robot/franka" : "",
           cameras_uri: cameraMode === "stock" ? "stock://cameras/default" : "",
           robot_preset: robotPreset,
           sim_backend: backend,
-          props: document.getElementById("propCube").checked ? ["cube"] : []
+          props: (cubeEl && cubeEl.checked) ? ["cube"] : []
         };
-      }
-      function fillRunSelectOptions(select, runs, current) {
-        // Compatibility wrapper — prefer rich latest-first objects when available.
-        const rich = (Array.isArray(runs) ? runs : []).map((item) => (
-          typeof item === "string" ? { run_id: item } : item
-        ));
-        fillRunSelectOptionsRich(select, rich, current);
       }
       function syncRunChooserFields(runId) {
         const chosen = String(runId || "").trim();
@@ -4743,7 +5712,9 @@
         if (Array.isArray(simViz && simViz.available_runs) && simViz.available_runs.length) {
           knownAvailableRuns = simViz.available_runs.map((item) => ({
             run_id: String((item && item.run_id) || "").trim(),
+            started_at: String((item && (item.started_at || item.submitted_at)) || "").trim(),
             last_modified: String((item && item.last_modified) || "").trim(),
+            activity_at: String((item && (item.activity_at || item.rrd_updated_at)) || "").trim(),
             stage: String((item && item.stage) || "").trim(),
           })).filter((item) => item.run_id);
         } else {
@@ -4784,6 +5755,131 @@
         };
         return labels[statusClass] || String(statusClass || "Pending");
       }
+      async function showStageDetail(runId, stageKey, stageLabel) {
+        const host = document.getElementById("stageDetail");
+        const rid = String(runId || activeRunId || "").trim();
+        const label = String(stageLabel || stageKey || "stage").trim();
+        if (host) host.innerHTML = '<p class="hint">Describing <strong>' + escapeHtml(label) + '</strong>…</p>';
+        let data = null;
+        try {
+          data = await loadJson(
+            "/api/artifacts/stage/" + encodeURIComponent(rid) +
+            "?stage_key=" + encodeURIComponent(String(stageKey || ""))
+          );
+        } catch (err) {
+          if (host) host.innerHTML = '<p class="preview-error">Stage inspect failed: ' +
+            escapeHtml(String((err && err.message) || err)) + "</p>";
+          return;
+        }
+        const description = String((data && data.description) || "");
+        const artifacts = Array.isArray(data && data.artifacts) ? data.artifacts : [];
+        const info = (data && data.info && typeof data.info === "object") ? data.info : {};
+        // The agent describes the stage inline in the stage-detail panel below —
+        // no chat message (stage/artifact inspection must not spam the chat log).
+        // Inline the stage's info/config JSON.
+        const infoKeys = Object.keys(info);
+        const infoHtml = infoKeys.length
+          ? '<div class="stage-detail-info"><strong>Info / config</strong>' + infoKeys.map((k) =>
+              '<details><summary><code>' + escapeHtml(k) + '</code></summary><pre>' +
+              escapeHtml(JSON.stringify(info[k], null, 2)) + "</pre></details>"
+            ).join("") + "</div>"
+          : "";
+        // Inline thumbnails for image/video artifacts so clicking a stage SHOWS
+        // the frames (e.g. the source-frames stage shows the input images) right
+        // here, without a tab switch. Mirrors the Voxel51 grid preview pattern.
+        const mediaArts = artifacts.filter((a) => {
+          const r = String((a && a.render) || "");
+          return r === "image" || r === "video";
+        });
+        const thumbsHtml = mediaArts.length
+          ? '<div class="stage-thumbs">' + mediaArts.map((a) => {
+              const key = String(a.key || "");
+              const s3uri = String(a.s3_uri || "");
+              const render = String(a.render || "");
+              const base = key.split("/").pop() || key;
+              const isVideo = render === "video";
+              return '<div class="stage-thumb" data-run-id="' + escapeHtml(rid) +
+                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                '" data-thumb-uri="' + escapeHtml(isVideo ? "" : s3uri) +
+                '" title="' + escapeHtml(base) + '">' +
+                (isVideo ? '<span class="stage-thumb-badge">&#9654; video</span>' : '<span class="hint">&hellip;</span>') +
+                '<span class="stage-thumb-name">' + escapeHtml(base) + "</span></div>";
+            }).join("") + "</div>"
+          : "";
+        // 3) List the stage's artifacts with View + Download.
+        const artHtml = artifacts.length
+          ? '<div class="stage-detail-artifacts"><strong>' + String(artifacts.length) +
+            " artifact(s)</strong>" + artifacts.map((item) => {
+              const key = String(item.key || "");
+              const render = String(item.render || "download");
+              const s3uri = String(item.s3_uri || "");
+              const base = key.split("/").pop() || key;
+              const actionLabel = render === "rerun" ? "View in Rerun" : (render === "video" ? "Play" : "Load");
+              return '<div class="stage-detail-row"><code title="' + escapeHtml(key) + '">' +
+                escapeHtml(base) + '</code> <span class="pill">' + escapeHtml(render) + "</span>" +
+                ' <button class="btn" type="button" data-sd-action="load" data-run-id="' + escapeHtml(rid) +
+                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '">' + actionLabel + "</button>" +
+                ' <button class="btn" type="button" data-sd-action="download" data-run-id="' + escapeHtml(rid) +
+                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                '" data-name="' + escapeHtml(base) + '">Download</button></div>';
+            }).join("") + "</div>"
+          : '<p class="hint">No artifacts found for this stage.</p>';
+        if (host) {
+          host.innerHTML =
+            '<div class="stage-detail-head"><strong>' + escapeHtml(label) + "</strong>" +
+            ' <span class="pill">' + escapeHtml(String(stageKey || "")) + "</span></div>" +
+            '<p class="stage-detail-desc">' + escapeHtml(description) + "</p>" +
+            infoHtml + thumbsHtml + artHtml;
+          // Lazy-load each image thumbnail through the authenticated download proxy,
+          // and make every thumbnail click open the full artifact in the viewer.
+          host.querySelectorAll(".stage-thumb").forEach((node) => {
+            const thumbUri = String(node.getAttribute("data-thumb-uri") || "").trim();
+            if (thumbUri) {
+              const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(thumbUri);
+              authenticatedPreviewObjectUrl(url, null).then((src) => {
+                const ph = node.querySelector(".hint");
+                if (ph) ph.remove();
+                const img = document.createElement("img");
+                img.alt = "frame";
+                img.src = src;
+                node.insertBefore(img, node.firstChild);
+              }).catch(() => {
+                const ph = node.querySelector(".hint");
+                if (ph) ph.textContent = "no preview";
+              });
+            }
+            node.addEventListener("click", (event) => {
+              event.preventDefault();
+              loadArtifact({
+                run_id: String(node.getAttribute("data-run-id") || "").trim(),
+                key: String(node.getAttribute("data-key") || "").trim(),
+                s3_uri: String(node.getAttribute("data-s3-uri") || "").trim(),
+              }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
+            });
+          });
+          host.querySelectorAll("button[data-sd-action='load']").forEach((btn) => {
+            btn.addEventListener("click", (event) => {
+              event.preventDefault();
+              loadArtifact({
+                run_id: String(btn.getAttribute("data-run-id") || "").trim(),
+                key: String(btn.getAttribute("data-key") || "").trim(),
+                s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
+              });
+            });
+          });
+          host.querySelectorAll("button[data-sd-action='download']").forEach((btn) => {
+            btn.addEventListener("click", (event) => {
+              event.preventDefault();
+              downloadArtifact(
+                String(btn.getAttribute("data-run-id") || "").trim(),
+                String(btn.getAttribute("data-key") || "").trim(),
+                String(btn.getAttribute("data-s3-uri") || "").trim(),
+                String(btn.getAttribute("data-name") || "").trim()
+              );
+            });
+          });
+        }
+      }
       function renderRunDetails(details) {
         const run = (details && details.run) || details || {};
         const summary = document.getElementById("runSummary");
@@ -4822,14 +5918,47 @@
             const label = String(stage.label || stage.id || "");
             const stageSummary = String(stage.summary || "");
             const active = idx === activeIdx ? " is-active" : "";
+            const stageKey = String(stage.stage_key || "");
+            const clickable = stageKey
+              ? ' data-stage-key="' + escapeHtml(stageKey) + '" data-stage-label="' + escapeHtml(label) +
+                '" style="cursor:pointer;" title="Describe this stage and inspect its artifacts"'
+              : "";
             return (
-              '<div class="stage-item' + active + '">' +
+              '<div class="stage-item' + active + '"' + clickable + '>' +
               '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
               '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
               '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
               '</div>'
             );
           }).join("");
+          // Selecting a stage in the timeline scopes the artifact browser to that
+          // workflow-progress step and lists its artifacts.
+          for (const node of stagesHost.querySelectorAll(".stage-item[data-stage-key]")) {
+            node.addEventListener("click", async () => {
+              const stageKey = String(node.getAttribute("data-stage-key") || "").trim();
+              const stageLabel = String(node.getAttribute("data-stage-label") || stageKey).trim();
+              for (const sib of stagesHost.querySelectorAll(".stage-item")) sib.classList.remove("is-selected");
+              node.classList.add("is-selected");
+              const select = document.getElementById("artifactStageFilter");
+              if (select) {
+                if (![...select.options].some((o) => o.value === stageKey)) {
+                  const opt = document.createElement("option");
+                  opt.value = stageKey;
+                  opt.textContent = stageKey;
+                  select.appendChild(opt);
+                }
+                select.value = stageKey;
+              }
+              // Agent describes the stage + lets you inspect its artifacts/info/configs.
+              await showStageDetail(runId, stageKey, stageLabel);
+              try {
+                await loadArtifactsForSelectedRun();
+              } catch (err) {
+                const list = document.getElementById("artifactList");
+                if (list) list.textContent = "Load stage artifacts failed: " + String((err && err.message) || err);
+              }
+            });
+          }
         }
         const logs = Array.isArray(run.logs) ? run.logs : [];
         logHost.textContent = logs.length
@@ -4843,6 +5972,8 @@
       }
       async function loadRunDetails(runId) {
         const target = String(runId || activeRunId || "").trim();
+        // No prefix needed: the server resolves the run by id across the whole
+        // run root and returns its real artifact-backed stages.
         const path = target
           ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
           : "/api/workflows/sim2real/status";
@@ -4856,8 +5987,7 @@
         }
       }
       async function loadRunData() {
-        const input = document.getElementById("runIdInput");
-        const runId = String((input && input.value) || "").trim();
+        const runId = String(selectedRunIdFromUi() || "").trim();
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
@@ -4888,18 +6018,6 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify(selectionPayloadFromUi()),
         });
-        await refresh();
-      }
-      async function previewCamera(camera) {
-        const data = await apiJson("/api/sim-viz/camera-preview", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ camera }),
-        });
-        const simVizForMount = (data && data.sim_viz) || await waitForRerunReady();
-        await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
-        const entity = String(data.entity_path || ("world/camera_frustums/" + camera + "/frustum"));
-        appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
       }
       async function applySelection() {
@@ -4939,16 +6057,24 @@
         if (simViz && simViz.rrd_uri) {
           await bestEffortMountRerun(String(simViz.camera || "workspace"), submittedRunId);
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {
-            throw new Error("Rerun recording/iframe did not reach SUCCESS after workflow submit");
+            // Submit already succeeded — treat a late/degraded viewer as a warning, not failure.
+            appendChat(
+              "assistant",
+              "Warning: Rerun recording/iframe did not reach SUCCESS yet for run `" +
+                submittedRunId +
+                "`. The submit itself completed; refresh the viewer or load the run when the `.rrd` is ready."
+            );
+            showToast("Submit ok; Rerun viewer still catching up", "info");
+          } else {
+            appendChat(
+              "assistant",
+              "Rerun update: **run_id** `" +
+                String(simViz.run_id || data.run_id || "unknown") +
+                "`, **stage** `" +
+                String(simViz.stage || "running") +
+                "`, **iframe** `/rerun/`, **recording_mount** `" + RERUN_BLOB_SUCCESS + "`"
+            );
           }
-          appendChat(
-            "assistant",
-            "Rerun update: **run_id** `" +
-              String(simViz.run_id || data.run_id || "unknown") +
-              "`, **stage** `" +
-              String(simViz.stage || "running") +
-              "`, **iframe** `/rerun/`, **recording_mount** `" + RERUN_BLOB_SUCCESS + "`"
-          );
         } else {
           await loadRunDetails(submittedRunId);
           showRerunPlaceholder(
@@ -5019,6 +6145,12 @@
         }
       }
       async function ensureFrankaRerunLoaded() {
+        // Mobile browsers can't run the Rerun wasm 3D viewer — never mount it;
+        // show a notice that points to the Voxel51 data view instead.
+        if (isMobileLayout()) {
+          showMobileRerunNotice(activeRunId);
+          return "mobile";
+        }
         const simViz = await loadJson("/api/sim-viz/status");
         const artifactRender = String((simViz && simViz.artifact_render) || "");
         const runId = String((simViz && (simViz.active_run_id || simViz.run_id)) || "").trim();
@@ -5043,10 +6175,11 @@
           setStatus("Waiting for run recording…");
           return "pending-run";
         }
-        setStatus("Loading Franka demo...");
-        showToast("Loading stock Franka in Rerun", "info");
-        await loadFrankaDemo();
-        return "demo";
+        // No active run: just show run artifacts, not the stock Franka/cube demo.
+        // (The demo is still reachable on demand via chat "load franka".)
+        showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
+        setStatus("Ready");
+        return "placeholder";
       }
       async function bootPage() {
         rerunBootInProgress = true;
@@ -5083,7 +6216,10 @@
             await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
             const mountMode = await ensureFrankaRerunLoaded();
             const iframe = document.getElementById("rerunFrame");
-            if (!safeHideRerunBundleCover(iframe)) {
+            if (mountMode === "placeholder") {
+              // Nothing mounted (viewer just shows artifacts) — drop the cover now.
+              hideRerunBundleCover();
+            } else if (!safeHideRerunBundleCover(iframe)) {
               // Background uncover waits for non-blank canvas — never flash Rerun splash.
               showRerunBundleCover("Opening viewer…", "Almost ready…");
               scheduleRerunBundleUncover(iframe).catch(() => {
@@ -5104,7 +6240,7 @@
           if (document.body.classList.contains("mobile-agent")) {
             setStatus("Ready");
           } else {
-            showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
+            showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
             showToast(String(err && err.message ? err.message : err), "error");
             setStatus("Ready");
           }
@@ -5116,8 +6252,10 @@
       function startPeriodicRefresh() {
         if (refreshTimer !== null) return;
         refreshTimer = window.setInterval(() => {
-          const iframe = document.getElementById("rerunFrame");
-          if (rerunIframeLoaded && iframe && !iframe.hidden) {
+          // Skip only while the Rerun panel is the active (visible) tab — do not
+          // kill chat/stages/model refresh for the rest of the session just because
+          // the iframe was mounted in the background.
+          if (activeMainTab === "rerun") {
             return;
           }
           refresh().catch(() => { /* periodic refresh is best-effort */ });

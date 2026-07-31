@@ -64,7 +64,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071925"
+AGENT_UI_VERSION = "2026072902"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -125,6 +125,10 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "Describe this — capturing",
     "client_max_body_size 32m",
     "maxChars = 700000",
+    # Grounded original-input ("what was the original input image") resolution.
+    "_maybe_origin_reply",
+    "build_run_origin",
+    "Grounded origin facts for this run",
 )
 
 AGENT_CHAT_QUEUE_CONTRACT = (
@@ -268,7 +272,10 @@ _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
+_AGENT_STATE_EMBED = "__NPA_AGENT_STATE_EMBED__"
+_AGENT_S3_GUARD_EMBED = "__NPA_AGENT_S3_GUARD_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
+_AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
@@ -318,11 +325,44 @@ def _embedded_agent_rrd_proxy_source() -> str:
     return raw
 
 
+def _embedded_agent_state_source() -> str:
+    """Return agent_state.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_state.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_s3_guard_source() -> str:
+    """Return agent_s3_guard.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_s3_guard.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
 def _embedded_agent_artifacts_source() -> str:
     """Return workflows/artifacts.py source embedded into the remote agent backend."""
     import re
 
     path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_provenance_source() -> str:
+    """Return workflows/data_factory_provenance.py source embedded into the backend."""
+    import re
+
+    path = Path(__file__).resolve().parents[1] / "workflows" / "data_factory_provenance.py"
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -1738,6 +1778,12 @@ def _nginx_agent_site_body(
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
+    # .rrd carries msgpack + metadata that still gzips usefully; the frame
+    # payloads are now JPEG-encoded so the win is modest but the transfer is
+    # smaller and TTFB unaffected (nginx streams as it compresses).
+    gzip on;
+    gzip_types application/octet-stream;
+    gzip_min_length 1024;
   }}
   location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     auth_basic off;
@@ -1825,7 +1871,10 @@ def _bootstrap_agent_stack(
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
+    agent_state_source = _embedded_agent_state_source()
+    agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
+    agent_provenance_source = _embedded_agent_provenance_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -1924,7 +1973,7 @@ from urllib.parse import quote
 import httpx
 import yaml
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 app = FastAPI(title="npa-agent")
 TOOL_CATALOG = {catalog_json}
@@ -1933,6 +1982,12 @@ STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
+
+{_AGENT_STATE_EMBED}
+
+{_AGENT_S3_GUARD_EMBED}
+
+{_AGENT_RRD_PROXY_EMBED}
 
 RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
 
@@ -2148,20 +2203,22 @@ def _default_state() -> dict:
         "state_version": 2,
     }}
 
-def _load_state() -> dict:
-    # Single-tenant operator-VM model: lock-free read-modify-write on STATE_PATH
-    # (+ best-effort S3 mirror). Concurrent writers are last-writer-wins — fine
-    # for one operator UI, not safe if this ever becomes a multi-client service.
-    data = None
-    if STATE_PATH.exists():
-        try:
-            payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                data = payload
-        except Exception:
-            data = None
-    if data is None:
-        data = _load_state_from_s3()
+_STATE_LOCK = threading.RLock()
+_STATE_STORE: StateStore | None = None
+
+
+def _get_state_store() -> StateStore:
+    global _STATE_STORE
+    if _STATE_STORE is None:
+        _STATE_STORE = StateStore(
+            STATE_PATH,
+            default_factory=_default_state,
+            after_save=_save_state_to_s3,
+        )
+    return _STATE_STORE
+
+
+def _normalize_loaded_state(data: dict | None) -> dict:
     if not isinstance(data, dict):
         return _default_state()
     merged = _default_state()
@@ -2186,12 +2243,42 @@ def _load_state() -> dict:
         merged["active_chat_session_id"] = "default"
     return merged
 
-def _save_state(state: dict) -> None:
-    # See _load_state: no file lock — last writer wins under concurrent requests.
+
+def _load_state_unlocked() -> dict:
+    # Caller must hold _STATE_LOCK / store.lock for read-modify-write.
+    store = _get_state_store()
+    data = store.load()
+    if not isinstance(data, dict) or not data:
+        data = _load_state_from_s3()
+    return _normalize_loaded_state(data)
+
+
+def _save_state_unlocked(state: dict) -> None:
+    # Caller must hold _STATE_LOCK / store.lock.
     state["updated_at"] = _now_iso()
     state["state_version"] = int(state.get("state_version") or 2)
-    STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
-    _save_state_to_s3(state)
+    _get_state_store().save(state)
+
+
+def _load_state() -> dict:
+    # Process-wide lock so concurrent Starlette threadpool handlers cannot
+    # clobber confirm tokens / chat history / sim-viz selection.
+    with _STATE_LOCK:
+        return _load_state_unlocked()
+
+
+def _save_state(state: dict) -> None:
+    with _STATE_LOCK:
+        _save_state_unlocked(state)
+
+
+def _mutate_state(fn):
+    # Atomic load → mutate → save under the process-wide lock.
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        result = fn(state)
+        _save_state_unlocked(state)
+        return result
 
 
 def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
@@ -2333,18 +2420,82 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
     return stages
 
 
-def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
+def _workflow_run_steps(s3, bucket: str, keys: list) -> list:
+    # Read the npa.workflow run manifest (<run>/npa-workflow/manifest.json) and
+    # return per-stage execution records: state, command, returncode, status,
+    # iteration, output_uri. Empty list when the run was not scheduler-driven.
+    manifest_key = ""
+    for key in keys:
+        if str(key).endswith("/npa-workflow/manifest.json"):
+            manifest_key = str(key)
+            break
+    if not manifest_key:
+        return []
+    try:
+        body = s3.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
+        manifest = json.loads(body)
+    except Exception:
+        return []
+    out = []
+    for step in manifest.get("steps", []) if isinstance(manifest, dict) else []:
+        if not isinstance(step, dict):
+            continue
+        argv = step.get("argv") or []
+        command = " ".join(str(a) for a in argv) if isinstance(argv, list) else str(argv)
+        outputs = step.get("outputs") or []
+        output_uri = ""
+        if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
+            output_uri = str(outputs[0].get("uri") or "")
+        out.append(
+            {{
+                "stage": str(step.get("state") or ""),
+                "status": str(step.get("status") or ""),
+                "returncode": step.get("returncode"),
+                "iteration": step.get("iteration"),
+                "command": command[:2000],
+                "output_uri": output_uri,
+            }}
+        )
+    return out
+
+
+def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> dict | None:
     if not run_id:
         return None
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, "")
-        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        artifacts = []
+        # Fast path: honor the artifact prefix the run was discovered under.
+        if prefix:
+            effective_prefix = _artifact_discovery_prefix(settings, prefix)
+            artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        # Generic fallback: locate the run across ALL category folders under the
+        # single run root (no hardcoded workflow path), so a run stored under any
+        # workflow shows its real artifact-backed stages, not the sim2real
+        # "not_run" template.
+        if not artifacts:
+            artifacts = find_run_artifacts(
+                settings["bucket"],
+                base_prefix=settings.get("prefix", ""),
+                run_id=validate_run_id(run_id),
+                s3=s3,
+            )
     except Exception:
         return None
     if not artifacts:
         return None
     keys = [str(item.key or "") for item in artifacts]
+    # Prefix (root/category) the run was actually found under, derived from the
+    # real keys so stage extraction strips <root>/<category>/<run_id>/ correctly
+    # regardless of which category held the run (works for both the prefix and
+    # generic-find paths).
+    marker = "/" + str(run_id) + "/"
+    effective_prefix = keys[0].split(marker, 1)[0] if marker in keys[0] else settings.get("prefix", "")
+    # Real per-stage execution record written by the npa.workflow scheduler:
+    # each step's state, exact command (argv), returncode, status, loop iteration.
+    # This is the authoritative "logs of each stage" surface (the artifact-derived
+    # stages below cover "artifacts of each stage").
+    workflow_steps = _workflow_run_steps(s3, settings["bucket"], keys)
     workflow_stage_defs = _workflow_stage_defs_from_state(state)
     overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
     stages = build_artifact_backed_stages(
@@ -2385,12 +2536,25 @@ def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
         "updated_at": max((str(item.last_modified or "") for item in artifacts), default=_now_iso()),
         "selection": {{}},
         "stages": stages,
+        "workflow_steps": workflow_steps,
         "logs": [
             {{
                 "timestamp": _now_iso(),
                 "level": "info",
                 "message": f"Derived stage timeline from {{len(artifacts)}} S3 artifacts.",
             }},
+            *[
+                {{
+                    "timestamp": _now_iso(),
+                    "level": "info" if str(step.get("status") or "") in ("ok", "succeeded", "") and (step.get("returncode") in (0, None)) else "error",
+                    "message": (
+                        f"[{{step.get('stage') or '?'}}"
+                        + (f" #{{step.get('iteration')}}" if step.get("iteration") not in (None, "") else "")
+                        + f"] rc={{step.get('returncode')}} ({{step.get('status') or 'n/a'}}) $ {{step.get('command') or ''}}"
+                    ),
+                }}
+                for step in workflow_steps
+            ],
             {{
                 "timestamp": _now_iso(),
                 "level": "info" if rrd_ready else "warn",
@@ -2410,7 +2574,7 @@ def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     }}
 
 
-def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
+def _sim2real_run_details(state: dict, run_id: str = "", prefix: str = "") -> dict:
     latest = state.get("latest_submit", {{}})
     if not isinstance(latest, dict):
         latest = {{}}
@@ -2426,7 +2590,7 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
     details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
     details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
-    artifact_details = _artifact_backed_run_details(state, resolved_run_id)
+    artifact_details = _artifact_backed_run_details(state, resolved_run_id, prefix=prefix)
     if artifact_details:
         details = _merge_sim2real_run_details(details, artifact_details)
     stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
@@ -2756,12 +2920,46 @@ def _join_agent_s3_prefix(base_prefix: str, suffix: str = "") -> str:
     return "/".join(part.strip("/") for part in (base_prefix, suffix) if str(part or "").strip().strip("/"))
 
 
+def _agent_insights_settings() -> dict[str, str]:
+    # Resolve the insights backbone endpoint + append-only store URI from
+    # config/env only (never hardcode endpoint, token, bucket, or store URI). A
+    # configured NPA_INSIGHTS_ENDPOINT selects service mode; otherwise the tools
+    # read the store directly. When no explicit store URI is set we derive one
+    # from the agent's own S3 settings so a co-located store works out of the box.
+    endpoint = str(os.environ.get("NPA_INSIGHTS_ENDPOINT", "")).strip().rstrip("/")
+    store_uri = str(os.environ.get("NPA_INSIGHTS_STORE_URI", "")).strip()
+    if not store_uri:
+        s3 = _agent_s3_settings()
+        bucket = str(s3.get("bucket") or "").strip()
+        if bucket:
+            prefix = _join_agent_s3_prefix(str(s3.get("prefix") or ""), "insights/store")
+            store_uri = f"s3://{{bucket}}/{{prefix}}"
+    return {{
+        "endpoint": endpoint,
+        "store_uri": store_uri,
+        "token_env": str(os.environ.get("NPA_INSIGHTS_TOKEN_ENV", "INSIGHTS_TOKEN")).strip() or "INSIGHTS_TOKEN",
+    }}
+
+
 def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") -> str:
     requested = str(user_prefix or "").strip().strip("/")
     base = str(settings.get("prefix") or "").strip().strip("/")
     if requested:
         return _join_agent_s3_prefix(base, requested)
     return _join_agent_s3_prefix(base, "sim2real-b")
+
+def _discovery_exclude_roots() -> set:
+    # Bucket-root prefixes that hold the agent's own state/chat-memory, not runs.
+    # Derived from the configured prefixes so generic discovery never lists them.
+    roots = set()
+    for prefix in (
+        str(_state_s3_settings().get("prefix") or ""),
+        _chat_memory_prefix(),
+    ):
+        top = str(prefix or "").strip().strip("/").split("/", 1)[0]
+        if top:
+            roots.add(top)
+    return roots
 
 
 def _agent_s3_client():
@@ -2783,6 +2981,44 @@ def _agent_s3_client():
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"failed to initialize S3 client: {{exc}}") from exc
     return client, settings
+
+
+def _agent_s3_buckets(s3, settings) -> list:
+    # Every bucket the agent can access — so runs are discoverable regardless of
+    # which bucket a workflow wrote to (never rely on copying runs into one
+    # bucket). Primary (configured) bucket first, then optional configured extras
+    # (NPA_AGENT_S3_BUCKETS), then everything ListBuckets returns.
+    # NOTE: use only for discovery. Operator-supplied s3_uri must use
+    # _configured_agent_s3_buckets / _assert_s3_uri_in_agent_bucket instead.
+    primary = str(settings.get("bucket") or "")
+    override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
+    extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
+    try:
+        buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
+    except Exception:
+        buckets = [primary] if primary else []
+    return buckets or ([primary] if primary else [])
+
+
+def _configured_agent_s3_buckets(settings) -> set:
+    return configured_agent_s3_buckets(
+        str((settings or {{}}).get("bucket") or ""),
+        str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
+    )
+
+
+def _assert_s3_uri_in_agent_bucket(uri: str, settings) -> None:
+    # Bucket-only gate (configured primary + explicit NPA_AGENT_S3_BUCKETS).
+    # Prefix is intentionally not enforced: runs live under multiple category
+    # roots inside the same configured bucket.
+    ok, reason = s3_uri_in_configured_buckets(
+        uri,
+        primary=str((settings or {{}}).get("bucket") or ""),
+        extras_csv=str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
+        prefix="",
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason or "s3_uri bucket is not the configured agent bucket")
 
 
 def _chat_memory_tenant() -> str:
@@ -2846,12 +3082,23 @@ def _normalize_chat_history(raw: object) -> list[dict]:
     return normalize_messages_for_storage(raw)
 
 
+_PLACEHOLDER_CHAT_TITLES = frozenset({{"", "new chat", "new chat session"}})
+
+
+def _is_placeholder_chat_title(title: str) -> bool:
+    return str(title or "").strip().lower() in _PLACEHOLDER_CHAT_TITLES
+
+
 def _normalize_chat_session(session_id: str, payload: object | None = None) -> dict:
     now = _now_iso()
     data = payload if isinstance(payload, dict) else {{}}
     resolved_id = _sanitize_chat_session_id(str(data.get("id") or session_id or "default"))
     history = _normalize_chat_history(data.get("chat_history") or data.get("messages") or [])
-    title = str(data.get("title") or "").strip() or _chat_session_title(history, "New chat")
+    raw_title = str(data.get("title") or "").strip()
+    if _is_placeholder_chat_title(raw_title):
+        title = _chat_session_title(history, "New chat")
+    else:
+        title = raw_title or _chat_session_title(history, "New chat")
     created_at = str(data.get("created_at") or now)
     updated_at = str(data.get("updated_at") or now)
     return {{
@@ -2945,7 +3192,8 @@ def _save_chat_session(state: dict, session: dict, *, active: bool = True) -> di
     return normalized
 
 
-def _get_chat_session(state: dict, session_id: str = "") -> dict:
+def _lookup_chat_session(state: dict, session_id: str = "") -> dict | None:
+    # Read-only lookup: never fabricate a placeholder session.
     sessions = _local_chat_sessions(state)
     target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
     remote = _load_chat_session_from_s3(target)
@@ -2955,10 +3203,53 @@ def _get_chat_session(state: dict, session_id: str = "") -> dict:
         return remote
     if target in sessions:
         return sessions[target]
+    return None
+
+
+def _get_chat_session(state: dict, session_id: str = "") -> dict:
+    sessions = _local_chat_sessions(state)
+    target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
+    found = _lookup_chat_session(state, target)
+    if found is not None:
+        return found
     session = _normalize_chat_session(target, {{"id": target, "title": "New chat", "chat_history": []}})
     sessions[target] = session
     state["chat_sessions"] = sessions
     return session
+
+
+def _append_chat_turn(session_id: str, history_base: list, assistant_msg: dict | None = None, *, title_hint: str = "") -> dict:
+    # Re-read session under the state lock and append — never overwrite from a
+    # stale snapshot taken before a long LLM/tool call (B2).
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        session = _get_chat_session(state, session_id)
+        current = normalize_messages_for_storage(session.get("chat_history") or [])
+        incoming = normalize_messages_for_storage(history_base or [])
+        merged = list(current)
+        if incoming:
+            last_in = incoming[-1]
+            tip_match = (
+                merged
+                and merged[-1].get("role") == last_in.get("role")
+                and merged[-1].get("content") == last_in.get("content")
+            )
+            if not tip_match:
+                if len(incoming) > len(merged):
+                    merged = list(incoming)
+                elif last_in not in merged:
+                    merged.append(last_in)
+        if assistant_msg and isinstance(assistant_msg, dict) and str(assistant_msg.get("content") or "").strip():
+            merged.append({{"role": "assistant", "content": str(assistant_msg.get("content"))}})
+        merged = merged[-80:]
+        prior_title = str(session.get("title") or "")
+        if _is_placeholder_chat_title(prior_title) or not prior_title:
+            title = _chat_session_title(merged, title_hint or "New chat")
+        else:
+            title = prior_title
+        session.update({{"id": session_id, "title": title, "chat_history": merged}})
+        # _save_chat_session → _save_state re-acquires RLock (safe).
+        return _save_chat_session(state, session, active=True)
 
 
 def _list_chat_sessions(state: dict) -> list[dict]:
@@ -3006,8 +3297,122 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
+def _artifact_stage_key(key: str, run_id: str) -> str:
+    # Derive a run-relative stage key from an object key, mirroring the UI's
+    # client-side derivation so stage selection is consistent both ways.
+    scoped = str(key or "")
+    marker = "/" + str(run_id) + "/"
+    idx = scoped.find(marker)
+    if idx >= 0:
+        scoped = scoped[idx + len(marker):]
+    elif run_id and scoped.startswith(str(run_id) + "/"):
+        scoped = scoped[len(str(run_id)) + 1:]
+    parts = [p for p in scoped.split("/") if p]
+    first = parts[0] if parts else "artifacts"
+    if first == "reports":
+        return "reports"
+    if first == "eval" and len(parts) > 1:
+        return "eval/" + parts[1]
+    if first in ("actions", "vlm_eval", "training_signal", "envs") and len(parts) > 1:
+        return first + "/" + parts[1]
+    return first
+
+
+_STAGE_DESCRIPTIONS = {{
+    "input": (
+        "Input — the run's source clip(s) and frames that the pipeline augments "
+        "(the base footage the augment stage conditions on)."
+    ),
+    "configs": (
+        "Config Generation — samples appearance-only scenario combos "
+        "(lighting/background/surface/color) into manifest.json. Each combo drives "
+        "one Cosmos Transfer inference, so N combos become N scenario variants in "
+        "the multiply fan-out."
+    ),
+    "labeled_original": (
+        "Understand & Annotate — Token Factory VLM dense captions of the SOURCE "
+        "frames (captions.json). These are descriptive labels, NOT the quality "
+        "gate (see the grade stage for the attribute-verify / hallucination check)."
+    ),
+    "cosmos_augmented": (
+        "Augment & Multiply — real Cosmos Transfer 2.5 GPU output: one augmented "
+        "variant per sampled scenario, each under aug-<clip>/ with "
+        "augmented_video.mp4 + frames + metadata.json (the sampled appearance). "
+        "manifest.json records variant_count / multiply_mode / variant_parallelism."
+    ),
+    "grade": (
+        "Evaluate & Validate — the VLM attribute-verification / hallucination check "
+        "(vlm_eval_stub.json: score / threshold / model) plus the quality-gate "
+        "decision.json (promote_checkpoint vs loop_back). This IS the eval, not a "
+        "caption."
+    ),
+    "labeled_augmented": (
+        "Pseudo-Label Augmented — Token Factory VLM captions of the AUGMENTED clips "
+        "(captions.json) so the amplified dataset ships fully labeled."
+    ),
+    "curation": (
+        "Curation — a real dataset report over the augmented + graded set "
+        "(clip/frame counts, per-clip coverage, multiply mode) for FiftyOne / "
+        "Voxel51 review."
+    ),
+    "reports": (
+        "Visualize & Finalize — the embedded Rerun recording (sim2real.rrd) and the "
+        "aggregate final report (final.json) summarizing the whole run."
+    ),
+    "eval/heldout": "Held-out evaluation — simulation eval report for the trained checkpoint.",
+    "actions/train": "Policy rollouts — action rollouts collected on the training envs.",
+    "vlm_eval/train": "VLM eval — VLM scoring of the training rollouts.",
+    "outer_loop": "Decision / outer loop — the promote_checkpoint vs loop_back gate decision.",
+}}
+
+
+_STAGE_LABELS = {{
+    "input": "Input",
+    "configs": "Configs",
+    "labeled_original": "Labeled original",
+    "cosmos_augmented": "Cosmos augmented",
+    "grade": "Grade",
+    "labeled_augmented": "Labeled augmented",
+    "curation": "Curation",
+    "reports": "Reports / visualization",
+    "eval/heldout": "Held-out eval",
+    "actions/train": "Policy rollouts",
+    "vlm_eval/train": "VLM eval",
+    "outer_loop": "Decision / outer loop",
+}}
+
+
+def _stage_label(stage_key: str) -> str:
+    key = str(stage_key or "").strip()
+    if key in _STAGE_LABELS:
+        return _STAGE_LABELS[key]
+    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
+    return cleaned[:1].upper() + cleaned[1:]
+
+
+def _stage_description(stage_key: str, label: str, count: int) -> str:
+    key = str(stage_key or "").strip()
+    desc = _STAGE_DESCRIPTIONS.get(key)
+    if desc:
+        return desc
+    return f"{{label}} — {{count}} artifact(s) discovered under `{{key or 'run'}}`."
+
+
 def _is_sim2real_pipeline_recording(key: str) -> bool:
     return str(key or "").endswith("/reports/sim2real.rrd")
+
+
+DATA_FACTORY_APP_ID = "physical-ai-data-factory"
+
+
+def _is_data_factory_recording(key: str) -> bool:
+    # A Physical AI Data Factory run also writes reports/sim2real.rrd, but its
+    # entities are input/ + augmented/ + captions/ (no held-out-sim camera), so
+    # it needs a different viewer note than the Sim2Real pipeline recording.
+    # Match the app id as a path segment (…/physical-ai-data-factory/…) rather
+    # than a bare substring so an unrelated prefix that merely contains the
+    # phrase is not misclassified.
+    return _is_sim2real_pipeline_recording(key) and (DATA_FACTORY_APP_ID + "/") in str(key or "")
 
 
 def _sim2real_pipeline_camera_label(requested: str = "") -> str:
@@ -3030,7 +3435,7 @@ def _apply_loaded_artifact(
     if isinstance(current, dict):
         sim_viz.update(current)
     camera = str(sim_viz.get("camera") or "workspace")
-    if render == "rerun" and _is_sim2real_pipeline_recording(key):
+    if render == "rerun" and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key):
         camera = _sim2real_pipeline_camera_label(camera)
     sim_viz.update(
         {{
@@ -3053,7 +3458,16 @@ def _apply_loaded_artifact(
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
-        if _is_sim2real_pipeline_recording(key):
+        if _is_data_factory_recording(key):
+            sim_viz["preview_entity"] = "augmented"
+            sim_viz["visualization_note"] = (
+                "Physical AI Data Factory recording loaded. Entities: input/<clip> "
+                "(source frames), augmented/<clip> (Cosmos Transfer 2.5 output; the "
+                "static text label shows the sampled appearance variables), and "
+                "captions/ (Token Factory VLM pseudo-labels). Scrub the frame "
+                "timeline to compare original vs augmented."
+            )
+        elif _is_sim2real_pipeline_recording(key):
             sim_viz["preview_entity"] = "camera"
             sim_viz["visualization_note"] = (
                 "Pipeline Sim2Real recording loaded. The primary Rerun view is the "
@@ -3243,8 +3657,10 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     active = _wire_active_sim2real_recording(state, camera=camera)
     if active is not None:
         return active
-    selection = _stock_franka_selection()
-    state["selection"] = selection
+    # Preserve operator-posted custom URIs; only fill stock defaults when empty.
+    current = state.get("selection") if isinstance(state.get("selection"), dict) else {{}}
+    if not current:
+        state["selection"] = _stock_franka_selection()
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
@@ -3584,9 +4000,9 @@ def _chat_with_resilience(
 
 {_AGENT_VISUAL_FEEDBACK_EMBED}
 
-{_AGENT_RRD_PROXY_EMBED}
-
 {_AGENT_STAGES_EMBED}
+
+{_AGENT_PROVENANCE_EMBED}
 
 {_AGENT_CHAT_EMBED}
 
@@ -3664,11 +4080,9 @@ def _sim_viz_runs(state: dict) -> list[dict]:
     )
 
 def _resolve_workflow_yaml(payload: dict) -> str:
-    yaml_text = str(payload.get("yaml") or "").strip()
-    if yaml_text:
-        return yaml_text
-    draft = _workflow_draft_from_state(_load_state())
-    return str(draft.get("yaml") or "").strip()
+    # Do not fall back to the shared stored draft — empty/omitted yaml must 400
+    # so validate/plan cannot leak another tab's draft.
+    return str(payload.get("yaml") or "").strip()
 
 def _agent_npa_ready() -> tuple[bool, str]:
     if not NPA_CLI.exists():
@@ -3842,15 +4256,23 @@ def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
         raise HTTPException(status_code=409, detail=reason)
-    proc = subprocess.run(
-        [str(NPA_CLI), *args],
-        cwd=str(NPA_SOURCE_ROOT),
-        env=_agent_command_env(),
-        text=True,
-        capture_output=True,
-        timeout=timeout_s,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [str(NPA_CLI), *args],
+            cwd=str(NPA_SOURCE_ROOT),
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"NPA command timed out after {{timeout_s}}s: {{args}}",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail=f"NPA command failed to start: {{exc}}") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         raise HTTPException(status_code=502, detail=detail or f"NPA command failed: {{args}}")
@@ -4255,19 +4677,15 @@ def _write_soperator_temp_spec(spec_text: str) -> Path:
 
 
 def _soperator_spec_text_from_payload(body: dict) -> str:
+    # Network-reachable: never accept local file paths (LFI). Specs must be
+    # supplied inline as YAML text or a mapping.
     spec_text = str(body.get("spec_yaml") or body.get("yaml") or "").strip()
     if spec_text:
         return spec_text
     spec = body.get("spec")
     if isinstance(spec, dict):
         return yaml.safe_dump(spec, sort_keys=False)
-    spec_path = str(body.get("spec_path") or "").strip()
-    if spec_path:
-        path = Path(spec_path).expanduser()
-        if not path.is_file():
-            raise HTTPException(status_code=400, detail=f"soperator spec file not found: {{spec_path}}")
-        return path.read_text(encoding="utf-8")
-    raise HTTPException(status_code=400, detail="Provide spec_yaml, yaml, spec, or spec_path")
+    raise HTTPException(status_code=400, detail="Provide spec_yaml, yaml, or spec")
 
 
 def _soperator_validate_payload(body: dict) -> dict:
@@ -4388,6 +4806,7 @@ _INTENT_SKILLS = {{
     "create_workflow": ("author-npa-workflow",),
     "create_vlm_rl_workflow": ("author-npa-workflow", "sim-to-real"),
     "create_gate_workflow": ("author-npa-workflow", "sim-to-real"),
+    "create_data_factory_workflow": ("physical-ai-data-factory", "author-npa-workflow"),
     "live_infra_loop": ("submit-workflow", "gpu-selection"),
     "mk8s_provision": ("nebius-infra", "submit-workflow"),
     "soperator": ("soperator", "nebius-infra"),
@@ -4678,13 +5097,26 @@ def _maybe_toolground_chat_reply(
         "create_gate_workflow",
         "create_loop_gate_workflow",
         "create_rl_policy_workflow",
+        "create_data_factory_workflow",
     }}:
-        draft = generate_workflow_draft(
-            user_text=user_text,
-            intent=intent,
-            tool_refs=frozenset(TOOL_REFS),
-            capabilities={{"tool_refs": list(TOOL_REFS)}},
-        )
+        draft = None
+        # Prefer catalog-composed authoring when the goal names a real tool
+        # (e.g. "npa yaml that uses cosmos"): compose from the LIVE catalog and
+        # self-validate/plan — no hardcoded template. Fall back to the template
+        # catalog for generic/simple requests or if composition is not runnable.
+        if intent == "create_workflow":
+            from npa.cli.agent_workflow import author_workflow_from_goal
+
+            authored = author_workflow_from_goal(user_text, tool_refs=frozenset(TOOL_REFS))
+            if authored.get("runnable") and authored.get("matched_tool_refs"):
+                draft = authored
+        if draft is None:
+            draft = generate_workflow_draft(
+                user_text=user_text,
+                intent=intent,
+                tool_refs=frozenset(TOOL_REFS),
+                capabilities={{"tool_refs": list(TOOL_REFS)}},
+            )
         yaml_text = str(draft.get("yaml") or "").strip()
         validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {{}}
         plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
@@ -4703,7 +5135,15 @@ def _maybe_toolground_chat_reply(
                 " chat returns YAML only after both validation and planning succeed."
             )
             return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "validation": validation, "plan": plan}}, intent
-        reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
+        drop_note = str(draft.get("dropped_stages_note") or "").strip()
+        reply = format_workflow_chat_reply(
+            yaml_text,
+            validation,
+            template=template,
+            plan=plan,
+            runnable=runnable,
+            dropped_stages_note=drop_note,
+        )
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
     if intent in {{
         "onboard_solution",
@@ -4779,6 +5219,79 @@ def _maybe_stage_count_numeric_reply(user_text: str, state: dict[str, Any]) -> s
         value -= int(match.group(1))
     return str(value)
 
+# Plain-string origin-question detector (no regex: this code is embedded verbatim
+# inside the backend f-string, where backslash escapes are unsafe).
+_ORIGIN_NOUNS = (
+    "image", "images", "frame", "frames", "input", "inputs", "scene",
+    "footage", "clip", "clips", "photo", "photos", "picture", "pictures",
+    "visual", "render", "data",
+)
+_ORIGIN_WORDS = (
+    "original", "source", "raw", "initial", "underlying", "starting",
+    "came from", "come from", "comes from", "where did", "where does",
+)
+
+def _origin_question(user_text: str) -> bool:
+    t = str(user_text or "").lower()
+    if not t:
+        return False
+    has_noun = any(n in t for n in _ORIGIN_NOUNS)
+    has_origin = any(w in t for w in _ORIGIN_WORDS)
+    if has_origin and has_noun:
+        return True
+    if "input" in t and ("what" in t or "which" in t):
+        return True
+    if "cosmos" in t and ("transform" in t or "input" in t or "start" in t):
+        return True
+    return False
+
+def _maybe_origin_reply(user_text: str, *, visual_context=None, state=None):
+    # Grounded answer to "what was the original input image?" — resolved from the
+    # active run's REAL artifacts (source frames if stored; otherwise the earliest
+    # stored visuals + augment engine + what the VLM labeled), never guessed.
+    if not _origin_question(user_text):
+        return None, []
+    vc = visual_context if isinstance(visual_context, dict) else {{}}
+    run_id = str(vc.get("run_id") or "").strip()
+    if not run_id:
+        st = state if isinstance(state, dict) else _load_state()
+        sv = _sim_viz_for_run(st)
+        run_id = str(sv.get("run_id") or "").strip()
+    if not run_id or run_id == "franka-demo":
+        return None, []
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception:
+        return None, []
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = find_run_artifacts(
+            settings["bucket"],
+            base_prefix=settings.get("prefix", ""),
+            run_id=normalized_run,
+            s3=s3,
+        )
+        keys = [str(a.key or "") for a in artifacts]
+        if not keys:
+            return None, []
+
+        def _read_json(key: str):
+            if not key:
+                return None
+            try:
+                body = s3.get_object(Bucket=settings["bucket"], Key=key)["Body"].read()
+                return json.loads(body)
+            except Exception:
+                return None
+
+        origin = build_run_origin(keys, run_id=normalized_run, read_json=_read_json)
+        summary = str(origin.get("summary") or "").strip()
+        if not summary:
+            return None, []
+        return summary, ["artifacts/provenance/" + normalized_run]
+    except Exception:
+        return None, []
+
 def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     last_user = _last_user_message(raw_messages)
     if not last_user:
@@ -4787,7 +5300,7 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     if numeric_reply is not None:
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": numeric_reply,
             "reasoning": None,
             "grounded": True,
@@ -4799,7 +5312,7 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     skill_names, _ = _resolve_skill_context(user_text=last_user, intent=intent)
     payload = {{
         "ok": True,
-        "model": model,
+        "model": "grounded",
         "reply": tool_reply,
         "reasoning": None,
         "grounded": True,
@@ -4844,7 +5357,14 @@ def chat(payload: dict):
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
-    model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    # Normalize UI "Auto" / explicit "auto" to empty so cost-tier routing runs.
+    _raw_model = str(payload.get("model") or "").strip()
+    if _raw_model.lower() in {{"", "auto"}}:
+        explicit_model_override = ""
+        model = ""
+    else:
+        explicit_model_override = _raw_model
+        model = _raw_model
     visual_context = payload.get("visual_context") if isinstance(payload.get("visual_context"), dict) else {{}}
     visual_kind = normalize_visual_kind(
         str(visual_context.get("kind") or visual_context.get("visual_kind") or "")
@@ -4875,6 +5395,42 @@ def chat(payload: dict):
     # Preserve merged session history across the LLM path (do not rebuild from a
     # short client payload and wipe prior turns after the model returns).
     merged_history = list(history)
+    # Grounded "where did this come from / what was the original input" answer.
+    # Resolved from the active run's real artifacts. For a metadata/text turn we
+    # return it directly (deterministic, 0 tokens); for a framed vision turn we
+    # inject it so the model's "Where it comes from" is grounded, not guessed.
+    origin_reply, origin_apis = _maybe_origin_reply(
+        last_content, visual_context=visual_context, state=state
+    )
+    if origin_reply and not has_image_content(llm_messages):
+        history = [*merged_history, {{"role": "assistant", "content": origin_reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
+            }}
+        )
+        state = _load_state()
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        return {{
+            "ok": True,
+            "model": "grounded",
+            "reply": origin_reply,
+            "reasoning": None,
+            "grounded": True,
+            "tier": "grounded-provenance",
+            "apis_used": origin_apis,
+            "skills_used": ["agent-visual-feedback"],
+            "session_id": session["id"],
+            "session": {{
+                "id": session["id"],
+                "title": session["title"],
+                "memory_uri": session.get("memory_uri", ""),
+                "message_count": len(session.get("chat_history", [])),
+            }},
+        }}
     # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
     if (not visual_turn) and re.search(
         r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
@@ -4905,7 +5461,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": reply,
             "reasoning": None,
             "grounded": True,
@@ -4936,7 +5492,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": meta_reply,
             "reasoning": None,
             "grounded": True,
@@ -4995,16 +5551,83 @@ def chat(payload: dict):
         if mapped:
             sem_reply = build_grounded_reply(mapped, _load_state(), TOOL_REFS)
         elif sem_mode == "action":
-            # The turn needs a multi-step tool loop; point at the confirmation-gated
-            # action endpoint instead of auto-spending GPU from a chat turn.
-            sem_reply = (
-                "**This looks like a multi-step task.** I can run it as a bounded, "
-                "confirmation-gated tool loop.\\n"
-                "- Use `POST /api/agent/act` with a JSON body carrying your goal.\\n"
-                "- Read-only tools run automatically; GPU/state-changing tools return a "
-                "confirmation token you re-send to execute.\\n"
-                "- The full step trace (`steps`, `tools_used`) comes back in the response."
+            # The turn needs a multi-step tool loop. Drive it inline (the grounded
+            # regex + semantic-intent tiers already missed, so this is a genuine
+            # fallthrough) so the agent actually *uses* its read-only tools —
+            # including the insights backbone — instead of describing an endpoint.
+            def _action_model_call(messages, tier="cheap"):
+                data, _provider, _model = _chat_with_resilience(
+                    messages=messages, tier=tier, interactive=True
+                )
+                return data
+
+            # Confirmation symmetry with POST /api/agent/act: a follow-up chat
+            # turn that carries the minted confirm_token can actually execute the
+            # gated action. Only consume the pending gate when a token is present
+            # so an unrelated turn never burns it.
+            chat_confirm_token = str(payload.get("confirm_token") or "").strip()
+            if chat_confirm_token:
+                chat_session_token, chat_confirm_digest, _chat_pending = _consume_agent_confirm_token()
+            else:
+                chat_session_token, chat_confirm_digest = "", ""
+            action_result = run_chat_action_loop(
+                last_user,
+                tools=_agent_act_tools(),
+                model_call=_action_model_call,
+                tier=classify_tier(last_user),
+                confirm_token=chat_confirm_token,
+                session_token=chat_session_token,
+                confirm_digest=chat_confirm_digest,
+                live_context=format_live_context_block(_load_state()),
             )
+            # Preserve the safety contract: a state-changing tool proposed from a
+            # chat turn never auto-runs without a token — it stops here and we mint
+            # a gate token bound to the exact action digest (same as /api/agent/act);
+            # the operator re-sends it (with the goal) to execute.
+            if action_result.get("needs_confirmation"):
+                proposed = action_result.get("proposed_action") if isinstance(action_result.get("proposed_action"), dict) else {{}}
+                digest = str(proposed.get("digest") or action_digest({{k: v for k, v in proposed.items() if k != "digest"}}))
+                action_result["confirm_token"] = _issue_agent_confirm_token(proposed, digest)
+            action_reply = str(action_result.get("reply") or "").strip()
+            history = [*merged_history, {{"role": "assistant", "content": action_reply}}][-80:]
+            session.update(
+                {{
+                    "id": session_id,
+                    "title": str(session.get("title") or _chat_session_title(history)),
+                    "chat_history": history,
+                }}
+            )
+            state = _load_state()
+            session = _save_chat_session(state, session, active=True)
+            _save_state(state)
+            response = {{
+                "ok": bool(action_result.get("ok")),
+                "model": "grounded",
+                "reply": action_reply,
+                "reasoning": None,
+                "grounded": False,
+                "tier": "semantic-action",
+                "mode": action_result.get("mode"),
+                # Include the tokens spent reaching MODE_ACTION, not just the loop's.
+                "usage": {{"total_tokens": int((action_result.get("usage") or {{}}).get("total_tokens", 0)) + semantic_tokens}},
+                "steps": action_result.get("steps") or [],
+                "tools_used": action_result.get("tools_used") or [],
+                "stopped_reason": action_result.get("stopped_reason"),
+                "needs_confirmation": bool(action_result.get("needs_confirmation")),
+                "proposed_action": action_result.get("proposed_action"),
+                "semantic_mode": sem_mode,
+                "apis_used": ["agent/act"],
+                "session_id": session["id"],
+                "session": {{
+                    "id": session["id"],
+                    "title": session["title"],
+                    "memory_uri": session.get("memory_uri", ""),
+                    "message_count": len(session.get("chat_history", [])),
+                }},
+            }}
+            if action_result.get("confirm_token"):
+                response["confirm_token"] = action_result["confirm_token"]
+            return response
         if sem_reply:
             grounded_zero = semantic_tokens == 0
             history = [*merged_history, {{"role": "assistant", "content": sem_reply}}][-80:]
@@ -5020,7 +5643,7 @@ def chat(payload: dict):
             _save_state(state)
             return {{
                 "ok": True,
-                "model": model,
+                "model": "grounded",
                 "reply": sem_reply,
                 "reasoning": None,
                 "grounded": grounded_zero,
@@ -5060,7 +5683,7 @@ def chat(payload: dict):
             _save_state(state)
             return {{
                 "ok": True,
-                "model": model,
+                "model": "grounded",
                 "reply": reply,
                 "reasoning": None,
                 "grounded": True,
@@ -5081,7 +5704,7 @@ def chat(payload: dict):
     tier = classify_tier(last_user, intent=intent, messages=llm_messages)
     if visual_turn and tier != TIER_VISION:
         tier = TIER_REASONING
-    explicit_model = str(payload.get("model") or "").strip()
+    explicit_model = explicit_model_override
     budget_ok, _ = enforce_input_budget(last_user)
     skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
     if visual_turn and "agent-visual-feedback" not in skill_names:
@@ -5097,6 +5720,13 @@ def chat(payload: dict):
     visual_block = format_visual_context_block(visual_context)
     if visual_block:
         system_content += "\\n\\n" + visual_block
+    if origin_reply:
+        # Ground the "Where it comes from" / original-input story with real facts.
+        system_content += (
+            "\\n\\nGrounded origin facts for this run (use verbatim for the original "
+            "input / 'where it comes from'; do NOT contradict or hedge past these):\\n"
+            + origin_reply
+        )
     if visual_turn and not has_image_content(llm_messages):
         system_content += (
             "\\n\\nIMPORTANT: No viewer frame image is attached to this turn. "
@@ -5155,19 +5785,15 @@ def chat(payload: dict):
     if not reply and reasoning:
         reply = reasoning
         reasoning = None
-    state = _load_state()
-    session = _get_chat_session(state, session_id)
-    history = list(merged_history)
-    if reply:
-        history.append({{"role": "assistant", "content": reply}})
-    session.update(
-        {{
-            "id": session_id,
-            "title": str(session.get("title") or _chat_session_title(history)),
-            "chat_history": history[-80:],
-        }}
+    if not str(reply or "").strip():
+        reply = "Model returned no content."
+        reasoning = None
+    # Re-read session history under the lock and append (do not clobber concurrent turns).
+    session = _append_chat_turn(
+        session_id,
+        merged_history,
+        {{"role": "assistant", "content": reply}},
     )
-    session = _save_chat_session(state, session, active=True)
     return {{
         "ok": True,
         "model": selected_model,
@@ -5286,6 +5912,140 @@ def _agent_act_tools():
         )
         return {{"ok": bool(plan.get("ok")), "plan": plan}}
 
+    def _insights_store_and_mode():
+        settings = _agent_insights_settings()
+        endpoint = str(settings.get("endpoint") or "")
+        store_uri = str(settings.get("store_uri") or "")
+        token_env = str(settings.get("token_env") or "INSIGHTS_TOKEN")
+        return endpoint, store_uri, token_env
+
+    def _tool_insights_query(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        try:
+            raw_value = args.get("threshold_value")
+            threshold_value = float(raw_value) if raw_value not in (None, "") else None
+        except (TypeError, ValueError):
+            threshold_value = None
+        try:
+            limit = int(args.get("limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.query(
+            input_uri=store_uri,
+            workflow=str(args.get("workflow") or ""),
+            run_id=str(args.get("run_id") or ""),
+            tool=str(args.get("tool") or ""),
+            stage=str(args.get("stage") or ""),
+            metric_name=str(args.get("metric_name") or ""),
+            accelerator=str(args.get("accelerator") or ""),
+            threshold_metric=str(args.get("threshold_metric") or ""),
+            threshold_op=normalize_threshold_op(args.get("threshold_op")),
+            threshold_value=threshold_value,
+            limit=limit,
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
+    def _tool_insights_compare(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        base_run = str(args.get("base_run") or "").strip()
+        candidate_run = str(args.get("candidate_run") or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        if not base_run or not candidate_run:
+            return {{"error": "base_run and candidate_run are required"}}
+        metric_names = args.get("metric_names")
+        if isinstance(metric_names, str):
+            metric_names = [m.strip() for m in metric_names.split(",") if m.strip()]
+        elif isinstance(metric_names, (list, tuple)):
+            metric_names = [str(m).strip() for m in metric_names if str(m).strip()]
+        else:
+            metric_names = []
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.compare(
+            input_uri=store_uri,
+            base_run=base_run,
+            candidate_run=candidate_run,
+            metric_names=metric_names,
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
+    def _tool_insights_lineage(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        uri = str(args.get("uri") or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        if not uri:
+            return {{"error": "uri is required"}}
+        try:
+            depth = int(args.get("depth") if args.get("depth") is not None else -1)
+        except (TypeError, ValueError):
+            depth = -1
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.lineage(
+            input_uri=store_uri,
+            uri=uri,
+            version=str(args.get("version") or ""),
+            direction=str(args.get("direction") or "both"),
+            depth=depth,
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
+    def _tool_insights_dashboard(args):
+        endpoint, default_store, token_env = _insights_store_and_mode()
+        store_uri = str(args.get("input_uri") or default_store or "").strip()
+        if not store_uri:
+            return {{"error": "insights store is not configured (set NPA_INSIGHTS_STORE_URI or NPA_INSIGHTS_ENDPOINT)"}}
+        from npa.sdk.workbench import insights as _insights_sdk
+
+        response = _insights_sdk.dashboard(
+            input_uri=store_uri,
+            workflow=str(args.get("workflow") or ""),
+            group_by=normalize_group_by(args.get("group_by")),
+            latest_run=str(args.get("latest_run") or ""),
+            service=bool(endpoint),
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+        return response.model_dump(mode="json")
+
+    def _tool_workflow_author(args):
+        goal = str(args.get("goal") or args.get("description") or args.get("prompt") or "").strip()
+        if not goal:
+            return {{"error": "goal is required to author a workflow"}}
+        from npa.cli.agent_workflow import author_workflow_from_goal
+
+        result = author_workflow_from_goal(goal, tool_refs=frozenset(TOOL_REFS))
+        # Surface a compact, JSON-serializable observation; yaml is only present
+        # (and reported runnable) when validate + plan both pass on real toolRefs.
+        return {{
+            "ok": bool(result.get("ok")),
+            "runnable": bool(result.get("runnable")),
+            "yaml": str(result.get("yaml") or "") if result.get("runnable") else "",
+            "tool_refs": result.get("tool_refs") or [],
+            "padded_tool_refs": result.get("padded_tool_refs") or [],
+            "states": result.get("states") or [],
+            "validation": result.get("validation") or {{}},
+            "error": result.get("error") or (None if result.get("runnable") else "authored spec did not pass validate+plan"),
+        }}
+
     def _tool_submit(args):
         return _act_response_to_dict(submit_sim2real({{"run_id": str(args.get("run_id") or "")}}))
 
@@ -5309,6 +6069,11 @@ def _agent_act_tools():
         "workflow_validate_spec": _tool_validate,
         "workflow_plan_spec": _tool_plan,
         "retrieval_search": _tool_retrieval_search,
+        "insights_query": _tool_insights_query,
+        "insights_compare": _tool_insights_compare,
+        "insights_lineage": _tool_insights_lineage,
+        "insights_dashboard": _tool_insights_dashboard,
+        "workflow_author": _tool_workflow_author,
         "sim2real_submit": _tool_submit,
     }}
 
@@ -5904,7 +6669,9 @@ def create_chat_session(payload: dict | None = None):
 @app.get("/chat/sessions/{{session_id}}")
 def get_chat_session(session_id: str):
     state = _load_state()
-    session = _get_chat_session(state, session_id)
+    session = _lookup_chat_session(state, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"chat session not found: {{session_id}}")
     return {{"ok": True, "session": session}}
 
 
@@ -6025,12 +6792,23 @@ def sim_viz_status(run_id: str = ""):
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # activity_at is when this run was last loaded/visualized in the agent
+            # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
+            # separately so the client never relabels a days-old run as recent just
+            # because it was opened today. Real recency (last_modified) is supplied
+            # by S3 artifact discovery; left blank here so viewer activity cannot
+            # override it in the merged, date-sorted run list.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # When the run started (its submit time). Used for the displayed date;
+            # S3 discovery supplies started_at for runs it can see, and the client
+            # keeps the earliest of the two.
+            "started_at": str(item.get("submitted_at") or "").strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
@@ -6098,12 +6876,17 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # See sim_viz_status: activity_at is viewer-load time, not artifact
+            # recency; last_modified stays blank so S3 discovery owns the date.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # Run start (submit time) for the displayed date; see sim_viz_status.
+            "started_at": str(item.get("submitted_at") or "").strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
@@ -6137,6 +6920,7 @@ def sim_viz_load_run(payload: dict | None = None):
     # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
     if requested_rrd_uri:
         s3, _settings = _agent_s3_client()
+        _assert_s3_uri_in_agent_bucket(requested_rrd_uri, _settings)
         bucket, key = parse_s3_uri(requested_rrd_uri)
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
@@ -6159,8 +6943,20 @@ def sim_viz_load_run(payload: dict | None = None):
 
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, str(body.get("prefix") or ""))
-        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        requested_prefix = str(body.get("prefix") or "")
+        artifacts = []
+        if requested_prefix:
+            effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
+            artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        # Generic fallback: find the run across all category folders under the run
+        # root so a mismatched/absent prefix does not hide a mountable .rrd.
+        if not artifacts:
+            artifacts = find_run_artifacts(
+                settings["bucket"],
+                base_prefix=settings.get("prefix", ""),
+                run_id=validate_run_id(run_id),
+                s3=s3,
+            )
         preferred = select_preferred_artifact(artifacts)
         if preferred and preferred.render == "rerun":
             local_name = _artifact_filename(preferred.key)
@@ -6195,12 +6991,24 @@ def sim_viz_load_run(payload: dict | None = None):
     if not isinstance(runs, dict):
         runs = {{}}
     selected = runs.get(run_id)
-    if not isinstance(selected, dict):
-        selected = {{}}
+    sim2real_runs = state.get("sim2real_runs") if isinstance(state.get("sim2real_runs"), dict) else {{}}
+    # Never invent phantom run ids — require a known sim-viz or sim2real run.
+    if not isinstance(selected, dict) or not selected:
+        if run_id not in sim2real_runs:
+            raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
+        selected = {{"run_id": run_id}}
+    else:
+        selected = dict(selected)
     rrd_uri = str(body.get("rrd_uri") or "").strip()
     if rrd_uri:
+        if rrd_uri.startswith("file://") and not file_uri_path_allowed(
+            rrd_uri, allowed_paths=(str(RECORDINGS_DIR), str(RRD_PATH))
+        ):
+            raise HTTPException(status_code=400, detail="file:// rrd_uri is outside the recordings allowlist")
+        if rrd_uri.startswith("s3://"):
+            _assert_s3_uri_in_agent_bucket(rrd_uri, _agent_s3_settings())
         selected["rrd_uri"] = rrd_uri
-    if camera:
+    if requested_camera:
         selected["camera"] = camera
     stage = str(body.get("stage") or "").strip()
     if stage:
@@ -6208,8 +7016,6 @@ def sim_viz_load_run(payload: dict | None = None):
     mode = str(body.get("mode") or "").strip().lower()
     if mode in {{"static", "live"}}:
         selected["mode"] = mode
-    if not selected:
-        raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
     selected["run_id"] = run_id
     selected["rrd_updated_at"] = _now_iso()
     state["sim_viz"] = selected
@@ -6242,17 +7048,48 @@ def sim_viz_recordings():
 
 
 @app.get("/artifacts/runs")
-def artifacts_runs(prefix: str = "", limit: int = 50):
+def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
+    # q: case-insensitive substring search over run ids, applied across ALL runs
+    # (every bucket root) before the limit — so old runs beyond the newest `limit`
+    # are still findable by name from the "Find run" box.
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        page = list_runs(
-            settings["bucket"],
-            prefix=effective_prefix,
+        query = str(q or "").strip()
+        if prefix:
+            effective_prefix = _artifact_discovery_prefix(settings, prefix)
+            # Cached (TTL + stale-while-revalidate): the run list is polled on every
+            # page load; walking a category's objects each time made the UI show
+            # "no runs" for seconds. The cache serves a warm result instantly and
+            # refreshes in the background, so only the first load pays the S3 walk.
+            page = list_runs_cached(
+                settings["bucket"],
+                prefix=effective_prefix,
+                base_prefix=settings.get("prefix", ""),
+                limit=limit,
+                contains=query,
+                s3=s3,
+            )
+            return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
+        # No user prefix: discover runs generically across ALL bucket roots.
+        # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
+        # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
+        # (e.g. scenario-gen-smoke/..., physical-ai-data-factory/...). list_all_runs
+        # enumerates category folders under both roots and merges them, so every
+        # workflow's runs show without hardcoding any workflow path. Cached the same
+        # way (the no-prefix walk is the slowest and the default UI view).
+        base = settings.get("prefix", "")
+        # Discover across EVERY accessible bucket (not just the configured one), so
+        # a run is visible no matter which bucket its workflow wrote to.
+        buckets = _agent_s3_buckets(s3, settings)
+        page = list_runs_cached_multi(
+            buckets,
+            base_prefix=base,
             limit=limit,
+            exclude=_discovery_exclude_roots(),
+            contains=query,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -6268,16 +7105,25 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
     try:
         s3, settings = _agent_s3_client()
         effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = list_artifacts(
-            settings["bucket"],
-            normalized_run,
-            prefix=effective_prefix,
-            s3=s3,
-        )
+        artifacts = []
+        run_bucket = settings["bucket"]
+        if prefix:
+            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
+        # Generic fallback: locate the run across EVERY accessible bucket and its
+        # category folders (no hardcoded workflow path, no single-bucket assumption).
+        if not artifacts:
+            run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
+                base_prefix=settings.get("prefix", ""),
+                run_id=normalized_run,
+                s3=s3,
+            )
+            if not run_bucket:
+                run_bucket = settings["bucket"]
         preferred = select_preferred_artifact(artifacts)
         return {{
             "ok": True,
-            "bucket": settings["bucket"],
+            "bucket": run_bucket,
             "prefix": effective_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
@@ -6285,6 +7131,145 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
             "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
         }}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
+@app.get("/artifacts/stage/{{run_id:path}}")
+def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
+    # Describe one pipeline stage and return its artifacts + inlined info/config
+    # JSON so an operator can click a stage and manually inspect it (grounded in
+    # the run's real S3 objects, no LLM call).
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = []
+        run_bucket = settings["bucket"]
+        if prefix:
+            artifacts = list_artifacts(
+                settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
+            )
+        if not artifacts:
+            run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
+            )
+            if not run_bucket:
+                run_bucket = settings["bucket"]
+        wanted = str(stage_key or "").strip()
+        stage_arts = [
+            a for a in artifacts
+            if not wanted or _artifact_stage_key(str(a.key or ""), normalized_run) == wanted
+        ]
+        label = _stage_label(wanted)
+        description = _stage_description(wanted, label, len(stage_arts))
+        # Inline small JSON artifacts (configs, grade, decision, reports, manifest)
+        # so the stage's info/config is inspectable without a second round-trip.
+        info: dict[str, Any] = {{}}
+        for a in stage_arts:
+            k = str(a.key or "")
+            leaf = Path(k).name
+            if not leaf.endswith(".json"):
+                continue
+            if int(getattr(a, "size", 0) or 0) > 65536 or len(info) >= 8:
+                continue
+            rel = k.split("/" + normalized_run + "/", 1)[-1]
+            try:
+                body = s3.get_object(Bucket=run_bucket, Key=k)["Body"].read()
+                info[rel] = json.loads(body)
+            except Exception:
+                continue
+        return {{
+            "ok": True,
+            "run_id": normalized_run,
+            "stage_key": wanted,
+            "label": label,
+            "description": description,
+            "count": len(stage_arts),
+            "artifacts": [item.to_dict() for item in stage_arts],
+            "info": info,
+        }}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
+@app.get("/fiftyone/dataset/{{run_id:path}}")
+def fiftyone_dataset(run_id: str, prefix: str = ""):
+    # FiftyOne / Voxel51 view of a data-factory run: augmented scenario variants
+    # (thumbnail + appearance tags + caption + video) and input frames as samples,
+    # summarized with grade + curation. Grounded in the run's real S3 artifacts.
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = []
+        bucket = settings["bucket"]
+        if prefix:
+            artifacts = list_artifacts(
+                settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
+            )
+        if not artifacts:
+            bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
+            )
+            if not bucket:
+                bucket = settings["bucket"]
+
+        def _read_json(key: str):
+            if not key:
+                return None
+            try:
+                body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                return json.loads(body)
+            except Exception:
+                return None
+
+        keys = [str(a.key or "") for a in artifacts]
+        dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json, bucket=bucket)
+        return {{"ok": True, "run_id": normalized_run, "bucket": bucket, **dataset}}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
+@app.get("/artifacts/provenance/{{run_id:path}}")
+def artifacts_run_provenance(run_id: str, prefix: str = ""):
+    # Where a run's data came from in the pipeline + which components produced it,
+    # grounded in the run's real artifacts (and manifests) so Describe-this can
+    # explain provenance instead of guessing.
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = []
+        if prefix:
+            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3)
+        if not artifacts:
+            artifacts = find_run_artifacts(settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3)
+        keys = [str(a.key or "") for a in artifacts]
+
+        def _read_json(key: str):
+            if not key:
+                return None
+            try:
+                body = s3.get_object(Bucket=settings["bucket"], Key=key)["Body"].read()
+                return json.loads(body)
+            except Exception:
+                return None
+
+        prov = build_run_provenance(keys, run_id=normalized_run, read_json=_read_json)
+        return {{"ok": True, "run_id": normalized_run, **prov}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -6299,8 +7284,74 @@ def artifact_file(filename: str):
     target = RECORDINGS_DIR / safe_name
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
+    # Browsers cannot render Netpbm (.ppm/.pgm/.pbm/.pnm), .bmp, or .tiff. Sim
+    # rollout camera frames are saved as .ppm, so transcode to PNG on the way out
+    # to make them viewable in the Rerun/Image panes and artifact previews.
+    if needs_image_transcode(safe_name):
+        try:
+            import io as _io
+
+            from PIL import Image as _Image
+
+            with _Image.open(target) as _im:
+                _buf = _io.BytesIO()
+                _im.convert("RGB").save(_buf, format="PNG")
+            return Response(content=_buf.getvalue(), media_type="image/png")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"image transcode failed: {{exc}}") from exc
     # artifact_media_type comes from the embedded workflows/artifacts.py module.
     return FileResponse(str(target), media_type=artifact_media_type(safe_name))
+
+
+@app.get("/artifacts/download")
+def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket: str = ""):
+    # Direct download of ANY run artifact (every object is downloadable, not just
+    # the viewer-loadable ones). Streams the S3 object back with an attachment
+    # Content-Disposition so the browser saves it under its real filename. Unlike
+    # /sim-viz/load-artifact this does not mutate viewer state. Bucket resolves
+    # from s3_uri (preferred, bucket-qualified) > explicit bucket param > the
+    # run's bucket (resolved across all accessible buckets) > primary.
+    requested_uri = str(s3_uri or "").strip()
+    requested_key = str(key or "").strip()
+    requested_bucket = str(bucket or "").strip()
+    if not requested_uri and not requested_key:
+        raise HTTPException(status_code=400, detail="Provide s3_uri or key")
+    try:
+        s3, settings = _agent_s3_client()
+        if requested_uri:
+            obj_bucket, obj_key = parse_s3_uri(requested_uri)
+            # Restrict caller-supplied URIs to the configured agent bucket(s) only
+            # (never ListBuckets / every credential-readable bucket).
+            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
+            uri = requested_uri
+        else:
+            obj_key = _safe_artifact_key(requested_key)
+            obj_bucket = requested_bucket or settings["bucket"]
+            if not requested_bucket and str(run_id or "").strip():
+                try:
+                    rb, _arts = find_run_artifacts_across_buckets(
+                        _agent_s3_buckets(s3, settings),
+                        base_prefix=settings.get("prefix", ""),
+                        run_id=validate_run_id(run_id),
+                        s3=s3,
+                    )
+                    if rb:
+                        obj_bucket = rb
+                except Exception:
+                    pass
+            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
+        local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
+        download_s3_uri(uri, local_path, s3=s3)
+        leaf = Path(obj_key).name or "artifact.bin"
+        return FileResponse(
+            str(local_path),
+            media_type=artifact_media_type(leaf),
+            filename=leaf,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
 @app.post("/sim-viz/load-artifact")
@@ -6315,13 +7366,28 @@ def sim_viz_load_artifact(payload: dict | None = None):
         s3, settings = _agent_s3_client()
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
+            # Configured agent bucket only — blocks arbitrary-bucket exfil.
+            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
             run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri
         else:
             run_id = validate_run_id(requested_run)
             key = _safe_artifact_key(requested_key)
+            # Resolve the run's bucket across all accessible buckets so a run in a
+            # non-primary bucket still loads (no copy required).
             bucket = settings["bucket"]
+            try:
+                rb, _arts = find_run_artifacts_across_buckets(
+                    _agent_s3_buckets(s3, settings),
+                    base_prefix=settings.get("prefix", ""),
+                    run_id=run_id,
+                    s3=s3,
+                )
+                if rb:
+                    bucket = rb
+            except Exception:
+                pass
             s3_uri = f"s3://{{bucket}}/{{key}}"
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
@@ -6389,18 +7455,21 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
     sim_viz = _sim_viz_for_run(state, run_id=run_id)
     uri = str(sim_viz.get("rrd_uri") or "").strip()
     if uri.startswith("file://"):
-        file_path = Path(uri[len("file://"):])
+        if not file_uri_path_allowed(uri, allowed_paths=(str(RECORDINGS_DIR), str(RRD_PATH))):
+            raise HTTPException(status_code=400, detail="Refusing to serve file:// rrd_uri outside recordings allowlist")
+        file_path = Path(uri[len("file://"):]).expanduser().resolve()
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     if uri.startswith("http://") or uri.startswith("https://"):
-        # Server-side fetch of session rrd_uri — hardened allowlist + size cap
-        # (see embedded agent_rrd_proxy.rrd_proxy_uri_allowed / MAX_RRD_PROXY_BYTES).
-        if not rrd_proxy_uri_allowed(uri):
+        # Resolve DNS once and fetch the vetted IP (DNS-rebinding TOCTOU guard).
+        allowed, fetch_url, host_header = resolve_rrd_proxy_target(uri)
+        if not allowed:
             raise HTTPException(status_code=400, detail="Refusing to proxy disallowed rrd_uri host")
         try:
             chunks: list[bytes] = []
             total = 0
-            with httpx.stream("GET", uri, timeout=20.0) as proxied:
+            headers = {{"Host": host_header}} if host_header else {{}}
+            with httpx.stream("GET", fetch_url, timeout=20.0, headers=headers) as proxied:
                 proxied.raise_for_status()
                 for chunk in proxied.iter_bytes(1024 * 1024):
                     total += len(chunk)
@@ -6535,7 +7604,9 @@ def set_sim_assets_selection(payload: dict):
     if preset == "franka":
         cam = str((state.get("camera_selection") or ["workspace"])[0])
         viz = _wire_franka_demo(state, camera=cam)
-        return {{"ok": True, "selection": selection, "sim_viz": viz}}
+        # Return the persisted selection (post-wire) so response matches state.
+        persisted = state.get("selection") if isinstance(state.get("selection"), dict) else selection
+        return {{"ok": True, "selection": persisted, "sim_viz": viz}}
     _save_state(state)
     return {{"ok": True, "selection": selection}}
 
@@ -6548,11 +7619,11 @@ def get_sim_assets_selection():
     return selection
 
 @app.get("/workflows/sim2real/status")
-def sim2real_status(run_id: str = ""):
+def sim2real_status(run_id: str = "", prefix: str = ""):
     state = _load_state()
     latest = state.get("latest_submit", {{}})
     sim_viz = state.get("sim_viz", {{}})
-    details = _sim2real_run_details(state, run_id=run_id)
+    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
     return {{
         "ok": True,
         "latest_submit": latest if isinstance(latest, dict) else {{}},
@@ -6563,9 +7634,9 @@ def sim2real_status(run_id: str = ""):
     }}
 
 @app.get("/workflows/sim2real/runs/{{run_id:path}}")
-def sim2real_run_detail(run_id: str):
+def sim2real_run_detail(run_id: str, prefix: str = ""):
     state = _load_state()
-    details = _sim2real_run_details(state, run_id=run_id)
+    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
     if not str(details.get("run_id") or "").strip():
         raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
     return {{"ok": True, "run": details}}
@@ -6620,12 +7691,33 @@ def provision_infra(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     project = _agent_project_alias(str(body.get("project") or ""))
     cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
-    dry_run = bool(body.get("dry_run", False))
+    # Default dry_run=True — real Terraform apply requires an explicit confirm token.
+    dry_run = bool(body.get("dry_run", True))
     validate = bool(body.get("validate", True))
     skip_s3 = bool(body.get("skip_s3", True))
+    if not dry_run:
+        confirm_token = str(body.get("confirm_token") or "").strip()
+        digest = "provision_infra:" + project + ":" + cluster_name
+        if not confirm_token:
+            token = _issue_agent_confirm_token(
+                {{"action": "provision_infra", "project": project, "cluster_name": cluster_name}},
+                digest,
+            )
+            return {{
+                "ok": False,
+                "needs_confirmation": True,
+                "confirm_token": token,
+                "proposed_action": {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "dry_run": False}},
+                "error": "Real infra provision requires confirm_token",
+                "project": project,
+                "cluster_name": cluster_name,
+            }}
+        session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+        if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
+            raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
     result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
     status = _agent_k8s_backends(project)
-    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status}}
+    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run}}
 
 
 @app.post("/infra/soperator/validate")
@@ -6743,7 +7835,8 @@ def submit_npa_workflow(payload: dict):
         raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
     project = _agent_project_alias(str(body.get("project") or ""))
     cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
-    allow_provision = bool(body.get("allow_provision", True))
+    # Submit is plan-only by default: never auto-provision real infra.
+    allow_provision = bool(body.get("allow_provision", False))
     dry_run = bool(body.get("dry_run", False))
     validate_infra = bool(body.get("validate_infra", True))
     infra_before = _agent_k8s_backends(project)
@@ -6751,6 +7844,28 @@ def submit_npa_workflow(payload: dict):
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
     provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
     if allow_provision and (dry_run or not infra_before.get("has_infra")):
+        # Real (non-dry-run) provision requires the confirm-token gate.
+        if not dry_run and not infra_before.get("has_infra"):
+            confirm_token = str(body.get("confirm_token") or "").strip()
+            digest = "provision_infra:" + project + ":" + cluster_name
+            if not confirm_token:
+                token = _issue_agent_confirm_token(
+                    {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "via": "workflows/submit"}},
+                    digest,
+                )
+                blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+                blocked["needs_confirmation"] = True
+                blocked["confirm_token"] = token
+                blocked["proposed_action"] = {{
+                    "action": "provision_infra",
+                    "project": project,
+                    "cluster_name": cluster_name,
+                    "dry_run": False,
+                }}
+                return blocked
+            session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+            if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
+                raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
         provision = _provision_agent_infra(
             project,
             cluster_name,
@@ -6882,18 +7997,44 @@ def submit_sim2real(payload: dict | None = None):
     script = Path("/opt/npa-agent/run-live-sim2real.sh")
     live_submit = None
     if script.is_file():
-        proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
-        if proc.returncode == 0:
-            try:
-                live_submit = json.loads((proc.stdout or "{{}}").strip().splitlines()[-1])
-                state["latest_submit"]["submit_mode"] = "live-k8s"
-                state["latest_submit"]["live_submit"] = live_submit
-                _save_state(state)
-                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
-            except Exception:
-                live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
+        try:
+            proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
+        except subprocess.TimeoutExpired as exc:
+            live_submit = {{"ok": False, "error": f"live sim2real submit timed out after 30s: {{exc}}"}}
+            state["latest_submit"]["live_submit"] = live_submit
+            details["result"] = "failed"
+            details["logs"].append({{"timestamp": _now_iso(), "level": "error", "message": live_submit["error"]}})
+            runs_detail[run_id] = details
+            state["sim2real_runs"] = runs_detail
+            _save_state(state)
+            return JSONResponse(
+                status_code=502,
+                content={{
+                    "ok": False,
+                    "error": live_submit["error"],
+                    "run_id": run_id,
+                    "selection": selection,
+                    "env": env_block,
+                    "run": details,
+                    "sim_viz": sim_viz,
+                    "submit_mode": "live-k8s-timeout",
+                    "live_submit": live_submit,
+                }},
+            )
+        except OSError as exc:
+            live_submit = {{"ok": False, "error": f"live sim2real submit failed to start: {{exc}}"}}
         else:
-            live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
+            if proc.returncode == 0:
+                try:
+                    live_submit = json.loads((proc.stdout or "{{}}").strip().splitlines()[-1])
+                    state["latest_submit"]["submit_mode"] = "live-k8s"
+                    state["latest_submit"]["live_submit"] = live_submit
+                    _save_state(state)
+                    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
+                except Exception:
+                    live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
+            else:
+                live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
     _save_state(state)
     thread = threading.Thread(
         target=_run_sim2real_pipeline_background,
@@ -7228,7 +8369,10 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
+        .replace(_AGENT_STATE_EMBED, agent_state_source)
+        .replace(_AGENT_S3_GUARD_EMBED, agent_s3_guard_source)
         .replace(_AGENT_STAGES_EMBED, agent_stages_source)
+        .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
     local_setup_script = ""
@@ -8318,7 +9462,7 @@ def verify_live_cmd(
         'name="viewport" content="width=device-width',
         'id="chatForm"',
         'id="mobileChatAuth"',
-        'id="tabChat"',
+        'id="tabMain"',
         'id="tabRerun"',
         'id="stagesPanel"',
         "<h3>Stages</h3>",

@@ -16,6 +16,7 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri` | `config.captions_uri` | no |
 | `workbench.token_factory.generate` | `npa workbench token-factory generate` | `config.prompts_uri` | `config.generations_uri` | no |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` | no |
+| `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | `config.trigger_uri` | `config.augment_uri` | yes (real Cosmos Transfer 2.5 on GPU; uploads video + frames to S3) |
 | `workbench.cosmos3.reason` | `npa workbench cosmos3 reason` | `config.scene_uri` | `config.reason_uri` | no |
 | `workbench.lerobot.eval` | `npa workbench lerobot eval` | `config.checkpoint_uri`, `config.env` | `config.eval_uri` | no |
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
@@ -46,6 +47,10 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.dataset.query` | `npa workbench dataset query` | `config.curated_manifest_uri` | matching records (LanceDB-backed) | no |
 | `workbench.dataset.write_quality_decision` | dataset quality-gate decision writer | `config.quality_gate`, `config.decision_uri` | accept/reject decision JSON | no |
 | `workbench.dataset.report_rejection` | dataset rejection report writer | `config.validation_uri`, `config.decision_uri` | rejection report | no |
+| `workbench.insights.record` | `npa workbench insights record` | `config.metrics_input_uri`, `config.insights_store_uri` | metric records + lineage edges appended to the store | no |
+| `workbench.insights.ingest_run` | `npa workbench insights ingest-run` | `config.run_prefix_uri`, `config.insights_store_uri` | extracted metrics + lineage (`npa.insights.metric_record.v1`) | no |
+| `workbench.insights.compare` | `npa workbench insights compare` | `config.insights_store_uri`, `config.base_run`, `config.candidate_run` | `npa.insights.comparison.v1` | no |
+| `workbench.insights.dashboard` | `npa workbench insights dashboard` | `config.insights_store_uri`, `config.dashboard_uri` | `npa.insights.dashboard.v1` + static HTML | no |
 | `workbench.lancedb.import_bdd100k` | `npa workbench lancedb import-bdd100k --service` | `config.source_uri`, `config.lance_uri` | LanceDB table | no |
 | `workbench.lancedb.backfill_cpu_bundle` | five CPU UDF backfills | `config.lance_table`, `config.lance_uri` | enriched table | no |
 | `workbench.lancedb.backfill_clip` | CLIP embedding UDF | `config.lance_uri` | `clip_embedding` column | no |

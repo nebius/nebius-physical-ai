@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from npa.cli import agent as agent_module
+from npa.cli import agent_actions
 from npa.cli.agent_chat import (
     build_grounded_reply,
     format_sim2real_status,
     match_chat_intent,
 )
+
+
+def _planner(script):
+    """A deterministic model_call yielding scripted planner decisions (0 tokens)."""
+    calls = {"n": 0}
+
+    def _call(messages, *, tier="cheap"):
+        obj = script[min(calls["n"], len(script) - 1)]
+        calls["n"] += 1
+        return {"choices": [{"message": {"content": json.dumps(obj)}}], "usage": {"total_tokens": 0}}
+
+    return _call
 
 
 def test_match_sim2real_status_intent() -> None:
@@ -275,3 +291,131 @@ def test_mk8s_provision_grounded_reply_points_to_agent_api() -> None:
     assert "POST /api/infra/mk8s/provision" in reply
     assert "npa provision-if-absent" in reply
     assert "dry_run" in reply
+
+
+def test_chat_action_mode_drives_readonly_loop_over_insights() -> None:
+    # A read-only "action" turn now returns a real loop result (steps/tools_used
+    # trace + grounded final), not the old "POST /api/agent/act" boilerplate.
+    planner = _planner(
+        [
+            {"tool": "insights_compare", "args": {"base_run": "r1", "candidate_run": "r2"}},
+            {"final": "Run `r2` regressed on **collision_rate** vs `r1`."},
+        ]
+    )
+    tools = {"insights_compare": lambda args: {"regressed": ["collision_rate"], "improved": []}}
+    result = agent_actions.run_chat_action_loop(
+        "which runs regressed on collision rate", tools=tools, model_call=planner
+    )
+    assert result["mode"] == agent_actions.CHAT_ACTION_MODE
+    assert result["grounded"] is False
+    assert result["tools_used"] == ["insights_compare"]
+    assert result["steps"], "chat action turn must return a step trace"
+    assert result["needs_confirmation"] is False
+    assert "collision_rate" in result["reply"]
+
+
+def test_chat_action_mode_gpu_turn_still_needs_confirmation() -> None:
+    launched = {"n": 0}
+
+    def _submit(args):  # pragma: no cover - a chat turn must never auto-launch GPU
+        launched["n"] += 1
+        return {"run_id": "x"}
+
+    planner = _planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    result = agent_actions.run_chat_action_loop(
+        "launch a big sim2real run", tools={"sim2real_submit": _submit}, model_call=planner
+    )
+    assert launched["n"] == 0
+    assert result["needs_confirmation"] is True
+    assert result["proposed_action"]["tool"] == "sim2real_submit"
+
+
+def test_author_workflow_requests_route_to_create_workflow_not_capabilities() -> None:
+    # "write me a 2 step npa yaml that uses cosmos" must generate a workflow,
+    # not fall through to the cosmos capabilities blurb.
+    assert match_chat_intent("write me a 2 step npa yaml that uses cosmos") == "create_workflow"
+    assert match_chat_intent("generate a 3-step npa spec that uses cosmos") == "create_workflow"
+    assert match_chat_intent("build an npa yaml pipeline that uses lancedb") == "create_workflow"
+    assert match_chat_intent("draft a two step npa.workflow spec") == "create_workflow"
+    # Non-authoring cosmos questions still route to capabilities.
+    assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
+    assert match_chat_intent("what can cosmos do") == "cosmos_capabilities"
+
+
+def test_metric_resource_queries_fall_through_to_insights() -> None:
+    # BUG #3: metric/resource/comparison qualifiers must NOT be intercepted by a
+    # grounded run-listing intent — they fall through so the insights loop runs.
+    for turn in (
+        "list runs by gpu count",
+        "how many gpus did each run use",
+        "which runs used more than 2 gpus",
+        "compare gpus between run-a and run-b",
+        "list runs by accelerator count",
+        "which runs regressed on success rate",
+    ):
+        assert match_chat_intent(turn) not in {"find_artifacts", "list_recordings"}, turn
+
+
+def test_plain_run_listing_stays_grounded_zero_tokens() -> None:
+    # No metric/resource qualifier -> still grounded run/recording history.
+    assert match_chat_intent("list recent runs") == "list_recordings"
+    assert match_chat_intent("what recordings do I have") == "list_recordings"
+    assert match_chat_intent("show me my run history") == "list_recordings"
+    assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
+
+
+def test_has_metric_resource_qualifier_helper() -> None:
+    from npa.cli.agent_chat import has_metric_resource_qualifier
+
+    assert has_metric_resource_qualifier("by gpu count")
+    assert has_metric_resource_qualifier("compare the runs")
+    assert has_metric_resource_qualifier("regressed on collision rate")
+    assert not has_metric_resource_qualifier("list recent runs")
+    assert not has_metric_resource_qualifier("what recordings do I have")
+
+
+def test_author_workflow_from_goal_composes_cosmos_from_live_catalog() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    result = author_workflow_from_goal(
+        "write me a 2 step npa yaml that uses cosmos", tool_refs=frozenset(TOOL_CATALOG)
+    )
+    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert len(result["states"]) == 2
+    assert result["tool_refs"] and all(ref in TOOL_CATALOG for ref in result["tool_refs"])
+    assert any("cosmos" in ref for ref in result["tool_refs"])
+    assert "npa.workflow/v0.0.1" in result["yaml"]
+    # Two cosmos tools match a 2-step cosmos goal, so no padding.
+    assert result["padded_tool_refs"] == []
+
+
+def test_author_workflow_flags_padded_placeholder_states() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    # More requested steps than goal-matched tools -> the extra state is padded
+    # from the catalog and flagged as a placeholder for the operator to replace.
+    # Derive the step count from how many catalog tools actually match the goal
+    # keyword ("cosmos") so this stays correct as cosmos tools are added/removed
+    # (e.g. cosmos2.transfer, cosmos2.transfer_execute, cosmos3.reason).
+    cosmos_tools = [ref for ref in TOOL_CATALOG if "cosmos" in ref.lower()]
+    n_steps = min(len(cosmos_tools) + 1, 6)
+    assert n_steps > len(cosmos_tools), "need headroom for at least one padded state"
+    result = author_workflow_from_goal(
+        f"write me a {n_steps} step npa yaml that uses cosmos",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+    assert len(result["tool_refs"]) == n_steps
+    assert result["padded_tool_refs"], "extra state should be flagged as padding"
+    if result["runnable"]:
+        assert "placeholder" in result["yaml"].lower()
+
+
+def test_embedded_chat_action_branch_drives_loop_not_boilerplate() -> None:
+    # Guard the /chat action branch wiring in the embedded backend f-string:
+    # it must drive the bounded loop, not describe the POST /api/agent/act recipe.
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "Use `POST /api/agent/act` with a JSON body carrying your goal" not in source
+    assert "run_chat_action_loop(" in source
+    assert '"insights_query": _tool_insights_query' in source

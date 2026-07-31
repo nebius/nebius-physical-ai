@@ -27,6 +27,9 @@ making architecture, review, or domain judgments.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
  and query production sensor data as a versioned, lineage-tracked dataset
  (FiftyOne curation + LanceDB query index).
+- `skills/tools/insights/SKILL.md`: lineage graph + common metrics store over
+ workflow-run artifacts — non-invasive ingest-run, query, compare, lineage
+ traversal, and dashboard (CPU-only, append-only S3 JSONL, LanceDB-optional).
 - `skills/tools/mjlab/SKILL.md`: MJLab locomotion evaluation and SONIC checkpoint
  scoring.
 - `skills/tools/retargeting/SKILL.md`: motion retargeting in SONIC locomotion
@@ -47,11 +50,18 @@ making architecture, review, or domain judgments.
  diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes, arrows,
  decision diamonds, and loop back-edges → states, loops, gates, catalog
  toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
+- `skills/workflows/physical-ai-data-factory/SKILL.md`: author, run, submit, or
+ view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
+ OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label →
+ FiftyOne curate → Rerun visualize.
 - `skills/workflows/onboard-world-model/SKILL.md`: generic playbook for
  onboarding and containerizing a world model (learned action-conditioned
  simulator) as a multi-GPU BYOF registry candidate — containerize, stage a real
  dataset, encode the train→tokenize→dynamics→dream→visualize loop as capability
  smokes, and validate on real GPUs (Open Dreamer is the reference example).
+- `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench
+ pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM),
+ not an echo/manifest stub masquerading as real work.
 - `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
   (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
 

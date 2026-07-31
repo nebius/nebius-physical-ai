@@ -7,9 +7,13 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+
+def _spec(name: str) -> Path:
+    path = resolve_npa_workflow_spec(name)
+    assert path is not None, f"{name} not found in any npa.workflow spec root"
+    return path
 
 
 @pytest.mark.parametrize(
@@ -22,13 +26,14 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         "tokenfactory-cosmos-gate.yaml",
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
+        "physical-ai-data-factory.yaml",
     ],
 )
 def test_cli_validate_spec(name: str) -> None:
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["workbench", "workflow", "validate-spec", str(SPECS / name), "--json"],
+        ["workbench", "workflow", "validate-spec", str(_spec(name)), "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -43,7 +48,7 @@ def test_cli_plan_spec_json() -> None:
             "workbench",
             "workflow",
             "plan-spec",
-            str(SPECS / "tokenfactory-rollout-judge.yaml"),
+            str(_spec("tokenfactory-rollout-judge.yaml")),
             "--run-id",
             "smoke-1",
             "--json",
@@ -63,7 +68,7 @@ def test_cli_plan_spec_omits_assume_decision_for_loop_free_spec() -> None:
             "workbench",
             "workflow",
             "plan-spec",
-            str(SPECS / "vlm-eval-single.yaml"),
+            str(_spec("vlm-eval-single.yaml")),
             "--run-id",
             "smoke-loopfree",
         ],
@@ -80,7 +85,7 @@ def test_cli_plan_spec_shows_assume_decision_for_loop_spec() -> None:
             "workbench",
             "workflow",
             "plan-spec",
-            str(SPECS / "tokenfactory-cosmos-gate.yaml"),
+            str(_spec("tokenfactory-cosmos-gate.yaml")),
             "--run-id",
             "smoke-loop",
             "--assume-decision",

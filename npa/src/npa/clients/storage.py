@@ -49,6 +49,11 @@ class StorageClient:
             ),
         )
 
+    @property
+    def s3(self):
+        """The underlying boto3 S3 client (endpoint already validated in __init__)."""
+        return self._s3
+
     @classmethod
     def from_environment(
         cls,

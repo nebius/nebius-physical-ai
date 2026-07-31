@@ -3638,6 +3638,62 @@ def curate_cmd(
     )
 
 
+@app.command("curate-augmented")
+def curate_augmented_cmd(
+    augment_uri: str = typer.Option(
+        ...,
+        "--augment-uri",
+        help="S3 URI of the augmented set (cosmos_augmented/ prefix) to curate.",
+    ),
+    report_uri: str = typer.Option(
+        ...,
+        "--report-uri",
+        help="S3 URI where the FiftyOne curation report JSON is written.",
+    ),
+    dedup_threshold: float = typer.Option(
+        0.10,
+        "--dedup-threshold",
+        help="Cosine-distance threshold below which two variants are near-duplicates.",
+    ),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Run REAL FiftyOne Brain curation over a Physical AI Data Factory run.
+
+    Intended to run in-container (inside the npa-fiftyone image, where FiftyOne is
+    installed): it builds a real fiftyone.Dataset from the augmented scenario
+    variants, computes per-sample uniqueness, detects near-duplicates, and writes a
+    curation report recording which variants were kept vs dropped. If FiftyOne is
+    unavailable it degrades to the report-only counts path (surfaced in the report's
+    ``curation_engine`` field).
+    """
+    aug = augment_uri.strip()
+    rpt = report_uri.strip()
+    if not aug.startswith("s3://"):
+        _fail("--augment-uri must be an s3:// URI.")
+    if not rpt.startswith("s3://"):
+        _fail("--report-uri must be an s3:// URI.")
+
+    from npa.workflows.data_factory_stages import curate as _curate
+
+    try:
+        report = _curate(aug, rpt, dedup_threshold=dedup_threshold)
+    except Exception as exc:  # noqa: BLE001 - surface a clean CLI error
+        _fail(f"curation failed: {exc}")
+        return
+
+    fo_block = report.get("fiftyone", {}) if isinstance(report, dict) else {}
+    summary = {
+        "engine": report.get("curation_engine", ""),
+        "clip_ids": report.get("clip_ids", []),
+        "multiply_mode": report.get("multiply", {}).get("mode", ""),
+        "kept": report.get("curated_kept", ""),
+        "dropped": report.get("curated_dropped", ""),
+        "uniqueness": fo_block.get("brain", {}).get("uniqueness", {}),
+        "report_uri": report.get("written_uri", rpt),
+    }
+    _output(summary, output)
+
+
 @app.command("eval")
 def eval_cmd(
     runtime: WorkbenchRuntime = typer.Option(

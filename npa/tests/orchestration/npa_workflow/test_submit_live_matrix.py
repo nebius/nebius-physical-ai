@@ -5,17 +5,10 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
     selected_submit_cases,
-)
-
-SPECS_DIR = (
-    Path(__file__).resolve().parents[4]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
 )
 
 
@@ -50,7 +43,11 @@ def test_force_accelerators_on_cpu_profiles() -> None:
 
 
 def test_submit_live_matrix_specs_exist() -> None:
-    missing = [case.spec for case in SUBMIT_LIVE_MATRIX if not (SPECS_DIR / case.spec).is_file()]
+    missing = [
+        case.spec
+        for case in SUBMIT_LIVE_MATRIX
+        if resolve_npa_workflow_spec(case.spec) is None
+    ]
     assert not missing, f"matrix references missing specs: {missing}"
 
 
@@ -80,3 +77,15 @@ def test_submit_live_matrix_has_cpu_gpu_and_multi() -> None:
     assert tiers == {"cpu", "gpu", "multi"}
     assert any(case.plan_only for case in SUBMIT_LIVE_MATRIX)
     assert any(not case.plan_only and case.tier == "gpu" for case in SUBMIT_LIVE_MATRIX)
+
+
+def test_physical_ai_data_factory_registered_for_live_infra() -> None:
+    """Backs the author-npa-workflow / testing-conventions rule: a new spec with a
+    dynamic gate must be in SUBMIT_LIVE_MATRIX and DYNAMIC_SPECS."""
+    spec = "physical-ai-data-factory.yaml"
+    matrix_case = next((c for c in SUBMIT_LIVE_MATRIX if c.spec == spec), None)
+    assert matrix_case is not None, "physical-ai-data-factory.yaml missing from SUBMIT_LIVE_MATRIX"
+    assert matrix_case.requires_token_factory
+    helpers = _load_live_helpers()
+    assert spec in helpers.DYNAMIC_SPECS, "dynamic-gate spec must be in DYNAMIC_SPECS"
+    assert helpers.assume_decision_for(spec) == "promote_checkpoint"

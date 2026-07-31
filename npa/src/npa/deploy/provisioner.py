@@ -11,6 +11,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+# The Nebius Terraform provider prefers an ambient NEBIUS_IAM_TOKEN over the
+# explicit `token = var.iam_token` in the provider block. A stale/expired token
+# in the environment (a common trap: it can be carried by a long-lived tmux
+# server or exported by a shell profile) therefore shadows the fresh token this
+# deploy mints via `get_iam_token()`, breaking `terraform apply/destroy` with
+# PermissionDenied / Unauthenticated even though the CLI works. Strip these keys
+# from the Terraform subprocess env so the fresh `-var iam_token` is always used.
+_IAM_TOKEN_ENV_KEYS = ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN")
+
 
 class ProvisionerError(Exception):
     pass
@@ -79,8 +88,15 @@ def _require_terraform() -> str:
 
 
 def _tf_env() -> dict[str, str]:
-    """Return the subprocess env for terraform with a warm plugin cache."""
+    """Return the subprocess env for terraform with a warm plugin cache.
+
+    Also strips stale Nebius IAM tokens (_IAM_TOKEN_ENV_KEYS) so a fresh
+    ``-var iam_token`` is always used instead of an ambient token that the
+    provider would otherwise prefer (causing PermissionDenied / Unauthenticated).
+    """
     env = dict(os.environ)
+    for key in _IAM_TOKEN_ENV_KEYS:
+        env.pop(key, None)
     if not env.get("TF_PLUGIN_CACHE_DIR"):
         cache = _TF_PLUGIN_CACHE_DIR
         try:
