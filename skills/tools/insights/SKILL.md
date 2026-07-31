@@ -110,6 +110,11 @@ toolRefs: `workbench.insights.record`, `workbench.insights.ingest_run`,
 - Object storage has no native append, so each write lands in its own immutable
   shard under `records.d/` / `edges.d/` and reads concatenate base + shards. This
   is what makes concurrent ingests safe; a store is never rewritten in place.
+- **Reader version skew:** a reader older than sharding sees only the base object
+  and silently reports a truncated store (e.g. an agent VM answering "no runs
+  found" for runs that did ingest). Re-bootstrap deployed agents
+  (`npa agent bootstrap --project <alias> --name agent`) after upgrading the
+  store writers.
 - `compare` needs both run ids present in the store; comparing a run to itself
   reports every metric as unchanged (useful as a smoke self-check). A `compare`
   that fails with `no metrics recorded for base run` right after a successful

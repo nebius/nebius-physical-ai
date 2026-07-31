@@ -22,6 +22,7 @@ from npa.workbench.insights.schemas import (
     DashboardRequest,
     IngestRunRequest,
     LineageRequest,
+    MetricRecord,
     QueryRequest,
     RecordRequest,
 )
@@ -688,3 +689,20 @@ def test_ingest_run_twice_concurrently_keeps_both_runs(tmp_path: Path) -> None:
 
     records = read_records(store)
     assert {r["run_id"] for r in records} == {"run-one", "run-two"}
+
+
+def test_failed_check_count_increase_is_a_regression(tmp_path: Path) -> None:
+    """More failed checks is worse; the hint list must not call it an improvement."""
+    store = str(tmp_path / "store")
+    for run_id, failed in (("base", 0.0), ("cand", 2.0)):
+        record_metrics(
+            RecordRequest(
+                output_uri=store,
+                records=[
+                    MetricRecord(run_id=run_id, metric_name="failed_check_count", value=failed, tool="dataset"),
+                ],
+            )
+        )
+    response = compare_runs(CompareRequest(input_uri=store, base_run="base", candidate_run="cand"))
+    assert response.regressed == ["failed_check_count"]
+    assert response.improved == []
