@@ -192,7 +192,13 @@ def submit_workflow(
             _cleanup_owned_submission_dir(owned_submission_dir)
             raise SkyPilotSubmitError(_format_submit_error(cmd, result))
         combined = f"{result.stdout}\n{result.stderr}"
-        job_id = _parse_job_id(combined)
+        job_id = _verified_job_id(
+            _parse_job_id(combined),
+            run_id,
+            env=env,
+            sky_executable=sky_executable,
+            cwd=stable_cwd,
+        )
         return WorkflowResult(
             status="SUBMITTED",
             job_id=job_id,
@@ -525,6 +531,47 @@ def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
         root.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _verified_job_id(
+    parsed: str,
+    job_name: str,
+    *,
+    env: dict[str, str],
+    sky_executable: str,
+    cwd: str | None,
+) -> str:
+    """Cross-check the scraped job id against the job NAME we just launched.
+
+    ``sky jobs launch`` streams from the API server, and a flaky/restarting server can
+    leave a previous request's ``Job submitted, ID: N`` in the output. Callers then poll
+    somebody else's job: observed live twice — a runtime wave declared CANCELLED while
+    its real job kept four GPUs busy, and a live e2e case reported FAILED by reading the
+    *previous* spec's job. The name is authoritative; the parsed id is only trusted when
+    the queue agrees.
+    """
+
+    try:
+        result = subprocess.run(
+            [sky_executable, "jobs", "queue", "--all", "--output", "json"],
+            env=env,
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+            check=False,
+        )
+        if result.returncode != 0:
+            return parsed
+        ids = parse_job_ids_by_name(result.stdout, job_name)
+    except Exception:  # noqa: BLE001 - never fail a successful submit over a lookup
+        return parsed
+    if not ids:
+        return parsed
+    if parsed and parsed in ids:
+        return parsed
+    return ids[0]
 
 
 def _parse_job_id(output: str) -> str:

@@ -583,3 +583,40 @@ def test_parse_job_ids_by_name_returns_newest_first() -> None:
     assert parse_job_ids_by_name(payload, "other") == ["142"]
     assert parse_job_ids_by_name(payload, "missing") == []
     assert parse_job_ids_by_name("not json", "wave-01") == []
+
+
+def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:
+    """A stale scraped id must not win over the queue's view of the job name."""
+
+    import subprocess
+
+    from npa.orchestration.skypilot import workflow as workflow_mod
+
+    queue = """
+    [{"job_id": 164, "job_name": "wave-x", "task_name": "a", "status": "RUNNING"}]
+    """
+    mocker.patch.object(
+        workflow_mod.subprocess,
+        "run",
+        return_value=subprocess.CompletedProcess(["sky"], 0, stdout=queue, stderr=""),
+    )
+    verified = workflow_mod._verified_job_id(
+        "163", "wave-x", env={}, sky_executable="sky", cwd=None
+    )
+    assert verified == "164"
+
+    # When the queue agrees, the parsed id is kept.
+    assert (
+        workflow_mod._verified_job_id("164", "wave-x", env={}, sky_executable="sky", cwd=None)
+        == "164"
+    )
+
+
+def test_verified_job_id_falls_back_when_the_lookup_fails(mocker) -> None:
+    from npa.orchestration.skypilot import workflow as workflow_mod
+
+    mocker.patch.object(workflow_mod.subprocess, "run", side_effect=OSError("no sky"))
+    assert (
+        workflow_mod._verified_job_id("163", "wave-x", env={}, sky_executable="sky", cwd=None)
+        == "163"
+    )
