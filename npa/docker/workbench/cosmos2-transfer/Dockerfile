@@ -27,17 +27,40 @@ ENV UV_LINK_MODE=copy \
 # Build the real inference env. `uv sync --extra=cu128` resolves torch cu128 +
 # flash-attn (cp310) + the full transfer2.5 dependency set from the upstream lock.
 #
-# `rm -rf .venv` matters when BASE_IMAGE is an already-built transfer image (the
-# upstream 2.5.0 base is not always available to rebuild from): uv reuses an
-# existing venv, so without this the venv keeps its old bin/python symlink into
-# /root and UV_PYTHON_INSTALL_DIR has no effect. Dropping uv's old interpreter tree
-# removes both the dead weight and the trap.
-RUN rm -rf .venv /root/.local/share/uv \
-    && uv python install 3.10 \
-    && echo "3.10" > .python-version \
-    && uv sync --extra=cu128 --python 3.10 \
-    && .venv/bin/python -c "import torch, flash_attn; print('cosmos-transfer2.5 env torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'cuda-build', torch.version.cuda)" \
-    && test "$(readlink -f .venv/bin/python | cut -d/ -f2)" != "root"
+# Two paths, because BASE_IMAGE may be either the upstream runtime or an
+# already-built transfer image (the upstream 2.5.0 base is not always available to
+# rebuild from):
+#
+#   fresh base      -> uv installs the interpreter into UV_PYTHON_INSTALL_DIR and
+#                      syncs the venv against it.
+#   built artifact  -> the venv already holds the right packages but its bin/python
+#                      symlinks into /root, so relocate the interpreter and repoint
+#                      the venv at it. Re-running `uv sync` here would re-download
+#                      the whole cu128 torch set for no benefit.
+#
+# Either way the layer ends with the interpreter outside /root, which is what makes
+# the venv usable by the non-root user this image runs as.
+RUN set -eux; \
+    if [ -x .venv/bin/python ] && [ "$(readlink -f .venv/bin/python | cut -d/ -f2)" = "root" ]; then \
+      mkdir -p "${UV_PYTHON_INSTALL_DIR}"; \
+      cp -a /root/.local/share/uv/python/. "${UV_PYTHON_INSTALL_DIR}/"; \
+      old_root="$(readlink -f .venv/bin/python)"; \
+      old_root="${old_root%/bin/*}"; \
+      new_root="${UV_PYTHON_INSTALL_DIR}/$(basename "$old_root")"; \
+      for link in .venv/bin/python .venv/bin/python3 .venv/bin/python3.10; do \
+        [ -L "$link" ] || continue; \
+        target="$(readlink "$link")"; \
+        case "$target" in /root/*) ln -sfn "${new_root}/bin/$(basename "$target")" "$link" ;; esac; \
+      done; \
+      sed -i "s|${old_root}|${new_root}|g" .venv/pyvenv.cfg; \
+      rm -rf /root/.local/share/uv; \
+    else \
+      uv python install 3.10; \
+      echo "3.10" > .python-version; \
+      uv sync --extra=cu128 --python 3.10; \
+    fi; \
+    .venv/bin/python -c "import torch, flash_attn; print('cosmos-transfer2.5 env torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'cuda-build', torch.version.cuda)"; \
+    test "$(readlink -f .venv/bin/python | cut -d/ -f2)" != "root"
 
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
 COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh /opt/cosmos2-transfer/entrypoint.sh
