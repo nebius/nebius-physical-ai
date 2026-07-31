@@ -55,7 +55,7 @@ bash scripts/stage-npa-src.sh --bucket <artifact-bucket> --prefix npa-workflow-e
 | Run | Command | Result |
 | --- | --- | --- |
 | Baseline (base commit `d129ee90`, before any change) | `pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q` | **3538 passed, 28 skipped, 1 xpassed, 2 errors** (637 s) |
-| Full suite after the change | same, plus `--ignore` for the two pre-existing live-GPU files | **3638 passed, 28 skipped, 1 xpassed, 0 failed** (307 s) |
+| Full suite after the change | same, plus `--ignore` for the two pre-existing live-GPU files | **3650 passed, 28 skipped, 1 xpassed, 0 failed** (301 s) |
 | Engine + specs | `pytest npa/tests/orchestration/npa_workflow/ npa/tests/smoke/test_all_workflow_yamls.py npa/tests/smoke/test_npa_workflow_smoke.py -q` | **263 passed** |
 | Runtime/parallel unit + CLI coverage | `pytest npa/tests/orchestration/npa_workflow/ npa/tests/orchestration/skypilot/test_workflow.py npa/tests/cli/test_workflow_runtime_cli.py -q` | **577 passed** (orchestration + smoke + runtime CLI) |
 | New stage modules | `pytest npa/tests/workflows/test_rl_sweep.py npa/tests/workflows/test_fanout_join.py -q` | **10 passed** |
@@ -90,7 +90,7 @@ The 2 baseline errors are **pre-existing** and unrelated: the live-GPU fixtures 
 `npa/tests/workbench/test_vlm_eval_backend.py` and `test_vlm_eval_loop_e2e.py`
 try to launch a SkyPilot cluster whenever `sky` is on `PATH` and hit the 120 s
 timeout (they also cost real cloud time), so the post-change runs exclude those
-two files. They fail identically on the base commit. Net: **+100 tests, all green.**
+two files. They fail identically on the base commit. Net: **+112 tests, all green.**
 
 Guardrails that stayed green untouched: `test_render_rejects_parallel_execution`
 (serial-only renderer guard), `test_dynamic_execution.py` (monkeypatched local
