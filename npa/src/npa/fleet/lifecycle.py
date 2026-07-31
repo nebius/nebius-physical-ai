@@ -82,6 +82,18 @@ def _nebius_cli_env() -> dict[str, str]:
     return env
 
 
+def _nebius_argv(nebius_bin: str, profile: str = "") -> list[str]:
+    """Base argv for a ``nebius`` CLI call, pinned to *profile* when given.
+
+    A Nebius service account belongs to exactly one tenant, so a fleet targeting
+    another tenant must authenticate as that tenant's profile. Passing
+    ``--profile`` per call keeps the machine's active profile untouched (and
+    keeps concurrent runs against different tenants independent).
+    """
+
+    return [nebius_bin, "--profile", profile] if profile else [nebius_bin]
+
+
 def _nebius_config() -> dict[str, Any]:
     path = Path.home() / ".nebius" / "config.yaml"
     if not path.exists():
@@ -94,16 +106,23 @@ def _nebius_config() -> dict[str, Any]:
         return {}
 
 
-def _resolve_tenant_id(nebius_bin: str, explicit: str) -> str:
+def _resolve_tenant_id(nebius_bin: str, explicit: str, profile: str = "") -> str:
     if explicit:
         return explicit
     cfg = _nebius_config()
-    default = str(cfg.get("default", "") or "")
+    # With an explicit profile, that profile's tenant is authoritative: falling
+    # back to the active profile's tenant would deploy into the wrong tenant.
+    selected = profile or str(cfg.get("default", "") or "")
     profiles = cfg.get("profiles", {}) if isinstance(cfg.get("profiles"), dict) else {}
-    prof = profiles.get(default, {}) if isinstance(profiles.get(default), dict) else {}
+    prof = profiles.get(selected, {}) if isinstance(profiles.get(selected), dict) else {}
     tenant = str(prof.get("tenant-id", "") or "")
     if tenant:
         return tenant
+    if profile:
+        raise ValueError(
+            f"tenant_id could not be resolved: profile {profile!r} has no 'tenant-id' in "
+            "~/.nebius/config.yaml; set 'tenant_id' in the fleet spec"
+        )
     # Fall back to the npa environment config.
     try:
         from npa.clients.config import resolve_environment
@@ -232,9 +251,14 @@ def _resolve_recipe_root(
 # --------------------------------------------------------------------------- #
 # Project resolution / creation
 # --------------------------------------------------------------------------- #
-def _list_projects(nebius_bin: str, tenant_id: str, env: dict[str, str]) -> list[dict[str, Any]]:
+def _list_projects(
+    nebius_bin: str, tenant_id: str, env: dict[str, str], profile: str = ""
+) -> list[dict[str, Any]]:
     result = _run_capture(
-        [nebius_bin, "iam", "project", "list", "--parent-id", tenant_id, "--format", "json"],
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "iam", "project", "list", "--parent-id", tenant_id, "--format", "json",
+        ],
         env=env,
         check=False,
     )
@@ -255,10 +279,16 @@ def _find_project_id(projects: list[dict[str, Any]], name: str) -> str:
 
 
 def _create_project(
-    nebius_bin: str, tenant_id: str, name: str, env: dict[str, str], *, region: str = ""
+    nebius_bin: str,
+    tenant_id: str,
+    name: str,
+    env: dict[str, str],
+    *,
+    region: str = "",
+    profile: str = "",
 ) -> str:
     argv = [
-        nebius_bin, "iam", "project", "create",
+        *_nebius_argv(nebius_bin, profile), "iam", "project", "create",
         "--parent-id", tenant_id, "--name", name,
     ]
     # Projects are regional in Nebius; pass the target region so the project (and
@@ -277,9 +307,14 @@ def _create_project(
     return project_id
 
 
-def _list_subnets(nebius_bin: str, project_id: str, env: dict[str, str]) -> list[dict[str, Any]]:
+def _list_subnets(
+    nebius_bin: str, project_id: str, env: dict[str, str], profile: str = ""
+) -> list[dict[str, Any]]:
     result = _run_capture(
-        [nebius_bin, "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json",
+        ],
         env=env,
         check=False,
     )
@@ -297,6 +332,7 @@ def ensure_subnet(
     *,
     name_stem: str,
     env: dict[str, str],
+    profile: str = "",
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[str, str]:
     """Return ``(subnet_id, created_network_id)`` for *project_id*.
@@ -309,7 +345,7 @@ def ensure_subnet(
     subnet is reused and left untouched).
     """
 
-    subnets = _list_subnets(nebius_bin, project_id, env)
+    subnets = _list_subnets(nebius_bin, project_id, env, profile)
     if subnets:
         # Deterministic pick: prefer a subnet whose name looks like the project
         # default, else the lowest id, so repeated runs choose the same subnet
@@ -326,7 +362,7 @@ def ensure_subnet(
     _log(on_status, f"no subnet in project {project_id[:12]}...; creating network + subnet")
     net = _run_capture(
         [
-            nebius_bin, "vpc", "network", "create",
+            *_nebius_argv(nebius_bin, profile), "vpc", "network", "create",
             "--parent-id", project_id, "--name", f"{name_stem}-net", "--format", "json",
         ],
         env=env,
@@ -339,7 +375,7 @@ def ensure_subnet(
         raise ValueError(f"could not create network in project {project_id}: {net.stdout[:200]}")
     sub = _run_capture(
         [
-            nebius_bin, "vpc", "subnet", "create",
+            *_nebius_argv(nebius_bin, profile), "vpc", "subnet", "create",
             "--parent-id", project_id, "--network-id", network_id,
             "--name", f"{name_stem}-subnet", "--format", "json",
         ],
@@ -363,6 +399,7 @@ def resolve_project_id(
     create: bool,
     env: dict[str, str],
     region: str = "",
+    profile: str = "",
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[str, bool]:
     """Return ``(project_id, created)`` for a project spec, creating if allowed."""
@@ -372,7 +409,7 @@ def resolve_project_id(
     name = project.display_name(prefix)
     if not name:
         raise ValueError("project needs a name or project_id to resolve")
-    existing = _list_projects(nebius_bin, tenant_id, env)
+    existing = _list_projects(nebius_bin, tenant_id, env, profile)
     found = _find_project_id(existing, name)
     if found:
         _log(on_status, f"project {name!r} exists ({found})")
@@ -382,7 +419,9 @@ def resolve_project_id(
             f"project {name!r} not found under tenant and project creation is disabled"
         )
     _log(on_status, f"creating project {name!r} under tenant (region {region or 'default'})")
-    project_id = _create_project(nebius_bin, tenant_id, name, env, region=region)
+    project_id = _create_project(
+        nebius_bin, tenant_id, name, env, region=region, profile=profile
+    )
     _log(on_status, f"created project {name!r} ({project_id})")
     return project_id, True
 
@@ -507,6 +546,7 @@ def _prewarm_plugin_cache(
     work_root: Path,
     terraform_bin: str,
     nebius_bin: str,
+    profile: str = "",
     on_status: Callable[[str], None] | None,
 ) -> None:
     """Populate a shared terraform plugin cache with a single ``init`` before fan-out.
@@ -530,7 +570,12 @@ def _prewarm_plugin_cache(
         on_status=None,
     )
     _log(on_status, f"pre-warming terraform provider cache at {cache_dir}")
-    _run_stream([terraform_bin, "init", "-input=false"], cwd=workdir, env=_terraform_env(nebius_bin), timeout=900)
+    _run_stream(
+        [terraform_bin, "init", "-input=false"],
+        cwd=workdir,
+        env=_terraform_env(nebius_bin, profile=profile),
+        timeout=900,
+    )
 
 
 def _cluster_tf_env(
@@ -540,8 +585,9 @@ def _cluster_tf_env(
     project_id: str,
     region: str,
     subnet_id: str,
+    profile: str = "",
 ) -> dict[str, str]:
-    env = _terraform_env(nebius_bin)
+    env = _terraform_env(nebius_bin, profile=profile)
     env["TF_VAR_tenant_id"] = tenant_id
     env["TF_VAR_parent_id"] = project_id
     env["TF_VAR_region"] = region
@@ -569,10 +615,17 @@ def _cluster_id_from_outputs(outputs: dict[str, Any]) -> str:
 
 
 def _find_cluster_id_by_name(
-    nebius_bin: str, project_id: str, cluster_name: str, env: dict[str, str]
+    nebius_bin: str,
+    project_id: str,
+    cluster_name: str,
+    env: dict[str, str],
+    profile: str = "",
 ) -> str:
     result = _run_capture(
-        [nebius_bin, "mk8s", "cluster", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "mk8s", "cluster", "list", "--parent-id", project_id, "--format", "json",
+        ],
         env=env,
         check=False,
     )
@@ -590,12 +643,24 @@ def _find_cluster_id_by_name(
 
 
 def _write_kubeconfig(
-    nebius_bin: str, cluster_id: str, kubeconfig_path: Path, context: str, env: dict[str, str]
+    nebius_bin: str,
+    cluster_id: str,
+    kubeconfig_path: Path,
+    context: str,
+    env: dict[str, str],
+    profile: str = "",
 ) -> None:
+    """Write an admin kubeconfig for *cluster_id*.
+
+    When a profile is given the nebius CLI bakes ``--profile`` into the
+    kubeconfig's exec-credential args, so ``kubectl`` keeps authenticating as
+    that tenant's principal rather than the machine's active profile.
+    """
+
     kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
     _run_capture(
         [
-            nebius_bin, "mk8s", "cluster", "get-credentials",
+            *_nebius_argv(nebius_bin, profile), "mk8s", "cluster", "get-credentials",
             "--id", cluster_id, "--external", "--force",
             "--kubeconfig", str(kubeconfig_path), "--context-name", context,
         ],
@@ -622,6 +687,7 @@ def plan_fleet(
     tenant_id: str | None = None,
     region: str | None = None,
     project_prefix: str | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Return the resolved deployment plan without touching infrastructure."""
 
@@ -658,6 +724,7 @@ def plan_fleet(
         "tenant_id": tenant or "(resolve-at-deploy)",
         "region": reg or "(resolve-at-deploy)",
         "project_prefix": prefix,
+        "profile": (spec.profile if profile is None else profile) or "(active)",
         "project_count": len(spec.projects),
         "cluster_count": len(spec.cluster_targets()),
         "projects": plan_projects,
@@ -677,6 +744,7 @@ def deploy_fleet(
     timeout_minutes: int = 120,
     continue_on_error: bool = True,
     concurrency: int = 1,
+    profile: str | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Deploy every ``(project, cluster)`` target in *spec*. Returns fleet metadata.
@@ -692,14 +760,20 @@ def deploy_fleet(
     deploys assume one cluster per project subnet (concurrent creates in a shared
     network can race on the same CIDR pool) -- give each cluster its own
     ``subnet_id`` (or its own project) when packing several into one project.
+
+    ``profile`` overrides the spec's ``profile``: every ``nebius`` CLI call and
+    the minted terraform IAM token then use that ``~/.nebius`` profile, which is
+    how one workstation deploys into several tenants (a service account is
+    single-tenant) without switching the machine-wide active profile.
     """
 
     spec.validate()
     prefix = project_prefix if project_prefix is not None else spec.project_prefix
+    nebius_profile = spec.profile if profile is None else profile
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
 
-    tenant_id = _resolve_tenant_id(nebius_bin, spec.tenant_id)
+    tenant_id = _resolve_tenant_id(nebius_bin, spec.tenant_id, nebius_profile)
     fleet_region = _resolve_region(spec.region)
     ssh_public_key = _resolve_ssh_public_key(spec.ssh_public_key)
 
@@ -719,6 +793,7 @@ def deploy_fleet(
         "tenant_id": tenant_id,
         "region": fleet_region,
         "project_prefix": prefix,
+        "profile": nebius_profile,
         "k8s_training_source": str(recipe_root),
     }
 
@@ -738,6 +813,7 @@ def deploy_fleet(
                 create=create_projects,
                 env=cli_env,
                 region=region,
+                profile=nebius_profile,
                 on_status=on_status,
             )
         except Exception as exc:  # noqa: BLE001 - report and continue
@@ -769,6 +845,7 @@ def deploy_fleet(
             work_root=work_root,
             terraform_bin=terraform_bin,
             nebius_bin=nebius_bin,
+            profile=nebius_profile,
             on_status=on_status,
         )
 
@@ -790,6 +867,7 @@ def deploy_fleet(
             recipe_root=recipe_root,
             terraform_bin=terraform_bin,
             nebius_bin=nebius_bin,
+            profile=nebius_profile,
             timeout_minutes=timeout_minutes,
             on_status=on_status,
             log_path=log_path,
@@ -836,6 +914,7 @@ def _deploy_one_cluster(
     recipe_root: Path,
     terraform_bin: str,
     nebius_bin: str,
+    profile: str = "",
     timeout_minutes: int,
     on_status: Callable[[str], None] | None,
     log_path: Path | None = None,
@@ -854,6 +933,7 @@ def _deploy_one_cluster(
                 project_id,
                 name_stem=cluster.name,
                 env=_nebius_cli_env(),
+                profile=profile,
                 on_status=on_status,
             )
         workdir = _prepare_install_dir(
@@ -870,6 +950,7 @@ def _deploy_one_cluster(
             project_id=project_id,
             region=region,
             subnet_id=subnet_id,
+            profile=profile,
         )
         # Written before apply so ``destroy`` can reconstruct TF_VAR_* and reclaim
         # the network we created even if apply fails midway. ``status`` starts as
@@ -883,6 +964,7 @@ def _deploy_one_cluster(
             "created_network_id": created_network_id,
             "cluster_name": cluster.name,
             "context": context,
+            "profile": profile,
             "status": "provisioning",
         }
         _write_env_sidecar(install_dir, sidecar)
@@ -905,7 +987,7 @@ def _deploy_one_cluster(
         kubeconfig_path = install_dir / "kubeconfig"
         if cluster_id:
             _log(on_status, f"[{label}] writing kubeconfig context {context}")
-            _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, env)
+            _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, env, profile)
         _write_env_sidecar(install_dir, {**sidecar, "cluster_id": cluster_id, "status": "deployed"})
         return {
             "project_key": project_key,
@@ -1000,6 +1082,7 @@ def destroy_fleet(
     only_clusters: list[str] | None = None,
     timeout_minutes: int = 120,
     concurrency: int = 1,
+    profile: str | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Destroy the fleet's clusters (best-effort, per-target).
@@ -1011,6 +1094,10 @@ def destroy_fleet(
     ``concurrency`` > 1 tears down that many clusters in parallel (each has its own
     state, so there is no lock contention). This does not enumerate clusters via
     the API, so a cluster created out-of-band is not reclaimed here.
+
+    ``profile`` overrides the spec's ``profile``; when neither is set the profile
+    recorded in each cluster's env sidecar at deploy time is used, so a teardown
+    authenticates as the same principal that created the cluster.
     """
 
     spec.validate()
@@ -1044,6 +1131,7 @@ def destroy_fleet(
             fleet_root=fleet_root,
             terraform_bin=terraform_bin,
             nebius_bin=nebius_bin,
+            profile=spec.profile if profile is None else profile,
             timeout_minutes=timeout_minutes,
             on_status=on_status,
             log_path=log_path,
@@ -1074,6 +1162,7 @@ def _destroy_one_cluster(
     fleet_root: Path,
     terraform_bin: str,
     nebius_bin: str,
+    profile: str = "",
     timeout_minutes: int,
     on_status: Callable[[str], None] | None,
     log_path: Path | None = None,
@@ -1086,6 +1175,9 @@ def _destroy_one_cluster(
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
     subnet_id = str(saved.get("subnet_id") or "")
+    # Fall back to the profile the cluster was deployed with so a teardown never
+    # authenticates as the wrong tenant's principal.
+    profile = profile or str(saved.get("profile") or "")
     workdir = install_dir / _K8S_TRAINING_SUBDIR
     env = _cluster_tf_env(
         nebius_bin,
@@ -1093,6 +1185,7 @@ def _destroy_one_cluster(
         project_id=project_id,
         region=str(saved.get("region") or spec.region),
         subnet_id=subnet_id,
+        profile=profile,
     )
     _log(on_status, f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""))
     _tf_run([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900, log_path=log_path)
@@ -1113,11 +1206,15 @@ def _destroy_one_cluster(
         _log(on_status, f"[{label}] terraform destroy reported errors; direct cleanup")
         if project_id:
             cid = _find_cluster_id_by_name(
-                nebius_bin, project_id, str(saved.get("cluster_name") or cluster.name), env
+                nebius_bin,
+                project_id,
+                str(saved.get("cluster_name") or cluster.name),
+                env,
+                profile,
             )
             if cid:
                 _run_capture(
-                    [nebius_bin, "mk8s", "cluster", "delete", "--id", cid],
+                    [*_nebius_argv(nebius_bin, profile), "mk8s", "cluster", "delete", "--id", cid],
                     env=env,
                     check=False,
                     timeout=timeout_minutes * 60,
@@ -1129,7 +1226,14 @@ def _destroy_one_cluster(
     created_network_id = str(saved.get("created_network_id") or "")
     if created_network_id and project_id:
         _reclaim_created_network(
-            nebius_bin, project_id, created_network_id, subnet_id, env, on_status, label
+            nebius_bin,
+            project_id,
+            created_network_id,
+            subnet_id,
+            env,
+            on_status,
+            label,
+            profile=profile,
         )
     # Remove the whole per-cluster install dir so the cluster no longer appears
     # in `status`.
@@ -1145,20 +1249,21 @@ def _reclaim_created_network(
     env: dict[str, str],
     on_status: Callable[[str], None] | None,
     label: str,
+    profile: str = "",
 ) -> None:
     """Best-effort delete of a fleet-created subnet + network (subnet first)."""
 
     if subnet_id:
         _log(on_status, f"[{label}] deleting fleet-created subnet {subnet_id}")
         _run_capture(
-            [nebius_bin, "vpc", "subnet", "delete", "--id", subnet_id],
+            [*_nebius_argv(nebius_bin, profile), "vpc", "subnet", "delete", "--id", subnet_id],
             env=env,
             check=False,
             timeout=600,
         )
     _log(on_status, f"[{label}] deleting fleet-created network {network_id}")
     _run_capture(
-        [nebius_bin, "vpc", "network", "delete", "--id", network_id],
+        [*_nebius_argv(nebius_bin, profile), "vpc", "network", "delete", "--id", network_id],
         env=env,
         check=False,
         timeout=600,

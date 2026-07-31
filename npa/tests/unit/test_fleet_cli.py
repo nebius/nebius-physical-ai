@@ -286,7 +286,7 @@ def test_resolve_project_id_creates_when_absent(monkeypatch) -> None:
     monkeypatch.setattr(lifecycle, "_list_projects", lambda *a, **k: [])
     created_names: list[str] = []
 
-    def fake_create(nebius_bin, tenant_id, name, env, *, region=""):
+    def fake_create(nebius_bin, tenant_id, name, env, *, region="", profile=""):
         created_names.append((name, region))
         return "project-new"
 
@@ -573,7 +573,7 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
     return L
 
 
-def _run_one_cluster(L, tmp_path):
+def _run_one_cluster(L, tmp_path, *, profile: str = ""):
     spec = FleetSpec(name="f")
     project = ProjectSpec(name="a")
     cluster = ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))
@@ -590,6 +590,7 @@ def _run_one_cluster(L, tmp_path):
         recipe_root=tmp_path,
         terraform_bin="terraform",
         nebius_bin="nebius",
+        profile=profile,
         timeout_minutes=1,
         on_status=None,
     )
@@ -636,7 +637,7 @@ def _setup_destroy(tmp_path, monkeypatch, sidecar_extra: dict):
         },
     )
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
-    monkeypatch.setattr(L, "_terraform_env", lambda b: {})
+    monkeypatch.setattr(L, "_terraform_env", lambda b, **k: {})
     monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
     deleted: list[str] = []
 
@@ -827,6 +828,134 @@ def test_upsert_and_prune_fleet_state_roundtrip(tmp_path) -> None:
     assert state["deployed"] == 1
 
 
+# --------------------------------------------------------------------------- #
+# --profile / spec profile: multi-tenant principal selection
+# --------------------------------------------------------------------------- #
+def test_spec_parses_profile() -> None:
+    spec = spec_from_mapping({**_base_mapping(), "profile": "sd"})
+    assert spec.profile == "sd"
+
+
+def test_spec_profile_defaults_to_active() -> None:
+    assert spec_from_mapping(_base_mapping()).profile == ""
+
+
+def test_nebius_argv_adds_profile_only_when_set() -> None:
+    from npa.fleet import lifecycle as L
+
+    assert L._nebius_argv("nebius") == ["nebius"]
+    assert L._nebius_argv("nebius", "sd") == ["nebius", "--profile", "sd"]
+
+
+def test_resolve_tenant_id_uses_named_profile(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(
+        L,
+        "_nebius_config",
+        lambda: {
+            "default": "other",
+            "profiles": {"other": {"tenant-id": "tenant-other"}, "sd": {"tenant-id": "tenant-sd"}},
+        },
+    )
+    assert L._resolve_tenant_id("nebius", "", "sd") == "tenant-sd"
+    assert L._resolve_tenant_id("nebius", "") == "tenant-other"
+
+
+def test_resolve_tenant_id_rejects_profile_without_tenant(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    # Falling back to the active profile's tenant here would deploy the fleet
+    # into the wrong tenant, so this must fail loudly instead.
+    monkeypatch.setattr(
+        L,
+        "_nebius_config",
+        lambda: {"default": "other", "profiles": {"other": {"tenant-id": "tenant-other"}, "sd": {}}},
+    )
+    with pytest.raises(ValueError, match="has no 'tenant-id'"):
+        L._resolve_tenant_id("nebius", "", "sd")
+
+
+def test_list_projects_passes_profile_to_cli(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        L, "_run_capture", lambda cmd, **k: (seen.append(cmd), _Cap('{"items": []}', 0))[1]
+    )
+    L._list_projects("nebius", "tenant-x", {}, "sd")
+    assert seen[0][:3] == ["nebius", "--profile", "sd"]
+
+
+def test_deploy_fleet_cli_profile_overrides_spec(tmp_path, monkeypatch) -> None:
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    seen: list[str] = []
+
+    def fake_one(**kwargs):
+        seen.append(kwargs["profile"])
+        return {"project_key": "a", "cluster_name": kwargs["cluster"].name, "status": "deployed"}
+
+    monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
+    spec = FleetSpec(
+        name="f",
+        profile="from-spec",
+        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+    )
+    res = L.deploy_fleet(spec, work_root=tmp_path)
+    assert seen == ["from-spec"]
+    assert res["profile"] == "from-spec"
+    seen.clear()
+    res = L.deploy_fleet(spec, work_root=tmp_path, profile="from-cli")
+    assert seen == ["from-cli"]
+    assert res["profile"] == "from-cli"
+
+
+def test_deploy_one_cluster_records_profile_in_sidecar(tmp_path, monkeypatch) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    _run_one_cluster(L, tmp_path, profile="sd")
+    sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["profile"] == "sd"
+
+
+def test_destroy_falls_back_to_sidecar_profile(tmp_path, monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    install = tmp_path / "f" / "a" / "c"
+    (install / L._K8S_TRAINING_SUBDIR).mkdir(parents=True)
+    L._write_env_sidecar(
+        install,
+        {"tenant_id": "t", "project_id": "p1", "region": "us-central1", "subnet_id": "s",
+         "cluster_name": "c", "profile": "sd", "status": "deployed"},
+    )
+    monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
+    seen: list[str] = []
+    monkeypatch.setattr(
+        L, "_terraform_env", lambda b, **k: (seen.append(k.get("profile", "")), {})[1]
+    )
+    spec = FleetSpec(
+        name="f",
+        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+    )
+    L.destroy_fleet(spec, work_root=tmp_path)
+    assert seen == ["sd"]  # teardown authenticates as the deploying principal
+
+
+def test_deploy_and_destroy_help_document_profile() -> None:
+    for cmd in ("deploy", "destroy", "plan"):
+        result = runner.invoke(app, ["fleet", cmd, "--help"])
+        assert result.exit_code == 0
+        assert "--profile" in result.output
+
+
+def test_fleet_deploy_toolref_is_non_interactive() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    # A workflow state cannot answer the confirmation prompt.
+    assert "--yes" in TOOL_CATALOG["infra.fleet.deploy"].argv_template
+
+
 def test_destroy_only_clusters_removes_install_dir_and_prunes_state(tmp_path, monkeypatch) -> None:
     from npa.fleet import lifecycle as L
 
@@ -847,7 +976,7 @@ def test_destroy_only_clusters_removes_install_dir_and_prunes_state(tmp_path, mo
          {"project_key": "a", "cluster_name": "c2", "status": "deployed"}],
     )
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
-    monkeypatch.setattr(L, "_terraform_env", lambda b: {})
+    monkeypatch.setattr(L, "_terraform_env", lambda b, **k: {})
     monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
     monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
 

@@ -13,6 +13,7 @@ Example::
         name="fleet1-test",
         region="us-central1",
         project_prefix="fleet1-test-",
+        profile="",  # ~/.nebius profile / tenant to authenticate as ("" = active)
         projects=[
             ProjectSpec(name="a", clusters=[ClusterSpec(
                 name="cluster",

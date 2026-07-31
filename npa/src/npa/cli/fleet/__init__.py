@@ -20,6 +20,13 @@ app = typer.Typer(
 )
 
 
+_PROFILE_HELP = (
+    "~/.nebius profile to authenticate every nebius CLI call as (overrides the "
+    "spec's 'profile'). Use it to deploy into another tenant -- a service "
+    "account is single-tenant -- without switching the machine's active profile."
+)
+
+
 def _load(spec_path: Path):
     from npa.fleet.spec import FleetSpecError, load_spec
 
@@ -80,6 +87,7 @@ def plan_cmd(
     project_prefix: str = typer.Option(
         "", "--project-prefix", help="Override the spec's project_prefix for created projects."
     ),
+    profile: str = typer.Option("", "--profile", help=_PROFILE_HELP),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     """Show the resolved deployment plan without touching infrastructure."""
@@ -87,12 +95,13 @@ def plan_cmd(
     from npa.fleet.lifecycle import plan_fleet
 
     spec = _load(spec_path)
-    plan = plan_fleet(spec, project_prefix=project_prefix or None)
+    plan = plan_fleet(spec, project_prefix=project_prefix or None, profile=profile or None)
     if output == "json":
         typer.echo(json.dumps(plan, indent=2))
         return
     typer.echo(f"Fleet '{plan['name']}': {plan['cluster_count']} cluster(s) across {plan['project_count']} project(s)")
     typer.echo(f"  tenant: {plan['tenant_id']}  region: {plan['region']}  prefix: {plan['project_prefix']!r}")
+    typer.echo(f"  nebius profile: {plan['profile']}")
     for proj in plan["projects"]:
         tag = "create" if proj["will_create"] else "existing"
         name = proj["display_name"] or proj["project_id"]
@@ -141,6 +150,7 @@ def deploy_cmd(
         "--continue-on-error/--fail-fast",
         help="Continue deploying remaining clusters if one fails.",
     ),
+    profile: str = typer.Option("", "--profile", help=_PROFILE_HELP),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt (non-interactive create)."
     ),
@@ -178,6 +188,7 @@ def deploy_cmd(
         continue_on_error=continue_on_error,
         concurrency=max(1, concurrency),
         timeout_minutes=timeout,
+        profile=profile or None,
         on_status=lambda msg: typer.echo(f"  - {msg}"),
     )
     if output == "json":
@@ -213,6 +224,7 @@ def destroy_cmd(
     concurrency: int = typer.Option(
         1, "--concurrency", "-j", help="Destroy this many clusters in parallel (isolated state)."
     ),
+    profile: str = typer.Option("", "--profile", help=_PROFILE_HELP),
     yes: bool = typer.Option(
         False, "--yes", "-y", "--force", help="Skip the confirmation prompt (non-interactive removal)."
     ),
@@ -238,6 +250,7 @@ def destroy_cmd(
         only_clusters=only_c,
         timeout_minutes=timeout,
         concurrency=max(1, concurrency),
+        profile=profile or None,
         on_status=lambda msg: typer.echo(f"  - {msg}"),
     )
     if output == "json":

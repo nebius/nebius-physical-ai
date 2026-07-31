@@ -37,6 +37,7 @@ apiVersion: npa.fleet/v0.0.1
 name: fleet1-test
 tenant_id: ""                # resolved from ~/.nebius + ~/.npa when empty
 region: us-central1
+profile: ""                  # ~/.nebius profile to authenticate as; "" = active
 project_prefix: "fleet1-test-"
 defaults:
   cpu_nodes: { count: 1, platform: cpu-d3, preset: 48vcpu-192gb }
@@ -58,6 +59,36 @@ projects:
 
 Example spec: `npa/examples/fleet/fleet1-test.yaml`.
 
+## Targeting another tenant (`profile`)
+
+A Nebius service account belongs to exactly one tenant, so deploying into a
+second tenant means authenticating as *that* tenant's principal. Set the spec's
+`profile:` (or pass `--profile <name>`, which wins) to name a `~/.nebius`
+profile; every `nebius` CLI call, the minted terraform `TF_VAR_iam_token`, and
+the generated kubeconfig's exec-credential args are pinned to it. The machine's
+active profile is never mutated, so concurrent fleets in different tenants stay
+independent.
+
+With a profile set, `tenant_id` resolves from **that** profile's `tenant-id`
+(never the active profile's) and a profile with no `tenant-id` is a hard error
+instead of a silent deploy into the wrong tenant. `destroy` falls back to the
+profile recorded in each cluster's env sidecar at deploy time, so a teardown
+always authenticates as the principal that created the cluster.
+
+Register a service-account profile non-interactively:
+
+```bash
+nebius profile create <name> --endpoint api.nebius.cloud \
+  --service-account-id <sa-id> --public-key-id <public-key-id> \
+  --private-key-file-path ~/.nebius/<name>.pem \
+  --parent-id <sa-parent-project> --tenant-id <tenant> --skip-auth
+nebius --profile <name> iam get-access-token >/dev/null   # verify
+```
+
+`nebius profile create` also *activates* the new profile; re-activate the
+previous one (`nebius profile activate <prev>`) if other tooling on the host
+depends on it.
+
 ## Procedure
 
 1. Keep committed files public-safe: never hardcode tenant/project/registry IDs
@@ -70,13 +101,24 @@ Example spec: `npa/examples/fleet/fleet1-test.yaml`.
    valid on fabric-capable 8-GPU SXM presets. Single-GPU presets (e.g. RTX PRO
    6000 `1gpu-24vcpu-218gb`) auto-set `enable_gpu_cluster=false`; set it `true`
    only with an 8-GPU preset **and** `infiniband_fabric`.
-4. **Preflight quotas per target project.** Each cluster needs, in the *owning
-   project's* region: `compute.instance.count` (nodes + etcd), the vCPU quota
-   for the CPU/GPU presets, GPU quota for the GPU preset (on-demand GPU quota is
-   often 0), `compute.disk.*`, and shared-filesystem SSD quota when
-   `enable_filestore`. **Freshly created projects start with zero quota** — raise
-   quotas (or deploy into projects that already have quota) before applying.
-   Read with `nebius quotas quota-allowance get-by-name --parent-id <project> --region <region> --name <quota>`.
+4. **Preflight quotas at the tenant, before anything else.** Each cluster needs,
+   in the target region: `compute.instance.count` (nodes + etcd),
+   `compute.instance.non-gpu.vcpu` for the CPU preset,
+   `compute.instance.gpu.<family>` for the GPU preset (on-demand GPU quota is
+   frequently **0**), `compute.disk.count`/`compute.disk.size.network-ssd`,
+   `compute.gpucluster.count` when `enable_gpu_cluster`, and
+   `compute.filesystem.count` + `compute.filesystem.size.network-ssd` when
+   `enable_filestore`. List them all at once with
+   `nebius --profile <p> quotas quota-allowance list --parent-id <tenant> --format json`
+   (each item carries `metadata.name`, `spec.region`, `spec.limit`).
+
+   Project-level allowances only *subdivide* the tenant allowance, so a tenant
+   limit of 0 cannot be worked around by creating a project quota: raising a
+   tenant allowance is a `root-g00root` operation and a tenant-scoped service
+   account gets `PermissionDenied ... resource ID: root-g00root`. A new tenant
+   therefore needs its GPU/filesystem quotas raised by the Nebius account team
+   before any GPU or shared-filesystem cluster can be applied — check this first,
+   because terraform otherwise fails deep into `apply` on node-group creation.
 5. **Deploy** (asks for confirmation): `npa fleet deploy --spec fleet.yaml`. It
    prints the projects/clusters it will create/update and prompts before acting;
    pass `--yes`/`-y` for non-interactive runs. Missing projects are created via
@@ -146,7 +188,14 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   one project. Cap N to stay under Nebius API rate limits / GPU quota.
 - **Stale IAM token**: a stale ambient `NEBIUS_IAM_TOKEN` shadows the profile
   exec-plugin; npa strips it for `nebius`/`terraform` calls unless
-  `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token).
+  `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token). This is also
+  why `--profile` must be threaded through rather than relying on the ambient
+  token: the token, not the profile, decides the principal.
+- **Default StorageClass depends on `enable_filestore`**: the recipe installs the
+  filesystem CSI (`csi-mounted-fs-path-sc`, `ReadWriteMany`) only when a shared
+  filesystem is attached. Without it, use the block-storage class
+  (`compute-csi`-backed, `ReadWriteOnce`) for PVCs — a `ReadWriteMany` PVC on a
+  block class stays `Pending` forever.
 - **terraform >= 1.12**: the recipe's modules use `ephemeral` blocks and a
   `>= 1.12` version constraint; set `NPA_TERRAFORM_BIN` if the system terraform
   is older.

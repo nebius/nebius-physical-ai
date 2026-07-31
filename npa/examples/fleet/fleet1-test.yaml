@@ -15,6 +15,11 @@ tenant_id: ""
 region: us-central1
 project_prefix: "fleet1-test-"
 
+# ~/.nebius profile every nebius call authenticates as; empty = the machine's
+# active profile. Set it (or pass --profile) to deploy into a tenant other than
+# the active profile's -- a service account belongs to exactly one tenant.
+profile: ""
+
 # Shared cluster profile merged under every cluster below. Because both projects
 # omit `clusters`, they each deploy exactly this profile (an "identical" fleet).
 defaults:

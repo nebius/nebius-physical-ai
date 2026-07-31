@@ -17,6 +17,9 @@ composable:
 * Projects may reference an existing ``project_id`` *or* be created on demand
   under the tenant (name = ``project_prefix`` + the entry's ``name``) using the
   ``nebius`` CLI.
+* ``profile`` names the ``~/.nebius`` profile the run authenticates as, so one
+  workstation can deploy fleets into several tenants without switching the
+  machine-wide active profile.
 
 No tenant/project IDs are baked in here -- they are resolved from the spec,
 ``~/.npa``/``~/.nebius`` config, or explicit CLI arguments, keeping this module
@@ -174,6 +177,11 @@ class FleetSpec:
     region: str = ""
     project_prefix: str = ""
     ssh_public_key: str = ""
+    # ~/.nebius profile every nebius CLI call runs under; empty -> the machine's
+    # active profile. Needed because a Nebius service account is single-tenant,
+    # so deploying into another tenant means selecting that tenant's profile
+    # rather than mutating the machine-wide active one.
+    profile: str = ""
     projects: list[ProjectSpec] = field(default_factory=list)
 
     def validate(self) -> None:
@@ -296,6 +304,7 @@ def spec_from_mapping(data: dict[str, Any]) -> FleetSpec:
         region=str(data.get("region", "") or ""),
         project_prefix=str(data.get("project_prefix", "") or ""),
         ssh_public_key=str(data.get("ssh_public_key", "") or ""),
+        profile=str(data.get("profile", "") or ""),
         projects=projects,
     )
 
