@@ -426,8 +426,18 @@ def reconstruct_cmd(
         # recipe works on real input without the caller having to know the ids.
         from npa.workbench.nurec.nurec import NO_LIDAR_SENTINEL, ncore_sensor_ids
 
+        from npa.workbench.nurec.nurec import read_rig_sidecar
+
         discovered_cameras, discovered = ncore_sensor_ids(resolved_json)
-        camera_id = list(camera_id) or list(discovered_cameras)
+        # A derived-rig sequence is an object-centric capture, and the recipe's
+        # SfM point-cloud initialization asserts "Only one camera sensor is
+        # currently supported" (observed live). The rig IS the reference camera, so
+        # training on exactly that camera is both required and geometrically
+        # coherent. AV sequences ship their own rig and no sidecar, so they keep
+        # full multi-camera behaviour.
+        reference = str(read_rig_sidecar(resolved_json).get("reference_camera") or "")
+        default_cameras = [reference] if reference else list(discovered_cameras)
+        camera_id = list(camera_id) or default_cameras
         config = NurecConfig.from_env(
             environ=None,
             image=image,

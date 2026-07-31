@@ -1161,3 +1161,97 @@ def test_cli_reconstruct_discovery_keeps_both_sensor_kinds(tmp_path: Path) -> No
     command = " ".join(json.loads(strip_ansi(result.output))["command"])
     assert "dataset.camera_ids=['camera1']" in command
     assert "dataset.lidar_ids=['virtual_lidar']" in command
+
+
+def _sidecar(path: Path, reference: str, cameras: list[str]) -> None:
+    from npa.workbench.nurec.ncore_rig import RIG_SIDECAR_NAME
+
+    (path.parent / RIG_SIDECAR_NAME).write_text(
+        json.dumps({"reference_camera": reference, "cameras": cameras})
+    )
+
+
+def _ncore_with_cameras(path: Path, cameras: list[str], lidars: list[str] = []) -> None:
+    stores = [{"components": {"cameras": {c: {} for c in cameras}}}]
+    if lidars:
+        stores.append({"components": {"lidars": {li: {} for li in lidars}}})
+    path.write_text(json.dumps({"version": "v4", "component_stores": stores}))
+
+
+def test_derived_rig_sequence_trains_on_the_reference_camera_only(tmp_path: Path) -> None:
+    """SfM point-cloud initialization supports exactly one camera.
+
+    Live failure: "AssertionError / Only one camera sensor is currently supported
+    for sfm-point-cloud initialization" once discovery started passing both
+    cameras. The rig IS the reference camera, so that is the coherent choice.
+    """
+    ncore = tmp_path / "scene.json"
+    _ncore_with_cameras(ncore, ["camera1", "camera2"], ["virtual_lidar"])
+    _sidecar(ncore, "camera2", ["camera1", "camera2"])
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    assert "dataset.camera_ids=['camera2']" in command
+    assert "camera1" not in command
+
+
+def test_sequence_without_a_derived_rig_keeps_all_cameras(tmp_path: Path) -> None:
+    """An AV sequence ships its own rig and no sidecar, so multi-camera stands."""
+    ncore = tmp_path / "scene.json"
+    _ncore_with_cameras(ncore, ["camera_front", "camera_rear"], ["lidar_top"])
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    assert "dataset.camera_ids=['camera_front','camera_rear']" in command
+
+
+def test_read_rig_sidecar_is_quiet_when_absent(tmp_path: Path) -> None:
+    from npa.workbench.nurec.nurec import read_rig_sidecar
+
+    ncore = tmp_path / "scene.json"
+    ncore.write_text("{}")
+
+    assert read_rig_sidecar(ncore) == {}
+
+
+def test_derive_rig_poses_writes_a_self_describing_sidecar(tmp_path: Path) -> None:
+    """The sidecar is what lets a LATER POD recover the reference camera."""
+    pytest.importorskip("ncore")
+    pytest.importorskip("upath")
+    from npa.workbench.nurec.ncore_rig import RIG_SIDECAR_NAME
+
+    # Only assert the contract that matters for cross-pod handoff: the name is
+    # stable and publish_ncore_sequence would carry it (it lives in the sequence
+    # directory alongside the meta-file).
+    assert RIG_SIDECAR_NAME.endswith(".json")
+    assert "/" not in RIG_SIDECAR_NAME

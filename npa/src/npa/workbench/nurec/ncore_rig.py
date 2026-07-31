@@ -51,6 +51,13 @@ WORLD_FRAME = "world"
 DERIVED_POSES_GROUP = "npa_rig"
 #: Store-file suffix for the derived store: ``<sequence>.ncore4-<group>.zarr.itar``.
 DERIVED_GROUP_NAME = "npa_rig"
+#: Sidecar written next to the derived meta-file. It makes the sequence
+#: SELF-DESCRIBING: whoever consumes it later -- including a stage in a different
+#: pod that only received an S3 prefix -- can recover which camera became the rig
+#: and which poses group to select, without re-opening the zarr stores or needing
+#: nvidia-ncore installed. ``publish_ncore_sequence`` uploads it automatically
+#: because it lives in the sequence directory.
+RIG_SIDECAR_NAME = "npa-rig.json"
 
 
 @dataclass(frozen=True)
@@ -307,6 +314,22 @@ def derive_rig_poses(
 
     meta_path = target_dir / (sequence_meta_name or f"{sequence_id}.json")
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    (target_dir / RIG_SIDECAR_NAME).write_text(
+        json.dumps(
+            {
+                "derived_by": "npa.workbench.nurec.ncore_rig",
+                "sequence_id": sequence_id,
+                "reference_camera": chosen,
+                "poses_component_group": DERIVED_POSES_GROUP,
+                "pose_count": int(len(timestamps)),
+                "cameras": sorted(trajectories),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
 
     return RigPoseResult(
         ok=True,

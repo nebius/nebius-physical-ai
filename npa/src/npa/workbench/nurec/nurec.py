@@ -1313,6 +1313,25 @@ def find_ncore_json(scene_dir: Path) -> Path | None:
     return candidates[0] if candidates else None
 
 
+def read_rig_sidecar(ncore_json: Path | str) -> dict[str, Any]:
+    """Read the ``npa-rig.json`` sidecar next to an NCore meta-file, if present.
+
+    Written by :func:`npa.workbench.nurec.ncore_rig.derive_rig_poses`. Its presence
+    means the sequence has a DERIVED rig frame, i.e. an object-centric capture --
+    which is exactly the case where the recipe's SfM point-cloud initialization
+    supports only one camera. Absent for AV sequences that ship their own rig, so
+    those keep their full multi-camera behaviour.
+    """
+    from npa.workbench.nurec.ncore_rig import RIG_SIDECAR_NAME
+
+    sidecar = Path(ncore_json).parent / RIG_SIDECAR_NAME
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def ncore_sensor_ids(ncore_json: Path | str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Best-effort camera / LiDAR ID discovery from an NCore V4 metadata JSON.
 
