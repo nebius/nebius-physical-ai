@@ -53,7 +53,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "genesis": "0.4.6",
     "isaac-lab": "2.3.2.post1",
     "cosmos": "1.0.9",
-    "cosmos2-transfer": "2.5.1-golden-eval-smoke-20260616T033000Z",
+    "cosmos2-transfer": "2.5.1-skypilot-exec-20260731T024500Z",
     "cosmos3-reason": "3.0.1-genuine-sm120",
     "cosmos-curate": "0.1.0",
     "cosmos-evaluator": "0.1.0",

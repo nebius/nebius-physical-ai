@@ -26,8 +26,14 @@ RUN uv python install 3.10 \
     && .venv/bin/python -c "import torch, flash_attn; print('cosmos-transfer2.5 env torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'cuda-build', torch.version.cuda)"
 
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
+COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh /opt/cosmos2-transfer/entrypoint.sh
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /opt/cosmos2-transfer /opt/cosmos/cosmos-transfer2.5/.venv
 
 USER ubuntu
+
+# The inherited `ENTRYPOINT ["/bin/bash"]` swallowed the args Kubernetes passes, so
+# SkyPilot's keep-alive command exited 126 and every GPU stage pinned to this image
+# failed to provision. This entrypoint execs its arguments instead.
+ENTRYPOINT ["/opt/cosmos2-transfer/entrypoint.sh"]

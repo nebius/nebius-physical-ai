@@ -124,6 +124,45 @@ def test_entrypoint_is_mode_based_and_not_bash(image: str) -> None:
     assert "engine" in text, "the availability report must be reachable as a mode"
 
 
+# Images the npa.workflow renderer pins for a Kubernetes stage. SkyPilot's
+# Kubernetes provisioner supplies its keep-alive as container *args*, which
+# Kubernetes hands to the image ENTRYPOINT — so an ENTRYPOINT that does not exec
+# its arguments exits (126) and SkyPilot reports the misleading
+# `container not found ("ray-node")` while setting up its runtime.
+ORCHESTRATED_IMAGES = ("cosmos-curate", "cosmos-evaluator", "cosmos2-transfer")
+
+
+@pytest.mark.parametrize("image", ORCHESTRATED_IMAGES)
+def test_entrypoint_execs_its_arguments(image: str) -> None:
+    body = _dockerfile(image)
+    entrypoints = [
+        line.strip()
+        for line in body.splitlines()
+        if line.lstrip().upper().startswith("ENTRYPOINT")
+    ]
+    assert entrypoints, f"{image} declares no ENTRYPOINT"
+    assert len(entrypoints) == 1, f"{image} declares several ENTRYPOINTs: {entrypoints}"
+    entrypoint = entrypoints[0]
+    assert entrypoint != 'ENTRYPOINT ["/bin/bash"]', (
+        f"{image}: a bare bash ENTRYPOINT swallows the args Kubernetes passes, so a "
+        "SkyPilot-orchestrated pod exits 126; exec the arguments instead"
+    )
+
+    script = re.search(r'ENTRYPOINT \["([^"]+)"\]', entrypoint)
+    assert script, f"{image}: ENTRYPOINT must be an exec-form script, got {entrypoint}"
+    name = Path(script.group(1)).name
+    local = DOCKER_ROOT / image / name
+    assert local.is_file(), f"{image}: entrypoint script {name} is not in the image dir"
+    text = local.read_text(encoding="utf-8")
+    # Either the plain passthrough, or a mode dispatcher whose catch-all execs the
+    # unrecognized first word plus the rest — both run an orchestrator's command.
+    passes_through = 'exec "$@"' in text or 'exec "$MODE" "$@"' in text
+    assert passes_through, (
+        f'{image}/{name} must exec its arguments (`exec "$@"`, or a mode dispatcher '
+        'whose catch-all branch does) so an orchestrator-supplied command runs'
+    )
+
+
 @pytest.mark.parametrize("image", IMAGES)
 def test_golden_eval_command_matches_the_image_smoke_script(image: str) -> None:
     manifest = yaml.safe_load(
