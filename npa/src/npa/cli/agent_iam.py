@@ -81,7 +81,7 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
 
 
 def report_destroyed_agent_iam(
-    project: str, name: str, *, record: dict[str, Any] | None, purge: bool
+    project: str, name: str, *, record: dict[str, Any] | None, purge: bool = True
 ) -> None:
     """Surface the npa-agent service account/keys that outlive the destroyed VM."""
     import typer

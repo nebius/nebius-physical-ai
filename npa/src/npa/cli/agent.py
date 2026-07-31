@@ -30,6 +30,7 @@ from npa.cli.agent_quota import (
     _agent_public_ip_quota_result,
 )
 from npa.cli.agent_iam import report_destroyed_agent_iam
+from npa.cli.agent_inventory import agent_list_cmd
 from npa.cli.agent_network import _agent_ssh_egress_result
 from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_destroy_tf_vars
 from npa.clients.config import (
@@ -55,6 +56,7 @@ app = typer.Typer(
     help="Deploy and operate a public NPA chat agent VM.",
     no_args_is_help=True,
 )
+app.command("list")(agent_list_cmd)
 
 DEFAULT_AGENT_PORT = 8088
 DEFAULT_BACKEND_PORT = 8787
@@ -9100,11 +9102,13 @@ def destroy_cmd(
         False, "--yes", "-y", help="Skip the interactive confirmation prompt."
     ),
     purge_iam: bool = typer.Option(
-        False,
-        "--purge-iam",
+        True,
+        "--purge-iam/--keep-iam",
         help=(
-            "Also delete the project's npa-agent service account and its access "
-            "keys once no agent is left (they outlive the VM otherwise)."
+            "Delete the project's npa-agent service account and its access keys "
+            "once no agent is left in the project (default). They outlive the VM "
+            "otherwise — including after a deploy that rolled back. --keep-iam "
+            "reports them instead."
         ),
     ),
 ) -> None:

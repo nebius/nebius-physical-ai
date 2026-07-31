@@ -216,8 +216,12 @@ def test_agent_iam_purge_keeps_an_account_other_agents_use(monkeypatch) -> None:
     assert any("2 other agent(s)" in line for line in lines)
 
 
-def test_agent_destroy_reports_the_iam_it_leaves_behind(monkeypatch, tmp_path: Path) -> None:
-    """"destroyed: <project>/<agent>" claimed a teardown that left credentials."""
+def test_agent_destroy_keep_iam_names_the_delete_commands(monkeypatch, tmp_path: Path) -> None:
+    """With --keep-iam the account survives, so say exactly how to remove it.
+
+    (Purging is the default since the cleanup report; see
+    `test_agent_destroy_purges_iam_by_default` in test_teardown_inventory.py.)
+    """
     from npa.cli import agent as agent_module
     from npa.clients import config as config_module
 
@@ -242,7 +246,7 @@ def test_agent_destroy_reports_the_iam_it_leaves_behind(monkeypatch, tmp_path: P
     monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
     _iam_stubs(monkeypatch)
 
-    result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes"])
+    result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes", "--keep-iam"])
 
     assert result.exit_code == 0, result.output
     assert "destroyed: prod/agent" in result.output

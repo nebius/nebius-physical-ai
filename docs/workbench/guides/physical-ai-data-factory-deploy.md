@@ -531,11 +531,22 @@ POST /api/sim-viz/load-run        # {"run_id": "<run-id>"}
 Cleanup has three owners — the agent VM, the cluster, and the storage/IAM that
 `npa configure` provisioned — and each needs its own command. In order:
 
-```bash
-# 1. Agent VM, its network, local record, and the IAM it created for the VM.
-npa agent destroy --project "$PROJECT" --name <agent-name> --yes --purge-iam
+First, see what exists:
 
-# 2. Cluster. `down` owns the Terraform state (cluster + VPC + subnet); it reads
+```bash
+npa agent list                      # agents recorded under ~/.npa/config.yaml
+npa cluster list                    # clusters known locally or in the project
+npa storage bucket list --project "$PROJECT"
+```
+
+Then remove them:
+
+```bash
+# 1. Agent VM, its network, local record, and the IAM the deploy created for it.
+npa agent destroy --project "$PROJECT" --name <agent-name> --yes
+
+# 2. Cluster. `down` owns everything the Terraform path created — cluster, VPC,
+#    subnet — and clears ~/.npa/clusters/<context>/. It reads
 #    project/tenant/region from ~/.npa/config.yaml when tfvars omit them.
 npa cluster down --terraform-dir deploy/cluster --project "$PROJECT" --force
 
@@ -546,14 +557,17 @@ npa storage bucket delete --project "$PROJECT" --yes
 
 Notes:
 
-- `npa cluster destroy --name <cluster>` deletes only the Managed Kubernetes
-  cluster through the API; the Terraform-managed `<cluster>-network` and subnet
-  survive it. The command now says so and points at `npa cluster down`, which is
-  the one that removes everything it created.
-- `--purge-iam` removes the project's `npa-agent` service account and its access
-  keys, but only once no agent is left in the project (other agents share it).
-  Without the flag, destroy prints what it left and the exact `nebius iam …`
-  commands.
+- **Which cluster verb:** `npa cluster down` is the complete teardown for a
+  cluster `npa cluster up` / `npa provision-if-absent` created. `npa cluster
+  destroy --name <cluster>` is the API-only path — it deletes the cluster but
+  leaves the Terraform-managed `<cluster>-network` and subnet running — so use it
+  for a cluster Terraform does not manage, or to clear local state for a cluster
+  that is already gone.
+- **Agent IAM is removed by default.** `destroy` deletes the project's
+  `npa-agent` service account and access keys once no agent is left in the project
+  (other agents share it, so it is kept while any remain). A deploy that rolled
+  back still created them, which is why this is the default; `--keep-iam` reports
+  them with the `nebius iam …` commands instead.
 - The `lerobot-training` service account and access key that `npa configure`
   provisions for workflow storage are **not** removed by any of the above; delete
   them with `nebius iam v2 access-key delete --id <id>` and

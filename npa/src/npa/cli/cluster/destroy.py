@@ -23,9 +23,13 @@ def destroy_cmd(
     timeout: int = typer.Option(30, "--timeout", help="Target cleanup wait timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or NPA config."),
 ) -> None:
-    """Clean up an NPA Workbench cluster target and remove its local profile state.
+    """Delete a Managed Kubernetes cluster through the API and drop its local state.
 
-    Wraps `nebius mk8s` cluster delete for target cleanup.
+    For a cluster created by `npa cluster up` / `npa provision-if-absent`, use
+    `npa cluster down` instead: Terraform owns the VPC network and subnet as well,
+    and `down` removes those, the cluster, and the local state in one step. This
+    command is the API-only path — for a cluster Terraform does not manage, or to
+    clear local state for a cluster that is already gone.
     """
 
     try:

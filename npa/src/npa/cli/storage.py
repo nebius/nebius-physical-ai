@@ -23,6 +23,63 @@ app.add_typer(bucket_app, name="bucket")
 DEFAULT_PURGE_TTL = "1m"
 
 
+@bucket_app.command("list")
+def list_buckets_cmd(
+    project: str = typer.Option("", "--project", help="NPA project alias to list buckets for."),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project id to list buckets for."),
+    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+) -> None:
+    """List the object-storage buckets in a project, marking the configured one."""
+    import json
+
+    from npa.clients.config import resolve_environment
+    from npa.clients.credentials import load_credentials
+    from npa.clients.nebius import NebiusError, _list_project_buckets
+
+    resolved_project = project_id.strip()
+    if not resolved_project:
+        saved = resolve_environment(project or None)
+        resolved_project = str(getattr(saved, "project_id", "") or "")
+    if not resolved_project:
+        raise typer.BadParameter(
+            "Cannot tell which Nebius project to list. Pass --project-id <id> or "
+            "--project <alias> (after `npa configure`)."
+        )
+    try:
+        items = _list_project_buckets(resolved_project)
+    except NebiusError as exc:
+        raise typer.BadParameter(f"Could not list buckets in {resolved_project}: {exc}") from exc
+
+    configured = ""
+    try:
+        configured = _bucket_name_from_uri(str(load_credentials(environ={}).s3_bucket or ""))
+    except Exception:  # noqa: BLE001 - listing works without readable credentials
+        configured = ""
+
+    rows = [
+        {
+            "name": str((item.get("metadata") or {}).get("name", "") or ""),
+            "id": str((item.get("metadata") or {}).get("id", "") or ""),
+            "configured": str((item.get("metadata") or {}).get("name", "") or "") == configured,
+        }
+        for item in items
+    ]
+    if output_json:
+        typer.echo(json.dumps(rows, indent=2, sort_keys=True))
+        return
+    if not rows:
+        typer.echo(f"No buckets in project {resolved_project}.")
+        return
+    width = max(len("NAME"), *(len(row["name"]) for row in rows))
+    typer.echo(f"{'NAME'.ljust(width)}  ID")
+    typer.echo(f"{'-' * width}  {'-' * 24}")
+    for row in rows:
+        marker = "  <- configured in ~/.npa" if row["configured"] else ""
+        typer.echo(f"{row['name'].ljust(width)}  {row['id']}{marker}")
+    typer.echo("")
+    typer.echo("Delete one with `npa storage bucket delete --name <bucket>`.")
+
+
 @bucket_app.command("delete")
 def delete_bucket_cmd(
     name: str = typer.Option("", "--name", help="Bucket name. Defaults to the configured bucket."),

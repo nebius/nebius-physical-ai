@@ -172,10 +172,27 @@ def down_cmd(
         "--project",
         help="NPA project alias whose saved project/tenant/region to use when tfvars omit them.",
     ),
+    context_name: str = typer.Option(
+        "",
+        "--context",
+        help="Kubeconfig context whose local state to remove. Defaults to the Terraform cluster_name.",
+    ),
+    keep_local_state: bool = typer.Option(
+        False,
+        "--keep-local-state",
+        help="Leave ~/.npa/clusters/<context>/ in place after the destroy succeeds.",
+    ),
     force: bool = typer.Option(False, "--force", help="Skip confirmation."),
     timeout: int = typer.Option(120, "--timeout", help="Terraform destroy timeout in minutes."),
 ) -> None:
-    """Destroy the Terraform-managed NPA Kubernetes cluster."""
+    """Destroy the Terraform-managed NPA cluster: cloud resources and local state.
+
+    This is the complete teardown for a cluster created by `npa cluster up` or
+    `npa provision-if-absent` — the Managed Kubernetes cluster, its VPC network and
+    subnet, and the local kubeconfig/state under ~/.npa/clusters/<context>/.
+    (`npa cluster destroy` is the API-only path for a cluster Terraform does not
+    manage; it leaves the network behind.)
+    """
 
     tf_dir = _resolve_terraform_dir(terraform_dir)
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
@@ -188,20 +205,46 @@ def down_cmd(
     _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
-    _run_stream(
-        [
-            terraform_bin,
-            "destroy",
-            "-auto-approve",
-            # Variable validation runs on destroy too, so the key has to resolve
-            # here as well — but a teardown must not be blocked by a machine that
-            # has no SSH key, since the value cannot affect what is destroyed.
-            *_ssh_public_key_var_args(tfvars, env, allow_placeholder=True),
-        ],
-        cwd=tf_dir,
-        env=env,
-        timeout=timeout * 60,
-    )
+    # `Still destroying...` every 10s with no detail made a ~6-minute node-group
+    # drain look like a hang. Report node-group state while it happens.
+    watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
+    watcher.start()
+    try:
+        _run_stream(
+            [
+                terraform_bin,
+                "destroy",
+                "-auto-approve",
+                # Variable validation runs on destroy too, so the key has to resolve
+                # here as well — but a teardown must not be blocked by a machine that
+                # has no SSH key, since the value cannot affect what is destroyed.
+                *_ssh_public_key_var_args(tfvars, env, allow_placeholder=True),
+            ],
+            cwd=tf_dir,
+            env=env,
+            timeout=timeout * 60,
+        )
+    finally:
+        watcher.stop()
+    if not keep_local_state:
+        _clear_local_cluster_state(context_name.strip() or str(tfvars.get("cluster_name") or "npa-cluster"))
+
+
+def _clear_local_cluster_state(context: str) -> None:
+    """Remove ``~/.npa/clusters/<context>/`` after the cloud resources are gone.
+
+    A successful destroy used to leave the state and kubeconfig behind, so
+    `npa cluster list` still showed the cluster (as UNKNOWN, with a kubeconfig
+    path that resolves nothing) and `npa cluster destroy` was needed purely to
+    delete local files.
+    """
+    from npa.cluster.state import cluster_dir, delete_cluster_state
+
+    directory = cluster_dir(context)
+    if not directory.exists():
+        return
+    delete_cluster_state(context)
+    typer.echo(f"Removed local cluster state {directory}")
 
 
 def kubeconfig_cmd(
