@@ -1257,6 +1257,24 @@ def ncore_sensor_ids(ncore_json: Path | str) -> tuple[tuple[str, ...], tuple[str
     cameras: set[str] = set()
     lidars: set[str] = set()
 
+    # NCore V4 declares sensors explicitly: each entry of ``component_stores``
+    # carries ``components.cameras`` / ``components.lidars`` keyed by sensor id.
+    # Real ids do not have to start with "camera"/"lidar" (PPISP ships
+    # ``virtual_lidar``), so read the structure first and only then fall back to
+    # the name heuristic below.
+    stores = payload.get("component_stores") if isinstance(payload, dict) else None
+    if isinstance(stores, list):
+        for store in stores:
+            components = store.get("components") if isinstance(store, dict) else None
+            if not isinstance(components, dict):
+                continue
+            for group, target in (("cameras", cameras), ("lidars", lidars)):
+                entries = components.get(group)
+                if isinstance(entries, dict):
+                    target.update(str(name) for name in entries)
+    if cameras or lidars:
+        return tuple(sorted(cameras)), tuple(sorted(lidars))
+
     def visit(node: Any) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
