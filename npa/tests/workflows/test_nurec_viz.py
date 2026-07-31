@@ -183,3 +183,51 @@ def test_nurec_stage_docs_are_empty_for_a_data_factory_run(tmp_path: Path) -> No
     (run / "input").mkdir(parents=True)
 
     assert _load_nurec_docs(run, []) == {}
+
+
+# ---------------------------------------------------------------------------------
+# agent-side classification of the recording
+# ---------------------------------------------------------------------------------
+# These helpers live INSIDE the agent bootstrap template string (agent.py is
+# rendered into the agent VM backend, so they are not importable module
+# attributes). The established pattern for guarding them is source inspection --
+# see npa/tests/cli/test_agent.py::
+# test_data_factory_recording_note_wired_in_apply_loaded_artifact.
+def _agent_source() -> str:
+    from npa.cli import agent as agent_module
+
+    return Path(agent_module.__file__).read_text(encoding="utf-8")
+
+
+def test_agent_recognises_a_nurec_recording_as_its_own_type() -> None:
+    source = _agent_source()
+
+    assert 'NEURAL_RECONSTRUCTION_APP_ID = "neural-reconstruction"' in source
+    assert "def _is_neural_reconstruction_recording(key: str) -> bool:" in source
+    # Path-boundary match (segment), not a bare substring, so an unrelated prefix
+    # that merely contains the phrase is not misclassified.
+    assert 'NEURAL_RECONSTRUCTION_APP_ID + "/"' in source
+
+
+def test_agent_shows_the_reconstruction_note_not_the_sim2real_one() -> None:
+    source = _agent_source()
+
+    assert "elif _is_neural_reconstruction_recording(key):" in source
+    assert 'sim_viz["preview_entity"] = "novel_view"' in source
+    assert "NuRec / NRE neural-reconstruction recording loaded." in source
+    # The branch must precede the generic Sim2Real branch, otherwise the held-out
+    # camera note wins (observed live before this fix).
+    assert source.index("elif _is_neural_reconstruction_recording(key):") < source.index(
+        "elif _is_sim2real_pipeline_recording(key):"
+    )
+
+
+def test_agent_does_not_relabel_the_nurec_camera_as_heldout_sim() -> None:
+    source = _agent_source()
+
+    assert "and not _is_neural_reconstruction_recording(key)" in source
+    # ...inside the camera-relabel guard, next to the data-factory exclusion.
+    guard_start = source.index("camera = _sim2real_pipeline_camera_label(camera)")
+    guard = source[max(0, guard_start - 400) : guard_start]
+    assert "_is_data_factory_recording(key)" in guard
+    assert "_is_neural_reconstruction_recording(key)" in guard
