@@ -191,8 +191,12 @@ def test_runtime_selection_honours_the_tier_filter(monkeypatch) -> None:
     monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "cpu")
     monkeypatch.delenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", raising=False)
     specs = {case.spec for case in runtime_submit_cases()}
-    assert specs == {"token-factory-parallel-fanout.yaml", "token-factory-gate-loop.yaml"}
-    assert "isaac-lab-rl-sweep.yaml" not in specs
+    assert specs == {
+        "token-factory-parallel-fanout.yaml",
+        "token-factory-gate-loop.yaml",
+        "token-factory-trigger-watch.yaml",
+    }
+    assert "isaac-lab-rl-sweep.yaml" not in specs  # multi tier
 
 
 def test_slow_cases_carry_their_own_deadline() -> None:
