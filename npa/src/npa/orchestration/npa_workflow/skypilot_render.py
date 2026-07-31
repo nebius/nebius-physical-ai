@@ -539,14 +539,12 @@ def build_skypilot_task_doc(
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa.
-    if not image:
-        import os
+    import os
 
-        src_uri = (
-            os.environ.get("NPA_SRC_S3_URI")
-            or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
-            or ""
-        ).strip()
+    src_uri = (
+        os.environ.get("NPA_SRC_S3_URI") or os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
+    ).strip()
+    if not image:
         if not src_uri:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} has no workbench image "
@@ -556,19 +554,22 @@ def build_skypilot_task_doc(
         envs["NPA_SRC_S3_URI"] = src_uri
         doc["envs"] = envs
     else:
-        # Image is pinned (baked npa). Opt-in overlay: when NPA_SRC_OVERLAY=1,
-        # propagate the source URI + flag so setup reinstalls branch npa on top
-        # (used to run un-imaged branch code — e.g. a new augment path — on GPU).
-        import os as _os
-
-        if str(_os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"}:
-            src_uri = (
-                _os.environ.get("NPA_SRC_S3_URI") or _os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
-            ).strip()
-            if src_uri:
-                envs["NPA_SRC_S3_URI"] = src_uri
-                envs["NPA_SRC_OVERLAY"] = "1"
-                doc["envs"] = envs
+        # A pinned image is EITHER an NPA workbench image with npa baked in, OR a
+        # VENDOR image that has never heard of npa (e.g. NVIDIA's NRE container,
+        # which is the runtime for the neural-reconstruction workflow). Propagating
+        # the source URI serves both: setup's primary install path is guarded by
+        # `command -v npa`, so it is a no-op when npa is already present and
+        # installs it WITH dependencies when it is not. Without this, a vendor image
+        # fails setup with "npa CLI not found; set NPA_SRC_S3_URI or use a workbench
+        # image" (observed live on the NRE image).
+        if src_uri:
+            envs["NPA_SRC_S3_URI"] = src_uri
+            doc["envs"] = envs
+        # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
+        # used to run un-imaged branch code on GPU without rebuilding the image.
+        if str(os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"} and src_uri:
+            envs["NPA_SRC_OVERLAY"] = "1"
+            doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,

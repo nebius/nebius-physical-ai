@@ -490,3 +490,78 @@ def test_renderer_task_config_ignores_unknown_kubernetes_fields() -> None:
     )
 
     assert "remote_identity" not in out["kubernetes"]
+
+
+def test_renderer_stages_npa_source_into_a_vendor_image(monkeypatch) -> None:
+    """A pinned VENDOR image still needs npa staged in.
+
+    The NuRec runtime is NVIDIA's NRE container, which has never heard of npa.
+    The renderer previously withheld NPA_SRC_S3_URI whenever an image was pinned
+    (assuming a baked workbench image), so every stage died in setup with
+    "npa CLI not found; set NPA_SRC_S3_URI or use a workbench image" -- observed
+    live on job 228. Setup's install path is guarded by `command -v npa`, so
+    propagating the URI is a no-op for images that really do bake npa in.
+    """
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        build_skypilot_task_doc,
+    )
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/test")
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+
+    spec = load_spec(SPEC)
+    plan = build_plan(spec)
+    step = next(s for s in plan.steps if s.state == "reconstruct")
+    doc = build_skypilot_task_doc(
+        spec, step, run_id="test-run", options=SkypilotRenderOptions()
+    )
+
+    # The vendor image is pinned...
+    assert doc["resources"]["image_id"].startswith("docker:nvcr.io/nvidia/nre/nre-ga")
+    # ...and the source is staged anyway, so setup can install npa WITH deps.
+    assert doc["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/test"
+    # The --no-deps overlay path stays opt-in and must NOT be triggered here.
+    assert "NPA_SRC_OVERLAY" not in doc["envs"]
+
+
+def test_renderer_overlay_stays_opt_in(monkeypatch) -> None:
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        build_skypilot_task_doc,
+    )
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/test")
+    monkeypatch.setenv("NPA_SRC_OVERLAY", "1")
+
+    spec = load_spec(SPEC)
+    plan = build_plan(spec)
+    step = next(s for s in plan.steps if s.state == "reconstruct")
+    doc = build_skypilot_task_doc(
+        spec, step, run_id="test-run", options=SkypilotRenderOptions()
+    )
+
+    assert doc["envs"]["NPA_SRC_OVERLAY"] == "1"
+
+
+def test_spec_cpu_stages_do_not_request_a_gpu(monkeypatch) -> None:
+    """visualize/finalize are CPU work; holding an RT-core GPU for them is waste."""
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        build_skypilot_task_doc,
+    )
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/test")
+    spec = load_spec(SPEC)
+    plan = build_plan(spec)
+
+    for name in ("visualize", "finalize"):
+        step = next(s for s in plan.steps if s.state == name)
+        doc = build_skypilot_task_doc(
+            spec, step, run_id="test-run", options=SkypilotRenderOptions()
+        )
+        assert "accelerators" not in doc["resources"], name
+        assert "config" not in doc, f"{name} should not carry GPU pod_config"
