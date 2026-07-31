@@ -6,11 +6,12 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import typer
 
@@ -114,11 +115,18 @@ def up_cmd(
     ]
     # Terraform prints only `Still creating...` while a node group retries, so a
     # cloud-side failure (QuotaFailure, no capacity) is invisible for as long as
-    # the operator is willing to wait. Report node-group state alongside it.
+    # the operator is willing to wait. Report node-group state alongside it, and
+    # cancel the apply when the platform reports a refusal retrying cannot fix.
     watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
     watcher.start()
     try:
-        _run_stream(apply_args, cwd=tf_dir, env=env, timeout=timeout * 60)
+        _run_stream(
+            apply_args,
+            cwd=tf_dir,
+            env=env,
+            timeout=timeout * 60,
+            cancel=lambda: watcher.fatal_reason,
+        )
     except (typer.BadParameter, KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
         watcher.stop()
         _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
@@ -402,11 +410,63 @@ def _run_stream(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     timeout: int | None = None,
+    cancel: Callable[[], str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(args, cwd=cwd, env=env, text=True, timeout=timeout, check=False)
-    if result.returncode != 0:
-        raise typer.BadParameter(f"Command failed ({result.returncode}): {' '.join(args)}")
-    return result
+    """Run *args*, streaming output.
+
+    ``cancel`` is polled while the command runs; when it returns a non-empty
+    reason the process is asked to stop (SIGINT first, which Terraform handles as
+    a graceful shutdown that still persists state) and the reason is raised.
+    """
+    if cancel is None:
+        result = subprocess.run(args, cwd=cwd, env=env, text=True, timeout=timeout, check=False)
+        if result.returncode != 0:
+            raise typer.BadParameter(f"Command failed ({result.returncode}): {' '.join(args)}")
+        return result
+
+    reason = ""
+    process = subprocess.Popen(args, cwd=cwd, env=env, text=True)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    try:
+        while process.poll() is None:
+            if not reason:
+                reason = cancel() or ""
+                if reason:
+                    _stop_process(process)
+            if deadline is not None and time.monotonic() >= deadline:
+                _stop_process(process)
+                raise subprocess.TimeoutExpired(args, timeout or 0)
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        _stop_process(process)
+        raise
+    returncode = process.returncode or 0
+    if reason:
+        raise typer.BadParameter(f"Cancelled `{' '.join(args[:2])}`: {reason}")
+    if returncode != 0:
+        raise typer.BadParameter(f"Command failed ({returncode}): {' '.join(args)}")
+    return subprocess.CompletedProcess(args=args, returncode=returncode, stdout="", stderr="")
+
+
+def _stop_process(process: subprocess.Popen[str]) -> None:
+    """Ask a process to stop: SIGINT (graceful for terraform), then SIGTERM/kill."""
+    for signal_name, grace in (("interrupt", 30.0), ("terminate", 10.0)):
+        if process.poll() is not None:
+            return
+        try:
+            if signal_name == "interrupt":
+                process.send_signal(signal.SIGINT)
+            else:
+                process.terminate()
+        except OSError:  # pragma: no cover - process already gone
+            return
+        try:
+            process.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+    if process.poll() is None:  # pragma: no cover - terraform ignoring both signals
+        process.kill()
 
 
 def _run_capture(
@@ -670,38 +730,121 @@ def _preflight_gpu_capacity(nebius_bin: str, tfvars: dict[str, Any], env: dict[s
             err=True,
         )
         return
+    preemptible = _tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False)
+    required = gpu_nodes * _gpus_per_node(preset)
+    capture = lambda args: _run_capture(args, env=env, check=False)  # noqa: E731 - passed through
     message = gpu_capacity_error(
-        lambda args: _run_capture(args, env=env, check=False),
+        capture,
         nebius_bin=nebius_bin,
         tenant_id=tenant_id,
         region=region,
         platform=platform,
         preset=preset,
-        required_gpus=gpu_nodes * _gpus_per_node(preset),
-        preemptible=_tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False),
+        required_gpus=required,
+        preemptible=preemptible,
     )
     if message:
         raise typer.BadParameter(message)
+    if not preemptible and not _gpu_quota_was_readable(
+        capture, nebius_bin=nebius_bin, tenant_id=tenant_id, region=region, platform=platform
+    ):
+        # Skipping silently is what let an unreadable quota become a node group
+        # that retries for hours with no explanation.
+        typer.echo(
+            f"Warning: could not read the {platform} GPU quota for {region} "
+            f"(tenant {tenant_id}), so this apply is not quota-checked. If the node "
+            "group never leaves PROVISIONING, the platform is refusing it — check "
+            "`nebius quotas quota-allowance get-by-name --parent-id <tenant> "
+            f"--region {region} --name compute.instance.gpu.<model>`.",
+            err=True,
+        )
+
+
+def _gpu_quota_was_readable(
+    capture: Any, *, nebius_bin: str, tenant_id: str, region: str, platform: str
+) -> bool:
+    from npa.cli.cluster.capacity import gpu_quota_headroom, gpu_quota_name
+
+    quota_name = gpu_quota_name(platform)
+    if not quota_name:
+        return True
+    return (
+        gpu_quota_headroom(
+            capture,
+            nebius_bin=nebius_bin,
+            tenant_id=tenant_id,
+            region=region,
+            quota_name=quota_name,
+        )
+        is not None
+    )
+
+
+#: Node-group status text that means the platform has *refused* the group rather
+#: than being slow: waiting these out cannot succeed. Terraform keeps printing
+#: `Still creating...` and retries until its own timeout (two hours by default),
+#: which is what turned an unavailable GPU into an open-ended hang.
+_TERMINAL_NODE_GROUP_MARKERS = (
+    "quotafailure",
+    "quota exceeded",
+    "quota_exceeded",
+    "exceeded quota",
+    "out of capacity",
+    "insufficient capacity",
+    "no capacity",
+    "capacity not available",
+)
+
+
+def terminal_node_group_failure(status: dict[str, Any]) -> str:
+    """Return the refusal text when *status* shows a failure retrying cannot fix."""
+    for key, value in (status or {}).items():
+        if not value or not any(
+            token in str(key).lower()
+            for token in ("error", "failure", "message", "condition", "reason", "state")
+        ):
+            continue
+        text = str(value)
+        lowered = text.lower()
+        for marker in _TERMINAL_NODE_GROUP_MARKERS:
+            if marker in lowered:
+                return text
+    return ""
 
 
 class _NodeGroupWatcher:
-    """Print Managed-Kubernetes node-group state while ``terraform apply`` runs.
+    """Watch Managed-Kubernetes node groups while ``terraform apply`` runs.
 
     Terraform's own output is just `Still creating...`, so a node group that
     Nebius refuses (QuotaFailure, no capacity) looks identical to one that is
-    provisioning normally. Polling is entirely best-effort: any error inside the
-    thread is swallowed so it can never affect the apply.
+    provisioning normally — the operator waits, then interrupts, and is left with
+    a half-created cluster and no reason. This prints each group's state as it
+    changes and, when the platform reports a refusal that retrying cannot fix,
+    cancels the apply (``on_fatal``) instead of waiting out the timeout.
+
+    Polling is best-effort: any error inside the thread stops the watcher rather
+    than affecting the apply.
     """
 
-    def __init__(self, nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str], *, interval: float = 45.0):
+    def __init__(
+        self,
+        nebius_bin: str,
+        tfvars: dict[str, Any],
+        env: dict[str, str],
+        *,
+        interval: float = 45.0,
+        on_fatal: Callable[[str], None] | None = None,
+    ):
         self._nebius_bin = nebius_bin
         self._project_id = str(_tfvar_value(tfvars, env, "parent_id", "") or "").strip()
         self._cluster_name = str(tfvars.get("cluster_name") or "npa-cluster")
         self._env = env
         self._interval = interval
+        self._on_fatal = on_fatal
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._seen: dict[str, str] = {}
+        self.fatal_reason = ""
 
     def start(self) -> None:
         if not self._project_id:
@@ -737,6 +880,19 @@ class _NodeGroupWatcher:
             if name and self._seen.get(name) != line:
                 self._seen[name] = line
                 typer.echo(f"  node group {name}: {line}", err=True)
+            refusal = terminal_node_group_failure(status)
+            if refusal and not self.fatal_reason:
+                self.fatal_reason = f"node group {name}: {refusal}"
+                typer.echo(
+                    f"  Nebius refused node group {name}: {refusal}. Retrying cannot fix "
+                    "this, so the apply is being cancelled instead of waiting for the "
+                    "Terraform timeout.",
+                    err=True,
+                )
+                if self._on_fatal is not None:
+                    self._on_fatal(self.fatal_reason)
+                self._stop.set()
+                return
 
     def _cluster_id(self) -> str:
         result = _run_capture(

@@ -185,11 +185,26 @@ def _row_for_cluster(
 ) -> dict[str, Any]:
     node_count = local_state.node_count if local_state else 0
     node_group_id = local_state.node_group_id if local_state else ""
+    node_groups: list[dict[str, Any]] = []
     if remote is not None and remote.id:
         groups = client.list_node_groups(remote.id)
         if groups:
             node_count = sum(group.node_count for group in groups)
             node_group_id = groups[0].id
+            # A cluster whose CPU group is up while its GPU group never provisions
+            # reports RUNNING with a quietly smaller node_count. Keep each group's
+            # own state so a half-created cluster is visible.
+            node_groups = [
+                {
+                    "name": group.name,
+                    "id": group.id,
+                    "state": group.status,
+                    "nodes": group.node_count,
+                    "platform": group.platform,
+                    "preset": group.preset,
+                }
+                for group in groups
+            ]
     state = remote.status if remote is not None else "UNKNOWN"
     endpoint = (remote.endpoint if remote is not None else "") or (local_state.endpoint if local_state else "")
     created_at = (remote.created_at if remote is not None else "") or (local_state.created_at if local_state else "")
@@ -205,6 +220,7 @@ def _row_for_cluster(
         "age": _age(created_at),
         "created_at": created_at,
         "project_id": (remote.project_id if remote is not None else "") or (local_state.project_id if local_state else ""),
+        "node_groups": node_groups,
     }
     if local_state is not None and remote is not None:
         save_cluster_state(
@@ -243,7 +259,40 @@ def _format_table(rows: list[dict[str, Any]]) -> str:
     lines = ["  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))]
     lines.append("  ".join("-" * width for width in widths))
     lines.extend("  ".join(value[index].ljust(widths[index]) for index in range(len(headers))) for value in values)
+    lines.extend(_node_group_lines(rows))
     return "\n".join(lines)
+
+
+def _node_group_lines(rows: list[dict[str, Any]]) -> list[str]:
+    """Return per-node-group lines for clusters whose groups are not all running.
+
+    A cluster is `RUNNING` as soon as its control plane is; a GPU node group that
+    never provisioned (no capacity, no quota) is invisible in the cluster row.
+    """
+    lines: list[str] = []
+    for row in rows:
+        groups = row.get("node_groups") or []
+        if not groups or all(str(group.get("state", "")).upper() == "RUNNING" for group in groups):
+            continue
+        lines.append("")
+        lines.append(f"Node groups for {row.get('name', '')} that are not RUNNING:")
+        for group in groups:
+            state = str(group.get("state", "") or "UNKNOWN")
+            if state.upper() == "RUNNING":
+                continue
+            shape = " ".join(
+                part for part in (str(group.get("platform", "")), str(group.get("preset", ""))) if part
+            )
+            lines.append(
+                f"  {group.get('name', '')}: {state} ({group.get('nodes', 0)} node(s))"
+                + (f" [{shape}]" if shape else "")
+            )
+        lines.append(
+            "  A node group stuck out of RUNNING usually means the platform refused it "
+            "(GPU quota or capacity). `npa cluster up` checks GPU quota before apply; "
+            "`npa cluster down --force` removes a half-created cluster."
+        )
+    return lines
 
 
 def _age(created_at: str) -> str:

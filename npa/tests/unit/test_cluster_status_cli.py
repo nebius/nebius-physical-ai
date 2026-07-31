@@ -146,3 +146,100 @@ def test_status_json_includes_terraform_outputs(monkeypatch, tmp_path) -> None:
     assert payload[0]["cluster_id"] == "mk8scluster-tf"
     assert payload[0]["k8s_training_ref"] == "main-v2026-05-25"
     assert payload[0]["filesystem_csi_storage_class"] == "csi-mounted-fs-path-sc"
+
+
+def test_status_surfaces_a_node_group_that_never_came_up(monkeypatch) -> None:
+    """A cluster is RUNNING as soon as its control plane is.
+
+    Regression: a GPU node group the platform refused (no quota, no capacity) was
+    invisible — the row said RUNNING with a quietly smaller node count.
+    """
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return ClusterInfo(
+                id="mk8scluster-a",
+                name="cluster-a",
+                project_id=project_id,
+                status="RUNNING",
+                created_at="2026-05-14T21:46:00Z",
+                endpoint="https://api.example.invalid",
+            )
+
+        def list_node_groups(self, cluster_id):
+            return [
+                NodeGroupInfo(
+                    id="mk8snodegroup-cpu",
+                    name="cluster-a-cpu",
+                    cluster_id=cluster_id,
+                    status="RUNNING",
+                    node_count=1,
+                    platform="cpu-d3",
+                    preset="4vcpu-16gb",
+                ),
+                NodeGroupInfo(
+                    id="mk8snodegroup-gpu",
+                    name="cluster-a-gpu-0",
+                    cluster_id=cluster_id,
+                    status="PROVISIONING",
+                    node_count=0,
+                    platform="gpu-rtx6000",
+                    preset="1gpu-24vcpu-218gb",
+                ),
+            ]
+
+    monkeypatch.setattr(status_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: _state())
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [_state()])
+    monkeypatch.setattr(status_mod, "save_cluster_state", lambda state: None)
+
+    result = runner.invoke(app, ["status", "--name", "cluster-a"])
+
+    assert result.exit_code == 0, result.output
+    assert "not RUNNING" in result.output
+    assert "cluster-a-gpu-0: PROVISIONING" in result.output
+    assert "gpu-rtx6000" in result.output
+    assert "npa cluster down --force" in result.output
+    # The healthy group is not listed as a problem.
+    assert "cluster-a-cpu: RUNNING" not in result.output
+
+    payload = json.loads(
+        runner.invoke(app, ["status", "--name", "cluster-a", "--format", "json"]).output
+    )
+    groups = {group["name"]: group["state"] for group in payload[0]["node_groups"]}
+    assert groups == {"cluster-a-cpu": "RUNNING", "cluster-a-gpu-0": "PROVISIONING"}
+
+
+def test_status_stays_quiet_when_every_node_group_is_running(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return ClusterInfo(
+                id="mk8scluster-a", name="cluster-a", project_id=project_id, status="RUNNING"
+            )
+
+        def list_node_groups(self, cluster_id):
+            return [
+                NodeGroupInfo(
+                    id="mk8snodegroup-cpu",
+                    name="cluster-a-cpu",
+                    cluster_id=cluster_id,
+                    status="RUNNING",
+                    node_count=1,
+                )
+            ]
+
+    monkeypatch.setattr(status_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: _state())
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [_state()])
+    monkeypatch.setattr(status_mod, "save_cluster_state", lambda state: None)
+
+    result = runner.invoke(app, ["status", "--name", "cluster-a"])
+
+    assert result.exit_code == 0, result.output
+    assert "not RUNNING" not in result.output

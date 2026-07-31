@@ -836,6 +836,189 @@ def test_duplicate_cluster_guard_offers_adoption(monkeypatch, tmp_path: Path) ->
     assert "mk8scluster-live" in result.output
 
 
+def test_terminal_node_group_failure_detects_a_refusal() -> None:
+    """QuotaFailure/no-capacity cannot be waited out; slow provisioning can."""
+    assert (
+        "QuotaFailure"
+        in tf_mod.terminal_node_group_failure(
+            {"state": "PROVISIONING", "error_message": "QuotaFailure: rtx6000 limit reached"}
+        )
+    )
+    assert tf_mod.terminal_node_group_failure(
+        {"state": "ERROR", "conditions": "InsufficientCapacity: no capacity in this zone"}
+    )
+    # A group that is merely slow, or failing for another reason, is left alone.
+    assert tf_mod.terminal_node_group_failure({"state": "PROVISIONING", "ready_node_count": "0"}) == ""
+    assert tf_mod.terminal_node_group_failure({"state": "RUNNING"}) == ""
+    assert tf_mod.terminal_node_group_failure({"error_message": "node not ready yet"}) == ""
+    assert tf_mod.terminal_node_group_failure({}) == ""
+
+
+def test_run_stream_cancels_the_command_when_the_watcher_reports_a_refusal() -> None:
+    """The apply is stopped instead of retrying to the Terraform timeout."""
+    import pytest
+
+    reasons = iter(["", "", "node group gpu: QuotaFailure"])
+
+    with pytest.raises(Exception, match="QuotaFailure"):
+        tf_mod._run_stream(
+            ["sleep", "60"],
+            cancel=lambda: next(reasons, "node group gpu: QuotaFailure"),
+        )
+
+
+def test_run_stream_returns_normally_when_nothing_cancels() -> None:
+    result = tf_mod._run_stream(["true"], cancel=lambda: "")
+
+    assert result.returncode == 0
+
+
+def test_up_cancels_the_apply_on_a_refused_node_group(monkeypatch, tmp_path: Path) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'parent_id = "project-a"',
+                'tenant_id = "tenant-a"',
+                'region = "us-central1"',
+                'cluster_name = "npa-cluster"',
+                "gpu_nodes_count = 1",
+                'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
+            ]
+        )
+        + "\n"
+    )
+
+    cluster_lists: list[int] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            # Empty for the pre-apply duplicate guard; present once apply is
+            # creating it, which is when the watcher looks it up.
+            cluster_lists.append(1)
+            if len(cluster_lists) == 1:
+                return _completed('{"items":[]}')
+            return _completed(
+                json.dumps({"items": [{"metadata": {"name": "npa-cluster", "id": "mk8scluster-a"}}]})
+            )
+        if args[:4] == ["nebius", "mk8s", "node-group", "list"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"name": "npa-cluster-ng-gpu-0"},
+                                "status": {
+                                    "state": "PROVISIONING",
+                                    "target_node_count": "1",
+                                    "ready_node_count": "0",
+                                    "error_message": "QuotaFailure: compute.instance.gpu.rtx6000",
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            # Quota reads fine and has headroom, so the preflight passes and the
+            # refusal only shows up once the node group is being created.
+            return _completed(json.dumps({"spec": {"limit": "8"}, "status": {"usage": "0"}}))
+        raise AssertionError(args)
+
+    def fake_stream(args, **kwargs):
+        cancel = kwargs.get("cancel")
+        if args[:2] == ["terraform", "apply"] and cancel is not None:
+            # Simulate the watcher observing the refusal mid-apply.
+            watcher = _watchers[-1]
+            watcher._poll()
+            reason = cancel()
+            assert reason, "the watcher should have reported the refusal"
+            raise tf_mod.typer.BadParameter(f"Cancelled `terraform apply`: {reason}")
+        return _completed()
+
+    _watchers: list[object] = []
+    original_watcher = tf_mod._NodeGroupWatcher
+
+    class RecordingWatcher(original_watcher):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            _watchers.append(self)
+
+        def start(self) -> None:  # no background thread in the test
+            return
+
+    monkeypatch.setattr(tf_mod, "_NodeGroupWatcher", RecordingWatcher)
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app, ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"]
+    )
+
+    assert result.exit_code != 0
+    assert "QuotaFailure" in result.output
+    # And the operator is told what exists and how to clean it up.
+    assert "npa cluster down" in result.output
+
+
+def test_up_warns_when_the_gpu_quota_cannot_be_read(monkeypatch, tmp_path: Path) -> None:
+    """Skipping the check silently is what let the hang be a surprise."""
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'parent_id = "project-a"',
+                'tenant_id = "tenant-a"',
+                'region = "us-central1"',
+                "gpu_nodes_count = 1",
+                'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
+            ]
+        )
+        + "\n"
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            return _completed("", returncode=1)  # e.g. PermissionDenied
+        if args[:3] == ["terraform", "output", "-json"]:
+            return _completed(
+                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
+
+    result = runner.invoke(
+        app, ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"]
+    )
+
+    # Unreadable quota never blocks a provision, but it is no longer silent.
+    assert result.exit_code == 0, result.output
+    assert "not quota-checked" in result.output
+    assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
+
+
 def test_node_group_status_keeps_failure_text() -> None:
     """QuotaFailure is not in the documented schema, so pass it through verbatim."""
     line = tf_mod._format_node_group_status(
