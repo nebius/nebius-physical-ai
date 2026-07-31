@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from importlib.metadata import version
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -372,6 +373,162 @@ def test_configure_never_writes_a_project_into_another_projects_alias(
     assert new_alias != "prod"
     assert cfg["projects"][new_alias]["project_id"] == "project-new"
     assert "terraform_state" not in cfg["projects"][new_alias]
+
+
+def test_configure_show_prints_the_saved_configuration(monkeypatch, tmp_path) -> None:
+    """--show printed only the empty template, not what is actually configured."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "tle-workbench",
+                "projects": {
+                    "tle-workbench": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "us-central1",
+                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                    },
+                    "other": {"project_id": "project-2"},
+                },
+            }
+        )
+    )
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "hf_secret"},
+                "storage": {
+                    "bucket": "s3://npa-bucket-test/",
+                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                    "access_key_id": "AKTEST",
+                    "secret_access_key": "SKTEST",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+
+    result = runner.invoke(app, ["configure", "--show"])
+
+    assert result.exit_code == 0, result.output
+    # The values the PAIDF quickstart placeholders need.
+    assert "tle-workbench" in result.output
+    assert "project-1" in result.output
+    assert "tenant-1" in result.output
+    assert "us-central1" in result.output
+    assert "cr.eu-north1.nebius.cloud/registry" in result.output
+    assert "s3://npa-bucket-test/" in result.output
+    assert "other" in result.output  # the non-default alias is listed too
+    # Secrets are reported as present, never echoed.
+    assert "hf_secret" not in result.output
+    assert "AKTEST" not in result.output
+    assert "HF token:" in result.output
+    assert "NGC API key:" in result.output
+
+
+def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> None:
+    """The runbook eval's this instead of asking for three hand-substitutions."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "tle-workbench",
+                "projects": {
+                    "tle-workbench": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "us-central1",
+                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                    }
+                },
+            }
+        )
+    )
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "hf_secret"},
+                "storage": {
+                    "bucket": "s3://npa-bucket-test/checkpoints/",
+                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                    "access_key_id": "AKTEST",
+                    "secret_access_key": "SKTEST",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        lambda: [SimpleNamespace(name="npa-cluster")],
+    )
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_PROJECT_ALIAS"] == "tle-workbench"
+    assert values["NPA_PROJECT_ID"] == "project-1"
+    assert values["NPA_REGION"] == "us-central1"
+    # The bare bucket name is what `--var bucket=` wants, not the s3:// URI.
+    assert values["NPA_BUCKET"] == "npa-bucket-test"
+    assert values["NPA_BUCKET_URI"] == "s3://npa-bucket-test/checkpoints/"
+    assert values["NPA_KUBE_CONTEXT"] == "npa-cluster"
+    # No secrets, and no prose that would break `eval`.
+    assert "hf_secret" not in result.output
+    assert "AKTEST" not in result.output
+    assert "Credential setup" not in result.output
+
+
+def test_configure_stores_hf_and_ngc_tokens_without_prompting(monkeypatch, tmp_path) -> None:
+    """Scripted setup had to pipe secrets into prompts, which echo on a non-TTY."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--show",
+            "--hf-token",
+            "hf_test",
+            "--ngc-api-key",
+            "nvapi-test",
+            "--token-factory-key",
+            "v1.test",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(creds_path.read_text())
+    assert saved["tokens"]["HF_TOKEN"] == "hf_test"
+    assert saved["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "v1.test"
+    assert saved["ngc"]["api_key"] == "nvapi-test"
 
 
 def test_configure_token_factory_key_without_a_nebius_profile(monkeypatch, tmp_path) -> None:

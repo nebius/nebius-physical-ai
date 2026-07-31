@@ -28,8 +28,13 @@ skipping one is what makes a first submit fail. The run needs **no dataset**:
 `seed_default_input=true` seeds its own frames for the mandatory caption stage.
 
 ```bash
-BUCKET=<your-artifact-bucket>        # the bucket `npa configure` provisioned
-PROJECT=<your-npa-project-alias>     # `npa configure --show` lists it
+# Fill BUCKET / PROJECT / KUBE_CONTEXT from ~/.npa instead of hand-substituting
+# them (`npa configure --show --env` prints NPA_* assignments and no secrets;
+# `npa configure --show` prints the same values in a readable block).
+eval "$(npa configure --show --env)"
+BUCKET="$NPA_BUCKET"
+PROJECT="$NPA_PROJECT_ALIAS"
+KUBE_CONTEXT="${NPA_KUBE_CONTEXT:-npa-cluster}"   # set after the cluster exists
 RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
 
 # 1. Credentials the stages need, and a GPU cluster + bucket if absent.
@@ -55,7 +60,7 @@ export AWS_ACCESS_KEY_ID=<...> AWS_SECRET_ACCESS_KEY=<...>
 npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
   --run-id "$RUN_ID" --var bucket="$BUCKET" --var seed_default_input=true \
   --assume-decision promote_checkpoint \
-  --infra k8s/<your-kube-context> \
+  --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
@@ -89,7 +94,7 @@ aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
 npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
   --run-id "$RUN_ID" --var bucket="$BUCKET" --stage-src \
   --assume-decision promote_checkpoint \
-  --infra k8s/<your-kube-context> \
+  --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```

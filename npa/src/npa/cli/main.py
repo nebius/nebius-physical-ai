@@ -1383,22 +1383,171 @@ def _store_token_factory_key(api_key: str) -> None:
     )
 
 
+def _store_tokens(hf_token: str, ngc_api_key: str) -> list[str]:
+    """Persist non-interactive token flags; return what was written."""
+    from npa.clients.credentials import write_credentials_file
+
+    payload: dict[str, object] = {}
+    written: list[str] = []
+    if hf_token:
+        payload["tokens"] = {"HF_TOKEN": hf_token}
+        written.append("The Hugging Face token")
+    if ngc_api_key:
+        payload["ngc"] = {"api_key": ngc_api_key}
+        written.append("The NGC API key")
+    if not payload:
+        return []
+    path = write_credentials_file(payload)
+    typer.echo(f"Stored {' and '.join(written).lower()} in {path}.")
+    return written
+
+
+def _configured_env_lines() -> str:
+    """Return the saved ~/.npa values as ``NPA_*=`` shell assignments.
+
+    Lets a runbook stop asking the operator to hand-substitute the alias, bucket
+    and kube context: ``eval "$(npa configure --show --env)"``. Secrets are not
+    included — those stay in credentials.yaml and are exported deliberately.
+    """
+    from npa.clients.config import default_project_name, list_projects
+    from npa.clients.credentials import load_credentials
+
+    try:
+        projects = list_projects()
+        alias = default_project_name()
+    except Exception:  # noqa: BLE001 - emit whatever is readable
+        projects, alias = {}, ""
+    lines: list[str] = []
+    if projects:
+        resolved = alias if alias in projects else next(iter(projects))
+        stanza = projects.get(resolved) or {}
+        lines.append(f"NPA_PROJECT_ALIAS={resolved}")
+        for name, key in (
+            ("NPA_PROJECT_ID", "project_id"),
+            ("NPA_TENANT_ID", "tenant_id"),
+            ("NPA_REGION", "region"),
+            ("NPA_REGISTRY", "container_registry"),
+        ):
+            value = str((stanza or {}).get(key, "") or "")
+            if value:
+                lines.append(f"{name}={value}")
+    try:
+        credentials = load_credentials(environ={})
+    except Exception:  # noqa: BLE001
+        credentials = None
+    if credentials is not None:
+        bucket_uri = str(credentials.s3_bucket or "")
+        if bucket_uri:
+            lines.append(f"NPA_BUCKET_URI={bucket_uri}")
+            lines.append(f"NPA_BUCKET={bucket_uri.removeprefix('s3://').strip('/').split('/', 1)[0]}")
+        if credentials.s3_endpoint:
+            lines.append(f"NPA_S3_ENDPOINT={credentials.s3_endpoint}")
+    context = _saved_kube_context()
+    if context:
+        lines.append(f"NPA_KUBE_CONTEXT={context}")
+    return "\n".join(lines)
+
+
+def _saved_kube_context() -> str:
+    """Return the most recently saved local cluster context, or ""."""
+    try:
+        from npa.cluster.state import list_local_clusters
+
+        clusters = list_local_clusters()
+    except Exception:  # noqa: BLE001 - no cluster cache is normal before provisioning
+        return ""
+    for state in reversed(clusters or []):
+        # `cluster up` names the kubeconfig context after the cluster by default.
+        context = str(getattr(state, "name", "") or "")
+        if context:
+            return context
+    return ""
+
+
+def _configured_summary() -> str:
+    """Return the resolved ~/.npa values a first run needs to fill in placeholders.
+
+    `configure --show` used to print only the empty file template, so an operator
+    following the runbook had to open the YAML by hand to find the alias, bucket
+    and ids the quickstart placeholders want. Secrets are reported as present or
+    missing, never echoed.
+    """
+    from npa.clients.config import CONFIG_PATH, default_project_name, list_projects
+    from npa.clients.credentials import CREDENTIALS_PATH, load_credentials
+
+    lines: list[str] = ["Current configuration"]
+    projects = {}
+    alias = ""
+    try:
+        projects = list_projects()
+        alias = default_project_name()
+    except Exception:  # noqa: BLE001 - a broken config must still print the layout
+        projects = {}
+    if not projects:
+        lines.append(f"  (no projects in {CONFIG_PATH} — run `npa configure`)")
+        return "\n".join(lines)
+
+    stanza = projects.get(alias) or next(iter(projects.values()))
+    resolved_alias = alias if alias in projects else next(iter(projects))
+    lines.append(f"  config file:        {CONFIG_PATH}")
+    lines.append(f"  project alias:      {resolved_alias}  (use with -p)")
+    if len(projects) > 1:
+        lines.append(f"  other aliases:      {', '.join(a for a in projects if a != resolved_alias)}")
+    for label, key in (
+        ("project id", "project_id"),
+        ("tenant id", "tenant_id"),
+        ("region", "region"),
+        ("container registry", "container_registry"),
+    ):
+        value = str((stanza or {}).get(key, "") or "")
+        lines.append(f"  {label + ':':<19} {value or '(unset)'}")
+
+    try:
+        credentials = load_credentials(environ={})
+    except Exception:  # noqa: BLE001 - report what is readable
+        credentials = None
+    if credentials is not None:
+        lines.append(f"  credentials file:   {CREDENTIALS_PATH}")
+        lines.append(f"  s3 bucket:          {credentials.s3_bucket or '(unset)'}")
+        lines.append(f"  s3 endpoint:        {credentials.s3_endpoint or '(unset)'}")
+        for label, value in (
+            ("s3 access key", credentials.s3_access_key_id),
+            ("HF token", credentials.hf_token),
+            ("Token Factory key", credentials.token_factory_api_key),
+            ("NGC API key", credentials.ngc_api_key),
+        ):
+            lines.append(f"  {label + ':':<19} {'set' if value else 'not set'}")
+    return "\n".join(lines)
+
+
 def _configure_impl(
     *,
     show: bool,
     interactive: Optional[bool],
     provision: bool = True,
     token_factory_key: str = "",
+    hf_token: str = "",
+    ngc_api_key: str = "",
+    env_output: bool = False,
 ) -> None:
-    already_written = ""
+    stored: list[str] = []
     if token_factory_key.strip():
         # Store the key, then continue with the rest of configure. Returning here
         # left users thinking configure finished when no project/S3/HF/NGC/config
         # had been written.
         _store_token_factory_key(token_factory_key.strip())
-        already_written = "The Nebius Token Factory API key"
+        stored.append("The Nebius Token Factory API key")
+    stored.extend(_store_tokens(hf_token.strip(), ngc_api_key.strip()))
+    already_written = " and ".join(stored)
+    if env_output:
+        # Machine-readable form first: runbooks eval this instead of asking the
+        # operator to hand-substitute the alias, bucket and kube context.
+        typer.echo(_configured_env_lines())
+        return
     if show:
         typer.echo(_SETUP_GUIDANCE)
+        typer.echo("")
+        typer.echo(_configured_summary())
         return
     should_prompt = interactive if interactive is not None else sys.stdin.isatty()
     if not should_prompt:
@@ -1458,6 +1607,31 @@ def configure(
             "under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of setup."
         ),
     ),
+    hf_token: str = typer.Option(
+        "",
+        "--hf-token",
+        help=(
+            "Store a Hugging Face token in ~/.npa/credentials.yaml under "
+            "tokens.HF_TOKEN without prompting (for scripted setup)."
+        ),
+    ),
+    ngc_api_key: str = typer.Option(
+        "",
+        "--ngc-api-key",
+        help=(
+            "Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under "
+            "ngc.api_key without prompting (for scripted setup)."
+        ),
+    ),
+    env_output: bool = typer.Option(
+        False,
+        "--env",
+        help=(
+            "Print the saved project/bucket/kube-context values as NPA_* shell "
+            "assignments (no secrets) instead of prompting: "
+            "eval \"$(npa configure --show --env)\"."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -1465,6 +1639,9 @@ def configure(
         interactive=interactive,
         provision=provision,
         token_factory_key=token_factory_key,
+        hf_token=hf_token,
+        ngc_api_key=ngc_api_key,
+        env_output=env_output,
     )
 
 
@@ -1502,6 +1679,31 @@ def init(
             "under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of setup."
         ),
     ),
+    hf_token: str = typer.Option(
+        "",
+        "--hf-token",
+        help=(
+            "Store a Hugging Face token in ~/.npa/credentials.yaml under "
+            "tokens.HF_TOKEN without prompting (for scripted setup)."
+        ),
+    ),
+    ngc_api_key: str = typer.Option(
+        "",
+        "--ngc-api-key",
+        help=(
+            "Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under "
+            "ngc.api_key without prompting (for scripted setup)."
+        ),
+    ),
+    env_output: bool = typer.Option(
+        False,
+        "--env",
+        help=(
+            "Print the saved project/bucket/kube-context values as NPA_* shell "
+            "assignments (no secrets) instead of prompting: "
+            "eval \"$(npa configure --show --env)\"."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -1509,6 +1711,9 @@ def init(
         interactive=interactive,
         provision=provision,
         token_factory_key=token_factory_key,
+        hf_token=hf_token,
+        ngc_api_key=ngc_api_key,
+        env_output=env_output,
     )
 
 

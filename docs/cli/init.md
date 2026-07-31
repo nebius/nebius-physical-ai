@@ -19,6 +19,13 @@ Use --no-provision to enter existing S3 credentials.
 --token-factory-key  <str>  Store a Nebius Token Factory API key in ~/.npa/credentials.yaml
 under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of
 setup.
+--hf-token  <str>  Store a Hugging Face token in ~/.npa/credentials.yaml under
+tokens.HF_TOKEN without prompting (for scripted setup).
+--ngc-api-key  <str>  Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under
+ngc.api_key without prompting (for scripted setup).
+--env  Print the saved project/bucket/kube-context values as NPA_* shell
+assignments (no secrets) instead of prompting: eval "$(npa
+configure --show --env)".
 --help  Show this message and exit.
 ```
 
@@ -30,6 +37,9 @@ setup.
 | `--interactive` | --no-interactive  Force or disable interactive prompting (defaults to auto-detect |
 | `--provision` | --no-provision  Auto-create a Nebius S3 bucket (when missing) and an access key |
 | `--token-factory-key` | <str>  Store a Nebius Token Factory API key in ~/.npa/credentials.yaml |
+| `--hf-token` | <str>  Store a Hugging Face token in ~/.npa/credentials.yaml under |
+| `--ngc-api-key` | <str>  Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under |
+| `--env` | Print the saved project/bucket/kube-context values as NPA_* shell |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
