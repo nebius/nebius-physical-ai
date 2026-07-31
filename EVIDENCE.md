@@ -461,6 +461,51 @@ pulled onto the disk-constrained dev VM), adding `python3`, `rsync`, `curl`,
 `NPA_E2E_IMAGE_OVERRIDE_ISAAC_LAB` hook; the base image is unchanged and the sweep
 spec still resolves the base tag by default.
 
+### 5.2b Two more npa.workflow specs on GPU, and the batched sweep
+
+| Spec | Run | Result |
+| --- | --- | --- |
+| `isaac-lab-rl-sweep.yaml`, `maxConcurrency: 2` | job 152 (non-root image) | **PASSED** (`678 s`) — 4 variants in **two batches of two**; first live coverage of multi-batch bounded concurrency |
+| `token-factory-gate-loop.yaml`, GPU-forced | jobs 145,147–150 | **PASSED** (`866 s`) — bounded loop, real early-exit on the S3 decision and the branch, all on GPU-requesting tasks |
+| `tokenfactory-rollout-judge.yaml` (gpu tier, one-shot path) | job 166 | **PASSED** (`253 s`) — `reason-scene` → `judge-rollouts`, both SUCCEEDED |
+| `vlm-eval-single.yaml` (gpu tier, one-shot path) | job 163 | **FAILED — pre-existing spec gap** (below) |
+
+`vlm-eval-single.yaml` got all the way through the engine: the renderer's vLLM setup
+installed (`vllm-0.26.0`, `torch-2.11.0`), the stage picked the right interpreter
+(`using npa interpreter /home/sky/miniconda3/bin/python3 for this stage`) and the tool
+ran — then failed with `VLM backend request failed: [Errno 111] Connection refused`.
+The spec asks for `vlm_backend: self-hosted`, but nothing in the spec or the tool
+*starts* a vLLM server, so there is no endpoint to call. That is a gap in that spec's
+backend wiring, unrelated to this PR, and it is left as-is rather than papered over.
+
+### 5.2c The sustainability of the Isaac image fix
+
+The first unblocker (a hand-built `-sky` tag) was **not** sustainable: nothing in the
+repo built it, the shipped spec's default stayed broken, and it silently ran as **root**.
+Bisecting derived images live established the minimal **non-root** recipe — all four
+ingredients are required:
+
+| # | Ingredient | Why |
+| --- | --- | --- |
+| 1 | system `python3` (+ `rsync`/`curl`/ssh client) | SkyPilot's k8s bootstrap runs in-pod; the NVIDIA base ships only `/isaac-sim/python.sh` |
+| 2 | runtime user in the `isaac-sim` **group** | `/isaac-sim` is `750 isaac-sim:isaac-sim`; a recursive `chmod` would rewrite multi-GB layers |
+| 3 | **passwordless sudo** for that user | SkyPilot's setup shells out to `sudo`; Debian's default rule prompts. *This alone* kept a non-root image failing while an identical root image worked |
+| 4 | system interpreter **first on PATH** | otherwise `python3` is Isaac's kit interpreter |
+
+Probe with the completed recipe (non-root): `whoami → ubuntu`,
+`command -v python3 → /usr/bin/python3`, `ISAAC_READABLE`, `PROBE2_OK`; then the batched
+sweep passed on it (job 152). Ingredient 4 then surfaced a general bug — Ubuntu 24.04's
+system python is **PEP 668** managed, so `pip install` failed with
+`externally-managed-environment`; in-task installs now retry with
+`--break-system-packages` and `--user`.
+
+All of this is now in the repo — `npa/docker/workbench/isaac-lab/Dockerfile`,
+`Dockerfile.k8s-prereqs` (repair an already-published tag) and
+`scripts/build-workbench-image-in-cluster.sh` (kaniko build **in-cluster**, so an 8 GB
+base never lands on a 92 %-full VM) — with guardrail tests pinning each ingredient *and*
+asserting the image does not end as root. `NPA_E2E_IMAGE_OVERRIDE_<TOOL>` remains only as
+an escape hatch for an unrebuilt tag.
+
 ### 5.3 Bugs that only real GPUs exposed (all fixed in this PR)
 
 | # | Symptom on GPU | Root cause | Fix |
@@ -470,6 +515,7 @@ spec still resolves the base tag by default.
 | 3 | `npa still missing after setup` (Isaac) / `/usr/bin/python3: No module named pip` (GPU default) | setup demanded the `npa` console script on PATH, and tried to install into an interpreter with no pip | verify by import (not by console script), link the console script into `/usr/local/bin`, and never require pip in the task shell |
 | 4 | Recorded interpreter was the string `alias python3='...python.sh'`, then Isaac's embedded kit python which cannot import its own site-packages | `command -v python3` prints alias definitions; `sys.executable` names an interpreter that needs its wrapper | try `sys.executable`, then the alias target, then `type -P python3`, and record the first that can actually import npa |
 | 5 | **Driver abandoned a running 4-GPU job**: it polled job 140 (already cancelled) while job 141 kept training | after the local SkyPilot API server flaked, `sky jobs launch` output carried a stale `Job submitted, ID:` line, and the driver trusted the scraped id | the launched job **name** is authoritative: the parsed id is cross-checked and recovered via `find_job_ids_by_name`, and only an unidentifiable job fails the wave |
+| 6 | Same class in the **one-shot** path: `tokenfactory-rollout-judge` SUCCEEDED (job 166) while the live case reported FAILED, having polled job 163 — the *previous* spec's job | the e2e harness trusts the id `submit_workflow` scrapes | `submit_workflow` itself now verifies the parsed id against the launched job name, fixing every caller; the spec passed on re-run |
 
 Bug 5 is the most important: it is precisely the leak class this PR exists to
 prevent, it was invisible to mocked tests (the fake submitter always returns a
