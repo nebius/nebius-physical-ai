@@ -139,11 +139,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "vlm-eval-benchmark.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        rotation_skip=True,
-        skip_reason=(
-            "Confirmed live: fails with 'Expected a JSON file or directory "
-            "containing benchmark.json' — the benchmark dataset is not staged "
-            "into the job. Re-include once the twin stages/points at a dataset."
+        notes=(
+            "Fixed: the twin now uses the `sample` sentinel, which resolves to "
+            "the packaged benchmark fixture at its install location (a "
+            "repo-relative path did not exist in the rendered job). backend=stub, "
+            "so it validates the submit path without a GPU model."
         ),
     ),
     SubmitLiveCase(

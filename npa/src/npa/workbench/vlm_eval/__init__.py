@@ -214,6 +214,12 @@ def benchmark_vlm_eval(
 ) -> VlmBenchmarkReport:
     """Run a labeled VLM-eval sweep and rank configs by label agreement."""
 
+    # Resolve the packaged sample fixture from its install location so callers
+    # (and the npa.workflow twin) get a working default regardless of CWD. A
+    # repo-relative path does not exist inside a rendered job; the ``sample``/
+    # ``default`` sentinels (and empty) map to the packaged fixture.
+    if dataset.strip().lower() in {"", "sample", "default"}:
+        dataset = str(DEFAULT_SAMPLE_BENCHMARK_PATH)
     benchmark_dataset = load_benchmark_dataset(dataset, default_task=task)
     threshold_values = _normalize_thresholds(thresholds)
     model_values = _normalize_strings(models, label="models")

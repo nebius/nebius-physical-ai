@@ -86,7 +86,6 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
         "sonic-train.yaml",
         "sonic-locomotion-finetuning.yaml",
         "vlm-eval-single.yaml",
-        "vlm-eval-benchmark.yaml",
         "bdd100k-pipeline.yaml",
         "tokenfactory-cosmos-gate.yaml",
     ):
