@@ -938,3 +938,109 @@ def test_cli_reconstruct_without_a_sequence_fails_with_guidance(tmp_path: Path) 
     payload = json.loads(strip_ansi(result.output))
     assert payload["status"] == "failed"
     assert any("nurec fetch" in error for error in payload["errors"])
+
+
+def test_cli_reconstruct_replaces_the_recipe_placeholder_lidar(tmp_path: Path) -> None:
+    """The object-centric recipe ships `dataset.lidar_ids: [dummy_lidar]`.
+
+    On real data NRE aborts with "Requested lidars not present in the data:
+    dummy_lidar" (observed live), so reconstruct must adopt the sequence's own
+    LiDAR ids when the caller named none.
+    """
+    ncore = tmp_path / "scene.json"
+    ncore.write_text(
+        json.dumps(
+            {
+                "version": "v4",
+                "component_stores": [
+                    {"components": {"cameras": {"camera2": {}}}},
+                    {"components": {"lidars": {"virtual_lidar": {}}}},
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    command = " ".join(json.loads(output)["command"])
+    assert "dataset.lidar_ids=['virtual_lidar']" in command
+    assert "dummy_lidar" not in command
+
+
+def test_cli_reconstruct_blanks_the_lidar_list_when_the_capture_has_none(
+    tmp_path: Path,
+) -> None:
+    ncore = tmp_path / "scene.json"
+    ncore.write_text(
+        json.dumps(
+            {"version": "v4", "component_stores": [{"components": {"cameras": {"camera1": {}}}}]}
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    assert "dataset.lidar_ids=[]" in command
+
+
+def test_cli_reconstruct_respects_an_explicit_lidar_id(tmp_path: Path) -> None:
+    ncore = tmp_path / "scene.json"
+    ncore.write_text(
+        json.dumps(
+            {
+                "version": "v4",
+                "component_stores": [{"components": {"lidars": {"virtual_lidar": {}}}}],
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--lidar-id",
+            "lidar_top",
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    assert "dataset.lidar_ids=['lidar_top']" in command
