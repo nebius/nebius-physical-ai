@@ -388,13 +388,31 @@ def test_submit_preflight_skips_context_check_for_self_provisioning_specs(
     assert not any("kube context" in item for item in items)
 
 
-def test_spec_self_provisions_detects_deploy_if_absent_targets() -> None:
+def test_spec_self_provisions_detects_deploy_if_absent_targets(tmp_path) -> None:
     from npa.cli.workbench.workflow import _spec_self_provisions
 
     assert _spec_self_provisions(HARDENING_SPEC) is True
-    assert _spec_self_provisions(SPEC) is False
+
+    plain = tmp_path / "plain.yaml"
+    plain.write_text(
+        "apiVersion: npa.workflow/v0.0.1\n"
+        "kind: Workflow\n"
+        "resources:\n"
+        "  gpu:\n"
+        "    cloud: kubernetes\n"
+        "    accelerators: RTXPRO6000:1\n",
+        encoding="utf-8",
+    )
+    assert _spec_self_provisions(plain) is False
     # An unreadable spec never turns the preflight itself into the failure.
     assert _spec_self_provisions(Path("/nonexistent/spec.yaml")) is False
+
+
+def test_data_factory_blueprint_provisions_from_the_spec_not_a_command() -> None:
+    """The blueprint chains provisioning through YAML, so no `paidf up` verb is needed."""
+    from npa.cli.workbench.workflow import _spec_self_provisions
+
+    assert _spec_self_provisions(SPEC) is True
 
 
 def test_adopt_npa_kubeconfig_points_kubeconfig_at_the_provisioned_cluster(

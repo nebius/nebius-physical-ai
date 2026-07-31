@@ -143,8 +143,18 @@ resources:
     accelerators: RTXPRO6000:1
     cpus: 4
     memory: 16Gi
+    # Provision the cluster through npa before submit if its context is absent,
+    # so one `npa workbench workflow submit ... --stage-src` covers the whole
+    # path (prerequisite check -> provision -> stage source -> launch) without a
+    # blueprint-specific command. `npa provision-if-absent` beforehand is still
+    # fine, and `--no-deploy-if-absent` opts out. The GPU quota gate in
+    # `npa cluster up` refuses before spending anything when quota is short.
+    deployIfAbsent: true
   cpu:
     cloud: kubernetes
+    # The same cluster serves both profiles, so only the GPU one declares
+    # deployIfAbsent; these requests must fit its CPU node (see
+    # tests/guardrails/test_default_cluster_fits_quickstart.py).
     cpus: 4
     memory: 16Gi
 

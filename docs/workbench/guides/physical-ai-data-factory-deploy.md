@@ -38,6 +38,9 @@ KUBE_CONTEXT="${NPA_KUBE_CONTEXT:-npa-cluster}"   # set after the cluster exists
 RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
 
 # 1. Credentials the stages need, and a GPU cluster + bucket if absent.
+#    The spec declares `deployIfAbsent` on its GPU profile, so step 5 provisions
+#    the cluster itself when the context is missing; run this first to see (and
+#    approve) the cost before submitting, or pass `--no-deploy-if-absent` there.
 npa workbench health preflight
 npa provision-if-absent --project "$PROJECT"          # --dry-run first to preview
 
