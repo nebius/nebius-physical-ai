@@ -167,9 +167,16 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
     summary = next((item for item in page.runs if item.run_id == run_id), None)
     assert summary is not None, f"{run_id} not listed under {category_prefix}"
     assert summary.has_viewable is True
-    assert summary.started_at.startswith(
-        time.strftime("%Y-%m-%d", time.gmtime())
-    ), summary.started_at
+    # started_at must be the run-id-encoded SUBMIT time, not the newest artifact
+    # write -- that is the whole point of embedding a timestamp in the run id.
+    # Verified against a real run: id ...t051728z -> 2026-07-31T05:17:28+00:00 while
+    # last_modified was 05:44:39.
+    encoded = (
+        f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}T"
+        f"{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}+00:00"
+    )
+    assert summary.started_at == encoded, f"{summary.started_at} != {encoded}"
+    assert summary.started_at < summary.last_modified
 
     artifacts = list_artifacts(bucket, run_id, prefix=category_prefix, s3=s3)
     preferred = select_preferred_artifact(artifacts)
