@@ -87,7 +87,7 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 | Pure logic + argv builders | `npa/src/npa/workbench/nurec/nurec.py` |
 | NCore rig-pose derivation | `npa/src/npa/workbench/nurec/ncore_rig.py` |
 | CLI | `npa/src/npa/cli/nurec/__init__.py` |
-| SDK | `npa.workbench.nurec` (`check`, `fetch`, `reconstruct`, ...) |
+| SDK | `npa.sdk.workbench.nurec` (`check`, `fetch`, `reconstruct`, `render`, `visualize`, `finalize`, `status`); the framework-free API is re-exported from `npa.workbench.nurec` |
 | SkyPilot workflow | `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml` |
 | Declarative twin | `npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml` |
 | Rerun recording | `npa.workflows.data_factory_viz.build_run_rrd` |

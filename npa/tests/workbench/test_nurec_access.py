@@ -353,3 +353,53 @@ def test_live_e2e_test_exists_and_asserts_the_definition_of_done() -> None:
         assert suffix in text, suffix
     assert "recording_has_run_entities" in text
     assert "is_stock_demo_recording" in text
+
+
+# ---------------------------------------------------------------------------------
+# SDK surface (the third tier: CLI <-> SDK <-> YAML)
+# ---------------------------------------------------------------------------------
+def test_sdk_module_exposes_every_cli_verb() -> None:
+    """`npa.sdk.workbench.nurec` must cover the CLI one-for-one.
+
+    The repo's three-access contract is CLI + SDK + YAML; a verb that exists only
+    on the CLI is invisible to SDK consumers.
+    """
+    from npa.cli.main import app as main_app
+    from npa.sdk.workbench import nurec as sdk
+
+    node = typer.main.get_command(main_app)
+    cli_verbs = set(node.commands["workbench"].commands["nurec"].commands)
+
+    assert set(sdk.__all__) == cli_verbs, (
+        f"SDK/CLI drift: only-CLI={sorted(cli_verbs - set(sdk.__all__))}, "
+        f"only-SDK={sorted(set(sdk.__all__) - cli_verbs)}"
+    )
+    for verb in sorted(cli_verbs):
+        wrapper = getattr(sdk, verb)
+        assert wrapper.__npa_cli_module__ == "npa.cli.nurec", verb
+        assert wrapper.__npa_cli_callback__ == f"{verb}_cmd", verb
+
+
+def test_sdk_namespace_registers_the_tool() -> None:
+    import npa.sdk.workbench as workbench
+
+    assert "nurec" in workbench.__all__
+    assert hasattr(workbench, "nurec")
+
+
+def test_workbench_package_also_exposes_the_pure_api() -> None:
+    """The tool package re-exports the framework-free API for direct use."""
+    from npa.workbench import nurec
+
+    for name in (
+        "NurecConfig",
+        "check_nurec_access",
+        "fetch_nurec_dataset",
+        "reconstruct_scene",
+        "render_novel_views",
+        "build_nre_train_args",
+        "build_nre_render_args",
+        "has_rt_cores",
+    ):
+        assert name in nurec.__all__, name
+        assert hasattr(nurec, name), name
