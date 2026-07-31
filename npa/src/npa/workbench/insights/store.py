@@ -388,6 +388,12 @@ def _extract_run_manifest(
     run. Non-invasive and value-honest: emits nothing when no step declares an
     accelerator, so CPU-only runs are never labeled with a fabricated GPU count.
     """
+    # A run that was only *planned* never touched an accelerator, so reporting a GPU
+    # count for it would be a fabrication: `run-spec --persist-state` without
+    # `--execute` writes a manifest with the full resource profile and status
+    # "planned". Submitted/running/completed/failed runs did request the hardware.
+    if str(payload.get("status") or "").strip().lower() == "planned":
+        return []
     run_id = str(payload.get("run_id") or workflow_run or "unknown")
     resolved_workflow = workflow or str(payload.get("workflow") or "")
     steps = payload.get("steps") or []

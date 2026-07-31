@@ -291,6 +291,55 @@ def test_ingest_run_skips_cpu_only_run_manifest(tmp_path: Path) -> None:
         ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
 
 
+def test_ingest_run_skips_a_planned_only_run_manifest(tmp_path: Path) -> None:
+    """A planned run never touched a GPU, so it must not report a GPU count.
+
+    `run-spec --persist-state` without `--execute` writes a manifest that carries the
+    full resource profile with status "planned"; ingesting it would attribute
+    accelerators to a run that never ran.
+    """
+    run = tmp_path / "run"
+    (run / "npa-workflow").mkdir(parents=True)
+    (run / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "hardening-with-insights",
+                "run_id": "planned-only",
+                "status": "planned",
+                "steps": [
+                    {"state": "generate", "status": "planned", "resources_profile": {"accelerators": "RTXPRO6000:4"}}
+                ],
+            }
+        )
+    )
+    with pytest.raises(InsightsStoreError):
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+
+
+def test_ingest_run_accepts_a_submitted_run_manifest(tmp_path: Path) -> None:
+    """A submitted run did request the hardware, so its GPU count is real."""
+    run = tmp_path / "run"
+    (run / "npa-workflow").mkdir(parents=True)
+    (run / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "hardening-with-insights",
+                "run_id": "submitted-run",
+                "status": "submitted",
+                "steps": [
+                    {"state": "retrain", "status": "submitted", "resources_profile": {"accelerators": "RTXPRO6000:2"}}
+                ],
+            }
+        )
+    )
+    store = str(tmp_path / "store")
+    ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store))
+    gpus = [r for r in read_records(store) if r["metric_name"] == "gpus"]
+    assert [r["value"] for r in gpus] == [2.0]
+
+
 def test_query_filters_by_accelerator_label(tmp_path: Path) -> None:
     a = tmp_path / "a"
     b = tmp_path / "b"

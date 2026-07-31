@@ -592,6 +592,14 @@ def submit_cmd(
             result.log_paths["run_prefix_uri"] = workflow_state.uri
             result.log_paths["manifest_uri"] = f"{workflow_state.uri.rstrip('/')}/manifest.json"
             result.log_paths["stages"] = ",".join(instrumented_manifest.get("stages", {}).keys())
+        if prepared_npa is not None:
+            # Persist the npa.workflow run manifest for the submitted run. Only the
+            # local `run-spec --persist-state` path used to write it, so a run that
+            # actually reached the cluster left no `npa.workflow.run.v1` record and
+            # was invisible to every manifest consumer (e.g. the insights GPU metric).
+            run_prefix_uri = _persist_npa_run_manifest(prepared_npa, run_id=resolved_run_id)
+            if run_prefix_uri:
+                result.log_paths.setdefault("npa_workflow_run_prefix_uri", run_prefix_uri)
     except OSError as exc:
         _fail(f"SkyPilot workflow submission failed: {exc}")
         return
@@ -613,6 +621,30 @@ def submit_cmd(
         typer.echo(f"job_id: {result.job_id}")
     if workflow_state is not None:
         typer.echo(f"run_prefix_uri: {workflow_state.uri}")
+
+
+def _persist_npa_run_manifest(prepared, *, run_id: str) -> str:
+    """Write the `npa.workflow.run.v1` manifest for a submitted run (best effort).
+
+    A failed manifest write must never turn an accepted submit into a reported
+    failure, but it must be visible, so the failure is warned about rather than
+    swallowed. Returns the run prefix URI (``""`` when the spec sets no config.bucket).
+    """
+    from npa.orchestration.npa_workflow.run_state import persist_submitted_manifest
+    from npa.orchestration.npa_workflow.runtime import _resolved_config
+
+    try:
+        config = _resolved_config(prepared.spec, run_id)
+        return persist_submitted_manifest(
+            config,
+            run_id=run_id,
+            workflow=prepared.spec.name,
+            api_version=prepared.spec.api_version,
+            steps=prepared.plan.steps,
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail an accepted submit
+        typer.echo(f"warning: could not persist the npa.workflow run manifest: {exc}", err=True)
+        return ""
 
 
 def _run_npa_workflow_runtime(
