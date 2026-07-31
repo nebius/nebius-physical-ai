@@ -25,9 +25,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 from npa.workbench.cosmos_curate.upstream import (
     UPSTREAM_LICENSE,
@@ -291,22 +293,23 @@ def fetch_models(
     fetched: list[str] = []
     already: list[str] = []
     failed: dict[str, str] = {}
-    for spec in specs:
-        if not force and before[spec.key].present:
-            already.append(spec.key)
-            continue
-        try:
-            download_model_weights_from_huggingface_to_workspace(
-                spec.model_id,
-                spec.revision or None,
-                list(spec.files) or None,
-            )
-        except Exception as exc:  # noqa: BLE001 - keep fetching the rest
-            message = f"{type(exc).__name__}: {exc}"[:300]
-            _log.warning("could not fetch %s (%s): %s", spec.key, spec.model_id, message)
-            failed[spec.key] = message
-            continue
-        fetched.append(spec.key)
+    with _upstream_hf_config(token):
+        for spec in specs:
+            if not force and before[spec.key].present:
+                already.append(spec.key)
+                continue
+            try:
+                download_model_weights_from_huggingface_to_workspace(
+                    spec.model_id,
+                    spec.revision or None,
+                    list(spec.files) or None,
+                )
+            except Exception as exc:  # noqa: BLE001 - keep fetching the rest
+                message = f"{type(exc).__name__}: {exc}"[:300]
+                _log.warning("could not fetch %s (%s): %s", spec.key, spec.model_id, message)
+                failed[spec.key] = message
+                continue
+            fetched.append(spec.key)
 
     return FetchResult(
         status="completed" if not failed else "partial",
@@ -317,6 +320,37 @@ def fetch_models(
         failed=failed,
         models=model_status(specs, environ=env),
     )
+
+
+@contextmanager
+def _upstream_hf_config(token: str) -> Iterator[None]:
+    """Give upstream's downloader the config file it reads its HF token from.
+
+    Upstream does not read ``HF_TOKEN``: it loads ``huggingface.api_key`` from a
+    config file at its in-container path, which its own launcher mounts from
+    ``~/.config/cosmos_curator/config.yaml``. Rather than ask operators to maintain
+    a second credential file, this writes a minimal one into a private temporary
+    directory for the duration of the call and points upstream's config loader at
+    it, so the token stays out of any persistent location and out of the image.
+    """
+
+    try:
+        from cosmos_curator.core.utils.config import config as upstream_config  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise CosmosCurateError(f"upstream config module is not importable: {exc}") from exc
+
+    attribute = "CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE"
+    previous = getattr(upstream_config, attribute, None)
+    with tempfile.TemporaryDirectory(prefix="npa-cosmos-curate-cfg-") as tmp:
+        path = Path(tmp) / "cosmos_curator.yaml"
+        path.write_text(f'huggingface:\n  api_key: "{token}"\n', encoding="utf-8")
+        path.chmod(0o600)
+        setattr(upstream_config, attribute, path)
+        try:
+            yield
+        finally:
+            if previous is not None:
+                setattr(upstream_config, attribute, previous)
 
 
 def _point_upstream_cache_at(root: Path) -> None:

@@ -174,6 +174,47 @@ def test_fetch_models_requires_a_hugging_face_token(checkout: Path, tmp_path: Pa
         mod.fetch_models(["split-transnetv2"], environ=environ)
 
 
+def test_fetch_models_gives_upstream_the_config_it_reads_its_token_from(
+    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upstream loads huggingface.api_key from a config file, not from the env."""
+
+    import yaml as yaml_mod
+
+    weights = tmp_path / "weights"
+    seen: dict[str, Any] = {}
+
+    def fake_download(model_id: str, revision: str | None, files: list[str] | None) -> None:
+        import sys
+
+        config_mod = sys.modules["cosmos_curator.core.utils.config.config"]
+        path = Path(config_mod.CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE)
+        seen["path"] = path
+        seen["config"] = yaml_mod.safe_load(path.read_text(encoding="utf-8"))
+        seen["mode"] = path.stat().st_mode & 0o777
+        local = weights / model_id
+        local.mkdir(parents=True, exist_ok=True)
+        (local / (files or ["weights.bin"])[0]).write_bytes(b"weights")
+
+    _install_fake_upstream(monkeypatch, weights, fake_download)
+    monkeypatch.setenv("HF_TOKEN", "hf-secret-token")
+    monkeypatch.setenv(mod.WEIGHTS_DIR_ENV, str(weights))
+
+    result = mod.fetch_models(["split-transnetv2"])
+    assert result.fetched == ["transnetv2"]
+    assert seen["config"] == {"huggingface": {"api_key": "hf-secret-token"}}
+    # Written into a private temporary file, not a persistent credential location.
+    assert seen["mode"] == 0o600
+    assert not seen["path"].exists(), "the temporary token file must not outlive the fetch"
+
+    import sys
+
+    restored = sys.modules["cosmos_curator.core.utils.config.config"]
+    assert str(restored.CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE) == (
+        "/cosmos_curator/config/cosmos_curator.yaml"
+    )
+
+
 def test_fetch_models_calls_upstreams_downloader_with_upstreams_pins(
     checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -308,8 +349,22 @@ def _install_fake_upstream(
     model_utils.download_model_weights_from_huggingface_to_workspace = download  # type: ignore[attr-defined]
     environment = types.ModuleType("cosmos_curator.core.utils.environment")
     environment.CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR = Path("/config/models")  # type: ignore[attr-defined]
+    # Upstream reads its HF token from this config path, not from the environment.
+    config_pkg = types.ModuleType("cosmos_curator.core.utils.config")
+    config_pkg.__path__ = []  # type: ignore[attr-defined]
+    config_mod = types.ModuleType("cosmos_curator.core.utils.config.config")
+    config_mod.CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE = Path(  # type: ignore[attr-defined]
+        "/cosmos_curator/config/cosmos_curator.yaml"
+    )
+    config_pkg.config = config_mod  # type: ignore[attr-defined]
 
-    monkeypatch.setitem(sys.modules, "cosmos_curator.core.utils.model.model_utils", model_utils)
-    monkeypatch.setitem(sys.modules, "cosmos_curator.core.utils.environment", environment)
+    for name, module in (
+        ("cosmos_curator.core.utils.model.model_utils", model_utils),
+        ("cosmos_curator.core.utils.environment", environment),
+        ("cosmos_curator.core.utils.config", config_pkg),
+        ("cosmos_curator.core.utils.config.config", config_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
     setattr(packages["cosmos_curator.core.utils"], "environment", environment)
+    setattr(packages["cosmos_curator.core.utils"], "config", config_pkg)
     setattr(packages["cosmos_curator.core.utils.model"], "model_utils", model_utils)

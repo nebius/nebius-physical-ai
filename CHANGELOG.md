@@ -26,12 +26,27 @@ a versioned heading when a release is cut.
   canonical `clips/` + `metas/v0/` + `processed_videos/` tree with real per-clip
   motion scores. `plan-pipeline` prints upstream's documented `video-pipeline
   split` command for operators running the full curator container.
-- New `npa-cosmos-curate` image bakes a pinned upstream checkout, the dependency
-  subset its GPU-free stages import, and a conda-forge ffmpeg carrying
-  `libopenh264` (upstream's transcoding stage accepts only `libopenh264` or
-  `h264_nvenc`). Its golden eval is a real curation run. Where the curator cannot
-  run, the stage records `engine: unavailable` plus the reason rather than emitting
-  a report that implies curation happened.
+- Both tools are containerized as mode-based workbench images, and **neither bakes
+  model weights**: upstream's source is Apache-2.0 and redistributable, its weights
+  are not. Each Dockerfile ends with a check that fails if a weight file is present,
+  both upstream checkouts are fetched with `GIT_LFS_SKIP_SMUDGE=1`, and a guardrail
+  test fails if a Dockerfile grows a build-time model download.
+  - `npa-cosmos-evaluator` (456 MB, CPU) needs no weights at all — its golden eval,
+    a real hallucination run against upstream's own processor, passes with
+    `--network none`. Upstream's objects check would need EULA-gated Git-LFS
+    weights, so it stays unwired.
+  - `npa-cosmos-curate` (CPU) bakes a pinned upstream checkout, the dependency
+    subset its GPU-free stages import, and a conda-forge ffmpeg carrying
+    `libopenh264` (upstream's transcoding stage accepts only `libopenh264` or
+    `h264_nvenc`). Its GPU stages' weights are downloaded at run time into a
+    `/config/models` volume by the new `fetch-models` mode using the operator's
+    `HF_TOKEN`; the model ids and pinned revisions come from upstream's own
+    registry, so a pin moves only when the checkout does. Where the curator cannot
+    run, the stage records `engine: unavailable` plus the reason rather than
+    emitting a report that implies curation happened.
+- New `npa workbench cosmos-curate fetch-models` / `models`: download the curator's
+  weights with your own Hugging Face token, and report each capability's model set,
+  what is already on disk, and which of `HF_TOKEN` / `NGC_API_KEY` is visible.
 - `grade_gate` reads `cosmos_evaluator.json` and still accepts the older `vlm_eval`
   report, so runs in flight keep grading. The FiftyOne review report gains a
   `cosmos_curator` block with the curator's run-level summary.
