@@ -1913,7 +1913,12 @@ def plan_spec_cmd(
         _fail(str(exc))
         return
     if json_output:
-        typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
+        payload = plan.to_dict()
+        # The human warning is suppressed under --json to keep the document clean,
+        # which made a placeholder plan look valid. Say it in the document instead.
+        if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
+            payload["bucket_is_placeholder"] = True
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     typer.echo(f"workflow: {plan.workflow}")
     if plan.assume_decision:
@@ -1993,6 +1998,8 @@ def run_spec_cmd(
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=resolved_assume)
         report["scheduler"] = build_scheduler_plan(spec, plan.steps, run_id=resolved_run_id)
     if json_output:
+        if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
+            report["bucket_is_placeholder"] = True
         typer.echo(json.dumps(report, indent=2, sort_keys=True))
     else:
         typer.echo(f"status: {report['status']}")

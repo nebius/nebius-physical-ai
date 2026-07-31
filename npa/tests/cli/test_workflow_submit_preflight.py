@@ -203,7 +203,32 @@ def test_plan_spec_json_output_stays_machine_readable() -> None:
 
     assert result.exit_code == 0, result.output
     assert "config.bucket is" not in result.output
-    json.loads(result.output)  # parses even with stderr mixed in
+    payload = json.loads(result.output)  # parses even with stderr mixed in
+    # The prose warning is suppressed here, so the document has to carry the fact:
+    # a plan against `example-bucket` looks valid but points at nothing.
+    assert payload["bucket_is_placeholder"] is True
+
+
+def test_plan_spec_json_omits_the_placeholder_flag_with_a_real_bucket() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(SPEC),
+            "--run-id",
+            "plan-demo",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--var",
+            "bucket=real-bucket",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "bucket_is_placeholder" not in json.loads(result.output)
 
 
 def test_run_spec_accepts_var_overrides() -> None:
