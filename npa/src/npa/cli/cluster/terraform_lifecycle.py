@@ -70,6 +70,11 @@ def up_cmd(
             "reservation selection. Equivalent to TF_VAR_capacity_block_group."
         ),
     ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="NPA project alias whose saved project/tenant/region to use when tfvars omit them.",
+    ),
     validation_timeout: int = typer.Option(
         60,
         "--validation-timeout",
@@ -89,6 +94,7 @@ def up_cmd(
     typer.echo(f"Terraform directory: {tf_dir}")
     _preflight_terraform_version(terraform_bin)
     tfvars = _read_tfvars(tf_dir)
+    _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
@@ -153,6 +159,11 @@ def down_cmd(
         "--terraform-dir",
         help="Terraform cluster directory. Defaults to ./deploy/cluster or the repo root deploy/cluster.",
     ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="NPA project alias whose saved project/tenant/region to use when tfvars omit them.",
+    ),
     force: bool = typer.Option(False, "--force", help="Skip confirmation."),
     timeout: int = typer.Option(120, "--timeout", help="Terraform destroy timeout in minutes."),
 ) -> None:
@@ -166,6 +177,7 @@ def down_cmd(
         raise typer.Exit(1)
     _preflight_terraform_version(terraform_bin)
     tfvars = _read_tfvars(tf_dir)
+    _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     _run_stream(
@@ -174,8 +186,9 @@ def down_cmd(
             "destroy",
             "-auto-approve",
             # Variable validation runs on destroy too, so the key has to resolve
-            # here as well.
-            *_ssh_public_key_var_args(tfvars, env),
+            # here as well — but a teardown must not be blocked by a machine that
+            # has no SSH key, since the value cannot affect what is destroyed.
+            *_ssh_public_key_var_args(tfvars, env, allow_placeholder=True),
         ],
         cwd=tf_dir,
         env=env,
@@ -322,6 +335,43 @@ def _require_bin(binary: str) -> str:
     raise typer.BadParameter(f"Required executable not found: {binary}")
 
 
+def _apply_project_tf_vars(env: dict[str, str], project: str, tfvars: dict[str, Any]) -> None:
+    """Fill TF_VAR_parent_id/tenant_id/region from ``~/.npa/config.yaml``.
+
+    `npa provision-if-absent` exports these before calling `up`, so a cluster
+    provisioned that way has no `terraform.tfvars` — and a later bare
+    `npa cluster down --force` then failed with "No value for required variable",
+    leaving the VPC/subnet orphaned until the operator exported them by hand.
+    Values already in tfvars or the environment win.
+    """
+    missing = [
+        key
+        for key, var in (("parent_id", "TF_VAR_parent_id"), ("tenant_id", "TF_VAR_tenant_id"), ("region", "TF_VAR_region"))
+        if key not in tfvars and not str(env.get(var, "") or "").strip()
+    ]
+    if not missing:
+        return
+    try:
+        from npa.clients.config import resolve_environment
+
+        saved = resolve_environment(project or None)
+    except Exception:  # noqa: BLE001 - no saved config is a normal first run
+        saved = None
+    if saved is None:
+        return
+    resolved: list[str] = []
+    for key, var, value in (
+        ("parent_id", "TF_VAR_parent_id", str(getattr(saved, "project_id", "") or "")),
+        ("tenant_id", "TF_VAR_tenant_id", str(getattr(saved, "tenant_id", "") or "")),
+        ("region", "TF_VAR_region", str(getattr(saved, "region", "") or "")),
+    ):
+        if key in missing and value:
+            env[var] = value
+            resolved.append(f"{key}={value}")
+    if resolved:
+        typer.echo(f"Using saved project settings from ~/.npa/config.yaml: {', '.join(resolved)}")
+
+
 def _terraform_env(nebius_bin: str) -> dict[str, str]:
     env = os.environ.copy()
     # A stale ambient IAM token (e.g. a cloud-env token) silently shadows the
@@ -416,7 +466,9 @@ def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
 _SSH_PUBLIC_KEY_NAMES = ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub")
 
 
-def _ssh_public_key_var_args(tfvars: dict[str, Any], env: dict[str, str]) -> list[str]:
+def _ssh_public_key_var_args(
+    tfvars: dict[str, Any], env: dict[str, str], *, allow_placeholder: bool = False
+) -> list[str]:
     """Pin an SSH public key that exists on this machine.
 
     The vendored module validates ``fileexists(ssh_public_key.path)`` against a
@@ -424,6 +476,10 @@ def _ssh_public_key_var_args(tfvars: dict[str, Any], env: dict[str, str]) -> lis
     (``npa provision-if-absent``, which passes no key) fails at plan time on any
     machine that only has an ed25519 key. Resolve one here instead; an explicit
     ``ssh_public_key`` in tfvars or ``TF_VAR_ssh_public_key`` always wins.
+
+    ``allow_placeholder`` is for destroy: variable validation still runs, but the
+    value is irrelevant to tearing resources down, and a teardown must not be
+    blocked by a missing key on the machine doing the cleanup.
     """
     if "ssh_public_key" in tfvars or str(env.get("TF_VAR_ssh_public_key", "") or "").strip():
         return []
@@ -436,6 +492,8 @@ def _ssh_public_key_var_args(tfvars: dict[str, Any], env: dict[str, str]) -> lis
     for candidate in candidates:
         if candidate.is_file():
             return ["-var", f'ssh_public_key={{path="{candidate}"}}']
+    if allow_placeholder:
+        return ["-var", 'ssh_public_key={key="ssh-ed25519 AAAA npa-teardown-placeholder"}']
     searched = ", ".join(str(path) for path in candidates)
     raise typer.BadParameter(
         f"No SSH public key found for the cluster node groups (looked at {searched}). "

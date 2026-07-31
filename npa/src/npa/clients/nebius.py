@@ -890,12 +890,21 @@ def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | No
     return None
 
 
-def delete_bucket(bucket_id: str) -> None:
-    """Delete an object-storage bucket by resource id."""
+def delete_bucket(bucket_id: str, *, ttl: str = "") -> None:
+    """Delete an object-storage bucket by resource id.
+
+    A bucket that still holds objects (or non-current object *versions*, which
+    ``aws s3 rb --force`` leaves behind) cannot be deleted immediately: the API
+    answers ``BucketNotEmpty``. Passing *ttl* schedules the purge instead
+    (``--ttl 1m``), which is how the platform empties and removes it.
+    """
 
     if not bucket_id:
         return
-    _run(["storage", "bucket", "delete", "--id", bucket_id])
+    args = ["storage", "bucket", "delete", "--id", bucket_id]
+    if str(ttl or "").strip():
+        args.extend(["--ttl", str(ttl).strip()])
+    _run(args)
 
 
 def bucket_exists(project_id: str, bucket_name: str) -> bool:
@@ -1118,6 +1127,52 @@ def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
         raise
     sa_id = data.get("metadata", {}).get("id", "")
     return str(sa_id).strip() or None
+
+
+def list_access_keys_for_service_account(project_id: str, sa_id: str) -> list[dict[str, str]]:
+    """Return ``[{"id", "name", "state"}]`` for every access key owned by *sa_id*.
+
+    Teardown needs the full list (not just the active one `ensure_access_key`
+    reuses): an agent VM's long-lived key outlives its VM otherwise.
+    """
+    if not project_id or not sa_id:
+        return []
+    try:
+        data = _run_json(["iam", "v2", "access-key", "list", "--parent-id", project_id])
+    except NebiusError:
+        return []
+    keys: list[dict[str, str]] = []
+    for item in data.get("items", []):
+        account = (item.get("spec", {}) or {}).get("account", {}) or {}
+        item_sa_id = (
+            (account.get("service_account", {}) or {}).get("id", "")
+            or account.get("service_account_id", "")
+        )
+        if item_sa_id != sa_id:
+            continue
+        metadata = item.get("metadata", {}) or {}
+        keys.append(
+            {
+                "id": str(metadata.get("id", "") or ""),
+                "name": str(metadata.get("name", "") or ""),
+                "state": str((item.get("status", {}) or {}).get("state", "") or ""),
+            }
+        )
+    return [key for key in keys if key["id"]]
+
+
+def delete_access_key(access_key_id: str) -> None:
+    """Delete an IAM access key by id."""
+    if not access_key_id:
+        return
+    _run(["iam", "v2", "access-key", "delete", "--id", access_key_id])
+
+
+def delete_service_account(sa_id: str) -> None:
+    """Delete a service account by id."""
+    if not sa_id:
+        return
+    _run(["iam", "service-account", "delete", "--id", sa_id])
 
 
 def bootstrap_agent_environment(

@@ -524,7 +524,41 @@ POST /api/sim-viz/load-run        # {"run_id": "<run-id>"}
 
 ---
 
-## 8. Where to go next
+## 8. Tear everything down
+
+Cleanup has three owners — the agent VM, the cluster, and the storage/IAM that
+`npa configure` provisioned — and each needs its own command. In order:
+
+```bash
+# 1. Agent VM, its network, local record, and the IAM it created for the VM.
+npa agent destroy --project "$PROJECT" --name <agent-name> --yes --purge-iam
+
+# 2. Cluster. `down` owns the Terraform state (cluster + VPC + subnet); it reads
+#    project/tenant/region from ~/.npa/config.yaml when tfvars omit them.
+npa cluster down --terraform-dir deploy/cluster --project "$PROJECT" --force
+
+# 3. Object storage. A versioned bucket cannot be deleted immediately, so this
+#    schedules the purge and drops the now-dead S3 keys from ~/.npa.
+npa storage bucket delete --project "$PROJECT" --yes
+```
+
+Notes:
+
+- `npa cluster destroy --name <cluster>` deletes only the Managed Kubernetes
+  cluster through the API; the Terraform-managed `<cluster>-network` and subnet
+  survive it. The command now says so and points at `npa cluster down`, which is
+  the one that removes everything it created.
+- `--purge-iam` removes the project's `npa-agent` service account and its access
+  keys, but only once no agent is left in the project (other agents share it).
+  Without the flag, destroy prints what it left and the exact `nebius iam …`
+  commands.
+- The `lerobot-training` service account and access key that `npa configure`
+  provisions for workflow storage are **not** removed by any of the above; delete
+  them with `nebius iam v2 access-key delete --id <id>` and
+  `nebius iam service-account delete --id <id>` when you are done with the
+  project.
+
+## 9. Where to go next
 
 - Conceptual blueprint, stage-by-stage mapping, and S3 layout:
   [physical-ai-data-factory.md](physical-ai-data-factory.md).
