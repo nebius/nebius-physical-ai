@@ -10,6 +10,7 @@ Object-storage buckets.
 Options
 --help  Show this message and exit.
 Commands
+list  List the object-storage buckets in a project, marking the configured one.
 delete  Delete an object-storage bucket npa provisioned, contents and versions included.
 ```
 
@@ -23,13 +24,14 @@ delete  Delete an object-storage bucket npa provisioned, contents and versions i
 
 | Command | Description |
 | --- | --- |
+| `list` | List the object-storage buckets in a project, marking the configured one. |
 | `delete` | Delete an object-storage bucket npa provisioned, contents and versions included. |
 
 ## Examples
 
 ```bash
 npa storage bucket --help
-npa storage bucket delete --help
+npa storage bucket list --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `bucket`.
