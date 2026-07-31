@@ -106,9 +106,16 @@ must not leak GPU spend, it is implemented as **one self-cleaning managed-job
 submit per day**, not the whole `gpu and e2e` suite:
 
 - `daily_workflow_e2e.py gpu-case` picks today's GPU workflow twin from
-  `submit_matrix.gpu_submit_cases()` (12 real-GPU-launching twins; `plan_only`
-  stubs are excluded), rotating by day-of-year so every twin is exercised over
-  the window.
+  `submit_matrix.gpu_submit_cases()`, rotating by day-of-year so every twin is
+  exercised over the window. `plan_only` stubs and `rotation_skip` twins (each
+  with a documented `skip_reason`) are excluded so the rotation only picks a
+  case that can actually pass standalone. All 12 GPU-launching twins were run
+  live on RTXPRO-6000: the rotation currently cycles the **verified-passing**
+  set — `mjlab-eval`, `cosmos3-reason`, `tokenfactory-rollout-judge` — while the
+  rest are `rotation_skip` with reasons (self-hosted vLLM not served,
+  consume-only inputs like an exported ONNX/checkpoint, SONIC's lack of an
+  in-job train runtime, unstaged datasets/scenes). See each `skip_reason` in
+  `submit_matrix.py` and the follow-ups below.
 - The runner submits just that twin via the sanctioned
   `test_npa_workflow_submit_live_reaches_terminal` path with a bounded wait and
   `NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1`, so a stuck job is cancelled

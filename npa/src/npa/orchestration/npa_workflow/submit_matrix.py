@@ -93,11 +93,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-train.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "Confirmed live: fails 'SONIC --runtime serverless requires "
+            "--project-id'. The twin renders `sonic train --runtime serverless` "
+            "INSIDE an already-GPU SkyPilot job; SONIC's runtimes (vm/container/"
+            "serverless) all delegate to more infra rather than training in-job, "
+            "and serverless needs a project id/creds. Re-include once SONIC train "
+            "supports an in-job runtime for the npa.workflow render."
+        ),
     ),
     SubmitLiveCase(
         "sonic-export.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        rotation_skip=True,
+        skip_reason=(
+            "Consume-only + env gap. Confirmed live: 'SONIC ONNX export requires "
+            "torch' (job env lacks torch) and it needs a checkpoint.pt from a "
+            "prior sonic-train. Re-include once export runs on the torch-bearing "
+            "SONIC image against a staged checkpoint."
+        ),
     ),
     SubmitLiveCase(
         "sonic-eval.yaml",
@@ -130,17 +146,35 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-export-eval.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        rotation_skip=True,
+        skip_reason=(
+            "Consume-only: the export stage needs a checkpoint.pt from a prior "
+            "sonic-train (per-run path is empty on a standalone submit), so it "
+            "fails before eval. Re-include once a checkpoint is staged."
+        ),
     ),
     SubmitLiveCase(
         "sonic-locomotion-finetuning.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "retarget → train → mjlab: hits the same SONIC train in-job runtime "
+            "gap as sonic-train, and needs a staged motion source. Re-include "
+            "once SONIC train has an in-job runtime and inputs are staged."
+        ),
         notes="retarget → train → mjlab",
     ),
     SubmitLiveCase(
         "bdd100k-pipeline.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "11-stage AV pipeline needs the raw-bdd100k demo dataset staged in "
+            "the run bucket and is the longest wall-clock twin; not a bounded "
+            "daily-rotation fit. Run manually with a staged dataset."
+        ),
         notes="11-stage AV pipeline; longest wall-clock.",
     ),
     SubmitLiveCase(
@@ -152,6 +186,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "AWS_SECRET_ACCESS_KEY",
         ),
         requires_token_factory=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Confirmed live: FAILED — dynamic Cosmos gate loop needs a staged "
+            "scene input and --assume-decision; not runnable as a bounded "
+            "standalone rotation submit. Run manually with a staged scene."
+        ),
         notes="Dynamic gate; needs --assume-decision.",
     ),
     # --- Plan-only / stub twins (do not burn GPUs on stubs) ---

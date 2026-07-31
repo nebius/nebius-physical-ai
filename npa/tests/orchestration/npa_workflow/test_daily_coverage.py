@@ -73,10 +73,24 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     # vLLM server the render doesn't wire).
     assert all(not c.plan_only for c in cases)
     assert all(not c.rotation_skip for c in cases)
-    skipped = {c.spec for c in cases}
-    assert "sonic-eval.yaml" not in skipped
-    assert "vlm-eval-single.yaml" not in skipped
     assert all(c.tier in {"gpu", "multi"} for c in cases)
+    rotation = {c.spec for c in cases}
+    # Verified-passing on real GPU (RTXPRO-6000) stay in the rotation.
+    for good in ("mjlab-eval.yaml", "cosmos3-reason.yaml", "tokenfactory-rollout-judge.yaml"):
+        assert good in rotation, f"{good} should be in the rotation"
+    # Twins that can't pass as a standalone submit today are excluded.
+    for bad in (
+        "sonic-eval.yaml",
+        "sonic-export.yaml",
+        "sonic-export-eval.yaml",
+        "sonic-train.yaml",
+        "sonic-locomotion-finetuning.yaml",
+        "vlm-eval-single.yaml",
+        "vlm-eval-benchmark.yaml",
+        "bdd100k-pipeline.yaml",
+        "tokenfactory-cosmos-gate.yaml",
+    ):
+        assert bad not in rotation, f"{bad} should be excluded from the rotation"
     # Every rotation_skip twin must document why (so the gap stays visible).
     from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 
