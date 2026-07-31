@@ -140,7 +140,7 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
     for name, entry in raw_states.items():
         if not isinstance(entry, dict):
             raise NpaWorkflowError(f"state {name!r} must be a mapping")
-        states[str(name)] = _parse_state(str(name), entry)
+        states[str(name)] = _parse_state(str(name), entry, config)
 
     initial = str(data.get("initial") or next(iter(states)))
     return NpaWorkflowSpec(
@@ -155,7 +155,9 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
     )
 
 
-def _parse_state(name: str, entry: dict[str, Any]) -> StateSpec:
+def _parse_state(
+    name: str, entry: dict[str, Any], config: dict[str, Any] | None = None
+) -> StateSpec:
     loop = None
     loop_raw = entry.get("loop")
     if loop_raw is not None:
@@ -195,11 +197,15 @@ def _parse_state(name: str, entry: dict[str, Any]) -> StateSpec:
             raise NpaWorkflowError(f"state {name}: trigger must be a mapping")
         trigger = TriggerSpec(
             uri=str(trigger_raw.get("uri") or ""),
-            poll_seconds=_positive_int(name, "trigger.pollSeconds", trigger_raw, 30),
-            max_polls=_positive_int(
-                name, "trigger.maxPolls", trigger_raw, 0, allow_zero=True
+            poll_seconds=_positive_int(
+                name, "trigger.pollSeconds", trigger_raw, 30, config=config
             ),
-            min_objects=_positive_int(name, "trigger.minObjects", trigger_raw, 1),
+            max_polls=_positive_int(
+                name, "trigger.maxPolls", trigger_raw, 0, allow_zero=True, config=config
+            ),
+            min_objects=_positive_int(
+                name, "trigger.minObjects", trigger_raw, 1, config=config
+            ),
         )
 
     params_raw = entry.get("params") or {}
@@ -272,6 +278,7 @@ def _positive_int(
     default: int,
     *,
     allow_zero: bool = False,
+    config: dict[str, Any] | None = None,
 ) -> int:
     """Parse an optional positive integer from a nested mapping key."""
 
@@ -280,6 +287,10 @@ def _positive_int(
     raw = entry.get(key, entry.get(snake))
     if raw is None or raw == "":
         return default
+    if isinstance(raw, str) and "{{" in raw:
+        # Config-driven knob (e.g. pollSeconds: "{{config.inbox_poll_seconds}}"); the
+        # value is resolved against config, like loop.max.
+        return resolve_config_int(raw, config or {})
     try:
         value = int(raw)
     except (TypeError, ValueError) as exc:

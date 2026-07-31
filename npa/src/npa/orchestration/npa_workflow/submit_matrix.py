@@ -95,6 +95,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "token-factory-trigger-watch.yaml",
+        "cpu",
+        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        requires_token_factory=True,
+        runtime=True,
+        notes=(
+            "Trigger/watch reference: the driver polls the inbox prefix and only "
+            "submits the stage once data lands. The live harness seeds the inbox "
+            "AFTER the run starts, so the wait is real."
+        ),
+    ),
+    SubmitLiveCase(
         "retargeting.yaml",
         "cpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

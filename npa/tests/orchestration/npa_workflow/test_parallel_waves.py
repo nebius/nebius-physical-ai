@@ -601,3 +601,19 @@ def test_setup_survives_pep668_managed_interpreters() -> None:
     assert "python3 -m pip install -q -e /tmp/npa-src\n" not in setup
     assert "npa_pip_install -e /tmp/npa-src" in setup
     assert "npa_pip_install -e /opt/nebius-physical-ai/npa" in setup
+
+
+def test_shipped_trigger_spec_reads_its_knobs_from_config() -> None:
+    """The trigger/watch reference must be config-driven, not hardcoded."""
+
+    spec = load_spec(SHIPPED / "token-factory-trigger-watch.yaml")
+    trigger = spec.states["caption-inbox"].trigger
+    assert trigger is not None
+    assert trigger.poll_seconds == int(spec.config["inbox_poll_seconds"])
+    assert trigger.max_polls == int(spec.config["inbox_max_polls"])
+    assert trigger.min_objects == int(spec.config["inbox_min_objects"])
+    # A trigger gates real work on the same state.
+    assert spec.states["caption-inbox"].tool_ref == "workbench.token_factory.caption"
+    # Plans and renders like an ordinary serial stage (trigger is runtime-only).
+    plan = build_plan(spec, run_id="trig-1")
+    assert [step.state for step in plan.steps] == ["caption-inbox"]
