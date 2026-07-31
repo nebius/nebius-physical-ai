@@ -67,7 +67,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Deploy a fleet of Nebius Managed Kubernetes (k8s-training) clusters "
             "across one or many projects in a tenant from an npa.fleet/v0.0.1 spec "
-            "(identical and/or custom clusters; creates projects on demand)."
+            "(identical and/or custom clusters; creates projects on demand). Set "
+            "the spec's 'profile' to target a tenant other than the active "
+            "~/.nebius profile."
         ),
         argv_template=[
             "npa",
@@ -75,6 +77,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "deploy",
             "--spec",
             "{{config.fleet_spec}}",
+            # Workflow states are non-interactive: without --yes the deploy
+            # confirmation prompt would block the run forever.
+            "--yes",
             "--output",
             "json",
         ],
