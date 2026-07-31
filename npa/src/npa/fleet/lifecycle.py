@@ -34,6 +34,7 @@ from npa.cli.cluster.terraform_lifecycle import (
     _run_stream,
     _terraform_env,
 )
+from npa.fleet.quotas import preflight_region, shortfall_message
 from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec
 from npa.fleet.tfvars import patch_provider_domain, provider_domain, render_tfvars
 
@@ -745,6 +746,7 @@ def deploy_fleet(
     continue_on_error: bool = True,
     concurrency: int = 1,
     profile: str | None = None,
+    preflight: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Deploy every ``(project, cluster)`` target in *spec*. Returns fleet metadata.
@@ -765,6 +767,11 @@ def deploy_fleet(
     the minted terraform IAM token then use that ``~/.nebius`` profile, which is
     how one workstation deploys into several tenants (a service account is
     single-tenant) without switching the machine-wide active profile.
+
+    ``preflight`` (default on) compares the tenant's quota allowances against
+    what the in-scope clusters need and raises before any apply. mk8s accepts a
+    node group it cannot fill, so without this a quota wall shows up as terraform
+    blocking on ``Still creating...`` until the timeout.
     """
 
     spec.validate()
@@ -835,6 +842,16 @@ def deploy_fleet(
                 }
             )
 
+    if preflight and targets:
+        _preflight_quotas(
+            nebius_bin,
+            tenant_id=tenant_id,
+            targets=targets,
+            env=cli_env,
+            profile=nebius_profile,
+            on_status=on_status,
+        )
+
     parallel = concurrency > 1 and len(targets) > 1
     if parallel:
         _prewarm_plugin_cache(
@@ -898,6 +915,38 @@ def deploy_fleet(
     if not continue_on_error and result["failed"]:
         raise RuntimeError(f"{result['failed']} cluster(s) failed")
     return result
+
+
+def _preflight_quotas(
+    nebius_bin: str,
+    *,
+    tenant_id: str,
+    targets: list[dict[str, Any]],
+    env: dict[str, str],
+    profile: str,
+    on_status: Callable[[str], None] | None,
+) -> None:
+    """Raise when the tenant's quota cannot cover the in-scope clusters."""
+
+    by_region: dict[str, list[ClusterSpec]] = {}
+    for target in targets:
+        by_region.setdefault(str(target["region"]), []).append(target["cluster"])
+    shortfalls = []
+    for region, clusters in sorted(by_region.items()):
+        _log(on_status, f"quota preflight: {len(clusters)} cluster(s) in {region}")
+        shortfalls += preflight_region(
+            nebius_bin=nebius_bin,
+            tenant_id=tenant_id,
+            region=region,
+            clusters=clusters,
+            env=env,
+            profile=profile,
+            run_capture=_run_capture,
+            nebius_argv=_nebius_argv,
+            on_status=on_status,
+        )
+    if shortfalls:
+        raise ValueError(shortfall_message(shortfalls, tenant_id))
 
 
 def _deploy_one_cluster(

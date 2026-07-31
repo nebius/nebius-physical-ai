@@ -151,6 +151,13 @@ def deploy_cmd(
         help="Continue deploying remaining clusters if one fails.",
     ),
     profile: str = typer.Option("", "--profile", help=_PROFILE_HELP),
+    preflight: bool = typer.Option(
+        True,
+        "--preflight/--no-preflight",
+        help="Check the tenant's quota allowances against the fleet's needs before "
+        "applying. Without it a quota wall surfaces as terraform blocking on "
+        "'Still creating...' until the timeout.",
+    ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt (non-interactive create)."
     ),
@@ -177,20 +184,27 @@ def deploy_cmd(
         _targets(spec, project_prefix=project_prefix, only_projects=only, only_clusters=only_c),
         yes=yes,
     )
-    result = deploy_fleet(
-        spec,
-        k8s_training_dir=k8s_training_dir,
-        k8s_training_ref=k8s_training_ref or None,
-        project_prefix=project_prefix or None,
-        create_projects=create_projects,
-        only_projects=only,
-        only_clusters=only_c,
-        continue_on_error=continue_on_error,
-        concurrency=max(1, concurrency),
-        timeout_minutes=timeout,
-        profile=profile or None,
-        on_status=lambda msg: typer.echo(f"  - {msg}"),
-    )
+    try:
+        result = deploy_fleet(
+            spec,
+            k8s_training_dir=k8s_training_dir,
+            k8s_training_ref=k8s_training_ref or None,
+            project_prefix=project_prefix or None,
+            create_projects=create_projects,
+            only_projects=only,
+            only_clusters=only_c,
+            continue_on_error=continue_on_error,
+            concurrency=max(1, concurrency),
+            timeout_minutes=timeout,
+            profile=profile or None,
+            preflight=preflight,
+            on_status=lambda msg: typer.echo(f"  - {msg}"),
+        )
+    except ValueError as exc:
+        # Resolution/preflight failures are operator-actionable, not bugs: report
+        # the message instead of a traceback.
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
     if output == "json":
         typer.echo(json.dumps(result, indent=2))
     else:

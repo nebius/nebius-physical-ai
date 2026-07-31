@@ -700,6 +700,7 @@ def test_deploy_only_clusters_targets_a_single_cluster(tmp_path, monkeypatch) ->
     monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
     monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
     monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("proj-1", False))
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 1))
     built: list[str] = []
 
     def fake_one(**kwargs):
@@ -729,6 +730,8 @@ def _mock_deploy_fleet_boundary(monkeypatch, tmp_path):
     monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
     monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
     monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("proj-1", False))
+    # No quota API in unit tests: an unreadable allowance list skips the preflight.
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 1))
     return L
 
 
@@ -954,6 +957,197 @@ def test_fleet_deploy_toolref_is_non_interactive() -> None:
 
     # A workflow state cannot answer the confirmation prompt.
     assert "--yes" in TOOL_CATALOG["infra.fleet.deploy"].argv_template
+
+
+# --------------------------------------------------------------------------- #
+# tenant quota preflight (mk8s accepts node groups it cannot fill)
+# --------------------------------------------------------------------------- #
+def _allowance(name: str, region: str, limit, unit: str = "count") -> dict:
+    return {
+        "metadata": {"name": name},
+        "spec": {"region": region, "limit": limit},
+        "status": {"unit": unit},
+    }
+
+
+def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
+    from npa.fleet.quotas import required_quotas
+
+    needed = required_quotas(
+        [
+            ClusterSpec(
+                name="c",
+                cpu_nodes=NodePoolSpec(count=2, platform="cpu-d3", preset="48vcpu-192gb"),
+                gpu_nodes=NodePoolSpec(
+                    count=2, platform="gpu-rtx6000", preset="8gpu-192vcpu-1744gb"
+                ),
+                enable_gpu_cluster=False,
+                enable_filestore=True,
+                filestore_disk_size_gibibytes=2048,
+            )
+        ]
+    )
+    assert needed["compute.instance.count"] == 4
+    assert needed["compute.disk.count"] == 4
+    assert needed["compute.instance.non-gpu.vcpu"] == 96  # GPU-node vCPUs excluded
+    assert needed["compute.instance.gpu.rtx6000"] == 16
+    assert needed["compute.filesystem.count"] == 1
+    assert needed["compute.filesystem.size.network-ssd"] == 2048 * 1024**3
+    assert needed["mk8s.cluster.count"] == 1
+    assert "compute.gpucluster.count" not in needed
+
+
+def test_required_quotas_counts_gpu_cluster_and_skips_existing_filestore() -> None:
+    from npa.fleet.quotas import required_quotas
+
+    needed = required_quotas(
+        [
+            ClusterSpec(
+                name="c",
+                gpu_nodes=NodePoolSpec(
+                    count=2, platform="gpu-h200-sxm", preset="8gpu-128vcpu-1600gb"
+                ),
+                enable_gpu_cluster=True,
+                infiniband_fabric="us-central1-a",
+                enable_filestore=True,
+                existing_filestore="computefilesystem-abc",
+            )
+        ]
+    )
+    assert needed["compute.instance.gpu.h200"] == 16
+    assert needed["compute.gpucluster.count"] == 1
+    # Reusing a filesystem consumes no new filesystem quota.
+    assert "compute.filesystem.count" not in needed
+
+
+def test_parse_allowances_filters_region_and_skips_unset_limits() -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    payload = json.dumps(
+        {
+            "items": [
+                _allowance("compute.instance.count", "us-central1", "10"),
+                _allowance("compute.instance.count", "eu-north1", "99"),
+                # Unset limit = "no limit at this container", not zero.
+                _allowance("compute.instance.gpu.rtx6000", "us-central1", None),
+            ]
+        }
+    )
+    parsed = parse_allowances(payload, "us-central1")
+    assert parsed["compute.instance.count"]["limit"] == 10
+    assert "compute.instance.gpu.rtx6000" not in parsed
+
+
+def test_find_shortfalls_flags_zero_limit_and_ignores_unadvertised() -> None:
+    from npa.fleet.quotas import find_shortfalls, parse_allowances
+
+    allowances = parse_allowances(
+        json.dumps(
+            {
+                "items": [
+                    _allowance("compute.instance.gpu.rtx6000", "us-central1", "0"),
+                    _allowance("compute.instance.count", "us-central1", "10"),
+                ]
+            }
+        ),
+        "us-central1",
+    )
+    needed = {
+        "compute.instance.gpu.rtx6000": 16,
+        "compute.instance.count": 4,
+        "mk8s.cluster.count": 1,  # not advertised for the region -> not asserted
+    }
+    shortfalls = find_shortfalls(needed, allowances, "us-central1")
+    assert [s.name for s in shortfalls] == ["compute.instance.gpu.rtx6000"]
+    assert "needs 16" in shortfalls[0].describe()
+
+
+def test_gpu_family_maps_platform_to_quota_family() -> None:
+    from npa.fleet.quotas import gpu_family
+
+    assert gpu_family("gpu-rtx6000") == "rtx6000"
+    assert gpu_family("gpu-h200-sxm") == "h200"
+    assert gpu_family("cpu-d3") == ""
+
+
+def _preflight_boundary(monkeypatch, tmp_path, allowances_json: str, *, rc: int = 0):
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap(allowances_json, rc))
+    deployed: list[str] = []
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **kw: (
+            deployed.append(kw["cluster"].name),
+            {"project_key": "a", "cluster_name": kw["cluster"].name, "status": "deployed"},
+        )[1],
+    )
+    return L, deployed
+
+
+def _rtx_cluster_spec() -> FleetSpec:
+    return FleetSpec(
+        name="f",
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[
+                    ClusterSpec(
+                        name="c",
+                        gpu_nodes=NodePoolSpec(
+                            count=2, platform="gpu-rtx6000", preset="8gpu-192vcpu-1744gb"
+                        ),
+                        enable_gpu_cluster=False,
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def test_deploy_preflight_blocks_on_zero_gpu_quota(tmp_path, monkeypatch) -> None:
+    payload = json.dumps(
+        {"items": [_allowance("compute.instance.gpu.rtx6000", "us-central1", "0")]}
+    )
+    L, deployed = _preflight_boundary(monkeypatch, tmp_path, payload)
+    with pytest.raises(ValueError, match="compute.instance.gpu.rtx6000"):
+        L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
+    assert deployed == []  # nothing applied
+
+
+def test_deploy_no_preflight_skips_the_check(tmp_path, monkeypatch) -> None:
+    payload = json.dumps(
+        {"items": [_allowance("compute.instance.gpu.rtx6000", "us-central1", "0")]}
+    )
+    L, deployed = _preflight_boundary(monkeypatch, tmp_path, payload)
+    L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path, preflight=False)
+    assert deployed == ["c"]
+
+
+def test_deploy_preflight_passes_when_quota_is_sufficient(tmp_path, monkeypatch) -> None:
+    payload = json.dumps(
+        {"items": [_allowance("compute.instance.gpu.rtx6000", "us-central1", "16")]}
+    )
+    L, deployed = _preflight_boundary(monkeypatch, tmp_path, payload)
+    L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
+    assert deployed == ["c"]
+
+
+def test_deploy_preflight_unreadable_quota_api_does_not_block(tmp_path, monkeypatch) -> None:
+    # Losing the preflight (no quota read permission) must not block a deploy.
+    L, deployed = _preflight_boundary(monkeypatch, tmp_path, "", rc=1)
+    msgs: list[str] = []
+    L.deploy_fleet(
+        _rtx_cluster_spec(), work_root=tmp_path, on_status=lambda m: msgs.append(m)
+    )
+    assert deployed == ["c"]
+    assert any("skipping quota preflight" in m for m in msgs)
+
+
+def test_deploy_help_documents_preflight() -> None:
+    result = runner.invoke(app, ["fleet", "deploy", "--help"])
+    assert result.exit_code == 0
+    assert "--no-preflight" in result.output
 
 
 def test_destroy_only_clusters_removes_install_dir_and_prunes_state(tmp_path, monkeypatch) -> None:

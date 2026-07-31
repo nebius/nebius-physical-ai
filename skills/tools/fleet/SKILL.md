@@ -112,13 +112,19 @@ depends on it.
    `nebius --profile <p> quotas quota-allowance list --parent-id <tenant> --format json`
    (each item carries `metadata.name`, `spec.region`, `spec.limit`).
 
+   `deploy` does this automatically (`--preflight`, on by default) and refuses to
+   apply when a tenant limit cannot cover the in-scope clusters; `--no-preflight`
+   attempts it anyway. The check compares requirements against the *limit* only —
+   current consumption is not subtracted, because the allowance API reports usage
+   only as a percentage — so it catches definite walls (above all a limit of 0)
+   and stays quiet when a limit merely looks tight.
+
    Project-level allowances only *subdivide* the tenant allowance, so a tenant
    limit of 0 cannot be worked around by creating a project quota: raising a
    tenant allowance is a `root-g00root` operation and a tenant-scoped service
    account gets `PermissionDenied ... resource ID: root-g00root`. A new tenant
    therefore needs its GPU/filesystem quotas raised by the Nebius account team
-   before any GPU or shared-filesystem cluster can be applied — check this first,
-   because terraform otherwise fails deep into `apply` on node-group creation.
+   before any GPU or shared-filesystem cluster can be applied.
 5. **Deploy** (asks for confirmation): `npa fleet deploy --spec fleet.yaml`. It
    prints the projects/clusters it will create/update and prompts before acting;
    pass `--yes`/`-y` for non-interactive runs. Missing projects are created via
@@ -193,9 +199,18 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   token: the token, not the profile, decides the principal.
 - **Default StorageClass depends on `enable_filestore`**: the recipe installs the
   filesystem CSI (`csi-mounted-fs-path-sc`, `ReadWriteMany`) only when a shared
-  filesystem is attached. Without it, use the block-storage class
-  (`compute-csi`-backed, `ReadWriteOnce`) for PVCs — a `ReadWriteMany` PVC on a
-  block class stays `Pending` forever.
+  filesystem is attached. Without it the only class is
+  `compute-csi-default-sc` (provisioner `compute.csi.nebius.com`, `ReadWriteOnce`
+  disk-over-CSI); a PVC naming `csi-mounted-fs-path-sc` then sits `Pending` with
+  `ProvisioningFailed: storageclass ... not found` and its pod never schedules.
+- **A quota-starved node group looks like a hang, not an error**: mk8s *accepts* a
+  node group whose instances it cannot create, then retries forever while compute
+  rejects each one. Terraform only prints `Still creating...` until the timeout,
+  and the real reason is visible solely in the node group's own events:
+  `nebius --profile <p> mk8s node-group get --id <ng> --format json` shows
+  `QuotaFailure` with `quota`, `limit`, and `requested`. This is exactly why the
+  quota preflight exists — the node group's k8s-side state is `PROVISIONING`, not
+  `FAILED`, so nothing else surfaces the wall.
 - **terraform >= 1.12**: the recipe's modules use `ephemeral` blocks and a
   `>= 1.12` version constraint; set `NPA_TERRAFORM_BIN` if the system terraform
   is older.
