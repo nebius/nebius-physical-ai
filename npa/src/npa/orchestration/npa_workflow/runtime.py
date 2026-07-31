@@ -172,6 +172,41 @@ class WaveAttempt:
         }
 
 
+def plan_fingerprint(spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = "") -> str:
+    """Fingerprint the plan a ledger belongs to.
+
+    Wave keys carry a monotonic sequence number, so replaying them is only sound when
+    the traversal is identical. If the spec or its config changed between runs the path
+    can diverge and every wave after the divergence would be resubmitted — the exact
+    double-spend ``--resume`` exists to prevent. Hashing the flattened plan (states,
+    iterations, commands, resources) makes that detectable instead of silent.
+    """
+
+    import hashlib
+    import json as _json
+
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    payload = _json.dumps(
+        {
+            "workflow": spec.name,
+            "api_version": spec.api_version,
+            "steps": [
+                {
+                    "state": step.state,
+                    "iteration": step.iteration,
+                    "group": step.group,
+                    "argv": step.argv,
+                    "shell": step.shell,
+                    "resources": step.resources,
+                }
+                for step in plan.steps
+            ],
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def wave_key(steps: Sequence[PlanStep], *, group: str, sequence_number: int) -> str:
     """Stable identity of a wave inside one run (used for resume/idempotency).
 
@@ -358,7 +393,7 @@ class SkyPilotWaveExecutor:
                 # bills GPUs for a driver that is no longer watching it.
                 self._abort_wave(attempt, exc)
                 last_error = attempt.error
-                if not isinstance(exc, (NpaWorkflowError, Exception)):
+                if not isinstance(exc, Exception):
                     raise  # BaseException (Ctrl-C, SystemExit): cancel, then propagate
                 if not isinstance(exc, NpaWorkflowError):
                     # Unexpected tooling failure: do not silently retry into more
@@ -737,7 +772,13 @@ def _sanitize_job_name(name: str) -> str:
 
 
 class RuntimeLedger:
-    """Durable wave ledger (``npa.workflow.runtime.v1``) with in-memory fallback."""
+    """Durable wave ledger (``npa.workflow.runtime.v1``) with in-memory fallback.
+
+    **Single writer by design.** ``flush`` rewrites the whole document, so two drivers
+    on the same ``run_id`` would clobber each other's records, and ``--resume``
+    reconciliation assumes exactly one prior driver. Run one driver per run id; use a
+    fresh run id (or a different ``config.prefix``) for a concurrent run.
+    """
 
     def __init__(
         self,
@@ -901,9 +942,21 @@ def s3_trigger_waiter(
             return list(lister(bucket, prefix))
         from npa.clients.storage import StorageClient
 
-        client = StorageClient.from_environment()
-        response = client._s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-        return [str(item["Key"]) for item in response.get("Contents") or ()]
+        # Paginate: a single list_objects_v2 caps at 1000 keys, so a trigger with
+        # minObjects > 1000 (or a busy prefix) could never be satisfied and would spin
+        # until the deadline. Same pattern as rl_sweep/_list_keys.
+        s3 = StorageClient.from_environment().s3
+        keys: list[str] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+            if token:
+                kwargs["ContinuationToken"] = token
+            page = s3.list_objects_v2(**kwargs)
+            keys.extend(str(item["Key"]) for item in page.get("Contents") or ())
+            if not page.get("IsTruncated"):
+                return keys
+            token = page.get("NextContinuationToken")
 
     def waiter(state: StateSpec, uri: str, ctx: RunContext) -> dict[str, Any]:
         trigger = state.trigger
@@ -1023,6 +1076,18 @@ def run_workflow_runtime(
             api_version=spec.api_version,
             resume=opts.resume,
         )
+    fingerprint = plan_fingerprint(spec, run_id=run_id, assume_decision=assume_decision)
+    recorded = ledger.state.plan_fingerprint
+    if opts.resume and recorded and recorded != fingerprint:
+        raise NpaWorkflowError(
+            f"refusing to resume run {run_id!r}: the recorded ledger describes a "
+            f"different plan (fingerprint {recorded} != {fingerprint}). Resuming would "
+            "replay wave keys that no longer describe the same work and could submit "
+            "duplicate jobs. Re-run without --resume under a NEW run id, or restore the "
+            "spec/--var values the run started with."
+        )
+    if recorded != fingerprint:
+        ledger.state.plan_fingerprint = fingerprint
     ledger.set_status("running")
 
     recording_reader = RecordingDecisionReader(

@@ -30,7 +30,10 @@ DOCKERFILE=""
 RUN_SNIPPET=""
 NAMESPACE="${NPA_BUILD_NAMESPACE:-default}"
 PULL_SECRET="${NPA_BUILD_PULL_SECRET:-npa-nebius-registry}"
-KANIKO_IMAGE="${NPA_KANIKO_IMAGE:-gcr.io/kaniko-project/executor:latest}"
+# Pinned by digest: an unpinned build tool undermines the reproducibility this
+# script exists for, and the repo pins its own base images the same way.
+# Refresh with: crane digest gcr.io/kaniko-project/executor:<version>
+KANIKO_IMAGE="${NPA_KANIKO_IMAGE:-gcr.io/kaniko-project/executor:v1.23.2@sha256:9e69fd4330ec887829c780f5126dd80edc663df6def362cd22e79bcdf00ac53f}"
 POD_NAME="${NPA_BUILD_POD:-npa-image-build}"
 TIMEOUT_SECONDS="${NPA_BUILD_TIMEOUT:-1800}"
 

@@ -67,6 +67,10 @@ class RuntimeRunState:
     api_version: str = ""
     status: str = "running"
     run_prefix_uri: str = ""
+    #: Fingerprint of the plan this ledger was recorded for. ``--resume`` replays waves
+    #: by key, and keys only line up when the traversal is identical, so a resumed run
+    #: whose spec/config changed must not silently reuse them.
+    plan_fingerprint: str = ""
     waves: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
     watermarks: dict[str, Any] = field(default_factory=dict)
@@ -81,6 +85,7 @@ class RuntimeRunState:
             "api_version": self.api_version,
             "status": self.status,
             "run_prefix_uri": self.run_prefix_uri,
+            "plan_fingerprint": self.plan_fingerprint,
             "updated_at": self.updated_at,
             "waves": list(self.waves),
             "decisions": list(self.decisions),
@@ -95,6 +100,7 @@ class RuntimeRunState:
             api_version=str(payload.get("api_version") or ""),
             status=str(payload.get("status") or "running"),
             run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
+            plan_fingerprint=str(payload.get("plan_fingerprint") or ""),
             waves=[dict(item) for item in payload.get("waves") or [] if isinstance(item, dict)],
             decisions=[
                 dict(item) for item in payload.get("decisions") or [] if isinstance(item, dict)

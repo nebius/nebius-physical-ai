@@ -620,3 +620,17 @@ def test_verified_job_id_falls_back_when_the_lookup_fails(mocker) -> None:
         workflow_mod._verified_job_id("163", "wave-x", env={}, sky_executable="sky", cwd=None)
         == "163"
     )
+
+
+def test_verified_job_id_can_be_disabled(monkeypatch, mocker) -> None:
+    """The extra queue round-trip is opt-out for latency-sensitive callers."""
+
+    from npa.orchestration.skypilot import workflow as workflow_mod
+
+    run = mocker.patch.object(workflow_mod.subprocess, "run")
+    monkeypatch.setenv("NPA_SKYPILOT_VERIFY_JOB_ID", "0")
+    assert (
+        workflow_mod._verified_job_id("163", "wave-x", env={}, sky_executable="sky", cwd=None)
+        == "163"
+    )
+    run.assert_not_called()

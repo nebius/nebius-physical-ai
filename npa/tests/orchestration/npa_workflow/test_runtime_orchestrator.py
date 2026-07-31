@@ -1047,3 +1047,94 @@ def test_no_job_id_and_no_name_match_fails_the_wave(tmp_path: Path) -> None:
     assert report.status == "failed"
     assert "could not be found by name" in report.error
     assert cancels, "must still attempt a teardown by cluster name"
+
+
+# ------------------------------------------------------- review follow-ups (#225)
+
+
+def test_trigger_listing_is_paginated(tmp_path: Path, mocker) -> None:
+    """A single list_objects_v2 caps at 1000 keys; minObjects above that must work."""
+
+    spec = load_spec(_write_spec(tmp_path, TRIGGER_SPEC))
+    pages = [
+        {"Contents": [{"Key": f"inbox/{i}.json"} for i in range(1000)], "IsTruncated": True,
+         "NextContinuationToken": "tok"},
+        {"Contents": [{"Key": "inbox/1000.json"}], "IsTruncated": False},
+    ]
+    calls: list[dict[str, Any]] = []
+
+    class FakeS3:
+        def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            return pages[len(calls) - 1]
+
+    mocker.patch(
+        "npa.clients.storage.StorageClient.from_environment",
+        return_value=mocker.Mock(s3=FakeS3()),
+    )
+    executor = _executor(spec, run_id="rt-trigger-page")
+    waiter = s3_trigger_waiter(ledger=executor.ledger, sleeper=lambda _s: None)
+    state = spec.states["ingest"]
+    state.trigger.min_objects = 1001  # type: ignore[union-attr]
+
+    watermark = waiter(state, "s3://bucket/inbox/", None)  # type: ignore[arg-type]
+
+    assert watermark["objects"] == 1001
+    assert len(calls) == 2, "must follow the continuation token"
+    assert calls[1]["ContinuationToken"] == "tok"
+
+
+def test_resume_refuses_a_ledger_recorded_for_a_different_plan(tmp_path: Path) -> None:
+    """Resuming a diverged plan would replay keys that no longer mean the same work."""
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+
+    first = _executor(spec, run_id="rt-fp", store=store)
+    assert (
+        run_workflow_runtime(spec, run_id="rt-fp", executor=first, options=first.options).status
+        == "succeeded"
+    )
+    recorded = store.read_runtime_state()
+    assert recorded is not None and recorded.plan_fingerprint
+
+    # A spec change (extra shard) makes the recorded wave keys meaningless.
+    changed = FANOUT_SPEC.replace(
+        "    parallel: [shard-a, shard-b, shard-c]",
+        "    parallel: [shard-a, shard-b]",
+    ).replace(
+        """  shard-c:
+    description: Shard C.
+    run:
+      shell: "echo c"
+    resources: cpu
+
+""",
+        "",
+    )
+    changed_spec = load_spec(_write_spec(tmp_path, changed, name="changed.yaml"))
+    resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    resumed = _executor(changed_spec, run_id="rt-fp", options=resume_options, store=store)
+
+    with pytest.raises(NpaWorkflowError, match="different plan"):
+        run_workflow_runtime(
+            changed_spec, run_id="rt-fp", executor=resumed, options=resume_options
+        )
+
+
+def test_resume_accepts_an_unchanged_plan(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    first = _executor(spec, run_id="rt-fp-ok", store=store)
+    run_workflow_runtime(spec, run_id="rt-fp-ok", executor=first, options=first.options)
+
+    resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    submitter = FakeSubmitter()
+    second = _executor(
+        spec, run_id="rt-fp-ok", submitter=submitter, options=resume_options, store=store
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-fp-ok", executor=second, options=resume_options
+    )
+    assert report.status == "succeeded"
+    assert not submitter.calls, "an unchanged plan must replay, not resubmit"

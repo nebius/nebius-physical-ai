@@ -543,6 +543,11 @@ def _verified_job_id(
 ) -> str:
     """Cross-check the scraped job id against the job NAME we just launched.
 
+    Costs one extra `sky jobs queue` call per submit. That is deliberate — polling the
+    wrong job is how a running GPU job gets abandoned — but it is bounded (short
+    timeout) and can be disabled with ``NPA_SKYPILOT_VERIFY_JOB_ID=0`` for callers that
+    submit in a tight loop and accept the risk.
+
     ``sky jobs launch`` streams from the API server, and a flaky/restarting server can
     leave a previous request's ``Job submitted, ID: N`` in the output. Callers then poll
     somebody else's job: observed live twice — a runtime wave declared CANCELLED while
@@ -551,6 +556,14 @@ def _verified_job_id(
     the queue agrees.
     """
 
+    import os as _os
+
+    if str(_os.environ.get("NPA_SKYPILOT_VERIFY_JOB_ID", "1")).strip().lower() in {
+        "0",
+        "false",
+        "no",
+    }:
+        return parsed
     try:
         result = subprocess.run(
             [sky_executable, "jobs", "queue", "--all", "--output", "json"],
@@ -559,7 +572,7 @@ def _verified_job_id(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=120,
+            timeout=60,
             check=False,
         )
         if result.returncode != 0:
