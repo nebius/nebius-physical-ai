@@ -34,7 +34,7 @@
 # Digest pinned 2026-07-30. Tag: python:3.12-slim-bookworm
 FROM python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
 
-ARG COSMOS_CURATE_VERSION=0.1.0
+ARG COSMOS_CURATE_VERSION=0.1.1
 # Upstream commit this image was validated against; bump together with the tag.
 ARG COSMOS_CURATE_REF=de89c5e4f76219c3f2985dc8fda790a74ab8bab0
 ARG COSMOS_XENNA_VERSION=0.5.5
@@ -59,6 +59,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/cosmos-curate/venv/bin:/opt/ffmpeg/bin:$PATH \
     PYTHONUNBUFFERED=1
 
+# openssh-server, rsync, and sudo are for SkyPilot's Kubernetes provisioner, whose
+# per-pod setup runs `$(prefix_cmd) apt install openssh-server rsync -y` and
+# `service ssh restart`, where prefix_cmd is `sudo` for a non-root user (see
+# sky/provision/kubernetes/instance.py). Without them the setup script fails, the
+# container exits, and SkyPilot reports the misleading `container not found
+# ("ray-node")`. Pre-installing them also makes that step a no-op instead of an
+# apt round trip on every pod.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bzip2 \
       ca-certificates \
@@ -67,9 +74,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1 \
       libglib2.0-0 \
       libgomp1 \
+      netcat-openbsd \
+      openssh-server \
+      procps \
+      rsync \
+      sudo \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
+    && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
+    && chmod 0440 /etc/sudoers.d/ubuntu \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /config \
       /config/models \

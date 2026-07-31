@@ -163,6 +163,52 @@ def test_entrypoint_execs_its_arguments(image: str) -> None:
     )
 
 
+# SkyPilot's Kubernetes provisioner runs this per pod, as the image's own user:
+#   prefix_cmd() { if [ $(id -u) -ne 0 ]; then echo "sudo"; else echo ""; fi; }
+#   $(prefix_cmd) apt install openssh-server rsync -y
+#   $(prefix_cmd) service ssh restart
+# (sky/provision/kubernetes/instance.py). A non-root image without sudo, or without
+# those packages, fails the script; the container exits and SkyPilot reports
+# `container not found ("ray-node")`, which reads like a scheduling fault.
+SKYPILOT_REQUIRED_PACKAGES = ("openssh-server", "rsync", "sudo")
+
+
+@pytest.mark.parametrize("image", ORCHESTRATED_IMAGES)
+def test_image_satisfies_skypilot_kubernetes_setup(image: str) -> None:
+    body = _dockerfile(image)
+    missing = [pkg for pkg in SKYPILOT_REQUIRED_PACKAGES if pkg not in body]
+    assert not missing, (
+        f"{image} does not install {missing}, which SkyPilot's Kubernetes setup shells "
+        "out to; the pod will exit before SkyPilot can exec into it"
+    )
+
+
+@pytest.mark.parametrize("image", ORCHESTRATED_IMAGES)
+def test_non_root_image_grants_passwordless_sudo(image: str) -> None:
+    body = _dockerfile(image)
+    if "USER ubuntu" not in body:
+        pytest.skip(f"{image} does not drop to a non-root user")
+    assert "NOPASSWD" in body, (
+        f"{image} runs as a non-root user, so SkyPilot's `sudo apt install ...` needs "
+        "passwordless sudo for that user"
+    )
+
+
+def test_transfer_image_keeps_its_interpreter_out_of_root() -> None:
+    """The venv must be usable by the non-root user the image runs as."""
+
+    body = _dockerfile("cosmos2-transfer")
+    assert "UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python" in body, (
+        "uv installs its interpreter under /root by default, and /root is 0700, so the "
+        "venv's bin/python symlink is unreadable by USER ubuntu (exit 126)"
+    )
+    assert "chown -R ubuntu:ubuntu" in body and "/opt/cosmos/uv-python" in body
+    # And the build proves it rather than assuming it.
+    assert "venv usable as ubuntu" in body, (
+        "the build must verify the venv runs as ubuntu, not just that it exists"
+    )
+
+
 @pytest.mark.parametrize("image", IMAGES)
 def test_golden_eval_command_matches_the_image_smoke_script(image: str) -> None:
     manifest = yaml.safe_load(
