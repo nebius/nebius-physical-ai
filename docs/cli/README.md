@@ -4,6 +4,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 
 - [npa adapter](adapter.md)
 - [npa agent](agent.md)
+- [npa storage bucket](bucket.md)
 - [npa burst](burst.md)
 - [npa workbench byof](byof.md)
 - [npa cluster](cluster.md)
@@ -36,6 +37,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa skypilot](skypilot.md)
 - [npa workbench sonic](sonic.md)
 - [npa soperator](soperator.md)
+- [npa storage](storage.md)
 - [npa workbench token-factory](token-factory.md)
 - [npa workbench workflow trigger](trigger.md)
 - [npa viz](viz.md)
