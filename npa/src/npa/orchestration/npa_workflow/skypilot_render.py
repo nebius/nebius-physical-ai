@@ -483,9 +483,13 @@ def render_setup_for_tool(
             "fi\n"
             "npa_nurec_py=python3\n"
             "if [ -s /tmp/npa-python ]; then npa_nurec_py=\"$(cat /tmp/npa-python)\"; fi\n"
+            # --break-system-packages FIRST: the NRE image is Ubuntu 24.04, whose
+            # interpreter is externally managed (PEP 668), so the plain form always
+            # fails there and only adds a confusing "error:
+            # externally-managed-environment" to the logs before the fallback wins.
             "npa_nurec_pip() {\n"
-            "  \"$npa_nurec_py\" -m pip install -q \"$@\" \\\n"
-            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" --break-system-packages \\\n"
+            "  \"$npa_nurec_py\" -m pip install -q \"$@\" --break-system-packages \\\n"
+            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" \\\n"
             "    || \"$npa_nurec_py\" -m pip install -q \"$@\" --user\n"
             "}\n"
             f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"

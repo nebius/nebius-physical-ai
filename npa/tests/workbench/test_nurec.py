@@ -1044,3 +1044,120 @@ def test_cli_reconstruct_respects_an_explicit_lidar_id(tmp_path: Path) -> None:
 
     command = " ".join(json.loads(strip_ansi(result.output))["command"])
     assert "dataset.lidar_ids=['lidar_top']" in command
+
+
+def test_cli_reconstruct_replaces_the_recipe_placeholder_cameras(tmp_path: Path) -> None:
+    """The shipped recipes default to AV camera ids.
+
+    On a real object-centric capture NRE aborts with "Requested cameras not present
+    in the data: camera_front_wide_120fov" (observed live on the declarative
+    pipeline), so reconstruct must adopt the sequence's own camera ids when the
+    caller named none.
+    """
+    ncore = tmp_path / "scene.json"
+    ncore.write_text(
+        json.dumps(
+            {
+                "version": "v4",
+                "component_stores": [
+                    {"components": {"cameras": {"camera1": {}, "camera2": {}}}},
+                    {"components": {"lidars": {"virtual_lidar": {}}}},
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    command = " ".join(json.loads(output)["command"])
+    assert "dataset.camera_ids=['camera1','camera2']" in command
+    assert "camera_front_wide_120fov" not in command
+
+
+def test_cli_reconstruct_respects_explicit_cameras_over_discovery(tmp_path: Path) -> None:
+    ncore = tmp_path / "scene.json"
+    ncore.write_text(
+        json.dumps(
+            {
+                "version": "v4",
+                "component_stores": [
+                    {"components": {"cameras": {"camera1": {}, "camera2": {}}}}
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--camera-id",
+            "camera2",
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    assert "dataset.camera_ids=['camera2']" in command
+
+
+def test_cli_reconstruct_discovery_keeps_both_sensor_kinds(tmp_path: Path) -> None:
+    """Naming only cameras must not lose the discovered LiDAR (and vice versa)."""
+    ncore = tmp_path / "scene.json"
+    ncore.write_text(
+        json.dumps(
+            {
+                "version": "v4",
+                "component_stores": [
+                    {"components": {"cameras": {"camera1": {}}}},
+                    {"components": {"lidars": {"virtual_lidar": {}}}},
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--camera-id",
+            "camera1",
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    assert "dataset.camera_ids=['camera1']" in command
+    assert "dataset.lidar_ids=['virtual_lidar']" in command

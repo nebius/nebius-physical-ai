@@ -416,15 +416,18 @@ def reconstruct_cmd(
         extra_overrides=override,
     )
     resolved_json = ncore_json or _materialize_ncore(config, ncore_uri) or _discover_ncore_json(config)
-    if resolved_json and not lidar_id:
-        # The object-centric recipe ships a PLACEHOLDER `dataset.lidar_ids:
-        # [dummy_lidar]` that only matches NVIDIA-internal data; on a real capture
-        # NRE aborts with "Requested lidars not present in the data: dummy_lidar".
-        # Adopt whatever the sequence actually declares (and explicitly blank the
-        # list when it declares none) so the recipe works on real input.
+    if resolved_json and not (lidar_id and camera_id):
+        # The shipped recipes carry PLACEHOLDER sensor ids that only match
+        # NVIDIA-internal data, so on a real capture NRE aborts with
+        # "Requested lidars not present in the data: dummy_lidar" or
+        # "Requested cameras not present in the data: camera_front_wide_120fov"
+        # (both observed live). Adopt whatever the sequence actually declares --
+        # and explicitly blank the LiDAR list for a camera-only capture -- so the
+        # recipe works on real input without the caller having to know the ids.
         from npa.workbench.nurec.nurec import NO_LIDAR_SENTINEL, ncore_sensor_ids
 
-        _cameras, discovered = ncore_sensor_ids(resolved_json)
+        discovered_cameras, discovered = ncore_sensor_ids(resolved_json)
+        camera_id = list(camera_id) or list(discovered_cameras)
         config = NurecConfig.from_env(
             environ=None,
             image=image,
@@ -442,7 +445,7 @@ def reconstruct_cmd(
             world_size=world_size,
             precision=precision,
             camera_ids=camera_id,
-            lidar_ids=list(discovered) or [NO_LIDAR_SENTINEL],
+            lidar_ids=list(lidar_id) or list(discovered) or [NO_LIDAR_SENTINEL],
             aux_data=aux_data,
             extra_overrides=override,
         )
