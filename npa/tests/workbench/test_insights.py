@@ -617,3 +617,74 @@ def test_cli_and_sdk_do_not_import_heavy_ml_dependencies_at_module_level() -> No
         assert "import torch" not in source
         assert "import lancedb" not in source
         assert "import fiftyone" not in source
+
+
+# ── Concurrent-writer safety for the append-only store ───────────────────────
+# Live evidence: two insights-smoke runs ingesting into the same store at the same
+# time each reported success ("recorded_count": 14, "total_records": 31), but only
+# the later writer's rows survived -- the earlier run's 14 records were silently
+# dropped by read-modify-write, and its next stage failed with
+# "no metrics recorded for base run: <run-id>".
+
+
+def test_concurrent_appends_do_not_lose_rows(tmp_path: Path) -> None:
+    from npa.workbench.insights.storage import append_jsonl_uri, read_jsonl_store
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    # Interleave two writers the way two pods do: both observe the same starting
+    # state, then both append.
+    before_a = read_jsonl_store(uri)
+    before_b = read_jsonl_store(uri)
+    assert before_a == before_b == []
+    append_jsonl_uri(uri, [{"run_id": "run-a", "metric_name": "m", "value": 1}])
+    append_jsonl_uri(uri, [{"run_id": "run-b", "metric_name": "m", "value": 2}])
+
+    rows = read_jsonl_store(uri)
+    assert {row["run_id"] for row in rows} == {"run-a", "run-b"}
+    assert len(rows) == 2
+
+
+def test_append_returns_the_full_store_total(tmp_path: Path) -> None:
+    from npa.workbench.insights.storage import append_jsonl_uri
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    assert append_jsonl_uri(uri, [{"a": 1}]) == 1
+    assert append_jsonl_uri(uri, [{"a": 2}, {"a": 3}]) == 3
+    assert append_jsonl_uri(uri, []) == 3
+
+
+def test_store_reads_legacy_single_object_plus_shards(tmp_path: Path) -> None:
+    """Stores written before sharding must keep reading correctly."""
+    from npa.workbench.insights.storage import append_jsonl_uri, read_jsonl_store
+
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    legacy = store_dir / "records.jsonl"
+    legacy.write_text(json.dumps({"run_id": "legacy", "value": 0}) + "\n")
+
+    append_jsonl_uri(str(legacy), [{"run_id": "new", "value": 1}])
+    rows = read_jsonl_store(str(legacy))
+    assert [row["run_id"] for row in rows] == ["legacy", "new"]
+
+
+def test_ingest_run_twice_concurrently_keeps_both_runs(tmp_path: Path) -> None:
+    """End-to-end guard: two ingests into one store keep both runs queryable."""
+    store = str(tmp_path / "store")
+    for run_id in ("run-one", "run-two"):
+        run = tmp_path / run_id
+        (run / "npa-workflow").mkdir(parents=True)
+        (run / "npa-workflow" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "npa.workflow.run.v1",
+                    "workflow": "wf",
+                    "run_id": run_id,
+                    "status": "submitted",
+                    "steps": [{"state": "s", "status": "submitted", "resources_profile": {"accelerators": "H100:2"}}],
+                }
+            )
+        )
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf"))
+
+    records = read_records(store)
+    assert {r["run_id"] for r in records} == {"run-one", "run-two"}

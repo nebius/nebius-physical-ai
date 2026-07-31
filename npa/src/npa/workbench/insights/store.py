@@ -31,7 +31,7 @@ from .storage import (
     append_jsonl_uri,
     list_json_uris,
     read_json_uri,
-    read_jsonl_uri,
+    read_jsonl_store,
     uri_join,
 )
 
@@ -60,11 +60,11 @@ def _now() -> str:
 
 
 def read_records(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_uri(records_uri(store_uri))
+    return read_jsonl_store(records_uri(store_uri))
 
 
 def read_edges(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_uri(edges_uri(store_uri))
+    return read_jsonl_store(edges_uri(store_uri))
 
 
 def _persist(
