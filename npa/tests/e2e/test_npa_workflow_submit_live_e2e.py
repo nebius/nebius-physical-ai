@@ -422,9 +422,23 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         pytest.skip("NEBIUS_TOKEN_FACTORY_KEY required for this twin")
 
     run_id, path = _prepare_runtime_run(case, tmp_path, e2e_project)
-    result = RUNNER.invoke(
-        app, _runtime_submit_args(path, run_id=run_id, registry=e2e_registry, case=case)
-    )
+    trigger_seeder = None
+    if case.spec == "token-factory-trigger-watch.yaml":
+        # Data lands only AFTER the driver starts polling, so the wait is real.
+        trigger_seeder = seed_trigger_inbox_later(
+            bucket=live_bucket(e2e_project),
+            run_id=run_id,
+            spec_name=case.spec,
+            e2e_project=e2e_project,
+            delay_seconds=float(os.environ.get("NPA_E2E_TRIGGER_SEED_DELAY", "45")),
+        )
+    try:
+        result = RUNNER.invoke(
+            app, _runtime_submit_args(path, run_id=run_id, registry=e2e_registry, case=case)
+        )
+    finally:
+        if trigger_seeder is not None:
+            trigger_seeder.cancel()
     payload = parse_runtime_json(result, forbidden_markers)
     write_runtime_evidence(run_id, payload)
 
@@ -432,6 +446,17 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         _skip_or_fail_infra(case, payload)
     waves = payload["waves"]
     assert waves, payload
+
+    if case.spec == "token-factory-trigger-watch.yaml":
+        # The driver must have polled an empty prefix before the data arrived.
+        watermarks = payload.get("watermarks") or {}
+        assert watermarks, f"no trigger watermark recorded: {payload}"
+        observed = next(iter(watermarks.values()))
+        assert observed["objects"] >= 1
+        assert observed["polls"] >= 2, (
+            f"trigger did not actually wait (polls={observed['polls']}); the inbox "
+            "was seeded too early to prove the watch"
+        )
 
     if case.expected_parallel_tasks > 1:
         parallel_waves = [wave for wave in waves if wave["kind"] == "parallel"]

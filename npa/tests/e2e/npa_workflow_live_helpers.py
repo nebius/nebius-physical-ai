@@ -141,6 +141,11 @@ def seed_live_workflow_inputs(
             _seed_images(client, bucket=bucket, prefix=f"{marker}/images/{shard}/", count=2)
         return
 
+    if spec_name == "token-factory-trigger-watch.yaml":
+        # Deliberately NOT seeded here: the whole point of the trigger pattern is that
+        # the run waits for data that is not there yet. Use seed_trigger_inbox_later().
+        return
+
     if spec_name == "token-factory-gate-loop.yaml":
         # The loop captions and scores the same small batch every iteration.
         _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
@@ -232,6 +237,37 @@ def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
             Body=buf.getvalue(),
             ContentType="image/png",
         )
+
+
+def seed_trigger_inbox_later(
+    *,
+    bucket: str,
+    run_id: str,
+    spec_name: str,
+    delay_seconds: float = 45.0,
+    e2e_project: str | None = None,
+    count: int = 2,
+):
+    """Drop frames into a trigger's inbox after ``delay_seconds``.
+
+    Returns the started timer. Seeding late is what makes the live trigger test
+    meaningful: the driver must poll an empty prefix, wait, and only then submit.
+    """
+
+    import threading
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+
+    def _seed() -> None:
+        client = s3_client_for_project(e2e_project, allow_host_creds=True)
+        _seed_images(client, bucket=bucket, prefix=f"{marker}/inbox/", count=count)
+
+    timer = threading.Timer(delay_seconds, _seed)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def concurrency_overlaps(tasks: Iterable[dict[str, Any]]) -> list[tuple[str, str]]:

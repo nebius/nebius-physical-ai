@@ -1006,6 +1006,8 @@ class RuntimeReport:
     waves: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
     steps: list[dict[str, Any]] = field(default_factory=list)
+    #: Trigger watermarks observed during the run, keyed by state name.
+    watermarks: dict[str, Any] = field(default_factory=dict)
     run_prefix_uri: str = ""
     runtime_state_uri: str = ""
     error: str = ""
@@ -1019,6 +1021,7 @@ class RuntimeReport:
             "waves": list(self.waves),
             "decisions": list(self.decisions),
             "steps": list(self.steps),
+            "watermarks": dict(self.watermarks),
             "run_prefix_uri": self.run_prefix_uri,
             "runtime_state_uri": self.runtime_state_uri,
             "error": self.error,
@@ -1140,6 +1143,7 @@ def run_workflow_runtime(
         waves=[attempt.to_dict() for attempt in wave_executor.attempts],
         decisions=list(ledger.state.decisions),
         steps=steps,
+        watermarks=dict(ledger.state.watermarks),
         run_prefix_uri=ledger.run_prefix_uri,
         runtime_state_uri=(
             f"{ledger.run_prefix_uri.rstrip('/')}/npa-workflow/runtime.json"
