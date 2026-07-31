@@ -26,10 +26,18 @@ ENV UV_LINK_MODE=copy \
 
 # Build the real inference env. `uv sync --extra=cu128` resolves torch cu128 +
 # flash-attn (cp310) + the full transfer2.5 dependency set from the upstream lock.
-RUN uv python install 3.10 \
+#
+# `rm -rf .venv` matters when BASE_IMAGE is an already-built transfer image (the
+# upstream 2.5.0 base is not always available to rebuild from): uv reuses an
+# existing venv, so without this the venv keeps its old bin/python symlink into
+# /root and UV_PYTHON_INSTALL_DIR has no effect. Dropping uv's old interpreter tree
+# removes both the dead weight and the trap.
+RUN rm -rf .venv /root/.local/share/uv \
+    && uv python install 3.10 \
     && echo "3.10" > .python-version \
     && uv sync --extra=cu128 --python 3.10 \
-    && .venv/bin/python -c "import torch, flash_attn; print('cosmos-transfer2.5 env torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'cuda-build', torch.version.cuda)"
+    && .venv/bin/python -c "import torch, flash_attn; print('cosmos-transfer2.5 env torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'cuda-build', torch.version.cuda)" \
+    && test "$(readlink -f .venv/bin/python | cut -d/ -f2)" != "root"
 
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
 COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh /opt/cosmos2-transfer/entrypoint.sh
