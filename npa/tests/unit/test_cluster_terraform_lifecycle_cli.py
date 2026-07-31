@@ -732,6 +732,110 @@ def test_up_explains_what_may_exist_after_an_interrupt(monkeypatch, tmp_path: Pa
     assert "npa cluster up" in result.output
 
 
+def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) -> None:
+    """An interrupted `up` leaves a cluster running with no kubeconfig; adopt it."""
+    stream_calls: list[list[str]] = []
+    saved: list[object] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {"metadata": {"name": "other", "id": "mk8scluster-other"}},
+                            {"metadata": {"name": "npa-cluster", "id": "mk8scluster-live"}},
+                        ]
+                    }
+                )
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state))
+
+    kubeconfig = tmp_path / "kubeconfig"
+    result = runner.invoke(
+        app,
+        [
+            "kubeconfig",
+            "--cluster-name",
+            "npa-cluster",
+            "--project-id",
+            "project-a",
+            "--kubeconfig",
+            str(kubeconfig),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "mk8scluster-live" in result.output
+    assert str(kubeconfig) in result.output
+    assert "--infra k8s/npa-cluster" in result.output
+    credentials = _find_call(stream_calls, "nebius", "mk8s", "cluster", "get-credentials")
+    assert credentials is not None
+    assert "mk8scluster-live" in credentials
+    assert str(kubeconfig) in credentials
+    assert saved and saved[-1].cluster_id == "mk8scluster-live"
+
+
+def test_kubeconfig_cmd_names_what_exists_when_the_cluster_is_absent(monkeypatch, tmp_path: Path) -> None:
+    def fake_capture(args, **kwargs):
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app, ["kubeconfig", "--cluster-name", "npa-cluster", "--project-id", "project-a"]
+    )
+
+    assert result.exit_code != 0
+    assert "No Managed Kubernetes cluster named" in result.output
+    assert "nebius mk8s cluster list" in result.output
+
+
+def test_duplicate_cluster_guard_offers_adoption(monkeypatch, tmp_path: Path) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "npa-cluster"\n'
+    )
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed(
+                json.dumps({"items": [{"metadata": {"name": "npa-cluster", "id": "mk8scluster-live"}}]})
+            )
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: _completed())
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app, ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"]
+    )
+
+    assert result.exit_code != 0
+    assert "npa cluster kubeconfig" in result.output
+    assert "mk8scluster-live" in result.output
+
+
 def test_node_group_status_keeps_failure_text() -> None:
     """QuotaFailure is not in the documented schema, so pass it through verbatim."""
     line = tf_mod._format_node_group_status(

@@ -183,6 +183,100 @@ def down_cmd(
     )
 
 
+def kubeconfig_cmd(
+    cluster_name: str = typer.Option(
+        "",
+        "--cluster-name",
+        help="Managed Kubernetes cluster name. Defaults to the Terraform cluster_name, else npa-cluster.",
+    ),
+    project_id: str = typer.Option(
+        "",
+        "--project-id",
+        help="Nebius project id holding the cluster. Defaults to tfvars/TF_VAR_parent_id, then the configured project.",
+    ),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias whose saved project_id to use."
+    ),
+    context_name: str = typer.Option(
+        "", "--context", help="Kubeconfig context name. Defaults to the cluster name."
+    ),
+    kubeconfig: Path | None = typer.Option(
+        None,
+        "--kubeconfig",
+        help="Kubeconfig output path. Defaults to ~/.npa/clusters/<context>/kubeconfig.",
+    ),
+    terraform_dir: Path | None = typer.Option(
+        None, "--terraform-dir", help="Terraform cluster directory to read tfvars from."
+    ),
+) -> None:
+    """Write a kubeconfig for a Managed Kubernetes cluster that already exists.
+
+    An interrupted `npa cluster up` (or one provisioned elsewhere) leaves a running
+    cluster with no local kubeconfig, which nothing could then use. This adopts it:
+    it writes the kubeconfig and cluster state that `npa cluster status` and
+    `npa workbench workflow submit --infra k8s/<context>` read.
+    """
+    from npa.clients.config import resolve_environment
+
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    env = _terraform_env(nebius_bin)
+    tfvars: dict[str, Any] = {}
+    try:
+        tfvars = _read_tfvars(_resolve_terraform_dir(terraform_dir))
+    except typer.BadParameter:
+        # Adopting a cluster does not require a Terraform directory at all.
+        tfvars = {}
+
+    name = cluster_name.strip() or str(tfvars.get("cluster_name") or "npa-cluster")
+    resolved_project = project_id.strip() or str(
+        tfvars.get("parent_id") or os.environ.get("TF_VAR_parent_id") or ""
+    )
+    if not resolved_project:
+        saved = resolve_environment(project or None)
+        resolved_project = str(getattr(saved, "project_id", "") or "")
+    if not resolved_project:
+        raise typer.BadParameter(
+            "Cannot tell which Nebius project holds the cluster. Pass --project-id "
+            "<id> (or --project <alias> after `npa configure`)."
+        )
+
+    result = _run_capture(
+        [nebius_bin, "mk8s", "cluster", "list", "--parent-id", resolved_project, "--format", "json"],
+        env=env,
+    )
+    matches = [
+        item
+        for item in (json.loads(result.stdout or "{}") or {}).get("items", [])
+        if str((item.get("metadata") or {}).get("name", "")) == name
+    ]
+    if not matches:
+        raise typer.BadParameter(
+            f"No Managed Kubernetes cluster named {name!r} in project {resolved_project}. "
+            f"List what exists with `nebius mk8s cluster list --parent-id {resolved_project}`."
+        )
+    metadata = matches[0].get("metadata") or {}
+    cluster_id = str(metadata.get("id") or "")
+    if not cluster_id:
+        raise typer.BadParameter(f"Cluster {name!r} has no id in the Nebius response")
+
+    context = context_name.strip() or name
+    kubeconfig_path = kubeconfig or kubeconfig_file(context)
+    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+    _save_terraform_cluster_state(
+        {**tfvars, "parent_id": resolved_project, "cluster_name": name},
+        {"id": cluster_id, "name": name},
+        context,
+        kubeconfig_path,
+    )
+    typer.echo(f"Cluster ID: {cluster_id}")
+    typer.echo(f"Kubeconfig: {kubeconfig_path}")
+    typer.echo(f"Context: {context}")
+    typer.echo(
+        f"Submit against it with `--infra k8s/{context}` (npa resolves this file), "
+        f"or export KUBECONFIG={kubeconfig_path} for kubectl."
+    )
+
+
 def terraform_status(terraform_dir: Path | None = None) -> dict[str, Any] | None:
     """Return Terraform cluster outputs when state exists."""
 
@@ -456,7 +550,10 @@ def _guard_unmanaged_duplicate(
     if unmanaged:
         ids = ", ".join(str(value) for value in unmanaged if value)
         raise typer.BadParameter(
-            f"Cluster {cluster_name} already exists outside this Terraform state: {ids}"
+            f"Cluster {cluster_name} already exists outside this Terraform state: {ids}. "
+            f"Adopt it with `npa cluster kubeconfig --cluster-name {cluster_name}` (writes "
+            "its kubeconfig and cluster state), pick another `cluster_name`, or delete it "
+            f"with `nebius mk8s cluster delete --id {unmanaged[0]}`."
         )
 
 
@@ -635,7 +732,12 @@ def _echo_apply_recovery(tf_dir: Path, tfvars: dict[str, Any], interrupted: bool
         err=True,
     )
     typer.echo(
-        f"  - tear it down: `npa cluster down --terraform-dir {tf_dir} --force`.",
+        f"  - tear it down: `npa cluster down --terraform-dir {tf_dir} --force`, or",
+        err=True,
+    )
+    typer.echo(
+        f"  - adopt what exists: `npa cluster kubeconfig --cluster-name {cluster_name}` "
+        "writes the kubeconfig and cluster state for a cluster that is already running.",
         err=True,
     )
     typer.echo(
