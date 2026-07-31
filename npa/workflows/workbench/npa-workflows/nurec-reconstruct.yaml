@@ -22,9 +22,18 @@ kind: Workflow
 # `nvcr.io/nvidia/nre/nre` needs an extra NGC entitlement (402 for a standard
 # key); the `-ga` General Availability repository is what a standard key pulls.
 #
-# The raw SkyPilot task this mirrors -- including the pod_config that supplies the
-# `sudo` shim and a 64 Gi /dev/shm the vendor image needs -- is
-# npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml.
+# EACH STATE RUNS IN ITS OWN POD, so nothing survives in /tmp between stages: the
+# NCore sequence and the trained USDZ travel through S3 (`fetch
+# --publish-sequence` then `reconstruct --ncore-uri`; `reconstruct --output-uri`
+# then `render --artifact-uri`). The single-pod SkyPilot task at
+# npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml shares /tmp instead and so
+# needs none of that.
+#
+# The `resources.gpu.kubernetes.pod_config` below is lifted onto each GPU task as a
+# SkyPilot task-level `config:` block. It is required, not cosmetic: the NRE image
+# ships no `sudo` (which SkyPilot's Kubernetes bootstrap calls unconditionally, so
+# the cluster never finishes provisioning) and needs far more than the 64 MB
+# Kubernetes default /dev/shm.
 
 metadata:
   name: nurec-reconstruct
@@ -75,6 +84,8 @@ config:
   # --- S3 artifact layout: one run prefix ------------------------------------
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   ncore_uri: "s3://{{config.bucket}}/{{config.prefix}}/ncore/"
+  # Cross-pod handoff: the published NCore sequence, and the trained USDZ.
+  ncore_sequence_uri: "s3://{{config.bucket}}/{{config.prefix}}/ncore/sequence/"
   input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   reconstruction_uri: "s3://{{config.bucket}}/{{config.prefix}}/reconstruction/"
   novel_views_uri: "s3://{{config.bucket}}/{{config.prefix}}/novel_views/"
@@ -90,6 +101,47 @@ resources:
     cpus: 8
     memory: 64Gi
     image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+    kubernetes:
+      # A ~14 GB compressed image pull dominates first-schedule latency.
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          # Appended to the cluster-wide list, so the registry secret stays.
+          imagePullSecrets:
+            - name: ngc-nvcr-imagepullsecret
+          initContainers:
+            # SkyPilot's runtime setup calls bare `sudo` when it writes the nofile
+            # limits and /etc/fuse.conf (templates/kubernetes-ray.yml.j2). The NRE
+            # image has no sudo, so that step exits 127 and the cluster never
+            # becomes usable even though provisioning otherwise succeeds. The pod
+            # already runs as root, so a shim that execs its arguments is exactly
+            # equivalent to SkyPilot's own `alias sudo=""` root path.
+            # /usr/local/sbin is on the image's PATH and empty.
+            - name: npa-sudo-shim
+              image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  printf '#!/bin/sh\nexec "$@"\n' > /shim/sudo
+                  chmod 0755 /shim/sudo
+              volumeMounts:
+                - name: npa-sudo-shim
+                  mountPath: /shim
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: npa-sudo-shim
+                  mountPath: /usr/local/sbin
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: npa-sudo-shim
+              emptyDir: {}
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Gi
   cpu:
     cloud: kubernetes
     cpus: 4

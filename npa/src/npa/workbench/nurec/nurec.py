@@ -1709,6 +1709,99 @@ def count_render_frames(output_dir: Path | str) -> int:
 # --------------------------------------------------------------------------------------
 # status
 # --------------------------------------------------------------------------------------
+def materialize_uri(source_uri: str, destination: Path | str, *, storage_client: Any = None) -> Path:
+    """Fetch ``source_uri`` (S3 prefix/object or local path) to ``destination``.
+
+    Stages of the declarative workflow run in SEPARATE pods, so nothing survives
+    in ``/tmp`` between them: the NCore sequence and the trained USDZ have to
+    travel through S3. A local ``source_uri`` is returned as-is so the
+    single-pod SkyPilot task keeps working without a round-trip.
+    """
+    if not source_uri:
+        raise NurecError("source_uri is required")
+    if not source_uri.startswith("s3://"):
+        local = Path(source_uri)
+        if not local.exists():
+            raise NurecError(f"local source does not exist: {local}")
+        return local
+
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    target = Path(destination)
+    is_prefix = source_uri.endswith("/")
+    if is_prefix:
+        target.mkdir(parents=True, exist_ok=True)
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    client.download_path(source_uri, str(target))
+    return target
+
+
+def publish_ncore_sequence(
+    ncore_json: Path | str,
+    output_uri: str,
+    *,
+    storage_client: Any = None,
+    max_bytes: int = 0,
+) -> dict[str, Any]:
+    """Upload a complete NCore sequence (meta-file + every shard) to ``output_uri``.
+
+    The derived sequence directory references the original shards through
+    SYMLINKS to avoid copying hundreds of megabytes locally; those cannot be
+    uploaded as links, so each is resolved and uploaded as a real object. The
+    result is a self-contained sequence a later stage can materialize.
+    """
+    source = Path(ncore_json)
+    if not source.is_file():
+        raise NurecError(f"NCore sequence meta-file not found: {source}")
+    sequence_dir = source.parent
+    siblings = sorted(
+        path
+        for path in sequence_dir.iterdir()
+        if path != source and (path.is_file() or path.is_symlink())
+    )
+    members = [source, *siblings]
+    total = 0
+    uploaded: list[str] = []
+    if not output_uri.startswith("s3://"):
+        destination = Path(output_uri)
+        destination.mkdir(parents=True, exist_ok=True)
+        for member in members:
+            resolved = member.resolve()
+            if not resolved.is_file():
+                continue
+            shutil.copy2(resolved, destination / member.name)
+            total += resolved.stat().st_size
+            uploaded.append(member.name)
+        return {"uri": str(destination), "objects": len(uploaded), "bytes": total,
+                "meta_name": source.name, "members": uploaded}
+
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    base = output_uri.rstrip("/")
+    for member in members:
+        resolved = member.resolve()
+        if not resolved.is_file():
+            continue
+        size = resolved.stat().st_size
+        if max_bytes and total + size > max_bytes:
+            raise NurecError(
+                f"NCore sequence exceeds max_bytes={max_bytes} at member {member.name}"
+            )
+        client.upload_file(str(resolved), f"{base}/{member.name}")
+        total += size
+        uploaded.append(member.name)
+    return {
+        "uri": f"{base}/",
+        "objects": len(uploaded),
+        "bytes": total,
+        "meta_name": source.name,
+        "members": uploaded,
+    }
+
+
 def nurec_run_status(
     run_uri: str,
     *,

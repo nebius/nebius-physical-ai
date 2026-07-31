@@ -403,3 +403,90 @@ def test_workbench_package_also_exposes_the_pure_api() -> None:
     ):
         assert name in nurec.__all__, name
         assert hasattr(nurec, name), name
+
+
+# ---------------------------------------------------------------------------------
+# declarative spec: cross-pod handoff + pod accommodations
+# ---------------------------------------------------------------------------------
+# Each state of an npa.workflow spec runs in its OWN pod, so anything the previous
+# stage left in /tmp is gone. These tests pin the two consequences.
+def _spec() -> dict:
+    return yaml.safe_load(SPEC.read_text(encoding="utf-8"))
+
+
+def test_spec_hands_the_ncore_sequence_between_pods() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    fetch = TOOL_CATALOG["workbench.nurec.fetch"].argv_template
+    reconstruct = TOOL_CATALOG["workbench.nurec.reconstruct"].argv_template
+
+    # Publishing is what makes the sequence reachable from another pod.
+    assert "--publish-sequence" in fetch
+    assert "--ncore-uri" in reconstruct
+    handoff = reconstruct[reconstruct.index("--ncore-uri") + 1]
+    assert handoff == "{{config.ncore_sequence_uri}}"
+    assert _spec()["config"]["ncore_sequence_uri"].endswith("/ncore/sequence/")
+
+
+def test_spec_hands_the_trained_usdz_between_pods() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    reconstruct = TOOL_CATALOG["workbench.nurec.reconstruct"].argv_template
+    render = TOOL_CATALOG["workbench.nurec.render"].argv_template
+
+    published = reconstruct[reconstruct.index("--output-uri") + 1]
+    consumed = render[render.index("--artifact-uri") + 1]
+    assert published == consumed == "{{config.reconstruction_uri}}"
+
+
+def test_spec_gpu_profile_supplies_the_sudo_shim_and_large_shm() -> None:
+    kubernetes = _spec()["resources"]["gpu"]["kubernetes"]
+
+    assert kubernetes["provision_timeout"] >= 1800
+    spec = kubernetes["pod_config"]["spec"]
+    init = {c["name"]: c for c in spec["initContainers"]}
+    assert "npa-sudo-shim" in init
+    script = "\n".join(str(part) for part in init["npa-sudo-shim"]["command"])
+    assert "/shim/sudo" in script
+    assert 'exec "$@"' in script
+    # A literal backslash-n, not a real newline: printf has to interpret it.
+    assert "\\n" in script
+
+    ray_node = next(c for c in spec["containers"] if c["name"] == "ray-node")
+    mounts = {m["name"]: m["mountPath"] for m in ray_node["volumeMounts"]}
+    assert mounts["npa-sudo-shim"] == "/usr/local/sbin"
+    assert mounts["dshm"] == "/dev/shm"
+    dshm = next(v for v in spec["volumes"] if v["name"] == "dshm")
+    assert dshm["emptyDir"]["medium"] == "Memory"
+
+
+def test_spec_init_container_image_matches_the_runtime_image() -> None:
+    """The shim runs in the same image, so there is no second registry dependency."""
+    gpu = _spec()["resources"]["gpu"]
+    init = gpu["kubernetes"]["pod_config"]["spec"]["initContainers"][0]
+
+    assert init["image"] == gpu["image"]
+
+
+def test_renderer_lifts_the_pod_config_onto_gpu_tasks_only() -> None:
+    """pod_config must reach the GPU tasks and stay off the CPU ones."""
+    from npa.orchestration.npa_workflow.skypilot_render import normalize_task_config
+
+    spec = _spec()
+    gpu = normalize_task_config(spec["resources"]["gpu"])
+    cpu = normalize_task_config(spec["resources"]["cpu"])
+
+    assert gpu["kubernetes"]["pod_config"]["spec"]["initContainers"]
+    assert gpu["kubernetes"]["provision_timeout"] >= 1800
+    assert cpu == {}
+
+
+def test_renderer_task_config_ignores_unknown_kubernetes_fields() -> None:
+    """A spec must not be able to smuggle arbitrary cluster config into a task."""
+    from npa.orchestration.npa_workflow.skypilot_render import normalize_task_config
+
+    out = normalize_task_config(
+        {"kubernetes": {"pod_config": {"spec": {}}, "remote_identity": "evil-sa"}}
+    )
+
+    assert "remote_identity" not in out["kubernetes"]

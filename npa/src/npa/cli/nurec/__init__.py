@@ -233,6 +233,16 @@ def fetch_cmd(
         "--output-path",
         help="S3/local prefix for the fetch manifest (e.g. s3://.../<run>/ncore/).",
     ),
+    publish_sequence: bool = typer.Option(
+        False,
+        "--publish-sequence/--no-publish-sequence",
+        help=(
+            "Also upload the whole NCore sequence (meta-file + every shard, with "
+            "symlinks resolved) under <output-uri>sequence/ so a LATER STAGE IN "
+            "ANOTHER POD can consume it. Required by the declarative workflow, "
+            "where each stage is its own pod and /tmp is not shared."
+        ),
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Download and unpack the real NCore V4 shards for a scene."""
@@ -248,6 +258,22 @@ def fetch_cmd(
         config, force=force, with_colmap=with_colmap, derive_rig=derive_rig
     )
     payload = result.as_dict()
+    if result.ok and output_uri and publish_sequence:
+        from npa.workbench.nurec.nurec import NurecError as _NurecError, publish_ncore_sequence
+
+        try:
+            published = publish_ncore_sequence(
+                result.ncore_json, _join_uri(output_uri, "sequence/")
+            )
+        except _NurecError as exc:
+            payload["status"] = "failed"
+            payload["errors"] = [*payload.get("errors", []), str(exc)]
+            _finish_nurec_result(payload, output)
+            return
+        payload["sequence_uri"] = published["uri"]
+        payload["sequence_objects"] = published["objects"]
+        payload["sequence_bytes"] = published["bytes"]
+        payload["sequence_meta_name"] = published["meta_name"]
     if result.ok and output_uri:
         manifest = config.resolved_cache_dir / "manifest.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -263,6 +289,16 @@ def reconstruct_cmd(
         "--ncore-json",
         envvar="NPA_NUREC_NCORE_JSON",
         help="NCore V4 sequence meta-file. Defaults to the fetched scene's JSON.",
+    ),
+    ncore_uri: str = typer.Option(
+        "",
+        "--ncore-uri",
+        envvar="NPA_NUREC_NCORE_URI",
+        help=(
+            "S3 prefix holding a published NCore sequence (from `fetch "
+            "--publish-sequence`). Materialized locally first, so a stage running "
+            "in its own pod does not need the fetch stage's filesystem."
+        ),
     ),
     dataset: str = typer.Option(
         "", "--dataset", envvar="NPA_NUREC_DATASET", help="Hugging Face dataset id."
@@ -379,7 +415,7 @@ def reconstruct_cmd(
         aux_data=aux_data,
         extra_overrides=override,
     )
-    resolved_json = ncore_json or _discover_ncore_json(config)
+    resolved_json = ncore_json or _materialize_ncore(config, ncore_uri) or _discover_ncore_json(config)
     if resolved_json and not lidar_id:
         # The object-centric recipe ships a PLACEHOLDER `dataset.lidar_ids:
         # [dummy_lidar]` that only matches NVIDIA-internal data; on a real capture
@@ -416,7 +452,7 @@ def reconstruct_cmd(
                 "status": "failed",
                 "errors": [
                     "no NCore sequence meta-file found; run `npa workbench nurec fetch` "
-                    "first or pass --ncore-json"
+                    "first (same pod), or pass --ncore-json / --ncore-uri"
                 ],
             },
             output,
@@ -444,6 +480,16 @@ def render_cmd(
         "--artifact-path",
         envvar="NPA_NUREC_ARTIFACT",
         help="Trained .usdz artifact. Defaults to the reconstruct stage's output.",
+    ),
+    artifact_uri: str = typer.Option(
+        "",
+        "--artifact-uri",
+        envvar="NPA_NUREC_ARTIFACT_URI",
+        help=(
+            "S3 URI of a trained .usdz (or the prefix the reconstruct stage wrote). "
+            "Downloaded first, so a stage running in its own pod does not need the "
+            "reconstruct stage's filesystem."
+        ),
     ),
     output_dir: Path | None = typer.Option(
         None, "--output-dir", envvar="NPA_NUREC_RENDER_DIR", help="Local render output directory."
@@ -530,14 +576,16 @@ def render_cmd(
         out_dir=out_dir,
         ffmpeg_exe=ffmpeg_exe,
     )
-    resolved_artifact = artifact_path or _discover_usdz(config)
+    resolved_artifact = (
+        artifact_path or _materialize_artifact(config, artifact_uri) or _discover_usdz(config)
+    )
     if not resolved_artifact:
         _finish_nurec_result(
             {
                 "status": "failed",
                 "errors": [
                     "no trained .usdz found; run `npa workbench nurec reconstruct` first "
-                    "or pass --artifact-path"
+                    "(same pod), or pass --artifact-path / --artifact-uri"
                 ],
             },
             output,
@@ -674,6 +722,36 @@ def _discover_ncore_json(config: NurecConfig) -> str:
     if scene_dir is None:
         return ""
     found = find_ncore_json(scene_dir)
+    return str(found) if found else ""
+
+
+def _materialize_ncore(config: NurecConfig, ncore_uri: str) -> str:
+    """Pull a published NCore sequence into the local cache and return its meta-file."""
+    if not ncore_uri:
+        return ""
+    from npa.workbench.nurec.nurec import find_ncore_json, materialize_uri
+
+    target = config.resolved_cache_dir / "ncore-staged"
+    source = ncore_uri if ncore_uri.endswith("/") else f"{ncore_uri}/"
+    local = materialize_uri(source, target)
+    found = find_ncore_json(Path(local))
+    return str(found) if found else ""
+
+
+def _materialize_artifact(config: NurecConfig, artifact_uri: str) -> str:
+    """Download a trained USDZ (object or prefix) and return the local path."""
+    if not artifact_uri:
+        return ""
+    from npa.workbench.nurec.nurec import latest_usdz, materialize_uri
+
+    staged = config.resolved_out_dir / "artifact-staged"
+    if artifact_uri.endswith(".usdz"):
+        local = materialize_uri(artifact_uri, staged / Path(artifact_uri).name)
+        return str(local)
+    local = materialize_uri(
+        artifact_uri if artifact_uri.endswith("/") else f"{artifact_uri}/", staged
+    )
+    found = latest_usdz(Path(local))
     return str(found) if found else ""
 
 

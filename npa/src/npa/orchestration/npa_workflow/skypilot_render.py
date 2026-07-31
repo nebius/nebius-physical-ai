@@ -121,6 +121,37 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
+#: SkyPilot 0.12 accepts these inside a task's ``config:`` block, and it APPENDS
+#: (rather than replaces) lists inside ``kubernetes.pod_config`` -- so a spec can
+#: add an imagePullSecret or a volume without discarding the cluster-wide ones.
+#: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
+#: arbitrary cluster configuration.
+TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
+
+
+def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a task-level SkyPilot ``config:`` block from a resource profile.
+
+    Vendor container images sometimes need pod-level accommodations that
+    ``resources:`` cannot express -- e.g. NVIDIA's NRE image ships no ``sudo``
+    (which SkyPilot's Kubernetes bootstrap calls unconditionally) and needs a
+    ``/dev/shm`` far larger than the 64 MB Kubernetes default. Declaring those on
+    the resource profile keeps them versioned with the spec instead of requiring a
+    hand-passed global config, which would mean duplicating tenant/project
+    identifiers into a committed file.
+    """
+    kubernetes = resources.get("kubernetes") if isinstance(resources, Mapping) else None
+    if not isinstance(kubernetes, Mapping):
+        return {}
+    selected = {
+        key: kubernetes[key]
+        for key in TASK_CONFIG_KUBERNETES_FIELDS
+        if kubernetes.get(key) not in (None, "", {}, [])
+    }
+    return {"kubernetes": selected} if selected else {}
+
+
 def tool_image_key(tool_ref: str) -> str | None:
     """Return the CONTAINER_IMAGE_NAMES key for a toolRef, if known."""
 
@@ -495,6 +526,9 @@ def build_skypilot_task_doc(
         "envs": envs,
         "run": render_task_run_script(command),
     }
+    task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    if task_config:
+        doc["config"] = task_config
     setup = render_setup_for_tool(
         str(scheduler_task.get("tool_ref") or ""),
         config=spec.config,
