@@ -20,10 +20,13 @@ class SubmitLiveCase:
     secret_envs: tuple[str, ...] = ()
     requires_token_factory: bool = False
     plan_only: bool = False
-    #: Consume-only twin that needs an artifact produced by a *prior* workflow
-    #: (e.g. an exported policy). It cannot run standalone, so the bounded daily
-    #: GPU rotation skips it; the self-contained chained twin covers it instead.
-    requires_external_artifact: bool = False
+    #: Skip this twin in the bounded daily GPU rotation because it cannot pass as
+    #: a standalone submit today (needs a prior workflow's artifact, an input not
+    #: staged into the job, or infra the npa.workflow render doesn't yet wire).
+    #: The twin stays in the matrix for manual/plan runs; ``skip_reason`` explains
+    #: the gap so it can be re-included once fixed.
+    rotation_skip: bool = False
+    skip_reason: str = ""
     notes: str = ""
 
 
@@ -59,12 +62,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "vlm-eval-single.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        notes="Self-hosted VLM; renderer injects vLLM setup.",
+        rotation_skip=True,
+        skip_reason=(
+            "vlm_backend=self-hosted, but the npa.workflow render "
+            "(catalog workbench.vlm_eval.run) starts only the eval client, not a "
+            "vLLM server, so :8000 is never up. Confirmed live: the eval now "
+            "waits and reports 'VLM backend not ready after 600s' (readiness "
+            "fix) instead of an instant connection-refused. Re-include once the "
+            "render injects a `vllm serve` background start for self-hosted steps."
+        ),
+        notes="Self-hosted VLM; render does not yet stand up the vLLM server.",
     ),
     SubmitLiveCase(
         "vlm-eval-benchmark.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "Confirmed live: fails with 'Expected a JSON file or directory "
+            "containing benchmark.json' — the benchmark dataset is not staged "
+            "into the job. Re-include once the twin stages/points at a dataset."
+        ),
     ),
     SubmitLiveCase(
         "mjlab-eval.yaml",
@@ -85,11 +103,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-eval.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
-        requires_external_artifact=True,
-        notes=(
+        rotation_skip=True,
+        skip_reason=(
             "Consume-only: evaluates an exported ONNX policy from a prior "
-            "sonic-export. Not runnable standalone; sonic-export-eval covers "
-            "SONIC eval self-contained, so the daily GPU rotation skips this."
+            "sonic-export. Not runnable standalone (confirmed live: 'ONNX policy "
+            "not found'); sonic-export-eval covers SONIC eval self-contained."
         ),
     ),
     SubmitLiveCase(
@@ -193,15 +211,14 @@ def selected_submit_cases() -> list[SubmitLiveCase]:
 
 
 def gpu_submit_cases(
-    *, include_plan_only: bool = False, include_external_artifact: bool = False
+    *, include_plan_only: bool = False, include_skipped: bool = False
 ) -> list[SubmitLiveCase]:
     """Real-GPU-launching twins, sorted by spec for a deterministic rotation.
 
     Excludes ``plan_only`` stub twins (they never launch a GPU) and
-    ``requires_external_artifact`` consume-only twins (they cannot run standalone
-    and always fail without a prior workflow's output), unless asked, so the
-    daily rotation only ever picks a case that actually exercises a GPU and can
-    succeed on its own.
+    ``rotation_skip`` twins (they cannot pass as a standalone submit today — see
+    each ``skip_reason``), unless asked, so the daily rotation only ever picks a
+    case that actually exercises a GPU and can succeed on its own.
     """
 
     cases = [
@@ -209,7 +226,7 @@ def gpu_submit_cases(
         for case in SUBMIT_LIVE_MATRIX
         if case.tier in {"gpu", "multi"}
         and (include_plan_only or not case.plan_only)
-        and (include_external_artifact or not case.requires_external_artifact)
+        and (include_skipped or not case.rotation_skip)
     ]
     return sorted(cases, key=lambda c: c.spec)
 

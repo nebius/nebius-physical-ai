@@ -68,12 +68,19 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     cases = gpu_submit_cases()
     assert cases, "expected at least one real-GPU-launching workflow twin"
     # Never rotate onto a plan-only stub (those never launch a GPU) or a
-    # consume-only twin that needs a prior workflow's artifact (always fails
-    # standalone, e.g. sonic-eval).
+    # rotation_skip twin that cannot pass standalone today (each carries a
+    # skip_reason, e.g. sonic-eval needs a prior export; vlm-eval-single needs a
+    # vLLM server the render doesn't wire).
     assert all(not c.plan_only for c in cases)
-    assert all(not c.requires_external_artifact for c in cases)
-    assert "sonic-eval.yaml" not in {c.spec for c in cases}
+    assert all(not c.rotation_skip for c in cases)
+    skipped = {c.spec for c in cases}
+    assert "sonic-eval.yaml" not in skipped
+    assert "vlm-eval-single.yaml" not in skipped
     assert all(c.tier in {"gpu", "multi"} for c in cases)
+    # Every rotation_skip twin must document why (so the gap stays visible).
+    from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
+
+    assert all(c.skip_reason for c in SUBMIT_LIVE_MATRIX if c.rotation_skip)
     # Over one full cycle the rotation visits every GPU twin.
     seen = {rotating_gpu_submit_case(day).spec for day in range(len(cases))}
     assert seen == {c.spec for c in cases}
