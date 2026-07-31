@@ -1,8 +1,14 @@
 """Live-submit matrix for npa.workflow twins.
 
-Shared by e2e tests and the operator runner. SkyPilot-only exceptions
-(parallel sweeps, burst, sim-to-real monolithic, etc.) are intentionally
-absent — see ``npa/workflows/workbench/npa-workflows/README.md``.
+Shared by e2e tests and the operator runner. SkyPilot-only exceptions (burst,
+sim-to-real monolithic, etc.) are intentionally absent — see
+``npa/workflows/workbench/npa-workflows/README.md``.
+
+Parallel sweeps are no longer such an exception: ``isaac-lab-rl-sweep.yaml`` is an
+``npa.workflow`` spec in this matrix, verified live on four GPUs. The raw SkyPilot
+template it was ported from is retained as a reference example (and is still
+referenced by docs, a runner script and its own test); retiring it is a separate
+change.
 """
 
 from __future__ import annotations
