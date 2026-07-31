@@ -80,6 +80,28 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
     return deleted
 
 
+def report_destroyed_agent_iam(
+    project: str, name: str, *, record: dict[str, Any] | None, purge: bool
+) -> None:
+    """Surface the npa-agent service account/keys that outlive the destroyed VM."""
+    import typer
+
+    from npa.cli.agent import resolve_project_agents
+    from npa.clients.config import resolve_environment
+
+    project_id = str((record or {}).get("project_id", "") or "")
+    if not project_id:
+        saved_env = resolve_environment(project)
+        project_id = str(getattr(saved_env, "project_id", "") or "")
+    remaining = len([key for key in resolve_project_agents(project) if key != name])
+    report_agent_iam(
+        project_id=project_id,
+        remaining_agents=remaining,
+        purge=purge,
+        on_status=lambda message: typer.echo(f"  {message}", err=True),
+    )
+
+
 def report_agent_iam(
     *,
     project_id: str,

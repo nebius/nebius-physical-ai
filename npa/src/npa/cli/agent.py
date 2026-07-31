@@ -29,7 +29,7 @@ from npa.cli.agent_quota import (
     _agent_check_public_ip_quota,
     _agent_public_ip_quota_result,
 )
-from npa.cli.agent_iam import report_agent_iam
+from npa.cli.agent_iam import report_destroyed_agent_iam
 from npa.cli.agent_network import _agent_ssh_egress_result
 from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_destroy_tf_vars
 from npa.clients.config import (
@@ -618,23 +618,6 @@ def _resolve_project_alias(project: str) -> str:
     if len(projects) == 1:
         return next(iter(projects))
     return configured or DEFAULT_PROJECT_ALIAS
-
-
-def _report_agent_iam(
-    project: str, name: str, *, record: dict[str, Any] | None, purge: bool
-) -> None:
-    """Surface the npa-agent service account/keys that outlive the destroyed VM."""
-    project_id = str((record or {}).get("project_id", "") or "")
-    if not project_id:
-        saved_env = resolve_environment(project)
-        project_id = str(getattr(saved_env, "project_id", "") or "")
-    remaining = len([key for key in resolve_project_agents(project) if key != name])
-    report_agent_iam(
-        project_id=project_id,
-        remaining_agents=remaining,
-        purge=purge,
-        on_status=lambda message: typer.echo(f"  {message}", err=True),
-    )
 
 
 def _agent_record(project_alias: str, name: str) -> dict[str, Any]:
@@ -9166,7 +9149,7 @@ def destroy_cmd(
     # Drop the local auth secret + agent state dir (stale credentials otherwise
     # linger after the VM is gone).
     _cleanup_agent_local_files(project, name)
-    _report_agent_iam(project, name, record=record or None, purge=purge_iam)
+    report_destroyed_agent_iam(project, name, record=record or None, purge=purge_iam)
     typer.echo(f"destroyed: {project}/{name}")
 
 
