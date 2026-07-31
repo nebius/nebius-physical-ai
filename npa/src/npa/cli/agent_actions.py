@@ -384,7 +384,15 @@ def _planner_messages(
         '{\"thought\": \"...\", \"final\": \"<markdown answer grounded in observations>\"}\n'
         "Rules: only call tools from the catalog; prefer read-only tools first; "
         "never claim a run/stage is complete unless an observation confirms it; "
-        "state-changing tools will require operator confirmation.\n\n"
+        "state-changing tools will require operator confirmation.\n"
+        # Faithfulness rule: measured 4/5 unfaithful scalar answers without it --
+        # the planner reported "40" (a metric value that appeared elsewhere in the
+        # same observation) when the observation's total_records was 73.
+        "Grounding: every number, run id, and URI in your final answer must be "
+        "copied verbatim from an observation field. Name the field you took it "
+        "from. Never sum, average, recompute, or estimate a value the tools "
+        "already returned, and never fill a gap with a plausible-looking value: "
+        "if an observation does not contain the answer, say so.\n\n"
         "Tool catalog:\n" + "\n".join(catalog_lines)
     )
     if live_context:

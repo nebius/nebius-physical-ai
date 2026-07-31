@@ -589,3 +589,11 @@ def test_oversized_non_record_observation_still_falls_back_to_preview():
 def test_small_observation_is_passed_through_unchanged():
     observation = {"backend": "jsonl", "count": 1, "records": [{"run_id": "r"}]}
     assert A._observe(observation) is observation
+
+
+def test_planner_prompt_carries_the_grounding_rule():
+    """The final answer must be told to copy values verbatim from observations."""
+    messages = A._planner_messages("goal", A.TOOL_ALLOWLIST, [])
+    system = messages[0]["content"]
+    assert "copied verbatim from an observation field" in system
+    assert "never sum, average, recompute, or estimate" in system.lower()
