@@ -47,6 +47,11 @@ making architecture, review, or domain judgments.
  diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes, arrows,
  decision diamonds, and loop back-edges → states, loops, gates, catalog
  toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
+- `skills/workflows/onboard-world-model/SKILL.md`: generic playbook for
+ onboarding and containerizing a world model (learned action-conditioned
+ simulator) as a multi-GPU BYOF registry candidate — containerize, stage a real
+ dataset, encode the train→tokenize→dynamics→dream→visualize loop as capability
+ smokes, and validate on real GPUs (Open Dreamer is the reference example).
 - `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
   (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
 

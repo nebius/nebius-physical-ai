@@ -13,7 +13,10 @@ reference example for the `>=2` GPU BYOF path.
 
 Load `skills/workflows/byof-onboard/SKILL.md` for packaging/run mechanics and
 `skills/workflows/oss-solution-registry-onboard/SKILL.md` for the registry
-admission contract. This skill records the solution-specific facts.
+admission contract. For onboarding a **new** world model, load
+`skills/workflows/onboard-world-model/SKILL.md` — the generic playbook for which
+this skill is the worked reference example. This skill records the
+solution-specific facts.
 
 ## When To Use
 
