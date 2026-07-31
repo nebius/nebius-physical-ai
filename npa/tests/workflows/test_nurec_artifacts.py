@@ -156,6 +156,45 @@ def test_usdz_is_offered_as_a_download_not_a_broken_inline_preview() -> None:
     assert render_hint_for_object(key=f"{CATEGORY}/{RUN_ID}/reconstruction/last.usdz") == "download"
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["last.usdz", "scene.usd", "scene.usda", "scene.usdc", "gaussians.ply", "mesh.obj"],
+)
+def test_every_3d_asset_extension_is_explicitly_download_only(name: str) -> None:
+    """Pinned explicitly, not left to the mimetypes fallback.
+
+    If Python ever learns a `model/...` type for these, an implicit fallthrough
+    could start classifying a reconstruction as something the browser is asked to
+    render inline, producing a broken pane.
+    """
+    from npa.workflows.artifacts import is_model_artifact
+
+    assert is_model_artifact(name) is True
+    assert render_hint_for_object(key=f"{CATEGORY}/{RUN_ID}/reconstruction/{name}") == "download"
+
+
+def test_model_extensions_do_not_swallow_a_viewable_artifact() -> None:
+    from npa.workflows.artifacts import is_model_artifact
+
+    for name in ("sim2real.rrd", "frame.png", "clip.mp4", "final.json", "metrics.yaml"):
+        assert is_model_artifact(name) is False, name
+
+
+def test_a_run_of_only_3d_assets_would_not_be_viewable() -> None:
+    """Guards the reason the run also publishes renders: a USDZ-only run is not
+    viewable, so the workflow must keep emitting the .rrd, PNGs and MP4."""
+    s3 = _FakeS3(
+        [
+            (f"{CATEGORY}/usdz-only-run/reconstruction/last.usdz", "2026-07-31T17:00:00+00:00"),
+        ]
+    )
+
+    runs = list_runs(BUCKET, prefix=CATEGORY, s3=s3).runs
+
+    assert [run.run_id for run in runs] == ["usdz-only-run"]
+    assert runs[0].has_viewable is False
+
+
 def test_run_id_is_a_single_safe_segment() -> None:
     from npa.workflows.rerun_serve import validate_run_id
 
