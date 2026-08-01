@@ -45,6 +45,39 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     assert detect_submit_format(path) == "skypilot"
 
 
+def test_sonic_stage_setup_installs_torch_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SONIC train/export/eval need torch + ONNX. On a run with no baked image
+    # (the daily rotation clears image pins) the stage would otherwise reach the
+    # GPU and fail with "requires torch".
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://bucket/prefix/npa")
+    spec = load_spec(NPA_SPECS / "sonic-export-eval.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="demo"),
+        run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
+    assert docs, rendered
+    for doc in docs[1:]:
+        setup = doc.get("setup", "")
+        assert "onnxruntime>=1.18" in setup, doc["name"]
+        assert "torch>=2.12.1" in setup, doc["name"]
+
+
+def test_sonic_specs_train_with_the_in_job_runtime() -> None:
+    # `serverless` (and vm/container) delegate to more infrastructure, which a
+    # stage that already holds a GPU cannot provision.
+    for name in (
+        "sonic-train.yaml",
+        "sonic-export.yaml",
+        "sonic-export-eval.yaml",
+        "sonic-locomotion-finetuning.yaml",
+    ):
+        spec = load_spec(NPA_SPECS / name)
+        assert spec.config["sonic_runtime"] == "local", name
+
+
 def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     # The self-hosted vlm-eval twin must launch a background vLLM server in its
     # run script (the eval client waits for /v1/models readiness). Without this

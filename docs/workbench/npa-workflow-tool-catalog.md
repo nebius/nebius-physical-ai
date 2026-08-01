@@ -21,9 +21,9 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.lerobot.eval` | `npa workbench lerobot eval` | `config.checkpoint_uri`, `config.env` | `config.eval_uri` | no |
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
 | `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
-| `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint | no |
-| `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |
-| `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report | no |
+| `workbench.sonic.train` | `npa workbench sonic train` | `config.sonic_runtime` (use `local`), `config.checkpoint_uri`, `config.data_uri`, `config.train_iterations` | `config.training_uri` (`checkpoint.pt` + `checkpoint.json`) | no |
+| `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` (local path or `s3://`) | `config.onnx_uri` (+ `.metadata.json` sidecar) | no |
+| `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` (local path or `s3://`), `config.episodes`, `config.env` | `config.eval_uri` | no |
 | `workbench.sim2real_envgen.raw_shard` | `python -m npa.workflows.sim2real_envgen raw-shard` | `config.raw_envs_uri`, `config.env_count` | raw env manifest on S3 | no |
 | `workbench.sim2real.policy_rollouts` | workflow stub (`echo`) | `config.rollouts_uri` | rollout prefix on S3 | yes |
 | `workbench.sim2real.heldout_eval` | workflow stub (`echo`) | — | `config.heldout_report_uri` | yes |

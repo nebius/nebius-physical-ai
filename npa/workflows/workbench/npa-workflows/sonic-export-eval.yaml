@@ -3,17 +3,24 @@ kind: Workflow
 
 metadata:
   name: sonic-export-eval
-  description: Export a SONIC checkpoint to ONNX, then evaluate it.
+  description: Train a SONIC policy, export it to ONNX, then evaluate the export.
   skypilotTwin: npa/src/npa/workflows/skypilot/sonic-export-eval.yaml
 
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/sonic-export-eval"
   episodes: "8"
-  env: smoke
+  env: locomotion-smoke
+  sonic_runtime: local
+  train_iterations: "40"
+  data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
 
-  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.pt"
+  # Each stage hands the next one an S3 artifact: stages run on their own
+  # clusters, so the chain only holds together through object storage.
+  checkpoint_uri: "{{config.training_uri}}checkpoint.pt"
   onnx_uri: "s3://{{config.bucket}}/{{config.prefix}}/sonic_policy.onnx"
+  eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval.json"
 
 resources:
   gpu:
@@ -22,13 +29,26 @@ resources:
     cpus: 8
     memory: 32Gi
 
-initial: export-onnx
+initial: train
 
 states:
+  train:
+    description: Train a SONIC locomotion policy in this stage's own container.
+    toolRef: workbench.sonic.train
+    resources: gpu
+    outputs:
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.workbench.sonic.checkpoint.v1
+    next: export-onnx
+
   export-onnx:
-    description: Export a SONIC locomotion checkpoint to ONNX.
+    description: Export the trained SONIC checkpoint to ONNX.
+    needs: [train]
     toolRef: workbench.sonic.export
     resources: gpu
+    inputs:
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.workbench.sonic.checkpoint.v1
     outputs:
       - uri: "{{config.onnx_uri}}"
         schema: npa.workbench.sonic.onnx.v1
@@ -39,7 +59,10 @@ states:
     needs: [export-onnx]
     toolRef: workbench.sonic.eval
     resources: gpu
+    inputs:
+      - uri: "{{config.onnx_uri}}"
+        schema: npa.workbench.sonic.onnx.v1
     outputs:
-      - uri: "s3://{{config.bucket}}/{{config.prefix}}/eval.json"
+      - uri: "{{config.eval_uri}}"
         schema: npa.workbench.sonic.eval.v1
     terminal: true

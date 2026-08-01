@@ -435,6 +435,39 @@ def default_npa_setup() -> str:
     )
 
 
+def _sonic_deps_setup() -> str:
+    """Install the torch/ONNX stack a SONIC stage needs, if it is not baked in.
+
+    The npa-sonic image already ships them, and the check below makes this a
+    no-op there. On the default SkyPilot image (which is what a workflow run
+    with ``--image none`` uses) SONIC train/export/eval would otherwise fail
+    with "requires torch" after the cluster is already up.
+    """
+
+    return (
+        "python3 - <<'PY'\n"
+        "import importlib.util\n"
+        "import subprocess\n"
+        "import sys\n"
+        "\n"
+        "REQUIRED = (\n"
+        "    ('torch', 'torch>=2.12.1'),\n"
+        "    ('onnx', 'onnx>=1.16'),\n"
+        "    ('onnxscript', 'onnxscript>=0.5'),\n"
+        "    ('onnxruntime', 'onnxruntime>=1.18'),\n"
+        ")\n"
+        "missing = [spec for module, spec in REQUIRED if importlib.util.find_spec(module) is None]\n"
+        "if missing:\n"
+        "    base = [sys.executable, '-m', 'pip', 'install', '-q', *missing]\n"
+        "    for extra in ([], ['--break-system-packages'], ['--user']):\n"
+        "        if subprocess.call(base + extra) == 0:\n"
+        "            break\n"
+        "    else:\n"
+        "        raise SystemExit('failed to install SONIC dependencies: ' + ', '.join(missing))\n"
+        "PY\n"
+    )
+
+
 def render_setup_for_tool(
     tool_ref: str,
     *,
@@ -458,6 +491,8 @@ def render_setup_for_tool(
             "    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'vllm>=0.8.5'])\n"
             "PY\n"
         )
+    if tool_ref.startswith("workbench.sonic"):
+        parts.append(_sonic_deps_setup())
     if tool_ref.startswith("workbench.token_factory"):
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(

@@ -3,14 +3,19 @@ kind: Workflow
 
 metadata:
   name: sonic-export
-  description: Export a SONIC locomotion checkpoint to ONNX.
+  description: Train a SONIC locomotion policy, then export it to ONNX.
   skypilotTwin: npa/src/npa/workflows/skypilot/sonic-export.yaml
 
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/sonic-export"
+  sonic_runtime: local
+  train_iterations: "40"
+  data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
 
-  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.pt"
+  # Produced by the train stage and consumed by the export stage.
+  checkpoint_uri: "{{config.training_uri}}checkpoint.pt"
   onnx_uri: "s3://{{config.bucket}}/{{config.prefix}}/sonic_policy.onnx"
 
 resources:
@@ -20,13 +25,26 @@ resources:
     cpus: 8
     memory: 32Gi
 
-initial: export-onnx
+initial: train
 
 states:
+  train:
+    description: Train a SONIC locomotion policy in this stage's own container.
+    toolRef: workbench.sonic.train
+    resources: gpu
+    outputs:
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.workbench.sonic.checkpoint.v1
+    next: export-onnx
+
   export-onnx:
-    description: Export a SONIC locomotion checkpoint to deterministic-action ONNX.
+    description: Export the trained checkpoint to deterministic-action ONNX.
+    needs: [train]
     toolRef: workbench.sonic.export
     resources: gpu
+    inputs:
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.workbench.sonic.checkpoint.v1
     outputs:
       - uri: "{{config.onnx_uri}}"
         schema: npa.workbench.sonic.onnx.v1
