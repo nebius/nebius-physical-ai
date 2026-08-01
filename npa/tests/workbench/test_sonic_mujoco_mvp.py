@@ -20,12 +20,15 @@ SONIC_MVP_YAML = (
 
 
 def _patch_registry_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    from npa.workbench.sonic import workflow as sonic_workflow
+    # SONIC delegates token minting to the canonical npa.clients.nebius_auth
+    # helper, so mock subprocess at that call site (not sonic.workflow, which no
+    # longer imports subprocess).
+    from npa.clients import nebius_auth
 
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(cmd, 0, stdout="fresh-test-token\n", stderr="")
 
-    monkeypatch.setattr(sonic_workflow.subprocess, "run", fake_run)
+    monkeypatch.setattr(nebius_auth.subprocess, "run", fake_run)
 
 
 def _docs(plan) -> list[dict]:

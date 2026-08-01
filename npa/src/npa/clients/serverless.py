@@ -17,6 +17,8 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.clients.nebius_auth import NebiusTokenError, mint_nebius_iam_token
+
 
 @dataclass
 class ServerlessClientError(Exception):
@@ -578,36 +580,16 @@ class ServerlessClient:
         self._sleep = sleep
 
     def _mint_registry_token(self) -> str:
-        """Mint a short-lived IAM token for Nebius Container Registry pulls."""
+        """Mint a short-lived IAM token for Nebius Container Registry pulls.
 
-        # Use real subprocess (not self._runner) so unit-test fakes for ai.* stay isolated.
-        from npa.clients.nebius import nebius_cli_env
+        Delegates to the canonical, ambient-token-robust helper so serverless
+        pulls never 403 because a stale ``NEBIUS_IAM_TOKEN`` was exported.
+        """
 
         try:
-            result = subprocess.run(
-                [self._nebius_bin, "iam", "get-access-token"],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                check=False,
-                # A stale ambient NEBIUS_IAM_TOKEN would be minted into the pull
-                # secret and 401 on image pulls; use the active profile instead.
-                env=nebius_cli_env(),
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ServerlessClientError(
-                "Could not mint Nebius registry token with "
-                f"`{self._nebius_bin} iam get-access-token`"
-            ) from exc
-        token = (result.stdout or "").strip()
-        if result.returncode != 0 or not token:
-            detail = (result.stderr or "").strip() or (result.stdout or "").strip() or f"exit {result.returncode}"
-            raise ServerlessClientError(
-                "Could not mint Nebius registry token with "
-                f"`{self._nebius_bin} iam get-access-token`: {detail}"
-            )
-        return token
+            return mint_nebius_iam_token(nebius_cli=self._nebius_bin)
+        except NebiusTokenError as exc:
+            raise ServerlessClientError(str(exc)) from exc
 
     def _registry_auth_args(self, image: str) -> list[str]:
         """CLI flags so serverless can pull private ``cr.*.nebius.cloud`` images."""
@@ -1019,8 +1001,6 @@ class ServerlessClient:
         env: Mapping[str, str] | None = None,
         wrap_timeout: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        from npa.clients.nebius import nebius_cli_env
-
         full_args = [self._nebius_bin, *args]
         logger.debug("Running Nebius CLI: %s", shlex.join(_redact_cli_args(full_args)))
         effective_timeout = timeout or self._timeout
@@ -1030,9 +1010,7 @@ class ServerlessClient:
                 capture_output=True,
                 text=True,
                 timeout=effective_timeout,
-                # Always sanitize a stale NEBIUS_IAM_TOKEN so the CLI uses the
-                # active profile (whether or not a custom env was supplied).
-                env=nebius_cli_env(env),
+                env=dict(env) if env is not None else None,
             )
         except subprocess.TimeoutExpired as exc:
             if not wrap_timeout:

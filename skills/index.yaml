@@ -301,6 +301,16 @@ skills:
       - type: cli_help
         args: ["agent", "--help"]
         contains: "bootstrap"
+  - name: open-dreamer
+    category: tools
+    when_to_use: "Onboard or run the Open Dreamer (next-state/open-dreamer) JAX/Flax Dreamer 4 world-model pipeline as a multi-GPU BYOF registry candidate: causal video tokenizer, action-conditioned latent dynamics, and a real >=2 GPU data-parallel smoke."
+    path: skills/tools/open-dreamer/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-2gpu.yaml
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/byof-open-dreamer.yaml
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."
@@ -451,6 +461,20 @@ skills:
     smoke:
       - type: file_exists
         path: skills/workflows/oss-solution-registry-onboard/SKILL.md
+  - name: onboard-world-model
+    category: workflows
+    when_to_use: "Onboard and containerize a world model (learned action-conditioned simulator — Dreamer/Genie/Cosmos-style latent video prediction) as a multi-GPU BYOF registry candidate: containerize the repo, stage a real dataset, encode the train→tokenize→dynamics→dream→visualize loop as capability smokes, and validate on real GPUs. Open Dreamer is the reference example."
+    path: skills/workflows/onboard-world-model/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/scripts/run_byof_repo.py
+      - type: file_exists
+        path: npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-2gpu.yaml
+      - type: file_exists
+        path: npa/tests/e2e/test_byof_open_dreamer_live_e2e.py
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/byof-open-dreamer.yaml
   - name: agent-fresh-operate
     category: workflows
     when_to_use: "Deploy, teardown, or reproduce a fresh NPA agent VM from scratch; validate /api/models and /api/chat; debug destroy/fresh-setup failures."

@@ -8,47 +8,23 @@ import os
 import subprocess
 from typing import Any
 
+from npa.clients.nebius_auth import mint_nebius_iam_token, strip_ambient_token_env
+
 
 def mint_nebius_registry_token(*, nebius_cli: str = "nebius") -> str:
     """Return a short-lived IAM token for ``cr.*.nebius.cloud`` pulls.
 
-    Prefers a ``NEBIUS_IAM_TOKEN`` from the environment (in-pod contexts often
-    have the token injected but not the ``nebius`` CLI), falling back to
-    ``nebius iam get-access-token`` when the env var is unset. The CLI fallback
-    runs under ``nebius_cli_env()``, which drops any ambient token so a stale one
-    cannot shadow the active profile and mint a pull secret for the wrong
-    principal (401 on image pulls).
+    Delegates to the canonical :func:`npa.clients.nebius_auth.mint_nebius_iam_token`,
+    which performs a fresh profile-scoped exchange first (ambient token stripped,
+    so a stale/wrong-identity ``NEBIUS_IAM_TOKEN`` can't be re-embedded into the
+    very pull secret this refresh exists to fix — the ``403`` / ``ErrImagePull``
+    failure), and only falls back to an injected ``NEBIUS_IAM_TOKEN`` when the
+    ``nebius`` CLI is unavailable/fails — the in-pod case (token injected, no CLI
+    on PATH). Raises ``NebiusTokenError`` (a ``RuntimeError``) if no token can be
+    obtained, which best-effort callers catch.
     """
 
-    from npa.clients.nebius import nebius_cli_env
-
-    env_token = os.environ.get("NEBIUS_IAM_TOKEN", "").strip()
-    if env_token:
-        return env_token
-    try:
-        result = subprocess.run(
-            [nebius_cli, "iam", "get-access-token"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-            check=False,
-            # A stale ambient NEBIUS_IAM_TOKEN would be minted into the pull
-            # secret and 401 on image pulls; use the active profile instead.
-            env=nebius_cli_env(),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(
-            "Could not mint Nebius registry token with `nebius iam get-access-token`"
-        ) from exc
-    token = result.stdout.strip()
-    if result.returncode != 0 or not token:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise RuntimeError(
-            "Could not mint Nebius registry token with `nebius iam get-access-token`: "
-            + detail
-        )
-    return token
+    return mint_nebius_iam_token(nebius_cli=nebius_cli)
 
 
 def _registry_server_from_image(image: str) -> str:
@@ -107,7 +83,10 @@ def ensure_nebius_registry_pull_secret(
     if k8s_context:
         cmd.extend(["--context", k8s_context])
     cmd.extend(["-n", namespace, "apply", "-f", "-"])
-    env = dict(os.environ)
+    # Strip any ambient/stale NEBIUS_IAM_TOKEN so kubectl's nebius exec-credential
+    # plugin re-authenticates via the configured profile instead of failing with
+    # "Invalid token" (otherwise the pull-secret apply silently no-ops).
+    env = strip_ambient_token_env(os.environ)
     if kubeconfig:
         env["KUBECONFIG"] = kubeconfig
     try:
