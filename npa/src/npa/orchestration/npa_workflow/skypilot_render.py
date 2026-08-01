@@ -20,6 +20,9 @@ from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
+    # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
+    # (differently built) Cosmos-Reason VLM image. Exact match wins over the prefix.
+    "workbench.cosmos3.generate": "cosmos3",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",

@@ -135,6 +135,18 @@ def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("unknown.tool") is None
 
 
+def test_cosmos3_generate_and_reason_resolve_to_different_images() -> None:
+    """Generation runs in the framework image, reasoning in the Reason VLM image.
+
+    An exact-match entry must beat the ``workbench.cosmos3`` prefix: rendering a
+    generate step into npa-cosmos3-reason would schedule a container that has no
+    cosmos-framework in it.
+    """
+
+    assert tool_image_key("workbench.cosmos3.generate") == "cosmos3"
+    assert tool_image_key("workbench.cosmos3.reason") == "cosmos3-reason"
+
+
 def test_render_token_factory_uses_env_aws_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.us-central1.nebius.cloud")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
