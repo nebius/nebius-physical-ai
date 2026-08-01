@@ -511,6 +511,102 @@ def write_config(data: dict[str, Any]) -> Path:
     return CONFIG_PATH
 
 
+def _write_config_replace(data: dict[str, Any]) -> Path:
+    """Write *data* to ``config.yaml`` verbatim (replacing), 0600.
+
+    ``write_config`` deep-merges and so cannot *drop* a key; teardown paths that
+    remove a stanza (a deleted bucket's ``terraform_state``, an uninstalled
+    SkyPilot ``sky_bin``, a forgotten project) rewrite the whole file instead.
+    """
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with CONFIG_PATH.open("w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    CONFIG_PATH.chmod(0o600)
+    try:
+        CONFIG_PATH.parent.chmod(0o700)
+    except OSError:  # pragma: no cover - unusual filesystems (e.g. mounted FAT)
+        pass
+    return CONFIG_PATH
+
+
+def _bucket_key(value: str) -> str:
+    """Normalize a bucket URI/name to its bare bucket name for comparison."""
+    return str(value or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
+
+
+def clear_terraform_state_for_bucket(bucket_name: str) -> list[str]:
+    """Drop ``projects.<alias>.terraform_state`` entries backed by *bucket_name*.
+
+    The Terraform remote-state block persists S3 access/secret keys for the
+    backend bucket. When that bucket is deleted, those secrets are dead weight
+    (and a leak) on disk; remove them for every project whose state bucket
+    matches. Returns the aliases whose state was cleared.
+    """
+    target = _bucket_key(bucket_name)
+    if not target:
+        return []
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if not isinstance(projects, dict):
+        return []
+    cleared: list[str] = []
+    for alias, proj in projects.items():
+        if not isinstance(proj, dict):
+            continue
+        state = proj.get("terraform_state")
+        if not isinstance(state, dict):
+            continue
+        if _bucket_key(str(state.get("bucket", "") or "")) == target:
+            del proj["terraform_state"]
+            cleared.append(str(alias))
+    if cleared:
+        yml["projects"] = projects
+        _write_config_replace(yml)
+    return cleared
+
+
+def clear_skypilot_bin() -> bool:
+    """Remove ``skypilot.sky_bin`` from ``config.yaml``; return whether present.
+
+    Paired with removing ``~/.npa/skypilot-venv`` so an uninstalled SkyPilot
+    runtime does not leave a dangling persisted binary path behind.
+    """
+    yml = _load_yaml()
+    sky = yml.get("skypilot")
+    if not isinstance(sky, dict) or "sky_bin" not in sky:
+        return False
+    del sky["sky_bin"]
+    if sky:
+        yml["skypilot"] = sky
+    else:
+        yml.pop("skypilot", None)
+    _write_config_replace(yml)
+    return True
+
+
+def forget_project(alias: str) -> bool:
+    """Remove ``projects.<alias>`` (stanza + ``terraform_state``) from config.
+
+    The inverse of the project stanza ``npa configure`` writes. Fixes
+    ``default_project`` when the forgotten alias was the default. Returns whether
+    a stanza was removed.
+    """
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        return False
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if not isinstance(projects, dict) or cleaned not in projects:
+        return False
+    del projects[cleaned]
+    yml["projects"] = projects
+    if yml.get("default_project") == cleaned:
+        remaining = list(projects.keys())
+        yml["default_project"] = remaining[0] if remaining else "default"
+    _write_config_replace(yml)
+    return True
+
+
 def remove_workbench_config(
     project: str,
     name: str,
