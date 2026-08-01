@@ -177,12 +177,13 @@ class FleetSpec:
     region: str = ""
     project_prefix: str = ""
     ssh_public_key: str = ""
-    # ~/.nebius profile every nebius CLI call runs under; empty -> the machine's
-    # active profile. Needed because a Nebius service account is single-tenant,
-    # so deploying into another tenant means selecting that tenant's profile
-    # rather than mutating the machine-wide active one.
-    profile: str = ""
     projects: list[ProjectSpec] = field(default_factory=list)
+    # Declared last so adding it cannot shift the positional order of the
+    # pre-existing fields for SDK callers. The ~/.nebius profile every nebius CLI
+    # call runs under; empty -> the machine's active profile. Needed because a
+    # Nebius service account is single-tenant, so deploying into another tenant
+    # means selecting that tenant's profile rather than mutating the active one.
+    profile: str = ""
 
     def validate(self) -> None:
         if not _is_dns_name(self.name):
@@ -304,8 +305,8 @@ def spec_from_mapping(data: dict[str, Any]) -> FleetSpec:
         region=str(data.get("region", "") or ""),
         project_prefix=str(data.get("project_prefix", "") or ""),
         ssh_public_key=str(data.get("ssh_public_key", "") or ""),
-        profile=str(data.get("profile", "") or ""),
         projects=projects,
+        profile=str(data.get("profile", "") or ""),
     )
 
 

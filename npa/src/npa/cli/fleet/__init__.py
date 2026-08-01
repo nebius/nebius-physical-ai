@@ -57,28 +57,36 @@ def _targets(spec, *, project_prefix, only_projects, only_clusters):
     return out
 
 
-def _confirm(action: str, spec, targets, *, yes: bool, cascade: bool = False) -> None:
-    """Show what will be created/destroyed and require confirmation unless ``yes``."""
+def _confirm(
+    action: str, spec, targets, *, yes: bool, cascade: bool = False, err: bool = False
+) -> None:
+    """Show what will be created/destroyed and require confirmation unless ``yes``.
+
+    ``err`` sends the human-readable banner (and prompt) to stderr so it cannot
+    corrupt a machine-readable ``--output json`` stdout stream.
+    """
 
     projects = sorted({t[0] for t in targets})
     typer.echo(
         f"About to {action} fleet '{spec.name}': "
-        f"{len(targets)} cluster(s) across {len(projects)} project(s)."
+        f"{len(targets)} cluster(s) across {len(projects)} project(s).",
+        err=err,
     )
     for display, _key, cluster_name in targets:
-        typer.echo(f"  - {display} / cluster {cluster_name}")
+        typer.echo(f"  - {display} / cluster {cluster_name}", err=err)
     if cascade:
         typer.echo(
             "  (each listed cluster with local state is torn down, along with any "
-            "VPC network this fleet created for it.)"
+            "VPC network this fleet created for it.)",
+            err=err,
         )
     if not targets:
-        typer.echo("  (no targets in scope) -- nothing to do.")
+        typer.echo("  (no targets in scope) -- nothing to do.", err=err)
         raise typer.Exit(0)
     if yes:
         return
-    if not typer.confirm(f"Proceed to {action}?"):
-        typer.echo("Aborted.")
+    if not typer.confirm(f"Proceed to {action}?", err=err):
+        typer.echo("Aborted.", err=err)
         raise typer.Exit(1)
 
 
@@ -178,11 +186,14 @@ def deploy_cmd(
     spec = _load(spec_path)
     only = _csv(only_projects)
     only_c = _csv(only_clusters)
+    # In json mode stdout must stay a pure JSON document, so progress goes to stderr.
+    json_mode = output == "json"
     _confirm(
         "create/update",
         spec,
         _targets(spec, project_prefix=project_prefix, only_projects=only, only_clusters=only_c),
         yes=yes,
+        err=json_mode,
     )
     try:
         result = deploy_fleet(
@@ -198,7 +209,7 @@ def deploy_cmd(
             timeout_minutes=timeout,
             profile=profile or None,
             preflight=preflight,
-            on_status=lambda msg: typer.echo(f"  - {msg}"),
+            on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
         )
     except ValueError as exc:
         # Resolution/preflight failures are operator-actionable, not bugs: report
@@ -251,12 +262,14 @@ def destroy_cmd(
     spec = _load(spec_path)
     only = _csv(only_projects)
     only_c = _csv(only_clusters)
+    json_mode = output == "json"
     _confirm(
         "destroy",
         spec,
         _targets(spec, project_prefix="", only_projects=only, only_clusters=only_c),
         yes=yes,
         cascade=True,
+        err=json_mode,
     )
     result = destroy_fleet(
         spec,
@@ -265,7 +278,7 @@ def destroy_cmd(
         timeout_minutes=timeout,
         concurrency=max(1, concurrency),
         profile=profile or None,
-        on_status=lambda msg: typer.echo(f"  - {msg}"),
+        on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
     )
     if output == "json":
         typer.echo(json.dumps(result, indent=2))

@@ -952,6 +952,76 @@ def test_deploy_and_destroy_help_document_profile() -> None:
         assert "--profile" in result.output
 
 
+def test_deploy_json_output_keeps_stdout_pure_json(tmp_path, monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    # Regression: progress + confirmation banner went to stdout even in json
+    # mode, so `npa fleet deploy --output json` (what the toolRef runs) emitted a
+    # stream that would not parse.
+    spec_file = tmp_path / "fleet.yaml"
+    spec_file.write_text(
+        textwrap.dedent(
+            """
+            apiVersion: npa.fleet/v0.0.1
+            name: f
+            region: us-central1
+            projects:
+              - name: a
+                clusters:
+                  - name: c
+                    cpu_nodes: { count: 1, platform: cpu-d3, preset: 4vcpu-16gb }
+            """
+        )
+    )
+    monkeypatch.setattr(
+        L,
+        "deploy_fleet",
+        lambda *a, **k: (
+            k["on_status"]("a status line that must not land on stdout"),
+            {"name": "f", "region": "us-central1", "tenant_id": "t", "deployed": 1,
+             "failed": 0, "clusters": []},
+        )[1],
+    )
+    result = runner.invoke(
+        app, ["fleet", "deploy", "--spec", str(spec_file), "--yes", "--output", "json"]
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["deployed"] == 1  # stdout parses as JSON
+
+
+def test_deploy_text_output_keeps_progress_on_stdout(tmp_path, monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    spec_file = tmp_path / "fleet.yaml"
+    spec_file.write_text(
+        textwrap.dedent(
+            """
+            apiVersion: npa.fleet/v0.0.1
+            name: f
+            region: us-central1
+            projects:
+              - name: a
+                clusters:
+                  - name: c
+                    cpu_nodes: { count: 1, platform: cpu-d3, preset: 4vcpu-16gb }
+            """
+        )
+    )
+    monkeypatch.setattr(
+        L,
+        "deploy_fleet",
+        lambda *a, **k: (
+            k["on_status"]("visible progress"),
+            {"name": "f", "region": "us-central1", "tenant_id": "t", "deployed": 1,
+             "failed": 0, "clusters": []},
+        )[1],
+    )
+    result = runner.invoke(app, ["fleet", "deploy", "--spec", str(spec_file), "--yes"])
+    assert result.exit_code == 0
+    assert "visible progress" in result.stdout
+    assert "About to create/update" in result.stdout
+
+
 def test_fleet_deploy_toolref_is_non_interactive() -> None:
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
@@ -1142,6 +1212,69 @@ def test_deploy_preflight_unreadable_quota_api_does_not_block(tmp_path, monkeypa
     )
     assert deployed == ["c"]
     assert any("skipping quota preflight" in m for m in msgs)
+
+
+def test_preflight_runs_before_any_project_is_created(tmp_path, monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    # Regression: the preflight used to run *after* project resolution, so a
+    # quota-blocked deploy left a freshly created, empty project behind.
+    monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "t")
+    monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
+    monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "k")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
+    monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
+    resolved: list[str] = []
+    monkeypatch.setattr(
+        L,
+        "resolve_project_id",
+        lambda *a, **k: (resolved.append("resolved"), ("proj-1", True))[1],
+    )
+    monkeypatch.setattr(
+        L,
+        "_run_capture",
+        lambda *a, **k: _Cap(
+            json.dumps(
+                {"items": [_allowance("compute.instance.gpu.rtx6000", "us-central1", "0")]}
+            ),
+            0,
+        ),
+    )
+    monkeypatch.setattr(L, "_deploy_one_cluster", lambda **kw: {"status": "deployed"})
+    with pytest.raises(ValueError, match="quota is too low"):
+        L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
+    assert resolved == []  # no project touched
+
+
+def test_plan_resolves_tenant_from_named_profile(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    # plan must show the tenant deploy would use, not "(resolve-at-deploy)".
+    monkeypatch.setattr(
+        L,
+        "_nebius_config",
+        lambda: {"default": "other", "profiles": {"sd": {"tenant-id": "tenant-sd"}}},
+    )
+    spec = spec_from_mapping({**_base_mapping(), "tenant_id": "", "profile": "sd"})
+    plan = L.plan_fleet(spec)
+    assert plan["tenant_id"] == "tenant-sd"
+    assert plan["profile"] == "sd"
+    # An explicit spec tenant_id still wins over the profile's.
+    pinned = spec_from_mapping({**_base_mapping(), "tenant_id": "tenant-pinned", "profile": "sd"})
+    assert L.plan_fleet(pinned)["tenant_id"] == "tenant-pinned"
+
+
+def test_fleet_spec_profile_is_declared_after_projects() -> None:
+    import dataclasses
+
+    # Adding `profile` must not shift the positional order of pre-existing SDK
+    # fields, so it has to come after `projects`.
+    names = [f.name for f in dataclasses.fields(FleetSpec)]
+    assert names.index("profile") > names.index("projects")
+    positional = FleetSpec("f", "t", "r", "p", "ssh", [ProjectSpec(name="a")])
+    assert positional.projects[0].name == "a"
+    assert positional.profile == ""
 
 
 def test_deploy_help_documents_preflight() -> None:

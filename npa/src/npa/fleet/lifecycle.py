@@ -138,6 +138,20 @@ def _resolve_tenant_id(nebius_bin: str, explicit: str, profile: str = "") -> str
     )
 
 
+def tenant_id_from_profile(profile: str) -> str:
+    """Tenant recorded for *profile* in ``~/.nebius/config.yaml`` (config-only).
+
+    Used by ``plan``, which must stay side-effect free: no ``nebius`` binary and
+    no API calls, just the on-disk profile.
+    """
+
+    cfg = _nebius_config()
+    selected = profile or str(cfg.get("default", "") or "")
+    profiles = cfg.get("profiles", {}) if isinstance(cfg.get("profiles"), dict) else {}
+    prof = profiles.get(selected, {}) if isinstance(profiles.get(selected), dict) else {}
+    return str(prof.get("tenant-id", "") or "")
+
+
 def _resolve_region(explicit: str) -> str:
     if explicit:
         return explicit
@@ -694,7 +708,11 @@ def plan_fleet(
 
     spec.validate()
     prefix = project_prefix if project_prefix is not None else spec.project_prefix
-    tenant = tenant_id or spec.tenant_id
+    plan_profile = spec.profile if profile is None else profile
+    # Show the tenant the deploy would actually use. Reporting
+    # "(resolve-at-deploy)" while a named profile pins a specific tenant would
+    # make plan useless as the pre-deploy check for targeting the right tenant.
+    tenant = tenant_id or spec.tenant_id or tenant_id_from_profile(plan_profile)
     reg = region or spec.region
     plan_projects: list[dict[str, Any]] = []
     for project in spec.projects:
@@ -725,7 +743,7 @@ def plan_fleet(
         "tenant_id": tenant or "(resolve-at-deploy)",
         "region": reg or "(resolve-at-deploy)",
         "project_prefix": prefix,
-        "profile": (spec.profile if profile is None else profile) or "(active)",
+        "profile": plan_profile or "(active)",
         "project_count": len(spec.projects),
         "cluster_count": len(spec.cluster_targets()),
         "projects": plan_projects,
@@ -804,6 +822,29 @@ def deploy_fleet(
         "k8s_training_source": str(recipe_root),
     }
 
+    # Phase 0: quota preflight, before any project is created. Regions come from
+    # the spec, so this needs no project ids -- and running it first means a
+    # quota-blocked deploy does not leave a freshly created, empty project behind.
+    if preflight:
+        scoped: dict[str, list[ClusterSpec]] = {}
+        for project in spec.projects:
+            if not _project_in_scope(project, only_projects, prefix):
+                continue
+            region = project.region or fleet_region
+            for cluster in project.clusters:
+                if only_clusters and cluster.name not in only_clusters:
+                    continue
+                scoped.setdefault(region, []).append(cluster)
+        if scoped:
+            _preflight_quotas(
+                nebius_bin,
+                tenant_id=tenant_id,
+                by_region=scoped,
+                env=cli_env,
+                profile=nebius_profile,
+                on_status=on_status,
+            )
+
     # Phase 1 (sequential, cheap): resolve/create each in-scope project and build
     # the flat list of (project, cluster) targets to apply.
     targets: list[dict[str, Any]] = []
@@ -841,16 +882,6 @@ def deploy_fleet(
                     "region": region,
                 }
             )
-
-    if preflight and targets:
-        _preflight_quotas(
-            nebius_bin,
-            tenant_id=tenant_id,
-            targets=targets,
-            env=cli_env,
-            profile=nebius_profile,
-            on_status=on_status,
-        )
 
     parallel = concurrency > 1 and len(targets) > 1
     if parallel:
@@ -921,16 +952,13 @@ def _preflight_quotas(
     nebius_bin: str,
     *,
     tenant_id: str,
-    targets: list[dict[str, Any]],
+    by_region: dict[str, list[ClusterSpec]],
     env: dict[str, str],
     profile: str,
     on_status: Callable[[str], None] | None,
 ) -> None:
     """Raise when the tenant's quota cannot cover the in-scope clusters."""
 
-    by_region: dict[str, list[ClusterSpec]] = {}
-    for target in targets:
-        by_region.setdefault(str(target["region"]), []).append(target["cluster"])
     shortfalls = []
     for region, clusters in sorted(by_region.items()):
         _log(on_status, f"quota preflight: {len(clusters)} cluster(s) in {region}")
