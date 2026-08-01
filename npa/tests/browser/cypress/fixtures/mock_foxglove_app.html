@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mock Foxglove embed app</title>
+    <style>
+      html, body { margin: 0; background: #101828; color: #e2e8f0; font: 13px monospace; }
+      #panel { padding: 12px; }
+      pre { white-space: pre-wrap; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <div id="state" data-testid="mock-foxglove-state">booting</div>
+      <pre id="received" data-testid="mock-foxglove-received">[]</pre>
+    </div>
+    <script>
+      // Protocol-accurate stand-in for the Foxglove embedded viewer application.
+      //
+      // It implements the postMessage handshake that @foxglove/embed's
+      // FoxgloveViewer expects (origin-request -> origin-ack,
+      // handshake-request -> handshake-ack, then handshake-complete) and records
+      // every command it receives so the browser test can assert what the NPA UI
+      // actually sent. The real Foxglove application is a licensed product and
+      // cannot run in CI; the SDK under test is the genuine npm package.
+      (function () {
+        const params = new URLSearchParams(location.search);
+        const received = [];
+        const stateEl = document.getElementById("state");
+        const receivedEl = document.getElementById("received");
+
+        function setState(value) {
+          stateEl.textContent = value;
+          stateEl.setAttribute("data-state", value);
+        }
+
+        function record(message) {
+          received.push(message);
+          receivedEl.textContent = JSON.stringify(received, null, 2);
+          window.__mockFoxgloveReceived = received;
+        }
+
+        function toParent(payload) {
+          window.parent.postMessage(payload, "*");
+        }
+
+        window.addEventListener("message", (event) => {
+          const data = event.data;
+          if (!data || typeof data !== "object" || typeof data.type !== "string") return;
+          record(data);
+          if (data.type === "origin-ack") {
+            // Parent acknowledged our origin request: start the handshake.
+            toParent({ type: "foxglove-handshake-request" });
+            setState("handshake-requested");
+            return;
+          }
+          if (data.type === "handshake-ack") {
+            setState("handshake-acked");
+            if (params.get("error") === "1") {
+              toParent({
+                type: "foxglove-error",
+                payload: { message: "mock viewer failed to open the data source" },
+              });
+              setState("error-sent");
+              return;
+            }
+            toParent({ type: "foxglove-handshake-complete" });
+            setState("ready");
+            return;
+          }
+          if (data.type === "get-layout") {
+            toParent({ type: "foxglove-layout-data", payload: { mock: true } });
+          }
+        });
+
+        toParent({ type: "foxglove-origin-request" });
+        setState("origin-requested");
+      })();
+    </script>
+  </body>
+</html>

@@ -171,12 +171,18 @@ def resolve_task_image(
     return container_image_for_tool(tool, **kwargs)
 
 
-def render_task_run_script(command: Sequence[str]) -> str:
-    """Turn an argv list into a SkyPilot ``run:`` shell script."""
+def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str:
+    """Turn an argv list into a SkyPilot ``run:`` shell script.
+
+    ``preamble`` is shell inserted just before the command (after the npa
+    interpreter shim), e.g. to launch a self-hosted server the command connects
+    to.
+    """
 
     if not command:
         raise NpaWorkflowRenderError("cannot render empty command for SkyPilot task")
     quoted = " ".join(shlex.quote(str(part)) for part in command)
+    preamble_block = f"{preamble.rstrip(chr(10))}\n" if preamble.strip() else ""
     return (
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
@@ -223,7 +229,47 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "echo 'warning: python3 in this shell cannot import npa' >&2\n"
         "set -u\n"
+        f"{preamble_block}"
         f"{quoted}\n"
+    )
+
+
+def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
+    """Background vLLM server launch for a self-hosted ``vlm_eval`` step.
+
+    The npa.workflow render otherwise only installs vLLM (see
+    ``render_setup_for_tool``) but never starts the OpenAI-compatible server the
+    eval client connects to, so :8000 is never up. Launch it in the background
+    on the eval's default endpoint; the client polls ``/v1/models`` and retries
+    connect errors up to ``NPA_VLM_READY_TIMEOUT_S`` (see
+    ``npa.workbench.vlm_eval``), so a cold start is a bounded wait.
+    """
+
+    backend = str(config.get("vlm_backend") or "").strip().lower()
+    if not (tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}):
+        return ""
+    if str(tool_ref).startswith("workbench.vlm_eval.benchmark"):
+        # The benchmark twin runs backend=stub / packaged fixtures; no server.
+        return ""
+    try:
+        from npa.workbench.vlm_eval import DEFAULT_MODEL as _default_model
+    except Exception:  # pragma: no cover - fallback keeps render import-light
+        _default_model = "Qwen/Qwen2-VL-7B-Instruct"
+    model = str(config.get("vlm_model") or config.get("vlm_models") or _default_model).split(",")[0].strip()
+    model_q = shlex.quote(model)
+    return (
+        "# Self-hosted vLLM: launch the OpenAI-compatible server in the background\n"
+        "# on 127.0.0.1:8000; the eval client waits for readiness. A cold start\n"
+        "# (install + weight download + load of a 7B VLM) can take many minutes,\n"
+        "# so widen the client's readiness window. Unbraced/plain assignment keeps\n"
+        "# SkyPilot placeholder lint clean.\n"
+        "export NPA_VLM_READY_TIMEOUT_S=1800\n"
+        "python3 -m vllm.entrypoints.openai.api_server "
+        "--host 127.0.0.1 --port 8000 "
+        f"--model {model_q} --served-model-name {model_q} --trust-remote-code "
+        "> /tmp/vllm-server.log 2>&1 &\n"
+        "vllm_pid=$!\n"
+        "trap 'kill \"$vllm_pid\" 2>/dev/null || true' EXIT\n"
     )
 
 
@@ -493,7 +539,10 @@ def build_skypilot_task_doc(
         "name": scheduler_task["name"],
         "resources": resources,
         "envs": envs,
-        "run": render_task_run_script(command),
+        "run": render_task_run_script(
+            command,
+            preamble=_vllm_serve_preamble(str(scheduler_task.get("tool_ref") or ""), spec.config),
+        ),
     }
     setup = render_setup_for_tool(
         str(scheduler_task.get("tool_ref") or ""),

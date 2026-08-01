@@ -419,3 +419,61 @@ def test_embedded_chat_action_branch_drives_loop_not_boilerplate() -> None:
     assert "Use `POST /api/agent/act` with a JSON body carrying your goal" not in source
     assert "run_chat_action_loop(" in source
     assert '"insights_query": _tool_insights_query' in source
+
+
+def test_foxglove_intent_routes_and_grounds() -> None:
+    from npa.cli.agent_chat import build_grounded_reply, match_chat_intent
+
+    for text in (
+        "open foxglove",
+        "foxglove status",
+        "show me the mcap recording",
+        "can I play this rosbag?",
+    ):
+        assert match_chat_intent(text) == "foxglove_viewer", text
+
+    # Rerun / generic viewer turns must not be captured by the new intent.
+    for text in ("watch the sim", "what is the current status", "open the rerun timeline"):
+        assert match_chat_intent(text) != "foxglove_viewer", text
+
+    reply = build_grounded_reply(
+        "foxglove_viewer",
+        {
+            "foxglove": {
+                "available": True,
+                "embed_src": "https://embed.foxglove.dev/",
+                "org_slug": "acme",
+                "sdk_version": "0.58.0",
+                "run_id": "run-7",
+                "artifact_key": "run-7/reports/session.mcap",
+                "data_source": {
+                    "type": "remote-file",
+                    "urls": ["https://agent.example/foxglove/data/tok-run.mcap"],
+                },
+            },
+            "sim_viz": {"foxglove_ready": True, "run_id": "run-7"},
+        },
+        [],
+    )
+    assert "**Foxglove viewer**" in reply
+    assert "`https://embed.foxglove.dev/`" in reply
+    assert "remote-file" in reply
+    assert "run-7" in reply
+    assert "0.58.0" in reply
+    # Honest about the cross-origin capture limit.
+    assert "cross-origin iframe" in reply
+
+
+def test_foxglove_grounded_reply_explains_unconfigured_state() -> None:
+    from npa.cli.agent_chat import build_grounded_reply
+
+    reply = build_grounded_reply(
+        "foxglove_viewer",
+        {"foxglove": {"available": False, "reason": "Foxglove SDK assets are not installed."}},
+        [],
+    )
+    assert "`False`" in reply
+    assert "not installed" in reply
+    assert "--foxglove-embed-src" in reply
+    # Never claim a viewer is showing data when it is not configured.
+    assert "ready" not in reply.lower().split("foxglove_ready")[0]

@@ -14,7 +14,9 @@ config:
   rubrics: "default,strict"
   vlm_models: "Qwen/Qwen2-VL-7B-Instruct"
 
-  benchmark_dataset: "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json"
+  # `sample` resolves to the packaged sample fixture at its install location, so
+  # it works inside a rendered job (a repo-relative path does not exist there).
+  benchmark_dataset: "sample"
   benchmark_output: "s3://{{config.bucket}}/{{config.prefix}}/results.json"
 
 resources:

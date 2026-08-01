@@ -50,6 +50,18 @@ _NON_STOCK_ARTIFACT_DISCOVERY_RE = re.compile(
 
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
+        # Embedded Foxglove viewer (MCAP / bag recordings). Kept ahead of the
+        # rerun-oriented watch rules so "open foxglove" never routes to Rerun.
+        "foxglove_viewer",
+        re.compile(
+            r"\bfoxglove\b"
+            r"|\bmcap\b"
+            r"|\b(?:ros\s*bag|rosbag)\b"
+            r"|\b(?:open|show|view|play|load)\b.{0,40}\b(?:\.mcap|mcap file|bag file)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "drive_sim2real",
         re.compile(
             r"\b(?:drive|orchestrate|automate|auto[- ]?run)\b.{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
@@ -1398,7 +1410,71 @@ def build_grounded_reply(
         )
     if intent == "list_recordings":
         return format_list_recordings(state)
+    if intent == "foxglove_viewer":
+        return format_foxglove_status(state)
     return format_sim2real_status(state, rerun_ready=rerun_ready)
+
+
+def format_foxglove_status(state: dict[str, Any]) -> str:
+    """Grounded reply for the embedded Foxglove viewer (0 model tokens).
+
+    Everything comes from the live ``/api/foxglove/config`` + ``/status`` payloads
+    the backend attached to the session state; nothing is assumed.
+    """
+    foxglove = state.get("foxglove")
+    foxglove = foxglove if isinstance(foxglove, dict) else {}
+    sim_viz = _sim_viz(state)
+    lines = ["**Foxglove viewer** (grounded):"]
+    if not foxglove:
+        lines.append("- **status**: `unknown` — `/api/foxglove/config` returned nothing.")
+        lines.append("- Open the **Foxglove** tab in the Viewer panel to initialize it.")
+        return "\n".join(lines)
+
+    available = bool(foxglove.get("available"))
+    lines.append(f"- **available**: `{available}`")
+    if foxglove.get("reason"):
+        lines.append(f"- **reason**: {foxglove['reason']}")
+    lines.append(f"- **embed_src**: `{foxglove.get('embed_src') or '(unset)'}`")
+    if foxglove.get("org_slug"):
+        lines.append(f"- **org_slug**: `{foxglove['org_slug']}`")
+    lines.append(f"- **sdk_version**: `{foxglove.get('sdk_version') or '(unknown)'}` (@foxglove/embed)")
+    source = foxglove.get("data_source") if isinstance(foxglove.get("data_source"), dict) else {}
+    source_type = str(source.get("type") or foxglove.get("data_source_type") or "none")
+    lines.append(f"- **data_source**: `{source_type}`")
+    urls = source.get("urls") if isinstance(source.get("urls"), list) else []
+    if urls:
+        lines.append(f"- **recording**: `{urls[0]}`")
+    elif source.get("url"):
+        lines.append(f"- **live_url**: `{source['url']}`")
+    run_id = str(foxglove.get("run_id") or sim_viz.get("run_id") or "").strip()
+    if run_id:
+        lines.append(f"- **run_id**: `{run_id}`")
+    if foxglove.get("artifact_key"):
+        lines.append(f"- **artifact_key**: `{foxglove['artifact_key']}`")
+    lines.append(f"- **foxglove_ready**: `{bool(sim_viz.get('foxglove_ready'))}`")
+
+    if available:
+        lines.append("- Open the **Foxglove** tab in the Viewer panel; the SDK iframe mounts there.")
+        if not urls and source_type == "none":
+            lines.append(
+                "- No recording is loaded yet: pick an `.mcap`/`.bag` artifact in "
+                "**Runs & artifacts** (Type = Foxglove), or "
+                "`POST /api/foxglove/load-artifact` with `s3_uri` / `run_id`+`key`."
+            )
+    else:
+        lines.append(
+            "- The agent serves the MIT-licensed `@foxglove/embed` SDK and the recording; "
+            "the viewer application runs at your Foxglove deployment and users sign in there."
+        )
+        lines.append(
+            "- Configure it with `npa agent bootstrap --foxglove-embed-src <url> "
+            "--foxglove-org-slug <slug>` (or `NPA_FOXGLOVE_EMBED_SRC`)."
+        )
+    lines.append(
+        "- Describe this on the Foxglove pane reports viewer state only — the embed is a "
+        "cross-origin iframe, so its pixels cannot be captured."
+    )
+    return "\n".join(lines)
 
 
 def format_list_recordings(state: dict[str, Any]) -> str:

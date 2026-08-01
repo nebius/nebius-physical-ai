@@ -15,6 +15,7 @@ cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
 cosmos3  Cosmos3 reasoning workflow contracts.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
+foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
 isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
@@ -50,6 +51,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
 | `cosmos3` | Cosmos3 reasoning workflow contracts. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
+| `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
 | `isaac-lab` | Isaac Lab simulation workbench deployment, training, and evaluation. |

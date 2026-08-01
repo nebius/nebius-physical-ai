@@ -43,7 +43,9 @@ except Exception:  # pragma: no cover - embedded backend fallback
         return value
 
 _RERUN_EXTENSIONS = {".rrd"}
-_MCAP_EXTENSIONS = {".mcap"}
+# Recording formats the embedded MCAP viewers open directly. MCAP is the
+# canonical one; Lichtblick/Foxglove also read ROS 1 bags, ROS 2 db3 and PX4 ulog.
+_MCAP_EXTENSIONS = {".mcap", ".bag", ".db3", ".ulg", ".ulog"}
 _VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
 # Browser-native image formats an <img> tag can render directly.
 _WEB_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -62,11 +64,12 @@ _JSON_EXTENSIONS = {".json"}
 _TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
 _RENDER_ORDER = {
     "rerun": 0,
-    "video": 1,
-    "image": 2,
-    "json": 3,
-    "text": 4,
-    "download": 5,
+    "mcap": 1,
+    "video": 2,
+    "image": 3,
+    "json": 4,
+    "text": 5,
+    "download": 6,
 }
 
 
@@ -214,6 +217,9 @@ def artifact_media_type(filename: str) -> str:
     name = str(filename or "").strip()
     suffix = Path(name).suffix.lower()
     explicit = {
+        # MCAP has no registered IANA type; Foxglove selects its reader from the
+        # URL extension, and octet-stream keeps byte-range streaming intact.
+        ".mcap": "application/octet-stream",
         ".mp4": "video/mp4",
         ".webm": "video/webm",
         ".mov": "video/quicktime",

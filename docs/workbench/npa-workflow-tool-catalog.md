@@ -47,6 +47,7 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.dataset.query` | `npa workbench dataset query` | `config.curated_manifest_uri` | matching records (LanceDB-backed) | no |
 | `workbench.dataset.write_quality_decision` | dataset quality-gate decision writer | `config.quality_gate`, `config.decision_uri` | accept/reject decision JSON | no |
 | `workbench.dataset.report_rejection` | dataset rejection report writer | `config.validation_uri`, `config.decision_uri` | rejection report | no |
+| `workbench.foxglove.convert` | `npa workbench foxglove convert-run` | `config.run_artifacts_path`, `config.mcap_output_path`, `config.mcap_fps` | MCAP recording (Foxglove well-known schemas) for the embedded viewer | no |
 | `workbench.insights.record` | `npa workbench insights record` | `config.metrics_input_uri`, `config.insights_store_uri` | metric records + lineage edges appended to the store | no |
 | `workbench.insights.ingest_run` | `npa workbench insights ingest-run` | `config.run_prefix_uri`, `config.insights_store_uri` | extracted metrics + lineage (`npa.insights.metric_record.v1`) | no |
 | `workbench.insights.compare` | `npa workbench insights compare` | `config.insights_store_uri`, `config.base_run`, `config.candidate_run` | `npa.insights.comparison.v1` | no |

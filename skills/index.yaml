@@ -186,6 +186,23 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/src/npa/workflows/skypilot/dataset-ingest-curate.yaml
+  - name: foxglove
+    category: tools
+    when_to_use: "Embed, operate, or debug the Foxglove viewer in the NPA agent: the @foxglove/embed TypeScript SDK, MCAP recordings, the npa-foxglove-embed container, and /api/foxglove/* endpoints."
+    path: skills/tools/foxglove/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "foxglove", "convert-run", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "foxglove", "install-sdk", "--help"]
+        contains: "integrity"
+      - type: file_exists
+        path: npa/docker/workbench/foxglove-embed/Dockerfile
+      - type: file_exists
+        path: npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
+      - type: file_exists
+        path: npa/src/npa/cli/agent_foxglove.py
   - name: insights
     category: tools
     when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."

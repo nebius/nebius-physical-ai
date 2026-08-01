@@ -1,0 +1,204 @@
+# Daily tests that run ON the operator/dev VM, reached over SSH from GitHub.
+#
+# GitHub-hosted runners live outside the operator's Nebius environment and cannot
+# reach real infrastructure (see docs/testing/live-e2e.md). Instead of running
+# the tests on the hosted runner, this workflow SSHes INTO the dev VM (which has
+# ~/.npa credentials, config, and SkyPilot) and runs scripts/dev-vm-daily-tests.sh
+# there.
+#
+# Required repository secrets:
+#   DEV_VM_SSH_HOST         hostname or IP of the dev VM
+#   DEV_VM_SSH_USER         SSH login user
+#   DEV_VM_SSH_PRIVATE_KEY  private key (PEM) authorized on the dev VM
+# Optional:
+#   DEV_VM_SSH_PORT         SSH port (defaults to 22)
+#
+# GUARDRAIL: the GPU-spending `live-gpu` tier must never run unattended on a
+# schedule (docs/testing/live-e2e.md). The scheduled path is capped to a safe
+# tier and this workflow refuses to dispatch `live-gpu` from a `schedule` event.
+name: Dev VM daily tests
+
+on:
+  schedule:
+    # 07:00 UTC daily. Adjust to the operator's off-peak window as needed.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      test_tier:
+        description: "Which test tier to run on the dev VM"
+        type: choice
+        default: e2e-daily
+        options:
+          - unit
+          - e2e
+          - e2e-daily
+          - gpu-daily
+          - e2e-serverless
+          - live-gpu
+      git_ref:
+        description: "Branch, tag, or sha to test on the dev VM"
+        type: string
+        default: main
+
+# The tier the daily schedule runs. `e2e-daily` runs the >= 4-step workflow
+# coverage gate, plans every npa.workflow spec, checks every image is reachable
+# in the registry, and runs a DIFFERENT rotating shard of the S3 e2e suite each
+# day. Keep this at `e2e-daily`/`e2e` or lighter: it must never be `live-gpu`
+# (that path provisions real GPUs and can leak spend unattended).
+env:
+  SCHEDULED_TEST_TIER: e2e-daily
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-vm-daily-tests
+  cancel-in-progress: false
+
+jobs:
+  dev-vm-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify required secrets are present
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+          DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "$DEV_VM_SSH_HOST" ] || missing="$missing DEV_VM_SSH_HOST"
+          [ -n "$DEV_VM_SSH_USER" ] || missing="$missing DEV_VM_SSH_USER"
+          [ -n "$DEV_VM_SSH_PRIVATE_KEY" ] || missing="$missing DEV_VM_SSH_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s):$missing. Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Resolve effective test tier and ref
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TIER: ${{ github.event.inputs.test_tier }}
+          INPUT_REF: ${{ github.event.inputs.git_ref }}
+        run: |
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            tier="${SCHEDULED_TEST_TIER}"
+            ref="main"
+          else
+            tier="${INPUT_TIER:-e2e-daily}"
+            ref="${INPUT_REF:-main}"
+          fi
+
+          # Hard guardrail: never let a schedule trigger the GPU-spending path.
+          if [ "$tier" = "live-gpu" ] && [ "$EVENT_NAME" = "schedule" ]; then
+            echo "::error::live-gpu must never run on a schedule (docs/testing/live-e2e.md)."
+            exit 1
+          fi
+
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Effective tier=$tier ref=$ref (event=$EVENT_NAME)"
+
+      - name: Configure SSH access to the dev VM
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
+          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
+          # Optional: a pre-vetted known_hosts entry (recommended). When set it is
+          # used as-is; otherwise we fall back to ssh-keyscan (trust-on-first-use).
+          DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEV_VM_SSH_PRIVATE_KEY" > ~/.ssh/dev_vm_key
+          chmod 600 ~/.ssh/dev_vm_key
+          port="${DEV_VM_SSH_PORT:-22}"
+          echo "SSH_PORT=$port" >> "$GITHUB_ENV"
+          if [ -n "$DEV_VM_SSH_KNOWN_HOSTS" ]; then
+            # Pre-vetted pin: no trust-on-first-use window.
+            printf '%s\n' "$DEV_VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            # Trust-on-first-use: records whatever key is presented now. Set the
+            # DEV_VM_SSH_KNOWN_HOSTS secret to remove this MITM-at-keyscan window.
+            echo "::warning::DEV_VM_SSH_KNOWN_HOSTS not set; using ssh-keyscan (trust-on-first-use)."
+            ssh-keyscan -p "$port" -H "$DEV_VM_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy runner script to the dev VM
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+        run: |
+          scp -P "$SSH_PORT" \
+            -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
+            -o StrictHostKeyChecking=yes \
+            scripts/dev-vm-daily-tests.sh \
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}:/tmp/npa-dev-vm-daily-tests.sh"
+
+      - name: Run test tier on the dev VM
+        env:
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+          TIER: ${{ steps.plan.outputs.tier }}
+          REF: ${{ steps.plan.outputs.ref }}
+          # Optional passthroughs; empty when not configured.
+          NPA_E2E_SERVERLESS_PROJECT: ${{ vars.NPA_E2E_SERVERLESS_PROJECT }}
+          NPA_E2E_PROJECT: ${{ vars.NPA_E2E_PROJECT }}
+          # Registry id enables the daily all-image reachability check on the dev VM.
+          NPA_REGISTRY_ID: ${{ vars.NPA_REGISTRY_ID }}
+          NPA_DAILY_E2E_SHARDS: ${{ vars.NPA_DAILY_E2E_SHARDS }}
+          # Set the NPA_DAILY_ENABLE_GPU repo variable to "1" to have the daily
+          # e2e-daily tier also run ONE rotating, self-cleaning real-GPU workflow
+          # submit. The full `live-gpu` sky-cluster suite stays manual-only.
+          NPA_DAILY_ENABLE_GPU: ${{ vars.NPA_DAILY_ENABLE_GPU }}
+        run: |
+          # Defense-in-depth: these values are interpolated into a command run
+          # over SSH on a VM that holds real credentials. Reject anything outside
+          # a safe charset (blocks quote/`$`/`;` breakouts) before building it.
+          # git refs and Nebius ids/flags never legitimately contain such chars.
+          safe='^[A-Za-z0-9._/-]*$'
+          for pair in "git_ref=$REF" \
+                      "NPA_E2E_SERVERLESS_PROJECT=$NPA_E2E_SERVERLESS_PROJECT" \
+                      "NPA_E2E_PROJECT=$NPA_E2E_PROJECT" \
+                      "NPA_REGISTRY_ID=$NPA_REGISTRY_ID" \
+                      "NPA_DAILY_E2E_SHARDS=$NPA_DAILY_E2E_SHARDS" \
+                      "NPA_DAILY_ENABLE_GPU=$NPA_DAILY_ENABLE_GPU"; do
+            name="${pair%%=*}"; val="${pair#*=}"
+            if ! [[ "$val" =~ $safe ]]; then
+              echo "::error::${name} contains unsafe characters; refusing to run."
+              exit 1
+            fi
+          done
+
+          # Only the live-gpu tier is allowed to arm the GPU path, and only from a
+          # manual dispatch (already guarded above). The scheduled path never
+          # reaches this branch with tier=live-gpu.
+          allow_gpu=0
+          if [ "$TIER" = "live-gpu" ]; then
+            allow_gpu=1
+          fi
+
+          remote_cmd="chmod +x /tmp/npa-dev-vm-daily-tests.sh && \
+            NPA_DAILY_ALLOW_LIVE_GPU=${allow_gpu} \
+            NPA_E2E_SERVERLESS_PROJECT='${NPA_E2E_SERVERLESS_PROJECT}' \
+            NPA_E2E_PROJECT='${NPA_E2E_PROJECT}' \
+            NPA_REGISTRY_ID='${NPA_REGISTRY_ID}' \
+            NPA_DAILY_E2E_SHARDS='${NPA_DAILY_E2E_SHARDS}' \
+            NPA_DAILY_ENABLE_GPU='${NPA_DAILY_ENABLE_GPU}' \
+            bash /tmp/npa-dev-vm-daily-tests.sh '${TIER}' '${REF}'"
+
+          ssh -p "$SSH_PORT" \
+            -o IdentitiesOnly=yes -i ~/.ssh/dev_vm_key \
+            -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=1200 \
+            "${DEV_VM_SSH_USER}@${DEV_VM_SSH_HOST}" \
+            "bash -lc \"${remote_cmd}\""
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/dev_vm_key

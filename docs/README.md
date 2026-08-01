@@ -20,6 +20,7 @@ Nebius Physical AI.
 | [sdk/errors.md](sdk/errors.md) | Typed exceptions for programmatic SDK consumers and agents |
 | [testing/e2e-serverless.md](testing/e2e-serverless.md) | E2E test conventions for serverless workloads |
 | [testing/e2e.md](testing/e2e.md) | General E2E test conventions |
+| [testing/dev-vm-daily.md](testing/dev-vm-daily.md) | Daily tests run on the dev VM over SSH from GitHub Actions |
 
 ## Audience
 

@@ -9,6 +9,7 @@ from npa.cli.workbench.byof import app as byof_app
 from npa.cli.workbench.cosmos2 import app as cosmos2_app
 from npa.cli.workbench.cosmos3 import app as cosmos3_app
 from npa.cli.workbench.data import app as data_app
+from npa.cli.workbench.foxglove import app as foxglove_app
 from npa.cli.workbench.lichtblick import app as lichtblick_app
 from npa.cli.workbench.lerobot import app as lerobot_app
 from npa.cli.workbench.mjlab import app as mjlab_app
@@ -51,6 +52,7 @@ app.add_typer(cosmos_app, name="cosmos")
 app.add_typer(cosmos2_app, name="cosmos2")
 app.add_typer(cosmos3_app, name="cosmos3")
 app.add_typer(fiftyone_app, name="fiftyone")
+app.add_typer(foxglove_app, name="foxglove")
 app.add_typer(genesis_app, name="genesis")
 app.add_typer(groot_app, name="groot")
 app.add_typer(isaac_lab_app, name="isaac-lab")
