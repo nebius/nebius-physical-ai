@@ -22,7 +22,8 @@ WORKDIR /opt/cosmos/cosmos-transfer2.5
 # `Permission denied` (exit 126) for every inference call and the venv was unusable
 # as shipped.
 ENV UV_LINK_MODE=copy \
-    UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python
+    UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python \
+    UV_LEGACY_PYTHON_DIR=/root/.local/share/uv/python
 
 # Build the real inference env. `uv sync --extra=cu128` resolves torch cu128 +
 # flash-attn (cp310) + the full transfer2.5 dependency set from the upstream lock.
@@ -41,26 +42,33 @@ ENV UV_LINK_MODE=copy \
 # Either way the layer ends with the interpreter outside /root, which is what makes
 # the venv usable by the non-root user this image runs as.
 RUN set -eux; \
-    if [ -x .venv/bin/python ] && [ "$(readlink -f .venv/bin/python | cut -d/ -f2)" = "root" ]; then \
-      mkdir -p "${UV_PYTHON_INSTALL_DIR}"; \
-      cp -a /root/.local/share/uv/python/. "${UV_PYTHON_INSTALL_DIR}/"; \
-      old_root="$(readlink -f .venv/bin/python)"; \
-      old_root="${old_root%/bin/*}"; \
+    resolved="$(readlink -f .venv/bin/python 2>/dev/null || true)"; \
+    case "$resolved" in \
+      "${UV_LEGACY_PYTHON_DIR}"/*) relocate=1 ;; \
+      *) relocate=0 ;; \
+    esac; \
+    if [ "$relocate" = 1 ]; then \
+      old_root="${resolved%/bin/*}"; \
       new_root="${UV_PYTHON_INSTALL_DIR}/$(basename "$old_root")"; \
+      mkdir -p "${UV_PYTHON_INSTALL_DIR}"; \
+      cp -a "${UV_LEGACY_PYTHON_DIR}/." "${UV_PYTHON_INSTALL_DIR}/"; \
       for link in .venv/bin/python .venv/bin/python3 .venv/bin/python3.10; do \
         [ -L "$link" ] || continue; \
         target="$(readlink "$link")"; \
-        case "$target" in /root/*) ln -sfn "${new_root}/bin/$(basename "$target")" "$link" ;; esac; \
+        case "$target" in \
+          "${UV_LEGACY_PYTHON_DIR}"/*) ln -sfn "${new_root}/bin/$(basename "$target")" "$link" ;; \
+        esac; \
       done; \
       sed -i "s|${old_root}|${new_root}|g" .venv/pyvenv.cfg; \
-      rm -rf /root/.local/share/uv; \
+      rm -rf "${UV_LEGACY_PYTHON_DIR}"; \
     else \
       uv python install 3.10; \
       echo "3.10" > .python-version; \
       uv sync --extra=cu128 --python 3.10; \
     fi; \
-    .venv/bin/python -c "import torch, flash_attn; print('cosmos-transfer2.5 env torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'cuda-build', torch.version.cuda)"; \
-    test "$(readlink -f .venv/bin/python | cut -d/ -f2)" != "root"
+    case "$(readlink -f .venv/bin/python)" in \
+      "${UV_LEGACY_PYTHON_DIR}"/*) echo "interpreter still under ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1 ;; \
+    esac
 
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
 COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh /opt/cosmos2-transfer/entrypoint.sh
@@ -79,9 +87,11 @@ RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
     && chown -R ubuntu:ubuntu \
       /opt/cosmos2-transfer \
       /opt/cosmos/cosmos-transfer2.5/.venv \
-      /opt/cosmos/uv-python
+      "${UV_PYTHON_INSTALL_DIR}"
 
-# The venv must be usable by the non-root user the image actually runs as.
+# The venv must be usable by the non-root user the image actually runs as. Verified
+# against the published image's real filesystem in-cluster; this keeps a rebuild from
+# silently reintroducing the /root interpreter.
 RUN su ubuntu -s /bin/bash -c \
       '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "import torch, flash_attn; print(\"venv usable as ubuntu:\", torch.__version__)"'
 

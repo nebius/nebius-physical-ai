@@ -207,6 +207,68 @@ def test_transfer_image_keeps_its_interpreter_out_of_root() -> None:
     assert "venv usable as ubuntu" in body, (
         "the build must verify the venv runs as ubuntu, not just that it exists"
     )
+    # A prebuilt BASE_IMAGE already carries a venv pointing into /root, and uv would
+    # reuse it, so the repair branch is what makes UV_PYTHON_INSTALL_DIR effective.
+    assert "UV_LEGACY_PYTHON_DIR=/root/.local/share/uv/python" in body, (
+        "the legacy interpreter location must be named once so the repair can detect it"
+    )
+    assert 'interpreter still under ${UV_LEGACY_PYTHON_DIR}' in body, (
+        "the build must fail if the resolved interpreter is still the legacy one"
+    )
+
+
+def test_transfer_relocation_repoints_a_root_venv(tmp_path: Path) -> None:
+    """Exercise the Dockerfile's relocation block against the layout it repairs.
+
+    Mirrors what the published image actually contains: a uv interpreter under
+    /root and a venv whose ``bin/python`` symlinks into it. Verified against the real
+    image in-cluster as well; this keeps the shell logic from regressing without one.
+    """
+
+    import re
+    import subprocess
+
+    legacy = tmp_path / "legacy" / "python"
+    interpreter = legacy / "cpython-3.10.20-linux-x86_64-gnu" / "bin"
+    interpreter.mkdir(parents=True)
+    (interpreter / "python3.10").write_text("#!/bin/sh\necho interpreter\n", encoding="utf-8")
+    (interpreter / "python3.10").chmod(0o755)
+
+    project = tmp_path / "project"
+    venv_bin = project / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").symlink_to(interpreter / "python3.10")
+    (venv_bin / "python3").symlink_to("python")
+    (project / ".venv" / "pyvenv.cfg").write_text(
+        f"home = {interpreter}\nversion = 3.10.20\n", encoding="utf-8"
+    )
+
+    # Lift the block straight out of the Dockerfile so the test cannot drift from it.
+    # The two directories it works on are env vars precisely so this is drivable.
+    body = _dockerfile("cosmos2-transfer")
+    block = body.split("RUN set -eux; \\", 1)[1].split("\n\n", 1)[0]
+    script = re.sub(r"\\\n\s*", " ", block)
+    install_dir = tmp_path / "relocated"
+
+    result = subprocess.run(
+        ["bash", "-c", "set -eux; " + script],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "UV_PYTHON_INSTALL_DIR": str(install_dir),
+            "UV_LEGACY_PYTHON_DIR": str(legacy),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+
+    resolved = (venv_bin / "python").resolve()
+    assert str(resolved).startswith(str(install_dir)), resolved
+    assert str(install_dir) in (project / ".venv" / "pyvenv.cfg").read_text(encoding="utf-8")
+    assert not legacy.exists(), (
+        "the stale interpreter tree should be removed so the trap cannot come back"
+    )
 
 
 @pytest.mark.parametrize("image", IMAGES)
