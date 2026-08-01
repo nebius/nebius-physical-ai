@@ -120,6 +120,24 @@ def test_caddyfile_supports_range_and_cors_for_mcap() -> None:
     assert "encode" not in data_conf.split("handle {", 1)[0]
 
 
+def test_data_path_is_not_browsable_or_world_writable() -> None:
+    """A reachable service must not enumerate or accept recordings.
+
+    `/data/` is unauthenticated by necessity (the cross-origin viewer cannot send
+    credentials), so it must not also list its contents, and its directory must
+    not be world-writable.
+    """
+    caddy = CADDYFILE.read_text(encoding="utf-8")
+    data_conf = caddy.split("handle /data/*", 1)[1].split("handle {", 1)[0]
+    assert "file_server browse" not in data_conf
+    assert "FOXGLOVE_DATA_BROWSE" in data_conf, "listing must be explicit opt-in"
+
+    dockerfile = _dockerfile()
+    assert "chmod 1777 /srv/data" not in dockerfile
+    assert re.search(r"chmod 0755 /srv/data", dockerfile)
+    assert re.search(r"chown -R 65534:65534 /srv/data", dockerfile)
+
+
 def test_smoke_script_checks_the_capability_not_just_liveness() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
     for marker in (

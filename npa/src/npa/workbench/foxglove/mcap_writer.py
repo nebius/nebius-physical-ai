@@ -200,16 +200,26 @@ def _time_fields(timestamp_ns: int) -> dict[str, int]:
 _IMAGE_MAGIC: dict[str, tuple[bytes, ...]] = {
     "png": (b"\x89PNG\r\n\x1a\n",),
     "jpeg": (b"\xff\xd8\xff",),
-    "webp": (b"RIFF",),
-    "avif": (b"\x00\x00\x00",),
+}
+# Container formats whose magic lives after a 4-byte length/size prefix:
+# WebP is "RIFF" + size + "WEBP"; AVIF is size + "ftyp" + a brand.
+_IMAGE_CONTAINER_MAGIC: dict[str, tuple[bytes, bytes]] = {
+    "webp": (b"RIFF", b"WEBP"),
+    "avif": (b"", b"ftyp"),
 }
 
 
 def _image_magic_ok(payload: bytes, image_format: str) -> bool:
     prefixes = _IMAGE_MAGIC.get(image_format)
-    if not prefixes:
-        return True
-    return any(payload.startswith(prefix) for prefix in prefixes)
+    if prefixes:
+        return any(payload.startswith(prefix) for prefix in prefixes)
+    container = _IMAGE_CONTAINER_MAGIC.get(image_format)
+    if container:
+        head, tag = container
+        if head and not payload.startswith(head):
+            return False
+        return payload[8:12] == tag if tag == b"WEBP" else payload[4:8] == tag
+    return True
 
 
 def _read_image(path: Path) -> tuple[bytes, str] | None:
@@ -254,6 +264,10 @@ def _metric_schema(payload: dict[str, Any], title: str) -> dict[str, Any]:
 def _flatten_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
     flat: dict[str, Any] = {}
     for key, value in payload.items():
+        # "timestamp" is reserved for the message time struct; a payload field of
+        # the same name would be silently overwritten (and unplottable).
+        if key == "timestamp":
+            key = "timestamp_value"
         if isinstance(value, (bool, int, float, str)) or value is None:
             flat[key] = value
         else:

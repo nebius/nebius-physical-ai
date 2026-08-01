@@ -50,7 +50,9 @@ lancedb = [
 viz = ["rerun-sdk==0.31.4"]
 # Foxglove embedded viewer: MCAP read/write for `npa workbench foxglove`
 # (pure-python; the browser SDK itself is fetched at build/bootstrap time).
-foxglove = ["mcap>=1.3"]
+# Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
+# [tool.mypy] override) and the writer/reader pin the 1.x record API.
+foxglove = ["mcap>=1.3,<2"]
 # Blueprint Phase J: guardrails-ai output validators for the adversarial eval.
 # Injected/guarded — the pure-python validator is the default; absence degrades
 # gracefully (see npa/tests/agent_eval/adversarial.py).

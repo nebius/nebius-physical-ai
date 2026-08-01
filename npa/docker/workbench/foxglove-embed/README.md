@@ -8,7 +8,7 @@ Static host for the [Foxglove embedding SDK](https://docs.foxglove.dev/docs/embe
 | `/` | Standalone host page (`?src=`, `?org=`, `?mcap=`, `?ws=`, `?layout=`, `?theme=`, `?autoplay=1`) |
 | `/sdk/` | Pinned `@foxglove/embed` browser ESM build (MIT), sha512-verified at build time |
 | `/app/npa-foxglove-host.js` | Glue module — the same file the NPA agent UI loads |
-| `/data/` | Operator-mounted recordings, served with CORS + byte ranges (directory listing enabled) |
+| `/data/` | Operator-mounted recordings, served with CORS + byte ranges (no directory listing; `FOXGLOVE_DATA_BROWSE=browse` opts in) |
 | `/healthz` | `{"ok":true,...}` liveness/readiness probe |
 
 ## What this image is *not*
@@ -54,7 +54,9 @@ Foxglove requires a [secure context](https://developer.mozilla.org/docs/Web/Secu
 - No authentication of its own: expose it on a cluster-internal address or behind an
   authenticating proxy. `/data/` is intentionally readable without credentials because the
   cross-origin Foxglove iframe cannot send them — mount only recordings you are willing to
-  serve to whoever can reach the port.
+  serve to whoever can reach the port. Directory listing is **off** by default, and
+  `/srv/data` is owned by the runtime user rather than world-writable, so a reachable
+  service can neither enumerate nor accept files.
 - `/data/*` is never compressed so HTTP Range playback keeps working.
 
 ## Attribution

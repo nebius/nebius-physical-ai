@@ -329,6 +329,14 @@ def data_source_for_state(
     if published:
         urls = [_absolute(published, origin)]
         return remote_file_data_source(urls)
+    # A live URL set for this session (POST /api/foxglove/live) wins over the
+    # deploy-time default; session state survives a backend restart, the process
+    # environment does not.
+    session_live = str(state.get("foxglove_live_url") or "").strip()
+    if session_live:
+        return live_data_source(
+            session_live, protocol=str(state.get("foxglove_live_protocol") or "")
+        )
     environ = env if env is not None else os.environ
     return live_data_source(str(environ.get("NPA_FOXGLOVE_LIVE_URL", "")).strip())
 
@@ -376,7 +384,9 @@ def resolve_foxglove_config(
         str(environ.get("NPA_FOXGLOVE_LAYOUT_STORAGE_KEY", "")).strip()
         or FOXGLOVE_DEFAULT_LAYOUT_KEY
     )
-    live_url = str(environ.get("NPA_FOXGLOVE_LIVE_URL", "")).strip()
+    live_url = str(state.get("foxglove_live_url") or "").strip() or str(
+        environ.get("NPA_FOXGLOVE_LIVE_URL", "")
+    ).strip()
     if live_url and not live_url_allowed(live_url):
         live_url = ""
 

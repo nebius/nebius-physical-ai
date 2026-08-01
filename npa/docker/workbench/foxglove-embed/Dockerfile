@@ -5,7 +5,8 @@
 #            verified at build time by install-sdk.sh)
 #   /app/    the shared NPA glue module, identical to the one the agent UI loads
 #   /data/   MCAP/bag recordings mounted by the operator, with CORS + byte ranges
-#            so Foxglove `remote-file` data sources can stream them
+#            so Foxglove `remote-file` data sources can stream them (no directory
+#            listing; set FOXGLOVE_DATA_BROWSE=browse to enable one)
 # plus `/` — a standalone host page — and `/healthz`.
 #
 # The Foxglove *application* is not redistributed here: point the viewer at
@@ -51,9 +52,12 @@ COPY docker/workbench/foxglove-embed/smoke.sh /usr/local/bin/npa-foxglove-smoke.
 RUN mkdir -p /srv/data /tmp/caddy-config /tmp/caddy-data \
     && chmod -R a+rX /srv \
     && chmod +x /usr/local/bin/npa-foxglove-smoke.sh \
-    # /srv/data is the recordings drop point: writable so the golden eval can place
-    # its range probe and operators can `docker cp` files without a bind mount.
-    && chmod 1777 /srv/data /tmp/caddy-config /tmp/caddy-data \
+    # /srv/data is a read-only drop point for mounted recordings; it is owned by
+    # the runtime user (not world-writable) so a reachable service cannot be used
+    # to plant files. The golden eval writes its range probe here as that user.
+    && chown -R 65534:65534 /srv/data \
+    && chmod 0755 /srv/data \
+    && chmod 1777 /tmp/caddy-config /tmp/caddy-data \
     && caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
 EXPOSE 8099
