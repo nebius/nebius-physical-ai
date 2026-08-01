@@ -47,6 +47,25 @@ a versioned heading when a release is cut.
 - New `npa workbench cosmos-curate fetch-models` / `models`: download the curator's
   weights with your own Hugging Face token, and report each capability's model set,
   what is already on disk, and which of `HF_TOKEN` / `NGC_API_KEY` is visible.
+- **Workbench images now satisfy SkyPilot's Kubernetes provisioner.** Its per-pod
+  setup runs `sudo apt install openssh-server rsync` and `service ssh restart` inside
+  the image; images lacking those exited and SkyPilot reported the misleading
+  `container not found ("ray-node")`, which is why operators disabled image pins
+  wholesale with `NPA_E2E_CLEAR_WORKBENCH_IMAGES=1`. All three Cosmos images install
+  them with passwordless sudo, and their entrypoints exec the arguments Kubernetes
+  passes rather than swallowing them.
+- **`npa-cosmos2-transfer`'s inference venv is usable by the non-root user it runs
+  as.** `uv` had installed the interpreter under `/root` (0700), so every inference
+  call failed with `Permission denied`. The image now keeps the interpreter in
+  `UV_PYTHON_INSTALL_DIR`, rewrites `pyvenv.cfg` by directory prefix (uv records it
+  through a version symlink, so matching the resolved path left `sys._home` in
+  `/root`), and repoints the absolute symlink `cp -a` copies verbatim. The build
+  asserts each of those and exercises `distutils.sysconfig`, which is the import path
+  that actually broke.
+- The workflow submit path refreshes the cluster's Nebius registry pull secret before
+  launching, since that secret holds a short-lived IAM token and a stale one fails
+  every private image pull with a 401 that SkyPilot reports as
+  resources-unavailable.
 - `grade_gate` reads `cosmos_evaluator.json` and still accepts the older `vlm_eval`
   report, so runs in flight keep grading. The FiftyOne review report gains a
   `cosmos_curator` block with the curator's run-level summary.

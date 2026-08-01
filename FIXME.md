@@ -13,29 +13,6 @@ work lives).
 
 ## Active
 
-### High
-
-#### [H] npa-cosmos2-transfer's inference venv is unusable as its own non-root user
-
-- **Surfaced by**: a live 4-GPU `physical-ai-data-factory` run on
-  `npa-rtxpro-mk8s`, 2026-07-31.
-- **Status**: Active. Worked around registry-side; the image still needs a rebuild.
-- **Current issue**: `uv` installed the venv's CPython as root, so
-  `/opt/cosmos/cosmos-transfer2.5/.venv/bin/python` symlinks to
-  `/root/.local/share/uv/python/cpython-3.10-.../bin/python3.10`. The image's final
-  `USER ubuntu` cannot read `/root`, so every attempt to run the real Cosmos
-  Transfer inference venv fails with `Permission denied` (exit 126). The `chown` in
-  the Dockerfile fixes the venv directory but not the interpreter it points at.
-- **Workaround in use**: a registry-side `crane mutate --user root` variant, tagged
-  `<pin>-rootvenv`, pinned onto the augment stage for that run. It runs the real
-  model, but as root, which the packaging contract otherwise forbids.
-- **Next step**: rebuild the image so the interpreter lives outside `/root` — either
-  run `uv python install` / `uv sync` as `ubuntu`, or set
-  `UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python` before the sync — then drop the
-  `-rootvenv` variant and re-verify with
-  `kubectl run ... --command=false -- /bin/bash -c 'sleep 60'` followed by
-  `.venv/bin/python -c "import torch, flash_attn"` as `ubuntu`.
-
 ### Medium
 
 #### [M] Add standalone LeRobot library validation test
@@ -66,6 +43,25 @@ work lives).
   document the API, and cover imports/behavior in tests.
 
 ## Resolved (recent)
+
+#### [H] npa-cosmos2-transfer's inference venv was unusable as its own non-root user
+
+- **Surfaced by**: a live 4-GPU `physical-ai-data-factory` run on `npa-rtxpro-mk8s`,
+  2026-07-31. **Resolved** 2026-08-01 in
+  `npa/docker/workbench/cosmos2-transfer/Dockerfile`.
+- `uv` had installed the venv's CPython as root, so the venv's `bin/python`
+  symlinked into `/root/.local/share/uv/...`; `/root` is 0700, so the image's own
+  `USER ubuntu` got `Permission denied` (exit 126) for every inference call.
+- The fix took three passes, each surfacing the next layer: set
+  `UV_PYTHON_INSTALL_DIR` so a fresh build keeps the interpreter out of `/root`;
+  rewrite `pyvenv.cfg` by directory *prefix*, because uv records the interpreter
+  through a version symlink whose name differs from the resolved path (leaving
+  `sys._home` in `/root`, which failed far away inside `distutils.sysconfig`); and
+  repoint the absolute version symlink that `cp -a` copies verbatim.
+- The build now asserts all three, its usability check exercises
+  `distutils.sysconfig` rather than just importing torch, and
+  `npa/tests/docker/test_cosmos_oss_images.py` runs the relocation block itself
+  against a fixture shaped like the published image.
 
 - 2026-07-22 - FIXME Active bookkeeping: removed seven stale `Status: Fixed`
   entries that were already covered under Resolved (Isaac Lab→LeRobot

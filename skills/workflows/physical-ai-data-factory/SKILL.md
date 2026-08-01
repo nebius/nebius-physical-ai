@@ -203,6 +203,18 @@ so an operator can tell which one is missing.
 Both images are mode-based (`engine`, `smoke`, plus each tool's commands), so one
 image serves the workflow stage, the golden eval, and interactive debugging.
 
+**Custom images must satisfy SkyPilot's Kubernetes setup.** Its provisioner runs, in
+the image and as the image's own user, `$(prefix_cmd) apt install openssh-server
+rsync -y` then `service ssh restart`, where `prefix_cmd` is `sudo` for a non-root
+user. An image missing `sudo` or those packages fails that script, the container
+exits, and SkyPilot reports `container not found ("ray-node")` — which reads like a
+scheduling fault and is the reason operators reached for
+`NPA_E2E_CLEAR_WORKBENCH_IMAGES=1`. All three Cosmos images install
+`openssh-server`, `rsync`, and `sudo` and grant their user passwordless sudo;
+`npa/tests/docker/test_cosmos_oss_images.py` fails if that regresses. The same test
+covers the entrypoint contract: a bare `ENTRYPOINT ["/bin/bash"]` swallows the args
+Kubernetes passes, so an entrypoint must exec its arguments.
+
 Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
 `meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`
 (Cosmos-family critic). Cosmos Transfer 2.5 is the GPU augment engine, not a
