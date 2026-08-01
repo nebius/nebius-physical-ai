@@ -759,3 +759,73 @@ def test_declarative_spec_has_more_than_two_gpu_stages() -> None:
     assert len(gpu_states) >= 2, f"expected multiple GPU stages, got {gpu_states}"
     # And the chain is real: each stage after the first declares what it needs.
     assert any(s.get("needs") for s in states.values())
+
+
+GUIDE = REPO_ROOT / "docs" / "workbench" / "guides" / "neural-reconstruction.md"
+
+
+def test_guide_exists_and_is_indexed() -> None:
+    assert GUIDE.exists()
+    index = (GUIDE.parent / "README.md").read_text(encoding="utf-8")
+    assert "neural-reconstruction.md" in index, "guide must be listed in the guides index"
+
+
+def test_guide_only_documents_commands_that_exist() -> None:
+    """Every `npa ...` command line in the guide and the spec header must be real.
+
+    A copy-paste guide whose commands 404 is worse than no guide. This caught
+    `npa workbench artifacts list-runs`, which does not exist.
+    """
+    import re
+
+    from typer.main import get_command
+
+    from npa.cli.main import app
+
+    root = get_command(app)
+
+    def resolve(parts: list[str]) -> bool:
+        cmd = root
+        for part in parts:
+            get_sub = getattr(cmd, "get_command", None)
+            if get_sub is None:
+                return False
+            cmd = get_sub(None, part)  # type: ignore[arg-type]
+            if cmd is None:
+                return False
+        return True
+
+    sources = {
+        "guide": GUIDE.read_text(encoding="utf-8"),
+        "spec header": SPEC.read_text(encoding="utf-8"),
+    }
+    # Only lines that INVOKE npa (optionally inside a YAML comment), never prose
+    # that merely mentions the word.
+    invocation = re.compile(r"^\s*(?:#\s*)?npa\s+(.*)$")
+    checked = 0
+    for label, text in sources.items():
+        for line in text.splitlines():
+            match = invocation.match(line)
+            if not match:
+                continue
+            parts: list[str] = []
+            for token in match.group(1).split():
+                if token.startswith("-") or token in {"\\", "|"}:
+                    break
+                parts.append(token)
+            if not parts:
+                continue
+            assert resolve(parts), f"{label}: `npa {' '.join(parts)}` is not a real command"
+            checked += 1
+    assert checked > 5, f"expected several npa commands, found {checked}"
+
+
+def test_guide_references_a_committed_image() -> None:
+    """The guide leads with a rendered-output image; it must actually be in-repo."""
+    import re
+
+    text = GUIDE.read_text(encoding="utf-8")
+    refs = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
+    assert refs, "guide should show the rendered output"
+    for ref in refs:
+        assert (GUIDE.parent / ref).resolve().exists(), ref

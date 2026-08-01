@@ -16,6 +16,7 @@ no GPU, and no credentials. Then pick a robot and have fun.
 | [Train a Reachy 2 humanoid policy](reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub | Yes |
 | [Make a Unitree G1 walk](g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC checkpoint | Yes (H100) |
 | [Train a quadruped to run](quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks | Yes (RT-core: L40S / RTX PRO 6000) |
+| [Turn a photo capture into a 3D scene](neural-reconstruction.md) | n/a (scene capture) | NVIDIA NuRec / NRE | `nvidia/PhysicalAI-NuRec-PPISP` | Yes (RT-core: RTX PRO 6000 / L40S) |
 
 ## How these guides work
 
