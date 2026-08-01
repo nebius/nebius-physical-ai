@@ -112,17 +112,69 @@ print(result["output_kind"], result["artifact_uri"])
 
 ### SkyPilot
 
+The checked-in YAML is a **template**, like the other `cosmos3-*` workflows:
+SkyPilot does not expand `${...}` inside `resources.image_id`, so render that one
+variable before launching. Everything under `envs:` can still be set with
+`--env`.
+
 ```bash
+export NPA_COSMOS3_IMAGE=<your-registry>/npa-cosmos3:1.2.2-cu130
+# Restrict envsubst to the image var so the run: script's own bash parameter
+# expansions (${VAR:+--flag}) survive.
+envsubst '${NPA_COSMOS3_IMAGE}' \
+  < npa/src/npa/workflows/skypilot/cosmos3-generate.yaml > /tmp/cosmos3-generate.yaml
+
 sky launch -y --infra kubernetes/<context> -c cosmos3-generate \
-  --env NPA_COSMOS3_IMAGE=<your-registry>/npa-cosmos3:1.2.2-cu130 \
   --env NPA_COSMOS3_PROMPT="a robot arm sorting colored blocks" \
   --env NPA_COSMOS3_OUTPUT_URI=s3://<bucket>/cosmos3/<run-id>/ \
-  --secret HF_TOKEN \
-  npa/src/npa/workflows/skypilot/cosmos3-generate.yaml
+  --env HF_TOKEN --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+  /tmp/cosmos3-generate.yaml
 ```
 
 The YAML requests `H100:1` and fails fast with an explicit message if no HF token
-is present, rather than discovering it after the pod is scheduled.
+is present, rather than discovering it after the pod is scheduled. Pass
+`--gpus <type>:1` to run on a different accelerator.
+
+SkyPilot's Kubernetes bootstrap replaces the image entrypoint with its own shell
+and installs an SSH runtime as the pod user, so the image ships `sudo` and
+`openssh-server` for it. Without them a workbench image cannot host a SkyPilot
+k8s task (it dies with `sudo: command not found`) — that is what
+`NPA_E2E_CLEAR_WORKBENCH_IMAGES` works around for the images that still lack them.
+
+### Declarative npa.workflow
+
+`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` runs the same stage
+through the `workbench.cosmos3.generate` toolRef, which resolves to the
+`npa-cosmos3` image automatically:
+
+```bash
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml \
+  --infra k8s/<context> --registry <your-registry> \
+  --var bucket=<bucket> --runtime \
+  --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+`--secret-env HF_TOKEN` is required: the plan only *hints* the secret, and without
+it the stage fails fast on the credential preflight. The submit path also refuses
+to run when the task image's registry does not match the Docker credentials in
+`SKYPILOT_DOCKER_SERVER`.
+
+## Validated on real GPUs
+
+Verified on `npa-rtxpro-mk8s` (NVIDIA RTX PRO 6000 Blackwell Server Edition,
+sm_120) with `nvidia/Cosmos3-Nano`, in all three entry paths. Each produced a
+non-blank 960×960 JPEG in S3 with `guardrails: true` and `weights_baked: false`:
+
+| Path | Result |
+| --- | --- |
+| Direct Kubernetes Job (image args) | generated + published |
+| `cosmos3-generate.yaml` via `sky launch` | job SUCCEEDED, generated + published |
+| `cosmos3-generate` npa.workflow via `workflow submit --runtime` | wave succeeded, 4m10s total (3m26s in-job) |
+
+Notes from those runs: the cu130 wheel set works on sm_120 (no NATTEN/flash-attn
+kernel gap surfaced for text2image); the guardrail model, `Cosmos3-Nano`, and the
+Wan 2.2 VAE all download at runtime, taking roughly two minutes on a warm node
+before generation starts.
 
 ## Troubleshooting
 
