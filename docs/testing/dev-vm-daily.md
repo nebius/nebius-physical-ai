@@ -107,10 +107,13 @@ submit per day**, not the whole `gpu and e2e` suite:
 
 - `daily_workflow_e2e.py gpu-case` picks today's GPU workflow twin from
   `submit_matrix.gpu_submit_cases()`, rotating by day-of-year so every twin is
-  exercised over the window. `plan_only` stubs and `rotation_skip` twins (each
-  with a documented `skip_reason`) are excluded so the rotation only picks a
-  case that can actually pass standalone. Every GPU-launching twin has been run
-  live on RTXPRO-6000; the rotation cycles the verified-passing set:
+  exercised over the window, and prints which live test can drive it
+  (`<spec>\t<one-shot|runtime>`) — a twin with a parallel group or a
+  decision-driven loop is only collected by the runtime test. `plan_only` stubs
+  and `rotation_skip` twins (each with a documented `skip_reason`) are excluded
+  so the rotation only picks a case that can actually pass standalone. Every
+  GPU-launching twin has been run live on RTXPRO-6000; the rotation cycles the
+  verified-passing set:
 
   | Twin | Live wall clock |
   | --- | --- |

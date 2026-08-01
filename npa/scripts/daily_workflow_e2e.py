@@ -164,7 +164,10 @@ def _cmd_gpu_case(day_index: int) -> int:
     case = rotating_gpu_submit_case(day_index)
     if case is None:
         return 0
-    sys.stdout.write(f"{case.spec}\n")
+    # Second field: which live test can drive this twin. Specs with a parallel
+    # group or a decision-driven loop only run under the runtime orchestrator;
+    # asking the one-shot test for them collects zero tests.
+    sys.stdout.write(f"{case.spec}\t{'runtime' if case.runtime else 'one-shot'}\n")
     return 0
 
 
