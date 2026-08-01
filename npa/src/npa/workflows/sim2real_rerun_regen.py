@@ -1,4 +1,4 @@
-"""Regenerate Sim2Real Rerun recordings and optionally re-run held-out Isaac capture."""
+"""Regenerate Sim2Real viewer recordings and optionally re-run held-out Isaac capture."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ from typing import Any
 from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.utils import _artifact_root_uri
-from npa.workflows.sim2real_viz import Sim2RealVizResult, emit_sim2real_rerun
+from npa.workflows.sim2real_viz import (
+    Sim2RealVizResult,
+    emit_sim2real_mcap_if_enabled,
+    emit_sim2real_rerun,
+)
 
 
 class Sim2RealRerunRegenError(ValueError):
@@ -30,6 +34,9 @@ class RegenResult:
     heldout_frame_count: int
     rollout_count: int
     frame_count: int
+    local_mcap_path: str = ""
+    mcap_upload_uri: str = ""
+    mcap_status: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +47,9 @@ class RegenResult:
             "heldout_frame_count": self.heldout_frame_count,
             "rollout_count": self.rollout_count,
             "frame_count": self.frame_count,
+            "local_mcap_path": self.local_mcap_path,
+            "mcap_upload_uri": self.mcap_upload_uri,
+            "mcap_status": self.mcap_status,
         }
 
 
@@ -236,6 +246,22 @@ def publish_regen_outputs(
     return upload_uri
 
 
+def publish_regen_mcap(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    *,
+    client: StorageClient | None = None,
+) -> str:
+    """Upload the regenerated ``reports/sim2real.mcap``, if one was emitted."""
+
+    mcap_path = Path(local_dir) / "reports" / "sim2real.mcap"
+    if not mcap_path.is_file() or mcap_path.stat().st_size == 0:
+        return ""
+    storage = client or _storage_client_for_config(config)
+    prefix = run_prefix_uri(config)
+    return storage.upload_file(str(mcap_path), f"{prefix}reports/sim2real.mcap")
+
+
 def regen_sim2real_rrd(
     config: Sim2RealLoopConfig,
     *,
@@ -273,10 +299,29 @@ def regen_sim2real_rrd(
         heldout_report=heldout_report,
         output_rrd=output_rrd,
     )
+    # The finalize stage emits both viewer recordings from the same inputs, so regen
+    # must too: refreshing only the .rrd leaves the run's MCAP frozen at whatever
+    # the emitter produced when the run first completed. Best-effort, exactly as in
+    # finalize, so a missing mcap writer can never fail a Rerun regen.
+    mcap_result = emit_sim2real_mcap_if_enabled(
+        local_dir=work_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=work_dir / "reports" / "sim2real.mcap",
+    )
     upload_uri = ""
+    mcap_upload_uri = ""
     if upload:
         upload_uri = publish_regen_outputs(config, work_dir, client=storage)
-    return _regen_result_from_viz(config.run_id, work_dir, result, upload_uri=upload_uri)
+        mcap_upload_uri = publish_regen_mcap(config, work_dir, client=storage)
+    return _regen_result_from_viz(
+        config.run_id,
+        work_dir,
+        result,
+        upload_uri=upload_uri,
+        mcap_result=mcap_result,
+        mcap_upload_uri=mcap_upload_uri,
+    )
 
 
 def rerun_heldout_eval_only(
@@ -345,11 +390,14 @@ def _regen_result_from_viz(
     result: Sim2RealVizResult,
     *,
     upload_uri: str = "",
+    mcap_result: dict[str, Any] | None = None,
+    mcap_upload_uri: str = "",
 ) -> RegenResult:
     if result.heldout_frame_count <= 0:
         raise Sim2RealRerunRegenError(
             "regenerated .rrd has heldout_frame_count=0; sync eval/heldout/renders or rerun held-out eval"
         )
+    mcap = mcap_result or {}
     return RegenResult(
         run_id=run_id,
         local_dir=str(local_dir),
@@ -358,4 +406,7 @@ def _regen_result_from_viz(
         heldout_frame_count=result.heldout_frame_count,
         rollout_count=result.rollout_count,
         frame_count=result.frame_count,
+        local_mcap_path=str(mcap.get("output_mcap_path") or ""),
+        mcap_upload_uri=mcap_upload_uri,
+        mcap_status=str(mcap.get("status") or ""),
     )

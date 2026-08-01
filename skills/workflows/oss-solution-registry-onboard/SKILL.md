@@ -238,6 +238,67 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 Follow-up: full / debug `train.py` once data is staged.
 
+### Open Dreamer (`byof-open-dreamer.yaml`)
+
+Pinned: `next-state/open-dreamer` `2b10640` · base `ubuntu` + system `python3.11`
++ `uv sync` (CUDA-12 JAX/Flax). This is a **world-model** solution (a JAX/Flax
+Dreamer 4 pipeline) and the reference example for the multi-GPU BYOF path: its
+accepted capability requires a genuine **>=2 GPU** device mesh, so it uses the
+`byof-solution-smoke-rtxpro-2gpu.yaml` resource profile
+(`RTXPRO-6000-BLACKWELL-SERVER-EDITION:2`) instead of the single-GPU profile.
+
+Hard-gate capabilities (all must pass; the driver `raise SystemExit`s if any is
+missing, so a green smoke means the dream actually ran):
+
+- `jax_two_gpu_data_parallel_mesh` (`dreamer.parallel.build_parallel("data")`
+  builds a `{data: 2, model: 1}` mesh over `jax.devices()`; fails on <2 GPUs)
+- `dreamer4_tokenizer_train_two_gpu` (real `scripts/train_tokenizer.py`
+  entrypoint trains the causal video tokenizer sharded across the mesh on a
+  **real Minecraft/VPT** video subset to legibility)
+- `dreamer4_action_conditioned_dream_rollout` (the marquee payoff:
+  `dreamer.sampler.sample_video` dreams future gameplay from context frames +
+  future actions; reports dream PSNR — transitively gates the whole loop)
+
+Also exercised in the same smoke:
+
+- `minecraft_vpt_video_dataloader` (real `dreamer.data.build_iterator`
+  `minecraft_vpt` MP4 path — decord decode + VPT action parse — with device
+  sharding)
+- `dreamer4_latent_tokenization` (`scripts/tokenize_minecraft_dataset.py`
+  encodes the episodes into real latent ArrayRecords + `latent_stats`, carrying
+  the real 27-binary / 121-categorical VPT actions)
+- `dreamer4_dynamics_train_two_gpu` (action-conditioned latent dynamics trained
+  on those Minecraft latents via `scripts/train_dynamics.py`; the core Dreamer
+  world-model loop)
+- `world_model_rerun_visualization` (emits `open_dreamer_world_model.rrd` with
+  synchronized `world/observation` (GT), `world/dream` (predicted),
+  `world/gt_decoded` (tokenizer ceiling), and `world/tokenizer_reconstruction`
+  streams, loadable in the NPA agent Rerun viewer)
+
+The run trains the tokenizer and dynamics for real on a real Minecraft/VPT
+gameplay subset and dreams action-conditioned future frames, so it is a real
+multi-stage GPU run with viewable visualizations, not an import-only or
+synthetic smoke.
+
+Data note: the smoke trains on a real **Minecraft/VPT** contractor-gameplay
+subset (OpenAI VPT `.mp4` + `.jsonl`), center-cropped and resized to 128x128 and
+staged as `minecraft_vpt` ArrayRecords to the run bucket under
+`datasets/minecraft_vpt_128_64/`, pulled at run time (no dataset paths, buckets,
+or IDs are hardcoded in the spec). Latent records carry the minecraft `latent`
+action layout (27 binary / 121 categorical) required by `train_dynamics.py`.
+
+Follow-up: FVD evaluation (`scripts/eval_fvd.py`, needs I3D weights) and a
+larger training budget / dataset for a sharper, longer-horizon dream.
+
+### Multi-GPU solutions
+
+When a solution's accepted capability is only meaningful across multiple GPUs
+(distributed / sharded / model-parallel training, multi-GPU inference), request
+`>=2` accelerators through a dedicated resource profile
+(`byof-solution-smoke-rtxpro-2gpu.yaml`) and make a "device mesh sees N GPUs"
+check a hard gate so a single-GPU scheduling fallback cannot masquerade as a
+passing multi-GPU run. Open Dreamer is the reference example.
+
 ## Capability Discovery Procedure
 
 1. **Read upstream docs first.**

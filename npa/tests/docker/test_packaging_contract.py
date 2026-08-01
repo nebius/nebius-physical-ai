@@ -37,6 +37,55 @@ def _runtime_commands(dockerfile_text: str) -> list[str]:
     return _entrypoints(dockerfile_text) or _cmds(dockerfile_text)
 
 
+def _strip_comments(dockerfile_text: str) -> str:
+    """Return only the Dockerfile's instructions, with comment lines removed."""
+
+    return "\n".join(
+        line for line in dockerfile_text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+def _bakes_omniverse(dockerfile_text: str, markers: list[str]) -> bool:
+    """Whether a Dockerfile's INSTRUCTIONS bake NVIDIA Omniverse Kit (Isaac Sim).
+
+    Markers are matched against instructions only. A comment that merely names
+    Isaac Sim (isaac-lab/Dockerfile carries a ``# Tag: nvcr.io/nvidia/isaac-lab``
+    header) bakes nothing, so matching raw text would let prose force an image to
+    ``restricted``.
+    """
+
+    instructions = _strip_comments(dockerfile_text)
+    return any(marker in instructions for marker in markers)
+
+
+def _base_image_refs(dockerfile_text: str) -> list[str]:
+    """Image refs this Dockerfile builds on: ``FROM`` targets plus ``ARG *BASE*``
+    defaults (most workbench images parameterize their parent as
+    ``ARG BASE_IMAGE=<ref>`` and then ``FROM ${BASE_IMAGE}``)."""
+    refs = [
+        match.group(1)
+        for match in re.finditer(r"(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)", dockerfile_text)
+    ]
+    refs.extend(
+        match.group(1)
+        for match in re.finditer(r"(?im)^\s*ARG\s+\w*BASE\w*=(\S+)", dockerfile_text)
+    )
+    return refs
+
+
+def _workbench_parents(dockerfile_text: str, contract_images: dict) -> set[str]:
+    """Contract image names this Dockerfile inherits from (``npa-<name>`` refs)."""
+    parents: set[str] = set()
+    for ref in _base_image_refs(dockerfile_text):
+        name = ref.rsplit("/", 1)[-1].split("@", 1)[0].split(":", 1)[0]
+        if not name.startswith("npa-"):
+            continue
+        parent = name[len("npa-") :]
+        if parent in contract_images:
+            parents.add(parent)
+    return parents
+
+
 def _exposes(dockerfile_text: str) -> list[int]:
     ports: list[int] = []
     for match in re.finditer(r"(?im)^\s*EXPOSE\s+(.+?)\s*$", dockerfile_text):
@@ -98,6 +147,97 @@ def test_image_matches_packaging_contract(image_name: str) -> None:
 
     for pattern in contract["security"].get("secret_patterns", []):
         assert re.search(pattern, text) is None, f"{image_name}: Dockerfile matches secret pattern {pattern}"
+
+
+@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
+def test_image_declares_redistribution_class(image_name: str) -> None:
+    contract = _load_contract()
+    entry = contract["images"][image_name]
+    classes = contract["redistribution"]["classes"]
+    cls = entry.get("redistribution")
+    assert cls in classes, (
+        f"{image_name}: redistribution must be one of {sorted(classes)}, got {cls!r}"
+    )
+
+
+@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
+def test_omniverse_images_are_restricted(image_name: str) -> None:
+    """An image that bakes NVIDIA Omniverse Kit (Isaac Sim) is NOT freely
+    redistributable and must be classified ``restricted`` so it is never
+    published to a public registry. This detects the marker in the Dockerfile so
+    a newly added Omniverse-baking image cannot silently be marked ``public``.
+    """
+    contract = _load_contract()
+    entry = contract["images"][image_name]
+    dockerfile = WORKBENCH_DOCKER / entry["dockerfile"]
+    text = dockerfile.read_text(encoding="utf-8")
+    markers = contract["redistribution"]["omniverse_markers"]
+    bakes_omniverse = _bakes_omniverse(text, markers)
+
+    if bakes_omniverse:
+        assert entry.get("redistribution") == "restricted", (
+            f"{image_name}: Dockerfile bakes Omniverse Kit (Isaac Sim); it must be "
+            f"redistribution: restricted (NVIDIA proprietary — public redistribution "
+            f"needs an NVIDIA AI Enterprise license)"
+        )
+        return
+
+    # An image built FROM a restricted workbench image inherits that parent's baked
+    # Omniverse Kit even though its own Dockerfile carries no marker (e.g.
+    # sonic-mujoco derives from sonic), so it must be restricted too.
+    restricted_parents = sorted(
+        parent
+        for parent in _workbench_parents(text, contract["images"])
+        if contract["images"][parent].get("redistribution") == "restricted"
+    )
+    assert not restricted_parents or entry.get("redistribution") == "restricted", (
+        f"{image_name}: builds FROM restricted workbench image(s) "
+        f"{restricted_parents} and inherits their baked Omniverse Kit; it must be "
+        f"redistribution: restricted"
+    )
+
+
+def test_omniverse_marker_detection_ignores_comments() -> None:
+    """Prose naming Isaac Sim must not read as baking it; instructions still must."""
+
+    contract = _load_contract()
+    markers = contract["redistribution"]["omniverse_markers"]
+
+    comment_only = (
+        "# Base is deliberately NOT nvcr.io/nvidia/isaac-lab, and no isaacsim wheel\n"
+        "  # is installed. ISAACSIM_ACCEPT_EULA/OMNI_KIT_ACCEPT_EULA are unset.\n"
+        "FROM nvidia/cuda:12.4.1-devel-ubuntu22.04\n"
+        "RUN pip install --no-cache-dir numpy\n"
+    )
+    assert not _bakes_omniverse(comment_only, markers), (
+        "comment-only prose must not count as baking Omniverse Kit"
+    )
+
+    for instruction in (
+        "FROM nvcr.io/nvidia/isaac-lab:2.3.2\n",
+        "ARG BASE_IMAGE=nvcr.io/nvidia/isaac-lab:2.3.2\n",
+        'RUN pip install --no-cache-dir "isaacsim==4.5.0"\n',
+        'RUN pip install "isaaclab[isaacsim,all]==2.3.2"\n',
+        "ENV ISAACSIM_ACCEPT_EULA=YES OMNI_KIT_ACCEPT_EULA=YES\n",
+    ):
+        assert _bakes_omniverse("# an explanatory header\n" + instruction, markers), instruction
+
+
+@pytest.mark.parametrize("image_name", ["groot", "isaac-lab", "sonic"])
+def test_first_party_omniverse_images_match_a_marker_in_instructions(image_name: str) -> None:
+    """Comment-stripping must not weaken the guard.
+
+    Every image that genuinely bakes Omniverse Kit has to remain detectable from
+    its instructions alone, so this pins that the markers do not depend on prose.
+    """
+
+    contract = _load_contract()
+    entry = contract["images"][image_name]
+    text = (WORKBENCH_DOCKER / entry["dockerfile"]).read_text(encoding="utf-8")
+    markers = contract["redistribution"]["omniverse_markers"]
+    assert _bakes_omniverse(text, markers), (
+        f"{image_name}: bakes Omniverse Kit but no marker matches its instructions"
+    )
 
 
 def test_packaging_doc_exists() -> None:

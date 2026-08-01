@@ -260,6 +260,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "isaac-lab",
         "lancedb",
         "lerobot",
+        # Static web viewer (caddy static server; no skypilot three-tier YAML).
+        "lichtblick",
         "mjlab",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.
