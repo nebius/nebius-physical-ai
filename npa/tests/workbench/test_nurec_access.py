@@ -624,3 +624,58 @@ def test_renderer_does_not_add_nurec_deps_to_other_tools() -> None:
     )
 
     assert "nvidia-ncore" not in setup
+
+
+def test_spec_ncore_sequence_uri_matches_what_fetch_publishes() -> None:
+    """`reconstruct --ncore-uri` must point exactly where `fetch` published.
+
+    fetch writes to `<ncore_uri>sequence/` (that suffix is hard-coded in
+    fetch_cmd). Nothing in the catalog forces the spec's `ncore_sequence_uri` to
+    agree, and a mismatch fails SILENTLY in a different pod -- reconstruct
+    materializes an empty prefix and reports "no NCore sequence meta-file found".
+    """
+    config = _spec()["config"]
+
+    assert config["ncore_sequence_uri"] == config["ncore_uri"] + "sequence/"
+
+
+def test_spec_reconstruct_reads_the_uri_the_fetch_stage_writes() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    fetch = TOOL_CATALOG["workbench.nurec.fetch"].argv_template
+    reconstruct = TOOL_CATALOG["workbench.nurec.reconstruct"].argv_template
+    config = _spec()["config"]
+
+    published_root = fetch[fetch.index("--output-uri") + 1]
+    consumed = reconstruct[reconstruct.index("--ncore-uri") + 1]
+
+    # Resolve both one level through the spec config and compare the real paths.
+    resolved_published = config[published_root.strip("{} ").removeprefix("config.")]
+    resolved_consumed = config[consumed.strip("{} ").removeprefix("config.")]
+    assert resolved_consumed == resolved_published + "sequence/"
+
+
+def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> None:
+    """Propagating NPA_SRC_S3_URI to every pinned image must not change baked ones.
+
+    The renderer now injects the URI for ANY pinned image (it previously required
+    NPA_SRC_OVERLAY=1). That is safe only because the in-pod install is guarded on
+    `command -v npa`, so an image that already ships npa skips it entirely. This
+    pins that guard -- it is the whole reason the change is non-breaking.
+    """
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        default_npa_setup,
+        render_setup_for_tool,
+    )
+
+    setup = default_npa_setup()
+    assert 'if ! command -v npa >/dev/null 2>&1; then' in setup
+    # The baked-image path is tried before any S3 sync.
+    assert setup.index("/opt/nebius-physical-ai/npa") < setup.index("NPA_SRC_S3_URI")
+
+    # And an unrelated tool's setup is unchanged by the NuRec additions.
+    other = render_setup_for_tool(
+        "workbench.token_factory.caption", config={}, options=SkypilotRenderOptions()
+    )
+    assert "nvidia-ncore" not in other

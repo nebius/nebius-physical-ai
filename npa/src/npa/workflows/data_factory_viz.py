@@ -190,6 +190,12 @@ def build_run_rrd(
         # Neural-reconstruction runs contribute their own entities: the novel views
         # rendered from the trained Gaussians and NRE's validation renders. Both are
         # no-ops for a data-factory run, which has neither directory.
+        #
+        # NOTE: the input loop above is NOT a no-op for existing runs -- it was
+        # widened from `rglob("*.png")` to every IMAGE_SUFFIXES entry, and entity
+        # naming now groups by sub-directory when frames are nested. A flat,
+        # all-PNG data-factory run is byte-identical, but a run with .jpg inputs or
+        # nested directories now yields more/differently-named entities than before.
         logged += _log_nurec_entities(rr, rec, local)
 
         for name, body in captions.items():

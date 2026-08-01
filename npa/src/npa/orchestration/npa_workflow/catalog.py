@@ -126,6 +126,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.cache_dir}}",
             "--derive-rig",
             # Each stage is its own pod, so the sequence must travel through S3.
+            # `fetch` publishes under `<ncore_uri>sequence/` and `reconstruct` reads
+            # `config.ncore_sequence_uri`; those two MUST agree. The relationship is
+            # asserted by npa/tests/workbench/test_nurec_access.py::
+            # test_spec_ncore_sequence_uri_matches_what_fetch_publishes, because a
+            # spec that sets only `ncore_uri` would otherwise fail silently in a
+            # different pod with an empty materialization.
             "--publish-sequence",
             "--output-uri",
             "{{config.ncore_uri}}",
