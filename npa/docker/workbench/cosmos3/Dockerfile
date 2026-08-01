@@ -67,8 +67,8 @@ RUN apt-get update \
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
 
 # The runtime user owns its trees BEFORE the heavy layers, and every later layer
-# runs as that user. A trailing `chown -R` would instead rewrite the whole ~9 GB
-# venv into an extra layer and roughly double the image.
+# runs as that user. A trailing `chown -R` would instead rewrite the whole 9.3 GB
+# venv into a second layer, taking the image from 27.3 GB to ~37 GB.
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
 RUN mkdir -p /opt/cosmos3 /opt/npa /opt/uv /workspace /tmp/hf_home \
         "${NPA_COSMOS3_OUTPUT_DIR}" \

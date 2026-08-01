@@ -61,6 +61,20 @@ resolution, and setup/sample resolution — stopping short of weight loading. If
 upstream bump needs a dependency the trimmed set lacks, the build fails there
 instead of on your first GPU run.
 
+### Size and node disk
+
+The image is **27.3 GB** uncompressed, so plan node ephemeral storage and first-pull
+time accordingly (the checkpoint cache is on top of this — `Cosmos3-Nano` is a 16B
+model). It breaks down as:
+
+| Layer | Size | Note |
+| --- | --- | --- |
+| `nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04` base | ~17 GB | Dominates. Kept as the `devel` variant because upstream builds against it and Triton JIT expects a real `ptxas`; a `runtime` base would be far smaller but is unvalidated here |
+| framework venv (torch cu130, flash-attn, natten, guardrail deps) | 9.3 GB | Appears once; installs run as the runtime user so no layer duplicates it |
+| apt (ffmpeg, git, git-lfs) | 534 MB | |
+| `npa` venv | 474 MB | |
+| framework source + uv binaries | ~90 MB | |
+
 ## Run
 
 ### CLI (inside the image, on a GPU)
