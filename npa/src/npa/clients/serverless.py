@@ -17,6 +17,8 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.clients.nebius_auth import NebiusTokenError, mint_nebius_iam_token
+
 
 @dataclass
 class ServerlessClientError(Exception):
@@ -578,31 +580,16 @@ class ServerlessClient:
         self._sleep = sleep
 
     def _mint_registry_token(self) -> str:
-        """Mint a short-lived IAM token for Nebius Container Registry pulls."""
+        """Mint a short-lived IAM token for Nebius Container Registry pulls.
 
-        # Use real subprocess (not self._runner) so unit-test fakes for ai.* stay isolated.
+        Delegates to the canonical, ambient-token-robust helper so serverless
+        pulls never 403 because a stale ``NEBIUS_IAM_TOKEN`` was exported.
+        """
+
         try:
-            result = subprocess.run(
-                [self._nebius_bin, "iam", "get-access-token"],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ServerlessClientError(
-                "Could not mint Nebius registry token with "
-                f"`{self._nebius_bin} iam get-access-token`"
-            ) from exc
-        token = (result.stdout or "").strip()
-        if result.returncode != 0 or not token:
-            detail = (result.stderr or "").strip() or (result.stdout or "").strip() or f"exit {result.returncode}"
-            raise ServerlessClientError(
-                "Could not mint Nebius registry token with "
-                f"`{self._nebius_bin} iam get-access-token`: {detail}"
-            )
-        return token
+            return mint_nebius_iam_token(nebius_cli=self._nebius_bin)
+        except NebiusTokenError as exc:
+            raise ServerlessClientError(str(exc)) from exc
 
     def _registry_auth_args(self, image: str) -> list[str]:
         """CLI flags so serverless can pull private ``cr.*.nebius.cloud`` images."""

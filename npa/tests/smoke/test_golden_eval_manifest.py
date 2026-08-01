@@ -136,6 +136,15 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
             f"{name}: {spec.dockerfile} runs `{command}` but no COPY writes "
             f"{script_path} into the image"
         )
+    elif command.startswith("sh /"):
+        # POSIX-sh smokes (images without bash, e.g. the alpine-based static hosts).
+        script_path = command.split("sh ", 1)[1].split()[0]
+        assert script_path in dests or any(
+            src.endswith(Path(script_path).name) for src in sources
+        ), (
+            f"{name}: {spec.dockerfile} runs `{command}` but no COPY writes "
+            f"{script_path} into the image"
+        )
     elif command.startswith("bash "):
         script_path = command.split("bash ", 1)[1].split()[0]
         assert any(

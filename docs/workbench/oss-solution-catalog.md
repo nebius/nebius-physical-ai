@@ -21,6 +21,7 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `policy_config_materialization` | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
+| Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 
 ## Live capability results
 
@@ -41,6 +42,13 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
+| Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
+| Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
+| Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
+| Open Dreamer | `dreamer4_latent_tokenization` | **accepted** | Same run (`scripts/tokenize_minecraft_dataset.py`, real latents + `latent_stats`, real 27/121 VPT actions) |
+| Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
+| Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
+| Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
 
 ## Native Capabilities Per Container
 
@@ -85,6 +93,36 @@ unique and must be tested with its own upstream-named capabilities.
 | `rlds_config_generator_contract` | accepted hard gate (live) | `droid_runs_language_conditioned_rlds` module contract |
 | `droid_100_download` | accepted (live) | HTTPS metadata pull of `droid_100/1.0.0/dataset_info.json` |
 | `droid_100_config_gen` | accepted (live) | Documented `EXP_NAMES` debug subset wiring |
+
+### Open Dreamer (world model, 2-GPU minimum)
+
+JAX/Flax Dreamer 4 world-model training pipeline. This is the reference
+multi-GPU BYOF candidate: its accepted capability requires a real `>=2` GPU
+device mesh, so it uses `byof-solution-smoke-rtxpro-2gpu.yaml`
+(`RTXPRO-6000-BLACKWELL-SERVER-EDITION:2`), not the single-GPU profile.
+
+The smoke is the full Dreamer 4 loop end to end on a **real Minecraft/VPT**
+gameplay subset (128x128), headlined by an action-conditioned **dream rollout**
+(context frames -> predicted future frames vs ground truth).
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `jax_two_gpu_data_parallel_mesh` | accepted hard gate (live) | `dreamer.parallel.build_parallel("data")` `{data:2, model:1}` over 2 `jax.devices()` |
+| `minecraft_vpt_video_dataloader` | accepted (live) | `dreamer.data.build_iterator` minecraft_vpt MP4 path (decord decode + VPT action parse) + device sharding (2 devices) |
+| `dreamer4_tokenizer_train_two_gpu` | accepted hard gate (live) | `scripts/train_tokenizer.py` causal video tokenizer trained on real Minecraft frames, data-parallel across the mesh |
+| `dreamer4_latent_tokenization` | accepted (live) | `scripts/tokenize_minecraft_dataset.py` encodes the episodes into latent ArrayRecords + `latent_stats` with real 27-binary/121-categorical VPT actions |
+| `dreamer4_dynamics_train_two_gpu` | accepted (live) | `scripts/train_dynamics.py` action-conditioned latent dynamics trained on the real Minecraft latents (core world-model loop) |
+| `dreamer4_action_conditioned_dream_rollout` | accepted (live) | `dreamer.sampler.sample_video` rolls out predicted future gameplay frames from context + future actions; reports dream PSNR |
+| `world_model_rerun_visualization` | accepted (live) | Rerun `.rrd` with synchronized `world/observation` (GT) + `world/dream` (predicted) + `world/gt_decoded` (tokenizer ceiling) + `world/tokenizer_reconstruction` streams, loaded into the agent viewer |
+
+Data: a real **Minecraft/VPT** contractor-gameplay subset (OpenAI VPT `.mp4` +
+`.jsonl`), center-cropped and resized to 128x128, staged as `minecraft_vpt`
+ArrayRecords (pickled `{video: mp4_bytes, video_shape, actions: [VPT dicts],
+source}`) to the run bucket under `datasets/minecraft_vpt_128_64/` and pulled at
+run time. Actions parse to the real 27-binary / 121-categorical VPT layout that
+`train_dynamics.py` asserts. Dream fidelity scales with the tokenizer/dynamics
+training budget (`OD_TOK_STEPS`/`OD_DYN_STEPS`; upstream trains ~200k). LPIPS is
+left off (no HF download); FVD/I3D scoring (`eval_fvd.py`) remains a follow-up.
 
 ## First-class Workbench tools (not BYOF)
 

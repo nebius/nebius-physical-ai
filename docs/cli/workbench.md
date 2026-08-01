@@ -15,11 +15,13 @@ cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
 cosmos3  Cosmos3 reasoning workflow contracts.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
+foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
 isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab locomotion policy evaluation for SONIC workflows.
+lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
 scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable
@@ -49,11 +51,13 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
 | `cosmos3` | Cosmos3 reasoning workflow contracts. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
+| `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
 | `isaac-lab` | Isaac Lab simulation workbench deployment, training, and evaluation. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
+| `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable |

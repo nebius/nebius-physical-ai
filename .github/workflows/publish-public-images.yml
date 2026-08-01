@@ -1,0 +1,85 @@
+# Mirror the OSS-redistributable workbench images to a PUBLIC registry.
+#
+# Nebius Container Registry has no anonymous/public mode, so "public exposure"
+# means mirroring the publicly-redistributable subset to a public-capable
+# registry (GHCR by default). This workflow is license-guarded: it runs
+# `python -m npa.deploy.publish_public`, which only ever copies
+# `images.publicly_publishable_tools()` and HARD-refuses the Omniverse-Kit
+# images (isaac-lab, sonic, sonic-mujoco, groot) — those are NVIDIA-proprietary
+# and must not be redistributed to third parties.
+#
+# Manual dispatch only (never auto-publishes). Defaults to dry-run.
+#
+# Required secret to actually copy (not needed for dry-run):
+#   NEBIUS_CR_TOKEN — a Nebius CR token (static key or access token) with viewer
+#                     on the source registry, used as the docker password (user
+#                     "iam"). GHCR push uses the built-in GITHUB_TOKEN.
+
+name: Publish public images
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target public registry (e.g. ghcr.io/OWNER/REPO)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run (plan only, no copy)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e ./npa
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Resolve target registry
+        id: target
+        shell: bash
+        run: |
+          target="${{ inputs.target }}"
+          if [ -z "$target" ]; then
+            target="ghcr.io/${GITHUB_REPOSITORY,,}"
+          fi
+          echo "value=$target" >> "$GITHUB_OUTPUT"
+          echo "Target: $target"
+
+      - name: Plan (dry run — always)
+        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}" --dry-run
+
+      - name: Login to GHCR
+        if: ${{ inputs.dry_run == false }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Login to Nebius source registry
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          if [ -z "${{ secrets.NEBIUS_CR_TOKEN }}" ]; then
+            echo "NEBIUS_CR_TOKEN secret is required to copy from the Nebius source registry" >&2
+            exit 1
+          fi
+          for host in cr.eu-north1.nebius.cloud cr.us-central1.nebius.cloud; do
+            echo "${{ secrets.NEBIUS_CR_TOKEN }}" | crane auth login "$host" -u iam --password-stdin
+          done
+
+      - name: Publish
+        if: ${{ inputs.dry_run == false }}
+        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}"

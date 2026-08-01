@@ -250,3 +250,58 @@ def test_shipped_agent_backend_modules_compile(monkeypatch, module, marker) -> N
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp_path):
+    """Execute the rendered backend for real, not just compile it.
+
+    The Foxglove routes are registered by a *call* into a shipped module
+    (`agent_backend.foxglove_routes`), so a name-ordering or wiring mistake is
+    invisible to `ast.parse`/`compile` and would only surface as an ImportError
+    on the agent VM. Extract the rendered backend plus its shipped modules into a
+    temp package and import it.
+    """
+    pytest.importorskip("fastapi")
+    import importlib.util
+    import sys
+
+    setup_script = _capture_setup_script(monkeypatch)
+
+    def _extract(remote_path: str) -> str:
+        match = re.search(
+            r"cat <<'PY' \| sudo tee " + re.escape(remote_path) + r" >/dev/null\n(.*?)\nPY\n",
+            setup_script,
+            flags=re.DOTALL,
+        )
+        assert match, f"bootstrap does not write {remote_path}"
+        return match.group(1)
+
+    package = tmp_path / "agent_backend"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    for name in ("memory", "retrieval", "trace", "foxglove", "foxglove_routes"):
+        (package / f"{name}.py").write_text(
+            _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
+        )
+    backend_path = tmp_path / "backend.py"
+    backend_path.write_text(_extract("/opt/npa-agent/backend.py"), encoding="utf-8")
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location("npa_rendered_backend", backend_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop("npa_rendered_backend", None)
+
+    paths = {getattr(route, "path", "") for route in module.app.routes}
+    for expected in (
+        "/foxglove/config",
+        "/foxglove/status",
+        "/foxglove/load-artifact",
+        "/foxglove/convert-run",
+        "/foxglove/live",
+    ):
+        assert expected in paths, f"rendered backend did not register {expected}"

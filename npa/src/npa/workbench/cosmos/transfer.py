@@ -86,13 +86,20 @@ def _venv_python(repo: Path) -> Path:
 
 
 def _venv_has_torch(py: Path) -> bool:
-    if not py.exists():
+    # Probe defensively: a mirrored/hardened transfer image can make the venv
+    # python unreadable (stat -> PermissionError) or non-executable. Treat any
+    # OSError as "runtime unavailable" so callers fall back to the descriptor
+    # path instead of crashing the augment stage.
+    try:
+        if not py.exists():
+            return False
+        proc = subprocess.run(
+            [str(py), "-c", "import torch, flash_attn"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
         return False
-    proc = subprocess.run(
-        [str(py), "-c", "import torch, flash_attn"],
-        capture_output=True,
-        text=True,
-    )
     return proc.returncode == 0
 
 

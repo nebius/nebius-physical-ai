@@ -1,6 +1,13 @@
 # Isaac Lab RSL-RL parameter sweep.
 # SkyPilot 0.12.2 supports all-parallel job groups; each task below is an
 # independent training job with different Hydra overrides.
+#
+# SUPERSEDED for workbench use by the npa.workflow port:
+#   npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
+# which expresses the same sweep as a `parallel:` group (one JobGroup, bounded by
+# maxConcurrency) plus a ranking barrier, and is verified live on four GPUs. Prefer
+# that spec; this file remains as a raw-SkyPilot reference for users who are not
+# using the npa.workflow engine.
 name: isaac-lab-rl-sweep
 execution: parallel
 ---

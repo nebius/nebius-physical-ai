@@ -257,6 +257,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "data",
         "dataset",
         "fiftyone",
+        # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
+        # SkyPilot task surface (the viewer runs in the browser / static image).
+        "foxglove",
         "genesis",
         "golden-eval",
         "groot",
@@ -265,6 +268,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "isaac-lab",
         "lancedb",
         "lerobot",
+        # Static web viewer (caddy static server; no skypilot three-tier YAML).
+        "lichtblick",
         "mjlab",
         "scenario-gen",
         "sim2real",

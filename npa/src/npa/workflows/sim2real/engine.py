@@ -694,6 +694,12 @@ def _run_sim2real_viz_stage(
         )
     except RerunUnavailableError as exc:
         info = {"status": "skipped", "reason": str(exc), "source": "reference"}
+        info["mcap"] = _emit_sim2real_mcap_artifact(
+            config,
+            local_dir=local_dir,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+        )
         return (
             ComponentRecord(
                 "stage_14_rerun_viz",
@@ -705,6 +711,19 @@ def _run_sim2real_viz_stage(
             info,
         )
     info = {"source": "reference", **result.to_dict()}
+    mcap_info = _emit_sim2real_mcap_artifact(
+        config,
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+    )
+    info["mcap"] = mcap_info
+    artifacts = {"rrd": str(rrd_path)}
+    if mcap_info.get("status") == "written" and mcap_info.get("output_mcap_path"):
+        artifacts["mcap"] = str(mcap_info["output_mcap_path"])
+    mcap_note = ""
+    if mcap_info.get("status") == "written":
+        mcap_note = f" Also wrote a Lichtblick/Foxglove MCAP with {mcap_info.get('message_count', 0)} message(s)."
     return (
         ComponentRecord(
             "stage_14_rerun_viz",
@@ -714,11 +733,35 @@ def _run_sim2real_viz_stage(
                 f"{result.frame_count} policy camera frame(s), "
                 f"{result.heldout_frame_count} held-out sim frame(s), and "
                 f"{result.heldout_env_count} held-out env score(s); camera streams, "
-                "VLM critiques, RL signal, and held-out scores are logged."
+                "VLM critiques, RL signal, and held-out scores are logged." + mcap_note
             ),
-            {"rrd": str(rrd_path)},
+            artifacts,
         ),
         info,
+    )
+
+
+def _emit_sim2real_mcap_artifact(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Emit ``reports/sim2real.mcap`` alongside the ``.rrd`` (best-effort).
+
+    Gated behind ``NPA_SIM2REAL_MCAP`` (default on when rerun viz is on). Degrades
+    gracefully (skip + reason) when ``mcap`` is unavailable, mirroring the ``.rrd``
+    path, so a missing writer never fails the finalize stage.
+    """
+
+    from npa.workflows.sim2real_viz import emit_sim2real_mcap_if_enabled
+
+    return emit_sim2real_mcap_if_enabled(
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
 
 
@@ -1847,12 +1890,22 @@ def _refresh_registry_pull_secret_for_sibling_job(
 
     from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
 
-    ensure_registry_pull_secret_for_images(
-        image,
-        namespace=namespace,
-        kubeconfig=config.k8s_kubeconfig,
-        k8s_context=config.k8s_context,
-    )
+    # Best-effort: sibling Jobs already carry the run's imagePullSecrets (e.g.
+    # ``agent-sa``) via ``config.k8s_image_pull_secrets``, so a refresh failure
+    # (no ``nebius`` CLI / no ``NEBIUS_IAM_TOKEN`` in-pod) must not crash the
+    # orchestrator. Log and continue; a genuinely stale secret surfaces as an
+    # ImagePullBackOff on the sibling rather than a hard orchestrator failure.
+    try:
+        ensure_registry_pull_secret_for_images(
+            image,
+            namespace=namespace,
+            kubeconfig=config.k8s_kubeconfig,
+            k8s_context=config.k8s_context,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort refresh must never abort the run
+        logging.getLogger(__name__).warning(
+            "sibling registry pull-secret refresh skipped for %s: %s", image, exc
+        )
 
 
 def _run_kubernetes_indexed_image_component(

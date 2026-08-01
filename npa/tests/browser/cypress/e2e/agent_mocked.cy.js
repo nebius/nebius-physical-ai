@@ -114,6 +114,81 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
 
+  it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
+    cy.window().then((win) => {
+      cy.stub(win, "open").as("windowOpen");
+    });
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+
+    // Lichtblick render-mode tab + dedicated iframe pane exist and activate.
+    cy.get("#renderModeLichtblick").should("exist").click();
+    cy.get("#renderModeLichtblick").should("have.class", "is-active");
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#viewerPaneRerun").should("have.class", "is-inactive-viewer");
+    cy.get("#lichtblickFrame")
+      .should("have.attr", "src")
+      .and("include", "/lichtblick/")
+      .and("include", "ds.url");
+    // The embedded Lichtblick app renders the MCAP data source (mock fixture).
+    cy.get("#lichtblickFrame").its("0.contentWindow.__NPA_MOCK_LICHTBLICK__", { timeout: 15000 }).should("exist");
+
+    // "Open in Lichtblick" opens the same-origin viewer URL in a new tab.
+    cy.get("#openLichtblick").click();
+    cy.get("@windowOpen").should("have.been.called");
+
+    // Reload stays on the Lichtblick pane and re-mounts the iframe.
+    cy.get("#loadLichtblickViewer").click();
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
+
+    // Switching back to Rerun deactivates the Lichtblick pane (both stay mounted).
+    cy.get("#renderModeRerun").click();
+    cy.get("#viewerPaneRerun").should("have.class", "is-active-viewer");
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-inactive-viewer");
+  });
+
+  it("loads a sim2real.mcap artifact into the embedded Lichtblick viewer", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
+
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "mcap");
+    cy.get("#artifactList").should("contain.text", "View in Lichtblick");
+
+    cy.get(`#artifactList button[data-action="load-artifact"][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.mcap"]`).click();
+    cy.wait("@loadArtifact");
+    cy.get("#renderModeLichtblick").should("have.class", "is-active");
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
+    cy.get("#renderedDataSummary").should("contain.text", "mcap");
+  });
+
+  it("lists artifacts for a pasted run id over a stale dropdown selection", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    // Leave a stale dropdown selection (mock-run) without firing its change handler,
+    // then paste a different specific run id into the input.
+    cy.get("#runIdSelect").then(($s) => {
+      $s[0].value = "mock-run";
+    });
+    cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
+    // Clicking the button steals focus from the input, but "List artifacts" must still
+    // use the pasted run id, not the stale dropdown value.
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "View in Lichtblick");
+    cy.get("#artifactList").should("not.contain.text", "mock-run/preview.png");
+  });
+
   it("covers chat quick actions, sessions, model selection, submit, and copy", () => {
     cy.get("#chatActionS3").click();
     cy.get("#chatInput").should("contain.value", "configure S3");

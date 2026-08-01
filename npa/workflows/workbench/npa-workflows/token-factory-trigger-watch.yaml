@@ -1,0 +1,66 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Zero-GPU reference for the TRIGGER / WATCH pattern.
+#
+# `caption-inbox` declares a `trigger:`, so with `--runtime` the driver polls the inbox
+# prefix and only submits the stage once at least `minObjects` objects have landed. The
+# watermark is written to the run ledger, so a resumed run does not wait again for data
+# it already saw. Nothing is scheduled while waiting: the watch is driver-side, so no
+# cloud job burns time sitting idle.
+#
+#   npa workbench workflow submit token-factory-trigger-watch.yaml \
+#     --run-id <id> --runtime --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+#
+# Without --runtime the spec still plans and renders as an ordinary serial stage (the
+# trigger is a runtime-only concern), so `--plan-only` output is unchanged in shape.
+
+metadata:
+  name: token-factory-trigger-watch
+  description: >
+    Trigger/watch reference (zero GPU) — wait for new frames to land in an inbox
+    prefix, then caption them with the hosted Token Factory vision model.
+
+config:
+  bucket: example-bucket
+  prefix: "token-factory-trigger/{{run.id}}"
+
+  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  max_images: "4"
+  max_tokens: "128"
+
+  # How patient the watch is. maxPolls bounds the wait in polls; the run's
+  # --max-wait-seconds bounds it in wall-clock regardless.
+  inbox_poll_seconds: 15
+  inbox_max_polls: 40
+  inbox_min_objects: 1
+
+  images_uri: "s3://{{config.bucket}}/{{config.prefix}}/inbox/"
+  captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/captions/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: caption-inbox
+
+states:
+  caption-inbox:
+    description: Wait for frames to land in the inbox, then caption them.
+    trigger:
+      uri: "{{config.images_uri}}"
+      pollSeconds: "{{config.inbox_poll_seconds}}"
+      maxPolls: "{{config.inbox_max_polls}}"
+      minObjects: "{{config.inbox_min_objects}}"
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    inputs:
+      - uri: "{{config.images_uri}}"
+        schema: npa.data_factory.frames.v1
+    outputs:
+      - uri: "{{config.captions_uri}}captions.json"
+        schema: npa.token_factory.captions.v1
+    terminal: true
