@@ -5115,7 +5115,7 @@ def _maybe_toolground_chat_reply(
         return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
     if intent == "find_artifacts":
         mentioned_run = ""
-        match = re.search(r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b", str(user_text or ""))
+        match = re.search(r"\\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\\b", str(user_text or ""))
         if match:
             mentioned_run = match.group(1)
         try:
@@ -5387,16 +5387,16 @@ def _sim2real_stage_count_from_report(state: dict[str, Any]) -> int:
 
 def _maybe_stage_count_numeric_reply(user_text: str, state: dict[str, Any]) -> str | None:
     lowered = str(user_text or "").lower()
-    if not re.search(r"\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|pipeline|workflow)\b", lowered):
+    if not re.search(r"\\b(?:sim\\s*[- ]?2\\s*[- ]?real|sim2real|pipeline|workflow)\\b", lowered):
         return None
-    if not re.search(r"\b(?:stage|stages|step|steps)\b", lowered):
+    if not re.search(r"\\b(?:stage|stages|step|steps)\\b", lowered):
         return None
-    if not re.search(r"\b(?:count|number|how many)\b", lowered):
+    if not re.search(r"\\b(?:count|number|how many)\\b", lowered):
         return None
     value = _sim2real_stage_count_from_report(state)
     if value <= 0:
         return None
-    match = re.search(r"(?:count|number|stages?|steps?)\s*(?:-|minus)\s*(\d+)", lowered)
+    match = re.search(r"(?:count|number|stages?|steps?)\\s*(?:-|minus)\\s*(\\d+)", lowered)
     if match:
         value -= int(match.group(1))
     return str(value)
@@ -5615,7 +5615,7 @@ def chat(payload: dict):
         }}
     # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
     if (not visual_turn) and re.search(
-        r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
+        r"\\b(?:run|start|submit|launch)\\b.{{0,80}}\\b(?:small|simple|tiny|minimal)\\b.{{0,80}}\\bsim(?:\\s*[- ]?2\\s*[- ]?real|2real)\\b",
         last_content,
         re.IGNORECASE,
     ):
