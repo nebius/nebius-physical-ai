@@ -255,6 +255,9 @@ def derive_rig_poses(
         # `<camera> -> rig` static identity is deliberately NOT written: the copied
         # `<camera> -> world` edges already position the cameras, and adding both
         # would give the pose graph two routes between the same frames.
+        # NCore stores each edge in ONE direction (store_dynamic_pose refuses a pair
+        # whose inverse already exists), so copying every edge verbatim cannot
+        # duplicate a relation.
         copied_dynamic: list[str] = []
         copied_static: list[str] = []
         for source_reader in reader.open_component_readers(PosesComponent.Reader).values():
@@ -288,6 +291,18 @@ def derive_rig_poses(
         combined = [Path(str(path)) for path in reader.component_store_paths] + derived_paths
         merged_reader = SequenceComponentGroupsReader([_upath(path) for path in combined])
         meta = merged_reader.get_sequence_meta().to_dict()
+        # get_sequence_meta records each store by BASENAME and the meta-file resolves
+        # them relative to its own directory. Assert it rather than trust it: a
+        # library change to absolute paths would silently produce a meta-file that
+        # only resolves on the machine that wrote it, which would then fail in a
+        # different pod after the S3 handoff.
+        recorded = [str(store.get("path", "")) for store in meta.get("component_stores", [])]
+        unexpected = [name for name in recorded if "/" in name or not name]
+        if unexpected:
+            raise NurecError(
+                "NCore wrote non-basename component-store paths "
+                f"{unexpected}; the derived meta-file would not resolve elsewhere"
+            )
     except Exception as exc:  # noqa: BLE001
         return RigPoseResult(
             ok=False,

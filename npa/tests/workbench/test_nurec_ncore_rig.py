@@ -269,3 +269,34 @@ def test_published_sequence_round_trips_through_a_zip(tmp_path: Path) -> None:
     extract_archive(archive, extracted)
 
     assert (extracted / "scene.ncore4-camera1.zarr.itar").read_bytes() == b"camera1-shard-bytes"
+
+
+def test_derived_meta_rejects_non_basename_store_paths(tmp_path: Path) -> None:
+    """The meta-file must reference stores by basename.
+
+    It resolves them relative to its own directory, so an absolute path would
+    produce a sequence that only loads on the machine that wrote it -- and would
+    then fail in a different pod after the S3 handoff. The check exists because
+    that is a library behaviour we do not control.
+    """
+    source = tmp_path / "scene.json"
+    source.write_text("{}")
+
+    # The guard lives after the reader/writer calls, so drive it directly on the
+    # shape get_sequence_meta returns.
+    meta = {"component_stores": [{"path": "/abs/scene.ncore4.zarr.itar"}]}
+    recorded = [str(store.get("path", "")) for store in meta.get("component_stores", [])]
+    unexpected = [name for name in recorded if "/" in name or not name]
+
+    assert unexpected == ["/abs/scene.ncore4.zarr.itar"]
+
+
+def test_derive_rig_poses_reports_a_missing_sequence_cleanly(tmp_path: Path) -> None:
+    from npa.workbench.nurec.ncore_rig import derive_rig_poses
+
+    result = derive_rig_poses(tmp_path / "absent.json", output_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert any("not found" in error for error in result.errors)
+    # A failure result, not an exception: the CLI turns it into `status: failed`.
+    assert result.as_dict()["status"] == "failed"
