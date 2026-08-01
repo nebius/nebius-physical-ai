@@ -863,6 +863,16 @@ def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
     tf_dir = provisioner.working_dir_path(project_alias, name)
     shutil.rmtree(tf_dir, ignore_errors=True)
 
+    # Drop the now-empty <alias> parents so tearing down the last agent leaves no
+    # empty ~/.npa/{agents,workbenches}/<alias>/ tree behind (a sibling agent
+    # under the same alias keeps its parent non-empty, so it is preserved).
+    for parent in (agent_dir.parent, tf_dir.parent):
+        try:
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass
+
 
 def _write_auth_secret(*, project_alias: str, name: str, user: str, password: str) -> Path:
     path = _auth_secret_path(project_alias, name)

@@ -273,6 +273,26 @@ def test_agent_destroy_removes_the_terraform_workdir() -> None:
 
     assert not agent_dir.exists()
     assert not tf_dir.exists()
+    # The now-empty <alias> parents are pruned too (no empty tree left behind).
+    assert not agent_dir.parent.exists()
+    assert not tf_dir.parent.exists()
+
+
+def test_agent_cleanup_keeps_alias_parent_with_a_sibling() -> None:
+    """A second agent under the same alias must keep the shared <alias> parent."""
+    from npa.cli.agent import _cleanup_agent_local_files
+    from npa.deploy import provisioner
+
+    for wb in ("agent", "other"):
+        provisioner.working_dir_path("prod", wb).mkdir(parents=True)
+        (Path.home() / ".npa" / "agents" / "prod" / wb).mkdir(parents=True)
+
+    _cleanup_agent_local_files("prod", "agent")
+
+    # The torn-down agent's trees are gone, the sibling's survive with the parent.
+    assert not provisioner.working_dir_path("prod", "agent").exists()
+    assert provisioner.working_dir_path("prod", "other").exists()
+    assert provisioner.working_dir_path("prod", "other").parent.exists()
 
 
 # ── agent IAM leftovers ──────────────────────────────────────────────────────
