@@ -269,7 +269,13 @@ def live_url_allowed(url: str) -> bool:
 
     Mirrors the ``.rrd`` proxy allowlist rules (no loopback / private / link-local
     / metadata targets) so a configured live URL cannot be pointed at agent-VM
-    internals. DNS is not resolved here: the browser, not the agent, connects.
+    internals.
+
+    Deliberately does **not** resolve DNS, so a public hostname that resolves to a
+    private address is not rejected. That is a conscious trade-off, not an
+    oversight: the *operator's browser* opens this WebSocket, not the agent, so
+    this is a UI-config guardrail rather than an SSRF boundary (contrast
+    ``agent_rrd_proxy``, where the agent itself fetches and therefore resolves).
     """
     raw = str(url or "").strip()
     if not raw:
