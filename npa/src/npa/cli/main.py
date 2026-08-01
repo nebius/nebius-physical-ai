@@ -1453,19 +1453,46 @@ def _configured_env_lines() -> str:
 
 
 def _saved_kube_context() -> str:
-    """Return the most recently saved local cluster context, or ""."""
+    """Return the most recently saved local cluster context, or "".
+
+    Scoped to the configured project when its ``project_id`` is resolvable, so
+    ``configure --show --env`` never emits an unrelated project's cluster context
+    (which would point a runbook / PAIDF submit at the wrong infra). Falls back to
+    the most recent cluster of any project when no scoped match exists.
+    """
     try:
         from npa.cluster.state import list_local_clusters
 
-        clusters = list_local_clusters()
+        clusters = list(list_local_clusters() or [])
     except Exception:  # noqa: BLE001 - no cluster cache is normal before provisioning
         return ""
-    for state in reversed(clusters or []):
+    configured_pid = _configured_project_id()
+    scoped = [
+        state
+        for state in clusters
+        if configured_pid and str(getattr(state, "project_id", "") or "") == configured_pid
+    ]
+    for state in reversed(scoped or clusters):
         # `cluster up` names the kubeconfig context after the cluster by default.
         context = str(getattr(state, "name", "") or "")
         if context:
             return context
     return ""
+
+
+def _configured_project_id() -> str:
+    """Return the configured default project's Nebius project id, or ""."""
+    try:
+        from npa.clients.config import default_project_name, list_projects
+
+        projects = list_projects() or {}
+        if not projects:
+            return ""
+        alias = default_project_name()
+        stanza = projects.get(alias) or next(iter(projects.values()))
+        return str((stanza or {}).get("project_id", "") or "")
+    except Exception:  # noqa: BLE001 - unreadable config scopes nothing
+        return ""
 
 
 def _configured_summary() -> str:

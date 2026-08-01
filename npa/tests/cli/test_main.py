@@ -499,6 +499,49 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
     assert "Credential setup" not in result.output
 
 
+def test_configure_show_env_scopes_kube_context_to_configured_project(monkeypatch, tmp_path) -> None:
+    """--show --env must not emit an unrelated project's cluster context.
+
+    Regression: `_saved_kube_context` returned the most recent local cluster of
+    any project, so a runbook could `eval` a context pointing at the wrong infra.
+    """
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {"mine": {"project_id": "project-1", "region": "us-central1"}},
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        # The unrelated cluster is listed last (most recent) on purpose.
+        lambda: [
+            SimpleNamespace(name="my-cluster", project_id="project-1"),
+            SimpleNamespace(name="someone-elses", project_id="project-OTHER"),
+        ],
+    )
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_KUBE_CONTEXT"] == "my-cluster"
+    assert "someone-elses" not in result.output
+
+
 def test_configure_stores_hf_and_ngc_tokens_without_prompting(monkeypatch, tmp_path) -> None:
     """Scripted setup had to pipe secrets into prompts, which echo on a non-TTY."""
     import yaml
