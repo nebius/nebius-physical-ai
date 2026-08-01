@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
+RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
 
 
 def utc_now() -> str:
@@ -51,9 +52,107 @@ class RunManifest:
         )
 
 
+@dataclass
+class RuntimeRunState:
+    """Durable ledger for a runtime-orchestrated run (waves, jobs, decisions).
+
+    This is written *in addition to* :class:`RunManifest` (whose schema is
+    unchanged) and is what makes the runtime tier resumable: a wave whose key is
+    already recorded as ``succeeded`` is replayed from the ledger instead of being
+    resubmitted, so re-running the same ``run_id`` is idempotent.
+    """
+
+    workflow: str
+    run_id: str
+    api_version: str = ""
+    status: str = "running"
+    run_prefix_uri: str = ""
+    #: Fingerprint of the plan this ledger was recorded for. ``--resume`` replays waves
+    #: by key, and keys only line up when the traversal is identical, so a resumed run
+    #: whose spec/config changed must not silently reuse them.
+    plan_fingerprint: str = ""
+    waves: list[dict[str, Any]] = field(default_factory=list)
+    decisions: list[dict[str, Any]] = field(default_factory=list)
+    watermarks: dict[str, Any] = field(default_factory=dict)
+    updated_at: str = field(default_factory=utc_now)
+    schema_version: str = RUNTIME_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "workflow": self.workflow,
+            "run_id": self.run_id,
+            "api_version": self.api_version,
+            "status": self.status,
+            "run_prefix_uri": self.run_prefix_uri,
+            "plan_fingerprint": self.plan_fingerprint,
+            "updated_at": self.updated_at,
+            "waves": list(self.waves),
+            "decisions": list(self.decisions),
+            "watermarks": dict(self.watermarks),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> RuntimeRunState:
+        return cls(
+            workflow=str(payload.get("workflow") or ""),
+            run_id=str(payload.get("run_id") or ""),
+            api_version=str(payload.get("api_version") or ""),
+            status=str(payload.get("status") or "running"),
+            run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
+            plan_fingerprint=str(payload.get("plan_fingerprint") or ""),
+            waves=[dict(item) for item in payload.get("waves") or [] if isinstance(item, dict)],
+            decisions=[
+                dict(item) for item in payload.get("decisions") or [] if isinstance(item, dict)
+            ],
+            watermarks=dict(payload.get("watermarks") or {}),
+            updated_at=str(payload.get("updated_at") or utc_now()),
+            schema_version=str(payload.get("schema_version") or RUNTIME_SCHEMA_VERSION),
+        )
+
+    def completed_wave(self, key: str) -> dict[str, Any] | None:
+        """Return the recorded outcome of a wave that already succeeded."""
+
+        for record in reversed(self.waves):
+            if record.get("key") == key and record.get("status") == "succeeded":
+                return record
+        return None
+
+    def in_flight_wave(self, key: str) -> dict[str, Any] | None:
+        """Return a wave recorded as started but never finished.
+
+        A ``running`` record means a driver submitted the wave and then stopped
+        watching it (crash, kill, lost connection). The managed job may still be
+        alive, so a resumed run must reconcile it instead of submitting a second
+        copy of the same work.
+        """
+
+        for record in reversed(self.waves):
+            if record.get("key") != key:
+                continue
+            status = str(record.get("status") or "")
+            if status == "succeeded":
+                return None
+            return dict(record) if status == "running" else None
+        return None
+
+    def record_wave(self, record: Mapping[str, Any]) -> None:
+        key = str(record.get("key") or "")
+        for index, existing in enumerate(self.waves):
+            if existing.get("key") == key:
+                self.waves[index] = dict(record)
+                return
+        self.waves.append(dict(record))
+
+
 def manifest_key(prefix: str) -> str:
     base = prefix.rstrip("/")
     return f"{base}/npa-workflow/manifest.json"
+
+
+def runtime_key(prefix: str) -> str:
+    base = prefix.rstrip("/")
+    return f"{base}/npa-workflow/runtime.json"
 
 
 def status_key(prefix: str) -> str:
@@ -108,6 +207,26 @@ class RunStateStore:
                 "step_count": len(manifest.steps),
             },
         )
+        return payload
+
+    def read_runtime_state(self) -> RuntimeRunState | None:
+        try:
+            body = self._read(runtime_key(self.prefix))
+        except FileNotFoundError:
+            return None
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return RuntimeRunState.from_dict(payload)
+
+    def write_runtime_state(self, state: RuntimeRunState) -> dict[str, Any]:
+        state.updated_at = utc_now()
+        state.run_prefix_uri = self.run_prefix_uri
+        payload = state.to_dict()
+        self._write(runtime_key(self.prefix), payload)
         return payload
 
     def append_step(self, manifest: RunManifest, step_record: Mapping[str, Any]) -> dict[str, Any]:

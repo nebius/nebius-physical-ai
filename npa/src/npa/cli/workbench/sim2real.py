@@ -855,7 +855,7 @@ def rerun_regen_command(
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Regenerate reports/sim2real.rrd locally from S3 artifacts (held-out PNG sync included)."""
+    """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
         config = build_config_from_env(
             run_id=run_id,
@@ -883,6 +883,12 @@ def rerun_regen_command(
     typer.echo(f"heldout_frame_count: {payload['heldout_frame_count']}")
     if payload.get("upload_uri"):
         typer.echo(f"upload_uri: {payload['upload_uri']}")
+    if payload.get("local_mcap_path"):
+        typer.echo(f"local_mcap_path: {payload['local_mcap_path']}")
+    if payload.get("mcap_status"):
+        typer.echo(f"mcap_status: {payload['mcap_status']}")
+    if payload.get("mcap_upload_uri"):
+        typer.echo(f"mcap_upload_uri: {payload['mcap_upload_uri']}")
 
 
 @rerun_app.command("heldout-only")

@@ -26,7 +26,8 @@ def _task_docs(plan) -> tuple[dict, dict]:
 
 
 def _patch_nebius_token(monkeypatch: pytest.MonkeyPatch, token: str = "fresh-test-token") -> list[list[str]]:
-    from npa.workbench.sonic import workflow as sonic_workflow
+    # SONIC delegates token minting to the canonical npa.clients.nebius_auth helper.
+    from npa.clients import nebius_auth
 
     calls: list[list[str]] = []
 
@@ -34,7 +35,10 @@ def _patch_nebius_token(monkeypatch: pytest.MonkeyPatch, token: str = "fresh-tes
         calls.append(list(cmd))
         return subprocess.CompletedProcess(cmd, 0, stdout=f"{token}\n", stderr="")
 
-    monkeypatch.setattr(sonic_workflow.subprocess, "run", fake_run)
+    monkeypatch.setattr(nebius_auth.subprocess, "run", fake_run)
+    # Keep the asserted argv stable regardless of the operator's ambient profile.
+    for name in ("NPA_NEBIUS_PROFILE", "NEBIUS_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
     return calls
 
 

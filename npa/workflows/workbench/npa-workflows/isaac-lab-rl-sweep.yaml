@@ -1,0 +1,156 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow port of the one `execution: parallel` SkyPilot template
+# (npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml).
+#
+# The template hand-wrote four near-identical task documents that differed only in
+# their Hydra overrides and output prefix. Here that is one `parallel:` group whose
+# members share a single stage definition and differ through `params:` (a per-state
+# config overlay). The renderer emits them as one SkyPilot JobGroup, so the four
+# variants train CONCURRENTLY, and `select-best` (needs: [sweep]) is the barrier
+# that only runs once every variant reached a terminal state.
+#
+#   npa workbench workflow submit isaac-lab-rl-sweep.yaml --run-id <id> --runtime \
+#     --registry <registry> --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+#
+# Cost control: `max_concurrency` caps how many GPUs the sweep holds at once
+# (the runtime tier submits the group in batches of that size).
+
+metadata:
+  name: isaac-lab-rl-sweep
+  description: >
+    Isaac Lab RSL-RL hyperparameter sweep — four training variants run
+    concurrently as one SkyPilot JobGroup, then a barrier stage ranks their
+    metrics, publishes the best variant, and rolls the sweep up in insights.
+  skypilotTwin: npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "isaac-lab-rl-sweep/{{run.id}}"
+  workflow_name: isaac-lab-rl-sweep
+
+  max_concurrency: "4"
+  task_name: Isaac-Cartpole-v0
+  num_envs: "64"
+  iterations: "10"
+
+  sweep_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/npa_rl_sweep_best.json"
+  run_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+
+resources:
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: L40S:1
+    cpus: 16
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: sweep
+
+states:
+  sweep:
+    description: Four RSL-RL variants trained concurrently (one GPU each).
+    parallel:
+      - variant-lr-1e-3
+      - variant-lr-3e-4
+      - variant-entropy-0
+      - variant-entropy-0-01
+    maxConcurrency: "{{config.max_concurrency}}"
+    next: select-best
+
+  variant-lr-1e-3:
+    description: Learning rate 1e-3.
+    resources: trainer-gpu
+    params:
+      variant: lr-1e-3
+      overrides: "agent.save_interval=1 agent.algorithm.learning_rate=1.0e-3"
+      variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/lr-1e-3/"
+    run:
+      shell: >
+        python3 -c "from npa.workflows.rl_sweep import train_variant;
+        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
+        task='{{config.task_name}}', iterations='{{config.iterations}}',
+        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
+        run_id='{{run.id}}')"
+    outputs:
+      - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
+        schema: npa.rl_sweep.variant_metrics.v1
+
+  variant-lr-3e-4:
+    description: Learning rate 3e-4.
+    resources: trainer-gpu
+    params:
+      variant: lr-3e-4
+      overrides: "agent.save_interval=1 agent.algorithm.learning_rate=3.0e-4"
+      variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/lr-3e-4/"
+    run:
+      shell: >
+        python3 -c "from npa.workflows.rl_sweep import train_variant;
+        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
+        task='{{config.task_name}}', iterations='{{config.iterations}}',
+        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
+        run_id='{{run.id}}')"
+    outputs:
+      - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
+        schema: npa.rl_sweep.variant_metrics.v1
+
+  variant-entropy-0:
+    description: Entropy coefficient 0.0.
+    resources: trainer-gpu
+    params:
+      variant: entropy-0
+      overrides: "agent.save_interval=1 agent.algorithm.entropy_coef=0.0"
+      variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/entropy-0/"
+    run:
+      shell: >
+        python3 -c "from npa.workflows.rl_sweep import train_variant;
+        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
+        task='{{config.task_name}}', iterations='{{config.iterations}}',
+        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
+        run_id='{{run.id}}')"
+    outputs:
+      - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
+        schema: npa.rl_sweep.variant_metrics.v1
+
+  variant-entropy-0-01:
+    description: Entropy coefficient 0.01.
+    resources: trainer-gpu
+    params:
+      variant: entropy-0-01
+      overrides: "agent.save_interval=1 agent.algorithm.entropy_coef=0.01"
+      variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/entropy-0-01/"
+    run:
+      shell: >
+        python3 -c "from npa.workflows.rl_sweep import train_variant;
+        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
+        task='{{config.task_name}}', iterations='{{config.iterations}}',
+        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
+        run_id='{{run.id}}')"
+    outputs:
+      - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
+        schema: npa.rl_sweep.variant_metrics.v1
+
+  select-best:
+    description: >
+      Barrier — rank every variant's metrics and publish the winner. Runs only
+      after all four variants reached a terminal state, so a partial sweep can
+      never produce a "best" variant.
+    needs: [sweep]
+    resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.rl_sweep import select_best;
+        select_best(sweep_uri='{{config.sweep_uri}}', report_uri='{{config.report_uri}}',
+        run_id='{{run.id}}')"
+    inputs:
+      - uri: "{{config.sweep_uri}}"
+        schema: npa.rl_sweep.variant_metrics.v1
+    outputs:
+      - uri: "{{config.report_uri}}"
+        schema: npa.rl_sweep.report.v1
+    terminal: true

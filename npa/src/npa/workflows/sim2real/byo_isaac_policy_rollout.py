@@ -390,6 +390,14 @@ def build_isaac_rollout_job_manifest(
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": service_account,
+                    # Deliberate, scoped privilege: npa-isaac-lab defaults to the
+                    # non-root ``ubuntu`` user, which cannot traverse ``/isaac-sim``,
+                    # so ``python.sh`` resolves empty. runAsGroup/fsGroup do not help
+                    # (the blocked bit is directory execute for other). This stays
+                    # bounded: root inside the container only, never privileged, no
+                    # host namespaces, and no host paths mounted (enforced by
+                    # npa/tests/workflows/test_isaac_job_security_context.py).
+                    "securityContext": {"runAsUser": 0},
                     "imagePullSecrets": [
                         {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},

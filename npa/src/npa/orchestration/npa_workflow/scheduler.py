@@ -24,7 +24,13 @@ def build_scheduler_task(
     """Return a portable task document for one workflow step."""
 
     resources = resources_for_step(spec, step)
-    command = step.argv or (["bash", "-lc", step.shell] if step.shell.strip() else [])
+    # `bash -c`, not `bash -lc`: a LOGIN shell re-runs the image's profile scripts and
+    # can resolve a DIFFERENT python3/PATH than the task environment SkyPilot set up.
+    # Two live GPU images broke exactly there (one login python3 had no npa and no
+    # numpy, another had no pip at all), so stage commands inherit the task
+    # environment instead. `render_task_run_script` sources /etc/profile.d/*.sh first,
+    # which is what images actually rely on for activation.
+    command = step.argv or (["bash", "-c", step.shell] if step.shell.strip() else [])
     name = step.state
     if step.iteration is not None:
         name = f"{name}-{step.iteration}"

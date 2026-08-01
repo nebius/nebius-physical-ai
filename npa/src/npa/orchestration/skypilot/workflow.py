@@ -192,7 +192,13 @@ def submit_workflow(
             _cleanup_owned_submission_dir(owned_submission_dir)
             raise SkyPilotSubmitError(_format_submit_error(cmd, result))
         combined = f"{result.stdout}\n{result.stderr}"
-        job_id = _parse_job_id(combined)
+        job_id = _verified_job_id(
+            _parse_job_id(combined),
+            run_id,
+            env=env,
+            sky_executable=sky_executable,
+            cwd=stable_cwd,
+        )
         return WorkflowResult(
             status="SUBMITTED",
             job_id=job_id,
@@ -268,6 +274,146 @@ def workflow_status(
         stdout=result.stdout,
         stderr=result.stderr,
     )
+
+
+def workflow_task_statuses(
+    job_id: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 300,
+) -> list[dict[str, Any]]:
+    """Return per-task rows for a managed job (pipeline tasks or JobGroup members).
+
+    Each row carries the timing fields SkyPilot records per task
+    (``submitted_at`` / ``start_at`` / ``end_at``), which is how a JobGroup can be
+    shown to have run its members *concurrently* and how a barrier state can be
+    shown to have started only after its predecessors finished.
+    """
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
+    result = subprocess.run(
+        cmd,
+        env=sky_environment(runtime_config.isolated_config_dir),
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return parse_task_statuses(result.stdout, job_id)
+
+
+def find_job_ids_by_name(
+    job_name: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 300,
+) -> list[str]:
+    """Return the managed-job ids whose ``job_name`` matches, newest first.
+
+    Used to verify (or recover) the job id parsed from ``sky jobs launch`` output.
+    Trusting the parsed number alone is unsafe: a flaky API server can leave stale
+    text in the stream, and polling the wrong id makes the driver abandon a job that
+    is still running — observed live, with four GPUs left burning.
+    """
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    result = subprocess.run(
+        [
+            str(ensure_skypilot_version(runtime_config.sky_bin)),
+            "jobs",
+            "queue",
+            "--all",
+            "--output",
+            "json",
+        ],
+        env=sky_environment(runtime_config.isolated_config_dir),
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return parse_job_ids_by_name(result.stdout, job_name)
+
+
+def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
+    """Extract managed-job ids for ``job_name`` from queue JSON, newest first."""
+
+    payload = _json_payload_from_output(output)
+    if payload is None:
+        return []
+    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    ids: list[int] = []
+    for job in jobs or []:
+        if not isinstance(job, dict):
+            continue
+        if str(job.get("job_name") or "") != job_name:
+            continue
+        raw = str(job.get("job_id") or job.get("id") or "")
+        if raw.isdigit() and int(raw) not in ids:
+            ids.append(int(raw))
+    return [str(value) for value in sorted(ids, reverse=True)]
+
+
+def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
+    """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
+
+    payload = _json_payload_from_output(output)
+    if payload is None:
+        return []
+    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    rows: list[dict[str, Any]] = []
+    for job in jobs or []:
+        if not isinstance(job, dict):
+            continue
+        current_id = str(job.get("job_id") or job.get("id") or "")
+        if current_id != str(job_id):
+            continue
+        rows.append(
+            {
+                "job_id": current_id,
+                "task_id": job.get("task_id"),
+                "task_name": job.get("task_name") or job.get("job_name") or "",
+                "status": str(job.get("status") or "").upper(),
+                "submitted_at": job.get("submitted_at"),
+                "start_at": job.get("start_at"),
+                "end_at": job.get("end_at"),
+                "is_job_group": job.get("is_job_group"),
+                "execution": job.get("execution"),
+                "cluster_name": job.get("cluster_name_on_cloud")
+                or job.get("current_cluster_name")
+                or "",
+            }
+        )
+    rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
+    return rows
 
 
 def _wait_for_healthy_jobs_controller(
@@ -385,6 +531,60 @@ def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
         root.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _verified_job_id(
+    parsed: str,
+    job_name: str,
+    *,
+    env: dict[str, str],
+    sky_executable: str,
+    cwd: str | None,
+) -> str:
+    """Cross-check the scraped job id against the job NAME we just launched.
+
+    Costs one extra `sky jobs queue` call per submit. That is deliberate — polling the
+    wrong job is how a running GPU job gets abandoned — but it is bounded (short
+    timeout) and can be disabled with ``NPA_SKYPILOT_VERIFY_JOB_ID=0`` for callers that
+    submit in a tight loop and accept the risk.
+
+    ``sky jobs launch`` streams from the API server, and a flaky/restarting server can
+    leave a previous request's ``Job submitted, ID: N`` in the output. Callers then poll
+    somebody else's job: observed live twice — a runtime wave declared CANCELLED while
+    its real job kept four GPUs busy, and a live e2e case reported FAILED by reading the
+    *previous* spec's job. The name is authoritative; the parsed id is only trusted when
+    the queue agrees.
+    """
+
+    import os as _os
+
+    if str(_os.environ.get("NPA_SKYPILOT_VERIFY_JOB_ID", "1")).strip().lower() in {
+        "0",
+        "false",
+        "no",
+    }:
+        return parsed
+    try:
+        result = subprocess.run(
+            [sky_executable, "jobs", "queue", "--all", "--output", "json"],
+            env=env,
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0:
+            return parsed
+        ids = parse_job_ids_by_name(result.stdout, job_name)
+    except Exception:  # noqa: BLE001 - never fail a successful submit over a lookup
+        return parsed
+    if not ids:
+        return parsed
+    if parsed and parsed in ids:
+        return parsed
+    return ids[0]
 
 
 def _parse_job_id(output: str) -> str:

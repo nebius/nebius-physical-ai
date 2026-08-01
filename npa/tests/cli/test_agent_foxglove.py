@@ -307,8 +307,8 @@ def test_status_payload_and_describe_context(tmp_path: Path) -> None:
         "foxglove_ready": True,
         "run_id": "run-7",
         "artifact_key": "run-7/reports/session.mcap",
-        "artifact_render": "foxglove",
-        "foxglove_updated_at": "2026-07-30T00:00:00+00:00",
+        "artifact_render": "mcap",
+        "mcap_updated_at": "2026-07-30T00:00:00+00:00",
     }
     config = resolve_foxglove_config(
         {}, assets_dir=assets, origin="https://agent.example", sim_viz=sim_viz

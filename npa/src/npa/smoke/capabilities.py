@@ -105,6 +105,10 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "HTTP byte range on /data returns 206 with an exact Content-Range",
         "CORS preflight for the Range header answered on /data",
     ],
+    "lichtblick": [
+        "static Lichtblick (Foxglove-compatible) web bundle present (/srv/index.html)",
+        "served bundle version pin (VERSION == 1.26.0)",
+    ],
 }
 
 

@@ -42,6 +42,19 @@
         },
         "toolRef": { "type": "string" },
         "sequence": { "type": "array", "items": { "type": "string" } },
+        "parallel": { "type": "array", "items": { "type": "string" } },
+        "maxConcurrency": {},
+        "params": { "type": "object" },
+        "trigger": {
+          "type": "object",
+          "required": ["uri"],
+          "properties": {
+            "uri": { "type": "string" },
+            "pollSeconds": {},
+            "maxPolls": {},
+            "minObjects": {}
+          }
+        },
         "loop": {
           "type": "object",
           "properties": {

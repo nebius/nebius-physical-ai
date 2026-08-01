@@ -70,8 +70,31 @@ workflow environment variables.
   when `~/.nebius/config.yaml` is absent. Keep this as fallback behavior, not a
   substitute for explicit operator-machine profile setup.
 - Nebius IAM registry tokens expire. If Kubernetes image pulls fail with `401
-  Unauthorized`, refresh the registry pull secret in the namespace that owns the
-  pod.
+  Unauthorized` / `403 Forbidden` / `ErrImagePull`, refresh the registry pull
+  secret in the namespace that owns the pod. **Do not hand-mint or hand-test the
+  token per run** — use the shared, reusable helper below (any workflow can call
+  and rely on it; it is the single source of truth).
+
+### Reusable registry token refresh (`npa.clients.nebius_auth`)
+
+`npa.clients.nebius_auth.mint_nebius_iam_token(...)` is the canonical way to get
+a fresh short-lived Nebius IAM token. It is robust to a stale/ambient
+`NEBIUS_IAM_TOKEN` (or `NEBIUS_IAM_TOKEN_FILE`) in the environment — which
+otherwise makes the bare `nebius iam get-access-token` skip a real exchange
+("token from NEBIUS_IAM_TOKEN env is used"), silently leaving pull secrets stale
+and causing later `403 Forbidden` pulls. The helper strips the ambient token,
+performs a profile-scoped exchange (`NPA_NEBIUS_PROFILE` / `NEBIUS_PROFILE`), and
+only falls back to the ambient token if the exchange fails.
+
+- `registry_auth.mint_nebius_registry_token` (sim2real / BYOF),
+  `workbench.sonic.workflow._mint_nebius_registry_token`, and
+  `ServerlessClient._mint_registry_token` all delegate here — fix once, fixed
+  everywhere.
+- To refresh a Kubernetes pull secret before a job, call
+  `npa.workflows.sim2real.registry_auth.ensure_registry_pull_secret_for_images(
+  *images, namespace=..., kubeconfig=..., k8s_context=...)`.
+- Operators no longer need to `unset NEBIUS_IAM_TOKEN` before a BYOF / sim2real
+  run; the refresh mints a fresh profile token regardless.
 - Dev/operator VM Docker access to a private Nebius Container Registry image
   does not automatically authenticate fresh SkyPilot worker VMs. Direct Nebius
   burst jobs need SkyPilot Docker-login env/secrets injected before image pull;

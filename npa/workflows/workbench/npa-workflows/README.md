@@ -18,6 +18,17 @@ npa workbench workflow submit <spec.yaml> --plan-only     # plan + render only
 `npa workbench workflow submit` plans the state graph and launches the run.
 Use `--plan-only` to inspect the planned steps without launching.
 
+Specs with a `parallel:` fan-out group or a loop that must **early-exit on the
+real decision artifact** are submitted with the runtime orchestrator:
+
+```bash
+npa workbench workflow submit <spec.yaml> --run-id demo --runtime
+npa workbench workflow plan-spec <spec.yaml> --waves    # offline wave preview
+```
+
+See `docs/workbench/npa-workflow-guide.md` (Runtime orchestrator) and the
+repo-root `DESIGN.md`.
+
 ## Live GPU / CPU submit E2E
 
 Skip-by-default. On an operator VM with Nebius creds:
@@ -60,6 +71,9 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `token-factory-cosmos-reason.yaml` | Zero-GPU; needs `NPA_SRC_S3_URI` (or `--image`) |
 | `tokenfactory-rollout-judge.yaml` | Reason → VLM chain |
 | `tokenfactory-cosmos-gate.yaml` | Gate loop |
+| `token-factory-parallel-fanout.yaml` | Zero-GPU **parallel** fan-out (JobGroup) + join barrier; submit with `--runtime` |
+| `token-factory-gate-loop.yaml` | Zero-GPU **runtime** gate loop: real early-exit + `goto` branch; submit with `--runtime` |
+| `isaac-lab-rl-sweep.yaml` | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
 | `bdd100k-pipeline.yaml` | 11-stage AV pipeline |
 | `av-night-scene-hardening.yaml` | AV night-scene hardening from diagram |
 | `cosmos-synth-fanout-curation.yaml` | Cosmos synth fan-out + curation |

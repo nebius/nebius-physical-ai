@@ -128,7 +128,7 @@ function startMockServer(port) {
       res.end(fs.readFileSync(fixturePath, "utf8"));
       return;
     }
-    if (url.pathname.startsWith("/foxglove/data/")) {
+    if (url.pathname === "/foxglove/data/" || url.pathname.startsWith("/foxglove/data/")) {
       // MCAP magic + filler; enough for a range-capable static response.
       const body = Buffer.concat([
         Buffer.from([0x89, 0x4d, 0x43, 0x41, 0x50, 0x30, 0x0d, 0x0a]),
@@ -140,6 +140,27 @@ function startMockServer(port) {
         "access-control-allow-origin": "*",
       });
       res.end(body);
+      return;
+    }
+    if (url.pathname === "/lichtblick/" || url.pathname === "/lichtblick") {
+      const fixturePath = path.join(__dirname, "cypress/fixtures/mock_lichtblick.html");
+      const mockHtml = fs.readFileSync(fixturePath, "utf8");
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(mockHtml);
+      return;
+    }
+    if (url.pathname === "/lichtblick/recordings/sim2real.mcap") {
+      // Serve a real (small) MCAP fixture with genuine camera topics so smoke
+      // tests can assert the viewer is fed substantive data, not a stub.
+      const fixtureMcap = path.join(__dirname, "cypress/fixtures/sim2real_sample.mcap");
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "accept-ranges": "bytes",
+      });
+      res.end(fs.readFileSync(fixtureMcap));
       return;
     }
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
