@@ -358,12 +358,16 @@ skills:
         contains: "Physical AI"
   - name: cosmos3-inference
     category: workflows
-    when_to_use: "Run or modify Cosmos3 inference through the public text-to-image SkyPilot workflow."
+    when_to_use: "Run or modify Cosmos3 inference: the containerized npa-cosmos3 generate path (image/video) or the public text-to-image SkyPilot workflow."
     path: skills/workflows/cosmos3-inference/SKILL.md
     smoke:
       - type: workflow_yaml
         paths:
           - npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml
+          - npa/src/npa/workflows/skypilot/cosmos3-generate.yaml
+      - type: cli_help
+        args: ["workbench", "cosmos3", "generate", "--help"]
+        contains: "guardrails"
   - name: cosmos3-post-training
     category: workflows
     when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."

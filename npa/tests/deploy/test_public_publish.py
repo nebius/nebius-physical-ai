@@ -77,7 +77,7 @@ def test_public_registry_honors_env_override(monkeypatch) -> None:
 
 def test_publish_plan_targets_public_registry_by_default() -> None:
     plan = build_publish_plan(target_registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
-    assert len(plan) == 16
+    assert len(plan) == 17
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
 

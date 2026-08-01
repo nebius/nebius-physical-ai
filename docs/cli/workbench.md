@@ -13,7 +13,7 @@ Commands
 lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
-cosmos3  Cosmos3 reasoning workflow contracts.
+cosmos3  Cosmos3 omni-model generation and reasoning workflow contracts.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
@@ -48,7 +48,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
-| `cosmos3` | Cosmos3 reasoning workflow contracts. |
+| `cosmos3` | Cosmos3 omni-model generation and reasoning workflow contracts. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
