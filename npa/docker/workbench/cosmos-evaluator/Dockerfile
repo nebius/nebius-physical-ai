@@ -24,7 +24,7 @@
 # Digest pinned 2026-07-30. Tag: python:3.12-slim-bookworm
 FROM python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
 
-ARG COSMOS_EVALUATOR_VERSION=0.1.1
+ARG COSMOS_EVALUATOR_VERSION=0.1.2
 # Upstream commit this image was validated against; bump together with the tag.
 ARG COSMOS_EVALUATOR_REF=e901afea61d70d2cfe94817c8a757989b47ebee4
 ARG OPENCV_VERSION=4.13.0.90
