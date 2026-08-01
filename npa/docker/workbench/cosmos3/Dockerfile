@@ -66,6 +66,17 @@ RUN apt-get update \
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
 
+# The runtime user owns its trees BEFORE the heavy layers, and every later layer
+# runs as that user. A trailing `chown -R` would instead rewrite the whole ~9 GB
+# venv into an extra layer and roughly double the image.
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
+RUN mkdir -p /opt/cosmos3 /opt/npa /opt/uv /workspace /tmp/hf_home \
+        "${NPA_COSMOS3_OUTPUT_DIR}" \
+    && chown -R ubuntu:ubuntu /opt/cosmos3 /opt/npa /opt/uv /workspace \
+       /tmp/hf_home "${NPA_COSMOS3_OUTPUT_DIR}"
+
+USER ubuntu
+
 # Framework source at the pinned commit. History is dropped and the upstream
 # license/notice files are kept alongside for attribution.
 RUN git clone --filter=blob:none "${COSMOS3_SOURCE_REPO}" "${COSMOS3_REPO}" \
@@ -79,9 +90,10 @@ RUN git clone --filter=blob:none "${COSMOS3_SOURCE_REPO}" "${COSMOS3_REPO}" \
 # flash-attn + guardrail deps). verify_env.py then walks the inference graph for
 # every advertised generation mode, so the trimmed dependency set is proven at
 # build time rather than assumed.
-COPY docker/workbench/cosmos3/verify_env.py /opt/cosmos3/verify_env.py
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3/verify_env.py /opt/cosmos3/verify_env.py
 RUN cd "${COSMOS3_REPO}" \
     && UV_CACHE_DIR=/tmp/uv-cache uv python install \
+    && chmod -R a+rX /opt/uv \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen \
        --extra "${COSMOS3_UV_EXTRA}" --group "${COSMOS3_UV_GROUP}" \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
@@ -91,15 +103,15 @@ RUN cd "${COSMOS3_REPO}" \
 
 # npa CLI/SDK in its own venv so `npa workbench cosmos3 generate` is the single
 # entrypoint for the CLI, the SDK, and the SkyPilot workflow.
-COPY pyproject.toml /opt/npa/pyproject.toml
-COPY src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install \
        --python /opt/npa/.venv/bin/python -e /opt/npa \
     && /opt/npa/.venv/bin/npa workbench cosmos3 generate --help >/dev/null \
     && rm -rf /tmp/uv-cache
 
-COPY --chmod=755 docker/workbench/cosmos3/smoke_functional.sh /opt/cosmos3/smoke_functional.sh
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/smoke_functional.sh /opt/cosmos3/smoke_functional.sh
 
 # Distribution guard: fail the build if any model weight was baked into a layer.
 RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
@@ -111,14 +123,7 @@ RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
          exit 1; \
        fi
 
-RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
-RUN mkdir -p /workspace /tmp/hf_home "${NPA_COSMOS3_OUTPUT_DIR}" \
-    && chmod -R a+rX /opt/uv \
-    && chown -R ubuntu:ubuntu /opt/cosmos3 /opt/npa /workspace /tmp/hf_home \
-       "${NPA_COSMOS3_OUTPUT_DIR}"
-
 WORKDIR /workspace
-USER ubuntu
 
 ENTRYPOINT ["npa", "workbench", "cosmos3"]
 CMD ["generate", "--help"]
