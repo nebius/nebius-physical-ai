@@ -117,6 +117,19 @@ def _max_wait() -> int:
     return int(os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS", "3600"))
 
 
+def _case_max_wait(case: SubmitLiveCase) -> int:
+    """Seconds to allow this case, honouring a per-case declared budget.
+
+    ``max_wait_seconds`` on a case means "this workload genuinely takes this
+    long" (a cold multi-GB image pull, a long train). The env var is the default
+    for cases that declare nothing. Both the CLI's ``--max-wait-seconds`` and the
+    polling loop below MUST use this same number: when they disagreed, the daily
+    runner's shorter env value cancelled healthy long jobs that the CLI had been
+    told to wait for.
+    """
+    return case.max_wait_seconds or _max_wait()
+
+
 def _poll_seconds() -> int:
     return int(os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", "30"))
 
@@ -246,7 +259,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
     assert submit_payload.get("status") in {"SUBMITTED", "RUNNING", "PENDING", "STARTING"}
     job_id = str(submit_payload.get("job_id") or run_id)
 
-    deadline = time.monotonic() + _max_wait()
+    deadline = time.monotonic() + _case_max_wait(case)
     last_status = str(submit_payload.get("status") or "SUBMITTED")
     try:
         while time.monotonic() < deadline:
@@ -272,7 +285,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 )
             time.sleep(_poll_seconds())
         pytest.fail(
-            f"{case.spec} did not reach terminal status within {_max_wait()}s; "
+            f"{case.spec} did not reach terminal status within {_case_max_wait(case)}s; "
             f"last_status={last_status} job_id={job_id}"
         )
     finally:
@@ -350,7 +363,7 @@ def _runtime_submit_args(
         "--poll-seconds",
         os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", "30"),
         "--max-wait-seconds",
-        str(case.max_wait_seconds or _max_wait()),
+        str(_case_max_wait(case)),
         "--submit-timeout",
         "1800",
         "--output-format",
