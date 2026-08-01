@@ -39,6 +39,7 @@ def _toolref_flags(tool_ref: str) -> list[str]:
     [
         ("workbench.cosmos2.transfer", "npa.cli.workbench.cosmos2", "transfer"),
         ("workbench.cosmos2.transfer_execute", "npa.cli.workbench.cosmos2", "transfer"),
+        ("workbench.cosmos3.generate", "npa.cli.workbench.cosmos3", "generate"),
         ("workbench.cosmos3.reason", "npa.cli.workbench.cosmos3", "reason"),
         ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
         ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
