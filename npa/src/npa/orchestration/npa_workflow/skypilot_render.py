@@ -234,6 +234,22 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
     )
 
 
+#: Readiness budget the eval client waits for a self-hosted server, in seconds.
+#: Override per spec with ``config.vlm_ready_timeout_s``.
+DEFAULT_VLM_READY_TIMEOUT_S = 1800
+
+
+def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
+    """Which VLM a self-hosted stage serves. ``config.vlm_model`` wins."""
+
+    try:
+        from npa.workbench.vlm_eval import DEFAULT_MODEL as _default_model
+    except Exception:  # pragma: no cover - fallback keeps render import-light
+        _default_model = "Qwen/Qwen2-VL-7B-Instruct"
+    raw = config.get("vlm_model") or config.get("vlm_models") or _default_model
+    return str(raw).split(",")[0].strip()
+
+
 def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
     """Background vLLM server launch for a self-hosted ``vlm_eval`` step.
 
@@ -251,19 +267,17 @@ def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
     if str(tool_ref).startswith("workbench.vlm_eval.benchmark"):
         # The benchmark twin runs backend=stub / packaged fixtures; no server.
         return ""
-    try:
-        from npa.workbench.vlm_eval import DEFAULT_MODEL as _default_model
-    except Exception:  # pragma: no cover - fallback keeps render import-light
-        _default_model = "Qwen/Qwen2-VL-7B-Instruct"
-    model = str(config.get("vlm_model") or config.get("vlm_models") or _default_model).split(",")[0].strip()
+    model = self_hosted_vlm_model(config)
     model_q = shlex.quote(model)
+    ready_timeout = str(config.get("vlm_ready_timeout_s") or DEFAULT_VLM_READY_TIMEOUT_S).strip()
     return (
         "# Self-hosted vLLM: launch the OpenAI-compatible server in the background\n"
-        "# on 127.0.0.1:8000; the eval client waits for readiness. A cold start\n"
-        "# (install + weight download + load of a 7B VLM) can take many minutes,\n"
-        "# so widen the client's readiness window. Unbraced/plain assignment keeps\n"
-        "# SkyPilot placeholder lint clean.\n"
-        "export NPA_VLM_READY_TIMEOUT_S=1800\n"
+        "# on 127.0.0.1:8000; the eval client waits for readiness. Export the\n"
+        "# served model so the client asks for THIS model instead of the library\n"
+        "# default (a mismatch is a 404 from the server). Unbraced/plain\n"
+        "# assignment keeps SkyPilot placeholder lint clean.\n"
+        f"export NPA_VLM_READY_TIMEOUT_S={shlex.quote(ready_timeout)}\n"
+        f"export NPA_VLM_SELF_HOSTED_MODEL={model_q}\n"
         "python3 -m vllm.entrypoints.openai.api_server "
         "--host 127.0.0.1 --port 8000 "
         f"--model {model_q} --served-model-name {model_q} --trust-remote-code "
@@ -468,6 +482,53 @@ def _sonic_deps_setup() -> str:
     )
 
 
+def _vllm_install_setup(model: str) -> str:
+    """Install vLLM and pre-fetch the served weights during ``setup``.
+
+    Two things dominate a self-hosted cold start on a fresh node: resolving and
+    downloading the vLLM + CUDA wheel set, and pulling the model weights. Use
+    ``uv`` for the former (it resolves and downloads in parallel; plain pip took
+    long enough that the eval's readiness window expired) and ``hf_transfer``
+    for the latter, so the ``run`` phase only has to load already-local weights.
+    """
+
+    return (
+        f"export NPA_VLM_SETUP_MODEL={shlex.quote(model)}\n"
+        "python3 - <<'PY'\n"
+        "import importlib.util\n"
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "\n"
+        "MODEL = os.environ['NPA_VLM_SETUP_MODEL']\n"
+        "\n"
+        "def pip_install(*packages):\n"
+        "    for prefix in (\n"
+        "        [sys.executable, '-m', 'uv', 'pip', 'install', '--python', sys.executable],\n"
+        "        [sys.executable, '-m', 'pip', 'install', '-q'],\n"
+        "        [sys.executable, '-m', 'pip', 'install', '-q', '--break-system-packages'],\n"
+        "    ):\n"
+        "        if subprocess.call([*prefix, *packages]) == 0:\n"
+        "            return True\n"
+        "    return False\n"
+        "\n"
+        "if importlib.util.find_spec('uv') is None:\n"
+        "    subprocess.call([sys.executable, '-m', 'pip', 'install', '-q', 'uv'])\n"
+        "if importlib.util.find_spec('vllm') is None and not pip_install('vllm>=0.8.5'):\n"
+        "    raise SystemExit('failed to install vllm for the self-hosted VLM backend')\n"
+        "pip_install('hf_transfer')\n"
+        "os.environ.setdefault('HF_HUB_ENABLE_HF_TRANSFER', '1')\n"
+        "try:\n"
+        "    from huggingface_hub import snapshot_download\n"
+        "except ImportError:\n"
+        "    print('huggingface_hub unavailable; vLLM will fetch weights at startup')\n"
+        "else:\n"
+        "    print('pre-fetching', MODEL, flush=True)\n"
+        "    snapshot_download(MODEL)\n"
+        "PY\n"
+    )
+
+
 def render_setup_for_tool(
     tool_ref: str,
     *,
@@ -481,16 +542,7 @@ def render_setup_for_tool(
     parts = [default_npa_setup()]
     backend = str(config.get("vlm_backend") or "").strip().lower()
     if tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}:
-        parts.append(
-            "python3 - <<'PY'\n"
-            "import importlib.util\n"
-            "import subprocess\n"
-            "import sys\n"
-            "\n"
-            "if importlib.util.find_spec('vllm') is None:\n"
-            "    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'vllm>=0.8.5'])\n"
-            "PY\n"
-        )
+        parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
     if tool_ref.startswith("workbench.sonic"):
         parts.append(_sonic_deps_setup())
     if tool_ref.startswith("workbench.token_factory"):

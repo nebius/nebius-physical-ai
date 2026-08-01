@@ -171,14 +171,13 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sonic-export.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
-        rotation_skip=True,
-        skip_reason=(
-            "Consume-only + env gap. Confirmed live: 'SONIC ONNX export requires "
-            "torch' (job env lacks torch) and it needs a checkpoint.pt from a "
-            "prior sonic-train. Re-include once export runs on the torch-bearing "
-            "SONIC image against a staged checkpoint."
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
         ),
+        notes="train (in-job runtime) -> export; self-contained.",
     ),
     SubmitLiveCase(
         "sonic-eval.yaml",
@@ -210,12 +209,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sonic-export-eval.yaml",
         "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
-        rotation_skip=True,
-        skip_reason=(
-            "Consume-only: the export stage needs a checkpoint.pt from a prior "
-            "sonic-train (per-run path is empty on a standalone submit), so it "
-            "fails before eval. Re-include once a checkpoint is staged."
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        notes=(
+            "train -> export -> eval, self-contained: the in-job train runtime "
+            "writes checkpoint.pt to S3 and each stage reads the previous "
+            "stage's artifact from there."
         ),
     ),
     SubmitLiveCase(

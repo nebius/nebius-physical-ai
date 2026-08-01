@@ -647,9 +647,25 @@ def _cli_failure_detail(result: Result) -> str:
     return "\n".join(parts)
 
 
+def _slice_json_document(text: str) -> str:
+    """Return the JSON document at the end of a CLI stream.
+
+    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, so
+    advisory lines the command writes to stderr (``Hint: consider
+    --secret-env ...``) sit in front of the ``--output-format json`` payload.
+    """
+
+    if text.lstrip().startswith("{"):
+        return text[text.index("{") :]
+    start = text.find("\n{")
+    if start < 0:
+        raise AssertionError(f"no JSON document in CLI output:\n{text[-4000:]}")
+    return text[start + 1 :]
+
+
 def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None) -> Any:
     assert_cli_ok(result, forbidden=forbidden)
-    return json.loads(result.output)
+    return json.loads(_slice_json_document(result.output or ""))
 
 
 def parse_json_payload(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
@@ -667,10 +683,6 @@ def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, An
     """
 
     assert_cli_ok(result, forbidden=forbidden)
-    text = result.output or ""
-    start = text.find("\n{")
-    start = 0 if text.lstrip().startswith("{") else (start + 1 if start >= 0 else -1)
-    assert start >= 0, f"no JSON summary in runtime output:\n{text[-4000:]}"
-    payload = json.loads(text[start:])
+    payload = json.loads(_slice_json_document(result.output or ""))
     assert isinstance(payload, dict)
     return payload
