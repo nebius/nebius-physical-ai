@@ -90,3 +90,24 @@ def test_cosmos2_transfer_uses_uri_flags_not_path() -> None:
     assert "--input-uri" in flags and "--output-uri" in flags
     assert "--input-path" not in flags and "--output-path" not in flags
     assert "--run-id" in flags
+
+
+def test_the_visualize_stage_pins_the_same_rerun_as_npas_viz_extra() -> None:
+    """The stage installs rerun-sdk itself, so its pin must not drift from npa's.
+
+    Two different rerun versions in one run means the recording is written by one and
+    read by another, which is exactly the kind of mismatch that shows up as an empty
+    viewer rather than an error.
+    """
+
+    import re
+
+    repo = Path(__file__).resolve().parents[3]
+    blueprint = (repo / "workflows" / "physical-ai-data-factory.yaml").read_text(encoding="utf-8")
+    pyproject = (repo / "pyproject.toml").read_text(encoding="utf-8")
+
+    in_stage = re.search(r'"rerun-sdk==([0-9.]+)"', blueprint)
+    in_extra = re.search(r'viz = \["rerun-sdk==([0-9.]+)"\]', pyproject)
+    assert in_stage, "the visualize stage no longer installs a pinned rerun-sdk"
+    assert in_extra, "npa no longer declares a pinned rerun-sdk viz extra"
+    assert in_stage.group(1) == in_extra.group(1)

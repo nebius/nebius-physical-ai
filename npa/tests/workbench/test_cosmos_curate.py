@@ -378,6 +378,42 @@ def test_curate_augmented_summarizes_a_real_curator_tree(
     assert (curated / "metas" / "v0" / "clip-0.json").is_file()
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "expected"),
+    [
+        (0, "GPU 0: NVIDIA RTX PRO 6000 (UUID: GPU-abc)\n", True),
+        (0, "", False),  # driver answers, no device allocated to this pod
+        (9, "", False),  # nvidia-smi present but cannot talk to a driver
+    ],
+    ids=["device-present", "no-device", "driver-error"],
+)
+def test_the_gpu_encoder_is_only_chosen_when_a_device_is_really_there(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str, expected: bool
+) -> None:
+    """`nvidia-smi` on PATH does not mean this pod has a GPU.
+
+    A CPU-tier pod on a GPU node has the binary and no device, and picking
+    h264_nvenc there fails every encode with CUDA_ERROR_NO_DEVICE — which upstream
+    logs per clip instead of raising, so the run reports success having dropped work.
+    """
+
+    import subprocess
+
+    from npa.workbench.cosmos_curate import upstream as up
+
+    up._has_gpu.cache_clear()
+    monkeypatch.setattr(up.shutil, "which", lambda name: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(
+        up.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], returncode, stdout=stdout, stderr=""),
+    )
+    try:
+        assert up._has_gpu() is expected
+    finally:
+        up._has_gpu.cache_clear()
+
+
 def test_variants_whose_names_sanitize_alike_are_staged_separately(tmp_path: Path) -> None:
     """Every unsafe character maps to ``_``, so distinct variants can collide.
 

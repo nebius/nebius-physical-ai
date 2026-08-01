@@ -233,7 +233,24 @@ def ffmpeg_encoders(*, ffmpeg: str = "") -> tuple[str, ...]:
 
 @functools.lru_cache(maxsize=1)
 def _has_gpu() -> bool:
-    return shutil.which("nvidia-smi") is not None
+    """True only when a GPU is actually usable here, not merely tooled for.
+
+    `nvidia-smi` on PATH is not enough: a CPU-tier pod on a GPU node has the binary
+    and no device allocated to it. Selecting ``h264_nvenc`` there makes every clip
+    encode fail with ``CUDA_ERROR_NO_DEVICE`` (observed live), which upstream logs
+    per clip rather than raising, so the run reports success having dropped work.
+    """
+
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return False
+    try:
+        proc = subprocess.run(
+            [exe, "-L"], capture_output=True, text=True, check=False, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and "GPU 0" in (proc.stdout or "")
 
 
 def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvailability:
