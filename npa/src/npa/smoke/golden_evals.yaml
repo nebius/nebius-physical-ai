@@ -271,6 +271,36 @@ containers:
       timeout_seconds: 1800
       status: gpu-gated
 
+  cosmos3:
+    image: npa-cosmos3
+    dockerfile: npa/docker/workbench/cosmos3/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Cosmos 3 omni-model generation (text2image / text2video / image2video /
+        video2video) for synthetic Physical AI data and world simulation.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
+      network: none (job entrypoint; npa workbench cosmos3 generate)
+      external_fetch: [pypi, pytorch-cu130, github-nvidia-cosmos, huggingface]
+      notes: >-
+        NO model weights are baked. The image ships OpenMDW-1.1 cosmos-framework
+        source at a pinned commit plus its cu130 inference venv; gated Cosmos3
+        checkpoints download at runtime under the operator's own HF token (and
+        NGC key when NPA_COSMOS3_REQUIRE_NGC=1), and generate refuses to run
+        without them. Guardrails are on unless --no-guardrails is passed. The
+        golden eval runs a real text2image generation and asserts a decodable
+        image.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_cosmos3_generate_functional
+      command: bash /opt/cosmos3/smoke_functional.sh
+      serverless_gpu: h100
+      gpu: required
+      timeout_seconds: 3600
+      status: gpu-gated
+
   cosmos3-reason:
     image: npa-cosmos3-reason
     dockerfile: npa/docker/workbench/cosmos3-reason/Dockerfile

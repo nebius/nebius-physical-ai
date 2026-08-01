@@ -114,6 +114,17 @@ images:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
     redistribution: public
+  cosmos3:
+    dockerfile: cosmos3/Dockerfile
+    tier: job
+    notes: >-
+      Cosmos 3 omni-model generation. Bakes OpenMDW-1.1 cosmos-framework SOURCE at
+      a pinned commit plus its cu130 inference venv; NO model weights. Gated
+      Cosmos3 checkpoints, the Wan VAE, and the guardrail models download at
+      runtime with the operator's own HF token (plus their NGC key when
+      NPA_COSMOS3_REQUIRE_NGC=1), so distribution never carries weight bytes. The
+      build fails if a checkpoint file lands in a layer.
+    redistribution: public
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job

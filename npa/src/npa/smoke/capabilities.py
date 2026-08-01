@@ -55,6 +55,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "real video-to-video world transfer on a bundled robot control example",
         "generated output video produced (capability, not a CUDA probe)",
     ],
+    "cosmos3": [
+        "cosmos-framework inference env (torch cu130 + guardrail deps)",
+        "real text2image generation with the Cosmos 3 omni model",
+        "decodable image artifact produced (capability, not a CUDA probe)",
+        "no baked weights: checkpoint fetched with the operator's HF token",
+    ],
     "cosmos3-reason": [
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
         "structured rollout judgment returned (score + success verdict)",
