@@ -199,35 +199,93 @@ def _agent_source() -> str:
     return Path(agent_module.__file__).read_text(encoding="utf-8")
 
 
-def test_agent_recognises_a_nurec_recording_as_its_own_type() -> None:
+def test_recording_identity_classifies_a_nurec_run() -> None:
+    """Now a real importable function, not a source scan.
+
+    Producer identity lives in agent_recordings.py -- next to the entity-marker
+    scan it belongs with, and off the agent module's size ratchet.
+    """
+    from npa.cli.agent_recordings import (
+        is_neural_reconstruction_recording,
+        is_pipeline_recording,
+    )
+
+    key = (
+        "checkpoints/neural-reconstruction/"
+        "neural-reconstruction-struktur28-20260731t051728z/reports/sim2real.rrd"
+    )
+    assert is_neural_reconstruction_recording(key) is True
+    assert is_pipeline_recording(key) is True
+
+
+def test_recording_identity_does_not_claim_the_other_producers() -> None:
+    from npa.cli.agent_recordings import is_neural_reconstruction_recording
+
+    for key in (
+        "checkpoints/sim2real-b/s2r-real-0725t222636z/reports/sim2real.rrd",
+        "checkpoints/physical-ai-data-factory/paidf-demo/reports/sim2real.rrd",
+    ):
+        assert is_neural_reconstruction_recording(key) is False
+
+
+def test_recording_identity_matches_a_path_segment_not_a_substring() -> None:
+    from npa.cli.agent_recordings import is_neural_reconstruction_recording
+
+    # No `<id>/` segment: a prefix that merely ENDS with the phrase must not match.
+    assert (
+        is_neural_reconstruction_recording(
+            "checkpoints/neural-reconstruction-only/reports/sim2real.rrd"
+        )
+        is False
+    )
+    # And a non-recording key is never a match, whatever the prefix says.
+    assert (
+        is_neural_reconstruction_recording(
+            "checkpoints/neural-reconstruction/run/reports/final.json"
+        )
+        is False
+    )
+
+
+def test_agent_wires_the_reconstruction_branch_before_the_generic_one() -> None:
+    """The branch order still has to be checked in the bootstrap template source.
+
+    _apply_loaded_artifact lives inside the agent bootstrap string, so it is not an
+    importable attribute. If the generic Sim2Real branch ran first, a NuRec run
+    would claim a held-out-simulation camera it does not have.
+    """
     source = _agent_source()
 
-    assert 'NEURAL_RECONSTRUCTION_APP_ID = "neural-reconstruction"' in source
-    assert "def _is_neural_reconstruction_recording(key: str) -> bool:" in source
-    # Path-boundary match (segment), not a bare substring, so an unrelated prefix
-    # that merely contains the phrase is not misclassified.
-    assert 'NEURAL_RECONSTRUCTION_APP_ID + "/"' in source
-
-
-def test_agent_shows_the_reconstruction_note_not_the_sim2real_one() -> None:
-    source = _agent_source()
-
-    assert "elif _is_neural_reconstruction_recording(key):" in source
-    assert 'sim_viz["preview_entity"] = "novel_view"' in source
-    assert "NuRec / NRE neural-reconstruction recording loaded." in source
-    # The branch must precede the generic Sim2Real branch, otherwise the held-out
-    # camera note wins (observed live before this fix).
-    assert source.index("elif _is_neural_reconstruction_recording(key):") < source.index(
+    assert "elif is_neural_reconstruction_recording(key):" in source
+    assert source.index("elif is_neural_reconstruction_recording(key):") < source.index(
         "elif _is_sim2real_pipeline_recording(key):"
     )
+    assert "NEURAL_RECONSTRUCTION_PREVIEW_ENTITY" in source
+    assert "NEURAL_RECONSTRUCTION_VIEWER_NOTE" in source
 
 
 def test_agent_does_not_relabel_the_nurec_camera_as_heldout_sim() -> None:
     source = _agent_source()
 
-    assert "and not _is_neural_reconstruction_recording(key)" in source
-    # ...inside the camera-relabel guard, next to the data-factory exclusion.
     guard_start = source.index("camera = _sim2real_pipeline_camera_label(camera)")
     guard = source[max(0, guard_start - 400) : guard_start]
     assert "_is_data_factory_recording(key)" in guard
-    assert "_is_neural_reconstruction_recording(key)" in guard
+    assert "is_neural_reconstruction_recording(key)" in guard
+
+
+def test_embedded_backend_defines_the_identity_helpers_before_using_them() -> None:
+    """The bootstrap inlines agent_recordings.py; order matters.
+
+    agent.py calls these names unqualified with no import, so they only resolve
+    because the recordings module is spliced in above. If that splice ever moved
+    below the usage, the agent VM would fail at import time -- far from the cause.
+    """
+    from npa.cli import agent as agent_module
+
+    source = _agent_source()
+    embed_marker = agent_module._AGENT_RECORDINGS_EMBED
+
+    assert embed_marker in source
+    assert source.index(embed_marker) < source.index(
+        "elif is_neural_reconstruction_recording(key):"
+    )

@@ -3497,21 +3497,6 @@ def _is_data_factory_recording(key: str) -> bool:
     return _is_sim2real_pipeline_recording(key) and (DATA_FACTORY_APP_ID + "/") in str(key or "")
 
 
-NEURAL_RECONSTRUCTION_APP_ID = "neural-reconstruction"
-
-
-def _is_neural_reconstruction_recording(key: str) -> bool:
-    # A NuRec/NRE run also writes reports/sim2real.rrd, but its entities are
-    # input/<sensor> (real capture frames), reconstruction/<camera> (NRE validation
-    # renders), novel_view/<camera> (rig-offset novel views) and gaussians/ - there
-    # is no held-out-sim camera, so it needs its own viewer note and preview entity.
-    # Match the capability id as a path SEGMENT so an unrelated prefix that merely
-    # contains the phrase is not misclassified.
-    return _is_sim2real_pipeline_recording(key) and (
-        NEURAL_RECONSTRUCTION_APP_ID + "/"
-    ) in str(key or "")
-
-
 def _sim2real_pipeline_camera_label(requested: str = "") -> str:
     value = str(requested or "").strip()
     return value if value and value != "workspace" else "heldout-sim"
@@ -3579,7 +3564,7 @@ def _apply_loaded_artifact(
     if (
         render == "rerun"
         and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
-        and not _is_neural_reconstruction_recording(key)
+        and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
     sim_viz.update(
@@ -3612,19 +3597,9 @@ def _apply_loaded_artifact(
                 "captions/ (Token Factory VLM pseudo-labels). Scrub the frame "
                 "timeline to compare original vs augmented."
             )
-        elif _is_neural_reconstruction_recording(key):
-            sim_viz["preview_entity"] = "novel_view"
-            sim_viz["visualization_note"] = (
-                "NuRec / NRE neural-reconstruction recording loaded. Entities: "
-                "novel_view/<camera> (views rendered from the trained 3D Gaussians "
-                "at an offset rig pose - views the reconstruction was NOT trained "
-                "on), reconstruction/<camera> (NRE validation renders), "
-                "input/<sensor> (the real capture frames that were reconstructed), "
-                "gaussians/summary (PSNR / SSIM / LPIPS), and pipeline/* (per-stage "
-                "reports, including how the rig->world pose edge was derived). "
-                "Scrub the frame timeline to fly the novel-view camera through the "
-                "reconstructed scene."
-            )
+        elif is_neural_reconstruction_recording(key):
+            sim_viz["preview_entity"] = NEURAL_RECONSTRUCTION_PREVIEW_ENTITY
+            sim_viz["visualization_note"] = NEURAL_RECONSTRUCTION_VIEWER_NOTE
         elif _is_sim2real_pipeline_recording(key):
             sim_viz["preview_entity"] = "camera"
             sim_viz["visualization_note"] = (

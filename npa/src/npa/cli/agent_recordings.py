@@ -50,6 +50,44 @@ DEMO_MARKERS: tuple[bytes, ...] = (
 
 _SAFE_RUN_ID_RE = re.compile(r"[^A-Za-z0-9._:-]")
 
+#: Several producers all write ``reports/sim2real.rrd``, so the recording's own
+#: name cannot identify it -- the run prefix does. Keeping the producer identity
+#: here (rather than in the agent bootstrap) puts it next to the entity-marker
+#: scan it belongs with, and keeps the agent module off its size ratchet.
+PIPELINE_RECORDING_SUFFIX = "/reports/sim2real.rrd"
+NEURAL_RECONSTRUCTION_APP_ID = "neural-reconstruction"
+
+#: Preview entity and viewer note for a NuRec run. A reconstruction has no
+#: held-out-simulation camera, so the generic Sim2Real note would be actively
+#: misleading.
+NEURAL_RECONSTRUCTION_PREVIEW_ENTITY = "novel_view"
+NEURAL_RECONSTRUCTION_VIEWER_NOTE = (
+    "NuRec / NRE neural-reconstruction recording loaded. Entities: "
+    "novel_view/<camera> (views rendered from the trained 3D Gaussians at an "
+    "offset rig pose - views the reconstruction was NOT trained on), "
+    "reconstruction/<camera> (NRE validation renders), input/<sensor> (the real "
+    "capture frames that were reconstructed), gaussians/summary (PSNR / SSIM / "
+    "LPIPS), and pipeline/* (per-stage reports, including how the rig->world pose "
+    "edge was derived). Scrub the frame timeline to fly the novel-view camera "
+    "through the reconstructed scene."
+)
+
+
+def is_pipeline_recording(key: str) -> bool:
+    """True for any producer's run-scoped ``reports/sim2real.rrd``."""
+    return str(key or "").endswith(PIPELINE_RECORDING_SUFFIX)
+
+
+def is_neural_reconstruction_recording(key: str) -> bool:
+    """True when the recording belongs to a NuRec / NRE reconstruction run.
+
+    Matches the capability id as a path SEGMENT so an unrelated prefix that merely
+    contains the phrase is not misclassified.
+    """
+    return is_pipeline_recording(key) and (
+        NEURAL_RECONSTRUCTION_APP_ID + "/"
+    ) in str(key or "")
+
 
 def recording_has_run_entities(data: bytes | None) -> bool:
     """Return True when the recording bytes contain run-specific entity paths."""
