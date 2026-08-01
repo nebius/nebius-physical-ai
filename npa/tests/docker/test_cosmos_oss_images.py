@@ -239,8 +239,13 @@ def test_transfer_relocation_repoints_a_root_venv(tmp_path: Path) -> None:
     venv_bin.mkdir(parents=True)
     (venv_bin / "python").symlink_to(interpreter / "python3.10")
     (venv_bin / "python3").symlink_to("python")
+    # uv records the interpreter in pyvenv.cfg through its version symlink, which is a
+    # different string from what `readlink -f` resolves to. Matching only the resolved
+    # form leaves `home =` in the legacy tree and Python takes sys._home from it.
+    symlinked = legacy / "cpython-3.10-linux-x86_64-gnu"
+    symlinked.symlink_to(interpreter.parent, target_is_directory=True)
     (project / ".venv" / "pyvenv.cfg").write_text(
-        f"home = {interpreter}\nversion = 3.10.20\n", encoding="utf-8"
+        f"home = {symlinked / 'bin'}\nversion = 3.10.20\n", encoding="utf-8"
     )
 
     # Lift the block straight out of the Dockerfile so the test cannot drift from it.
@@ -265,7 +270,12 @@ def test_transfer_relocation_repoints_a_root_venv(tmp_path: Path) -> None:
 
     resolved = (venv_bin / "python").resolve()
     assert str(resolved).startswith(str(install_dir)), resolved
-    assert str(install_dir) in (project / ".venv" / "pyvenv.cfg").read_text(encoding="utf-8")
+    config = (project / ".venv" / "pyvenv.cfg").read_text(encoding="utf-8")
+    assert str(install_dir) in config
+    assert str(legacy) not in config, (
+        "pyvenv.cfg still points into the legacy tree; Python takes sys._home from it, "
+        "so an inference run fails later in distutils.sysconfig"
+    )
     assert not legacy.exists(), (
         "the stale interpreter tree should be removed so the trap cannot come back"
     )

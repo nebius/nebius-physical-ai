@@ -59,7 +59,14 @@ RUN set -eux; \
           "${UV_LEGACY_PYTHON_DIR}"/*) ln -sfn "${new_root}/bin/$(basename "$target")" "$link" ;; \
         esac; \
       done; \
-      sed -i "s|${old_root}|${new_root}|g" .venv/pyvenv.cfg; \
+      # Rewrite by directory prefix, not by the resolved path: pyvenv.cfg records the
+      # interpreter through uv's version symlink (cpython-3.10-...) while readlink -f
+      # resolves to the real directory (cpython-3.10.20-...). Matching only the
+      # resolved form leaves `home =` pointing into the legacy tree, and Python takes
+      # sys._home from it — which surfaces much later as a PermissionError from
+      # distutils.sysconfig rather than from the venv itself. `cp -a` copied both the
+      # real directory and the symlink, so a prefix swap is correct for either form.
+      sed -i "s|${UV_LEGACY_PYTHON_DIR}|${UV_PYTHON_INSTALL_DIR}|g" .venv/pyvenv.cfg; \
       rm -rf "${UV_LEGACY_PYTHON_DIR}"; \
     else \
       uv python install 3.10; \
@@ -68,7 +75,9 @@ RUN set -eux; \
     fi; \
     case "$(readlink -f .venv/bin/python)" in \
       "${UV_LEGACY_PYTHON_DIR}"/*) echo "interpreter still under ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1 ;; \
-    esac
+    esac; \
+    grep -q "${UV_LEGACY_PYTHON_DIR}" .venv/pyvenv.cfg \
+      && { echo "pyvenv.cfg still points at ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1; } || true
 
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
 COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh /opt/cosmos2-transfer/entrypoint.sh
@@ -89,11 +98,21 @@ RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
       /opt/cosmos/cosmos-transfer2.5/.venv \
       "${UV_PYTHON_INSTALL_DIR}"
 
-# The venv must be usable by the non-root user the image actually runs as. Verified
-# against the published image's real filesystem in-cluster; this keeps a rebuild from
-# silently reintroducing the /root interpreter.
+# The venv must be usable by the non-root user the image actually runs as.
+#
+# `import torch` alone is too weak a check: it never reads sys._home, so a
+# pyvenv.cfg still pointing into /root passes here and then fails deep in an
+# inference run (megatron -> torch.utils.cpp_extension -> setuptools ->
+# distutils.sysconfig -> PermissionError). Exercising distutils.sysconfig is what
+# actually proves the relocation is complete.
 RUN su ubuntu -s /bin/bash -c \
-      '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "import torch, flash_attn; print(\"venv usable as ubuntu:\", torch.__version__)"'
+      '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "\
+import sys, torch, flash_attn; \
+from distutils.sysconfig import customize_compiler, get_config_var; \
+home = sys._home or \"\"; \
+assert \"/root\" not in home, home; \
+get_config_var(\"prefix\"); \
+print(\"venv usable as ubuntu:\", torch.__version__, \"home=\", home)"'
 
 USER ubuntu
 
