@@ -11,6 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 bootstrap  Install SkyPilot into an isolated, idempotent virtualenv.
+uninstall  Remove the isolated SkyPilot venv and clear the saved sky binary.
 status  Report the isolated SkyPilot runtime status.
 verify  Run `sky check` against the isolated SkyPilot runtime.
 ```
@@ -26,6 +27,7 @@ verify  Run `sky check` against the isolated SkyPilot runtime.
 | Command | Description |
 | --- | --- |
 | `bootstrap` | Install SkyPilot into an isolated, idempotent virtualenv. |
+| `uninstall` | Remove the isolated SkyPilot venv and clear the saved sky binary. |
 | `status` | Report the isolated SkyPilot runtime status. |
 | `verify` | Run `sky check` against the isolated SkyPilot runtime. |
 

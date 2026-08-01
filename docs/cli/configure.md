@@ -26,6 +26,10 @@ ngc.api_key without prompting (for scripted setup).
 --env  Print the saved project/bucket/kube-context values as NPA_* shell
 assignments (no secrets) instead of prompting: eval "$(npa
 configure --show --env)".
+--forget-project  <str>  Remove a project stanza (and its terraform_state) from
+~/.npa/config.yaml, then exit - the inverse of writing it. Use
+`npa storage bucket delete` and `npa agent destroy` to clean up
+the cloud resources and their credentials first.
 --help  Show this message and exit.
 ```
 
@@ -40,6 +44,7 @@ configure --show --env)".
 | `--hf-token` | <str>  Store a Hugging Face token in ~/.npa/credentials.yaml under |
 | `--ngc-api-key` | <str>  Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under |
 | `--env` | Print the saved project/bucket/kube-context values as NPA_* shell |
+| `--forget-project` | <str>  Remove a project stanza (and its terraform_state) from |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
