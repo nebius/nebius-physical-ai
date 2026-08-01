@@ -376,3 +376,51 @@ def test_bootstrap_still_succeeds_when_saving_fails(
 
     assert result.exit_code == 0, result.output
     assert "could not save skypilot.sky_bin" in result.output
+
+
+def test_skypilot_uninstall_removes_venv_and_clears_saved_bin(tmp_path: Path) -> None:
+    """`npa skypilot uninstall` is the inverse of bootstrap.
+
+    The teardown report left ~/.npa/skypilot-venv and skypilot.sky_bin in
+    config.yaml behind with no npa command to remove them.
+    """
+    import yaml
+
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    boot = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+    assert boot.exit_code == 0, boot.output
+    assert venv.exists()
+    assert yaml.safe_load(_config_path().read_text(encoding="utf-8"))["skypilot"]["sky_bin"]
+
+    result = runner.invoke(app, ["skypilot", "uninstall", "--path", str(venv), "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not venv.exists()
+    assert "Removed SkyPilot venv" in result.output
+    assert "Cleared skypilot.sky_bin" in result.output
+    saved = yaml.safe_load(_config_path().read_text(encoding="utf-8")) or {}
+    assert "sky_bin" not in saved.get("skypilot", {})
+
+
+def test_skypilot_uninstall_is_idempotent_without_a_venv(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["skypilot", "uninstall", "--path", str(tmp_path / "absent"), "--yes"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "No SkyPilot venv" in result.output
+
+
+def test_skypilot_uninstall_refuses_to_delete_the_npa_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A --path pointing at the running interpreter must be rejected, not wiped."""
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "npa-venv"))
+    (tmp_path / "npa-venv").mkdir()
+
+    result = runner.invoke(
+        app, ["skypilot", "uninstall", "--path", str(tmp_path / "npa-venv"), "--yes"]
+    )
+
+    assert result.exit_code != 0
+    assert (tmp_path / "npa-venv").exists()

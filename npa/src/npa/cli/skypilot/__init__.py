@@ -148,6 +148,56 @@ def _persist_sky_bin(sky_bin: Path) -> str:
         return ""
 
 
+def _clear_saved_sky_bin() -> bool:
+    """Drop ``skypilot.sky_bin`` from ``~/.npa/config.yaml``; return if present."""
+
+    try:
+        from npa.clients.config import clear_skypilot_bin
+
+        return clear_skypilot_bin()
+    except Exception:  # noqa: BLE001 - never fatal during teardown
+        return False
+
+
+@app.command("uninstall")
+def uninstall_cmd(
+    path: Path | None = typer.Option(
+        None,
+        "--path",
+        help=f"SkyPilot venv path. Defaults to {VENV_PATH_ENV} or ~/.npa/skypilot-venv.",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Remove the isolated SkyPilot venv and clear the saved sky binary.
+
+    The inverse of `npa skypilot bootstrap`: deletes the venv and drops
+    ``skypilot.sky_bin`` from ~/.npa/config.yaml, so a torn-down environment does
+    not leave a dangling runtime or a persisted binary path behind.
+    """
+
+    venv_path = _resolve_venv_path(path)
+    # Never delete the NPA interpreter/venv even if someone points --path at it.
+    try:
+        _reject_npa_environment(venv_path)
+    except SkyPilotBootstrapError as exc:
+        _fail(str(exc))
+        return
+
+    existed = venv_path.exists()
+    if existed and not yes and sys.stdin.isatty():
+        if not typer.confirm(f"Remove the SkyPilot venv at {venv_path}?", default=False):
+            typer.echo("Aborted.")
+            raise typer.Exit(code=1)
+    if existed:
+        shutil.rmtree(venv_path, ignore_errors=True)
+        typer.echo(f"Removed SkyPilot venv {venv_path}.")
+    else:
+        typer.echo(f"No SkyPilot venv at {venv_path}.")
+
+    if _clear_saved_sky_bin():
+        typer.echo("Cleared skypilot.sky_bin from ~/.npa/config.yaml.")
+
+
 @app.command("status")
 def status_cmd(
     path: Path | None = typer.Option(
