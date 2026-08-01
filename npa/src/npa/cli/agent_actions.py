@@ -446,7 +446,8 @@ def summarize_observations(observations: Sequence[Mapping[str, Any]]) -> str:
             continue
         if "count" in result:
             count = result.get("count")
-            records = result.get("records") if isinstance(result.get("records"), list) else []
+            raw_records = result.get("records")
+            records = raw_records if isinstance(raw_records, list) else []
             run_ids: list[str] = []
             for record in records:
                 if isinstance(record, Mapping):

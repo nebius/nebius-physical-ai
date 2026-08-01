@@ -598,8 +598,11 @@ def submit_cmd(
             # actually reached the cluster left no `npa.workflow.run.v1` record and
             # was invisible to every manifest consumer (e.g. the insights GPU metric).
             run_prefix_uri = _persist_npa_run_manifest(prepared_npa, run_id=resolved_run_id)
-            if run_prefix_uri:
-                result.log_paths.setdefault("npa_workflow_run_prefix_uri", run_prefix_uri)
+            # ``result`` is union-typed across submit paths; only the workflow
+            # result carries log_paths, so probe for it instead of assuming.
+            log_paths = getattr(result, "log_paths", None)
+            if run_prefix_uri and isinstance(log_paths, dict):
+                log_paths.setdefault("npa_workflow_run_prefix_uri", run_prefix_uri)
     except OSError as exc:
         _fail(f"SkyPilot workflow submission failed: {exc}")
         return
