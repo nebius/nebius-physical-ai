@@ -411,36 +411,49 @@ def write_run_mcap(
             except (OSError, ValueError) as exc:
                 summary.skipped.append(f"{metric.path.name}: {exc}")
                 continue
-            if not isinstance(raw, dict):
-                summary.skipped.append(f"{metric.path.name}: not a JSON object")
+            # A JSON object is a single sample; a JSON array of objects is a real
+            # time series (reward per episode, score per step, ...) and becomes one
+            # message per element so Foxglove's Plot panel draws a curve.
+            if isinstance(raw, dict):
+                records = [raw]
+            elif isinstance(raw, list) and all(isinstance(item, dict) for item in raw):
+                records = raw
+            else:
+                summary.skipped.append(
+                    f"{metric.path.name}: not a JSON object or array of objects"
+                )
                 continue
-            flat = _flatten_metric_payload(raw)
+            if not records:
+                summary.skipped.append(f"{metric.path.name}: empty metrics document")
+                continue
             topic = safe_topic(metric.name, prefix=metrics_topic_prefix)
-            timestamp_ns = base_ns + index * step_ns
-            if topic not in metric_channels:
-                schema_id = writer.register_schema(
-                    name=f"npa.RunMetrics.{metric.name}",
-                    encoding="jsonschema",
-                    data=json.dumps(
-                        _metric_schema(flat, f"npa.RunMetrics.{metric.name}")
-                    ).encode("utf-8"),
+            for offset, record in enumerate(records):
+                flat = _flatten_metric_payload(record)
+                timestamp_ns = base_ns + (index if len(records) == 1 else offset) * step_ns
+                if topic not in metric_channels:
+                    schema_id = writer.register_schema(
+                        name=f"npa.RunMetrics.{metric.name}",
+                        encoding="jsonschema",
+                        data=json.dumps(
+                            _metric_schema(flat, f"npa.RunMetrics.{metric.name}")
+                        ).encode("utf-8"),
+                    )
+                    metric_channels[topic] = writer.register_channel(
+                        topic=topic, message_encoding="json", schema_id=schema_id
+                    )
+                message = dict(flat)
+                message["timestamp"] = _time_fields(timestamp_ns)
+                writer.add_message(
+                    channel_id=metric_channels[topic],
+                    log_time=timestamp_ns,
+                    data=json.dumps(message).encode("utf-8"),
+                    publish_time=timestamp_ns,
+                    sequence=offset,
                 )
-                metric_channels[topic] = writer.register_channel(
-                    topic=topic, message_encoding="json", schema_id=schema_id
-                )
-            message = dict(flat)
-            message["timestamp"] = _time_fields(timestamp_ns)
-            writer.add_message(
-                channel_id=metric_channels[topic],
-                log_time=timestamp_ns,
-                data=json.dumps(message).encode("utf-8"),
-                publish_time=timestamp_ns,
-                sequence=index,
-            )
-            summary.metrics += 1
-            summary.channels[topic] = summary.channels.get(topic, 0) + 1
-            first_ns = timestamp_ns if not first_ns else min(first_ns, timestamp_ns)
-            last_ns = max(last_ns, timestamp_ns)
+                summary.metrics += 1
+                summary.channels[topic] = summary.channels.get(topic, 0) + 1
+                first_ns = timestamp_ns if not first_ns else min(first_ns, timestamp_ns)
+                last_ns = max(last_ns, timestamp_ns)
 
         log_sequence = 0
         for entry in log_list:

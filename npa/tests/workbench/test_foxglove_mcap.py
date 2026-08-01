@@ -269,3 +269,45 @@ def test_sdk_metadata_helpers() -> None:
     assert sdk_tarball_url().endswith(f"embed-{FOXGLOVE_EMBED_SDK_VERSION}.tgz")
     ready, reason = sdk_assets_present("/nonexistent/foxglove/sdk")
     assert not ready and reason
+
+
+def test_metric_series_becomes_a_plottable_curve(tmp_path: Path) -> None:
+    """A JSON array of records is a time series, not one opaque blob."""
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    series = tmp_path / "reward_curve.json"
+    series.write_text(
+        json.dumps([{"episode": i, "reward": i * 0.5} for i in range(5)]), encoding="utf-8"
+    )
+    output = tmp_path / "series.mcap"
+
+    summary = write_run_mcap(
+        output=output, metrics=[MetricsInput(path=series, name="reward_curve")], fps=5.0
+    )
+
+    assert summary.metrics == 5
+    assert summary.channels["/metrics/reward_curve"] == 5
+    with output.open("rb") as handle:
+        messages = [json.loads(m.data) for _s, _c, m in make_reader(handle).iter_messages()]
+    assert [m["episode"] for m in messages] == [0, 1, 2, 3, 4]
+    assert [m["reward"] for m in messages] == [0.0, 0.5, 1.0, 1.5, 2.0]
+    # Each sample carries its own timestamp so the Plot panel can draw a curve.
+    stamps = [m["timestamp"]["sec"] * 1_000_000_000 + m["timestamp"]["nsec"] for m in messages]
+    assert stamps == sorted(stamps) and len(set(stamps)) == 5
+
+
+def test_metric_document_that_is_neither_object_nor_records_is_reported(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    bad = tmp_path / "weird.json"
+    bad.write_text("[1, 2, 3]", encoding="utf-8")
+    good = tmp_path / "ok.json"
+    good.write_text('{"score": 1}', encoding="utf-8")
+
+    summary = write_run_mcap(
+        output=tmp_path / "x.mcap",
+        metrics=[MetricsInput(path=bad, name="weird"), MetricsInput(path=good, name="ok")],
+    )
+
+    assert summary.metrics == 1
+    assert any("weird.json" in item for item in summary.skipped)
