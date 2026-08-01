@@ -279,6 +279,17 @@ def test_transfer_relocation_repoints_a_root_venv(tmp_path: Path) -> None:
     assert not legacy.exists(), (
         "the stale interpreter tree should be removed so the trap cannot come back"
     )
+    # `cp -a` copies uv's absolute version symlink verbatim, so the relocated tree can
+    # still point back into the legacy location and resolve into it.
+    dangling = [
+        path
+        for path in install_dir.rglob("*")
+        if path.is_symlink() and str(path.readlink()).startswith(str(legacy))
+    ]
+    assert not dangling, f"relocated tree still links into the legacy dir: {dangling}"
+    assert (install_dir / "cpython-3.10-linux-x86_64-gnu" / "bin" / "python3.10").exists(), (
+        "resolving through the version symlink must reach the relocated interpreter"
+    )
 
 
 @pytest.mark.parametrize("image", IMAGES)

@@ -52,6 +52,17 @@ RUN set -eux; \
       new_root="${UV_PYTHON_INSTALL_DIR}/$(basename "$old_root")"; \
       mkdir -p "${UV_PYTHON_INSTALL_DIR}"; \
       cp -a "${UV_LEGACY_PYTHON_DIR}/." "${UV_PYTHON_INSTALL_DIR}/"; \
+      # uv's tree contains an absolute version symlink (cpython-3.10-... ->
+      # cpython-3.10.20-...), and `cp -a` copies such links verbatim — so the copy
+      # still points back into the legacy tree and resolving through it lands in
+      # /root again. Repoint every absolute link that targets the old location.
+      find "${UV_PYTHON_INSTALL_DIR}" -type l | while read -r link; do \
+        target="$(readlink "$link")"; \
+        case "$target" in \
+          "${UV_LEGACY_PYTHON_DIR}"/*) \
+            ln -sfn "${UV_PYTHON_INSTALL_DIR}/${target#"${UV_LEGACY_PYTHON_DIR}/"}" "$link" ;; \
+        esac; \
+      done; \
       for link in .venv/bin/python .venv/bin/python3 .venv/bin/python3.10; do \
         [ -L "$link" ] || continue; \
         target="$(readlink "$link")"; \
@@ -77,7 +88,11 @@ RUN set -eux; \
       "${UV_LEGACY_PYTHON_DIR}"/*) echo "interpreter still under ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1 ;; \
     esac; \
     grep -q "${UV_LEGACY_PYTHON_DIR}" .venv/pyvenv.cfg \
-      && { echo "pyvenv.cfg still points at ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1; } || true
+      && { echo "pyvenv.cfg still points at ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1; } || true; \
+    if [ -d "${UV_PYTHON_INSTALL_DIR}" ] \
+       && find "${UV_PYTHON_INSTALL_DIR}" -type l -lname "${UV_LEGACY_PYTHON_DIR}/*" | grep -q .; then \
+      echo "relocated tree still links back into ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1; \
+    fi
 
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
 COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh /opt/cosmos2-transfer/entrypoint.sh
