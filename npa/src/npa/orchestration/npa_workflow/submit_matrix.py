@@ -26,6 +26,13 @@ class SubmitLiveCase:
     secret_envs: tuple[str, ...] = ()
     requires_token_factory: bool = False
     plan_only: bool = False
+    #: Skip this twin in the bounded daily GPU rotation because it cannot pass as
+    #: a standalone submit today (needs a prior workflow's artifact, an input not
+    #: staged into the job, or infra the npa.workflow render doesn't yet wire).
+    #: The twin stays in the matrix for manual/plan runs; ``skip_reason`` explains
+    #: the gap so it can be re-included once fixed.
+    rotation_skip: bool = False
+    skip_reason: str = ""
     notes: str = ""
     #: Submit through the runtime orchestrator (``submit --runtime``) instead of
     #: the one-shot serial path. Required for specs with a ``parallel:`` group or
@@ -117,12 +124,30 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "vlm-eval-single.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        notes="Self-hosted VLM; renderer injects vLLM setup.",
+        rotation_skip=True,
+        skip_reason=(
+            "vlm_backend=self-hosted. The render now DOES start a background "
+            "vLLM server and the client waits up to NPA_VLM_READY_TIMEOUT_S "
+            "(=1800s, set by the render) for readiness. Confirmed live on "
+            "RTXPRO-6000 (Blackwell/sm_120): the cold start — heavy vLLM+CUDA13 "
+            "install, ~16GB Qwen2-VL-7B weight download, and first-run compile — "
+            "exceeds even the 30-min window, so it is not a fit for the bounded "
+            "daily rotation. Re-include with the model pre-baked/pre-cached into "
+            "the image or a faster node. (The old instant connection-refused is "
+            "fixed; failure is now a clean, bounded 'not ready' diagnostic.)"
+        ),
+        notes="Self-hosted VLM; render starts vLLM, but cold start > 30min on this node.",
     ),
     SubmitLiveCase(
         "vlm-eval-benchmark.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Fixed: the twin now uses the `sample` sentinel, which resolves to "
+            "the packaged benchmark fixture at its install location (a "
+            "repo-relative path did not exist in the rendered job). backend=stub, "
+            "so it validates the submit path without a GPU model."
+        ),
     ),
     SubmitLiveCase(
         "mjlab-eval.yaml",
@@ -133,16 +158,38 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-train.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "Confirmed live: fails 'SONIC --runtime serverless requires "
+            "--project-id'. The twin renders `sonic train --runtime serverless` "
+            "INSIDE an already-GPU SkyPilot job; SONIC's runtimes (vm/container/"
+            "serverless) all delegate to more infra rather than training in-job, "
+            "and serverless needs a project id/creds. Re-include once SONIC train "
+            "supports an in-job runtime for the npa.workflow render."
+        ),
     ),
     SubmitLiveCase(
         "sonic-export.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        rotation_skip=True,
+        skip_reason=(
+            "Consume-only + env gap. Confirmed live: 'SONIC ONNX export requires "
+            "torch' (job env lacks torch) and it needs a checkpoint.pt from a "
+            "prior sonic-train. Re-include once export runs on the torch-bearing "
+            "SONIC image against a staged checkpoint."
+        ),
     ),
     SubmitLiveCase(
         "sonic-eval.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        rotation_skip=True,
+        skip_reason=(
+            "Consume-only: evaluates an exported ONNX policy from a prior "
+            "sonic-export. Not runnable standalone (confirmed live: 'ONNX policy "
+            "not found'); sonic-export-eval covers SONIC eval self-contained."
+        ),
     ),
     SubmitLiveCase(
         "cosmos3-reason.yaml",
@@ -164,11 +211,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-export-eval.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        rotation_skip=True,
+        skip_reason=(
+            "Consume-only: the export stage needs a checkpoint.pt from a prior "
+            "sonic-train (per-run path is empty on a standalone submit), so it "
+            "fails before eval. Re-include once a checkpoint is staged."
+        ),
     ),
     SubmitLiveCase(
         "sonic-locomotion-finetuning.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "retarget → train → mjlab: hits the same SONIC train in-job runtime "
+            "gap as sonic-train, and needs a staged motion source. Re-include "
+            "once SONIC train has an in-job runtime and inputs are staged."
+        ),
         notes="retarget → train → mjlab",
     ),
     SubmitLiveCase(
@@ -194,6 +253,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "bdd100k-pipeline.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "11-stage AV pipeline needs the raw-bdd100k demo dataset staged in "
+            "the run bucket and is the longest wall-clock twin; not a bounded "
+            "daily-rotation fit. Run manually with a staged dataset."
+        ),
         notes="11-stage AV pipeline; longest wall-clock.",
     ),
     SubmitLiveCase(
@@ -205,6 +270,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "AWS_SECRET_ACCESS_KEY",
         ),
         requires_token_factory=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Confirmed live: FAILED — dynamic Cosmos gate loop needs a staged "
+            "scene input and --assume-decision; not runnable as a bounded "
+            "standalone rotation submit. Run manually with a staged scene."
+        ),
         notes="Dynamic gate; needs --assume-decision.",
     ),
     # --- Plan-only / stub twins (do not burn GPUs on stubs) ---
@@ -261,6 +332,41 @@ def selected_submit_cases() -> list[SubmitLiveCase]:
         for case in SUBMIT_LIVE_MATRIX
         if case.tier in tiers and (not specs or case.spec in specs)
     ]
+
+
+def gpu_submit_cases(
+    *, include_plan_only: bool = False, include_skipped: bool = False
+) -> list[SubmitLiveCase]:
+    """Real-GPU-launching twins, sorted by spec for a deterministic rotation.
+
+    Excludes ``plan_only`` stub twins (they never launch a GPU) and
+    ``rotation_skip`` twins (they cannot pass as a standalone submit today — see
+    each ``skip_reason``), unless asked, so the daily rotation only ever picks a
+    case that actually exercises a GPU and can succeed on its own.
+    """
+
+    cases = [
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.tier in {"gpu", "multi"}
+        and (include_plan_only or not case.plan_only)
+        and (include_skipped or not case.rotation_skip)
+    ]
+    return sorted(cases, key=lambda c: c.spec)
+
+
+def rotating_gpu_submit_case(day_index: int) -> SubmitLiveCase | None:
+    """Pick one real-GPU twin for ``day_index`` (round-robins over days).
+
+    Lets the daily runner exercise a *different* real GPU workflow E2E each day
+    at bounded cost (one managed job) instead of the whole ``gpu and e2e`` blast,
+    cycling through every GPU twin over the rotation window.
+    """
+
+    cases = gpu_submit_cases()
+    if not cases:
+        return None
+    return cases[day_index % len(cases)]
 
 
 def runtime_submit_cases() -> list[SubmitLiveCase]:

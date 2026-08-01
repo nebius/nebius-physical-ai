@@ -27,6 +27,9 @@ making architecture, review, or domain judgments.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
  and query production sensor data as a versioned, lineage-tracked dataset
  (FiftyOne curation + LanceDB query index).
+- `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the
+ `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings
+ (convert/inspect/publish), and the `npa-foxglove-embed` container.
 - `skills/tools/insights/SKILL.md`: lineage graph + common metrics store over
  workflow-run artifacts — non-invasive ingest-run, query, compare, lineage
  traversal, and dashboard (CPU-only, append-only S3 JSONL, LanceDB-optional).
@@ -54,6 +57,11 @@ making architecture, review, or domain judgments.
  view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
  OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label →
  FiftyOne curate → Rerun visualize.
+- `skills/workflows/onboard-world-model/SKILL.md`: generic playbook for
+ onboarding and containerizing a world model (learned action-conditioned
+ simulator) as a multi-GPU BYOF registry candidate — containerize, stage a real
+ dataset, encode the train→tokenize→dynamics→dream→visualize loop as capability
+ smokes, and validate on real GPUs (Open Dreamer is the reference example).
 - `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench
  pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM),
  not an echo/manifest stub masquerading as real work.

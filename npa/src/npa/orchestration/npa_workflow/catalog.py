@@ -525,6 +525,29 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.foxglove.convert": ToolEntry(
+        name="workbench.foxglove.convert",
+        description=(
+            "Pack a run's frames, JSON metrics, and logs into a real MCAP recording "
+            "(Foxglove well-known schemas) for the embedded Foxglove viewer."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "foxglove",
+            "convert-run",
+            "--input-path",
+            "{{config.run_artifacts_path}}",
+            "--output-path",
+            "{{config.mcap_output_path}}",
+            "--run-id",
+            "{{run.id}}",
+            "--fps",
+            "{{config.mcap_fps}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.insights.ingest_run": ToolEntry(
         name="workbench.insights.ingest_run",
         description=(

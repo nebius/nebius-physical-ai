@@ -254,11 +254,20 @@ def evaluate_onnx_policy(
 def load_eval_bundle(*, onnx: str, metadata: str | None = None) -> _EvalBundle:
     """Load an exported ONNX policy and its SONIC export metadata sidecar."""
 
+    onnx = (onnx or "").strip()
     if not onnx:
-        raise SonicEvalError("--onnx is required")
+        raise SonicEvalError(
+            "no ONNX policy provided: sonic eval consumes an exported policy. "
+            "Run `sonic export` first (or use the sonic-export-eval workflow, "
+            "which chains export -> eval), then pass its .onnx via --onnx."
+        )
     onnx_path = Path(onnx)
     if not onnx_path.exists():
-        raise SonicEvalError(f"ONNX policy not found: {onnx}")
+        raise SonicEvalError(
+            f"ONNX policy not found: {onnx_path} (resolved from {onnx!r}). "
+            "sonic eval requires an exported policy; run `sonic export` first "
+            "or use the sonic-export-eval workflow."
+        )
     metadata_path = _resolve_metadata_path(onnx_path, metadata)
     payload = load_export_metadata(str(metadata_path))
     if payload.get("format") != EXPORT_METADATA_FORMAT:

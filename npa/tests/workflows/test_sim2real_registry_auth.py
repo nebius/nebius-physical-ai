@@ -17,22 +17,31 @@ from npa.workflows.sim2real.registry_auth import (
 
 
 def test_mint_nebius_registry_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Delegated to the canonical npa.clients.nebius_auth helper; with no ambient
+    # token the profile-scoped CLI exchange is used.
     monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
     monkeypatch.setattr(
-        "npa.workflows.sim2real.registry_auth.subprocess.run",
+        "npa.clients.nebius_auth.subprocess.run",
         lambda *args, **kwargs: MagicMock(returncode=0, stdout="token-abc\n", stderr=""),
     )
     assert mint_nebius_registry_token() == "token-abc"
 
 
-def test_mint_nebius_registry_token_prefers_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """In-pod contexts may have the token but not the ``nebius`` CLI."""
+def test_mint_nebius_registry_token_falls_back_to_env_without_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In-pod contexts may have the token injected but not the ``nebius`` CLI.
+
+    The canonical helper tries a fresh profile-scoped exchange first (so a stale
+    token can't poison the pull secret on operator VMs) and falls back to the
+    injected ``NEBIUS_IAM_TOKEN`` when the CLI is unavailable — the in-pod case.
+    """
     monkeypatch.setenv("NEBIUS_IAM_TOKEN", "env-token")
 
-    def _fail_run(*args, **kwargs):  # pragma: no cover - must not be called
-        raise AssertionError("nebius CLI must not be invoked when env token is set")
+    def _no_cli(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "nebius")
 
-    monkeypatch.setattr("npa.workflows.sim2real.registry_auth.subprocess.run", _fail_run)
+    monkeypatch.setattr("npa.clients.nebius_auth.subprocess.run", _no_cli)
     assert mint_nebius_registry_token() == "env-token"
 
 
@@ -125,8 +134,10 @@ def test_ensure_nebius_registry_pull_secret_applies_secret(
 
     def fake_run(cmd, **kwargs):
         captured["input"] = kwargs.get("input", "")
+        captured["env"] = kwargs.get("env")
         return MagicMock(returncode=0, stdout="", stderr="")
 
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-ambient-token")
     monkeypatch.setattr("npa.workflows.sim2real.registry_auth.subprocess.run", fake_run)
     ensure_nebius_registry_pull_secret(
         registry_server="cr.eu-north1.nebius.cloud",
@@ -134,6 +145,9 @@ def test_ensure_nebius_registry_pull_secret_applies_secret(
     )
     payload = json.loads(captured["input"])
     assert payload["metadata"]["name"] == "npa-nebius-registry"
+    # kubectl must not inherit the stale ambient token (else it 'Invalid token's).
+    kubectl_env = captured["env"] or {}
+    assert "NEBIUS_IAM_TOKEN" not in kubectl_env
 
 
 def test_refresh_registry_pull_secret_helper_forwards_k8s_context(

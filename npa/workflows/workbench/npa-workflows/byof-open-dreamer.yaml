@@ -1,0 +1,577 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-open-dreamer
+  description: >
+    Registry-candidate BYOF workflow for Open Dreamer (next-state/open-dreamer),
+    a JAX/Flax implementation of the Dreamer 4 world-model training pipeline.
+    Runs a real end-to-end 2-GPU (minimum) world-model run inside the pushed
+    registry image on a **real Minecraft/VPT** gameplay subset (128x128) and
+    produces the headline Dreamer payoff: an action-conditioned "dream" rollout.
+    It builds a JAX data-parallel device mesh across >=2 GPUs, streams the real
+    `minecraft_vpt` MP4 ArrayRecords through `dreamer.data.build_iterator`,
+    trains the causal video tokenizer to legibility via
+    `scripts/train_tokenizer.py`, tokenizes the episodes into latent
+    ArrayRecords + stats via `scripts/tokenize_minecraft_dataset.py`, trains the
+    action-conditioned latent dynamics model on those latents
+    (`scripts/train_dynamics.py`, the core Dreamer world-model loop), rolls out
+    a dream (context frames -> predicted future frames vs ground truth) via
+    `dreamer.sampler.sample_video`, and emits a Rerun `.rrd` with synchronized
+    observation / dream / tokenizer-ceiling / reconstruction streams that can be
+    loaded into the NPA agent's Rerun viewer. The Minecraft/VPT subset is staged
+    to the run bucket under `datasets/minecraft_vpt_128_64/` and pulled at run
+    time (no dataset paths, buckets, or IDs are hardcoded in this spec).
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/next-state/open-dreamer.git"
+  # Pin to the reviewed commit ("Correct Bibtex") so the run is reproducible.
+  repo_ref: "2b10640"
+  base_profile: ubuntu
+  # Plain Ubuntu base: uv provisions Python 3.11 and JAX CUDA-12 wheels bundle
+  # their own CUDA runtime, so no CUDA devel base image is required.
+  base_image: "ubuntu:22.04"
+  # Open Dreamer requires Python 3.11 and a CUDA 12 JAX build. Use a uv-managed
+  # Python 3.11 installed to a world-readable location (default uv dirs live
+  # under /root, which the non-root runtime user cannot read), create the venv
+  # from it, then `uv sync` the CUDA-12 JAX dependency set (which includes
+  # decord for MP4 decoding and imageio). rerun-sdk is added for the
+  # visualization artifact. Everything the runtime `ubuntu` user must execute
+  # (interpreter + venv) is chmod a+rX.
+  build_command: >
+    export DEBIAN_FRONTEND=noninteractive &&
+    apt-get update &&
+    apt-get install -y --no-install-recommends
+    curl git ca-certificates build-essential &&
+    export UV_PYTHON_INSTALL_DIR=/opt/uv/python &&
+    export UV_CACHE_DIR=/opt/uv/cache &&
+    mkdir -p /opt/uv/python &&
+    curl -LsSf https://astral.sh/uv/install.sh | sh &&
+    export PATH="/root/.local/bin:$PATH" &&
+    cd /opt/byof &&
+    uv python install 3.11 &&
+    uv venv --python 3.11 /opt/byof/.venv &&
+    (uv sync --frozen || uv sync) &&
+    (uv pip install --python /opt/byof/.venv/bin/python "rerun-sdk==0.31.4" || true) &&
+    chmod -R a+rX /opt/byof/.venv /opt/uv/python &&
+    /opt/byof/.venv/bin/python -c "import jax, flax, dreamer; print('jax', jax.__version__)"
+  workload: solution-smoke
+  smoke_command: |
+    set -o pipefail
+    export XLA_PYTHON_CLIENT_PREALLOCATE=false
+    export TOKENIZERS_PARALLELISM=false
+    export HYDRA_FULL_ERROR=1
+    VENV=/opt/byof/.venv/bin/python
+    "$VENV" -c "import rerun" 2>/dev/null || "$VENV" -m pip install --user --quiet "rerun-sdk==0.31.4" || true
+    SMOKE_PKG=/tmp/od_smoke
+    mkdir -p "$SMOKE_PKG"
+    # Download the real Minecraft/VPT minecraft_vpt shards from the run bucket.
+    export OD_DATASET_KEY=${OD_DATASET_KEY:-datasets/minecraft_vpt_128_64/}
+    export OD_LOCAL_DATASET=/opt/byof/mc_data
+    mkdir -p "$OD_LOCAL_DATASET"
+    python3 - <<'PYDL'
+    import os
+    from urllib.parse import urlparse
+    import boto3
+    from botocore.config import Config
+    key = os.environ.get('OD_DATASET_KEY', 'datasets/minecraft_vpt_128_64/')
+    bucket = urlparse(os.environ['S3_OUTPUT_PREFIX']).netloc
+    ep = (os.environ.get('AWS_ENDPOINT_URL') or os.environ.get('NEBIUS_S3_ENDPOINT') or '').strip() or None
+    s3 = boto3.client('s3', endpoint_url=ep, region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-central1'), config=Config(s3={'addressing_style': 'path'}))
+    dst = os.environ['OD_LOCAL_DATASET']; tok = None; n = 0
+    while True:
+        kw = {'Bucket': bucket, 'Prefix': key}
+        if tok: kw['ContinuationToken'] = tok
+        r = s3.list_objects_v2(**kw)
+        for o in r.get('Contents', []):
+            if o['Key'].endswith('.array_record'):
+                s3.download_file(bucket, o['Key'], os.path.join(dst, o['Key'].split('/')[-1])); n += 1
+        if r.get('IsTruncated'): tok = r.get('NextContinuationToken')
+        else: break
+    print('minecraft_vpt shards downloaded:', n, flush=True)
+    PYDL
+    # Driver: real Minecraft tokenizer -> tokenize_minecraft_dataset -> dynamics ->
+    # action-conditioned dream rollout -> 3-stream Rerun .rrd.
+    cat > "$SMOKE_PKG/od_mc.py" <<'PYEOF'
+    import json
+    import os
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    import numpy as np
+
+    OUT = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    OUT.mkdir(parents=True, exist_ok=True)
+    REPO = Path(os.environ.get("BYOF_REPO_ROOT", "/opt/byof"))
+    PY = os.environ.get("OD_PYTHON", "/opt/byof/.venv/bin/python")
+    CPU = os.environ.get("OD_MODE") == "cpu"
+    NW = int(os.environ.get("OD_NUM_WORKERS", "4"))
+
+    # Dataset: a real Minecraft/VPT subset staged as minecraft_vpt ArrayRecords. In
+    # the container it is pulled from the run bucket (derived from S3_OUTPUT_PREFIX)
+    # under OD_DATASET_KEY; for CPU validation OD_LOCAL_DATASET points at a local dir.
+    DATASET_KEY = os.environ.get("OD_DATASET_KEY", "datasets/minecraft_vpt_128_64/")
+    LOCAL_DATASET = os.environ.get("OD_LOCAL_DATASET", "")
+
+    RES = 128
+    PATCH = 16
+    T = 64  # frames per staged clip
+
+    TOK_NLAT = int(os.environ.get("OD_TOK_NLAT", "8" if CPU else "128"))
+    TOK_DBOT = 16
+    TOK_ENC_DEPTH = int(os.environ.get("OD_TOK_ENC_DEPTH", "1" if CPU else "6"))
+    TOK_DEC_DEPTH = int(os.environ.get("OD_TOK_DEC_DEPTH", "1" if CPU else "4"))
+    TOK_STEPS = int(os.environ.get("OD_TOK_STEPS", "2" if CPU else "15000"))
+    TOK_B = int(os.environ.get("OD_TOK_B", "2" if CPU else "48"))
+    TOK_T = int(os.environ.get("OD_TOK_T", "8" if CPU else "24"))
+    TOK_MAE_PMAX = os.environ.get("OD_TOK_MAE_PMAX", "0.15")
+    TOK_VIS_EVERY = int(os.environ.get("OD_TOK_VIS_EVERY", "1" if CPU else "1500"))
+
+    DYN_PACK = int(os.environ.get("OD_DYN_PACK", "2"))
+    DYN_DEPTH = int(os.environ.get("OD_DYN_DEPTH", "1" if CPU else "10"))
+    DYN_NREG = int(os.environ.get("OD_DYN_NREG", "2" if CPU else "16"))
+    DYN_KMAX = int(os.environ.get("OD_DYN_KMAX", "4" if CPU else "32"))
+    DYN_STEPS = int(os.environ.get("OD_DYN_STEPS", "2" if CPU else "15000"))
+    DYN_B = int(os.environ.get("OD_DYN_B", "2" if CPU else "24"))
+    DYN_SHORT_T = int(os.environ.get("OD_DYN_SHORT_T", "8" if CPU else "32"))
+    DYN_LONG_T = int(os.environ.get("OD_DYN_LONG_T", "16" if CPU else "64"))
+    DYN_BOOT_START = int(os.environ.get("OD_DYN_BOOT_START", "1" if CPU else "12000"))
+
+    ROLL_HORIZON = int(os.environ.get("OD_ROLL_HORIZON", "4" if CPU else "32"))
+    ROLL_DENOISE = int(os.environ.get("OD_ROLL_DENOISE", "2" if CPU else "16"))
+    ROLL_B = int(os.environ.get("OD_ROLL_B", "2" if CPU else "6"))
+
+    DATA_DIR = REPO / "datasets" / "minecraft_vpt"
+    LATENT_DIR = REPO / "datasets" / "minecraft_vpt_latent"
+    TOK_RUN = "od_mc_tok"
+    DYN_RUN = "od_mc_dyn"
+    TOK_CKPT = REPO / "logs" / TOK_RUN / "checkpoints"
+    DYN_CKPT = REPO / "logs" / DYN_RUN / "checkpoints"
+    ROLL_DIR = OUT / "rollout"
+
+    results = {
+        "solution": "open-dreamer",
+        "capability": "dreamer4_action_conditioned_dream_rollout",
+        "upstream": "https://github.com/next-state/open-dreamer",
+        "data": "real Minecraft/VPT contractor gameplay (128x128), minecraft_vpt records",
+        "profile": "cpu" if CPU else "gpu-2x",
+        "capabilities_exercised": [],
+        "deferred": [],
+    }
+
+
+    def run_isolated(name, argv, timeout=36000, extra_env=None):
+        env = os.environ.copy()
+        env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+        existing_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = os.pathsep.join([str(REPO)] + ([existing_pp] if existing_pp else []))
+        if extra_env:
+            env.update(extra_env)
+        try:
+            proc = subprocess.run(argv, cwd=str(REPO), capture_output=True, text=True,
+                                  timeout=timeout, env=env, check=False)
+        except subprocess.TimeoutExpired as exc:
+            return {"capability": name, "ok": False, "returncode": None, "error": f"timeout after {timeout}s",
+                    "stdout_tail": (exc.stdout or "")[-3000:] if isinstance(exc.stdout, str) else "",
+                    "stderr_tail": (exc.stderr or "")[-3000:] if isinstance(exc.stderr, str) else ""}, None
+        entry = {"capability": name, "returncode": proc.returncode, "ok": proc.returncode == 0,
+                 "stdout_tail": (proc.stdout or "")[-3000:], "stderr_tail": (proc.stderr or "")[-3000:]}
+        return entry, proc
+
+
+    def last_json(proc):
+        if proc is None or not proc.stdout:
+            return {}
+        for line in reversed(proc.stdout.strip().splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+        return {}
+
+
+    def acquire_dataset():
+        """Return number of minecraft_vpt shards available under DATA_DIR."""
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if LOCAL_DATASET:
+            src = Path(LOCAL_DATASET)
+            for p in sorted(src.glob("*.array_record")):
+                dst = DATA_DIR / p.name
+                if not dst.exists():
+                    # Symlink (fall back to copy) so we do not double the dataset
+                    # on disk; the array_record reader opens by path.
+                    try:
+                        dst.symlink_to(p)
+                    except OSError:
+                        dst.write_bytes(p.read_bytes())
+            return len(list(DATA_DIR.glob("*.array_record")))
+        # Download from the run bucket, derived from S3_OUTPUT_PREFIX.
+        prefix = os.environ["S3_OUTPUT_PREFIX"]
+        parsed = urlparse(prefix)
+        bucket = parsed.netloc
+        import boto3
+        from botocore.config import Config
+        ep = (os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or "").strip() or None
+        s3 = boto3.client("s3", endpoint_url=ep, region_name=os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+                          config=Config(s3={"addressing_style": "path"}))
+        token = None
+        keys = []
+        while True:
+            kw = {"Bucket": bucket, "Prefix": DATASET_KEY}
+            if token:
+                kw["ContinuationToken"] = token
+            resp = s3.list_objects_v2(**kw)
+            for o in resp.get("Contents", []):
+                if o["Key"].endswith(".array_record"):
+                    keys.append(o["Key"])
+            if resp.get("IsTruncated"):
+                token = resp.get("NextContinuationToken")
+            else:
+                break
+        for k in keys:
+            s3.download_file(bucket, k, str(DATA_DIR / Path(k).name))
+        return len(list(DATA_DIR.glob("*.array_record")))
+
+
+    def main():
+        # 1) hard gate: >=2 GPU JAX data-parallel mesh
+        mesh_script = textwrap.dedent('''
+            import json, jax
+            from dreamer.parallel import build_parallel
+            devices = [str(d) for d in jax.devices()]
+            mesh, sharding, rules = build_parallel("data")
+            shape = {k: int(v) for k, v in dict(mesh.shape).items()}
+            print(json.dumps({"jax_version": jax.__version__, "jax_devices": devices,
+                              "device_count": len(devices), "mesh": shape}))
+        ''')
+        mesh_entry, mesh_proc = run_isolated("jax_two_gpu_data_parallel_mesh", [PY, "-c", mesh_script], timeout=600)
+        mp = last_json(mesh_proc)
+        results.update({"jax_version": mp.get("jax_version", ""), "jax_devices": mp.get("jax_devices", []),
+                        "jax_device_count": mp.get("device_count", 0), "data_parallel_mesh": mp.get("mesh", {})})
+        min_dev = 1 if CPU else 2
+        two_gpu = bool(mesh_entry["ok"] and mp.get("device_count", 0) >= min_dev and mp.get("mesh", {}).get("data", 0) >= min_dev)
+        (OUT / "open_dreamer_two_gpu_mesh.json").write_text(json.dumps(
+            {"solution": "open-dreamer", "capability": "jax_two_gpu_data_parallel_mesh", "ok": two_gpu, **mp}, indent=2))
+        results["mesh_probe"] = mesh_entry
+        (results["capabilities_exercised"] if two_gpu else results["deferred"]).append(
+            "jax_two_gpu_data_parallel_mesh" if two_gpu else {"capability": "jax_two_gpu_data_parallel_mesh",
+                                                              "blocker": mesh_entry.get("error") or mesh_entry["stderr_tail"][-500:]})
+
+        # 2) acquire the real minecraft_vpt dataset
+        nshards = 0
+        try:
+            nshards = acquire_dataset()
+        except Exception as exc:  # noqa: BLE001
+            results["deferred"].append({"capability": "minecraft_vpt_dataset", "blocker": f"{type(exc).__name__}: {exc}"})
+        results["dataset"] = {"shards": nshards, "dir": str(DATA_DIR)}
+        have_data = nshards > 0
+        if not have_data and not any(
+            isinstance(d, dict) and d.get("capability") == "minecraft_vpt_dataset"
+            for d in results["deferred"]):
+            # Make a missing/misnamed dataset a clear failure rather than a
+            # confusing downstream "tokenizer hard-gate failed".
+            results["deferred"].append({"capability": "minecraft_vpt_dataset",
+                "blocker": f"no *.array_record shards found under {DATASET_KEY} "
+                           "(bucket derived from S3_OUTPUT_PREFIX)"})
+
+        dcommon = [
+            "dataset=minecraft_vpt", f"dataset.array_record_path={DATA_DIR}", f"dataset.index_max={nshards}",
+            f"dataset.H={RES}", f"dataset.W={RES}", "dataset.padding_H=[0,0]", "dataset.padding_W=[0,0]",
+            f"dataset.patch_size={PATCH}",
+        ]
+
+        # 3) minecraft_vpt video dataloader probe
+        if have_data:
+            loader_script = textwrap.dedent(f'''
+                import json, jax
+                from dreamer.configs import DatasetConfig, DataloaderConfig
+                from dreamer.data import build_iterator
+                from dreamer.parallel import build_parallel
+                mesh, sharding, rules = build_parallel("data")
+                with jax.set_mesh(mesh):
+                    dl = DataloaderConfig(B={TOK_B}, short_T={TOK_T}, long_T={TOK_T}, num_workers={NW},
+                                          prefetch_buffer_size=2, device_prefetch_buffer_size=1, dtype="bfloat16")
+                    cfg = DatasetConfig(name="minecraft_vpt", dataloader_cfg=dl, H={RES}, W={RES}, C=3, patch_size={PATCH},
+                                        array_record_path="{DATA_DIR}", index_max={nshards}, num_binary_actions=27,
+                                        categorical_action_dim=121, mouse_repr="categorical", data_type="video")
+                    it = build_iterator(cfg, device=sharding, seq_len={TOK_T}, return_actions=True)
+                    batch = next(iter(it))
+                    v = batch["videos"]
+                    print(json.dumps({{"videos_shape": list(v.shape), "dtype": str(v.dtype)}}))
+            ''')
+            le, lp = run_isolated("minecraft_vpt_video_dataloader", [PY, "-c", loader_script], timeout=1200)
+            lpay = last_json(lp)
+            ok = bool(le["ok"] and lpay.get("videos_shape"))
+            (OUT / "open_dreamer_minecraft_dataloader.json").write_text(json.dumps(
+                {"solution": "open-dreamer", "capability": "minecraft_vpt_video_dataloader", "ok": ok, **lpay}, indent=2))
+            results["dataloader_probe"] = le
+            (results["capabilities_exercised"] if ok else results["deferred"]).append(
+                "minecraft_vpt_video_dataloader" if ok else {"capability": "minecraft_vpt_video_dataloader",
+                                                             "blocker": le.get("error") or le["stderr_tail"][-500:]})
+
+        # 4) hard gate: tokenizer training on real Minecraft
+        tok_ok = False
+        if have_data:
+            tok_overrides = dcommon + [
+                f"dataset.dataloader_cfg.B={TOK_B}", f"dataset.dataloader_cfg.short_T={TOK_T}",
+                f"dataset.dataloader_cfg.long_T={TOK_T}", f"dataset.dataloader_cfg.num_workers={NW}",
+                "dataset.dataloader_cfg.prefetch_buffer_size=3",
+                f"tokenizer.encoder.depth={TOK_ENC_DEPTH}", f"tokenizer.encoder.n_latents={TOK_NLAT}",
+                f"tokenizer.encoder.d_bottleneck={TOK_DBOT}", f"tokenizer.decoder.depth={TOK_DEC_DEPTH}",
+                f"tokenizer.encoder.mae_p_max={TOK_MAE_PMAX}", f"max_steps={TOK_STEPS}", "lpips_weight=0",
+                f"visualize_every={TOK_VIS_EVERY}", "tokenizer_loss_type=mse", "logger.log_every=50",
+                f"ckpt.save_interval_steps={max(1, TOK_STEPS // 3)}", "ckpt.max_to_keep=1", f"run_name={TOK_RUN}",
+            ]
+            te, _ = run_isolated("dreamer4_tokenizer_train_two_gpu", [PY, "scripts/train_tokenizer.py", *tok_overrides], timeout=54000)
+            tok_ok = bool(te["ok"] and TOK_CKPT.exists() and any(TOK_CKPT.iterdir()))
+            vis = REPO / "logs" / TOK_RUN / "viz"
+            vpngs = sorted(vis.glob("step_*.png")) if vis.exists() else []
+            (OUT / "open_dreamer_tokenizer_train.json").write_text(json.dumps(
+                {"solution": "open-dreamer", "capability": "dreamer4_tokenizer_train_two_gpu", "ok": tok_ok,
+                 "checkpoint_dir": str(TOK_CKPT), "vis_frames": len(vpngs), "steps": TOK_STEPS,
+                 "returncode": te.get("returncode"), "stdout_tail": te.get("stdout_tail", ""),
+                 "stderr_tail": te.get("stderr_tail", "")}, indent=2))
+            results["tokenizer_train_probe"] = te
+            results["tokenizer_vis_frames"] = len(vpngs)
+            (results["capabilities_exercised"] if tok_ok else results["deferred"]).append(
+                "dreamer4_tokenizer_train_two_gpu" if tok_ok else {"capability": "dreamer4_tokenizer_train_two_gpu",
+                                                                   "blocker": te.get("error") or te["stderr_tail"][-800:]})
+
+        # 5) offline latent tokenization via the documented script
+        latent_ok = False
+        latent_payload = {}
+        if tok_ok:
+            tok_overrides2 = dcommon + [
+                f"tokenizer_ckpt={TOK_CKPT}", f"output_dir={LATENT_DIR}", "records_per_shard=100000",
+                f"dataset.dataloader_cfg.B={TOK_B}", f"dataset.dataloader_cfg.short_T={T}",
+                f"dataset.dataloader_cfg.long_T={T}", f"dataset.dataloader_cfg.num_workers={NW}",
+                "dataset.dataloader_cfg.prefetch_buffer_size=3", "dataset.dataloader_cfg.device_prefetch_buffer_size=1",
+            ]
+            lte, _ = run_isolated("dreamer4_latent_tokenization",
+                                  [PY, "scripts/tokenize_minecraft_dataset.py", *tok_overrides2], timeout=10800)
+            stats_p = LATENT_DIR / "metadata" / "latent_stats.npz"
+            nlat = len(list(LATENT_DIR.glob("shard-*.array_record")))
+            latent_ok = bool(lte["ok"] and stats_p.exists() and nlat > 0)
+            if latent_ok:
+                st = np.load(stats_p)
+                latent_payload = {"latent_mean": st["mean"].astype(float).tolist(),
+                                  "latent_std": np.maximum(st["std"], 1e-6).astype(float).tolist(),
+                                  "n_latent_shards": nlat}
+            (OUT / "open_dreamer_latent_tokenization.json").write_text(json.dumps(
+                {"solution": "open-dreamer", "capability": "dreamer4_latent_tokenization", "ok": latent_ok,
+                 "n_latent_shards": nlat, "returncode": lte.get("returncode"), "stderr_tail": lte.get("stderr_tail", "")}, indent=2))
+            results["latent_tokenization_probe"] = lte
+            (results["capabilities_exercised"] if latent_ok else results["deferred"]).append(
+                "dreamer4_latent_tokenization" if latent_ok else {"capability": "dreamer4_latent_tokenization",
+                                                                  "blocker": lte.get("error") or lte["stderr_tail"][-800:]})
+
+        # 6) action-conditioned latent dynamics training
+        dyn_ok = False
+        if latent_ok:
+            lm = "[" + ",".join(f"{x:.8f}" for x in latent_payload["latent_mean"]) + "]"
+            ls = "[" + ",".join(f"{x:.8f}" for x in latent_payload["latent_std"]) + "]"
+            nlat = latent_payload["n_latent_shards"]
+            dyn_overrides = [
+                "dataset=minecraft_vpt_latent", f"dataset.array_record_path={LATENT_DIR}", f"dataset.index_max={nlat}",
+                f"dataset.C={TOK_DBOT}", f"dataset.latent_mean={lm}", f"dataset.latent_std={ls}",
+                f"dataset.dataloader_cfg.B={DYN_B}", f"dataset.dataloader_cfg.short_T={DYN_SHORT_T}",
+                f"dataset.dataloader_cfg.long_T={DYN_LONG_T}", "dataset.dataloader_cfg.long_ratio=0.3",
+                f"dataset.dataloader_cfg.num_workers={NW}", "dataset.dataloader_cfg.prefetch_buffer_size=3",
+                f"tokenizer_ckpt={TOK_CKPT}", f"dynamics.depth={DYN_DEPTH}", f"dynamics.packing_factor={DYN_PACK}",
+                f"dynamics.n_register={DYN_NREG}", f"dynamics.k_max={DYN_KMAX}", f"max_steps={DYN_STEPS}",
+                f"bootstrap_start={DYN_BOOT_START}", "image_fraction=0.0", "ot.enabled=false", "write_video_every=0",
+                "logger.log_every=50", f"ckpt.save_interval_steps={max(1, DYN_STEPS // 3)}", "ckpt.max_to_keep=1",
+                f"run_name={DYN_RUN}",
+            ]
+            de, _ = run_isolated("dreamer4_dynamics_train_two_gpu", [PY, "scripts/train_dynamics.py", *dyn_overrides], timeout=54000)
+            dyn_ok = bool(de["ok"] and DYN_CKPT.exists() and any(DYN_CKPT.iterdir()))
+            (OUT / "open_dreamer_dynamics_train.json").write_text(json.dumps(
+                {"solution": "open-dreamer", "capability": "dreamer4_dynamics_train_two_gpu", "ok": dyn_ok,
+                 "checkpoint_dir": str(DYN_CKPT), "steps": DYN_STEPS, "returncode": de.get("returncode"),
+                 "stdout_tail": de.get("stdout_tail", ""), "stderr_tail": de.get("stderr_tail", "")}, indent=2))
+            results["dynamics_train_probe"] = de
+            (results["capabilities_exercised"] if dyn_ok else results["deferred"]).append(
+                "dreamer4_dynamics_train_two_gpu" if dyn_ok else {"capability": "dreamer4_dynamics_train_two_gpu",
+                                                                  "blocker": de.get("error") or de["stderr_tail"][-800:]})
+
+        # 7) action-conditioned dream rollout on real held-out Minecraft video
+        dream_ok = False
+        dream_payload = {}
+        if dyn_ok:
+            ROLL_DIR.mkdir(parents=True, exist_ok=True)
+            rollout_script = textwrap.dedent(f'''
+                import json
+                from pathlib import Path
+                import numpy as np
+                import jax
+                from dreamer.configs import DatasetConfig, DataloaderConfig
+                from dreamer.data import build_iterator
+                from dreamer.checkpointing import DynamicsCheckpointBundle
+                from dreamer.parallel import build_parallel
+                from dreamer.generation import DenoiseSchedule
+                from dreamer.sampler import sample_video
+                from dreamer.actions import shift_actions
+                ROLL = Path("{ROLL_DIR}"); horizon = {ROLL_HORIZON}
+                mesh, sharding, rules = build_parallel("data")
+                with jax.set_mesh(mesh):
+                    bundle = DynamicsCheckpointBundle.from_pretrained(
+                        "{DYN_CKPT}", mesh_rules=rules, model_names={{"dynamics_ema", "tokenizer"}})
+                    tokenizer = bundle.tokenizer; dynamics = bundle.dynamics_ema
+                    schedule = DenoiseSchedule.init({ROLL_DENOISE}, dynamics.cfg.k_max)
+                    dl = DataloaderConfig(B={ROLL_B}, short_T={T}, long_T={T}, num_workers={NW},
+                                          prefetch_buffer_size=2, device_prefetch_buffer_size=1, dtype="bfloat16")
+                    cfg = DatasetConfig(name="minecraft_vpt", dataloader_cfg=dl, H={RES}, W={RES}, C=3, patch_size={PATCH},
+                                        array_record_path="{DATA_DIR}", index_max={nshards if have_data else 1},
+                                        num_binary_actions=27, categorical_action_dim=121, mouse_repr="categorical", data_type="video")
+                    it = build_iterator(cfg, seed=1234, device=sharding, seq_len={T}, return_actions=True)
+                    batch = next(iter(it))
+                    # Keep rollout context within the dynamics attention window so the
+                    # KV cache (window=context_length) is never overflowed at prefill.
+                    use = min({T}, int(dynamics.cfg.context_length))
+                    frames = batch["videos"][:, :use]
+                    actions = shift_actions(jax.tree.map(lambda x: x[:, :use] if x is not None else None, batch["actions"]), 121)
+                    pred, gt_decoded, original = sample_video(tokenizer=tokenizer, dynamics=dynamics, frames=frames,
+                        actions=actions, horizon=horizon, schedule_config=schedule, rng=jax.random.PRNGKey(0))
+                    pred = np.asarray(jax.device_get(pred)).astype(np.uint8)
+                    gtd = np.asarray(jax.device_get(gt_decoded)).astype(np.uint8)
+                    orig = np.asarray(jax.device_get(original)).astype(np.uint8)
+                    np.save(ROLL / "pred.npy", pred); np.save(ROLL / "gt_decoded.npy", gtd); np.save(ROLL / "original.npy", orig)
+                    p = pred[:, -horizon:].astype(np.float64)/255.0; g = orig[:, -horizon:].astype(np.float64)/255.0
+                    mse = float(np.mean((p-g)**2)); psnr = float(-10.0*np.log10(mse+1e-8))
+                    print(json.dumps({{"pred_shape": list(pred.shape), "horizon": horizon,
+                                       "ctx": int(pred.shape[1]-horizon), "dream_psnr_db": psnr, "dream_mse": mse}}))
+            ''')
+            re_, rp = run_isolated("dreamer4_action_conditioned_dream_rollout", [PY, "-c", rollout_script], timeout=7200)
+            dream_payload = last_json(rp)
+            dream_ok = bool(re_["ok"] and (ROLL_DIR / "pred.npy").exists() and dream_payload.get("pred_shape"))
+            (OUT / "open_dreamer_dream_rollout.json").write_text(json.dumps(
+                {"solution": "open-dreamer", "capability": "dreamer4_action_conditioned_dream_rollout", "ok": dream_ok,
+                 **dream_payload, "returncode": re_.get("returncode"), "stderr_tail": re_.get("stderr_tail", "")}, indent=2))
+            results["dream_rollout_probe"] = re_
+            if dream_ok:
+                results["capabilities_exercised"].append("dreamer4_action_conditioned_dream_rollout")
+                results["dream_psnr_db"] = dream_payload.get("dream_psnr_db")
+            else:
+                results["deferred"].append({"capability": "dreamer4_action_conditioned_dream_rollout",
+                                            "blocker": re_.get("error") or re_["stderr_tail"][-800:]})
+
+        # 8) Rerun .rrd with observation / dream / gt_decoded / tokenizer_reconstruction
+        rrd_info = {"solution": "open-dreamer", "capability": "world_model_rerun_visualization", "ok": False}
+        try:
+            import rerun as rr
+            import imageio.v2 as imageio
+
+            def set_seq(tl, v):
+                (rr.set_time_sequence if hasattr(rr, "set_time_sequence") else (lambda a, b: rr.set_time(a, sequence=b)))(tl, v)
+
+            rrd_path = OUT / "open_dreamer_world_model.rrd"
+            rr.init("open-dreamer-world-model", spawn=False)
+            rr.save(str(rrd_path))
+            logged_dream = 0
+            if dream_ok and (ROLL_DIR / "pred.npy").exists():
+                pred = np.load(ROLL_DIR / "pred.npy"); gtd = np.load(ROLL_DIR / "gt_decoded.npy"); orig = np.load(ROLL_DIR / "original.npy")
+                b = 0
+                for t in range(int(pred.shape[1])):
+                    set_seq("frame", t)
+                    rr.log("world/observation", rr.Image(orig[b, t]))
+                    rr.log("world/dream", rr.Image(pred[b, t]))
+                    rr.log("world/gt_decoded", rr.Image(gtd[b, t]))
+                logged_dream = int(pred.shape[1])
+            vpngs = sorted((REPO / "logs" / TOK_RUN / "viz").glob("step_*.png"))
+            logged_recon = 0
+            for png in vpngs:
+                try:
+                    step = int(png.stem.split("_")[-1])
+                except ValueError:
+                    step = logged_recon
+                set_seq("train_step", step)
+                rr.log("world/tokenizer_reconstruction", rr.Image(imageio.imread(png)))
+                logged_recon += 1
+            psnr = dream_payload.get("dream_psnr_db")
+            ctx = int(dream_payload.get("ctx", 0))
+            rr.log("world/legend", rr.TextDocument(
+                "Open Dreamer (Dreamer 4) world model - 2-GPU run on real Minecraft/VPT video.\n"
+                "world/observation: ground-truth Minecraft gameplay.\n"
+                f"world/dream: action-conditioned rollout ({ctx} context frames, then predicted).\n"
+                "world/gt_decoded: tokenizer reconstruction of GT latents (dynamics ceiling).\n"
+                f"dream PSNR (predicted frames): {psnr} dB.\n"
+                "world/tokenizer_reconstruction: original | masked | online(mixed) | online | ema(mixed) | ema."))
+            if hasattr(rr, "flush"):
+                rr.flush(blocking=True)
+            size = rrd_path.stat().st_size if rrd_path.exists() else 0
+            rrd_info.update({"ok": size > 0, "rrd": str(rrd_path), "bytes": size,
+                             "dream_frames": logged_dream, "recon_frames": logged_recon})
+            (results["capabilities_exercised"] if rrd_info["ok"] else results["deferred"]).append(
+                "world_model_rerun_visualization" if rrd_info["ok"] else {"capability": "world_model_rerun_visualization", "blocker": "empty rrd"})
+        except Exception as exc:  # noqa: BLE001
+            rrd_info["error"] = f"{type(exc).__name__}: {exc}"
+            results["deferred"].append({"capability": "world_model_rerun_visualization", "blocker": rrd_info["error"]})
+        results["rerun_visualization"] = rrd_info
+        (OUT / "open_dreamer_rerun_visualization.json").write_text(json.dumps(rrd_info, indent=2))
+
+        (OUT / "open_dreamer_world_model_2gpu.json").write_text(json.dumps(results, indent=2))
+        print(json.dumps(results, indent=2))
+        # Hard-gate the marquee payoff too: the action-conditioned dream rollout
+        # depends on the whole loop (dataloader -> tokenizer -> latent -> dynamics
+        # -> dream), so gating it makes a green smoke actually mean "the dream
+        # ran", not just "training started".
+        required = [
+            "jax_two_gpu_data_parallel_mesh",
+            "dreamer4_tokenizer_train_two_gpu",
+            "dreamer4_action_conditioned_dream_rollout",
+        ]
+        missing = [c for c in required if c not in results["capabilities_exercised"]]
+        if missing:
+            raise SystemExit(f"open-dreamer hard-gate capabilities failed: {missing}")
+
+
+    if __name__ == "__main__":
+        main()
+    PYEOF
+    "$VENV" "$SMOKE_PKG/od_mc.py"
+  solution_name: "open-dreamer"
+  capability_name: "dreamer4_tokenizer_train_two_gpu"
+  smoke_artifact_name: "open_dreamer_world_model_2gpu.json"
+  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-2gpu.yaml"
+  task: "open-dreamer-world-model"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  # Real Minecraft tokenizer + tokenization + dynamics + dream rollout is real
+  # multi-GPU hours; keep a generous wall-clock budget.
+  wait_timeout: 21600
+  poll_interval: 60
+
+  # Base output root only — the BYOF runner (run_byof_container_verify) appends
+  # `/{{run.id}}/` to `--output-root` when it renders S3_OUTPUT_PREFIX, so this
+  # must NOT already include the run id (otherwise artifacts land under a
+  # doubled `.../<run-id>/<run-id>/` prefix that summary_uri never points at).
+  output_root: s3://{{config.bucket}}/oss-solutions/open-dreamer
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+resources:
+  gpu:
+    cloud: kubernetes
+    # Source of truth for scheduling is `resource_profile_yaml`
+    # (byof-solution-smoke-rtxpro-2gpu.yaml); keep this inline accelerator name
+    # aligned with it to avoid confusion about which name is real.
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:2
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build/push Open Dreamer and run the real 2-GPU world-model run on a real
+      Minecraft/VPT subset (data-parallel mesh, minecraft_vpt dataloader,
+      tokenizer training to legibility, offline latent tokenization,
+      action-conditioned latent dynamics training, an action-conditioned dream
+      rollout, and a Rerun `.rrd` artifact) from the registry image in live
+      Kubernetes.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

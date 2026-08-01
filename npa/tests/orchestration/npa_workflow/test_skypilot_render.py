@@ -45,6 +45,30 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     assert detect_submit_format(path) == "skypilot"
 
 
+def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
+    # The self-hosted vlm-eval twin must launch a background vLLM server in its
+    # run script (the eval client waits for /v1/models readiness). Without this
+    # the server is never up and the eval fails with connection-refused.
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="demo"), run_id="demo", options=SkypilotRenderOptions(materialize_registry_secrets=False)
+    )
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
+    run = next(d["run"] for d in docs if "vlm-eval run" in d.get("run", ""))
+    assert "vllm.entrypoints.openai.api_server" in run
+    assert "--served-model-name" in run
+    assert "vllm_pid=$!" in run  # backgrounded + trap-killed on exit
+
+
+def test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
+    # The benchmark twin runs backend=stub; it must NOT launch a vLLM server.
+    spec = load_spec(NPA_SPECS / "vlm-eval-benchmark.yaml")
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="demo"), run_id="demo", options=SkypilotRenderOptions(materialize_registry_secrets=False)
+    )
+    assert "vllm.entrypoints.openai.api_server" not in rendered
+
+
 def test_normalize_resources_strips_gi_suffix() -> None:
     assert normalize_resources({"memory": "80Gi", "cpus": 16, "cloud": "k8s"}) == {
         "cloud": "k8s",

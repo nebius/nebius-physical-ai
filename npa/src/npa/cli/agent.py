@@ -36,10 +36,16 @@ from npa.clients.network import (
     remove_ingress_for_instance,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.workbench.foxglove import (
+    DEFAULT_FOXGLOVE_EMBED_SRC,
+    FOXGLOVE_EMBED_SDK_INTEGRITY,
+    FOXGLOVE_EMBED_SDK_VERSION,
+)
 
 app = typer.Typer(
     name="agent",
@@ -50,7 +56,6 @@ app = typer.Typer(
 DEFAULT_AGENT_PORT = 8088
 DEFAULT_BACKEND_PORT = 8787
 DEFAULT_RERUN_PORT = 9090
-DEFAULT_LICHTBLICK_PORT = 8081
 DEFAULT_PROJECT_ALIAS = "us-central1"
 DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
@@ -66,7 +71,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072902"
+AGENT_UI_VERSION = "2026073001"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -131,6 +136,29 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "_maybe_origin_reply",
     "build_run_origin",
     "Grounded origin facts for this run",
+)
+
+# Embedded Foxglove viewer: the real @foxglove/embed SDK, loaded on demand from
+# same-origin assets, mounted into its own viewer pane, and fed by /api/foxglove/*.
+AGENT_FOXGLOVE_CONTRACT = (
+    'id="renderModeFoxglove"',
+    'id="viewerPaneFoxglove"',
+    'id="foxgloveHost"',
+    'id="foxgloveStatus"',
+    "ensureFoxgloveViewer",
+    "setFoxgloveDataSource",
+    "refreshFoxgloveViewer",
+    "mountFoxgloveViewer",
+    "/api/foxglove/config",
+    "captureFoxgloveContext",
+    "convertRunToMcap",
+    "/api/foxglove/convert-run",
+    # Two backends behind one pane: the official app (SDK) and the self-hosted
+    # OSS viewer that renders MCAP without a Foxglove account.
+    "mountSelfHostedViewer",
+    "self-hosted",
+    # Cross-origin embed: never claim a captured frame for the official app.
+    "cross-origin iframe",
 )
 
 AGENT_CHAT_QUEUE_CONTRACT = (
@@ -269,6 +297,8 @@ _AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
 # Blueprint Phases H/I: also shipped as importable files.
 _AGENT_RETRIEVAL_SHIP = "__NPA_AGENT_RETRIEVAL_SHIP__"
 _AGENT_TRACE_SHIP = "__NPA_AGENT_TRACE_SHIP__"
+_AGENT_FOXGLOVE_SHIP = "__NPA_AGENT_FOXGLOVE_SHIP__"
+_AGENT_FOXGLOVE_ROUTES_SHIP = "__NPA_AGENT_FOXGLOVE_ROUTES_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1490,6 +1520,15 @@ def _write_agent_nebius_env(
         )
 
 
+def _env_line_value(value: str) -> str:
+    """Return ``value`` as a single safe ``KEY=value`` line fragment.
+
+    Bootstrap writes plain env files inside a quoted heredoc, so the only real
+    hazard is an embedded newline (which would inject an extra assignment).
+    """
+    return " ".join(str(value or "").split()).strip()
+
+
 def _create_agent_source_archive() -> str:
     """Package the NPA source tree needed for agent-side workflow execution."""
     repo_root = Path(__file__).resolve().parents[4]
@@ -1723,232 +1762,19 @@ def _agent_public_login_form_html(auth_user: str) -> str:
     </script>"""
 
 
-# Placeholder token the Lichtblick web bundle ships in its index.html inline
-# script: ``LICHTBLICK_SUITE_DEFAULT_LAYOUT = [/*...PLACEHOLDER*/][0];``. Replacing
-# the comment with a layout object is the upstream-supported self-hosting hook, so
-# the embedded viewer opens with the sim2real point cloud + camera already shown
-# (Lichtblick otherwise hides point-cloud topics and picks no image topic).
-LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
-
-
-def _lichtblick_default_layout_json() -> str:
-    """Return the compact JSON for the embedded viewer's default layout.
-
-    A 3D panel with ``/heldout/points`` made visible (colored by its RGBA fields)
-    and framed on the workspace, alongside an Image panel bound to ``/camera``. The
-    JSON is single-quote-free so it can be injected as an nginx ``sub_filter``
-    replacement without escaping.
-
-    ``rgba-fields`` requires the cloud to carry all four of red/green/blue/alpha;
-    ``npa.workbench.lichtblick.pack_pointcloud_bytes`` emits the opaque alpha
-    channel that makes this mode available (without it the panel falls back to a
-    synthetic colormap and the cloud loses its captured colours). ``/camera`` is
-    always emitted by the sim2real MCAP writer — from the held-out episode when
-    there is one, else mirrored from the first rollout.
-    """
-
-    layout = {
-        "configById": {
-            "3D!npasim2real": {
-                "cameraState": {
-                    "distance": 7.0,
-                    "perspective": True,
-                    "phi": 55.0,
-                    "target": [0.0, 0.0, 0.0],
-                    # Orbit around the fixed-camera reconstruction's workspace
-                    # centroid so the cloud is framed on load (follow-none).
-                    "targetOffset": [2.3, -1.2, -0.15],
-                    "thetaOffset": 45.0,
-                    "fovy": 45.0,
-                    "near": 0.1,
-                    "far": 5000.0,
-                },
-                "followTf": "sim2real",
-                "followMode": "follow-none",
-                "scene": {},
-                "topics": {
-                    "/heldout/points": {
-                        "visible": True,
-                        "colorMode": "rgba-fields",
-                        "pointSize": 4.0,
-                    }
-                },
-                "layers": {
-                    "npa-grid": {
-                        "visible": True,
-                        "frameLocked": True,
-                        "label": "Grid",
-                        "instanceId": "npa-grid",
-                        "layerId": "foxglove.Grid",
-                        "size": 10,
-                        "divisions": 10,
-                        "lineWidth": 1,
-                        "color": "#248eff",
-                        "position": [0.0, 0.0, 0.0],
-                        "rotation": [0.0, 0.0, 0.0],
-                        "order": 1,
-                    }
-                },
-            },
-            "Image!npacamera": {"imageMode": {"imageTopic": "/camera"}},
-        },
-        "globalVariables": {},
-        "userNodes": {},
-        "playbackConfig": {"speed": 1.0},
-        "layout": {
-            "first": "3D!npasim2real",
-            "second": "Image!npacamera",
-            "direction": "row",
-            "splitPercentage": 62,
-        },
-    }
-    return json.dumps(layout, separators=(",", ":"))
-
-
 def _nginx_agent_site_body(
     *,
     backend_port: int,
     rerun_port: int,
     lichtblick_port: int = DEFAULT_LICHTBLICK_PORT,
 ) -> str:
-    """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
-    lichtblick_default_layout = _lichtblick_default_layout_json()
-    lichtblick_layout_placeholder = LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER
-    return f"""  auth_basic "NPA Agent";
-  auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
-  # Describe-this / multimodal chat posts JPEG data-URLs; default 1m rejects them (413 → browser Failed to fetch).
-  client_max_body_size 32m;
-  location = /healthz {{
-    auth_basic off;
-    default_type application/json;
-    return 200 '{{"ok":true,"service":"npa-agent","welcome":"/welcome","ui":"/","ui_version":"{AGENT_UI_VERSION}"}}';
-  }}
-  location = /welcome {{
-    auth_basic off;
-    alias /opt/npa-agent/welcome.html;
-    default_type text/html;
-    add_header Cache-Control "no-store" always;
-  }}
-  location = /login-help.html {{
-    auth_basic off;
-    alias /opt/npa-agent/login-help.html;
-    default_type text/html;
-    add_header Cache-Control "no-store" always;
-  }}
-  location /api/ {{
-    proxy_pass http://127.0.0.1:{backend_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 900s;
-    proxy_send_timeout 900s;
-    client_max_body_size 32m;
-  }}
-  location /assets/api/ {{
-    rewrite ^/assets/api/(.*)$ /$1 break;
-    proxy_pass http://127.0.0.1:{backend_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 900s;
-    proxy_send_timeout 900s;
-    client_max_body_size 32m;
-  }}
-  location /rerun/recordings/ {{
-    auth_basic off;
-    alias /opt/npa-agent/recordings/;
-    default_type application/octet-stream;
-    add_header Cache-Control "no-cache" always;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-    add_header Cross-Origin-Resource-Policy "cross-origin" always;
-    # .rrd carries msgpack + metadata that still gzips usefully; the frame
-    # payloads are now JPEG-encoded so the win is modest but the transfer is
-    # smaller and TTFB unaffected (nginx streams as it compresses).
-    gzip on;
-    gzip_types application/octet-stream;
-    gzip_min_length 1024;
-  }}
-  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
-    auth_basic off;
-    rewrite ^/rerun/(.*)$ /$1 break;
-    proxy_pass http://127.0.0.1:{rerun_port};
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    gzip on;
-    gzip_types application/wasm application/javascript text/javascript image/svg+xml;
-    gzip_min_length 256;
-    add_header Cache-Control "public, max-age=31536000, immutable" always;
-  }}
-  location /rerun/ {{
-    auth_basic off;
-    proxy_pass http://127.0.0.1:{rerun_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    add_header Cache-Control "public, max-age=3600" always;
-  }}
-  location /lichtblick/recordings/ {{
-    auth_basic off;
-    alias /opt/npa-agent/recordings/;
-    default_type application/octet-stream;
-    add_header Cache-Control "no-cache" always;
-    # nginx's static module already emits `Accept-Ranges: bytes`; do NOT add it again
-    # (a duplicate makes the browser join it to "bytes, bytes", which fails Lichtblick's
-    # `headers.get("accept-ranges") === "bytes"` range-support check).
-    #
-    # Deliberately NO Access-Control-* headers here. A run's MCAP carries camera
-    # frames, VLM critiques and reward signals, and this location is unauthenticated
-    # (wasm/worker fetches cannot carry basic auth). Granting `Allow-Origin: *` would
-    # let any web page a viewer visits read those recordings off this host. The embed
-    # never needs it: the viewer document is proxied from this same origin under
-    # /lichtblick/ and the UI pins ds.url to window.location.origin, so the fetch is
-    # same-origin — which also makes Accept-Ranges readable without Expose-Headers.
-    add_header Cross-Origin-Resource-Policy "same-origin" always;
-  }}
-  location = /lichtblick/ {{
-    # Exact-match the viewer document so we can inject the sim2real default layout
-    # into its index.html (the point cloud + camera show without manual topic
-    # enabling). Assets keep long caching via the prefix location below.
-    auth_basic off;
-    proxy_pass http://127.0.0.1:{lichtblick_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    # Force an uncompressed upstream response so sub_filter can rewrite the HTML.
-    proxy_set_header Accept-Encoding "";
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    sub_filter_once on;
-    sub_filter_types text/html;
-    sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';
-    add_header Cache-Control "no-store" always;
-  }}
-  location /lichtblick/ {{
-    auth_basic off;
-    proxy_pass http://127.0.0.1:{lichtblick_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    add_header Cache-Control "public, max-age=3600" always;
-  }}
-  location / {{
-    root /opt/npa-agent;
-    index ui.html;
-    try_files /ui.html =404;
-    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
-    add_header Pragma "no-cache" always;
-  }}"""
+    """Render the agent nginx site (policy lives in ``agent_site``)."""
+    return nginx_agent_site_body(
+        backend_port=backend_port,
+        rerun_port=rerun_port,
+        lichtblick_port=lichtblick_port,
+        ui_version=AGENT_UI_VERSION,
+    )
 
 
 def _bootstrap_agent_stack(
@@ -1980,6 +1806,9 @@ def _bootstrap_agent_stack(
     nebius_project_id: str = "",
     nebius_tenant_id: str = "",
     public_https: bool = True,
+    foxglove_embed_src: str = "",
+    foxglove_org_slug: str = "",
+    foxglove_live_url: str = "",
 ) -> None:
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -1999,6 +1828,8 @@ def _bootstrap_agent_stack(
     agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
     agent_retrieval_ship_source = _shipped_agent_backend_module_source("retrieval")
     agent_trace_ship_source = _shipped_agent_backend_module_source("trace")
+    agent_foxglove_ship_source = _shipped_agent_backend_module_source("foxglove")
+    agent_foxglove_routes_ship_source = _shipped_agent_backend_module_source("foxglove_routes")
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -2011,6 +1842,22 @@ def _bootstrap_agent_stack(
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
+    # Foxglove embedded-viewer settings (no secrets). CLI flag wins, then the
+    # operator environment, then the SDK's documented default embed host.
+    # Left empty unless the operator configured one: the Foxglove-hosted app needs
+    # an account, so a stock deploy renders MCAP with the self-hosted OSS viewer
+    # instead of showing a sign-in wall.
+    foxglove_embed_src_value = _env_line_value(
+        foxglove_embed_src or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
+    )
+    foxglove_org_slug_value = _env_line_value(
+        foxglove_org_slug or os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "")
+    )
+    foxglove_live_url_value = _env_line_value(
+        foxglove_live_url or os.environ.get("NPA_FOXGLOVE_LIVE_URL", "")
+    )
+    foxglove_sdk_version = _env_line_value(FOXGLOVE_EMBED_SDK_VERSION)
+    foxglove_sdk_integrity = shlex.quote(FOXGLOVE_EMBED_SDK_INTEGRITY)
     login_form_html = _agent_public_login_form_html(auth_user)
     mobile_login_help_html = _agent_mobile_login_help_html()
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -2091,6 +1938,27 @@ cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
 NPA_AGENT_PUBLIC_URL=https://{host}
 NPA_AGENT_PUBLIC_HOST={host}
 ENV
+cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
+NPA_FOXGLOVE_ENABLED=1
+NPA_FOXGLOVE_EMBED_SRC={foxglove_embed_src_value}
+NPA_FOXGLOVE_ORG_SLUG={foxglove_org_slug_value}
+NPA_FOXGLOVE_LIVE_URL={foxglove_live_url_value}
+NPA_FOXGLOVE_SDK_VERSION={foxglove_sdk_version}
+ENV
+sudo mkdir -p /opt/npa-agent/foxglove/sdk /opt/npa-agent/foxglove/app /opt/npa-agent/foxglove/data
+# Install the pinned, sha512-verified @foxglove/embed browser SDK. Non-fatal: an
+# agent VM without egress to the npm registry still deploys, and
+# /api/foxglove/config reports exactly why the viewer is unavailable.
+if sudo bash {AGENT_SOURCE_ROOT}/npa/docker/workbench/foxglove-embed/install-sdk.sh \\
+    --dest /opt/npa-agent/foxglove/sdk \\
+    --version {foxglove_sdk_version} \\
+    --integrity {foxglove_sdk_integrity}; then
+  sudo rm -f /opt/npa-agent/foxglove/INSTALL_FAILED
+else
+  echo "install-sdk.sh failed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee /opt/npa-agent/foxglove/INSTALL_FAILED >/dev/null
+fi
+sudo cp {AGENT_SOURCE_ROOT}/npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js /opt/npa-agent/foxglove/app/npa-foxglove-host.js
+sudo chmod -R a+rX /opt/npa-agent/foxglove
 sudo mkdir -p /opt/npa-agent/agent_backend
 printf '' | sudo tee /opt/npa-agent/agent_backend/__init__.py >/dev/null
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
@@ -2101,6 +1969,12 @@ cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/trace.py >/dev/null
 {_AGENT_TRACE_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove.py >/dev/null
+{_AGENT_FOXGLOVE_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove_routes.py >/dev/null
+{_AGENT_FOXGLOVE_ROUTES_SHIP}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
@@ -2127,12 +2001,29 @@ STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
+FOXGLOVE_ROOT = Path("/opt/npa-agent/foxglove")
+FOXGLOVE_SDK_DIR = FOXGLOVE_ROOT / "sdk"
+FOXGLOVE_DATA_DIR = FOXGLOVE_ROOT / "data"
+# Keep a few published recordings so switching runs back and forth does not
+# re-download, but do not let the public data path grow without bound.
+FOXGLOVE_KEEP_PUBLISHED = 3
 
 {_AGENT_STATE_EMBED}
 
 {_AGENT_S3_GUARD_EMBED}
 
 {_AGENT_RRD_PROXY_EMBED}
+
+# Foxglove viewer helpers + routes are SHIPPED modules (see agent_backend/).
+from agent_backend.foxglove import (
+    convert_run_request,
+    describe_foxglove_context,
+    foxglove_status_payload,
+    is_foxglove_artifact,
+    publish_recording,
+    resolve_foxglove_config,
+)
+from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 
 RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
 MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
@@ -2200,6 +2091,7 @@ def _publish_mcap_recording(source: Path) -> Path:
 
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
+LICHTBLICK_WEB_PORT = {lichtblick_port}
 AGENT_PYTHON = Path("/opt/npa-agent/venv/bin/python")
 DEFAULT_SCENE_SPEC = {{
     "schema": "npa.sim2real.manip_scene_spec.v1",
@@ -2260,10 +2152,16 @@ DEFAULT_SIM_VIZ = {{
     "camera": "workspace",
     "rerun_ready": False,
     "rerun_iframe_url": "/rerun/",
+    # MCAP recording for the embedded viewers. The same file is exposed twice:
+    # mcap_uri is the same-origin path Lichtblick (OSS, in-page) streams, and
+    # foxglove_url is the CORS-enabled copy the official Foxglove app fetches
+    # cross-origin. mcap_updated_at timestamps both.
     "mcap_uri": "",
     "mcap_updated_at": "",
     "lichtblick_ready": False,
     "lichtblick_iframe_url": "/lichtblick/",
+    "foxglove_ready": False,
+    "foxglove_url": "",
 }}
 SIM2REAL_STAGE_TEMPLATE = [
     ("submit", "Submit request"),
@@ -2486,9 +2384,11 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                 "artifact_preview_url",
                 "artifact_download_url",
                 "visualization_note",
+                "foxglove_url",
             ):
                 if key not in payload or not str(payload.get(key) or "").strip():
                     snapshot[key] = ""
+            snapshot["foxglove_ready"] = bool(payload.get("foxglove_ready"))
     else:
         # Never let a sparse update erase richer artifact fields from load-run.
         for key in (
@@ -2501,9 +2401,13 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
             "rerun_iframe_url",
             "visualization_note",
             "preview_entity",
+            "foxglove_url",
+            "mcap_updated_at",
         ):
             if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
                 snapshot[key] = existing[key]
+        if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
+            snapshot["foxglove_ready"] = True
     runs[run_id] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
@@ -3598,6 +3502,48 @@ def _sim2real_pipeline_camera_label(requested: str = "") -> str:
     return value if value and value != "workspace" else "heldout-sim"
 
 
+def _copy_artifact_preview(local_path: Path, key: str) -> str:
+    filename = _artifact_filename(key)
+    target = RECORDINGS_DIR / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if local_path.resolve() != target.resolve():
+        shutil.copy2(local_path, target)
+    return _artifact_preview_url(filename)
+
+
+def _publish_foxglove_recording(local_path: Path, key: str) -> str:
+    return publish_recording(
+        local_path, key, data_dir=FOXGLOVE_DATA_DIR, keep=FOXGLOVE_KEEP_PUBLISHED
+    )
+
+
+def _self_hosted_viewer_healthy() -> bool:
+    # The OSS (Lichtblick) sidecar is best-effort on the VM; probe it rather than
+    # assuming, so the Foxglove pane only offers a backend that can actually render.
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{{LICHTBLICK_WEB_PORT}}/", timeout=2
+        ) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _foxglove_config(state: dict | None = None) -> dict:
+    session = state if isinstance(state, dict) else _load_state()
+    sim_viz = session.get("sim_viz") if isinstance(session.get("sim_viz"), dict) else {{}}
+    env, origin = dict(os.environ), _agent_public_origin()
+    return resolve_foxglove_config(
+        env,
+        assets_dir=FOXGLOVE_SDK_DIR,
+        origin=origin,
+        sim_viz=sim_viz,
+        self_hosted_ready=_self_hosted_viewer_healthy(),
+    )
+
+
 def _apply_loaded_artifact(
     *,
     state: dict,
@@ -3653,31 +3599,53 @@ def _apply_loaded_artifact(
                 "reference proxy context, not custom hardware footage."
             )
     elif render == "mcap":
-        _publish_mcap_recording(local_path)
-        mcap_url = _lichtblick_recording_url()
-        sim_viz["mcap_uri"] = f"file://{{MCAP_RECORDING_PATH}}"
+        # One recording, two embedded viewers. Lichtblick (OSS, in-page) streams
+        # the same-origin copy; the official Foxglove app runs cross-origin and
+        # needs the CORS + byte-range copy. Publish both so either backend works.
+        # Only real .mcap files may take the Lichtblick slot (it is a fixed
+        # sim2real.mcap path); bags/db3/ulog are published on the Foxglove path,
+        # which keeps their real extension so the viewer picks the right reader.
+        is_mcap = key.lower().endswith(".mcap")
+        published = _publish_foxglove_recording(local_path, key)
+        sim_viz["rrd_uri"] = ""
+        sim_viz["rerun_iframe_url"] = "/rerun/"
+        sim_viz["rerun_ready"] = False
+        sim_viz["preview_entity"] = ""
+        sim_viz["foxglove_url"] = published
+        sim_viz["foxglove_ready"] = bool(published)
         sim_viz["mcap_updated_at"] = now
-        sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-        sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-        sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
-        sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-        sim_viz["visualization_note"] = (
-            "Sim2Real MCAP loaded into the embedded Lichtblick (Foxglove-compatible) "
-            "viewer: rollout camera, VLM critiques, and reward/advantage signals."
-        )
+        if is_mcap:
+            _publish_mcap_recording(local_path)
+            mcap_url = _lichtblick_recording_url()
+            sim_viz["mcap_uri"] = f"file://{{MCAP_RECORDING_PATH}}"
+            sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+            sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
+            sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
+            sim_viz["visualization_note"] = (
+                "MCAP recording loaded: it plays in the embedded Lichtblick "
+                "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
+                "reward/advantage signals — and the same file is published on a CORS + "
+                "byte-range path for the official Foxglove app."
+            )
+        else:
+            sim_viz["lichtblick_ready"] = False
+            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
+            sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
+            sim_viz["visualization_note"] = (
+                f"Recording loaded ({{Path(key).suffix.lower() or 'unknown'}}). Foxglove-family "
+                "viewers read it directly; the Lichtblick slot is reserved for .mcap."
+            )
     else:
-        filename = _artifact_filename(key)
-        target = RECORDINGS_DIR / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if local_path.resolve() != target.resolve():
-            shutil.copy2(local_path, target)
-        preview_url = _artifact_preview_url(filename)
+        preview_url = _copy_artifact_preview(local_path, key)
         sim_viz["artifact_preview_url"] = preview_url
         sim_viz["artifact_download_url"] = preview_url
         sim_viz["rrd_uri"] = ""
         sim_viz["rerun_iframe_url"] = "/rerun/"
         sim_viz["rerun_ready"] = False
         sim_viz["preview_entity"] = ""
+        sim_viz["foxglove_ready"] = False
+        sim_viz["foxglove_url"] = ""
         sim_viz["visualization_note"] = (
             f"Loaded {{render}} artifact preview. Use the Video/Image/Data viewer tabs."
         )
@@ -4043,6 +4011,9 @@ def _agent_system_prompt() -> str:
         "- GET /api/artifacts/run/{{run_id}} — list every object for a run with render hints",
         "- POST /api/sim-viz/load-artifact — load explicit s3_uri (or run_id+key) into viewer/download",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
+        "- GET /api/foxglove/config, /api/foxglove/status — embedded Foxglove viewer config + readiness",
+        "- POST /api/foxglove/load-artifact | /api/foxglove/convert-run | /api/foxglove/live —"
+        " open an .mcap/.bag recording, pack the active run's artifacts into MCAP, or attach a live ws:// source",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
@@ -5231,6 +5202,17 @@ def _maybe_toolground_chat_reply(
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    elif intent == "foxglove_viewer":
+        # Ground the reply on the same payload the viewer pane mounts from.
+        try:
+            state["foxglove"] = foxglove_status_payload(
+                _foxglove_config(state),
+                state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}},
+            )
+            apis_used.append("foxglove/config")
+            apis_used.append("foxglove/status")
+        except Exception:
+            state["foxglove"] = {{}}
     elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
@@ -7600,6 +7582,31 @@ def sim_viz_load_artifact(payload: dict | None = None):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
+def _foxglove_convert_run(**kwargs):
+    from npa.sdk.workbench.foxglove import convert_run
+
+    return convert_run(**kwargs)
+
+
+register_foxglove_routes(
+    app,
+    FoxgloveDeps(
+        load_state=_load_state,
+        save_state=_save_state,
+        record_run=_record_sim_viz_run,
+        foxglove_config=_foxglove_config,
+        load_artifact=sim_viz_load_artifact,
+        convert_run=_foxglove_convert_run,
+        now_iso=_now_iso,
+        validate_run_id=validate_run_id,
+        data_dir=FOXGLOVE_DATA_DIR,
+        runs_dir=Path("/opt/npa-agent/runs"),
+        keep_published=FOXGLOVE_KEEP_PUBLISHED,
+    ),
+    HTTPException,
+)
+
+
 @app.post("/sim-viz/load-franka-demo")
 def load_franka_demo(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -8496,7 +8503,7 @@ HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
 sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
-sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server]"
+sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server,foxglove]"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
@@ -8509,6 +8516,7 @@ EnvironmentFile=-/opt/npa-agent/llm.env
 EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
 EnvironmentFile=-/opt/npa-agent/public.env
+EnvironmentFile=-/opt/npa-agent/foxglove.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
@@ -8597,6 +8605,8 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
         .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)
         .replace(_AGENT_TRACE_SHIP, agent_trace_ship_source)
+        .replace(_AGENT_FOXGLOVE_SHIP, agent_foxglove_ship_source)
+        .replace(_AGENT_FOXGLOVE_ROUTES_SHIP, agent_foxglove_routes_ship_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
@@ -8751,6 +8761,24 @@ def deploy_cmd(
         [],
         "--llm-models",
         help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
+    ),
+    foxglove_embed_src: str = typer.Option(
+        "",
+        "--foxglove-embed-src",
+        help=(
+            "Foxglove embed application URL for the viewer pane "
+            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
+        ),
+    ),
+    foxglove_org_slug: str = typer.Option(
+        "",
+        "--foxglove-org-slug",
+        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
+    ),
+    foxglove_live_url: str = typer.Option(
+        "",
+        "--foxglove-live-url",
+        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
     ),
     no_public_https: bool = typer.Option(
         False,
@@ -8940,6 +8968,9 @@ def deploy_cmd(
             nebius_tenant_id=env_tenant_id,
             service_account_id=str(creds.get("service_account_id", "")),
             public_https=public_https,
+            foxglove_embed_src=foxglove_embed_src,
+            foxglove_org_slug=foxglove_org_slug,
+            foxglove_live_url=foxglove_live_url,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         try:
@@ -9102,6 +9133,24 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
+    foxglove_embed_src: str = typer.Option(
+        "",
+        "--foxglove-embed-src",
+        help=(
+            "Foxglove embed application URL for the viewer pane "
+            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
+        ),
+    ),
+    foxglove_org_slug: str = typer.Option(
+        "",
+        "--foxglove-org-slug",
+        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
+    ),
+    foxglove_live_url: str = typer.Option(
+        "",
+        "--foxglove-live-url",
+        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
+    ),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -9235,6 +9284,9 @@ def bootstrap_cmd(
             nebius_tenant_id=tenant_id,
             service_account_id=service_account_id,
             public_https=public_https,
+            foxglove_embed_src=foxglove_embed_src,
+            foxglove_org_slug=foxglove_org_slug,
+            foxglove_live_url=foxglove_live_url,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
@@ -9772,6 +9824,13 @@ def verify_live_cmd(
         'id="chatDrawerClose"',
         "chat-fab",
         "transform-origin: bottom right",
+        # Embedded Foxglove viewer pane.
+        'id="renderModeFoxglove"',
+        'id="viewerPaneFoxglove"',
+        'id="foxgloveHost"',
+        "ensureFoxgloveViewer",
+        "mountFoxgloveViewer",
+        "/api/foxglove/config",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

@@ -17,6 +17,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa demo](demo.md)
 - [npa workbench detection-training](detection-training.md)
 - [npa workbench fiftyone](fiftyone.md)
+- [npa workbench foxglove](foxglove.md)
 - [npa workbench genesis](genesis.md)
 - [npa workbench golden-eval](golden-eval.md)
 - [npa workbench groot](groot.md)

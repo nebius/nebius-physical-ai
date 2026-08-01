@@ -25,11 +25,24 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
-def _agent_ui_bundle() -> str:
-    """agent.py source plus rendered UI HTML (UI lives in agent_ui.html)."""
-    from npa.cli import agent as agent_module
+def _agent_source() -> str:
+    """agent.py plus the nginx site policy split out of it.
 
-    return Path(agent_module.__file__).read_text(encoding="utf-8") + "\n" + rendered_agent_ui_html()
+    The site body moved to ``npa/src/npa/cli/agent_site.py`` to keep the monolith
+    under its size ratchet, so source-scanning assertions must see both files.
+    """
+    from npa.cli import agent as agent_module
+    from npa.cli import agent_site as agent_site_module
+
+    return "\n".join(
+        Path(module.__file__).read_text(encoding="utf-8")
+        for module in (agent_module, agent_site_module)
+    )
+
+
+def _agent_ui_bundle() -> str:
+    """agent.py + nginx site policy + rendered UI HTML (UI lives in agent_ui.html)."""
+    return _agent_source() + "\n" + rendered_agent_ui_html()
 
 
 
@@ -346,9 +359,7 @@ def test_bootstrap_enables_public_https_nginx() -> None:
 
 
 def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "location /rerun/recordings/" in source
     assert "auth_basic off" in source
     assert "alias /opt/npa-agent/recordings/" in source
@@ -359,9 +370,7 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
 
 
 def test_bootstrap_embeds_lichtblick_viewer() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
     assert "location /lichtblick/recordings/" in source
     assert "location /lichtblick/ {{" in source
@@ -394,9 +403,7 @@ def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
     no CORS grant at all.
     """
 
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     recordings_location = source.split("location /lichtblick/recordings/ {{", 1)[1].split(
         "location = /lichtblick/ {{", 1
     )[0]
@@ -445,16 +452,16 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
 
 
 def test_bootstrap_injects_lichtblick_default_layout() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # The viewer document is exact-matched so nginx can inject a default layout via
     # the upstream-provided placeholder, so the point cloud + camera show on load.
     assert "location = /lichtblick/ {{" in source
     assert "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';" in source
     assert "def _lichtblick_default_layout_json" in source
 
-    layout = json.loads(agent_module._lichtblick_default_layout_json())
+    from npa.cli import agent_site as agent_site_module
+
+    layout = json.loads(agent_site_module._lichtblick_default_layout_json())
     panels = layout["configById"]
     three_d = next(v for k, v in panels.items() if k.startswith("3D!"))
     assert three_d["topics"]["/heldout/points"]["visible"] is True
@@ -816,7 +823,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
-    assert "resolveRerunRrdUrl" in source
+    # The authenticated blob endpoint is the fallback when the public recording
+    # copy is not published yet. (This used to assert `resolveRerunRrdUrl`, a
+    # helper that no longer existed — the call sites raised ReferenceError inside
+    # a catch, so the substring assertion passed while the fallback was dead.)
+    assert "resolveRerunRecordingUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
     assert "resolve_rrd_proxy_target" in source or "rrd_proxy_uri_allowed" in source
@@ -1343,6 +1354,10 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
+                '<button id="renderModeFoxglove"></button>'
+                '<div id="viewerPaneFoxglove"><div id="foxgloveHost"></div></div>'
+                '<script>function ensureFoxgloveViewer(){} function mountFoxgloveViewer(){} '
+                'fetch("/api/foxglove/config");</script>'
                 '<button id="describeVisual"></button>'
                 '<button id="chatDrawerToggle" class="chat-fab"></button>'
                 '<button id="chatDrawerClose"></button>'
@@ -2298,3 +2313,46 @@ def test_stages_tab_run_search_uses_server_search() -> None:
     assert "stagesSearchTimer" in source
     # Both run-search boxes wire the debounced server search.
     assert source.count("await refreshArtifactRuns(value)") >= 2
+
+
+def test_ui_script_calls_no_undefined_local_helper() -> None:
+    """Catch a helper that was deleted (or renamed) but is still called.
+
+    `node --check` only proves the script *parses*; calling a removed function is
+    a runtime ReferenceError that silently breaks a whole handler. Two real cases
+    motivated this: a merge dropped `applyViewerChromeForMode` while `refresh()`
+    still called it (aborting the refresh loop mid-way), and `resolveRerunRrdUrl`
+    had been gone for a while behind a try/catch.
+
+    Scope is deliberately narrow — bare calls to camelCase names, which is what
+    this UI's own helpers look like — so prose and member calls do not trip it.
+    """
+    import re
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    defined = set(re.findall(r"function\s+([A-Za-z_$][\w$]*)\s*\(", script))
+    defined |= set(re.findall(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", script))
+    called = set(re.findall(r"(?<![.\w$])([a-z][a-z0-9]*(?:[A-Z][A-Za-z0-9]*)+)\s*\(", script))
+
+    # Browser globals plus names provided by the dynamically imported glue module.
+    allowed = {
+        "clearInterval",
+        "clearTimeout",
+        "createImageBitmap",
+        "decodeURIComponent",
+        "drawImage",
+        "encodeURIComponent",
+        "isFinite",
+        "isNaN",
+        "localStorage",
+        "mountFoxgloveViewer",
+        "mountSelfHostedViewer",
+        "parseFloat",
+        "parseInt",
+        "requestAnimationFrame",
+        "setInterval",
+        "setTimeout",
+        "structuredClone",
+    }
+    undefined = sorted(called - defined - allowed)
+    assert not undefined, f"UI script calls undefined helper(s): {undefined}"

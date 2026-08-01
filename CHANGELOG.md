@@ -7,6 +7,47 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Foxglove embedded viewer
+
+- Embedded the official [Foxglove TypeScript SDK](https://docs.foxglove.dev/docs/embed/typescript-sdk)
+  (`@foxglove/embed`, MIT) in the NPA agent: a new **Foxglove** viewer tab mounts the
+  real SDK from same-origin assets and drives it with the configured embed source,
+  organization slug, layout key and data source. The SDK is fetched from npm at
+  build/bootstrap time and verified against its pinned sha512 integrity digest;
+  nothing is vendored. When the assets or an embed source are missing,
+  `GET /api/foxglove/config` reports `available:false` with a reason and the pane
+  says so instead of rendering an empty viewer.
+- The pane picks a **viewer backend** at runtime, so it renders instead of showing a
+  config screen: the official Foxglove app when `NPA_FOXGLOVE_EMBED_SRC` is configured,
+  otherwise the self-hosted, Foxglove-compatible OSS viewer the agent already runs
+  (Lichtblick) — which plays the recording with no account at all — otherwise an
+  explained unavailable state. `NPA_FOXGLOVE_VIEWER_BACKEND` forces either backend.
+- `.mcap`, `.bag`, `.db3`, `.ulg` and `.ulog` artifacts classify as `mcap` and are
+  published twice from one load: same-origin for the in-page OSS viewer, and on an
+  unauthenticated, CORS-enabled, byte-range `/foxglove/data/` path (random file names,
+  pruned) for the cross-origin Foxglove app, which cannot send basic-auth credentials.
+- New agent endpoints: `GET /api/foxglove/config|status`,
+  `POST /api/foxglove/load-artifact|convert-run|live`, a grounded `foxglove_viewer`
+  chat intent, and deploy flags `--foxglove-embed-src`, `--foxglove-org-slug`,
+  `--foxglove-live-url`. **Describe this** on this pane sends viewer *state* only —
+  a cross-origin embed cannot be captured — and says so.
+- New workbench tool `npa workbench foxglove` (`convert-run`, `inspect`,
+  `install-sdk`, `config`) plus `npa.sdk.workbench.foxglove` and the
+  `workbench.foxglove.convert` toolRef: packs a run's real frames, metrics and logs
+  into MCAP using Foxglove well-known schemas (a JSON array of records becomes a
+  plottable time series). Frame clocks are recorded as `timestamps=synthetic-fps`
+  because run artifacts carry no capture time, and frames are encoded by the same
+  encoder the Lichtblick writer uses. Needs the new optional extra `npa[foxglove]`.
+- New container `npa-foxglove-embed` (caddy, `:8099`, non-root): serves the SDK, the
+  shared glue module, a standalone host page, and mounted recordings with CORS +
+  byte ranges. Registered in the packaging contract, image registry, supported-tool
+  versions, and the golden-eval manifest with a capability smoke that checks the
+  SDK, glue, range reads and the CORS preflight. `/data/` has no directory listing
+  and is not world-writable.
+- Fixed: a relative Lichtblick `ds.url` was never loaded by the viewer (its
+  `remote-file` source silently ignores relative URLs), so the recording URL is now
+  always pinned onto the browsed origin.
+
 ### npa.workflow: real parallel execution and a runtime orchestrator
 
 - **Parallel fan-out.** `npa.workflow/v0.0.1` specs can declare a `parallel:`

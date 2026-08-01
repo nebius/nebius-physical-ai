@@ -22,7 +22,7 @@ DESCRIBE_MARKER = "[npa-visual-feedback]"
 # Soft cap so one screenshot cannot dominate Token Factory cost / payload size.
 MAX_IMAGE_DATA_URL_CHARS = 2_500_000
 
-VISUAL_KINDS = frozenset({"rerun", "video", "image", "data", "unknown"})
+VISUAL_KINDS = frozenset({"rerun", "foxglove", "video", "image", "data", "unknown"})
 
 # Token → operator-facing hint. Matched against joined metadata text only.
 _DOMAIN_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -84,6 +84,15 @@ _KIND_GUIDANCE: dict[str, str] = {
         "This is a still image artifact. Describe the scene concretely (objects, "
         "robot, camera viewpoint, defects). Note corruption or empty content. "
         "Suggest how it helps debugging or dataset review."
+    ),
+    "foxglove": (
+        "No pixel frame is attached — the operator is on the embedded Foxglove "
+        "viewer, which runs in a cross-origin iframe the browser cannot capture. "
+        "Use the supplied viewer state (embed source, data source type, recording "
+        "URL, run/artifact ids) to explain what is loaded, whether the recording is "
+        "actually reachable, and what to check next (topics/panels to open, whether "
+        "to compare with the Rerun recording, whether the MCAP looks empty). "
+        "Never claim to see pixels or describe imagined panels."
     ),
     "data": (
         "No pixel frame is attached — the operator is on the Data pane "
@@ -264,12 +273,21 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
         ]
     )
     if capture in {"metadata-only", "text"} or not meta.get("has_image"):
-        lines.append(
-            "CRITICAL: No viewer frame image is attached. Do NOT invent pixels, "
-            "noise, robots, or scenes. State metadata-only limits up front, use "
-            "domain hints + artifact/note fields, and suggest how to capture a "
-            "real frame (Describe this after the Rerun canvas settles)."
-        )
+        if visual_kind == "foxglove":
+            lines.append(
+                "CRITICAL: No viewer frame image is attached, and none can be: the "
+                "Foxglove viewer is a cross-origin iframe, so the browser cannot "
+                "read its canvas. Do NOT invent pixels or panels. Work from the "
+                "viewer state above and say plainly that this is a state-level, "
+                "not a pixel-level, description."
+            )
+        else:
+            lines.append(
+                "CRITICAL: No viewer frame image is attached. Do NOT invent pixels, "
+                "noise, robots, or scenes. State metadata-only limits up front, use "
+                "domain hints + artifact/note fields, and suggest how to capture a "
+                "real frame (Describe this after the Rerun canvas settles)."
+            )
     else:
         lines.append(
             "Use a vision-capable reading of the attached frame. Never claim the "

@@ -207,6 +207,10 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 - **`workflow validate-spec` / `plan-spec` / `run-spec` / `submit`** operate on
   customer-facing `npa.workflow/v0.0.1` specs — see
   [Author and submit workflows](#author-and-submit-workflows).
+- **`foxglove`** packs run frames/metrics/logs into MCAP and installs the pinned
+  [`@foxglove/embed`](https://docs.foxglove.dev/docs/embed/typescript-sdk) assets
+  behind the agent's embedded Foxglove viewer — see
+  [docs/cli/foxglove.md](docs/cli/foxglove.md).
 - **`trigger`** watches S3-compatible prefixes and retriggers workflows.
 - **`golden-eval`** runs per-container hello-world reruns as a CI gate.
 - SONIC image routing is manifest-driven — see
@@ -225,7 +229,7 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
 | Zero-GPU LLM    | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
 | Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                           |
-| Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
+| Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa workbench foxglove convert-run`, `inspect`, `install-sdk`, `config`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
 | Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
 
 </details>

@@ -103,6 +103,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     "rerun-viewer": [
         "rerun SDK import + __version__",
     ],
+    "foxglove-embed": [
+        "/healthz reports the service and the pinned @foxglove/embed version",
+        "real SDK served (FoxgloveViewer class + embed postMessage handshake)",
+        "shared NPA glue module served and importing the served SDK",
+        "standalone host page served and loading the glue module",
+        "HTTP byte range on /data returns 206 with an exact Content-Range",
+        "CORS preflight for the Range header answered on /data",
+    ],
     "lichtblick": [
         "static Lichtblick (Foxglove-compatible) web bundle present (/srv/index.html)",
         "served bundle version pin (VERSION == 1.26.0)",
