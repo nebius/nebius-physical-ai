@@ -9,9 +9,14 @@ whole run — so the submit path mints a fresh token first.
 
 from __future__ import annotations
 
+import base64
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
+
+from npa.workflows.sim2real import registry_auth
 
 from npa.cli.workbench.workflow import (
     _refresh_kubernetes_pull_secrets,
@@ -52,26 +57,83 @@ def test_no_nebius_image_means_no_hosts(rendered: str) -> None:
     assert nebius_registry_hosts(rendered) == []
 
 
-def test_refresh_is_called_once_per_registry_host(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[str] = []
+def test_every_host_lands_in_one_apply(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plan spanning two registries must produce a single, merged refresh.
+
+    The secret holds one dockerconfigjson and each apply replaces it, so refreshing
+    host by host would leave only the last host authenticated.
+    """
+
+    calls: list[tuple[str, tuple[str, ...]]] = []
     monkeypatch.setattr(
         "npa.workflows.sim2real.registry_auth.ensure_nebius_registry_pull_secret",
-        lambda *, registry_server, **kwargs: calls.append(registry_server),
+        lambda *, registry_server="", registry_servers=(), **kwargs: calls.append(
+            (registry_server, tuple(registry_servers))
+        ),
     )
     rendered = tmp_path / "workflow.yaml"
     rendered.write_text(RENDERED, encoding="utf-8")
 
     _refresh_kubernetes_pull_secrets(rendered)
-    assert calls == ["cr.eu-north1.nebius.cloud", "cr.us-central1.nebius.cloud"]
+    assert calls == [("", ("cr.eu-north1.nebius.cloud", "cr.us-central1.nebius.cloud"))]
+
+
+def test_the_applied_secret_authenticates_every_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """End to end through the real writer: both hosts survive in the applied secret."""
+
+    applied: dict[str, object] = {}
+
+    def fake_run(cmd, *, input, **kwargs):  # noqa: ANN001, ANN202 - stands in for kubectl
+        applied.update(json.loads(input))
+        return subprocess.CompletedProcess(cmd, 0, stdout="secret/npa-nebius-registry", stderr="")
+
+    monkeypatch.setattr(registry_auth, "mint_nebius_registry_token", lambda **_: "tok")
+    monkeypatch.setattr(registry_auth.subprocess, "run", fake_run)
+
+    registry_auth.ensure_nebius_registry_pull_secret(
+        registry_servers=["cr.eu-north1.nebius.cloud", "cr.us-central1.nebius.cloud"]
+    )
+
+    payload = base64.b64decode(applied["data"][".dockerconfigjson"]).decode("utf-8")
+    auths = json.loads(payload)["auths"]
+    assert sorted(auths) == ["cr.eu-north1.nebius.cloud", "cr.us-central1.nebius.cloud"]
+    assert all(entry["password"] == "tok" for entry in auths.values())
+
+
+def test_non_nebius_hosts_are_dropped_before_applying(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mixed plan must not produce a secret claiming to cover a foreign registry."""
+
+    applied: dict[str, object] = {}
+
+    def fake_run(cmd, *, input, **kwargs):  # noqa: ANN001, ANN202
+        applied.update(json.loads(input))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(registry_auth, "mint_nebius_registry_token", lambda **_: "tok")
+    monkeypatch.setattr(registry_auth.subprocess, "run", fake_run)
+
+    registry_auth.ensure_nebius_registry_pull_secret(
+        registry_servers=["ghcr.io", "cr.us-central1.nebius.cloud", "docker.io"]
+    )
+
+    payload = base64.b64decode(applied["data"][".dockerconfigjson"]).decode("utf-8")
+    assert sorted(json.loads(payload)["auths"]) == ["cr.us-central1.nebius.cloud"]
+
+
+def test_no_apply_when_no_host_is_a_nebius_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        registry_auth,
+        "mint_nebius_registry_token",
+        lambda **_: pytest.fail("must not mint a token with nothing to authenticate"),
+    )
+    registry_auth.ensure_nebius_registry_pull_secret(registry_servers=["ghcr.io"])
 
 
 def test_no_refresh_without_a_private_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
+    calls: list[object] = []
     monkeypatch.setattr(
         "npa.workflows.sim2real.registry_auth.ensure_nebius_registry_pull_secret",
-        lambda *, registry_server, **kwargs: calls.append(registry_server),
+        lambda **kwargs: calls.append(kwargs),
     )
     rendered = tmp_path / "workflow.yaml"
     rendered.write_text("resources:\n  cloud: kubernetes\n", encoding="utf-8")
@@ -85,7 +147,7 @@ def test_a_refresh_failure_does_not_block_the_submit(
 ) -> None:
     """An operator without kubectl reach, or a public-image cluster, still submits."""
 
-    def boom(*, registry_server: str, **kwargs: object) -> None:
+    def boom(**kwargs: object) -> None:
         raise RuntimeError("kubectl not found")
 
     monkeypatch.setattr(

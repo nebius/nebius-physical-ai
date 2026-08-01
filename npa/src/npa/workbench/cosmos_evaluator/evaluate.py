@@ -42,6 +42,7 @@ from npa.workbench.cosmos_evaluator.upstream import (
     UPSTREAM_LICENSE,
     UPSTREAM_REPO,
     CosmosEvaluatorError,
+    CosmosEvaluatorStorageError,
     upstream_source_dir,
 )
 
@@ -158,23 +159,33 @@ def evaluate_run(
         )
 
         evaluations: list[ClipEvaluation] = []
+        status = "completed"
         for clip_id in clip_dirs:
-            evaluations.append(
-                _evaluate_clip(
-                    clip_id=clip_id,
-                    clip_uri=augment_uri.rstrip("/") + f"/{clip_id}/",
-                    workdir=workdir / clip_id,
-                    store=store,
-                    client=client,
-                    option_table=option_table,
-                    source_clip=source_clip,
-                    threshold=threshold,
-                    hallucination_weight=hallucination_weight,
-                    question_model=question_model,
-                    vlm_model=vlm_model,
-                    warnings=warnings,
+            try:
+                evaluations.append(
+                    _evaluate_clip(
+                        clip_id=clip_id,
+                        clip_uri=augment_uri.rstrip("/") + f"/{clip_id}/",
+                        workdir=workdir / clip_id,
+                        store=store,
+                        client=client,
+                        option_table=option_table,
+                        source_clip=source_clip,
+                        threshold=threshold,
+                        hallucination_weight=hallucination_weight,
+                        question_model=question_model,
+                        vlm_model=vlm_model,
+                        warnings=warnings,
+                    )
                 )
-            )
+            except CosmosEvaluatorStorageError as exc:
+                # Storage stopped answering, so the remaining variants would skip for
+                # the same reason and average into a score that describes the outage
+                # rather than the run. Report what was actually graded, marked
+                # degraded, instead of a full batch of zeros that reads as real.
+                status = "degraded"
+                warnings.append(str(exc)[:300])
+                break
 
     scores = [clip.score for clip in evaluations]
     run_score = round(sum(scores) / len(scores), 6) if scores else 0.0
@@ -189,9 +200,10 @@ def evaluate_run(
     )
     result_uri = report_uri_for(output_uri)
     return EvaluateRunResult(
-        status="completed",
+        status=status,
         score=run_score,
-        passed=run_score >= threshold,
+        # A degraded run never learned enough to promote anything.
+        passed=status == "completed" and run_score >= threshold,
         augment_uri=augment_uri,
         output_uri=output_uri,
         result_uri=result_uri,
@@ -396,6 +408,22 @@ def _local_path(uri: str) -> str:
     return uri[len("file://") :] if uri.startswith("file://") else uri
 
 
+def _is_object_absent(exc: BaseException) -> bool:
+    """True when object storage said "no such object", rather than failing to answer.
+
+    The two cases lead to opposite conclusions: an absent variant is a legitimate
+    skip, while a credential or endpoint failure means the run learned nothing and
+    must not be reported as a batch of clips that all scored zero.
+    """
+
+    from botocore.exceptions import ClientError
+
+    if isinstance(exc, ClientError):
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        return code in {"404", "NoSuchKey", "NotFound", "NoSuchBucket"}
+    return False
+
+
 def _download_file(uri: str, dest_dir: Path, *, store: Any) -> Path | None:
     if not _is_remote(uri):
         local = Path(_local_path(uri))
@@ -404,8 +432,14 @@ def _download_file(uri: str, dest_dir: Path, *, store: Any) -> Path | None:
     try:
         local = store.download_path(uri, str(dest_dir))
     except Exception as exc:  # noqa: BLE001 - a missing artifact is not fatal
-        _log.info("could not download %s: %s", uri, exc)
-        return None
+        if _is_object_absent(exc):
+            _log.info("no object at %s: %s", uri, exc)
+            return None
+        # Anything else — bad endpoint, expired credentials, a transient outage —
+        # means the scores that follow would describe our own storage access, not the
+        # variants. Raising keeps that from being reported as a real batch of zeros.
+        _log.warning("could not read %s: %s", uri, exc, exc_info=True)
+        raise CosmosEvaluatorStorageError(f"could not read {uri}: {exc}") from exc
     path = Path(local)
     if path.is_dir():
         wanted = uri.rstrip("/").split("/")[-1]
@@ -445,7 +479,9 @@ def _download_first_frame(clip_uri: str, workdir: Path, *, store: Any) -> Path |
     if not keys:
         return None
     bucket, _ = _split(clip_uri)
-    return _download_file(f"s3://{bucket}/{sorted(keys)[0]}", workdir, store=store)
+    return _download_file(
+        f"s3://{bucket}/{sorted(keys)[0]}", workdir, store=store
+    )
 
 
 def _load_option_table(
@@ -504,7 +540,9 @@ def _resolve_source_clip(
     if not keys:
         return None
     bucket, _ = _split(prefixed)
-    return _download_file(f"s3://{bucket}/{sorted(keys)[0]}", workdir, store=store)
+    return _download_file(
+        f"s3://{bucket}/{sorted(keys)[0]}", workdir, store=store
+    )
 
 
 def write_report(

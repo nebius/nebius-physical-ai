@@ -183,7 +183,7 @@ def curate_augmented(
             verbose=verbose,
         )
         ingested = ingest_output(produced)
-        _publish(produced, curated_uri, store=store, warnings=warnings)
+        published = _publish(produced, curated_uri, store=store, warnings=warnings)
 
     clips = [
         _rewrite_source(clip, variants=variants, curated_uri=curated_uri)
@@ -192,8 +192,15 @@ def curate_augmented(
     per_variant: dict[str, int] = {}
     for clip in clips:
         per_variant[clip.source] = per_variant.get(clip.source, 0) + 1
+    if not published and require_curator:
+        raise CosmosCurateError(
+            f"curated {len(clips)} clips but could not publish them to {curated_uri}; "
+            f"{'; '.join(warnings[-2:]) or 'see warnings'}"
+        )
     return CurationReport(
-        status="completed",
+        # The clips exist only in a temporary directory that this function is about to
+        # drop, so "completed" would point the next stage at an empty prefix.
+        status="completed" if published else "degraded",
         engine=run.engine,
         augment_uri=augment_uri,
         curated_uri=curated_uri,
@@ -424,12 +431,17 @@ def _safe_stem(variant: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in variant)
 
 
-def _publish(produced: Path, curated_uri: str, *, store: Any, warnings: list[str]) -> None:
-    """Publish the curator's output tree to ``curated_uri``."""
+def _publish(produced: Path, curated_uri: str, *, store: Any, warnings: list[str]) -> bool:
+    """Publish the curator's output tree to ``curated_uri``.
+
+    Returns whether the clips are actually readable at ``curated_uri``. The caller
+    needs that: a report claiming ``completed`` with a real clip count, whose clips
+    never left the temporary directory, sends the next stage to an empty prefix.
+    """
 
     if not produced.is_dir():
         warnings.append("curator produced no output directory")
-        return
+        return False
     if not _is_remote(curated_uri):
         target = Path(_local_path(curated_uri))
         target.mkdir(parents=True, exist_ok=True)
@@ -439,11 +451,14 @@ def _publish(produced: Path, curated_uri: str, *, store: Any, warnings: list[str
             dest = target / path.relative_to(produced)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(path.read_bytes())
-        return
+        return True
     try:
         store.upload_directory(str(produced), curated_uri.rstrip("/") + "/")
     except Exception as exc:  # noqa: BLE001 - report but keep the run's findings
+        _log.warning("could not publish curator output to %s", curated_uri, exc_info=True)
         warnings.append(f"could not publish curator output to {curated_uri}: {exc}"[:300])
+        return False
+    return True
 
 
 def write_report(payload: dict[str, Any], *, result_uri: str, storage: Any | None = None) -> str:

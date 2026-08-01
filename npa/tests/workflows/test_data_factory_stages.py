@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from npa.workflows import data_factory_stages as dfs
 
 
@@ -74,6 +76,64 @@ def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> Non
     assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="0.5") == "promote_checkpoint"
     # non-numeric -> fallback 0.5 -> 0.6 >= 0.5 -> promote.
     assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="bogus") == "promote_checkpoint"
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {"score": "n/a"},  # non-numeric score
+        {"score": None},
+        {"score": {"overall": 0.9}},  # nested where a number is expected
+        ["not", "an", "object"],  # JSON root is not a report at all
+    ],
+    ids=["non-numeric", "null", "nested", "not-an-object"],
+)
+def test_grade_gate_loops_back_on_a_malformed_report(tmp_path: Path, monkeypatch, report) -> None:
+    """A gate exists to make a decision, so a malformed score must not abort the loop.
+
+    The report downloads cleanly here — only its ``score`` is unusable — so the
+    download's own error handling never sees it.
+    """
+
+    scores = tmp_path / "cosmos_evaluator.json"
+    scores.write_text(json.dumps(report))
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: None,
+    )
+    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold=0.5) == "loop_back"
+
+
+def test_grade_gate_will_not_promote_a_degraded_report(tmp_path: Path, monkeypatch) -> None:
+    """A high score the evaluator itself flagged as degraded must not promote.
+
+    The evaluator marks a run degraded when it lost object storage part-way, so the
+    score reflects the clips it managed to read rather than the batch.
+    """
+
+    scores = tmp_path / "cosmos_evaluator.json"
+    scores.write_text(json.dumps({"score": 0.95, "status": "degraded"}))
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: None,
+    )
+    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold=0.5) == "loop_back"
+
+
+def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A malformed newest-contract report must not shadow a usable older one."""
+
+    (tmp_path / "cosmos_evaluator.json").write_text(json.dumps({"score": "n/a"}))
+    (tmp_path / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.9}))
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: None,
+    )
+    assert dfs.grade_gate(str(tmp_path), str(tmp_path / "d.json"), threshold=0.5) == (
+        "promote_checkpoint"
+    )
 
 
 def test_download_json_missing_exact_file_does_not_substitute(tmp_path: Path, monkeypatch) -> None:

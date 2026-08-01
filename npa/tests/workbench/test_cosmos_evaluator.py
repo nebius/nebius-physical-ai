@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -498,6 +499,61 @@ def test_local_run_needs_no_object_storage_credentials(
     assert result.clip_count == 1
     written = write_report_helper(result, tmp_path)
     assert json.loads(Path(written).read_text())["clip_count"] == 1
+
+
+class _BrokenStore:
+    """Object storage that answers a listing and then stops answering.
+
+    Mirrors an expired credential or endpoint failure part-way through a run: the
+    variants exist, so every subsequent clip would skip for a reason that has nothing
+    to do with the clips.
+    """
+
+    def __init__(self, clips: list[str]) -> None:
+        contents = [
+            {"Key": f"cosmos_augmented/{clip}/metadata.json"} for clip in clips
+        ]
+        self.s3 = SimpleNamespace(
+            list_objects_v2=lambda **kwargs: {"Contents": contents, "IsTruncated": False}
+        )
+
+    def download_path(self, uri: str, dest: str) -> str:
+        from botocore.exceptions import EndpointConnectionError
+
+        raise EndpointConnectionError(endpoint_url="https://storage.invalid")
+
+
+def test_a_storage_outage_is_reported_degraded_not_as_a_batch_of_zeros(tmp_path: Path) -> None:
+    """An outage and a genuinely bad batch must not produce the same report.
+
+    Without this, every clip skips, the mean is 0.0, and the run reads as
+    ``completed`` — a quality gate acting on that cannot tell the two apart.
+    """
+
+    from npa.workbench.cosmos_evaluator import evaluate_run
+
+    result = evaluate_run(
+        augment_uri="s3://bucket/cosmos_augmented/",
+        output_uri="s3://bucket/grade/",
+        storage=_BrokenStore(["clip-a", "clip-b"]),
+    )
+    assert result.status == "degraded"
+    assert result.passed is False
+    assert any("could not read" in warning for warning in result.warnings), result.warnings
+
+
+def test_an_absent_variant_is_a_skip_not_an_outage(tmp_path: Path) -> None:
+    """The mirror case: nothing to read is a legitimate zero, and stays completed."""
+
+    from npa.workbench.cosmos_evaluator import evaluate_run
+
+    augment = tmp_path / "cosmos_augmented"
+    (augment / "clip-a").mkdir(parents=True)  # a variant dir with no artifacts in it
+
+    result = evaluate_run(augment_uri=str(augment), output_uri=str(tmp_path / "grade"))
+    assert result.status == "completed"
+    assert result.score == 0.0
+    assert result.clips[0].skipped
 
 
 def write_report_helper(result: Any, tmp_path: Path) -> str:

@@ -179,6 +179,10 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
 
     ``threshold`` accepts a str (the blueprint interpolates a quoted config value)
     or float; a non-numeric value falls back to 0.5.
+
+    Best-effort by design: an unreadable, malformed, or self-declared-degraded report
+    yields ``loop_back`` rather than an exception, because a gate that raises takes
+    the whole refinement loop down with it.
     """
     from npa.orchestration.npa_workflow.decisions import write_decision
     from npa.workbench.cosmos_evaluator import RESULT_FILENAME as COSMOS_EVALUATOR_RESULT
@@ -194,20 +198,34 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
         base = scores_uri.rstrip("/")
         candidates = [f"{base}/{COSMOS_EVALUATOR_RESULT}", f"{base}/{VLM_EVAL_RESULT}"]
     score = 0.0
+    status = "completed"
     source = ""
     problems: list[str] = []
     for candidate in candidates:
         try:
             report = _download_json(candidate)
+            if not isinstance(report, dict):
+                raise TypeError(f"expected a JSON object, got {type(report).__name__}")
+            # Parsed inside the try on purpose: a report that downloads cleanly but
+            # carries a non-numeric score has to degrade to loop_back exactly like an
+            # unreadable one. Letting it raise would abort the whole refinement loop
+            # over a malformed field, which is the opposite of a gate's job.
+            candidate_score = float(report.get("score", 0.0))
+            # A report the producer itself marked degraded (an evaluator that lost
+            # object storage part-way, say) describes the run's infrastructure, not
+            # its variants. Promoting on it would ship an ungraded batch.
+            candidate_status = str(report.get("status", "completed"))
         except Exception as exc:  # noqa: BLE001 - fall through to the older contract
             problems.append(f"{candidate.rsplit('/', 1)[-1]}: {exc}"[:150])
             continue
-        score = float(report.get("score", 0.0))
+        score = candidate_score
+        status = candidate_status
         source = candidate
         break
     if not source:
         print(json.dumps({"stage": "grade_gate", "warn": f"could not read a score ({'; '.join(problems)})"[:300]}))
-    decision = "promote_checkpoint" if score >= threshold else "loop_back"
+    graded = status == "completed"
+    decision = "promote_checkpoint" if graded and score >= threshold else "loop_back"
     write_decision(decision_uri, decision)
     print(
         json.dumps(
@@ -217,6 +235,7 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
                 "threshold": threshold,
                 "decision": decision,
                 "source": source,
+                "report_status": status,
             }
         )
     )

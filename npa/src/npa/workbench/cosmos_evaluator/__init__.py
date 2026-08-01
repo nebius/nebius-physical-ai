@@ -47,6 +47,7 @@ from npa.workbench.cosmos_evaluator.upstream import (
     UPSTREAM_LICENSE,
     UPSTREAM_REPO,
     CosmosEvaluatorError,
+    CosmosEvaluatorStorageError,
     upstream_source_dir,
 )
 
@@ -67,6 +68,7 @@ __all__ = [
     "AttributeVerificationResult",
     "ClipEvaluation",
     "CosmosEvaluatorError",
+    "CosmosEvaluatorStorageError",
     "EvaluateRunResult",
     "HallucinationResult",
     "check_hallucination",

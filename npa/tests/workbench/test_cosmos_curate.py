@@ -378,6 +378,104 @@ def test_curate_augmented_summarizes_a_real_curator_tree(
     assert (curated / "metas" / "v0" / "clip-0.json").is_file()
 
 
+def _stub_a_successful_curator_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
+    """Stage two variants and a curator that really writes an output tree."""
+
+    from npa.workbench.cosmos_curate.pipeline import CuratorRunResult
+
+    augment = tmp_path / "cosmos_augmented"
+    for clip in ("variant-0", "variant-1"):
+        (augment / clip).mkdir(parents=True)
+        (augment / clip / "augmented_video.mp4").write_bytes(b"fake mp4")
+
+    monkeypatch.setattr(
+        report_mod,
+        "probe_availability",
+        lambda: CuratorAvailability(
+            source="/opt/cosmos-curate",
+            importable=True,
+            ffmpeg="/usr/bin/ffmpeg",
+            encoders=("libopenh264",),
+        ),
+    )
+
+    def fake_curate_videos(*, input_dir: Any, output_dir: Any, **kwargs: Any) -> CuratorRunResult:
+        out = Path(output_dir)
+        (out / "clips").mkdir(parents=True)
+        (out / "metas" / "v0").mkdir(parents=True)
+        for index, source in enumerate(sorted(Path(input_dir).glob("*.mp4"))):
+            meta = dict(UPSTREAM_META)
+            meta["span_uuid"] = f"clip-{index}"
+            meta["source_video"] = str(source)
+            (out / "clips" / f"clip-{index}.mp4").write_bytes(b"fake mp4")
+            (out / "metas" / "v0" / f"clip-{index}.json").write_text(
+                json.dumps(meta), encoding="utf-8"
+            )
+        return CuratorRunResult(
+            status="completed",
+            engine="cosmos-curator-stages",
+            source="/opt/cosmos-curate",
+            encoder="libopenh264",
+            input_dir=str(input_dir),
+            output_dir=str(out),
+            input_videos=2,
+            clips_written=2,
+            clips_filtered=0,
+            motion_filter="score-only",
+        )
+
+    monkeypatch.setattr(report_mod, "curate_videos", fake_curate_videos)
+    return augment, tmp_path / "curated"
+
+
+class _UnwritableStore:
+    """Object storage that reads fine but refuses the upload."""
+
+    def download_path(self, uri: str, dest: str) -> str:
+        raise AssertionError("the local fixture never downloads")
+
+    def upload_directory(self, local: str, uri: str) -> None:
+        raise RuntimeError("AccessDenied")
+
+
+def test_a_failed_publish_is_reported_degraded_not_completed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clips that never reached ``curated_uri`` must not be reported as curated.
+
+    The clips live in a temp directory that curate_augmented drops on the way out, so
+    a "completed" report with a real clip_count sends the review stage to an empty
+    prefix and it silently curates nothing.
+    """
+
+    augment, _ = _stub_a_successful_curator_run(tmp_path, monkeypatch)
+    report = report_mod.curate_augmented(
+        augment_uri=str(augment),
+        curated_uri="s3://bucket/curated/",
+        report_uri=str(tmp_path / "report.json"),
+        storage=_UnwritableStore(),
+    )
+    assert report.status == "degraded"
+    assert report.clip_count == 2  # what it curated is still reported honestly
+    assert any("could not publish" in warning for warning in report.warnings), report.warnings
+
+
+def test_a_failed_publish_raises_when_the_curator_is_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    augment, _ = _stub_a_successful_curator_run(tmp_path, monkeypatch)
+    with pytest.raises(CosmosCurateError, match="could not publish"):
+        report_mod.curate_augmented(
+            augment_uri=str(augment),
+            curated_uri="s3://bucket/curated/",
+            report_uri=str(tmp_path / "report.json"),
+            storage=_UnwritableStore(),
+            require_curator=True,
+        )
+
+
 def test_curate_augmented_requires_variants(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -81,16 +81,18 @@ def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
 
     from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
-    for host in hosts:
-        try:
-            ensure_nebius_registry_pull_secret(registry_server=host)
-        except Exception as exc:  # noqa: BLE001 - never block a submit on this
-            console.print(
-                f"[yellow]Warning:[/yellow] could not refresh the Kubernetes pull secret "
-                f"for {host} ({exc}); a private-image pull may fail with 401"
-            )
-        else:
-            console.print(f"Refreshed the Kubernetes pull secret for {host}")
+    joined = ", ".join(hosts)
+    # One call with every host: the secret holds a single dockerconfigjson and each
+    # apply replaces it, so refreshing host by host would leave only the last one.
+    try:
+        ensure_nebius_registry_pull_secret(registry_servers=hosts)
+    except Exception as exc:  # noqa: BLE001 - never block a submit on this
+        console.print(
+            f"[yellow]Warning:[/yellow] could not refresh the Kubernetes pull secret "
+            f"for {joined} ({exc}); a private-image pull may fail with 401"
+        )
+    else:
+        console.print(f"Refreshed the Kubernetes pull secret for {joined}")
 
 
 @app.command("submit")

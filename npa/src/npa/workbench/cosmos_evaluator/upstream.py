@@ -37,6 +37,17 @@ class CosmosEvaluatorError(RuntimeError):
     """Raised when a Cosmos Evaluator request cannot be satisfied."""
 
 
+class CosmosEvaluatorStorageError(CosmosEvaluatorError):
+    """Raised when object storage could not answer, as opposed to having no object.
+
+    A variant that is simply absent is a legitimate skip and scores nothing. A
+    credential, endpoint, or transport failure is not: every clip would skip for a
+    reason that has nothing to do with the clips, and the run would look like a
+    batch that genuinely scored zero. Keeping the two apart lets the report say
+    which one happened.
+    """
+
+
 def upstream_source_dir(*, environ: dict[str, str] | None = None) -> Path | None:
     """Return a Cosmos Evaluator checkout root, or ``None`` when there is none.
 
