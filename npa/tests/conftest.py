@@ -69,6 +69,27 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "SKYPILOT_DOCKER_PASSWORD",
 )
 
+# Ambient infra-targeting env vars an operator/dev VM exports (a live kube
+# context/config and the persisted SkyPilot bin) that would otherwise leak into
+# non-live tests and make them resolve real clusters/binaries instead of their
+# mocked ones — e.g. `resolve_byof_kubernetes_target` reads KUBECONTEXT, and the
+# `sky` bin resolver reads NPA_SKYPILOT_BIN. A contributor who has provisioned a
+# cluster and exported these must still get the same hermetic suite as CI, where
+# they are unset. Non-live tests that need a value set them via monkeypatch after
+# this scrub runs; live-marked tests are exempt and keep the real context.
+_AMBIENT_INFRA_TARGET_ENV_VARS = (
+    "KUBECONFIG",
+    "KUBECONTEXT",
+    "NPA_K8S_CONTEXT",
+    "NPA_K8S_NAMESPACE",
+    "NPA_KUBECONFIG",
+    "NPA_BYOF_K8S_CONTEXT",
+    "NPA_BYOF_K8S_NAMESPACE",
+    "NPA_BYOF_KUBECONFIG",
+    "NPA_BYOF_CLUSTER_NAME",
+    "NPA_SKYPILOT_BIN",
+)
+
 
 def pytest_collection_finish(session: pytest.Session) -> None:
     assert_nonzero_collection(len(session.items))
@@ -79,7 +100,7 @@ def scrub_ambient_credential_env(monkeypatch, request):
     """Isolate non-live tests from real credentials exported in the shell."""
     if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
         return
-    for env_var in _AMBIENT_CREDENTIAL_ENV_VARS:
+    for env_var in (*_AMBIENT_CREDENTIAL_ENV_VARS, *_AMBIENT_INFRA_TARGET_ENV_VARS):
         monkeypatch.delenv(env_var, raising=False)
 
 
