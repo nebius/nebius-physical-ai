@@ -1524,6 +1524,20 @@ def _configured_summary() -> str:
     return "\n".join(lines)
 
 
+def _forget_project(alias: str) -> None:
+    """Remove a project stanza from ~/.npa/config.yaml (the configure inverse)."""
+    from npa.clients.config import forget_project
+
+    cleaned = alias.strip()
+    if forget_project(cleaned):
+        typer.echo(
+            f"Removed project '{cleaned}' (stanza + terraform_state) from "
+            "~/.npa/config.yaml."
+        )
+    else:
+        typer.echo(f"No project '{cleaned}' in ~/.npa/config.yaml; nothing to remove.")
+
+
 def _configure_impl(
     *,
     show: bool,
@@ -1533,7 +1547,14 @@ def _configure_impl(
     hf_token: str = "",
     ngc_api_key: str = "",
     env_output: bool = False,
+    forget_project: str = "",
 ) -> None:
+    if forget_project.strip():
+        # Deconfigure a single project: the inverse of the stanza configure
+        # writes. Storage credentials (host-scoped) and a deleted bucket's
+        # remote-state keys are handled by `npa storage bucket delete`.
+        _forget_project(forget_project.strip())
+        return
     stored: list[str] = []
     if token_factory_key.strip():
         # Store the key, then continue with the rest of configure. Returning here
@@ -1636,6 +1657,16 @@ def configure(
             "eval \"$(npa configure --show --env)\"."
         ),
     ),
+    forget_project: str = typer.Option(
+        "",
+        "--forget-project",
+        help=(
+            "Remove a project stanza (and its terraform_state) from "
+            "~/.npa/config.yaml, then exit — the inverse of writing it. Use "
+            "`npa storage bucket delete` and `npa agent destroy` to clean up the "
+            "cloud resources and their credentials first."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -1646,6 +1677,7 @@ def configure(
         hf_token=hf_token,
         ngc_api_key=ngc_api_key,
         env_output=env_output,
+        forget_project=forget_project,
     )
 
 

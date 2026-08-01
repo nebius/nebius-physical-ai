@@ -98,7 +98,11 @@ def delete_bucket_cmd(
     prune_config: bool = typer.Option(
         True,
         "--prune-config/--keep-config",
-        help="Also drop the saved S3 credentials for this bucket from ~/.npa/credentials.yaml.",
+        help=(
+            "Also drop this bucket's saved S3 credentials from "
+            "~/.npa/credentials.yaml and its Terraform remote-state keys from "
+            "~/.npa/config.yaml."
+        ),
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ) -> None:
@@ -141,7 +145,7 @@ def delete_bucket_cmd(
         if item is None:
             typer.echo(f"Bucket {bucket_name!r} does not exist in project {resolved_project}.")
             if prune_config:
-                _prune_storage_credentials(bucket_name)
+                _prune_local_state(bucket_name)
             return
         resolved_id = str((item.get("metadata") or {}).get("id", "") or "")
         bucket_name = bucket_name or str((item.get("metadata") or {}).get("name", "") or "")
@@ -168,11 +172,59 @@ def delete_bucket_cmd(
     else:
         typer.echo(f"Bucket {target} deleted.")
     if prune_config and bucket_name:
-        _prune_storage_credentials(bucket_name)
+        _prune_local_state(bucket_name)
 
 
 def _bucket_name_from_uri(value: str) -> str:
     return str(value or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
+
+
+def _prune_local_state(bucket_name: str) -> None:
+    """Drop every on-disk secret tied to a now-deleted bucket.
+
+    Two files hold them: ``credentials.yaml`` (the object-storage access key) and
+    ``config.yaml`` (the Terraform remote-state backend key under
+    ``projects.<alias>.terraform_state``). A bucket delete that cleaned only the
+    former left live-looking HMAC keys for the deleted bucket in config.yaml.
+    """
+    _prune_storage_credentials(bucket_name)
+    from npa.clients.config import CONFIG_PATH, clear_terraform_state_for_bucket
+
+    cleared = clear_terraform_state_for_bucket(bucket_name)
+    if cleared:
+        typer.echo(
+            f"Removed the Terraform remote-state keys for {bucket_name} from "
+            f"{CONFIG_PATH} (projects: {', '.join(cleared)})."
+        )
+
+
+# All key aliases `npa configure` / hand-written files use for the storage
+# section. `configure` writes the aws_* / endpoint_url forms; the loader accepts
+# the rest, so a robust prune must drop every alias, not just the canonical one.
+_STORAGE_SECRET_KEYS = (
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "access_key_id",
+    "secret_access_key",
+    "access_key",
+    "secret_key",
+    "nebius_api_key",
+    "nebius_secret_key",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "endpoint_url",
+    "endpoint",
+    "s3_endpoint",
+    "AWS_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "bucket",
+    "checkpoint_bucket",
+    "s3_bucket",
+    "NEBIUS_S3_BUCKET",
+    "NPA_CHECKPOINT_BUCKET",
+)
+# The credentials.yaml section names the loader accepts for storage.
+_STORAGE_SECTION_KEYS = ("storage", "s3", "object-storage", "object_storage")
 
 
 def _prune_storage_credentials(bucket_name: str) -> None:
@@ -180,8 +232,11 @@ def _prune_storage_credentials(bucket_name: str) -> None:
 
     Leaving them behind means the next `npa configure` / deploy reuses an access
     key for a deleted bucket — the stale-secret half of the teardown report.
+    Removes the access key, secret key, endpoint and bucket from the storage
+    section (under whatever key names the file uses) and the
+    ``nebius.service_account_id`` of the deleted bucket's storage principal.
     """
-    from npa.clients.credentials import CREDENTIALS_PATH, load_credentials, write_credentials_file
+    from npa.clients.credentials import CREDENTIALS_PATH, load_credentials
 
     try:
         credentials = load_credentials(environ={})
@@ -198,20 +253,45 @@ def _prune_storage_credentials(bucket_name: str) -> None:
         data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return
-    storage = data.get("storage")
-    if not isinstance(storage, dict):
+    if not isinstance(data, dict):
         return
-    removed = [key for key in ("bucket", "access_key_id", "secret_access_key") if storage.get(key)]
+
+    removed: list[str] = []
+    for section_key in _STORAGE_SECTION_KEYS:
+        section = data.get(section_key)
+        if not isinstance(section, dict):
+            continue
+        for key in _STORAGE_SECRET_KEYS:
+            if section.get(key) not in (None, ""):
+                section.pop(key, None)
+                removed.append(key)
+        if section:
+            data[section_key] = section
+        else:
+            data.pop(section_key, None)
+
+    # The storage principal's service account id lives beside the keys it owns;
+    # once its bucket + key are gone it points at a deleted/foreign identity.
+    nebius = data.get("nebius")
+    if isinstance(nebius, dict) and nebius.get("service_account_id") not in (None, ""):
+        nebius.pop("service_account_id", None)
+        removed.append("service_account_id")
+        if nebius:
+            data["nebius"] = nebius
+        else:
+            data.pop("nebius", None)
+
     if not removed:
         return
-    for key in removed:
-        storage.pop(key, None)
-    data["storage"] = storage
-    # write_credentials_file deep-merges, so rewrite the file to drop keys.
-    CREDENTIALS_PATH.write_text(yaml.safe_dump(data, default_flow_style=False), encoding="utf-8")
+    # Rewrite the file verbatim: write_credentials_file deep-merges and cannot
+    # drop keys.
+    CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8"
+    )
     CREDENTIALS_PATH.chmod(0o600)
-    write_credentials_file({})
+    unique_removed = list(dict.fromkeys(removed))
     typer.echo(
-        f"Removed the saved S3 {', '.join(removed)} for {bucket_name} from {CREDENTIALS_PATH} "
-        "(they pointed at a deleted bucket). Re-run `npa configure` to provision new storage."
+        f"Removed the saved S3 {', '.join(unique_removed)} for {bucket_name} from "
+        f"{CREDENTIALS_PATH} (they pointed at a deleted bucket). Re-run `npa configure` "
+        "to provision new storage."
     )

@@ -36,6 +36,8 @@ def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
     from npa.clients import nebius as nebius_module
 
     creds_path = tmp_path / "credentials.yaml"
+    # The real schema `npa configure` writes: aws_* key names, an endpoint_url,
+    # and the storage principal's service account id under `nebius:`.
     creds_path.write_text(
         yaml.safe_dump(
             {
@@ -43,9 +45,10 @@ def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
                 "storage": {
                     "bucket": "s3://npa-bucket-8a0bcf2c/",
                     "endpoint_url": "https://storage.eu-north1.nebius.cloud",
-                    "access_key_id": "AKDEAD",
-                    "secret_access_key": "SKDEAD",
+                    "aws_access_key_id": "AKDEAD",
+                    "aws_secret_access_key": "SKDEAD",
                 },
+                "nebius": {"service_account_id": "serviceaccount-storage"},
             }
         )
     )
@@ -80,11 +83,12 @@ def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
     # A versioned bucket cannot be deleted immediately, so a purge is scheduled.
     assert deletes == [("bucket-abc", "1m")]
     assert "scheduled for purge" in result.output
-    # The dead access key no longer sits in credentials.yaml waiting to be reused.
+    # Every stale secret for the deleted bucket is gone: the aws_* HMAC keys, the
+    # endpoint, the bucket, and the storage principal's service account id.
     saved = yaml.safe_load(creds_path.read_text())
-    assert "access_key_id" not in saved["storage"]
-    assert "bucket" not in saved["storage"]
-    assert saved["storage"]["endpoint_url"].endswith("nebius.cloud")
+    assert "storage" not in saved  # section emptied and dropped
+    assert "nebius" not in saved
+    # Unrelated secrets are untouched.
     assert saved["tokens"]["HF_TOKEN"] == "hf_keep"
     assert creds_path.stat().st_mode & 0o077 == 0
 
@@ -112,6 +116,108 @@ def test_bucket_delete_keeps_credentials_for_another_bucket(monkeypatch, tmp_pat
 
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(creds_path.read_text())["storage"]["access_key_id"] == "AKKEEP"
+
+
+def test_bucket_delete_clears_terraform_state_for_that_bucket(monkeypatch, tmp_path: Path) -> None:
+    """The Terraform remote-state S3 keys for a deleted bucket are secrets too.
+
+    They live in config.yaml (`projects.<alias>.terraform_state`), a separate
+    file from the object-storage access key in credentials.yaml, and a bucket
+    delete that cleaned only the latter left live-looking HMAC keys behind.
+    """
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    creds_path.write_text(
+        yaml.safe_dump({"storage": {"bucket": "s3://npa-bucket-dead/", "aws_access_key_id": "AK"}})
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "gone": {
+                        "project_id": "project-a",
+                        "terraform_state": {
+                            "bucket": "npa-bucket-dead",
+                            "endpoint": "https://storage.eu-north1.nebius.cloud",
+                            "access_key": "TFAKDEAD",
+                            "secret_key": "TFSKDEAD",
+                        },
+                    },
+                    "other": {
+                        "project_id": "project-b",
+                        "terraform_state": {"bucket": "npa-bucket-live", "access_key": "KEEP"},
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_bucket_by_name",
+        lambda project_id, name: {"metadata": {"id": "bucket-dead", "name": name}},
+    )
+    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+
+    result = runner.invoke(
+        app,
+        ["storage", "bucket", "delete", "--name", "npa-bucket-dead", "--project-id", "project-a", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(config_path.read_text())
+    # The deleted bucket's remote-state secrets are gone; the other project's stay.
+    assert "terraform_state" not in saved["projects"]["gone"]
+    assert saved["projects"]["other"]["terraform_state"]["access_key"] == "KEEP"
+    assert "remote-state" in result.output
+
+
+def test_configure_forget_project_removes_the_stanza(monkeypatch, tmp_path: Path) -> None:
+    """`npa configure --forget-project` is the inverse of writing a stanza."""
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "gone",
+                "projects": {
+                    "gone": {"project_id": "project-a", "terraform_state": {"access_key": "AK"}},
+                    "keep": {"project_id": "project-b"},
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    result = runner.invoke(app, ["configure", "--forget-project", "gone"])
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(config_path.read_text())
+    assert "gone" not in saved["projects"]
+    assert "keep" in saved["projects"]
+    # The default moved off the forgotten project.
+    assert saved["default_project"] == "keep"
+
+
+def test_configure_forget_project_is_quiet_when_absent(monkeypatch, tmp_path: Path) -> None:
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump({"projects": {"keep": {"project_id": "p"}}}))
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    result = runner.invoke(app, ["configure", "--forget-project", "missing"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing to remove" in result.output
+    assert yaml.safe_load(config_path.read_text())["projects"]["keep"]["project_id"] == "p"
 
 
 def test_bucket_delete_reports_a_missing_bucket_without_failing(monkeypatch, tmp_path: Path) -> None:
@@ -143,6 +249,30 @@ def test_delete_bucket_client_passes_ttl() -> None:
 
     assert calls[0] == ["storage", "bucket", "delete", "--id", "bucket-abc", "--ttl", "1m"]
     assert calls[1] == ["storage", "bucket", "delete", "--id", "bucket-def"]
+
+
+def test_agent_destroy_removes_the_terraform_workdir() -> None:
+    """destroy must also drop ~/.npa/workbenches/<alias>/<name>/ (the TF tree).
+
+    It previously cleaned only ~/.npa/agents/<alias>/<name>/, leaving the whole
+    Terraform workdir (provider cache + a local-backend tfstate) behind.
+    """
+    from npa.cli.agent import _cleanup_agent_local_files
+    from npa.deploy import provisioner
+
+    agent_dir = Path.home() / ".npa" / "agents" / "prod" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth.env").write_text("AGENT_PASSWORD=secret\n")
+
+    tf_dir = provisioner.working_dir_path("prod", "agent")
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
+    (tf_dir / "backend.tf").write_text("")
+
+    _cleanup_agent_local_files("prod", "agent")
+
+    assert not agent_dir.exists()
+    assert not tf_dir.exists()
 
 
 # ── agent IAM leftovers ──────────────────────────────────────────────────────
