@@ -161,3 +161,23 @@ def test_a_refresh_failure_does_not_block_the_submit(
 
 def test_a_missing_rendered_file_is_ignored(tmp_path: Path) -> None:
     _refresh_kubernetes_pull_secrets(tmp_path / "absent.yaml")  # must not raise
+
+
+def test_a_branch_overlay_is_put_ahead_of_a_baked_npa() -> None:
+    """Installing the overlay editable is not enough to displace an image's own npa.
+
+    A workbench image whose npa was installed by a different pip/backend keeps a path
+    hook pointing at its baked tree. The overlay install then reports success while
+    the stage silently runs the image's older code — observed live as
+    `No such command 'cosmos2'` from an image built for cosmos2.
+    """
+
+    from npa.orchestration.npa_workflow.skypilot_render import render_task_run_script
+
+    script = render_task_run_script(["npa", "workbench", "cosmos2", "transfer"])
+    assert "PYTHONPATH=/tmp/npa-src-overlay/src" in script
+    assert 'PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"' in script
+    # Ahead of the command, or it has no effect on it.
+    assert script.index("PYTHONPATH") < script.index("npa workbench")
+    # SkyPilot reads ${...} as one of its own placeholders.
+    assert "${" not in script
