@@ -6,6 +6,11 @@ when rebuilding the same Dockerfiles.
 
 Manifest source: `npa/docker/workbench/sm120-images.json`.
 
+> Extending to datacenter Blackwell (B200 `sm_100` / B300 `sm_103`)? `sm_120`
+> validation does **not** transfer to `sm_100`/`sm_103` (different compute-
+> capability major). Follow the per-image plan and runbook in
+> `docs/workbench/blackwell-b200-b300-compatibility-plan.md`.
+
 ## Required Images
 
 | Image | Tag | Purpose |

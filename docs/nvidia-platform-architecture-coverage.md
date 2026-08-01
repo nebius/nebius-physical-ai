@@ -38,6 +38,13 @@ NVIDIA publishes different CUDA / PyTorch versions per host CPU architecture for
 - aarch64 (Jetson Thor, DGX Spark) already has CUDA 13 from NVIDIA. Nebius does not currently offer aarch64 GPU compute.
 - Genesis is independently blocked on upstream Taichi sm_103, unrelated to this split.
 
+## B200 / B300 image build effort
+
+The per-image plan for making Workbench containers deployable on datacenter
+Blackwell (B200 `sm_100`, B300 `sm_103`) — compatibility rules, current state,
+verdicts, and the build/validate runbook — lives in
+`docs/workbench/blackwell-b200-b300-compatibility-plan.md`.
+
 ## Sources
 
 - Isaac Lab: https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/pip_installation.html
