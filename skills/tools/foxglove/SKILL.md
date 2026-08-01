@@ -17,6 +17,24 @@ a Foxglove organization on a plan that allows embedding) or your self-hosted
 deployment. Without a configured embed source the viewer pane says so — it never
 renders an empty frame and calls it a viewer.
 
+## Which viewer when
+
+NPA ships **two** MCAP viewers; they are complements, not alternatives:
+
+| | `skills/tools/lichtblick/SKILL.md` (OSS) | this skill (official Foxglove) |
+| --- | --- | --- |
+| What runs | Lichtblick web build (MPL-2.0) served by the agent, in-page | Foxglove's own app in a cross-origin iframe, driven by `@foxglove/embed` |
+| Account | none | a Foxglove org on a plan that allows embedding |
+| Renders MCAP | yes, out of the box | yes, after sign-in |
+| Recording path | same-origin `/lichtblick/recordings/` (no CORS) | `/foxglove/data/` (CORS + byte ranges) |
+| Use it for | default operator playback, CI, air-gapped | customers standardized on Foxglove (layouts, extensions, org sharing) |
+
+The agent's **Foxglove** pane picks between them at runtime
+(`/api/foxglove/config` → `viewer_backend`): the official app when
+`NPA_FOXGLOVE_EMBED_SRC` is configured and the SDK assets are installed,
+otherwise the self-hosted OSS viewer, otherwise an explained unavailable state.
+`NPA_FOXGLOVE_VIEWER_BACKEND=foxglove-sdk|self-hosted` forces one.
+
 ## When To Use
 
 - Adding/changing the agent's Foxglove viewer pane or `/api/foxglove/*` endpoints
@@ -34,7 +52,9 @@ renders an empty frame and calls it a viewer.
 | Shared browser glue (`mountFoxgloveViewer`) | `npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js` |
 | Standalone host page | `npa/src/npa/cli/assets/foxglove/index.html` |
 | Container (caddy, `:8099`, non-root) | `npa/docker/workbench/foxglove-embed/` |
-| Agent backend helpers (embedded module) | `npa/src/npa/cli/agent_foxglove.py` |
+| Agent backend helpers (shipped module) | `npa/src/npa/agent_backend/foxglove.py` (shim: `cli/agent_foxglove.py`) |
+| Agent routes (shipped module) | `npa/src/npa/agent_backend/foxglove_routes.py` |
+| nginx serving policy | `npa/src/npa/cli/agent_site.py` |
 | Agent UI pane + lazy SDK import | `npa/src/npa/cli/agent_ui.html` (`ensureFoxgloveViewer`) |
 | MCAP writer / reader | `npa/src/npa/workbench/foxglove/{mcap_writer,inspect}.py` |
 | CLI / SDK | `npa/src/npa/cli/workbench/foxglove.py`, `npa/src/npa/sdk/workbench/foxglove.py` |
@@ -50,7 +70,7 @@ Published names are random (`<token>-<stem>.mcap`) and pruned to the newest few.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/foxglove/config` | Everything the UI needs to mount the viewer; `available:false` + `reason` when it cannot |
+| `GET /api/foxglove/config` | Everything the UI needs to mount a viewer: `viewer_backend`, `self_hosted_url`, SDK/embed settings, data source; `available:false` + `reason` when neither backend can render |
 | `GET /api/foxglove/status` | Readiness + active recording (also grounds the `foxglove_viewer` chat intent) |
 | `POST /api/foxglove/load-artifact` | Load an `.mcap`/`.bag`/`.db3`/`.ulg`/`.ulog` artifact (`s3_uri` or `run_id`+`key`) |
 | `POST /api/foxglove/convert-run` | Convert the active run's local artifacts to MCAP and load it |
@@ -102,6 +122,12 @@ It has no authentication of its own: keep it cluster-internal or behind an auth 
   screenshot path for this pane.
 - **Lazy load.** The SDK is imported only when the Foxglove tab is opened; keep it
   that way so the Rerun-first boot path stays fast.
+- **`ds.url` must be absolute.** The self-hosted viewer's `remote-file` source
+  silently ignores a relative URL (no range request, "No data source"), so always
+  pin it onto the browsed origin.
+- **No implicit hosted app.** An unset `NPA_FOXGLOVE_EMBED_SRC` means "no official
+  app", not `embed.foxglove.dev` — otherwise a stock deploy shows a sign-in wall
+  instead of rendering.
 - Bump the SDK by editing `FOXGLOVE_EMBED_SDK_VERSION` + `FOXGLOVE_EMBED_SDK_INTEGRITY`
   (npm `dist.integrity`) and the Dockerfile ARGs together —
   `npa/tests/docker/test_foxglove_image.py` fails if they drift.
