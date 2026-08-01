@@ -679,3 +679,21 @@ def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> No
         "workbench.token_factory.caption", config={}, options=SkypilotRenderOptions()
     )
     assert "nvidia-ncore" not in other
+
+
+def test_declarative_spec_has_more_than_two_gpu_stages() -> None:
+    """Guards the premise of the live declarative e2e: it is genuinely multi-step.
+
+    The live run lives in ``npa/tests/e2e/test_nurec_reconstruct_live_e2e.py`` and
+    is gated behind real GPU infra. This assertion is deliberately here instead,
+    where it runs in the ordinary suite, so that collapsing the spec into a single
+    stage fails immediately rather than silently weakening an e2e nobody runs.
+    """
+    spec = yaml.safe_load(SPEC.read_text(encoding="utf-8"))
+    states = spec["states"]
+
+    assert len(states) >= 2, states
+    gpu_states = [name for name, s in states.items() if s.get("resources") == "gpu"]
+    assert len(gpu_states) >= 2, f"expected multiple GPU stages, got {gpu_states}"
+    # And the chain is real: each stage after the first declares what it needs.
+    assert any(s.get("needs") for s in states.values())

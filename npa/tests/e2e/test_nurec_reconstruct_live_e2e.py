@@ -29,6 +29,9 @@ pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "nurec-reconstruct.yaml"
+SPEC = (
+    ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "nurec-reconstruct.yaml"
+)
 CATEGORY = "neural-reconstruction"
 DEFAULT_IMAGE = "nvcr.io/nvidia/nre/nre-ga:26.04"
 #: Objects the run MUST publish for the capability to be considered delivered.
@@ -204,3 +207,114 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
     assert report["has_rrd"] is True
     assert report["has_usdz"] is True
     assert report["has_novel_views"] is True
+
+
+def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> None:
+    """The declarative npa.workflow twin must run end to end, not just render.
+
+    This is a materially different execution path from the single-pod SkyPilot
+    task above: every state becomes its OWN pod, so nothing survives in /tmp and
+    the NCore sequence and the trained USDZ have to travel through S3. That
+    cross-pod handoff is the thing this test exists to protect -- a rendering-only
+    check cannot see it fail.
+    """
+    if os.environ.get("NPA_INTEGRATION_E2E", "") != "1":
+        pytest.skip("set NPA_INTEGRATION_E2E=1 to run the live NuRec e2e")
+
+    bucket = _require("NPA_NUREC_E2E_BUCKET")
+    npa_src = _require("NPA_NUREC_E2E_NPA_SRC_S3_URI")
+    infra = os.environ.get("NPA_NUREC_E2E_INFRA", "").strip()
+    base_prefix = os.environ.get("NPA_NUREC_E2E_PREFIX", "checkpoints").strip().strip("/")
+    for name in ("NGC_API_KEY", "HF_TOKEN", "AWS_ENDPOINT_URL"):
+        _require(name)
+
+    stamp = time.strftime("%Y%m%dt%H%M%S", time.gmtime())
+    run_id = f"nurec-npa-{stamp}z"
+    prefix = f"{base_prefix}/{CATEGORY}/{run_id}" if base_prefix else f"{CATEGORY}/{run_id}"
+
+    command = [
+        _npa_bin(),
+        "workbench",
+        "workflow",
+        "submit",
+        str(SPEC),
+        "--run-id",
+        run_id,
+        "--var",
+        f"bucket={bucket}",
+        "--var",
+        f"prefix={prefix}",
+        # The declarative path forwards credentials as SkyPilot secrets rather than
+        # substituting them into the YAML.
+        "--secret-env",
+        "AWS_ACCESS_KEY_ID",
+        "--secret-env",
+        "AWS_SECRET_ACCESS_KEY",
+        "--secret-env",
+        "HF_TOKEN",
+        "--secret-env",
+        "NGC_API_KEY",
+    ]
+    if infra:
+        command.extend(["--infra", infra])
+
+    env = dict(os.environ, NPA_SRC_S3_URI=npa_src)
+    submit = subprocess.run(command, capture_output=True, text=True, timeout=3600, env=env)
+    evidence = tmp_path / "submit-declarative.log"
+    evidence.write_text((submit.stdout or "") + (submit.stderr or ""), encoding="utf-8")
+    assert submit.returncode == 0, f"submit failed; see {evidence}"
+    for secret in ("NGC_API_KEY", "HF_TOKEN", "AWS_SECRET_ACCESS_KEY"):
+        assert os.environ[secret] not in evidence.read_text(encoding="utf-8"), secret
+
+    deadline = time.time() + float(os.environ.get("NPA_NUREC_E2E_MAX_WAIT_SECONDS", "7200"))
+    s3 = _s3_client()
+    scan_prefix = f"{prefix}/"
+    keys: list[str] = []
+    while time.time() < deadline:
+        keys = _list_run_keys(s3, bucket, scan_prefix)
+        if any(key.endswith("/reports/final.json") for key in keys):
+            break
+        time.sleep(30)
+
+    missing = [s for s in REQUIRED_SUFFIXES if not any(k.endswith(s) for k in keys)]
+    assert not missing, f"{run_id} is missing {missing}; published: {sorted(keys)[:40]}"
+
+    # The cross-pod handoff specifically: fetch must have published the WHOLE
+    # sequence (meta-file + every shard, symlinks resolved) for reconstruct to
+    # materialize in a different pod.
+    sequence = [k for k in keys if "/ncore/sequence/" in k]
+    assert sequence, "fetch did not publish the NCore sequence for the next pod"
+    assert any(k.endswith(".json") for k in sequence), "sequence has no meta-file"
+    assert sum(1 for k in sequence if k.endswith(".itar")) >= 2, (
+        f"sequence looks incomplete, only: {sorted(sequence)}"
+    )
+    # ...and the later stages actually consumed it.
+    assert any("/novel_views/" in k and k.endswith(".png") for k in keys)
+
+    from npa.workflows.artifacts import list_artifacts, list_runs, select_preferred_artifact
+
+    category_prefix = f"{base_prefix}/{CATEGORY}" if base_prefix else CATEGORY
+    summary = next(
+        (r for r in list_runs(bucket, prefix=category_prefix, s3=s3).runs if r.run_id == run_id),
+        None,
+    )
+    assert summary is not None, f"{run_id} not listed under {category_prefix}"
+    assert summary.has_viewable is True
+    encoded = (
+        f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}T"
+        f"{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}+00:00"
+    )
+    assert summary.started_at == encoded, f"{summary.started_at} != {encoded}"
+
+    preferred = select_preferred_artifact(list_artifacts(bucket, run_id, prefix=category_prefix, s3=s3))
+    assert preferred is not None
+    assert preferred.key.endswith("/reports/sim2real.rrd")
+
+    from npa.cli.agent_recordings import is_stock_demo_recording, recording_has_run_entities
+
+    local_rrd = tmp_path / "declarative.rrd"
+    s3.download_file(bucket, preferred.key, str(local_rrd))
+    data = local_rrd.read_bytes()
+    assert recording_has_run_entities(data) is True
+    assert is_stock_demo_recording(data) is False
+
