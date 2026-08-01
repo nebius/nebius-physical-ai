@@ -846,13 +846,22 @@ def _auth_secret_path(project_alias: str, name: str) -> Path:
 
 
 def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
-    """Remove the local agent state dir (auth.env + secrets) after a destroy.
+    """Remove the local agent state + Terraform workdir after a destroy.
 
-    The auth secret file held live basic-auth credentials for the torn-down VM;
-    leaving it on disk after ``destroy`` was a stale-credential leak.
+    Two trees live under ``~/.npa`` for an agent: ``agents/<alias>/<name>/``
+    (auth.env + secrets — live basic-auth credentials, a stale-credential leak
+    if left) and ``workbenches/<alias>/<name>/`` (the Terraform workdir with the
+    provider cache and, in a local backend, ``terraform.tfstate``). Terraform has
+    already destroyed the VM by the time this runs, so both are safe to remove;
+    leaving the workdir behind was the teardown-report leftover.
     """
     agent_dir = Path.home() / ".npa" / "agents" / project_alias / name
     shutil.rmtree(agent_dir, ignore_errors=True)
+
+    from npa.deploy import provisioner
+
+    tf_dir = provisioner.working_dir_path(project_alias, name)
+    shutil.rmtree(tf_dir, ignore_errors=True)
 
 
 def _write_auth_secret(*, project_alias: str, name: str, user: str, password: str) -> Path:
