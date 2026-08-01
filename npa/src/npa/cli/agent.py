@@ -23,7 +23,9 @@ import typer
 from npa.cli._typer_defaults import resolve_option_default, resolve_typer_defaults
 from npa.cli.agent_errors import _agent_deploy_failure_hint
 from npa.cli.agent_quota import (
+    _agent_check_compute_instance_quota,
     _agent_check_public_ip_quota,
+    _agent_compute_instance_quota_result,
     _agent_public_ip_quota_result,
 )
 from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
@@ -8457,6 +8459,7 @@ def preflight_cmd(
     if not skip_nebius:
         results.append(_agent_nebius_auth_result())
         results.append(_agent_public_ip_quota_result())
+        results.append(_agent_compute_instance_quota_result())
     results.append(_agent_ssh_egress_result())
     results.append(_agent_token_factory_result())
     has_fail = _render_agent_checks(results, output_json=output_json)
@@ -8602,7 +8605,9 @@ def deploy_cmd(
     # surfaces deep in `terraform apply` (a raw QuotaFailure) after the network,
     # subnet and boot disk were created and must be rolled back. Best-effort: an
     # unreadable quota never blocks the deploy.
-    _agent_check_public_ip_quota(env_project_id, env_tenant_id, env_region, agent_exists=bool(_agent_record(project, name).get("public_ip")))
+    _agent_exists = bool(_agent_record(project, name).get("public_ip"))
+    _agent_check_public_ip_quota(env_project_id, env_tenant_id, env_region, agent_exists=_agent_exists)
+    _agent_check_compute_instance_quota(env_project_id, env_tenant_id, env_region, agent_exists=_agent_exists)
 
     from npa.clients.nebius import NebiusError, bootstrap_agent_environment, get_iam_token
 

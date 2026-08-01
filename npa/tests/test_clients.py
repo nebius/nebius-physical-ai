@@ -1245,3 +1245,54 @@ def test_nebius_public_ipv4_quota_best_effort_on_error(mocker) -> None:
 def test_nebius_public_ipv4_quota_requires_tenant_and_region() -> None:
     assert nebius.get_public_ipv4_quota("", "us-central1") == (None, None)
     assert nebius.get_public_ipv4_quota("tenant-x", "") == (None, None)
+
+
+def _compute_instance_quota_items() -> dict:
+    return {
+        "items": [
+            {
+                "metadata": {"name": "compute.instance.count"},
+                "spec": {"limit": "5", "region": "us-central1"},
+                "status": {"usage": "2"},
+            },
+            # The reported failure: limit 0 and Nebius omits `status.usage`.
+            {
+                "metadata": {"name": "compute.instance.count"},
+                "spec": {"limit": "0", "region": "eu-north1"},
+                "status": {},
+            },
+            # A tenant-wide (region-less) allowance used as a fallback.
+            {
+                "metadata": {"name": "compute.instance.count"},
+                "spec": {"limit": "7"},
+                "status": {"usage": "1"},
+            },
+        ]
+    }
+
+
+def test_nebius_compute_instance_quota_matches_region(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", return_value=_compute_instance_quota_items())
+
+    assert nebius.get_compute_instance_quota("tenant-x", "us-central1") == (2, 5)
+
+
+def test_nebius_compute_instance_quota_limit_zero_reads_missing_usage_as_zero(mocker) -> None:
+    """A real `limit 0` with no `status.usage` must gate (usage 0 >= limit 0)."""
+    mocker.patch("npa.clients.nebius._run_json", return_value=_compute_instance_quota_items())
+
+    usage, limit = nebius.get_compute_instance_quota("tenant-x", "eu-north1")
+    assert (usage, limit) == (0, 0)
+
+
+def test_nebius_compute_instance_quota_falls_back_to_region_less(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", return_value=_compute_instance_quota_items())
+
+    # No per-region match for uk-south1 -> the tenant-wide allowance is used.
+    assert nebius.get_compute_instance_quota("tenant-x", "uk-south1") == (1, 7)
+
+
+def test_nebius_compute_instance_quota_best_effort_on_error(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
+
+    assert nebius.get_compute_instance_quota("tenant-x", "us-central1") == (None, None)

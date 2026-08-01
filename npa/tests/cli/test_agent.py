@@ -2815,6 +2815,81 @@ def test_agent_public_ip_quota_result_skips_without_project(monkeypatch) -> None
     assert "skipped" in result.summary.lower()
 
 
+def test_agent_check_compute_instance_quota_fails_when_exhausted(monkeypatch) -> None:
+    """Deploy aborts early when the region's compute.instance.count is full.
+
+    Regression: preflight/deploy checked only public IPv4, so a `limit 0`
+    compute quota let the disk/network/SG create before the VM create failed.
+    """
+    from npa.cli.agent import _agent_check_compute_instance_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 0))
+
+    with pytest.raises(Exit):
+        _agent_check_compute_instance_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_check_compute_instance_quota_skips_a_redeploy(monkeypatch) -> None:
+    """`agent_exists` (a re-deploy reusing the VM) never blocks on the quota."""
+    from npa.cli.agent import _agent_check_compute_instance_quota
+    from npa.clients import nebius as nebius_module
+
+    def _boom(*_a, **_k):  # pragma: no cover - must not be reached
+        raise AssertionError("quota lookup should be skipped for an existing agent")
+
+    monkeypatch.setattr(nebius_module, "get_project_region", _boom)
+
+    _agent_check_compute_instance_quota("project-x", "tenant-x", "eu-north1", agent_exists=True)
+
+
+def test_agent_check_compute_instance_quota_noop_when_unreadable(monkeypatch) -> None:
+    from npa.cli.agent import _agent_check_compute_instance_quota
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (None, None))
+
+    _agent_check_compute_instance_quota("project-x", "tenant-x", "eu-north1")
+
+
+def test_agent_compute_instance_quota_result_fails_on_limit_zero(monkeypatch) -> None:
+    from npa.cli.agent import _agent_compute_instance_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "us-central1"}},
+    )
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 0))
+
+    result = _agent_compute_instance_quota_result()
+    assert result.status == "FAIL"
+    assert "compute instance quota" in result.summary.lower()
+
+
+def test_agent_compute_instance_quota_result_passes_with_headroom(monkeypatch) -> None:
+    from npa.cli.agent import _agent_compute_instance_quota_result
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "uk-south1"}},
+    )
+    monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
+    monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 3))
+
+    assert _agent_compute_instance_quota_result().status == "PASS"
+
+
 def test_resolve_project_alias_prefers_explicit(monkeypatch) -> None:
     from npa.cli.agent import _resolve_project_alias
 

@@ -89,6 +89,75 @@ def _agent_public_ip_quota_result() -> "CheckResult":
     )
 
 
+def _agent_compute_instance_quota_result() -> "CheckResult":
+    """Compute-instance quota check (FAIL): deploy needs one VM.
+
+    Mirrors `_agent_public_ip_quota_result` for ``compute.instance.count``. This
+    is the quota the audit reported at ``limit 0``: preflight passed on public
+    IPv4 while the deploy then created the disk/network/SG and failed to attach a
+    VM, rolling back. Best-effort: skips (PASS) when the project/region/quota
+    can't be resolved so preflight never false-fails.
+    """
+    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
+
+    try:
+        from npa.clients.config import default_project_name, list_projects
+
+        projects = list_projects()
+        alias = default_project_name()
+        stanza = projects.get(alias) or (
+            next(iter(projects.values())) if projects else {}
+        )
+        project_id = str((stanza or {}).get("project_id", "")).strip()
+        tenant_id = str((stanza or {}).get("tenant_id", "")).strip()
+        fallback_region = str((stanza or {}).get("region", "")).strip()
+    except Exception:  # noqa: BLE001
+        project_id = tenant_id = fallback_region = ""
+
+    if not project_id or not tenant_id:
+        return CheckResult(
+            name="compute_instance_quota",
+            status=PASS,
+            summary="Compute instance quota check skipped (no configured project).",
+        )
+
+    from npa.clients.nebius import get_compute_instance_quota, get_project_region
+
+    region = (get_project_region(project_id) or fallback_region).strip()
+    if not region:
+        return CheckResult(
+            name="compute_instance_quota",
+            status=PASS,
+            summary="Compute instance quota check skipped (region unresolved).",
+        )
+    usage, limit = get_compute_instance_quota(tenant_id, region)
+    if usage is None or limit is None:
+        return CheckResult(
+            name="compute_instance_quota",
+            status=PASS,
+            summary=f"Compute instance quota not readable for region {region!r}; skipping.",
+        )
+    if usage >= limit:
+        return CheckResult(
+            name="compute_instance_quota",
+            status=FAIL,
+            summary=(
+                f"Compute instance quota is exhausted in region {region} "
+                f"({usage}/{limit}); agent deploy needs one VM."
+            ),
+            remedy=(
+                "Free a VM (`npa agent destroy` an unused agent, or delete an idle "
+                "instance), or ask a tenant admin to raise the "
+                "compute.instance.count quota for this region, then re-run."
+            ),
+        )
+    return CheckResult(
+        name="compute_instance_quota",
+        status=PASS,
+        summary=f"Compute instance quota OK in {region} ({usage}/{limit}).",
+    )
+
+
 def _agent_check_public_ip_quota(
     project_id: str, tenant_id: str, fallback_region: str, *, agent_exists: bool = False
 ) -> None:
@@ -125,4 +194,37 @@ def _agent_check_public_ip_quota(
             "Free a public IP (e.g. `npa agent destroy` an unused agent, or delete "
             "an idle VM/allocation), or ask a tenant admin to raise the "
             "vpc.ipv4-address.public.count quota for this region, then re-run."
+        )
+
+
+def _agent_check_compute_instance_quota(
+    project_id: str, tenant_id: str, fallback_region: str, *, agent_exists: bool = False
+) -> None:
+    """Fail fast when the deploy region has no compute-instance quota headroom.
+
+    The audit's tenant had ``compute.instance.count`` at ``limit 0``: preflight
+    passed on public IPv4, then deploy created the disk/network/SG and the VM
+    create failed, rolling everything back. Gate on it before any Terraform side
+    effect, mirroring `_agent_check_public_ip_quota`. Best-effort (unreadable
+    quota is a no-op); ``agent_exists`` skips it (a re-deploy reuses the VM).
+    """
+    if agent_exists:
+        return
+    from npa.clients.nebius import get_compute_instance_quota, get_project_region
+
+    region = (get_project_region(project_id) or (fallback_region or "").strip()).strip()
+    if not region:
+        return
+    usage, limit = get_compute_instance_quota(tenant_id, region)
+    if usage is None or limit is None:
+        return
+    if usage >= limit:
+        from npa.cli.agent import _fail
+
+        _fail(
+            f"Nebius compute instance quota is exhausted in region {region!r} "
+            f"(in use {usage}/{limit}); the agent VM needs one instance. "
+            "Free a VM (e.g. `npa agent destroy` an unused agent, or delete an "
+            "idle instance), or ask a tenant admin to raise the "
+            "compute.instance.count quota for this region, then re-run."
         )

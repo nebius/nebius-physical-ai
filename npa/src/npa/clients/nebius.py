@@ -464,6 +464,50 @@ def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int 
     return (None, None)
 
 
+def get_compute_instance_quota(tenant_id: str, region: str) -> tuple[int | None, int | None]:
+    """Return ``(usage, limit)`` for the tenant compute-instance quota in *region*.
+
+    Nebius meters VMs via the ``compute.instance.count`` quota allowance; a tenant
+    with ``limit 0`` (the reported failure) lets the agent VM's disk/network/SG
+    create, then the instance create fails and the whole apply rolls back. Prefer
+    an exact per-region allowance and fall back to a region-less (tenant-wide)
+    one. Best-effort: ``(None, None)`` when unreadable, so callers never block a
+    deploy on an unreadable quota. Nebius omits ``status.usage`` when nothing is
+    allocated, so a missing usage reads as 0 (a real ``limit 0`` must gate).
+    """
+    tenant = str(tenant_id or "").strip()
+    reg = str(region or "").strip()
+    if not tenant or not reg:
+        return (None, None)
+    try:
+        data = _run_json(
+            ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+        )
+    except Exception:
+        return (None, None)
+
+    def _to_int(value: Any) -> int | None:
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    region_less: tuple[int | None, int | None] | None = None
+    for item in data.get("items", []):
+        metadata = item.get("metadata", {}) or {}
+        if metadata.get("name") != "compute.instance.count":
+            continue
+        spec = item.get("spec", {}) or {}
+        item_region = str(spec.get("region", "") or "").strip()
+        status = item.get("status", {}) or {}
+        pair = (_to_int(status.get("usage", "0")), _to_int(spec.get("limit")))
+        if item_region == reg:
+            return pair
+        if not item_region and region_less is None:
+            region_less = pair
+    return region_less if region_less is not None else (None, None)
+
+
 def discover_container_registry(project_id: str, *, preferred_region: str = "eu-north1") -> str:
     """Best-effort container registry URL for *project_id*, or "".
 
