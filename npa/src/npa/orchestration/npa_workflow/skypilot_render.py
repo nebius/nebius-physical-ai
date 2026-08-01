@@ -224,6 +224,16 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         "> /tmp/npa-shim/python3\n"
         "  chmod +x /tmp/npa-shim/python3\n"
         "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
+        # Console scripts installed next to that interpreter must be resolvable by
+        # name too. Live: vLLM's FlashInfer JIT shells out to `ninja`, which pip
+        # had installed into the interpreter's bin dir — a directory that is not on
+        # the stage shell's PATH, which is the whole reason the shim above exists.
+        # Appended, not prepended, so it cannot shadow a system tool.
+        "  npa_scripts=\"$(\"$npa_python\" -c 'import sysconfig; "
+        "print(sysconfig.get_path(\"scripts\"))' 2>/dev/null || true)\"\n"
+        "  if [ -n \"$npa_scripts\" ] && [ -d \"$npa_scripts\" ]; then\n"
+        "    export PATH=\"$PATH:$npa_scripts\"\n"
+        "  fi\n"
         "  echo \"using npa interpreter $npa_python for this stage\" >&2\n"
         "fi\n"
         "python3 -c 'import npa' >/dev/null 2>&1 || "
