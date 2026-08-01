@@ -48,6 +48,11 @@ lancedb = [
 ]
 # Rerun viewer/recording integration (`npa rerun`, sim-viz adapters).
 viz = ["rerun-sdk==0.31.4"]
+# Foxglove embedded viewer: MCAP read/write for `npa workbench foxglove`
+# (pure-python; the browser SDK itself is fetched at build/bootstrap time).
+# Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
+# [tool.mypy] override) and the writer/reader pin the 1.x record API.
+foxglove = ["mcap>=1.3,<2"]
 # Blueprint Phase J: guardrails-ai output validators for the adversarial eval.
 # Injected/guarded — the pure-python validator is the default; absence degrades
 # gracefully (see npa/tests/agent_eval/adversarial.py).
@@ -60,7 +65,7 @@ agent-trace = [
     "opentelemetry-sdk>=1.20",
 ]
 # Everything the previous monolithic install provided, minus GPU extras.
-full = ["npa[data,lancedb,viz,server]"]
+full = ["npa[data,foxglove,lancedb,viz,server]"]
 server = ["fastapi~=0.136.1"]
 genesis = [
     "genesis-world",
@@ -133,6 +138,8 @@ lerobot-vlm-rl = "0.1.1"
 # (sm_120) 2026-07-21; 0.1.1 deleted from the registry. See FIXME.md.
 loop-eval = "0.1.3-genuine-sm120"
 rerun-viewer = "0.31.4"
+# Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
+foxglove-embed = "0.58.0"
 # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle tag.
 lichtblick = "1.26.0"
 lancedb = "0.30.3"
@@ -160,6 +167,18 @@ src = ["src", "tests"]
 # and CI enforces it (.github/workflows/lint.yml); widen deliberately, not by
 # accident.
 select = ["E4", "E7", "E9", "F"]
+
+# Advisory type-check config (CI: `mypy src/npa --ignore-missing-imports`).
+# mcap 1.4.0 makes mypy's module discovery report the same file under two module
+# names ("mcap" and "mcap.__init__"), which aborts the whole run. The library is
+# an optional, lazily imported dependency, so skip following it.
+[tool.mypy]
+exclude = ["(^|/)\\.venv/"]
+
+[[tool.mypy.overrides]]
+module = ["mcap", "mcap.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

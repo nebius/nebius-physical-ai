@@ -17,6 +17,11 @@ required.
 - Pinned OSS version: Lichtblick `1.26.0` (`[tool.npa.supported-tools]`).
 - CPU-only; not part of the `cuda12` / `cuda13-b300` tag families.
 
+> **Related:** `skills/tools/foxglove/SKILL.md` covers the official Foxglove app
+> embedded with the `@foxglove/embed` SDK, the MCAP converter
+> (`npa workbench foxglove convert-run`), and the agent's Foxglove pane — which
+> falls back to *this* viewer when no Foxglove account is configured.
+
 ## Interfaces
 
 CLI:

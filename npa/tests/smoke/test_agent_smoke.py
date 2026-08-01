@@ -6,7 +6,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from npa.cli.agent import AGENT_MEDIA_PREVIEW_CONTRACT, AGENT_UI_VERSION, rendered_agent_ui_html
+from npa.cli.agent import (
+    AGENT_FOXGLOVE_CONTRACT,
+    AGENT_MEDIA_PREVIEW_CONTRACT,
+    AGENT_UI_VERSION,
+    rendered_agent_ui_html,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TMUX_SCRIPT = REPO_ROOT / "npa" / "scripts" / "start_agent_live_tmux.sh"
@@ -59,12 +64,29 @@ def test_agent_bootstrap_source_smoke() -> None:
         assert marker in bundled, f"missing UI wiring marker: {marker!r}"
     for marker in AGENT_MEDIA_PREVIEW_CONTRACT:
         assert marker in bundled, f"missing media-preview contract marker: {marker!r}"
+    for marker in AGENT_FOXGLOVE_CONTRACT:
+        assert marker in bundled, f"missing Foxglove viewer contract marker: {marker!r}"
+    # The Foxglove SDK must be loaded on demand (dynamic import), never eagerly:
+    # opening the agent must not pay for an embed the operator did not ask for.
+    assert 'await import(moduleUrl)' in ui_source
+    # The Foxglove routes are a shipped backend module registered by agent.py.
+    assert "register_foxglove_routes(" in source
+    routes_source = (
+        REPO_ROOT / "npa" / "src" / "npa" / "agent_backend" / "foxglove_routes.py"
+    ).read_text(encoding="utf-8")
+    assert '@app.get("/foxglove/config")' in routes_source
+    assert '@app.post("/foxglove/load-artifact")' in routes_source
+    assert '@app.post("/foxglove/convert-run")' in routes_source
     assert 'id="chatSend"' in bundled
     assert 'id="chatForm"' in bundled
     assert 'id="chatSessionSelect"' in bundled
     assert 'chatForm.addEventListener("submit"' in bundled
     assert "/api/chat/sessions" in bundled
-    assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
+    # nginx site policy now lives in agent_site.py (split out of the monolith).
+    site_source = (REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_site.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in site_source
     assert "media_type=artifact_media_type(safe_name)" in source
 
 

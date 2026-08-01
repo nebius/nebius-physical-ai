@@ -1,0 +1,47 @@
+# npa-foxglove-embed static host.
+#
+# Byte ranges matter: Foxglove `remote-file` data sources stream MCAP/bag files
+# with HTTP Range requests, and a compressed response would break them — so
+# /data/* is served uncompressed, with CORS (including the Range preflight)
+# because the fetch is issued by the cross-origin Foxglove viewer iframe.
+{
+	admin off
+	auto_https off
+	persist_config off
+	log {
+		output stderr
+		format console
+	}
+}
+
+:8099 {
+	root * /srv
+
+	handle /healthz {
+		header Content-Type application/json
+		respond `{"ok":true,"service":"npa-foxglove-embed","sdk":"@foxglove/embed@{$FOXGLOVE_EMBED_VERSION}"}` 200
+	}
+
+	handle /data/* {
+		header {
+			Access-Control-Allow-Origin "*"
+			Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+			Access-Control-Allow-Headers "Range, If-Range, Content-Type"
+			Access-Control-Expose-Headers "Accept-Ranges, Content-Range, Content-Length"
+			Cross-Origin-Resource-Policy "cross-origin"
+			Cache-Control "no-cache"
+		}
+		@options method OPTIONS
+		respond @options 204
+		# No directory listing: a reachable port would otherwise enumerate every
+		# mounted recording. Callers address recordings by name (the agent hands
+		# the viewer an explicit URL). Set FOXGLOVE_DATA_BROWSE=browse to opt in
+		# on a trusted, cluster-internal deployment.
+		file_server {$FOXGLOVE_DATA_BROWSE:}
+	}
+
+	handle {
+		encode gzip
+		file_server
+	}
+}

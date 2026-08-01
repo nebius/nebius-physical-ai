@@ -521,6 +521,32 @@ containers:
       timeout_seconds: 60
       status: ready
 
+  foxglove-embed:
+    image: npa-foxglove-embed
+    dockerfile: npa/docker/workbench/foxglove-embed/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Serves the @foxglove/embed TypeScript SDK, the shared NPA glue module, and
+        MCAP/bag recordings so robotics runs can be replayed in an embedded Foxglove
+        viewer (agent UI viewer pane and standalone host page).
+    safety:
+      runs_as: nobody
+      base_image: caddy:2.11-alpine (digest-pinned)
+      network: internal (static host port 8099)
+      external_fetch: [npm registry at build time only]
+      notes: >-
+        Build-time fetch of @foxglove/embed is sha512-verified against the pinned
+        npm dist.integrity digest. No admin API, no ACME, no runtime outbound calls.
+        /data is served without auth (the cross-origin Foxglove iframe cannot send
+        credentials) — keep the port cluster-internal or behind an auth proxy.
+    golden_eval:
+      kind: server-smoke
+      command: sh /usr/local/bin/npa-foxglove-smoke.sh
+      gpu: none
+      timeout_seconds: 120
+      status: ready
+
   lichtblick:
     image: npa-lichtblick
     dockerfile: npa/docker/workbench/lichtblick/Dockerfile

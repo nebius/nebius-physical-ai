@@ -42,6 +42,7 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
     "loop-eval": "npa-loop-eval",
     "rerun-viewer": "npa-rerun-viewer",
+    "foxglove-embed": "npa-foxglove-embed",
     "lichtblick": "npa-lichtblick",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
@@ -107,6 +108,8 @@ SUPPORTED_TOOL_VERSIONS = {
     # from the registry.
     "loop-eval": "0.1.3-genuine-sm120",
     "rerun-viewer": "0.31.4",
+    # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
+    "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
     "lichtblick": "1.26.0",
     "lancedb": "0.30.3",

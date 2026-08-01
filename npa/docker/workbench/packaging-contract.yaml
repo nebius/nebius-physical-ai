@@ -161,6 +161,13 @@ images:
     ports: [9090]
     final_user: nobody
     redistribution: public
+  foxglove-embed:
+    dockerfile: foxglove-embed/Dockerfile
+    tier: service
+    ports: [8099]
+    final_user: nobody
+    notes: "Static host for the @foxglove/embed SDK (MIT), the shared glue module, and MCAP data (CORS + byte ranges)."
+    redistribution: public
   lichtblick:
     dockerfile: lichtblick/Dockerfile
     tier: service
