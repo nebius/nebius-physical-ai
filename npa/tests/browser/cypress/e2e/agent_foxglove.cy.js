@@ -24,6 +24,10 @@ function foxgloveConfig(overrides) {
       sdk_version: "0.58.0",
       sdk_ready: true,
       embed_src: MOCK_EMBED_SRC,
+      viewer_backend: "foxglove-sdk",
+      viewer_backends: ["foxglove-sdk", "self-hosted"],
+      self_hosted_ready: false,
+      self_hosted_url: "",
       org_slug: "acme-robotics",
       color_scheme: "dark",
       layout_storage_key: "npa-agent-foxglove",
@@ -52,6 +56,9 @@ function stubFoxgloveApis(configOverrides) {
       sdk_version: config.sdk_version,
       embed_src: config.embed_src,
       org_slug: config.org_slug,
+      viewer_backend: config.viewer_backend,
+      self_hosted_ready: config.self_hosted_ready,
+      self_hosted_url: config.self_hosted_url,
       foxglove_ready: Boolean(config.data_source),
       run_id: config.run_id,
       artifact_key: config.artifact_key,
@@ -193,6 +200,62 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#renderModeFoxglove").click();
     cy.wait("@foxgloveConfig");
     cy.get("#viewerPaneFoxglove iframe").should("exist");
+  });
+
+  it("renders the recording with the self-hosted OSS viewer when no Foxglove app is configured", () => {
+    // The point of the fallback: an operator with no Foxglove account still sees
+    // the recording, in-page, instead of a config screen.
+    stubFoxgloveApis({
+      viewer_backend: "self-hosted",
+      embed_src: "",
+      self_hosted_ready: true,
+      self_hosted_url: `/lichtblick/?ds=remote-file&ds.url=${encodeURIComponent(MCAP_URL)}`,
+    });
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeFoxglove").click();
+    cy.wait("@foxgloveConfig");
+
+    cy.get("#viewerPaneFoxglove iframe", { timeout: 20000 })
+      .should("have.attr", "src")
+      .and("include", "/lichtblick/?ds=remote-file");
+    // The recording must be pinned to this page's origin: the in-page viewer
+    // fetches it same-origin (that path grants no CORS).
+    cy.get("#viewerPaneFoxglove iframe").should(($frame) => {
+      const src = new URL($frame.attr("src"), window.location.origin);
+      const ds = new URL(String(src.searchParams.get("ds.url")), window.location.origin);
+      expect(ds.origin).to.eq(window.location.origin);
+      expect(ds.pathname).to.eq(MCAP_URL);
+    });
+    cy.get("#foxgloveStatus", { timeout: 20000 })
+      .should("have.class", "is-ready")
+      .and("contain.text", "Self-hosted");
+    cy.get("#foxgloveMessage").should("have.attr", "hidden");
+    // The mock viewer echoes the data source it was handed.
+    cy.get("#viewerPaneFoxglove iframe").should(($frame) => {
+      const doc = $frame[0].contentDocument;
+      expect(doc, "self-hosted viewer document").to.exist;
+      expect(String(doc.body.textContent)).to.include("sim2real.mcap".slice(0, 4));
+    });
+  });
+
+  it("points at the OSS viewer when nothing can render the official app", () => {
+    stubFoxgloveApis({
+      available: false,
+      viewer_backend: "",
+      embed_src: "",
+      sdk_ready: false,
+      self_hosted_ready: true,
+      reason: "No Foxglove embed source is configured (NPA_FOXGLOVE_EMBED_SRC).",
+      data_source: null,
+    });
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeFoxglove").click();
+    cy.wait("@foxgloveConfig");
+
+    cy.get("#foxgloveMessage").should("not.have.attr", "hidden");
+    cy.get("#foxgloveMessage").should("contain.text", "self-hosted");
+    cy.get("#foxgloveMessage").should("contain.text", "Lichtblick");
+    cy.get("#viewerPaneFoxglove iframe").should("not.exist");
   });
 
   it("describes the viewer from state and never claims a captured frame", () => {
