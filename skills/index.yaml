@@ -395,6 +395,16 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos3", "generate", "--help"]
         contains: "guardrails"
+  - name: cosmos3-npa-workflow
+    category: workflows
+    when_to_use: "Write, validate, or submit an npa.workflow/v0.0.1 YAML that runs Cosmos 3 generation (the declarative spec, not the SkyPilot template)."
+    path: skills/workflows/cosmos3-npa-workflow/SKILL.md
+    smoke:
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
+      - type: file_exists
+        path: npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
     when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
