@@ -33,6 +33,8 @@ states:
     toolRef: workbench.vlm_eval.run
     resources: gpu
     outputs:
-      - uri: "{{config.scores_uri}}report.json"
+      # vlm_eval_stub.json is the tool's (legacy-named) result file; it holds a
+      # real score whenever backend != stub.
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
         schema: npa.workbench.vlm_eval.report.v1
     terminal: true

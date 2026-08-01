@@ -86,6 +86,8 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
         "sonic-export-eval.yaml",
         "sonic-locomotion-finetuning.yaml",
         "tokenfactory-cosmos-gate.yaml",
+        # Self-hosted vLLM, bounded by serving a 2B VLM and pre-fetching weights.
+        "vlm-eval-single.yaml",
     ):
         assert good in rotation, f"{good} should be in the rotation"
     # Twins that can't pass as a standalone submit today are excluded.

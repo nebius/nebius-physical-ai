@@ -123,6 +123,7 @@ submit per day**, not the whole `gpu and e2e` suite:
   | `sonic-export` | 6m11s |
   | `sonic-export-eval` | 6m33s |
   | `sonic-locomotion-finetuning` | 7m01s |
+  | `vlm-eval-single` | 7m32s |
   | `tokenfactory-cosmos-gate` | 11m40s |
 
   Two twins stay out, each with an accurate `skip_reason` in
@@ -147,8 +148,10 @@ reached `SUCCEEDED`, and self-cleaned with no leftover cluster. The rotation has
 already paid for itself in real product bugs it surfaced:
 
 - The self-hosted vLLM server was never started by the render (`[Errno 111]
-  Connection refused`), and once started, a 7B VLM's cold start did not fit a
-  bounded run.
+  Connection refused`); once started, a 7B VLM's cold start did not fit a
+  bounded run; and once it fit, the engine died in warmup three different ways
+  (missing `ninja`, `ninja` present but not on the stage's PATH, then
+  `nvcc: not found` for FlashInfer's JIT sampler).
 - `sonic train` had no runtime that trains in the job it is already running in;
   all three delegated to more infrastructure.
 - `sonic export` / `sonic eval` could not exchange artifacts between stages,
