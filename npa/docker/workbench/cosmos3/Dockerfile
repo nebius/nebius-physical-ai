@@ -54,6 +54,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas \
     PATH=/opt/npa/.venv/bin:${PATH}
 
+# openssh-server + sudo are here for the SkyPilot Kubernetes bootstrap, which
+# overrides the entrypoint with its own shell and then installs an SSH runtime as
+# the pod user. Without them a workbench image cannot host a SkyPilot k8s task
+# (it dies with `sudo: command not found`), which is why the cosmos3-generate
+# workflow needs them. The final user stays non-root; the sudoers grant below is
+# scoped to that bootstrap.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -61,6 +67,8 @@ RUN apt-get update \
         ffmpeg \
         git \
         git-lfs \
+        openssh-server \
+        sudo \
         wget \
     && rm -rf /var/lib/apt/lists/*
 
@@ -73,7 +81,9 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
 RUN mkdir -p /opt/cosmos3 /opt/npa /opt/uv /workspace /tmp/hf_home \
         "${NPA_COSMOS3_OUTPUT_DIR}" \
     && chown -R ubuntu:ubuntu /opt/cosmos3 /opt/npa /opt/uv /workspace \
-       /tmp/hf_home "${NPA_COSMOS3_OUTPUT_DIR}"
+       /tmp/hf_home "${NPA_COSMOS3_OUTPUT_DIR}" \
+    && echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-skypilot \
+    && chmod 0440 /etc/sudoers.d/90-skypilot
 
 USER ubuntu
 
