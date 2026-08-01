@@ -27,6 +27,9 @@ def status_cmd(
     name: str = typer.Option("", "--name", help="NPA cluster target name. Lists all known targets when omitted."),
     output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or NPA config."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias whose saved project_id to use (like `npa cluster up`)."
+    ),
     terraform_dir: Path | None = typer.Option(
         None,
         "--terraform-dir",
@@ -35,24 +38,40 @@ def status_cmd(
 ) -> None:
     """Show NPA cluster target state from Nebius and the local cache."""
 
-    _emit_status(name=name, output_format=output_format, project_id=project_id, terraform_dir=terraform_dir)
+    _emit_status(
+        name=name,
+        output_format=output_format,
+        project_id=project_id,
+        project=project,
+        terraform_dir=terraform_dir,
+    )
 
 
 def list_cmd(
     output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from NPA config."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias whose saved project_id to use (like `npa cluster up`)."
+    ),
 ) -> None:
     """List NPA Workbench cluster targets known locally or in the configured project."""
 
-    _emit_status(name="", output_format=output_format, project_id=project_id)
+    _emit_status(name="", output_format=output_format, project_id=project_id, project=project)
 
 
-def _emit_status(*, name: str, output_format: str, project_id: str, terraform_dir: Path | None = None) -> None:
+def _emit_status(
+    *,
+    name: str,
+    output_format: str,
+    project_id: str,
+    project: str = "",
+    terraform_dir: Path | None = None,
+) -> None:
     fmt = output_format.lower()
     if fmt not in {"table", "json"}:
         raise typer.BadParameter("--format must be table or json")
     try:
-        resolved_project_id = _resolve_project_for_status(project_id)
+        resolved_project_id = _resolve_project_for_status(project_id, project)
         rows = _collect_rows(name=name, project_id=resolved_project_id, terraform_dir=terraform_dir)
         if fmt == "json":
             typer.echo(json.dumps(rows, indent=2, sort_keys=True))
@@ -63,9 +82,22 @@ def _emit_status(*, name: str, output_format: str, project_id: str, terraform_di
         raise typer.Exit(1) from exc
 
 
-def _resolve_project_for_status(explicit_project_id: str) -> str:
+def _resolve_project_for_status(explicit_project_id: str, project_alias: str = "") -> str:
     if explicit_project_id.strip():
         return explicit_project_id.strip()
+    alias = (project_alias or "").strip()
+    if alias:
+        # Accept the same `--project <alias>` other cluster commands (up/down)
+        # take, resolving it to the saved project id before the config default.
+        from npa.clients.config import resolve_environment
+
+        try:
+            saved = resolve_environment(alias)
+        except Exception:  # noqa: BLE001 - a bad alias falls through to the config default
+            saved = None
+        resolved = str(getattr(saved, "project_id", "") or "")
+        if resolved:
+            return resolved
     try:
         return resolve_project_id()
     except ClusterConfigError:

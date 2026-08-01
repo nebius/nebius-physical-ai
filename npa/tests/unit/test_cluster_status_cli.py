@@ -97,6 +97,51 @@ def test_list_json_merges_remote_and_local(monkeypatch) -> None:
     assert payload[0]["node_count"] == 1
 
 
+def test_list_resolves_project_alias_like_up_and_down(monkeypatch) -> None:
+    """`cluster status`/`list` accept `--project <alias>` (not just `--project-id`).
+
+    Regression: the audit flagged `npa cluster status --project` as rejected while
+    `npa cluster up`/`down` accept the alias.
+    """
+    from types import SimpleNamespace
+
+    import npa.clients.config as config_mod
+
+    seen: dict[str, str] = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def list_clusters(self, project_id):
+            seen["project_id"] = project_id
+            return []
+
+        def get_cluster(self, name, *, project_id=""):  # pragma: no cover - not hit
+            raise AssertionError("get_cluster should not be called here")
+
+        def list_node_groups(self, cluster_id):  # pragma: no cover - no clusters
+            return []
+
+    monkeypatch.setattr(status_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [])
+    monkeypatch.setattr(
+        config_mod,
+        "resolve_environment",
+        lambda project=None: SimpleNamespace(
+            project_id="project-from-alias" if project == "test-rtx" else ""
+        ),
+    )
+
+    result = runner.invoke(app, ["list", "--project", "test-rtx", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert seen["project_id"] == "project-from-alias"
+    # And `status --project` parses the same option (no "No such option").
+    status_result = runner.invoke(app, ["status", "--project", "test-rtx", "--format", "json"])
+    assert status_result.exit_code == 0, status_result.output
+
+
 def test_status_json_includes_terraform_outputs(monkeypatch, tmp_path) -> None:
     class FakeClient:
         def __init__(self, **kwargs) -> None:
