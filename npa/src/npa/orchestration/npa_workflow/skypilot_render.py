@@ -259,7 +259,11 @@ def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
     model_q = shlex.quote(model)
     return (
         "# Self-hosted vLLM: launch the OpenAI-compatible server in the background\n"
-        "# on 127.0.0.1:8000; the eval client waits for /v1/models readiness.\n"
+        "# on 127.0.0.1:8000; the eval client waits for readiness. A cold start\n"
+        "# (install + weight download + load of a 7B VLM) can take many minutes,\n"
+        "# so widen the client's readiness window. Unbraced/plain assignment keeps\n"
+        "# SkyPilot placeholder lint clean.\n"
+        "export NPA_VLM_READY_TIMEOUT_S=1800\n"
         "python3 -m vllm.entrypoints.openai.api_server "
         "--host 127.0.0.1 --port 8000 "
         f"--model {model_q} --served-model-name {model_q} --trust-remote-code "
