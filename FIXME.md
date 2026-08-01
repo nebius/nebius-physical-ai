@@ -13,35 +13,31 @@ work lives).
 
 ## Active
 
-### High
+### Medium
 
-#### [H] SkyPilot's runtime bootstrap hangs in npa-cosmos-curate
+#### [M] SkyPilot's runtime bootstrap stalled once in npa-cosmos-curate
 
 - **Surfaced by**: a full-pipeline `physical-ai-data-factory` submit on
-  `npa-rtxpro-mk8s`, 2026-08-01 (managed job 255). Stages 1-5 ran through SkyPilot;
-  the `cosmos-curate` stage never left `STARTING`.
-- **Current issue**: the pod comes up healthy and SkyPilot's setup script completes
-  (its `apt install openssh-server rsync` + `service ssh restart` step is satisfied by
-  the image), but SkyPilot's own runtime bootstrap — `bash --login -c -i '... ~/.sky
-  /.runtime_files ...'` — then sits for over an hour with no ray, pip, or uv child
-  process. This is a *different* failure from the image-setup one already fixed: the
-  container stays up, so SkyPilot reports `STARTING` rather than `container not
-  found`.
-- **Likely cause, not yet confirmed**: the image puts its venv first on PATH and
+  `npa-rtxpro-mk8s`, 2026-08-01 (managed job 255, image `npa-cosmos-curate:0.1.1`).
+  Stages 1-5 ran through SkyPilot; the `cosmos-curate` stage never left `STARTING`.
+- **What happened**: the pod came up healthy and SkyPilot's setup script completed,
+  but its own runtime bootstrap — `bash --login -c -i '... ~/.sky/.runtime_files
+  ...'` — then sat for over an hour with no ray, pip, or uv child process. That is a
+  different failure from the image-setup one already fixed: the container stays up,
+  so SkyPilot reports `STARTING` rather than `container not found`.
+- **Status: has not recurred.** Two later full submits on `npa-cosmos-curate:0.1.2`
+  (jobs 279 and 282) provisioned and ran the stage through SkyPilot, job 282
+  completing all ten stages. Downgraded from high because the observed impact is now
+  a one-off stall rather than a reproducible block, and left open because the cause
+  was never identified.
+- **Leading hypothesis if it returns**: the image puts its venv first on PATH and
   `cosmos-xenna` pulls in ray, so `which ray` resolves to
-  `/opt/cosmos-curate/venv/bin/ray` (2.56.1) ahead of the ray in
-  `~/skypilot-runtime` that SkyPilot just installed. Version-mismatched ray on PATH is
-  a known cause of its bootstrap stalling. The evaluator image, which has no ray,
-  provisions and runs fine through the same path.
-- **Impact**: none on correctness of the stage itself — the curator runs green in the
-  image's golden eval (offline) and produced a full curated set on this cluster when
-  driven as a direct Kubernetes Job. Only the SkyPilot-orchestrated path is affected.
-- **Next step**: confirm by running SkyPilot's bootstrap with the venv removed from
-  PATH; if that is it, either order the venv after the system paths (checking that
-  `npa` and `python` still resolve as the smoke expects) or drop ray's console script
-  from the image, then re-run the full submit.
+  `/opt/cosmos-curate/venv/bin/ray` (2.56.1) ahead of the ray in `~/skypilot-runtime`
+  that SkyPilot just installed. A version-mismatched ray on PATH is a known cause of
+  its bootstrap stalling, and the evaluator image, which has no ray, has never
+  stalled. Confirm by running the bootstrap with the venv off PATH before changing
+  anything.
 
-### Medium
 
 #### [M] Add standalone LeRobot library validation test
 
