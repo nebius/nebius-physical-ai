@@ -305,3 +305,67 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
+
+
+def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
+    """The skill loader must resolve real SKILL.md files from skills/index.yaml.
+
+    ``index.yaml`` paths are repo-root-relative, so joining them onto the index's
+    own directory produced ``skills/skills/skills/...`` and every excerpt came
+    back empty — silently disabling skill injection for the whole agent. Execute
+    the rendered loader against the real repo tree so that stays fixed.
+    """
+    pytest.importorskip("fastapi")
+    import importlib.util
+    import sys
+
+    setup_script = _capture_setup_script(monkeypatch)
+
+    def _extract(remote_path: str) -> str:
+        match = re.search(
+            r"cat <<'PY' \| sudo tee " + re.escape(remote_path) + r" >/dev/null\n(.*?)\nPY\n",
+            setup_script,
+            flags=re.DOTALL,
+        )
+        assert match, f"bootstrap does not write {remote_path}"
+        return match.group(1)
+
+    package = tmp_path / "agent_backend"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    for name in ("memory", "retrieval", "trace", "foxglove", "foxglove_routes"):
+        (package / f"{name}.py").write_text(
+            _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
+        )
+    backend_path = tmp_path / "backend.py"
+    backend_path.write_text(_extract("/opt/npa-agent/backend.py"), encoding="utf-8")
+
+    repo_root = Path(__file__).resolve().parents[3]
+    monkeypatch.syspath_prepend(str(tmp_path))
+    # _skill_index_candidates() falls back to Path.cwd()/"skills"/"index.yaml".
+    monkeypatch.chdir(repo_root)
+    spec = importlib.util.spec_from_file_location("npa_rendered_skill_backend", backend_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    try:
+        spec.loader.exec_module(module)
+
+        index, root = module._load_skill_index()
+        assert index, "skill index did not load"
+        assert (root / index["cosmos3-npa-workflow"]).is_file(), (
+            f"skill paths do not resolve from root={root}"
+        )
+
+        excerpt = module._skill_excerpt("cosmos3-npa-workflow")
+        assert excerpt, "cosmos3-npa-workflow excerpt is empty"
+        assert "npa.workflow" in excerpt
+
+        # A Cosmos 3 workflow ask must reach for the npa.workflow skill first,
+        # not the SkyPilot-oriented one.
+        names, context = module._resolve_skill_context(
+            user_text="write me a cosmos3 workflow yaml", intent=None
+        )
+        assert names[0] == "cosmos3-npa-workflow", names
+        assert "npa.workflow" in context
+    finally:
+        sys.modules.pop("npa_rendered_skill_backend", None)

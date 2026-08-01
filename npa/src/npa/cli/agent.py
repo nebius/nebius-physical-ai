@@ -4972,7 +4972,7 @@ _INTENT_SKILLS = {{
     "live_infra_loop": ("submit-workflow", "gpu-selection"),
     "mk8s_provision": ("nebius-infra", "submit-workflow"),
     "soperator": ("soperator", "nebius-infra"),
-    "cosmos3": ("cosmos3-setup",),
+    "cosmos3": ("cosmos3-setup", "cosmos3-npa-workflow"),
     "start_sim2real": ("sim2real-operate", "sim2real-engine"),
     "sim2real_status": ("sim2real-operate",),
     "watch_sim": ("sim2real-operate",),
@@ -5005,8 +5005,12 @@ def _load_skill_index() -> tuple[dict[str, str], Path]:
         skills = payload.get("skills")
         if not isinstance(skills, list):
             continue
-        root_name = str(payload.get("root") or "skills").strip() or "skills"
-        root = candidate.parent / root_name
+        # index.yaml `path:` values are repo-root-relative ("skills/<cat>/<name>/
+        # SKILL.md") and `root:` names the skill tree itself, so the base is the
+        # directory CONTAINING the skill tree. Joining onto candidate.parent
+        # instead yields skills/skills/skills/... and every excerpt silently
+        # comes back empty.
+        root = candidate.parent.parent
         index: dict[str, str] = {{}}
         for entry in skills:
             if not isinstance(entry, dict):
@@ -5051,6 +5055,15 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
         names.append("find-artifacts")
     if ("workflow" in lowered or "yaml" in lowered) and "author-npa-workflow" not in names:
         names.append("author-npa-workflow")
+    # Cosmos 3 workflow asks are about the declarative npa.workflow spec, which
+    # is a different file from the SkyPilot template; lead with that skill so the
+    # agent does not answer with the SkyPilot YAML.
+    if (
+        ("cosmos3" in lowered or "cosmos 3" in lowered)
+        and ("workflow" in lowered or "yaml" in lowered or "spec" in lowered)
+        and "cosmos3-npa-workflow" not in names
+    ):
+        names.insert(0, "cosmos3-npa-workflow")
     if (
         "npa-visual-feedback" in lowered
         or "describe this" in lowered
