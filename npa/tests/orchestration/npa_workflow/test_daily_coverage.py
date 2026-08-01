@@ -81,8 +81,11 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
         "tokenfactory-rollout-judge.yaml",
         # SONIC twins are self-contained now: the in-job train runtime writes a
         # checkpoint each downstream stage reads back from S3.
+        "sonic-train.yaml",
         "sonic-export.yaml",
         "sonic-export-eval.yaml",
+        "sonic-locomotion-finetuning.yaml",
+        "tokenfactory-cosmos-gate.yaml",
     ):
         assert good in rotation, f"{good} should be in the rotation"
     # Twins that can't pass as a standalone submit today are excluded.

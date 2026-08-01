@@ -246,7 +246,10 @@ def test_npa_workflow_submit_live_reaches_terminal(
     assert submit_payload.get("status") in {"SUBMITTED", "RUNNING", "PENDING", "STARTING"}
     job_id = str(submit_payload.get("job_id") or run_id)
 
-    deadline = time.monotonic() + _max_wait()
+    # A case may declare its own budget when it is much slower than the rest
+    # (a big image pull, a self-hosted model's cold start); otherwise the tier's.
+    max_wait = case.max_wait_seconds or _max_wait()
+    deadline = time.monotonic() + max_wait
     last_status = str(submit_payload.get("status") or "SUBMITTED")
     try:
         while time.monotonic() < deadline:
@@ -272,7 +275,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 )
             time.sleep(_poll_seconds())
         pytest.fail(
-            f"{case.spec} did not reach terminal status within {_max_wait()}s; "
+            f"{case.spec} did not reach terminal status within {max_wait}s; "
             f"last_status={last_status} job_id={job_id}"
         )
     finally:
