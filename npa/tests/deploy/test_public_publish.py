@@ -77,9 +77,14 @@ def test_public_registry_honors_env_override(monkeypatch) -> None:
 
 def test_publish_plan_targets_public_registry_by_default() -> None:
     plan = build_publish_plan(target_registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
-    assert len(plan) == 16
+    # Derived from the contract rather than a magic number, so adding a freely
+    # redistributable image does not silently drift this gate.
+    assert len(plan) == len(publicly_publishable_tools())
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
+    # npa-foxglove-embed carries only MIT (@foxglove/embed) + Apache-2.0 (Caddy)
+    # content plus our own assets, so it belongs in the public set.
+    assert "foxglove-embed" in {item.tool for item in plan}
 
 
 def test_restricted_image_names_cover_every_contract_restricted_image() -> None:
