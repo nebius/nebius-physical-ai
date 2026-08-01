@@ -159,6 +159,30 @@ it the stage fails fast on the credential preflight. The submit path also refuse
 to run when the task image's registry does not match the Docker credentials in
 `SKYPILOT_DOCKER_SERVER`.
 
+## View the result in the NPA agent
+
+The generated artifact is an ordinary run artifact, so the agent's viewer renders
+it. To do that without provisioning an agent VM, run the agent locally — the
+script renders the same embedded backend + UI the VM bootstrap ships:
+
+```bash
+sudo mkdir -p /opt/npa-agent && sudo chown "$(id -u)":"$(id -g)" /opt/npa-agent
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_ENDPOINT_URL=...
+export NPA_AGENT_S3_BUCKET=<bucket-holding-the-run>
+npa/.venv/bin/python npa/scripts/run_agent_local.py     # http://127.0.0.1:8088/
+```
+
+Then load the artifact and open the **Rerun → IMAGE** viewer tab:
+
+```bash
+curl -s -X POST http://127.0.0.1:8088/api/sim-viz/load-artifact \
+  -H 'content-type: application/json' \
+  -d '{"s3_uri":"s3://<bucket>/runs/<run-id>/cosmos3-generate/generated/vision.jpg"}'
+```
+
+The Runs & Artifacts panel also finds the run by name (`cosmos3-`), and
+**Describe this** sends the frame to the vision tier for a critique.
+
 ## Validated on real GPUs
 
 Verified on `npa-rtxpro-mk8s` (NVIDIA RTX PRO 6000 Blackwell Server Edition,
