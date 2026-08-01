@@ -4251,10 +4251,12 @@
           const viewer = new URL(rawUrl, origin);
           const ds = viewer.searchParams.get("ds.url");
           if (ds) {
+            // Always absolutize: Lichtblick's remote-file source silently ignores a
+            // relative ds.url (it never issues a range request and the viewer sits
+            // on "No data source"), so a same-origin *relative* path must be
+            // rewritten too — not only a cross-origin one.
             const recording = new URL(ds, origin);
-            if (recording.origin !== origin) {
-              viewer.searchParams.set("ds.url", origin + recording.pathname + recording.search);
-            }
+            viewer.searchParams.set("ds.url", origin + recording.pathname + recording.search);
           }
           // Preserve the backend's relative form so the embed stays origin-agnostic.
           if (/^https?:\/\//i.test(rawUrl)) return viewer.toString();

@@ -124,14 +124,19 @@ describe("Lichtblick MCAP viewer (mocked smoke)", () => {
       expect(ds, "recording fetched from the browsed origin").to.eq(
         win.location.origin + "/lichtblick/recordings/sim2real.mcap",
       );
-      // An already-same-origin (relative) ds.url is left addressing this origin.
+      // A *relative* ds.url must be absolutized too: Lichtblick's remote-file
+      // source silently ignores a relative URL (no range request is ever issued
+      // and the viewer sits on "No data source"), which was observed live.
       const relative =
         "/lichtblick/?ds=remote-file&ds.url=" +
         encodeURIComponent("/lichtblick/recordings/sim2real.mcap");
       const relativeDs = decodeURIComponent(
         new URL(pin(relative), win.location.origin).searchParams.get("ds.url") || "",
       );
-      expect(relativeDs).to.include("/lichtblick/recordings/sim2real.mcap");
+      expect(relativeDs, "relative ds.url is absolutized").to.eq(
+        win.location.origin + "/lichtblick/recordings/sim2real.mcap",
+      );
+      expect(relativeDs).to.match(/^https?:\/\//);
     });
   });
 
