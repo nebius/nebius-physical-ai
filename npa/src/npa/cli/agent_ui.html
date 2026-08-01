@@ -4043,12 +4043,15 @@
           // the unauthenticated recording copy because Rerun's WASM fetch path
           // does not reliably consume parent-created blob URLs across browsers.
           try {
-            await resolveRerunRrdUrl(3, runId);
+            await fetchWithTimeout("/api/sim-viz/rrd-blob", { credentials: "include", method: "HEAD" }, 8000);
           } catch (_blobErr) {
             // Keep the public recording URL when the recording is already present.
           }
         } catch (_recordingErr) {
-          rrdUrl = await resolveRerunRrdUrl(18, runId);
+          // Fall back to the authenticated blob endpoint (the public copy is not
+          // published yet). Previously this called a helper that no longer exists,
+          // so the fallback raised ReferenceError instead of returning a URL.
+          rrdUrl = location.origin + "/api/sim-viz/rrd-blob?t=" + String(Date.now());
         }
         // Prefer the public recording copy; authenticated blob fetch remains the fallback.
         // Rerun parses path-only `/rerun/...` as host `rerun` → http://rerun/... (broken).
@@ -6205,9 +6208,9 @@
           } else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {
             showRerunPlaceholder("Select a run and load its artifacts to view them here.");
           }
-          // Re-assert viewer chrome: the Rerun placeholder/CTA above must not talk
-          // about Rerun while another viewer pane (e.g. Foxglove) is active.
-          applyViewerChromeForMode();
+          // Re-assert the shared CTA against the freshly fetched status so it never
+          // keeps another tab's wording (setRenderMode does the same on switch).
+          updateSimvizCta(simViz);
           // The Selection controls were removed; only sync them if still present.
           const robotPreset = document.getElementById("robotPreset");
           if (robotPreset && assets.selection && assets.selection.robot_preset) {

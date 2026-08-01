@@ -823,7 +823,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
-    assert "resolveRerunRrdUrl" in source
+    # The authenticated blob endpoint is the fallback when the public recording
+    # copy is not published yet. (This used to assert `resolveRerunRrdUrl`, a
+    # helper that no longer existed — the call sites raised ReferenceError inside
+    # a catch, so the substring assertion passed while the fallback was dead.)
+    assert "resolveRerunRecordingUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
     assert "resolve_rrd_proxy_target" in source or "rrd_proxy_uri_allowed" in source
@@ -2309,3 +2313,46 @@ def test_stages_tab_run_search_uses_server_search() -> None:
     assert "stagesSearchTimer" in source
     # Both run-search boxes wire the debounced server search.
     assert source.count("await refreshArtifactRuns(value)") >= 2
+
+
+def test_ui_script_calls_no_undefined_local_helper() -> None:
+    """Catch a helper that was deleted (or renamed) but is still called.
+
+    `node --check` only proves the script *parses*; calling a removed function is
+    a runtime ReferenceError that silently breaks a whole handler. Two real cases
+    motivated this: a merge dropped `applyViewerChromeForMode` while `refresh()`
+    still called it (aborting the refresh loop mid-way), and `resolveRerunRrdUrl`
+    had been gone for a while behind a try/catch.
+
+    Scope is deliberately narrow — bare calls to camelCase names, which is what
+    this UI's own helpers look like — so prose and member calls do not trip it.
+    """
+    import re
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    defined = set(re.findall(r"function\s+([A-Za-z_$][\w$]*)\s*\(", script))
+    defined |= set(re.findall(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", script))
+    called = set(re.findall(r"(?<![.\w$])([a-z][a-z0-9]*(?:[A-Z][A-Za-z0-9]*)+)\s*\(", script))
+
+    # Browser globals plus names provided by the dynamically imported glue module.
+    allowed = {
+        "clearInterval",
+        "clearTimeout",
+        "createImageBitmap",
+        "decodeURIComponent",
+        "drawImage",
+        "encodeURIComponent",
+        "isFinite",
+        "isNaN",
+        "localStorage",
+        "mountFoxgloveViewer",
+        "mountSelfHostedViewer",
+        "parseFloat",
+        "parseInt",
+        "requestAnimationFrame",
+        "setInterval",
+        "setTimeout",
+        "structuredClone",
+    }
+    undefined = sorted(called - defined - allowed)
+    assert not undefined, f"UI script calls undefined helper(s): {undefined}"
