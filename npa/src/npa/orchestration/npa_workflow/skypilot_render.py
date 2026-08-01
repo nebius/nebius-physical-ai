@@ -288,6 +288,12 @@ def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
         "# assignment keeps SkyPilot placeholder lint clean.\n"
         f"export NPA_VLM_READY_TIMEOUT_S={shlex.quote(ready_timeout)}\n"
         f"export NPA_VLM_SELF_HOSTED_MODEL={model_q}\n"
+        # vLLM's FlashInfer sampler JIT-compiles a CUDA kernel on first use, and
+        # a task image with a GPU driver does not necessarily ship a CUDA
+        # TOOLKIT: live on RTXPRO-6000 the engine died at warmup with
+        # "/usr/local/cuda/bin/nvcc: not found". The native torch sampler needs
+        # no compiler.
+        "export VLLM_USE_FLASHINFER_SAMPLER=0\n"
         "python3 -m vllm.entrypoints.openai.api_server "
         "--host 127.0.0.1 --port 8000 "
         f"--model {model_q} --served-model-name {model_q} --trust-remote-code "

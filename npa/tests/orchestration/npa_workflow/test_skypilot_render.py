@@ -98,6 +98,8 @@ def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     # own log, not stall until the client's readiness window expires.
     assert "vLLM server exited during startup" in run
     assert "tail -n 60 /tmp/vllm-server.log" in run
+    # No CUDA toolkit in the task image, so nothing may JIT-compile a kernel.
+    assert "export VLLM_USE_FLASHINFER_SAMPLER=0" in run
     setup = next(d["setup"] for d in docs if "vlm-eval run" in d.get("run", ""))
     # FlashInfer JIT-builds vLLM's sampling kernel with ninja during warmup.
     assert "pip_install('ninja')" in setup
