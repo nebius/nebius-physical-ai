@@ -173,7 +173,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real.write_decision",
         description="Write threshold decision artifact for dynamic transitions (demo stub).",
         argv_template=[
-            "python",
+            # python3, not python: the render's interpreter shim only puts a
+            # `python3` that can import npa on PATH, and images without a bare
+            # `python` (the SkyPilot default among them) fail otherwise.
+            "python3",
             "-c",
             (
                 "from npa.orchestration.npa_workflow.decisions import write_decision; "
