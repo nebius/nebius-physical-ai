@@ -12,6 +12,16 @@ Adapted from the NVIDIA Omniverse NuRec agent skills at
 `skills/physical-ai-datasets`, `skills/ncore`) and the NVIDIA NCore data library
 at <https://github.com/NVIDIA/ncore>.
 
+The capability routing table, the easy mix-ups, the safe secret-verification
+pattern, and several troubleshooting rows below are adapted from the NVIDIA
+router skill
+<https://github.com/NVIDIA/skills/tree/main/skills/physical-ai-neural-reconstruction>
+(Apache-2.0), pinned at commit `0122ea0` (2026-08-01). That skill is a *router*:
+it never runs anything, it decides which upstream sibling skill answers a
+question. This skill is the opposite — it is the workbench implementation — so
+the router's picker table is re-pointed at real `npa workbench nurec` verbs, and
+each row upstream owns is marked as such rather than reproduced.
+
 Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. Upstream licenses are
 Apache-2.0 and CC-BY-4.0. Trademarks (NVIDIA, Omniverse, NuRec, NRE, Isaac Sim,
 Cosmos) belong to NVIDIA. See `skills/NOTICE-NVIDIA-SKILLS`.
@@ -215,6 +225,111 @@ run by when it **started** (`npa.workflows.artifacts._run_started_at`).
 the agent has no USDZ viewer. Viewability comes from the `.rrd`, `.png`, `.mp4`
 and `.json`.
 
+## Which Capability Answers This?
+
+Adapted from the NVIDIA router skill's picker table, re-pointed at what this
+repo actually implements. "Upstream" means the workbench has no verb for it: read
+the named sibling skill at <https://github.com/NVIDIA/nurec-skills> and run it
+yourself; do not invent a workbench command for it.
+
+| I want to... | Where |
+| --- | --- |
+| Check NGC/HF access and that the GPU has RT cores, before pulling 14 GB | `npa workbench nurec check` |
+| Download a published NVIDIA NuRec/PhysicalAI capture in NCore V4 | `npa workbench nurec fetch` |
+| Train a reconstruction from an NCore clip and get a USDZ | `npa workbench nurec reconstruct` |
+| Render novel views along a shifted rig trajectory | `npa workbench nurec render` |
+| Get a Rerun recording the NPA agent will display | `npa workbench nurec visualize` |
+| Run all of the above on a GPU as one pipeline | `npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml` |
+| Measure PSNR / SSIM / LPIPS | Already emitted -- `reconstruction/metrics.yaml`, and `gaussians/summary` in the `.rrd` |
+| Convert my *own* recording (drone, RGB-D, ROS 2 bag, ScanNet++) to NCore V4 | Upstream `ncore`. The workbench consumes NCore V4; it does not author it |
+| Serve frames to CARLA / Isaac Sim / a custom simulator | Upstream `nre` (`serve-grpc`) -- not wired, see Limitations |
+| Render LiDAR sweeps from a USDZ | Upstream `nre` (`render-grpc --lidar`) -- not wired |
+| Extract individual 3D objects (cars, pedestrians) from a clip | Upstream `asset-harvester` -- not wired |
+| Clean up ghosting / floaters / flicker in rendered frames | Upstream `nurec-fixer` (DiffusionHarmonizer), or NRE's inline `--enable-difix` -- neither wired |
+| Generate segmentation / depth / ego-mask auxiliary inputs | Upstream `nre` via the `nre-tools` image -- not wired, see Limitations |
+| Package CAD or source meshes for simulation | Not NuRec at all -- that is SimReady, a different pipeline |
+
+## Easy Mix-Ups
+
+Adapted from the router skill's `references/mix-ups.md`; the last row is
+workbench-specific.
+
+- **NuRec vs NRE.** NuRec is the product, NRE ("Neural Reconstruction Engine") is
+  the engine that trains and renders. Used interchangeably in most docs.
+- **`ncore` then `nre`, never instead of.** NCore V4 is the input format; NRE
+  reads it. They run in order. If NRE says a clip "is not valid NCore V4", the
+  conversion step is missing, not a training bug.
+- **3DGUT vs 3DGRT.** Two Gaussian-splatting flavours inside NRE. The Hydra
+  recipe picks one; you should not normally set it by hand.
+- **`PhysicalAI-Autonomous-Vehicles-NuRec` vs `Cosmos-Drive-Dreams`.** Both AV
+  datasets on Hugging Face and easy to confuse. The former is *real* driving
+  footage under the gated AV license; the latter is *synthetic* weather-augmented
+  video under CC-BY-4.0.
+- **NRE's inline `--enable-difix` vs the standalone `nurec-fixer`.** Upstream
+  documents `--enable-difix` as a built-in cleanup pass during rendering, while
+  `nurec-fixer` wraps the public DiffusionHarmonizer release for frames already
+  rendered. Neither is wired into a workbench verb, and the flag has not been
+  exercised against `nre-ga 26.04` here -- treat it as upstream-documented, not
+  as a verified workbench feature.
+- **A missing `rig -> world` edge is not a corrupt download.** The most common
+  first failure is a pose-graph gap this workflow derives for you. See
+  [The rig -> world Pose Edge](#the-rig---world-pose-edge-the-thing-that-breaks-first).
+
+## Troubleshooting
+
+Rows marked (upstream) are adapted from the router skill's troubleshooting
+table; the rest were hit for real while landing this capability.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `402 Payment Required` pulling `nvcr.io/nvidia/nre/nre` | That repo needs an extra entitlement (upstream: `denied: requested access ...`) | Use the `-ga` channel, `nvcr.io/nvidia/nre/nre-ga:26.04`. `nurec check` reports `entitlement-required` |
+| `401`/`403` on `nvidia/PhysicalAI-*` (upstream) | Gated license not accepted, or `HF_TOKEN` lacks `read` | Accept the license on Hugging Face as the token owner, then re-run `nurec check` |
+| NRE will not load a clip: "not valid NCore V4" (upstream) | The recording was never converted | Convert with upstream `ncore` first; the workbench consumes NCore V4 only |
+| `KeyError: ('rig', 'world')` / no scene extent | The clip has camera poses but no rig edge -- NVIDIA's own COLMAP converter omits it | Automatic: `reconstruct` derives it. See the pose-edge section |
+| `Requested lidars not present in the data: dummy_lidar` | The recipe ships placeholder sensor ids | Automatic: the sequence's real ids are adopted |
+| `Requested cameras not present: camera_front_wide_120fov` | Same, for AV camera names | Automatic: same adoption path |
+| `Only one camera sensor is currently supported` | SfM point-cloud init is single-camera | Automatic: trains on the recorded reference camera and warns which cameras were dropped |
+| Cluster never finishes provisioning, `sudo: command not found` | The image ships no `sudo`; SkyPilot's K8s bootstrap calls it unconditionally | Automatic: `pod_config` initContainer installs a shim |
+| OOM / bus error early in training | `/dev/shm` defaults to 64 MB | Automatic: 64 Gi `emptyDir{medium: Memory}` |
+| USDZ looks like an early preview | `<run>/artifacts/<step>.usdz`, first-alphabetical picks step 1000 | Automatic: `latest_usdz()` picks the newest by step |
+| Renders look identical to the input frames | `nre render` defaults to `--replicate-training-views` | Automatic: the negation plus a non-zero rig offset is always emitted; a zero offset is rejected |
+| Output files owned by `root` after a local `docker run` (upstream) | `-u $(id -u):$(id -g)` was omitted | `sudo chown -R "$(id -u):$(id -g)" <dir>`, and pass `-u` next time. Not an issue in-pod, which runs as root by design |
+| Ghosting / floaters / flicker in rendered frames (upstream) | No cleanup pass | Upstream `nurec-fixer`, or NRE's inline `--enable-difix`. Neither is wired here |
+| A stage runs but publishes nothing to S3 | The stage ran in its own pod and wrote only to `/tmp` | Pass the handoff URIs. Every declarative stage is a separate pod |
+
+## Verifying Secrets Safely
+
+From the router skill's `references/secrets-handling.md`. Never interpolate a
+token into an ad-hoc shell check. In particular this common line **prints the
+token**:
+
+```bash
+echo "HF_TOKEN: ${HF_TOKEN:+yes}${HF_TOKEN:-no}"   # WRONG: emits yes<token>
+```
+
+`${VAR:-no}` only falls back when the variable is *empty*, so a set token is
+echoed straight into the log. If you suspect one was printed, rotate it at
+<https://huggingface.co/settings/tokens> or
+<https://org.ngc.nvidia.com/setup/api-key>.
+
+Safe checks:
+
+```bash
+hf auth whoami
+[ -n "${HF_TOKEN:-}" ]    && echo "HF_TOKEN length=${#HF_TOKEN}"       || echo "HF_TOKEN unset"
+[ -n "${NGC_API_KEY:-}" ] && echo "NGC_API_KEY length=${#NGC_API_KEY}" || echo "NGC_API_KEY unset"
+```
+
+Better, because it probes real *download authorization* rather than mere
+visibility (a gated HF repo still answers 200 on `/api/datasets/<id>`):
+
+```bash
+npa workbench nurec check --json
+```
+
+Every `nurec` failure payload is redacted before it is rendered, so a token
+cannot reach a log or a `--json` body.
+
 ## Running The Workflow
 
 ```bash
@@ -327,3 +442,10 @@ GPU with no H100/H200 reference, every stage in the YAML is a real
   a workbench verb.
 - **`nre-tools` auxiliary data (segmentation, depth, DINOv2) is not wired in.**
   It is a second ~22 GB image and the object-centric default does not need it.
+- **No object harvesting or actor editing.** Upstream `asset-harvester` extracts
+  per-object `.ply` splats and `nre export-external-assets` packages them; the
+  workbench does neither. Asset Harvester always runs *before* USDZ packaging.
+- **No frame-cleanup pass.** Upstream `nurec-fixer` (DiffusionHarmonizer) and
+  NRE's inline `--enable-difix` are both unwired and unverified here.
+- **Consumes NCore V4, does not author it.** Converting a novel sensor rig is
+  upstream `ncore` work.

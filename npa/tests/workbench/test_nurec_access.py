@@ -70,6 +70,68 @@ def test_notice_file_covers_the_new_skill() -> None:
     assert "NVIDIA CORPORATION & AFFILIATES" in body
     assert "nurec-skills" in body
     assert "NVIDIA/ncore" in body
+    # The router skill whose picker table / mix-ups / secret-handling guidance the
+    # SKILL adapts. Pinned, because an unpinned citation cannot be audited later.
+    assert "NVIDIA/skills" in body
+    assert "physical-ai-neural-reconstruction" in body
+    assert UPSTREAM_ROUTER_PIN in body
+
+
+#: Upstream commit the adapted router content was taken from. Cited in both the
+#: NOTICE and the SKILL so a reader can diff against exactly that revision.
+UPSTREAM_ROUTER_PIN = "0122ea0"
+
+
+def test_skill_cites_the_router_upstream_it_adapts() -> None:
+    """Adapted upstream content must be attributed in the SKILL body itself.
+
+    The NOTICE covers licensing; this asserts a reader of the skill can see where
+    the routing table and mix-ups came from without opening another file.
+    """
+    text = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "physical-ai-neural-reconstruction" in text
+    assert UPSTREAM_ROUTER_PIN in text
+    assert "Apache-2.0" in text
+    # The adapted sections are actually present.
+    assert "## Which Capability Answers This?" in text
+    assert "## Easy Mix-Ups" in text
+    assert "## Verifying Secrets Safely" in text
+    assert "## Troubleshooting" in text
+
+
+def test_skill_warns_about_the_token_echoing_antipattern() -> None:
+    """The upstream secrets guidance is only useful if the wrong form is shown.
+
+    ``${VAR:-no}`` falls back only when the variable is EMPTY, so the common
+    "is it set?" one-liner prints the token itself.
+    """
+    text = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "${HF_TOKEN:+yes}${HF_TOKEN:-no}" in text
+    assert "rotate" in text.lower()
+    # And the safe alternative is given, not just the warning.
+    assert "hf auth whoami" in text
+    assert "${#HF_TOKEN}" in text
+
+
+def test_routing_table_marks_unimplemented_capabilities_as_upstream() -> None:
+    """Rows the workbench cannot do must not read like workbench features.
+
+    The router skill lists many NuRec capabilities; advertising one we have no
+    verb for is exactly the "real components" failure mode this repo guards
+    against elsewhere.
+    """
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    table = text.split("## Which Capability Answers This?", 1)[1].split("## Easy Mix-Ups", 1)[0]
+
+    for unimplemented in ("serve-grpc", "asset-harvester", "render-grpc"):
+        row = next(ln for ln in table.splitlines() if unimplemented in ln)
+        assert "Upstream" in row, f"{unimplemented} must be marked upstream: {row}"
+
+    # Everything advertised as a workbench verb is a real CLI command.
+    for verb in ("check", "fetch", "reconstruct", "render", "visualize"):
+        assert f"npa workbench nurec {verb}" in table
 
 
 def test_skill_smoke_entries_point_at_files_that_exist() -> None:
