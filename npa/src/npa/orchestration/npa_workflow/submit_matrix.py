@@ -123,20 +123,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "vlm-eval-single.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        rotation_skip=True,
-        skip_reason=(
-            "vlm_backend=self-hosted. The render now DOES start a background "
-            "vLLM server and the client waits up to NPA_VLM_READY_TIMEOUT_S "
-            "(=1800s, set by the render) for readiness. Confirmed live on "
-            "RTXPRO-6000 (Blackwell/sm_120): the cold start — heavy vLLM+CUDA13 "
-            "install, ~16GB Qwen2-VL-7B weight download, and first-run compile — "
-            "exceeds even the 30-min window, so it is not a fit for the bounded "
-            "daily rotation. Re-include with the model pre-baked/pre-cached into "
-            "the image or a faster node. (The old instant connection-refused is "
-            "fixed; failure is now a clean, bounded 'not ready' diagnostic.)"
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        # A self-hosted VLM cold start is dominated by the vLLM wheel set and the
+        # engine's own warmup, both of which land outside the other twins' range.
+        max_wait_seconds=2400,
+        notes=(
+            "Self-hosted vLLM on the job's own GPU. Bounded by serving the 2B "
+            "Qwen2-VL (config.vlm_model), installing vLLM with uv, pre-fetching "
+            "weights in setup, and having the run script wait for readiness so a "
+            "server that dies during startup fails immediately with its log."
         ),
-        notes="Self-hosted VLM; render starts vLLM, but cold start > 30min on this node.",
     ),
     SubmitLiveCase(
         "vlm-eval-benchmark.yaml",

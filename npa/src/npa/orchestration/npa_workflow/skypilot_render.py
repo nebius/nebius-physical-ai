@@ -284,6 +284,34 @@ def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
         "> /tmp/vllm-server.log 2>&1 &\n"
         "vllm_pid=$!\n"
         "trap 'kill \"$vllm_pid\" 2>/dev/null || true' EXIT\n"
+        # Wait for the server here rather than leaving it to the eval client's
+        # retry loop. A server that DIES during startup (live: FlashInfer's JIT
+        # sampling kernel needs ninja, which the image lacked) is otherwise
+        # indistinguishable from one that is still loading, and the job burns the
+        # whole readiness window before reporting a connection error with no
+        # server-side detail.
+        "vllm_deadline=$(( $(date +%s) + NPA_VLM_READY_TIMEOUT_S ))\n"
+        "vllm_ready=0\n"
+        "while [ \"$(date +%s)\" -lt \"$vllm_deadline\" ]; do\n"
+        "  if ! kill -0 \"$vllm_pid\" 2>/dev/null; then\n"
+        "    echo 'vLLM server exited during startup; last 60 log lines:' >&2\n"
+        "    tail -n 60 /tmp/vllm-server.log >&2\n"
+        "    exit 1\n"
+        "  fi\n"
+        "  if python3 -c \"import urllib.request; "
+        "urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)\" "
+        ">/dev/null 2>&1; then\n"
+        "    vllm_ready=1\n"
+        "    break\n"
+        "  fi\n"
+        "  sleep 5\n"
+        "done\n"
+        "if [ \"$vllm_ready\" != 1 ]; then\n"
+        "  echo 'vLLM server never became ready; last 60 log lines:' >&2\n"
+        "  tail -n 60 /tmp/vllm-server.log >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "echo \"vLLM server ready on 127.0.0.1:8000\" >&2\n"
     )
 
 
@@ -497,6 +525,7 @@ def _vllm_install_setup(model: str) -> str:
         "python3 - <<'PY'\n"
         "import importlib.util\n"
         "import os\n"
+        "import shutil\n"
         "import subprocess\n"
         "import sys\n"
         "\n"
@@ -516,6 +545,11 @@ def _vllm_install_setup(model: str) -> str:
         "    subprocess.call([sys.executable, '-m', 'pip', 'install', '-q', 'uv'])\n"
         "if importlib.util.find_spec('vllm') is None and not pip_install('vllm>=0.8.5'):\n"
         "    raise SystemExit('failed to install vllm for the self-hosted VLM backend')\n"
+        # FlashInfer JIT-compiles vLLM's sampling kernel on first use and shells out
+        # to ninja; without it the engine dies during warmup with a bare
+        # FileNotFoundError, long after the weights are loaded.
+        "if shutil.which('ninja') is None:\n"
+        "    pip_install('ninja')\n"
         "pip_install('hf_transfer')\n"
         "os.environ.setdefault('HF_HUB_ENABLE_HF_TRANSFER', '1')\n"
         "try:\n"

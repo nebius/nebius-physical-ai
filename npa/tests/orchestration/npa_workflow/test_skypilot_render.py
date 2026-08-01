@@ -91,6 +91,17 @@ def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     assert "vllm.entrypoints.openai.api_server" in run
     assert "--served-model-name" in run
     assert "vllm_pid=$!" in run  # backgrounded + trap-killed on exit
+    # The served model is exported so the eval client asks for it instead of the
+    # library default, and the twin picks a model whose cold start is bounded.
+    assert "export NPA_VLM_SELF_HOSTED_MODEL=Qwen/Qwen2-VL-2B-Instruct" in run
+    # A server that dies during startup must fail the stage immediately with its
+    # own log, not stall until the client's readiness window expires.
+    assert "vLLM server exited during startup" in run
+    assert "tail -n 60 /tmp/vllm-server.log" in run
+    setup = next(d["setup"] for d in docs if "vlm-eval run" in d.get("run", ""))
+    # FlashInfer JIT-builds vLLM's sampling kernel with ninja during warmup.
+    assert "pip_install('ninja')" in setup
+    assert "snapshot_download(MODEL)" in setup
 
 
 def test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
