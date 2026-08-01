@@ -56,6 +56,19 @@ GPU_ENCODER = "h264_nvenc"
 # message ("cannot import name 'Self' from 'typing'") rather than at the boundary.
 MIN_PYTHON = (3, 12)
 
+# The upstream commit :mod:`.pipeline` was written against. Upstream's stages are
+# constructed with explicit keyword arguments, and it publishes no wheel and makes no
+# stability promise about them, so a checkout from another commit can differ in ways
+# that only surface as a TypeError from inside a stage constructor. The image records
+# what it checked out (see REVISION_STAMP_FILE) and the probe compares the two, so a
+# bumped Dockerfile pin fails at the boundary with something actionable.
+PINNED_REVISION = "de89c5e4f76219c3f2985dc8fda790a74ab8bab0"
+
+# Written by the workbench image after it checks out the pinned commit, because the
+# build drops .git. A checkout without this file is somebody's own clone; that is a
+# supported way to work, so it is reported as unknown rather than refused.
+REVISION_STAMP_FILE = ".npa-upstream-revision"
+
 
 class CosmosCurateError(RuntimeError):
     """Raised when a Cosmos Curator request cannot be satisfied."""
@@ -76,6 +89,13 @@ class CuratorAvailability:
     encoders: tuple[str, ...] = field(default_factory=tuple)
     pipeline_cli: str = ""
     python_version: str = ""
+    revision: str = ""
+
+    @property
+    def revision_ok(self) -> bool:
+        """False only when the checkout states a revision and it is the wrong one."""
+
+        return not self.revision or self.revision == PINNED_REVISION
 
     @property
     def python_ok(self) -> bool:
@@ -99,7 +119,13 @@ class CuratorAvailability:
 
     @property
     def can_run_in_process(self) -> bool:
-        return bool(self.source) and self.python_ok and self.importable and bool(self.encoder)
+        return (
+            bool(self.source)
+            and self.python_ok
+            and self.revision_ok
+            and self.importable
+            and bool(self.encoder)
+        )
 
     def reason(self) -> str:
         """Human-readable explanation of why in-process curation cannot run."""
@@ -114,6 +140,13 @@ class CuratorAvailability:
             return (
                 f"Cosmos Curator needs Python >= {wanted} (upstream declares "
                 f"requires-python >=3.12,<3.13); this interpreter is {self.python_version}"
+            )
+        if not self.revision_ok:
+            return (
+                f"Cosmos Curator at {self.source} is checked out at {self.revision}, but this "
+                f"code drives upstream's stages at {PINNED_REVISION}; upstream publishes no "
+                "wheel and no stability promise for those constructors, so re-check "
+                "cosmos_curate/pipeline.py against the new commit before bumping the pin"
             )
         if not self.importable:
             return f"Cosmos Curator at {self.source} is not importable: {self.import_error}"
@@ -138,6 +171,8 @@ class CuratorAvailability:
             "encoder": self.encoder,
             "pipeline_cli": self.pipeline_cli,
             "python_version": self.python_version,
+            "revision": self.revision,
+            "pinned_revision": PINNED_REVISION,
             "can_run_in_process": self.can_run_in_process,
             "reason": self.reason(),
         }
@@ -156,6 +191,15 @@ def upstream_source_dir(*, environ: dict[str, str] | None = None) -> Path | None
         if (root / "cosmos_curator" / "pipelines").is_dir():
             return root
     return None
+
+
+def upstream_revision(root: Path) -> str:
+    """Return the commit the checkout records, or ``""`` when it records none."""
+
+    try:
+        return (root / REVISION_STAMP_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def ensure_upstream_importable(*, environ: dict[str, str] | None = None) -> Path:
@@ -207,6 +251,7 @@ def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvail
             pipeline_cli=pipeline_cli,
             python_version=python_version,
         )
+    revision = upstream_revision(root)
     if sys.version_info[:2] < MIN_PYTHON:
         # Report the version gap instead of the confusing import error it causes.
         return CuratorAvailability(
@@ -215,6 +260,18 @@ def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvail
             encoders=encoders,
             pipeline_cli=pipeline_cli,
             python_version=python_version,
+            revision=revision,
+        )
+    if revision and revision != PINNED_REVISION:
+        # Importing would succeed and the mismatch would only surface later, from
+        # inside a stage constructor, as a TypeError with no hint of the cause.
+        return CuratorAvailability(
+            source=str(root),
+            ffmpeg=ffmpeg,
+            encoders=encoders,
+            pipeline_cli=pipeline_cli,
+            python_version=python_version,
+            revision=revision,
         )
 
     importable = True
@@ -236,4 +293,5 @@ def probe_availability(*, environ: dict[str, str] | None = None) -> CuratorAvail
         encoders=encoders,
         pipeline_cli=pipeline_cli,
         python_version=python_version,
+        revision=revision,
     )

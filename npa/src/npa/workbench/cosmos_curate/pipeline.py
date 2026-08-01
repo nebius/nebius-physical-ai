@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from npa.workbench.cosmos_curate.upstream import (
+    PINNED_REVISION,
     CPU_ENCODER,
     UPSTREAM_LICENSE,
     UPSTREAM_REPO,
@@ -137,25 +138,33 @@ def curate_videos(
         stage_names.extend(["MotionVectorDecodeStage", "MotionFilterStage"])
     stage_names.append("ClipWriterStage")
 
-    downloader = stages["VideoDownloader"](
+    downloader = _construct(
+        stages,
+        "VideoDownloader",
         input_path=str(source_dir),
         input_s3_profile_name="default",
         verbose=verbose,
     )
     downloader.stage_setup()
-    splitter = stages["FixedStrideExtractorStage"](
+    splitter = _construct(
+        stages,
+        "FixedStrideExtractorStage",
         clip_len_s=clip_len_s,
         clip_stride_s=clip_stride_s or clip_len_s,
         min_clip_length_s=min_clip_length_s,
         limit_clips=limit_clips,
         verbose=verbose,
     )
-    transcoder = stages["ClipTranscodingStage"](
+    transcoder = _construct(
+        stages,
+        "ClipTranscodingStage",
         encoder=chosen_encoder,
         encode_batch_size=8,
         verbose=verbose,
     )
-    writer = stages["ClipWriterStage"](
+    writer = _construct(
+        stages,
+        "ClipWriterStage",
         output_path=str(target_dir),
         input_path=str(source_dir),
         output_s3_profile_name="default",
@@ -177,9 +186,11 @@ def curate_videos(
     clips_written = 0
     clips_filtered = 0
     for video_path in videos:
-        task = stages["SplitPipeTask"](
+        task = _construct(
+            stages,
+            "SplitPipeTask",
             session_id=str(video_path),
-            video=stages["Video"](input_video=video_path),
+            video=_construct(stages, "Video", input_video=video_path),
         )
         tasks: list[Any] = [task]
         tasks = downloader.process_data(tasks) or tasks
@@ -233,8 +244,10 @@ def _run_motion_stages(
     ``check_if_small_motion``, so this runs on the CPU tier.
     """
 
-    decode = stages["MotionVectorDecodeStage"](num_cpus_per_worker=1.0, verbose=verbose)
-    scorer = stages["MotionFilterStage"](
+    decode = _construct(stages, "MotionVectorDecodeStage", num_cpus_per_worker=1.0, verbose=verbose)
+    scorer = _construct(
+        stages,
+        "MotionFilterStage",
         score_only=score_only,
         global_mean_threshold=DEFAULT_MOTION_GLOBAL_MEAN_THRESHOLD,
         per_patch_min_256_threshold=DEFAULT_MOTION_PER_PATCH_THRESHOLD,
@@ -243,6 +256,24 @@ def _run_motion_stages(
     )
     tasks = decode.process_data(tasks) or tasks
     return scorer.process_data(tasks) or tasks
+
+
+def _construct(stages: dict[str, Any], name: str, /, **kwargs: Any) -> Any:
+    """Build an upstream stage, turning a signature mismatch into "cannot run here".
+
+    Upstream's constructor keyword arguments are not a published API, so a checkout
+    whose signature moved raises ``TypeError`` from inside its own code. Uncaught,
+    that reaches the operator as a traceback with no indication that the fix is a
+    version mismatch rather than a bug in this call.
+    """
+
+    try:
+        return stages[name](**kwargs)
+    except TypeError as exc:
+        raise CosmosCurateUnavailable(
+            f"upstream's {name} does not accept the arguments this code passes "
+            f"({exc}); the checkout is likely not at {PINNED_REVISION}"
+        ) from exc
 
 
 def _load_stages() -> dict[str, Any]:

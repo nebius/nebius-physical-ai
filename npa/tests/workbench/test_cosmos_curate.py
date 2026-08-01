@@ -378,6 +378,163 @@ def test_curate_augmented_summarizes_a_real_curator_tree(
     assert (curated / "metas" / "v0" / "clip-0.json").is_file()
 
 
+def _weights_env(root: Path) -> dict[str, str]:
+    return {"NPA_COSMOS_CURATE_WEIGHTS_DIR": str(root)}
+
+
+def test_an_interrupted_download_is_not_mistaken_for_a_finished_one(tmp_path: Path) -> None:
+    """Files on disk are not evidence of a complete fetch.
+
+    Registry entries carry no file list, so "any file is here" accepted a download
+    killed part-way; the next run skipped it and the missing shard surfaced much later
+    as a load error inside a stage.
+    """
+
+    from npa.workbench.cosmos_curate.models import ModelSpec, model_status
+
+    spec = ModelSpec(key="motion", model_id="org/model")
+    partial = tmp_path / "org" / "model"
+    partial.mkdir(parents=True)
+    (partial / "model-00001-of-00002.safetensors").write_bytes(b"half a download")
+
+    status = model_status([spec], environ=_weights_env(tmp_path))[0]
+    assert status.present is False
+    assert "no completion stamp" in status.stale_reason
+
+
+def test_weights_from_another_revision_do_not_satisfy_a_pinned_request(tmp_path: Path) -> None:
+    """The pin is only meaningful if a cache at a different commit is re-fetched."""
+
+    from npa.workbench.cosmos_curate.models import (
+        ModelSpec,
+        model_status,
+        write_completion_stamp,
+    )
+
+    local = tmp_path / "org" / "model"
+    local.mkdir(parents=True)
+    (local / "weights.bin").write_bytes(b"weights")
+    write_completion_stamp(local, ModelSpec(key="motion", model_id="org/model", revision="old"))
+
+    wanted = ModelSpec(key="motion", model_id="org/model", revision="new")
+    status = model_status([wanted], environ=_weights_env(tmp_path))[0]
+    assert status.present is False
+    assert "wanted new" in status.stale_reason
+
+
+def test_a_stamped_download_at_the_pinned_revision_is_reused(tmp_path: Path) -> None:
+    from npa.workbench.cosmos_curate.models import (
+        ModelSpec,
+        model_status,
+        write_completion_stamp,
+    )
+
+    spec = ModelSpec(key="motion", model_id="org/model", revision="abc123")
+    local = tmp_path / "org" / "model"
+    local.mkdir(parents=True)
+    (local / "weights.bin").write_bytes(b"weights")
+    write_completion_stamp(local, spec)
+
+    status = model_status([spec], environ=_weights_env(tmp_path))[0]
+    assert status.present is True
+    assert status.stale_reason == ""
+    # The stamp is bookkeeping, not a weight file.
+    assert status.file_count == 1
+
+
+def test_a_cache_predating_stamps_is_kept_when_the_registry_vouches_for_it(
+    tmp_path: Path,
+) -> None:
+    """Do not re-download gigabytes just because the stamp convention is new."""
+
+    from npa.workbench.cosmos_curate.models import ModelSpec, model_status
+
+    spec = ModelSpec(key="motion", model_id="org/model", files=("a.bin", "b.bin"))
+    local = tmp_path / "org" / "model"
+    local.mkdir(parents=True)
+    (local / "a.bin").write_bytes(b"a")
+    (local / "b.bin").write_bytes(b"b")
+
+    assert model_status([spec], environ=_weights_env(tmp_path))[0].present is True
+
+
+def test_a_checkout_at_another_commit_is_refused_with_the_reason_why(tmp_path: Path) -> None:
+    """Upstream's constructor kwargs are not an API, so the commit has to match.
+
+    Without this the mismatch imports fine and only shows up later as a TypeError
+    from inside an upstream constructor, which reads like a bug in our call.
+    """
+
+    from npa.workbench.cosmos_curate.upstream import (
+        PINNED_REVISION,
+        REVISION_STAMP_FILE,
+        probe_availability,
+    )
+
+    checkout = tmp_path / "cosmos-curator"
+    (checkout / "cosmos_curator" / "pipelines").mkdir(parents=True)
+    (checkout / REVISION_STAMP_FILE).write_text("0" * 40, encoding="utf-8")
+
+    availability = probe_availability(environ={"NPA_COSMOS_CURATE_SRC": str(checkout)})
+    assert availability.can_run_in_process is False
+    assert availability.revision == "0" * 40
+    assert PINNED_REVISION in availability.reason()
+    assert "pipeline.py" in availability.reason()
+
+
+def test_a_checkout_without_a_stamp_is_not_refused(tmp_path: Path) -> None:
+    """Working from your own clone is supported; only a stated wrong commit is not."""
+
+    from npa.workbench.cosmos_curate.upstream import probe_availability
+
+    checkout = tmp_path / "cosmos-curator"
+    (checkout / "cosmos_curator" / "pipelines").mkdir(parents=True)
+
+    availability = probe_availability(environ={"NPA_COSMOS_CURATE_SRC": str(checkout)})
+    assert availability.revision == ""
+    assert availability.revision_ok is True
+    assert "checked out at" not in availability.reason()
+
+
+def test_the_image_pin_and_the_code_pin_cannot_drift(tmp_path: Path) -> None:
+    """The Dockerfile checks out one commit; this code is written against another.
+
+    They are the same fact in two places, so assert it rather than trusting a
+    reviewer to notice when one moves.
+    """
+
+    import re
+
+    from npa.workbench.cosmos_curate.upstream import PINNED_REVISION
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "cosmos-curate"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    match = re.search(r"^ARG COSMOS_CURATE_REF=(\S+)", dockerfile, re.MULTILINE)
+    assert match, "the Dockerfile no longer pins COSMOS_CURATE_REF"
+    assert match.group(1) == PINNED_REVISION, (
+        "cosmos-curate/Dockerfile checks out a different commit than "
+        "cosmos_curate/upstream.py drives its stages at"
+    )
+
+
+def test_a_moved_upstream_signature_is_reported_as_unavailable() -> None:
+    """A stage whose kwargs moved must surface as "cannot run here", not a traceback."""
+
+    from npa.workbench.cosmos_curate.pipeline import _construct
+
+    class MovedOn:
+        def __init__(self, *, brand_new_name: str) -> None:
+            self.brand_new_name = brand_new_name
+
+    with pytest.raises(CosmosCurateError, match="does not accept the arguments"):
+        _construct({"ClipWriterStage": MovedOn}, "ClipWriterStage", output_path="/tmp/x")
+
+
 def _stub_a_successful_curator_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, Path]:

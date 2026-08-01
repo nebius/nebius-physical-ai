@@ -120,9 +120,15 @@ RUN set -eux; \
     git remote add origin https://github.com/nvidia-cosmos/cosmos-curate.git; \
     GIT_LFS_SKIP_SMUDGE=1 git fetch -q --depth 1 origin "${COSMOS_CURATE_REF}"; \
     GIT_LFS_SKIP_SMUDGE=1 git checkout -q FETCH_HEAD; \
+    # Record what was checked out before .git goes away. npa's probe compares this to
+    # the commit its stage-construction code was written against, so bumping the pin
+    # without revisiting that code fails at the boundary rather than as a TypeError
+    # from inside an upstream constructor.
+    git rev-parse HEAD > .npa-upstream-revision; \
     rm -rf .git; \
     test -d cosmos_curator/pipelines/video; \
-    test -f cosmos_curator/configs/all_models.json
+    test -f cosmos_curator/configs/all_models.json; \
+    test "$(cat .npa-upstream-revision)" = "${COSMOS_CURATE_REF}"
 
 # The dependency set upstream's GPU-free stages import. torch is CPU-only here:
 # the motion stage runs its CPU code path when no GPU is requested, and the CUDA

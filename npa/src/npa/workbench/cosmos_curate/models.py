@@ -28,6 +28,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
@@ -47,6 +48,11 @@ REGISTRY_RELATIVE_PATH = Path("cosmos_curator") / "configs" / "all_models.json"
 # Where upstream's stages look for weights inside its container workspace.
 DEFAULT_WEIGHTS_DIR = "/config/models"
 WEIGHTS_DIR_ENV = "NPA_COSMOS_CURATE_WEIGHTS_DIR"
+# Written into a model directory once its download returns. Its absence is what
+# distinguishes an interrupted fetch from a finished one, and the revision it
+# records is what makes a pinned request re-fetch weights from another commit.
+COMPLETION_STAMP = ".npa-fetch-complete.json"
+
 HF_TOKEN_ENVS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN")
 
 # Named sets of upstream model keys, one per curator capability. The membership of
@@ -106,6 +112,8 @@ class ModelStatus:
     present: bool
     file_count: int = 0
     bytes: int = 0
+    #: Why the cache was not accepted, when ``present`` is false but files exist.
+    stale_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -217,24 +225,82 @@ def resolve_models(
     return specs
 
 
+def read_completion_stamp(local_dir: Path) -> dict[str, Any]:
+    """Return the stamp a finished fetch left behind, or ``{}`` when there is none."""
+
+    try:
+        loaded = json.loads((local_dir / COMPLETION_STAMP).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def write_completion_stamp(local_dir: Path, spec: ModelSpec) -> None:
+    """Record that ``spec`` downloaded completely, and at which revision."""
+
+    local_dir.mkdir(parents=True, exist_ok=True)
+    (local_dir / COMPLETION_STAMP).write_text(
+        json.dumps(
+            {
+                "model_id": spec.model_id,
+                "revision": spec.revision,
+                "files": list(spec.files),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _cache_state(spec: ModelSpec, local: Path, names: set[str]) -> tuple[bool, str]:
+    """Decide whether a local directory is a complete, current copy of ``spec``.
+
+    Presence used to mean "some file is here", which silently accepts an interrupted
+    download — the next run skips it and the missing shard surfaces as a load error —
+    and never looks at the revision, so weights from a different commit satisfy a
+    pinned request. A stamp written only after a fetch returns answers both.
+    """
+
+    stamp = read_completion_stamp(local)
+    if stamp:
+        stamped_revision = str(stamp.get("revision") or "")
+        if spec.revision and stamped_revision != spec.revision:
+            return False, (
+                f"cached at revision {stamped_revision or 'unknown'}, wanted {spec.revision}"
+            )
+        if spec.files and not set(spec.files) <= names:
+            return False, "stamped complete but files are missing from the directory"
+        return True, ""
+    if spec.files and set(spec.files) <= names:
+        # Downloaded before stamps existed, and the registry's own file list vouches
+        # for it. The revision cannot be verified, so the fetch re-stamps it.
+        return True, ""
+    if names:
+        return False, "no completion stamp; treating the partial directory as incomplete"
+    return False, ""
+
+
 def model_status(
     specs: Iterable[ModelSpec],
     *,
     environ: dict[str, str] | None = None,
 ) -> list[ModelStatus]:
-    """Report which of ``specs`` already have weights on disk.
-
-    A model counts as present when its directory holds every file upstream's
-    registry lists for it, or — for entries with no file list — any file at all.
-    """
+    """Report which of ``specs`` already have complete, current weights on disk."""
 
     root = weights_dir(environ=environ)
     out: list[ModelStatus] = []
     for spec in specs:
         local = root / spec.model_id
-        files = [path for path in local.rglob("*") if path.is_file()] if local.is_dir() else []
+        files = [
+            path
+            for path in (local.rglob("*") if local.is_dir() else [])
+            if path.is_file() and path.name != COMPLETION_STAMP
+        ]
         names = {path.name for path in files}
-        present = bool(files) and (not spec.files or set(spec.files) <= names)
+        present, stale_reason = _cache_state(spec, local, names)
         out.append(
             ModelStatus(
                 key=spec.key,
@@ -244,6 +310,7 @@ def model_status(
                 present=present,
                 file_count=len(files),
                 bytes=sum(path.stat().st_size for path in files),
+                stale_reason=stale_reason,
             )
         )
     return out
@@ -278,9 +345,6 @@ def fetch_models(
     # that module at the configured directory instead of patching call sites.
     _point_upstream_cache_at(root)
     root.mkdir(parents=True, exist_ok=True)
-    # huggingface_hub reads the token from the environment; normalize the name.
-    os.environ.setdefault("HF_TOKEN", token)
-    os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", token)
 
     try:
         from cosmos_curator.core.utils.model.model_utils import (  # type: ignore
@@ -293,7 +357,9 @@ def fetch_models(
     fetched: list[str] = []
     already: list[str] = []
     failed: dict[str, str] = {}
-    with _upstream_hf_config(token):
+    # huggingface_hub reads the token from the environment under either name, but the
+    # caller's process outlives this fetch, so both are scoped to it.
+    with _hf_token_env(token), _upstream_hf_config(token):
         for spec in specs:
             if not force and before[spec.key].present:
                 already.append(spec.key)
@@ -306,9 +372,13 @@ def fetch_models(
                 )
             except Exception as exc:  # noqa: BLE001 - keep fetching the rest
                 message = f"{type(exc).__name__}: {exc}"[:300]
-                _log.warning("could not fetch %s (%s): %s", spec.key, spec.model_id, message)
+                _log.warning(
+                    "could not fetch %s (%s): %s", spec.key, spec.model_id, message, exc_info=True
+                )
                 failed[spec.key] = message
                 continue
+            # Only now, after the download returned, is the directory known complete.
+            write_completion_stamp(root / spec.model_id, spec)
             fetched.append(spec.key)
 
     return FetchResult(
@@ -320,6 +390,28 @@ def fetch_models(
         failed=failed,
         models=model_status(specs, environ=env),
     )
+
+
+@contextmanager
+def _hf_token_env(token: str) -> Iterator[None]:
+    """Expose the token to ``huggingface_hub`` for the duration of the fetch only.
+
+    Leaving it in ``os.environ`` would hand the operator's credential to every later
+    stage and child process in the run, which no other part of the fetch requires.
+    """
+
+    names = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+    previous = {name: os.environ.get(name) for name in names}
+    for name in names:
+        os.environ[name] = token
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 @contextmanager
