@@ -156,15 +156,25 @@ def test_model_status_reports_missing_then_present(checkout: Path, tmp_path: Pat
     assert status.bytes > 0
 
 
-def test_model_status_treats_any_file_as_present_without_a_file_list(
+def test_model_status_needs_more_than_a_file_when_there_is_no_file_list(
     checkout: Path, tmp_path: Path
 ) -> None:
+    """Without a registry file list, only a completion stamp can vouch for a cache.
+
+    Treating any file as proof accepts a download that was killed part-way: the next
+    run skips it and the missing shard surfaces later as a load error inside a stage.
+    """
+
     weights = tmp_path / "weights"
     environ = {"NPA_COSMOS_CURATE_SRC": str(checkout), mod.WEIGHTS_DIR_ENV: str(weights)}
     specs = mod.resolve_models(["split-transnetv2"], environ=environ)
     local = weights / "Sn4kehead/TransNetV2"
     local.mkdir(parents=True)
     (local / "transnetv2-pytorch-weights.pth").write_bytes(b"weights")
+
+    assert not mod.model_status(specs, environ=environ)[0].present
+
+    mod.write_completion_stamp(local, specs[0])
     assert mod.model_status(specs, environ=environ)[0].present
 
 
@@ -260,6 +270,10 @@ def test_fetch_models_skips_what_is_already_complete(
     )
     monkeypatch.setenv("HF_TOKEN", "hf-test-token")
     monkeypatch.setenv(mod.WEIGHTS_DIR_ENV, str(weights))
+
+    # A finished download is one that left a stamp behind.
+    environ = {"NPA_COSMOS_CURATE_SRC": str(checkout), mod.WEIGHTS_DIR_ENV: str(weights)}
+    mod.write_completion_stamp(local, mod.resolve_models(["split-transnetv2"], environ=environ)[0])
 
     result = mod.fetch_models(["split-transnetv2"])
     assert result.already_present == ["transnetv2"]

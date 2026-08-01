@@ -39,6 +39,9 @@ ARG COSMOS_CURATE_VERSION=0.1.1
 ARG COSMOS_CURATE_REF=de89c5e4f76219c3f2985dc8fda790a74ab8bab0
 ARG COSMOS_XENNA_VERSION=0.5.5
 ARG MICROMAMBA_VERSION=2.0.5
+# Checksum of the linux-64 tarball for MICROMAMBA_VERSION. Piping curl into tar would
+# execute whatever the endpoint served; verify it first and bump both together.
+ARG MICROMAMBA_SHA256=ff1a10b46e9ee673bb672ac464d4787b4e9c3569b75816a56f76dddc0b1f07fc
 ARG FFMPEG_VERSION=7.1.1
 ARG TORCH_VERSION=2.9.0
 
@@ -81,6 +84,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       sudo \
     && rm -rf /var/lib/apt/lists/*
 
+# SkyPilot's Kubernetes provisioner gates on `sudo -l` and then runs, as this image's
+# own user, `sudo apt install`, `sudo sed -i` on /etc/ssh/sshd_config and
+# /etc/pam.d/sshd, `sudo ssh-keygen -A`, `sudo chown`/`chmod` on ~/.ssh, `sudo cat` of
+# the mounted key, and `sudo service ssh restart`. Enumerating those commands in
+# sudoers would look narrower without being narrower — arbitrary `sudo sed -i`,
+# `sudo cat`, and `sudo chown` already amount to root — and would break provisioning
+# the moment SkyPilot adds one more. The grant is blanket and the reason recorded.
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
     && chmod 0440 /etc/sudoers.d/ubuntu \
@@ -100,7 +110,10 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
 RUN set -eux; \
     cd /tmp; \
     curl -sSL "https://micro.mamba.pm/api/micromamba/linux-64/${MICROMAMBA_VERSION}" \
-      | tar -xvj bin/micromamba; \
+      -o micromamba.tar.bz2; \
+    echo "${MICROMAMBA_SHA256}  micromamba.tar.bz2" | sha256sum -c -; \
+    tar -xj -f micromamba.tar.bz2 bin/micromamba; \
+    rm -f micromamba.tar.bz2; \
     ./bin/micromamba create -y -p "${FFMPEG_PREFIX}" -c conda-forge \
       "ffmpeg==${FFMPEG_VERSION}" "openh264"; \
     ./bin/micromamba clean -y --all; \
@@ -133,6 +146,11 @@ RUN set -eux; \
 # The dependency set upstream's GPU-free stages import. torch is CPU-only here:
 # the motion stage runs its CPU code path when no GPU is requested, and the CUDA
 # wheels would add several GB for kernels this image never calls.
+#
+# Every version is pinned to what the verified image resolved. Unpinned, the same
+# Dockerfile builds a different image every day and a bad upstream release lands
+# without anyone choosing it — and this image's whole job is to be the one place the
+# curator's environment is known good.
 RUN python -m venv "${COSMOS_CURATE_VENV}" \
     && python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install --no-cache-dir \
@@ -140,24 +158,24 @@ RUN python -m venv "${COSMOS_CURATE_VENV}" \
       --index-url https://download.pytorch.org/whl/cpu \
     && python -m pip install --no-cache-dir \
       "cosmos-xenna==${COSMOS_XENNA_VERSION}" \
-      "attrs" \
-      "av" \
-      "azure-identity" \
-      "azure-storage-blob" \
-      "boto3" \
-      "huggingface_hub" \
-      "loguru" \
-      "ngcsdk" \
-      "numpy" \
-      "nvidia-ml-py" \
-      "nvtx" \
-      "opencv-python-headless" \
-      "pandas" \
-      "pyarrow" \
-      "pydantic" \
-      "pylance" \
-      "tqdm" \
-      "webdataset"
+      "attrs==26.1.0" \
+      "av==18.0.0" \
+      "azure-identity==1.25.3" \
+      "azure-storage-blob==12.30.0" \
+      "boto3==1.43.61" \
+      "huggingface_hub==1.26.0" \
+      "loguru==0.7.3" \
+      "ngcsdk==4.34.7" \
+      "numpy==2.5.1" \
+      "nvidia-ml-py==13.610.43" \
+      "nvtx==0.2.15" \
+      "opencv-python-headless==5.0.0.93" \
+      "pandas==3.0.5" \
+      "pyarrow==25.0.0" \
+      "pydantic==2.13.4" \
+      "pylance==9.0.0" \
+      "tqdm==4.70.0" \
+      "webdataset==1.0.2"
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -190,6 +208,21 @@ baked = [str(path) for path in root.rglob("*") if path.is_file()] if root.is_dir
 if baked:
     raise RuntimeError(
         f"model weights must never be baked into this image; found {len(baked)} file(s) under {root}"
+    )
+
+# The runtime mount being empty proves nothing about the layers: a weight committed
+# into upstream's tree, or pulled by an LFS smudge that slipped through, lands in the
+# baked checkout instead. Scan there too, the way the evaluator image does.
+WEIGHT_SUFFIXES = {".onnx", ".safetensors", ".pth", ".pt", ".bin", ".ckpt", ".gguf"}
+source = Path(availability.source)
+in_source = sorted(
+    str(path.relative_to(source))
+    for path in source.rglob("*")
+    if path.is_file() and path.suffix.lower() in WEIGHT_SUFFIXES
+)
+if in_source:
+    raise RuntimeError(
+        f"model weights must never be baked into this image; found {in_source} under {source}"
     )
 print(
     "COSMOS_CURATE_BUILD_OK "

@@ -316,11 +316,7 @@ def test_verify_attributes_records_a_failing_check_without_dropping_the_batch(tm
             return super().chat_completion_text(**kwargs)
 
     client = FailsFirstQuestion(
-        [
-            "unparseable",  # the unstructured retry also fails to parse
-            _question_json("lighting", "warm lamp light", "bright daylight"),
-            "A",
-        ]
+        [_question_json("lighting", "warm lamp light", "bright daylight"), "A"]
     )
     result = av.verify_attributes(
         clip_id="clip-0",
@@ -333,6 +329,46 @@ def test_verify_attributes_records_a_failing_check_without_dropping_the_batch(tm
     assert result.checks[0].error
     assert result.checks[1].passed
     assert result.score == 0.5
+
+
+class _RefusesGuidedJson(FakeTokenFactory):
+    """An endpoint that cannot honour ``response_format`` but answers plain calls."""
+
+    def chat_completion_text(self, **kwargs: Any) -> str:
+        if "response_format" in kwargs:
+            raise RuntimeError("400: response_format is not supported by this model")
+        return super().chat_completion_text(**kwargs)
+
+
+class _RateLimited(FakeTokenFactory):
+    """An endpoint under load. Retrying the same call just doubles the load."""
+
+    def __init__(self, responses: list[str]) -> None:
+        super().__init__(responses)
+        self.calls = 0
+
+    def chat_completion_text(self, **kwargs: Any) -> str:
+        self.calls += 1
+        raise RuntimeError("429: rate limit exceeded")
+
+
+def test_an_endpoint_without_guided_json_is_retried_unstructured() -> None:
+    client = _RefusesGuidedJson([_question_json("cloth_color", "blue", "red")])
+    question = av.generate_question(
+        client=client, variable="cloth_color", value="blue", options=["blue", "red"], model="m"
+    )
+    assert question["correct_answer"]
+
+
+def test_a_rate_limit_is_not_retried_as_if_it_were_a_schema_problem() -> None:
+    """Retrying a 429 doubles the load and hides the cause behind a JSON message."""
+
+    client = _RateLimited([])
+    with pytest.raises(RuntimeError, match="rate limit"):
+        av.generate_question(
+            client=client, variable="cloth_color", value="blue", options=["blue"], model="m"
+        )
+    assert client.calls == 1
 
 
 def test_verify_attributes_requires_exactly_one_media_source(tmp_path: Path) -> None:

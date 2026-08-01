@@ -215,7 +215,7 @@ def _verify_one(
             model=llm_model,
         )
     except Exception as exc:  # noqa: BLE001 - one bad question must not drop the batch
-        _log.warning("question generation failed for %r: %s", variable, exc)
+        _log.warning("question generation failed for %r: %s", variable, exc, exc_info=True)
         return AttributeVerificationCheck(
             variable=variable,
             value=value,
@@ -237,7 +237,7 @@ def _verify_one(
             max_tokens=max_tokens,
         )
     except Exception as exc:  # noqa: BLE001 - record the failure, keep the batch
-        _log.warning("VLM verification failed for %r: %s", variable, exc)
+        _log.warning("VLM verification failed for %r: %s", variable, exc, exc_info=True)
         return AttributeVerificationCheck(
             variable=variable,
             value=value,
@@ -290,8 +290,14 @@ def generate_question(
             max_tokens=max_tokens,
             response_format=QUESTION_SCHEMA,
         )
-    except Exception as exc:  # noqa: BLE001 - endpoints without guided JSON retry plain
-        _log.info("guided JSON unavailable for %s (%s); retrying unstructured", model, exc)
+    except Exception as exc:
+        # Only retry the one thing a retry can fix. A 429, an auth failure, or a
+        # timeout would fail again identically, so retrying doubles the load on an
+        # endpoint already in trouble and buries the real cause under a message
+        # about guided JSON.
+        if not _looks_like_unsupported_response_format(exc):
+            raise
+        _log.info("guided JSON unsupported by %s (%s); retrying unstructured", model, exc)
         text = client.chat_completion_text(
             model=model,
             messages=messages,
@@ -300,6 +306,33 @@ def generate_question(
         )
     question = parse_question_response(text)
     return normalize_question(question, variable=variable, value=value, options=options)
+
+
+#: Substrings OpenAI-compatible endpoints use when they cannot honour a
+#: ``response_format`` schema. Matched case-insensitively against the error text
+#: because the wording, not the exception type, is what varies between servers.
+_UNSUPPORTED_RESPONSE_FORMAT_MARKERS = (
+    "response_format",
+    "guided",
+    "json_schema",
+    "json schema",
+    "structured output",
+)
+
+
+def _looks_like_unsupported_response_format(exc: BaseException) -> bool:
+    """True when the endpoint rejected the schema itself, not the request."""
+
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
+    # A rejected schema is a client error; 429 and 5xx are load, not capability.
+    if status is not None and not 400 <= int(status) < 429:
+        return False
+    if status is not None and int(status) in {401, 403, 408}:
+        return False
+    text = str(exc).lower()
+    return any(marker in text for marker in _UNSUPPORTED_RESPONSE_FORMAT_MARKERS)
 
 
 def answer_question(
@@ -512,32 +545,39 @@ class _FrameImage:
         if not exe:
             raise CosmosEvaluatorError("extracting a frame from a video requires ffmpeg on PATH")
         self._tmp = tempfile.TemporaryDirectory(prefix="npa-cosmos-eval-")
-        out = Path(self._tmp.name) / "first_frame.jpg"
-        proc = subprocess.run(
-            [
-                exe,
-                "-nostdin",
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-i",
-                str(self._video),
-                "-frames:v",
-                "1",
-                "-q:v",
-                "2",
-                str(out),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-        if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
-            raise CosmosEvaluatorError(
-                f"ffmpeg could not extract a frame from {self._video.name}: {(proc.stderr or '').strip()[:200]}"
+        # From here on __exit__ will not run if this raises, because the caller never
+        # receives the context manager, so clean up the directory here instead.
+        try:
+            out = Path(self._tmp.name) / "first_frame.jpg"
+            proc = subprocess.run(
+                [
+                    exe,
+                    "-nostdin",
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(self._video),
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "2",
+                    str(out),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
             )
+            if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
+                raise CosmosEvaluatorError(
+                    f"ffmpeg could not extract a frame from {self._video.name}: "
+                    f"{(proc.stderr or '').strip()[:200]}"
+                )
+        except BaseException:
+            self.__exit__()
+            raise
         return out
 
     def __exit__(self, *_exc: object) -> None:

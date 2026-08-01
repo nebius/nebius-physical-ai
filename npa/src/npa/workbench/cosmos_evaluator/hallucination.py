@@ -300,11 +300,30 @@ def _iter_gray_frames(video: Path, height: int, width: int) -> Iterator[np.ndarr
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
     try:
         assert proc.stdout is not None
+        partial = False
         while True:
             buffer = proc.stdout.read(frame_bytes)
-            if not buffer or len(buffer) < frame_bytes:
+            if not buffer:
+                break
+            if len(buffer) < frame_bytes:
+                # Every raw gray frame is exactly height*width bytes, so a short read
+                # is a cut-off stream rather than the end of one.
+                partial = True
                 break
             yield np.frombuffer(buffer, dtype=np.uint8).reshape(height, width)
+        # Only reached when the caller consumed the whole stream, so a non-zero exit
+        # is a real decode failure and not this generator being abandoned early.
+        # Silently truncating here would drop frames from one side of the comparison
+        # and quietly bias the score.
+        returncode = proc.wait(timeout=30)
+        if returncode != 0 or partial:
+            detail = ""
+            if proc.stderr is not None:
+                detail = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
+            raise CosmosEvaluatorError(
+                f"ffmpeg failed to decode {video} (exit {returncode}): "
+                f"{detail or 'stream ended mid-frame'}"[:300]
+            )
     finally:
         for stream in (proc.stdout, proc.stderr):
             if stream is not None:

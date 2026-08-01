@@ -40,6 +40,9 @@ class LazyStorageClient:
         self._client: "StorageClient | None" = None
 
     def resolve(self) -> "StorageClient":
+        # Unsynchronized on purpose. Two threads racing here build one redundant
+        # client and discard it, which costs nothing; a lock would make this object
+        # uncopyable, and copying it without connecting is the point.
         if self._client is None:
             self._client = StorageClient.from_environment(**self._kwargs)  # type: ignore[arg-type]
         return self._client
@@ -47,6 +50,13 @@ class LazyStorageClient:
     def __getattr__(self, name: str) -> object:
         # Only reached for names this class does not define, which is every
         # StorageClient method plus the `s3` property.
+        #
+        # Dunders are excluded deliberately: copy, pickle, and several inspection
+        # paths probe for __deepcopy__, __reduce__, __getstate__ and friends, and
+        # forwarding those would open a real connection just because something
+        # looked at the object — the opposite of what this class is for.
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
         return getattr(self.resolve(), name)
 
 

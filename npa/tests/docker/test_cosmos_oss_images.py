@@ -52,6 +52,45 @@ def test_dockerfile_does_not_download_weights_at_build_time(image: str) -> None:
 
 
 @pytest.mark.parametrize("image", IMAGES)
+def test_every_runtime_dependency_is_pinned(image: str) -> None:
+    """An unpinned dependency makes the image a moving target.
+
+    These images exist to be the one place a Cosmos tool's environment is known
+    good, so rebuilding the same Dockerfile must not silently pick up whatever the
+    index published since — including a bad release nobody chose.
+    """
+
+    body = _dockerfile(image)
+    unpinned: list[str] = []
+    for raw in body.splitlines():
+        line = raw.strip().rstrip("\\").strip()
+        # Only the quoted requirement arguments of a pip install continuation line.
+        match = re.fullmatch(r'"([A-Za-z0-9_.\-]+(?:\[[a-z0-9,_-]+\])?)"', line)
+        if match and "==" not in match.group(1):
+            unpinned.append(match.group(1))
+    assert not unpinned, f"{image} installs unpinned dependencies: {unpinned}"
+
+
+@pytest.mark.parametrize("image", IMAGES)
+def test_a_piped_download_is_checksummed(image: str) -> None:
+    """Piping a download straight into a shell or tar executes whatever was served."""
+
+    body = _dockerfile(image)
+    piped = [
+        line.strip()
+        for line in body.splitlines()
+        if not line.lstrip().startswith("#")
+        and re.search(r"(curl|wget)[^|]*\|\s*(tar|bash|sh)\b", line)
+    ]
+    assert not piped, (
+        f"{image} pipes a download into tar/sh without verifying it: {piped}; "
+        "download to a file, check its sha256, then extract"
+    )
+    if "curl" in body and "micromamba" in body:
+        assert "sha256sum -c" in body, f"{image} fetches micromamba without a checksum"
+
+
+@pytest.mark.parametrize("image", IMAGES)
 def test_dockerfile_never_copies_a_weight_file(image: str) -> None:
     body = _dockerfile(image)
     copied = [

@@ -378,6 +378,31 @@ def test_curate_augmented_summarizes_a_real_curator_tree(
     assert (curated / "metas" / "v0" / "clip-0.json").is_file()
 
 
+def test_variants_whose_names_sanitize_alike_are_staged_separately(tmp_path: Path) -> None:
+    """Every unsafe character maps to ``_``, so distinct variants can collide.
+
+    Staged under one name the second download overwrites the first, and its clips are
+    then attributed to the wrong variant.
+    """
+
+    augment = tmp_path / "cosmos_augmented"
+    for clip in ("cam a", "cam+a", "cam_a"):
+        (augment / clip).mkdir(parents=True)
+        (augment / clip / "augmented_video.mp4").write_bytes(clip.encode())
+
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    variants = report_mod._stage_variants(
+        str(augment), staged, store=object(), max_variants=0, warnings=[]
+    )
+
+    assert sorted(variants.values()) == ["cam a", "cam+a", "cam_a"]
+    assert len(list(staged.glob("*.mp4"))) == 3
+    # Each staged file still holds its own variant's bytes.
+    for stem, variant in variants.items():
+        assert (staged / f"{stem}.mp4").read_bytes() == variant.encode()
+
+
 def _weights_env(root: Path) -> dict[str, str]:
     return {"NPA_COSMOS_CURATE_WEIGHTS_DIR": str(root)}
 

@@ -20,7 +20,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Container
 from urllib.parse import urlparse
 
 from npa.workbench.cosmos_curate.pipeline import (
@@ -383,7 +383,7 @@ def _stage_variants(
             if not video.is_file():
                 warnings.append(f"variant {child.name} has no video to curate")
                 continue
-            target = staged / f"{_safe_stem(child.name)}.mp4"
+            target = staged / f"{_safe_stem(child.name, taken=variants)}.mp4"
             target.write_bytes(video.read_bytes())
             variants[target.stem] = child.name
             if max_variants and len(variants) >= max_variants:
@@ -404,7 +404,7 @@ def _stage_variants(
     for variant in sorted(by_variant):
         keys = by_variant[variant]
         preferred = [key for key in keys if key.endswith(VARIANT_VIDEO_NAME)] or sorted(keys)
-        target = staged / f"{_safe_stem(variant)}.mp4"
+        target = staged / f"{_safe_stem(variant, taken=variants)}.mp4"
         try:
             local = store.download_path(f"s3://{bucket}/{preferred[0]}", str(target))
         except Exception as exc:  # noqa: BLE001 - skip a variant we cannot read
@@ -425,10 +425,25 @@ def _stage_variants(
     return variants
 
 
-def _safe_stem(variant: str) -> str:
-    """A filesystem-safe stem that still round-trips to the variant name."""
+def _safe_stem(variant: str, *, taken: Container[str] = frozenset()) -> str:
+    """A filesystem-safe stem that still round-trips to the variant name.
 
-    return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in variant)
+    Every unsafe character maps to ``_``, so ``cam a``, ``cam/b`` and ``cam_b`` all
+    collapse to the same stem. Staged under one name, the second download overwrites
+    the first and its clips are attributed to the wrong variant, so a collision gets
+    a suffix instead.
+    """
+
+    stem = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_" for char in variant
+    )
+    if stem not in taken:
+        return stem
+    for index in range(2, 1000):
+        candidate = f"{stem}-{index}"
+        if candidate not in taken:
+            return candidate
+    raise CosmosCurateError(f"could not find a free staging name for variant {variant!r}")
 
 
 def _publish(produced: Path, curated_uri: str, *, store: Any, warnings: list[str]) -> bool:

@@ -270,7 +270,8 @@ def _evaluate_clip(
             )
         except Exception as exc:  # noqa: BLE001 - keep grading the remaining variants
             message = f"attribute verification failed for {clip_id}: {exc}"[:300]
-            _log.warning(message)
+            # exc_info so a defect in this code is distinguishable from a flaky endpoint.
+            _log.warning(message, exc_info=True)
             warnings.append(message)
             skipped.append("attribute verification failed")
 
@@ -289,7 +290,7 @@ def _evaluate_clip(
             )
         except Exception as exc:  # noqa: BLE001 - keep grading the remaining variants
             message = f"hallucination check failed for {clip_id}: {exc}"[:300]
-            _log.warning(message)
+            _log.warning(message, exc_info=True)
             warnings.append(message)
             skipped.append("hallucination check failed")
 

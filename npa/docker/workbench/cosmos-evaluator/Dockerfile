@@ -99,14 +99,14 @@ RUN set -eux; \
 RUN python -m venv "${COSMOS_EVALUATOR_VENV}" \
     && python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install --no-cache-dir \
-      "bazel-runfiles" \
-      "multi-storage-client[boto3]" \
+      "bazel-runfiles==2.2.0" \
+      "multi-storage-client[boto3]==1.0.1" \
       "numpy==${NUMPY_VERSION}" \
-      "openai" \
+      "openai==2.52.0" \
       "opencv-python-headless==${OPENCV_VERSION}" \
-      "pydantic" \
-      "python-dotenv" \
-      "pyyaml"
+      "pydantic==2.13.4" \
+      "python-dotenv==1.2.2" \
+      "pyyaml==6.0.3"
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
