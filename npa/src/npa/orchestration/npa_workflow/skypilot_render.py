@@ -420,17 +420,16 @@ def default_npa_setup() -> str:
     )
 
 
-def _nurec_rerun_pin() -> str:
-    """Return npa's pinned rerun-sdk requirement, so the two cannot drift."""
-    try:
-        from npa.orchestration.npa_workflow import _rerun_pin  # type: ignore[attr-defined]
-
-        return str(_rerun_pin)
-    except Exception:  # noqa: BLE001 - fall back to the documented pin
-        return "rerun-sdk==0.31.4"
-
-
-NUREC_RERUN_PIN = _nurec_rerun_pin()
+#: rerun-sdk requirement installed into NuRec stage pods.
+#:
+#: Must equal npa's own ``viz`` extra in ``npa/pyproject.toml``. There is no import
+#: that can enforce that -- pyproject is data, not code, and parsing it at runtime
+#: from an installed wheel is unreliable -- so the guarantee is provided by
+#: ``test_renderer_nurec_rerun_pin_matches_the_packaged_extra``, which fails if the
+#: two ever diverge. (An earlier version imported a ``_rerun_pin`` symbol that does
+#: not exist and silently fell back to this literal, so its "cannot drift" promise
+#: never actually engaged.)
+NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
 
 
 def render_setup_for_tool(

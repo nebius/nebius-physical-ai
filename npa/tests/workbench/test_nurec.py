@@ -48,6 +48,19 @@ from npa.workbench.nurec.nurec import (
 runner = CliRunner()
 
 
+def _json_payload(result) -> dict:
+    """Parse the JSON document out of CliRunner output.
+
+    CliRunner merges stderr into ``result.output`` on this click version, so a
+    human-facing note on stderr lands in the same string as the machine-readable
+    payload. Production keeps them separate (asserted by
+    ``test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json``).
+    """
+    text = strip_ansi(result.output)
+    start = text.index("{")
+    return json.loads(text[start:])
+
+
 def _completed(returncode: int = 0, stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(["nre"], returncode, stdout, "")
 
@@ -882,7 +895,7 @@ def test_cli_check_emits_json_and_exits_non_zero_on_failure(
     result = runner.invoke(app, ["workbench", "nurec", "check", "--output", "json"])
 
     assert result.exit_code == 1
-    payload = json.loads(strip_ansi(result.output))
+    payload = _json_payload(result)
     assert payload["status"] == "failed"
     assert payload["hf_dataset"] == "gated"
 
@@ -911,7 +924,7 @@ def test_cli_reconstruct_dry_run_prints_the_resolved_nre_command(tmp_path: Path)
 
     output = strip_ansi(result.output)
     assert result.exit_code == 0, output
-    payload = json.loads(output)
+    payload = _json_payload(result)
     assert payload["status"] == "ok"
     command = " ".join(payload["command"])
     assert "dataset.poses_component_group=npa_rig" in command
@@ -935,7 +948,7 @@ def test_cli_reconstruct_without_a_sequence_fails_with_guidance(tmp_path: Path) 
     )
 
     assert result.exit_code == 1
-    payload = json.loads(strip_ansi(result.output))
+    payload = _json_payload(result)
     assert payload["status"] == "failed"
     assert any("nurec fetch" in error for error in payload["errors"])
 
@@ -978,7 +991,7 @@ def test_cli_reconstruct_replaces_the_recipe_placeholder_lidar(tmp_path: Path) -
 
     output = strip_ansi(result.output)
     assert result.exit_code == 0, output
-    command = " ".join(json.loads(output)["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.lidar_ids=['virtual_lidar']" in command
     assert "dummy_lidar" not in command
 
@@ -1009,7 +1022,7 @@ def test_cli_reconstruct_blanks_the_lidar_list_when_the_capture_has_none(
         ],
     )
 
-    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.lidar_ids=[]" in command
 
 
@@ -1042,7 +1055,7 @@ def test_cli_reconstruct_respects_an_explicit_lidar_id(tmp_path: Path) -> None:
         ],
     )
 
-    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.lidar_ids=['lidar_top']" in command
 
 
@@ -1085,7 +1098,7 @@ def test_cli_reconstruct_replaces_the_recipe_placeholder_cameras(tmp_path: Path)
 
     output = strip_ansi(result.output)
     assert result.exit_code == 0, output
-    command = " ".join(json.loads(output)["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.camera_ids=['camera1','camera2']" in command
     assert "camera_front_wide_120fov" not in command
 
@@ -1121,7 +1134,7 @@ def test_cli_reconstruct_respects_explicit_cameras_over_discovery(tmp_path: Path
         ],
     )
 
-    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.camera_ids=['camera2']" in command
 
 
@@ -1158,7 +1171,7 @@ def test_cli_reconstruct_discovery_keeps_both_sensor_kinds(tmp_path: Path) -> No
         ],
     )
 
-    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.camera_ids=['camera1']" in command
     assert "dataset.lidar_ids=['virtual_lidar']" in command
 
@@ -1205,7 +1218,7 @@ def test_derived_rig_sequence_trains_on_the_reference_camera_only(tmp_path: Path
         ],
     )
 
-    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.camera_ids=['camera2']" in command
     assert "camera1" not in command
 
@@ -1231,7 +1244,7 @@ def test_sequence_without_a_derived_rig_keeps_all_cameras(tmp_path: Path) -> Non
         ],
     )
 
-    command = " ".join(json.loads(strip_ansi(result.output))["command"])
+    command = " ".join(_json_payload(result)["command"])
     assert "dataset.camera_ids=['camera_front','camera_rear']" in command
 
 
@@ -1255,3 +1268,193 @@ def test_derive_rig_poses_writes_a_self_describing_sidecar(tmp_path: Path) -> No
     # directory alongside the meta-file).
     assert RIG_SIDECAR_NAME.endswith(".json")
     assert "/" not in RIG_SIDECAR_NAME
+
+
+# ---------------------------------------------------------------------------------
+# regressions from PR review
+# ---------------------------------------------------------------------------------
+def test_parse_metrics_yaml_falls_back_when_the_file_is_corrupt(tmp_path: Path) -> None:
+    """A corrupt metrics.yaml must NOT crash a reconstruction that succeeded.
+
+    yaml.safe_load raises yaml.YAMLError, which derives from Exception and NOT from
+    ValueError; the previous `except ValueError` let it escape.
+    """
+    path = tmp_path / "metrics.yaml"
+    # Valid enough for the flat scan, invalid as YAML (unclosed flow mapping).
+    path.write_text("test/psnr: 28.5\nbroken: {unclosed\n")
+
+    metrics = parse_metrics_yaml(path)
+
+    assert metrics["test/psnr"] == pytest.approx(28.5)
+
+
+def test_parse_metrics_yaml_survives_a_truncated_binary_file(tmp_path: Path) -> None:
+    path = tmp_path / "metrics.yaml"
+    path.write_bytes(b"\xff\xfe\x00 not utf-8 \xc3\x28")
+
+    assert parse_metrics_yaml(path) == {}
+
+
+def test_parse_metrics_yaml_records_every_numeric_leaf(tmp_path: Path) -> None:
+    """The docstring promises every numeric leaf, not just test/*."""
+    path = tmp_path / "metrics.yaml"
+    path.write_text("test:\n  psnr: 30.0\ntrain:\n  loss: 0.25\nstep: 30000\n")
+
+    metrics = parse_metrics_yaml(path)
+
+    assert metrics["test/psnr"] == pytest.approx(30.0)
+    assert metrics["train/loss"] == pytest.approx(0.25)
+    assert metrics["step"] == pytest.approx(30000)
+
+
+def test_redact_catches_a_secret_straddling_the_truncation_boundary() -> None:
+    """Redaction must happen BEFORE truncation.
+
+    Truncating first can slice through a secret, leaving a tail fragment that no
+    longer matches the full value and so survives redaction.
+    """
+    config = NurecConfig.from_env(environ={})
+    secret = "nvapi-" + "s" * 40
+    env = {"NGC_API_KEY": secret}
+    # Place the secret so the default 2000-char tail cuts through its middle.
+    filler = "x" * 1980
+    text = filler + secret + " trailing context"
+
+    out = redact(text, config, env)
+
+    assert secret not in out
+    # No surviving fragment of the secret either.
+    assert "sssssssssss" not in out
+    assert "<redacted>" in out
+
+
+def test_redact_still_truncates_to_the_limit() -> None:
+    config = NurecConfig.from_env(environ={})
+
+    out = redact("y" * 5000, config, {}, limit=100)
+
+    assert len(out) == 100
+
+
+def test_latest_usdz_tie_breaks_on_the_step_not_the_name(tmp_path: Path) -> None:
+    """Equal mtimes are common right after extraction.
+
+    Lexically "7000.usdz" > "10000.usdz", which would ship the early preview
+    instead of the trained scene -- the exact failure latest_usdz exists to avoid.
+    """
+    import os
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    for step in ("7000", "10000", "30000"):
+        path = artifacts / f"{step}.usdz"
+        path.write_text("gaussians")
+        os.utime(path, (1_000_000, 1_000_000))  # identical mtimes
+
+    found = latest_usdz(tmp_path)
+
+    assert found is not None
+    assert found.name == "30000.usdz"
+
+
+def test_latest_usdz_still_prefers_a_newer_mtime_over_a_higher_step(tmp_path: Path) -> None:
+    """mtime stays the primary key; the step only breaks ties."""
+    import os
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    old = artifacts / "30000.usdz"
+    old.write_text("x")
+    os.utime(old, (1_000_000, 1_000_000))
+    new = artifacts / "1000.usdz"
+    new.write_text("x")
+    os.utime(new, (2_000_000, 2_000_000))
+
+    assert latest_usdz(tmp_path).name == "1000.usdz"
+
+
+def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path) -> None:
+    """The workflow pipes stdout into a JSON parser, so it must stay pure.
+
+    Run as a real subprocess rather than through CliRunner, which merges the two
+    streams and would hide a regression here.
+    """
+    import subprocess as sp
+    import sys
+
+    ncore = tmp_path / "scene.json"
+    _ncore_with_cameras(ncore, ["camera1", "camera2"], ["virtual_lidar"])
+    _sidecar(ncore, "camera2", ["camera1", "camera2"])
+
+    proc = sp.run(
+        [
+            sys.executable,
+            "-m",
+            "npa.cli.main",
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    # stdout parses as JSON on its own -- nothing else is written to it.
+    payload = json.loads(proc.stdout)
+    assert "dataset.camera_ids=['camera2']" in " ".join(payload["command"])
+    # ...and the operator still gets told which camera was dropped.
+    assert "camera1" in proc.stderr
+    assert "reference camera" in proc.stderr
+
+
+def test_reconstruct_is_silent_when_there_is_nothing_to_drop(tmp_path: Path) -> None:
+    """A single-camera capture loses nothing, so it must not emit a warning."""
+    import subprocess as sp
+    import sys
+
+    ncore = tmp_path / "scene.json"
+    _ncore_with_cameras(ncore, ["camera2"], ["virtual_lidar"])
+    _sidecar(ncore, "camera2", ["camera2"])
+
+    proc = sp.run(
+        [
+            sys.executable, "-m", "npa.cli.main", "workbench", "nurec", "reconstruct",
+            "--ncore-json", str(ncore), "--out-dir", str(tmp_path / "out"),
+            "--dry-run", "--output", "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "restricting training" not in proc.stderr
+
+
+def test_publish_merges_into_a_local_directory_without_deleting_it(tmp_path: Path) -> None:
+    """A mistyped --output-uri must not wipe a populated directory."""
+    from npa.cli.nurec import _publish
+
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "new.txt").write_text("new")
+
+    destination = tmp_path / "dst"
+    destination.mkdir()
+    precious = destination / "precious.txt"
+    precious.write_text("do not delete me")
+
+    _publish(source, str(destination))
+
+    assert precious.is_file(), "pre-existing content was destroyed"
+    assert precious.read_text() == "do not delete me"
+    assert (destination / "new.txt").read_text() == "new"

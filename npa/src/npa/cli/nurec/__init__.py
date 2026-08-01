@@ -106,9 +106,10 @@ def _publish(local_path: Path, output_uri: str) -> str:
         if local_path.is_dir():
             import shutil
 
-            if destination.exists():
-                shutil.rmtree(destination)
-            shutil.copytree(local_path, destination)
+            # Merge rather than rmtree: a mistyped --output-uri pointing at a
+            # populated directory must not delete it. dirs_exist_ok overwrites the
+            # files we actually publish and leaves everything else alone.
+            shutil.copytree(local_path, destination, dirs_exist_ok=True)
         else:
             destination.write_bytes(local_path.read_bytes())
         return str(destination)
@@ -437,9 +438,20 @@ def reconstruct_cmd(
         # full multi-camera behaviour.
         reference = str(read_rig_sidecar(resolved_json).get("reference_camera") or "")
         default_cameras = [reference] if reference else list(discovered_cameras)
+        if not camera_id and reference and len(discovered_cameras) > 1:
+            # Silently dropping real training data would be worse than being noisy.
+            typer.echo(
+                f"note: restricting training to the rig reference camera "
+                f"{reference!r}; the capture also has "
+                f"{sorted(set(discovered_cameras) - {reference})}. The recipe's SfM "
+                "point-cloud initialization supports only one camera. Pass "
+                "--camera-id explicitly to override.",
+                err=True,
+            )
         camera_id = list(camera_id) or default_cameras
-        config = NurecConfig.from_env(
-            environ=None,
+        # Rebuild through _config() so a bad value still produces the CLI's
+        # `error: ...` / exit 2 contract rather than an uncaught traceback.
+        config = _config(
             image=image,
             entrypoint=entrypoint,
             docker_bin=docker_bin,

@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -848,15 +849,20 @@ def _secret_values(config: NurecConfig, env: Mapping[str, str]) -> list[str]:
 
 
 def redact(text: str, config: NurecConfig, env: Mapping[str, str], *, limit: int = 2000) -> str:
-    """Truncate ``text`` and replace every known secret value with ``<redacted>``."""
+    """Replace every known secret value with ``<redacted>``, then truncate.
+
+    The order matters: truncating first can slice through the middle of a secret,
+    leaving a tail fragment that no longer matches the full value and therefore
+    survives redaction. Redacting the whole body first makes the boundary
+    irrelevant.
+    """
     body = str(text or "").strip()
     if not body:
         return ""
-    sanitized = body[-limit:]
     for value in _secret_values(config, env):
         if value and len(value) >= 8:
-            sanitized = sanitized.replace(value, "<redacted>")
-    return sanitized
+            body = body.replace(value, "<redacted>")
+    return body[-limit:]
 
 
 def _sanitize(
@@ -1547,7 +1553,17 @@ def latest_usdz(run_dir: Path | str) -> Path | None:
     candidates = [path for path in root.rglob("*.usdz") if path.is_file()]
     if not candidates:
         return None
-    return max(candidates, key=lambda path: (path.stat().st_mtime, path.name))
+    # Tie-break on the PARSED step number, not the name: artifact names are not
+    # zero-padded consistently, so a lexical comparison ranks "7000.usdz" above
+    # "10000.usdz" and would ship an early preview whenever two artifacts share an
+    # mtime (common straight after an archive extraction, which sets them equal).
+    return max(candidates, key=lambda path: (path.stat().st_mtime, _usdz_step(path), path.name))
+
+
+def _usdz_step(path: Path) -> int:
+    """Training step encoded in an artifact name, or -1 when there is none."""
+    match = re.search(r"(\d+)", path.stem)
+    return int(match.group(1)) if match else -1
 
 
 def _first_existing(*candidates: Path | None) -> Path | None:
@@ -1558,14 +1574,23 @@ def _first_existing(*candidates: Path | None) -> Path | None:
 
 
 def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
-    """Extract the numeric ``test/*`` metrics from an NRE ``metrics.yaml``.
+    """Extract every numeric leaf from an NRE ``metrics.yaml`` as a flat mapping.
 
-    Parsed with PyYAML when available and a flat ``key: value`` scan otherwise so
-    the helper stays usable in a dependency-light container.
+    Keys are slash-joined paths, so NRE's ``test: {psnr: ...}`` becomes
+    ``{"test/psnr": ...}`` -- but the extraction is not limited to ``test/*``; any
+    numeric leaf is recorded.
+
+    Parsed with PyYAML when available and a flat ``key: value`` scan otherwise, so
+    the helper stays usable in a dependency-light container. Metrics are EVIDENCE,
+    never the deliverable: a metrics file that is missing, unreadable, or corrupt
+    (a real possibility after an NRE crash or a partial write) must never fail a
+    reconstruction whose training actually succeeded, so every failure mode
+    degrades to the scan or to an empty mapping.
     """
     try:
         text = Path(path).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # A truncated or mis-encoded file is a degraded read, not a crash.
         return {}
     metrics: dict[str, float] = {}
     try:
@@ -1579,8 +1604,11 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
             return metrics
     except ImportError:
         _logger.debug("PyYAML unavailable; falling back to a flat metrics scan")
-    except ValueError as exc:
-        _logger.debug("metrics.yaml is not valid YAML (%s); using a flat scan", exc)
+    except Exception as exc:  # noqa: BLE001 - yaml.YAMLError is NOT a ValueError
+        # yaml.safe_load raises yaml.YAMLError, which derives from Exception and
+        # NOT from ValueError; catching ValueError here let a corrupt metrics.yaml
+        # escape and crash a successful reconstruction.
+        _logger.debug("metrics.yaml is not parseable (%s); using a flat scan", exc)
     for line in text.splitlines():
         if ":" not in line:
             continue
