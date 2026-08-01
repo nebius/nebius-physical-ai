@@ -30,10 +30,14 @@ LineageRelation = Literal["produced_from", "derived_from", "evaluated_on"]
 # Substrings that mark a metric as "lower is better" for comparison direction.
 LOWER_IS_BETTER_HINTS = (
     "corrupt",
-    # "fail" (not "failure"/"fail_") so failed_check_count / failed_count are
-    # covered too: a run going from 0 to 2 failed checks regressed, and reporting
-    # that as an improvement would invert the meaning of a gate.
-    "fail",
+    # Spelled out rather than a bare "fail": these cover failed_check_count,
+    # failure_rate and fail_count (a run going from 0 to 2 failed checks
+    # regressed, and calling that an improvement inverts the meaning of a gate)
+    # without silently flipping a higher-is-better metric whose name merely
+    # starts with the same letters, e.g. failsafe_score.
+    "failed",
+    "failure",
+    "fail_",
     "error",
     "loss",
     "latency",

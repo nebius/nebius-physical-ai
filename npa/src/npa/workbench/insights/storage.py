@@ -132,8 +132,8 @@ def read_jsonl_store(uri: str) -> list[dict[str, Any]]:
     return rows
 
 
-def append_jsonl_uri(uri: str, rows: list[dict[str, Any]]) -> int:
-    """Append rows to an append-only JSONL store; return the new total count.
+def append_jsonl_uri(uri: str, rows: list[dict[str, Any]], *, previous_total: int | None = None) -> int:
+    """Append rows to an append-only JSONL store; return the store's row count.
 
     Object storage has no native append. Rewriting one object read-modify-write
     loses data whenever two writers overlap: both read N rows and both write
@@ -142,12 +142,21 @@ def append_jsonl_uri(uri: str, rows: list[dict[str, Any]]) -> int:
     shard object under ``<name>.d/``; readers concatenate the base object and all
     shards. That keeps the store genuinely append-only (rows are never mutated or
     removed) and safe for concurrent writers with no database and no locking.
+
+    ``previous_total`` lets a caller that already knows the pre-append count skip
+    a full re-read of the store: the total is then arithmetic rather than another
+    list + GET of every shard. The returned count is **best effort** under
+    concurrent writers — a writer that overlaps this one may land rows this count
+    does not include. It is telemetry (surfaced as ``total_records`` /
+    ``total_edges``), never an input to a correctness decision.
     """
     new_rows = list(rows)
     if new_rows:
         shard_name = f"{utc_stamp()}-{uuid.uuid4().hex[:12]}.jsonl"
         payload = "".join(json.dumps(row, sort_keys=True) + "\n" for row in new_rows)
         write_bytes_uri(uri_join(shard_prefix_for(uri), shard_name), payload.encode("utf-8"))
+    if previous_total is not None:
+        return previous_total + len(new_rows)
     return len(read_jsonl_store(uri))
 
 

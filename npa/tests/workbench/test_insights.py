@@ -706,3 +706,80 @@ def test_failed_check_count_increase_is_a_regression(tmp_path: Path) -> None:
     response = compare_runs(CompareRequest(input_uri=store, base_run="base", candidate_run="cand"))
     assert response.regressed == ["failed_check_count"]
     assert response.improved == []
+
+
+# ── Review follow-ups: store scaling, hint precision, planned-only diagnostics ──
+
+
+def test_append_does_not_reread_the_store_when_the_total_is_known(tmp_path: Path, monkeypatch) -> None:
+    """The sharded layout must not re-list + re-GET every shard just for telemetry."""
+    from npa.workbench.insights import storage as st
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    st.append_jsonl_uri(uri, [{"a": 1}])
+
+    calls = {"n": 0}
+    real = st.read_jsonl_store
+
+    def _counting(target: str):
+        calls["n"] += 1
+        return real(target)
+
+    monkeypatch.setattr(st, "read_jsonl_store", _counting)
+    assert st.append_jsonl_uri(uri, [{"a": 2}, {"a": 3}], previous_total=1) == 3
+    assert calls["n"] == 0, "a known previous total must make the new total arithmetic"
+    # Without the hint the count is still exact, by reading the store back.
+    assert st.append_jsonl_uri(uri, [{"a": 4}]) == 4
+
+
+def test_persist_totals_stay_exact_across_appends(tmp_path: Path) -> None:
+    store = str(tmp_path / "store")
+    first = record_metrics(
+        RecordRequest(output_uri=store, records=[MetricRecord(run_id="r1", metric_name="m", value=1.0)])
+    )
+    second = record_metrics(
+        RecordRequest(output_uri=store, records=[MetricRecord(run_id="r2", metric_name="m", value=2.0)])
+    )
+    assert (first.total_records, second.total_records) == (1, 2)
+    assert len(read_records(store)) == 2
+
+
+def test_failsafe_style_metric_is_not_flipped_to_lower_is_better(tmp_path: Path) -> None:
+    """A bare "fail" substring would silently invert a higher-is-better metric."""
+    from npa.workbench.insights.analytics import _is_lower_better
+
+    assert _is_lower_better("failed_check_count", []) is True
+    assert _is_lower_better("failure_rate", []) is True
+    assert _is_lower_better("fail_count", []) is True
+    assert _is_lower_better("failsafe_score", []) is False
+    assert _is_lower_better("success_rate", []) is False
+
+
+def test_planned_only_prefix_explains_why_nothing_was_ingested(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    (run / "npa-workflow").mkdir(parents=True)
+    (run / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "wf",
+                "run_id": "planned-only",
+                "status": "planned",
+                "steps": [{"state": "s", "status": "planned", "resources_profile": {"accelerators": "H100:8"}}],
+            }
+        )
+    )
+    with pytest.raises(InsightsStoreError) as excinfo:
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+    message = str(excinfo.value)
+    assert "planned" in message
+    assert "never executed" in message
+
+
+def test_shards_are_read_in_write_order(tmp_path: Path) -> None:
+    from npa.workbench.insights.storage import append_jsonl_uri, read_jsonl_store
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    for index in range(12):
+        append_jsonl_uri(uri, [{"seq": index}], previous_total=index)
+    assert [row["seq"] for row in read_jsonl_store(uri)] == list(range(12))

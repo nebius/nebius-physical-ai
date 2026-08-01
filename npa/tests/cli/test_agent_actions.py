@@ -597,3 +597,53 @@ def test_planner_prompt_carries_the_grounding_rule():
     system = messages[0]["content"]
     assert "copied verbatim from an observation field" in system
     assert "never sum, average, recompute, or estimate" in system.lower()
+
+
+def test_single_oversized_record_still_yields_a_run_id():
+    """One record with a huge labels blob must not collapse to a text preview."""
+    observation = {
+        "backend": "jsonl",
+        "count": 1,
+        "records": [
+            {
+                "run_id": "run-huge",
+                "metric_name": "corruption_rate",
+                "value": 0.3,
+                "unit": "",
+                "workflow": "insights-smoke",
+                "stage": "validate",
+                "tool": "dataset",
+                "labels": {"blob": "z" * 5000},
+            }
+        ],
+    }
+    observed = A._observe(observation, limit=600)
+    assert observed.get("records_summarized") is True
+    assert observed["records"][0]["run_id"] == "run-huge"
+    assert "labels" not in observed["records"][0], "bulky fields drop before grounding does"
+    assert len(json.dumps(observed)) <= 600
+
+
+def test_strip_reasoning_trace_matches_token_factory_split_reasoning():
+    """Parity guard: the embedded copy must not drift from the shared helper.
+
+    ``agent_actions`` is embedded verbatim into the agent-VM backend and cannot
+    import from the wider package, so the logic is duplicated on purpose. This
+    pins the two implementations to the same behavior on the shapes that matter.
+    """
+    from npa.clients.token_factory import split_reasoning
+
+    cases = [
+        "<think>reasoning here</think>\n{\"tool\": \"health\"}",
+        "<think>braces {\"a\": 1} inside</think> {\"final\": \"done\"}",
+        "plain answer with no trace",
+    ]
+    for content in cases:
+        visible, _ = split_reasoning({"content": content})
+        assert A.strip_reasoning_trace(content) == visible.strip()
+
+    # Truncated mid-thought: both drop the unusable partial trace.
+    truncated = "<think>still thinking about {x}"
+    visible, _ = split_reasoning({"content": truncated})
+    assert visible == ""
+    assert A.strip_reasoning_trace(truncated) == ""

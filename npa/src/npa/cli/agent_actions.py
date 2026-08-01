@@ -495,6 +495,10 @@ _RECORD_SUMMARY_FIELDS = (
     "labels",
 )
 
+#: Smallest set that still lets the planner act on a record (pick a run, compare a
+#: pair). Used when even one fully-summarized record exceeds the size budget.
+_RECORD_IDENTITY_FIELDS = ("run_id", "metric_name", "value")
+
 
 def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[str, Any] | None:
     """Shrink a record-bearing observation while keeping its structure intact.
@@ -508,26 +512,33 @@ def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[st
     if not isinstance(records, list) or not records:
         return None
     base = {key: value for key, value in observation.items() if key != "records"}
-    summarized = [
-        {field: record.get(field) for field in _RECORD_SUMMARY_FIELDS if field in record}
-        for record in records
-        if isinstance(record, Mapping)
-    ]
-    if not summarized:
-        return None
-    kept = len(summarized)
-    while kept > 0:
-        candidate = dict(base)
-        candidate["records"] = summarized[:kept]
-        if kept < len(summarized):
-            candidate["records_omitted"] = len(summarized) - kept
-        candidate["records_summarized"] = True
-        try:
-            if len(json.dumps(candidate, sort_keys=True)) <= limit:
-                return candidate
-        except (TypeError, ValueError):
-            return None
-        kept //= 2
+    # Widest field set first; the identity-only set is the last line of defence so
+    # that even a single record carrying a huge labels blob still yields a readable
+    # run id instead of collapsing to a text preview -- the exact failure this
+    # summarizer exists to prevent.
+    for fields in (_RECORD_SUMMARY_FIELDS, _RECORD_IDENTITY_FIELDS):
+        summarized = [
+            {field: record.get(field) for field in fields if field in record}
+            for record in records
+            if isinstance(record, Mapping)
+        ]
+        if not summarized:
+            continue
+        kept = len(summarized)
+        while kept > 0:
+            candidate = dict(base)
+            candidate["records"] = summarized[:kept]
+            if kept < len(summarized):
+                candidate["records_omitted"] = len(summarized) - kept
+            candidate["records_summarized"] = True
+            try:
+                if len(json.dumps(candidate, sort_keys=True)) <= limit:
+                    return candidate
+            except (TypeError, ValueError):
+                return None
+            # Halve while there is room to, then try a single record before
+            # falling through to the narrower field set.
+            kept = kept // 2 if kept > 1 else 0
     return None
 
 
