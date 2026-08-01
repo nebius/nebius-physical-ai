@@ -4217,17 +4217,11 @@
         togglePane(foxglovePane, isFoxglove);
         togglePane(mediaPane, isMedia);
         // The Rerun-specific placeholder must not sit above another viewer's pane.
-        const rerunPlaceholderEl = document.getElementById("rerunPlaceholder");
-        if (rerunPlaceholderEl) {
-          if (!isRerun) {
-            if (!rerunPlaceholderEl.hidden) {
-              rerunPlaceholderEl.dataset.hiddenByMode = "1";
-              rerunPlaceholderEl.hidden = true;
-            }
-          } else if (rerunPlaceholderEl.dataset.hiddenByMode === "1") {
-            delete rerunPlaceholderEl.dataset.hiddenByMode;
-            rerunPlaceholderEl.hidden = false;
-          }
+        // Only ever hide it here: showing it again is owned by the Rerun mount /
+        // refresh logic, which knows whether a recording is actually pending.
+        if (!isRerun) {
+          const rerunPlaceholderEl = document.getElementById("rerunPlaceholder");
+          if (rerunPlaceholderEl) rerunPlaceholderEl.hidden = true;
         }
         if (isLichtblick) {
           mountLichtblickIframe(currentLichtblickSimViz || {});
