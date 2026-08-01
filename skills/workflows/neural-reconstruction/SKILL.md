@@ -272,6 +272,30 @@ instead of the trained scene.
 
 ## Verify
 
+### Real-GPU (live) verification
+
+The committed live e2e provisions a real RT-core GPU and asserts the whole
+capability against S3. It skips unless the environment is supplied:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_NUREC_E2E_BUCKET=<bucket> \
+NPA_NUREC_E2E_NPA_SRC_S3_URI=s3://<bucket>/npa-src/<tag> \
+NPA_NUREC_E2E_INFRA=k8s/<rt-core-context> \
+NPA_NUREC_E2E_PREFIX=checkpoints \
+  npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_nurec_reconstruct_live_e2e.py -v -s
+```
+
+Also needs `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`HF_TOKEN` and `NGC_API_KEY` exported. Budget ~30 min end to end (image pull,
+30k 3DGUT steps, render, upload); raise `NPA_NUREC_E2E_MAX_WAIT_SECONDS` (default
+7200) for a slower cluster. Measured: **1 passed in 28m47s**, with the underlying
+SkyPilot job taking 26m10s and reporting `test/psnr 31.19`, `test/ssim 0.833`,
+`test/lpips 0.267`.
+
+### Offline verification
+
 ```bash
 npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_nurec.py \
