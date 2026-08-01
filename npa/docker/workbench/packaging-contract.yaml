@@ -123,7 +123,10 @@ images:
       Cosmos3 checkpoints, the Wan VAE, and the guardrail models download at
       runtime with the operator's own HF token (plus their NGC key when
       NPA_COSMOS3_REQUIRE_NGC=1), so distribution never carries weight bytes. The
-      build fails if a checkpoint file lands in a layer.
+      build fails if a checkpoint file lands in a layer. Ships sudo +
+      openssh-server with a NOPASSWD grant for the non-root runtime user because
+      the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
+      docs/security/container-golden-evals.md.
     redistribution: public
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile

@@ -239,6 +239,13 @@ pipeline. Key safety notes are condensed below.
 
 ## Safety review highlights
 
+- **`cosmos3` sudo grant** — `cosmos3` runs as `ubuntu` but ships `sudo` +
+  `openssh-server` with a NOPASSWD sudoers entry for that user. SkyPilot's
+  Kubernetes bootstrap overrides the entrypoint and installs an SSH runtime as
+  the pod user, so without them the image cannot host a SkyPilot k8s task. This
+  is a deliberate trade: the pod user can escalate inside its own container, so
+  treat the container boundary (not the user) as the trust boundary for this
+  image, as for any image whose orchestrator needs in-pod package installs.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
   `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`, `loop-eval`) run as the unprivileged `ubuntu`
   user. `isaac-lab` and `sonic` inherit `root` from the `nvcr.io/nvidia/isaac-lab`
