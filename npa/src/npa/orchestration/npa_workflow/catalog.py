@@ -1000,6 +1000,30 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.onnx_uri}}",
         ],
     ),
+    "workbench.cosmos3.generate": ToolEntry(
+        name="workbench.cosmos3.generate",
+        description=(
+            "Generate an image or video with the Cosmos 3 omni model (real "
+            "inference in the npa-cosmos3 image; gated weights download at "
+            "runtime with the operator's HF token)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "generate",
+            "--mode",
+            "{{config.cosmos3_mode}}",
+            "--prompt",
+            "{{config.prompt}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--checkpoint",
+            "{{config.cosmos3_checkpoint}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.cosmos3.reason": ToolEntry(
         name="workbench.cosmos3.reason",
         description="Build a Cosmos3 reason-stage manifest over input frames.",
