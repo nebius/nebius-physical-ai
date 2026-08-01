@@ -226,6 +226,45 @@ def test_missing_mcap_dependency_degrades_with_guidance(tmp_path: Path, monkeypa
         )
 
 
+def test_image_encoding_is_shared_with_the_lichtblick_writer(tmp_path: Path) -> None:
+    """One encoder feeds both viewers — no second image implementation."""
+    from npa.workbench.lichtblick import encode_frame_to_compressed_bytes
+
+    from npa.workbench.foxglove import mcap_writer
+
+    source = Path(inspect_module_source := mcap_writer.__file__).read_text(encoding="utf-8")
+    assert "encode_frame_to_compressed_bytes" in source, inspect_module_source
+    assert "compressed_image_message" in source
+
+    from PIL import Image
+
+    frame = tmp_path / "frame.ppm"
+    Image.new("RGB", (8, 6), (12, 34, 56)).save(frame)
+    payload, fmt = mcap_writer._read_image(frame)
+    shared_payload, shared_fmt = encode_frame_to_compressed_bytes(str(frame))
+    assert (payload, fmt) == (shared_payload, shared_fmt)
+
+
+def test_metric_field_named_timestamp_is_preserved(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    metrics = tmp_path / "m.json"
+    metrics.write_text('{"timestamp": 12.5, "success_rate": 0.9}', encoding="utf-8")
+    output = tmp_path / "metrics.mcap"
+
+    write_run_mcap(output=output, metrics=[MetricsInput(path=metrics, name="m")])
+
+    with output.open("rb") as handle:
+        message = next(
+            json.loads(msg.data) for _s, _c, msg in make_reader(handle).iter_messages()
+        )
+    # The time struct owns "timestamp"; the payload field keeps its value.
+    assert message["timestamp"] == {"sec": message["timestamp"]["sec"], "nsec": message["timestamp"]["nsec"]}
+    assert message["timestamp_value"] == 12.5
+    assert message["success_rate"] == 0.9
+
+
 def test_sdk_metadata_helpers() -> None:
     assert sdk_tarball_url().endswith(f"embed-{FOXGLOVE_EMBED_SDK_VERSION}.tgz")
     ready, reason = sdk_assets_present("/nonexistent/foxglove/sdk")

@@ -102,6 +102,76 @@ export function formatViewerError(detail) {
 }
 
 /**
+ * Mount the self-hosted, Foxglove-compatible OSS viewer (Lichtblick) into
+ * `parent` and return the same handle shape as {@link mountFoxgloveViewer}.
+ *
+ * This backend needs no Foxglove account: the viewer is served by this agent and
+ * reads a same-origin recording through `?ds=remote-file&ds.url=…`. Because the
+ * recording must be same-origin for that fetch, the URL is pinned to the page's
+ * origin (the backend may have built it from a different configured public host).
+ */
+export function mountSelfHostedViewer(params) {
+  const { parent, config, onReady, onError } = params || {};
+  if (!parent) throw new Error("mountSelfHostedViewer requires a parent element");
+  const cfg = config || {};
+  const origin = params.origin || (typeof location !== "undefined" ? location.origin : "");
+  const viewerUrl = pinSelfHostedDataSource(String(cfg.self_hosted_url || ""), origin);
+  if (!viewerUrl) throw new Error("no self-hosted viewer URL in the Foxglove config");
+
+  const iframe = document.createElement("iframe");
+  iframe.src = viewerUrl;
+  iframe.title = "Foxglove-compatible viewer (self-hosted)";
+  iframe.allow = "fullscreen; clipboard-read; clipboard-write";
+  iframe.setAttribute("allowfullscreen", "");
+  iframe.style.width = "100%";
+  iframe.style.height = "100%";
+  iframe.style.border = "none";
+  iframe.addEventListener("load", () => {
+    if (typeof onReady === "function") onReady();
+  });
+  iframe.addEventListener("error", () => {
+    if (typeof onError === "function") onError("self-hosted viewer failed to load");
+  });
+  parent.appendChild(iframe);
+
+  return {
+    viewer: iframe,
+    backend: "self-hosted",
+    isReady: () => Boolean(iframe.contentWindow),
+    setDataSource(next) {
+      const url = pinSelfHostedDataSource(String((next && next.self_hosted_url) || ""), origin);
+      if (!url || url === iframe.src) return null;
+      iframe.src = url;
+      return url;
+    },
+    selectLayout() { /* layouts are managed inside the self-hosted viewer */ },
+    seek() { /* playback control is not exposed by the URL-driven backend */ },
+    destroy() { iframe.remove(); },
+  };
+}
+
+/**
+ * Rewrite a self-hosted viewer URL so its `ds.url` recording is same-origin.
+ * Exported for tests; safe on absolute and relative inputs.
+ */
+export function pinSelfHostedDataSource(viewerUrl, origin) {
+  const raw = String(viewerUrl || "").trim();
+  if (!raw) return "";
+  const base = String(origin || (typeof location !== "undefined" ? location.origin : "")) || "";
+  try {
+    const url = new URL(raw, base || undefined);
+    const ds = url.searchParams.get("ds.url");
+    if (ds) {
+      const recording = new URL(ds, base || undefined);
+      url.searchParams.set("ds.url", (base || recording.origin) + recording.pathname + recording.search);
+    }
+    return /^[a-z][a-z0-9+.-]*:/i.test(raw) ? url.toString() : url.pathname + url.search + url.hash;
+  } catch (_err) {
+    return raw;
+  }
+}
+
+/**
  * Mount a `FoxgloveViewer` into `parent` and return a small handle.
  *
  * @param {object} params

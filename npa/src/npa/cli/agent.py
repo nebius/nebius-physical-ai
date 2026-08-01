@@ -153,7 +153,11 @@ AGENT_FOXGLOVE_CONTRACT = (
     "captureFoxgloveContext",
     "convertRunToMcap",
     "/api/foxglove/convert-run",
-    # Cross-origin embed: never claim a captured frame for this pane.
+    # Two backends behind one pane: the official app (SDK) and the self-hosted
+    # OSS viewer that renders MCAP without a Foxglove account.
+    "mountSelfHostedViewer",
+    "self-hosted",
+    # Cross-origin embed: never claim a captured frame for the official app.
     "cross-origin iframe",
 )
 
@@ -2086,6 +2090,7 @@ def _publish_mcap_recording(source: Path) -> Path:
 
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
+LICHTBLICK_WEB_PORT = {lichtblick_port}
 AGENT_PYTHON = Path("/opt/npa-agent/venv/bin/python")
 DEFAULT_SCENE_SPEC = {{
     "schema": "npa.sim2real.manip_scene_spec.v1",
@@ -3511,11 +3516,31 @@ def _publish_foxglove_recording(local_path: Path, key: str) -> str:
     )
 
 
+def _self_hosted_viewer_healthy() -> bool:
+    # The OSS (Lichtblick) sidecar is best-effort on the VM; probe it rather than
+    # assuming, so the Foxglove pane only offers a backend that can actually render.
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{{LICHTBLICK_WEB_PORT}}/", timeout=2
+        ) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def _foxglove_config(state: dict | None = None) -> dict:
     session = state if isinstance(state, dict) else _load_state()
     sim_viz = session.get("sim_viz") if isinstance(session.get("sim_viz"), dict) else {{}}
     env, origin = dict(os.environ), _agent_public_origin()
-    return resolve_foxglove_config(env, assets_dir=FOXGLOVE_SDK_DIR, origin=origin, sim_viz=sim_viz)
+    return resolve_foxglove_config(
+        env,
+        assets_dir=FOXGLOVE_SDK_DIR,
+        origin=origin,
+        sim_viz=sim_viz,
+        self_hosted_ready=_self_hosted_viewer_healthy(),
+    )
 
 
 def _apply_loaded_artifact(

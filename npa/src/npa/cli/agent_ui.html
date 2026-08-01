@@ -4426,6 +4426,14 @@
         }
       }
       function foxgloveUnavailableHtml(config) {
+        if (config && config.self_hosted_ready && !config.viewer_backend) {
+          return (
+            '<h4>Foxglove viewer unavailable</h4>' +
+            '<p>' + escapeHtml(String(config.reason || "")) + '</p>' +
+            '<p>The self-hosted, Foxglove-compatible viewer is running — open the ' +
+            '<strong>Lichtblick</strong> tab to render this recording without a Foxglove account.</p>'
+          );
+        }
         const reason = escapeHtml(String((config && config.reason) || "Foxglove viewer is unavailable."));
         const src = escapeHtml(String((config && config.embed_src) || ""));
         return (
@@ -4438,6 +4446,9 @@
         );
       }
       function foxgloveSourceKey(config) {
+        if (config && String(config.viewer_backend || "") === "self-hosted") {
+          return "self-hosted:" + String(config.self_hosted_url || "");
+        }
         const source = (config && config.data_source) || null;
         if (!source) return "";
         if (source.type === "live") return "live:" + String(source.url || "");
@@ -4473,29 +4484,53 @@
           const host = document.getElementById("foxgloveHost");
           if (!host) return false;
           hideFoxgloveMessage();
-          setFoxgloveStatus("Loading Foxglove embed SDK…");
+          const backend = String(config.viewer_backend || "");
+          const selfHosted = backend === "self-hosted";
+          setFoxgloveStatus(
+            selfHosted
+              ? "Loading the self-hosted Foxglove-compatible viewer…"
+              : "Loading Foxglove embed SDK…"
+          );
           try {
             const moduleUrl = String(config.host_module_url || "/foxglove/app/npa-foxglove-host.js");
             const mod = await import(moduleUrl);
             teardownFoxgloveViewer();
-            foxgloveHandle = mod.mountFoxgloveViewer({
-              parent: host,
-              config,
-              origin: location.origin,
-              onReady: () => {
-                const source = (foxgloveConfig && foxgloveConfig.data_source) || null;
-                setFoxgloveStatus(
-                  source
-                    ? "Foxglove viewer ready — " + String(source.type) + " source loaded."
-                    : "Foxglove viewer ready — no recording loaded yet.",
+            if (selfHosted) {
+              // OSS backend: renders the run's MCAP in-page, no account needed.
+              foxgloveHandle = mod.mountSelfHostedViewer({
+                parent: host,
+                config,
+                origin: location.origin,
+                onReady: () => setFoxgloveStatus(
+                  "Self-hosted Foxglove-compatible viewer ready — rendering this run's MCAP.",
                   "ready"
-                );
-              },
-              onError: (message) => setFoxgloveStatus("Foxglove viewer error: " + message, "error"),
-              onDescribe: () => { describeVisual().catch(() => {}); },
-            });
+                ),
+                onError: (message) => setFoxgloveStatus("Viewer error: " + message, "error"),
+              });
+            } else {
+              foxgloveHandle = mod.mountFoxgloveViewer({
+                parent: host,
+                config,
+                origin: location.origin,
+                onReady: () => {
+                  const source = (foxgloveConfig && foxgloveConfig.data_source) || null;
+                  setFoxgloveStatus(
+                    source
+                      ? "Foxglove viewer ready — " + String(source.type) + " source loaded."
+                      : "Foxglove viewer ready — no recording loaded yet.",
+                    "ready"
+                  );
+                },
+                onError: (message) => setFoxgloveStatus("Foxglove viewer error: " + message, "error"),
+                onDescribe: () => { describeVisual().catch(() => {}); },
+              });
+            }
             foxgloveLastSourceKey = foxgloveSourceKey(config);
-            setFoxgloveStatus("Connecting to " + String(config.embed_src || "the Foxglove viewer") + "…");
+            setFoxgloveStatus(
+              selfHosted
+                ? "Opening the self-hosted viewer…"
+                : "Connecting to " + String(config.embed_src || "the Foxglove viewer") + "…"
+            );
             return true;
           } catch (err) {
             const message = String((err && err.message) || err);
@@ -4533,6 +4568,11 @@
         }
         if (key === foxgloveLastSourceKey) return true;
         foxgloveHandle.setDataSource(cfg);
+        if (String(cfg.viewer_backend || "") === "self-hosted") {
+          foxgloveLastSourceKey = key;
+          setFoxgloveStatus("Loading recording into the self-hosted viewer…");
+          return true;
+        }
         foxgloveLastSourceKey = key;
         setFoxgloveStatus("Loading recording into Foxglove…");
         return true;

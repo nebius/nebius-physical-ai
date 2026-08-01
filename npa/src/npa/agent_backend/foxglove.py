@@ -45,10 +45,23 @@ FOXGLOVE_DEFAULT_LAYOUT_KEY = "npa-agent-foxglove"
 FOXGLOVE_ARTIFACT_EXTENSIONS: tuple[str, ...] = (".mcap", ".bag", ".db3", ".ulg", ".ulog")
 MCAP_MAGIC = b"\x89MCAP0\r\n"
 
+# Viewer backends the pane can mount.
+#   foxglove-sdk : the official Foxglove app embedded with @foxglove/embed
+#                  (cross-origin iframe; users sign in to your Foxglove org)
+#   self-hosted  : the OSS, Foxglove-compatible viewer this agent already runs
+#                  in-page (Lichtblick) — renders MCAP with no account at all
+FOXGLOVE_BACKEND_SDK = "foxglove-sdk"
+FOXGLOVE_BACKEND_SELF_HOSTED = "self-hosted"
+FOXGLOVE_BACKENDS = (FOXGLOVE_BACKEND_SDK, FOXGLOVE_BACKEND_SELF_HOSTED)
+
 # Public (same-origin) URLs served by nginx on the agent VM.
 FOXGLOVE_SDK_URL = "/foxglove/sdk/index.js"
 FOXGLOVE_HOST_MODULE_URL = "/foxglove/app/npa-foxglove-host.js"
 FOXGLOVE_DATA_URL_PREFIX = "/foxglove/data/"
+# The OSS, Foxglove-compatible viewer this agent serves in-page (Lichtblick).
+FOXGLOVE_SELF_HOSTED_BASE = "/lichtblick/"
+# Same-origin path the agent publishes the run recording on for that viewer.
+LICHTBLICK_RECORDING_PATH = "/lichtblick/recordings/sim2real.mcap"
 
 # Live data-source protocols the embedded viewer understands.
 FOXGLOVE_LIVE_PROTOCOLS: tuple[str, ...] = ("foxglove-websocket", "rosbridge-websocket")
@@ -364,6 +377,7 @@ def resolve_foxglove_config(
     assets_dir: str | Path,
     origin: str = "",
     sim_viz: dict | None = None,
+    self_hosted_ready: bool = False,
 ) -> dict:
     """Return the ``/api/foxglove/config`` payload.
 
@@ -390,22 +404,37 @@ def resolve_foxglove_config(
     if live_url and not live_url_allowed(live_url):
         live_url = ""
 
-    reason = ""
+    backend, reason = "", ""
     if not enabled:
         reason = "Foxglove viewer is disabled on this agent (NPA_FOXGLOVE_ENABLED=0)."
-    elif not assets["ready"]:
-        reason = assets["reason"]
-    elif not _valid_embed_src(embed_src):
-        reason = (
-            "No Foxglove embed source is configured. Set NPA_FOXGLOVE_EMBED_SRC "
-            "(or `npa agent bootstrap --foxglove-embed-src ...`) to "
-            "https://embed.foxglove.dev/ or a self-hosted Foxglove deployment."
+    else:
+        backend, reason = select_viewer_backend(
+            environ,
+            sdk_ready=bool(assets["ready"]),
+            embed_src=embed_src,
+            self_hosted_ready=bool(self_hosted_ready),
         )
+        if backend == FOXGLOVE_BACKEND_SELF_HOSTED and not assets["ready"]:
+            # Not an error: the OSS viewer renders without the SDK. Surface the
+            # SDK gap so an operator who wanted the official app knows why.
+            reason = ""
 
     data_source = data_source_for_state(state, origin=origin, env=environ)
+    # The in-page OSS viewer must read a same-origin recording; the published
+    # Lichtblick path is exactly that (the CORS copy is for the official app).
+    self_hosted_recording = str(state.get("mcap_uri") and LICHTBLICK_RECORDING_PATH or "")
+    self_hosted_url = (
+        self_hosted_viewer_url(self_hosted_recording)
+        if backend == FOXGLOVE_BACKEND_SELF_HOSTED
+        else ""
+    )
     payload = {
-        "available": not reason,
+        "available": bool(backend) and not reason,
         "reason": reason,
+        "viewer_backend": backend,
+        "viewer_backends": list(FOXGLOVE_BACKENDS),
+        "self_hosted_ready": bool(self_hosted_ready),
+        "self_hosted_url": self_hosted_url,
         "enabled": enabled,
         "sdk_url": FOXGLOVE_SDK_URL,
         "host_module_url": FOXGLOVE_HOST_MODULE_URL,
@@ -433,6 +462,62 @@ def resolve_foxglove_config(
     return payload
 
 
+def select_viewer_backend(
+    env: Mapping[str, str],
+    *,
+    sdk_ready: bool,
+    embed_src: str,
+    self_hosted_ready: bool,
+) -> tuple[str, str]:
+    """Choose the viewer backend and explain the choice.
+
+    Order (honest, never a dead end):
+
+    1. an operator override (``NPA_FOXGLOVE_VIEWER_BACKEND``) that is actually usable;
+    2. the official Foxglove app when its SDK assets are installed and an embed
+       source is configured;
+    3. the self-hosted OSS viewer when it is healthy — so the pane renders the
+       recording out of the box, with no Foxglove account;
+    4. nothing, with a reason.
+    """
+    sdk_usable = bool(sdk_ready and _valid_embed_src(embed_src))
+    requested = str(env.get("NPA_FOXGLOVE_VIEWER_BACKEND", "")).strip().lower()
+    if requested == FOXGLOVE_BACKEND_SDK and sdk_usable:
+        return FOXGLOVE_BACKEND_SDK, ""
+    if requested == FOXGLOVE_BACKEND_SELF_HOSTED and self_hosted_ready:
+        return FOXGLOVE_BACKEND_SELF_HOSTED, ""
+    if sdk_usable:
+        return FOXGLOVE_BACKEND_SDK, ""
+    if self_hosted_ready:
+        return FOXGLOVE_BACKEND_SELF_HOSTED, ""
+    if not sdk_ready:
+        return "", (
+            "No MCAP viewer is available: the Foxglove SDK assets are not installed "
+            "and the self-hosted viewer is not running."
+        )
+    return "", (
+        "No Foxglove embed source is configured and the self-hosted viewer is not "
+        "running. Set NPA_FOXGLOVE_EMBED_SRC (or `npa agent bootstrap "
+        "--foxglove-embed-src ...`) to https://embed.foxglove.dev/ or your own "
+        "Foxglove deployment, or start the self-hosted viewer sidecar."
+    )
+
+
+def self_hosted_viewer_url(recording_url: str, *, base: str = FOXGLOVE_SELF_HOSTED_BASE) -> str:
+    """Return the self-hosted viewer URL that opens ``recording_url``.
+
+    Same contract the Lichtblick pane uses: ``?ds=remote-file&ds.url=<mcap>``.
+    The recording must be same-origin for the in-page viewer to read it.
+    """
+    from urllib.parse import quote
+
+    root = str(base or FOXGLOVE_SELF_HOSTED_BASE)
+    recording = str(recording_url or "").strip()
+    if not recording:
+        return root
+    return f"{root}?ds=remote-file&ds.url={quote(recording, safe='')}"
+
+
 def _valid_embed_src(src: str) -> bool:
     raw = str(src or "").strip()
     if not raw:
@@ -451,6 +536,9 @@ def foxglove_status_payload(config: dict, sim_viz: dict | None = None) -> dict:
     return {
         "available": bool(config.get("available")),
         "reason": str(config.get("reason") or ""),
+        "viewer_backend": str(config.get("viewer_backend") or ""),
+        "self_hosted_ready": bool(config.get("self_hosted_ready")),
+        "self_hosted_url": str(config.get("self_hosted_url") or ""),
         "sdk_version": str(config.get("sdk_version") or ""),
         "embed_src": str(config.get("embed_src") or ""),
         "org_slug": str(config.get("org_slug") or ""),
@@ -475,9 +563,17 @@ def describe_foxglove_context(config: dict | None, sim_viz: dict | None = None) 
     cfg = config if isinstance(config, dict) else {}
     state = sim_viz if isinstance(sim_viz, dict) else {}
     source = cfg.get("data_source") or {}
+    backend = str(cfg.get("viewer_backend") or "")
+    capture_note = (
+        "Foxglove viewer context (self-hosted, same-origin viewer: a frame capture "
+        "is possible)."
+        if backend == FOXGLOVE_BACKEND_SELF_HOSTED
+        else "Foxglove viewer context (no pixel capture: the official embed is a "
+        "cross-origin iframe, so the browser cannot read its canvas)."
+    )
     lines = [
-        "Foxglove viewer context (no pixel capture: the embedded viewer is a "
-        "cross-origin iframe, so the browser cannot read its canvas).",
+        capture_note,
+        f"- viewer_backend: `{backend or 'none'}`",
         f"- available: `{bool(cfg.get('available'))}`",
     ]
     if cfg.get("reason"):
@@ -502,6 +598,13 @@ def describe_foxglove_context(config: dict | None, sim_viz: dict | None = None) 
 
 
 __all__ = [
+    "self_hosted_viewer_url",
+    "select_viewer_backend",
+    "LICHTBLICK_RECORDING_PATH",
+    "FOXGLOVE_SELF_HOSTED_BASE",
+    "FOXGLOVE_BACKEND_SELF_HOSTED",
+    "FOXGLOVE_BACKEND_SDK",
+    "FOXGLOVE_BACKENDS",
     "FOXGLOVE_ARTIFACT_EXTENSIONS",
     "FOXGLOVE_DATA_URL_PREFIX",
     "FOXGLOVE_DEFAULT_EMBED_SRC",

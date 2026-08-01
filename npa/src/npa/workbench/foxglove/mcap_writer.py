@@ -22,12 +22,13 @@ import error is turned into an actionable message rather than a stack trace.
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
+
+from npa.workbench.lichtblick import compressed_image_message
 
 NS_PER_S = 1_000_000_000
 
@@ -223,26 +224,26 @@ def _image_magic_ok(payload: bytes, image_format: str) -> bool:
 
 
 def _read_image(path: Path) -> tuple[bytes, str] | None:
-    """Return ``(payload, format)`` for an image artifact, or None if unsupported."""
-    suffix = path.suffix.lower()
-    if suffix in _DIRECT_IMAGE_FORMATS:
-        payload = path.read_bytes()
-        image_format = _DIRECT_IMAGE_FORMATS[suffix]
-        if not _image_magic_ok(payload, image_format):
-            return None
-        return payload, image_format
-    if suffix in _TRANSCODE_IMAGE_SUFFIXES:
-        try:
-            from io import BytesIO  # noqa: PLC0415
+    """Return ``(payload, format)`` for an image artifact, or None if unsupported.
 
-            from PIL import Image  # noqa: PLC0415
-        except ModuleNotFoundError:  # pragma: no cover - Pillow is a core dep
-            return None
-        with Image.open(path) as image:
-            buffer = BytesIO()
-            image.convert("RGB").save(buffer, format="PNG")
-        return buffer.getvalue(), "png"
-    return None
+    Encoding is delegated to :func:`npa.workbench.lichtblick.encode_frame_to_compressed_bytes`
+    — the same encoder the Lichtblick MCAP writer uses — so both viewers are fed
+    byte-identical frames and there is one place that decides PNG vs JPEG vs
+    transcode. Obvious corruption is rejected here before it reaches a viewer.
+    """
+    suffix = path.suffix.lower()
+    if suffix not in _DIRECT_IMAGE_FORMATS and suffix not in _TRANSCODE_IMAGE_SUFFIXES:
+        return None
+    if suffix in _DIRECT_IMAGE_FORMATS and not _image_magic_ok(
+        path.read_bytes()[:16], _DIRECT_IMAGE_FORMATS[suffix]
+    ):
+        return None
+    from npa.workbench.lichtblick import encode_frame_to_compressed_bytes  # noqa: PLC0415
+
+    try:
+        return encode_frame_to_compressed_bytes(str(path))
+    except Exception:  # noqa: BLE001 - unreadable/corrupt frame, reported as skipped
+        return None
 
 
 def _metric_schema(payload: dict[str, Any], title: str) -> dict[str, Any]:
@@ -388,12 +389,10 @@ def write_run_mcap(
                 if frame.timestamp_ns is not None
                 else base_ns + index * step_ns
             )
-            message: dict[str, Any] = {
-                "timestamp": _time_fields(timestamp_ns),
-                "frame_id": frame.camera,
-                "data": base64.b64encode(payload).decode("ascii"),
-                "format": image_format,
-            }
+            # Shared message builder: identical wire shape to the Lichtblick writer.
+            message: dict[str, Any] = compressed_image_message(
+                payload, fmt=image_format, stamp_ns=timestamp_ns, frame_id=frame.camera
+            )
             writer.add_message(
                 channel_id=camera_channels[topic],
                 log_time=timestamp_ns,
