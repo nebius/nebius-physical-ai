@@ -3567,6 +3567,11 @@ def _apply_loaded_artifact(
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_neural_reconstruction_recording(key):
+        # Do not inherit the previous run's label: the agent keeps sim_viz state
+        # across loads, so a NuRec run following a Sim2Real one would report
+        # camera="heldout-sim" while its own viewer note says the opposite.
+        camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
     sim_viz.update(
         {{
             "run_id": run_id,

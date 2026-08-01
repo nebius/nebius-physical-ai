@@ -61,6 +61,10 @@ NEURAL_RECONSTRUCTION_APP_ID = "neural-reconstruction"
 #: held-out-simulation camera, so the generic Sim2Real note would be actively
 #: misleading.
 NEURAL_RECONSTRUCTION_PREVIEW_ENTITY = "novel_view"
+#: Camera label for a NuRec run. A reconstruction has no held-out simulation
+#: camera, so inheriting the previous run's "heldout-sim" label would contradict
+#: the viewer note directly above.
+NEURAL_RECONSTRUCTION_CAMERA_LABEL = "novel-view"
 NEURAL_RECONSTRUCTION_VIEWER_NOTE = (
     "NuRec / NRE neural-reconstruction recording loaded. Entities: "
     "novel_view/<camera> (views rendered from the trained 3D Gaussians at an "

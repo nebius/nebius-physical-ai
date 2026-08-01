@@ -347,3 +347,20 @@ def test_agent_module_source_has_no_invalid_escape_sequences() -> None:
         compile(source, "agent.py", "exec")
     offenders = [str(w.message) for w in caught if "invalid escape" in str(w.message)]
     assert not offenders, offenders
+
+
+def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) -> None:
+    """A NuRec run must not inherit the previous run's camera label.
+
+    ``sim_viz`` state persists across artifact loads, and ``camera`` is seeded
+    from it. Loading a reconstruction after a Sim2Real pipeline run therefore
+    reported ``camera="heldout-sim"`` while the very same response carried the
+    NuRec note explaining there is no held-out simulation camera. Observed live
+    on the deployed agent.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    assert "NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+    assert 'NEURAL_RECONSTRUCTION_CAMERA_LABEL = "novel-view"' in body
+    # The label is applied on the neural-reconstruction branch, not inherited.
+    assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
