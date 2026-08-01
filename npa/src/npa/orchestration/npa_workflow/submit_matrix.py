@@ -126,14 +126,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         rotation_skip=True,
         skip_reason=(
-            "vlm_backend=self-hosted, but the npa.workflow render "
-            "(catalog workbench.vlm_eval.run) starts only the eval client, not a "
-            "vLLM server, so :8000 is never up. Confirmed live: the eval now "
-            "waits and reports 'VLM backend not ready after 600s' (readiness "
-            "fix) instead of an instant connection-refused. Re-include once the "
-            "render injects a `vllm serve` background start for self-hosted steps."
+            "vlm_backend=self-hosted. The render now DOES start a background "
+            "vLLM server and the client waits up to NPA_VLM_READY_TIMEOUT_S "
+            "(=1800s, set by the render) for readiness. Confirmed live on "
+            "RTXPRO-6000 (Blackwell/sm_120): the cold start — heavy vLLM+CUDA13 "
+            "install, ~16GB Qwen2-VL-7B weight download, and first-run compile — "
+            "exceeds even the 30-min window, so it is not a fit for the bounded "
+            "daily rotation. Re-include with the model pre-baked/pre-cached into "
+            "the image or a faster node. (The old instant connection-refused is "
+            "fixed; failure is now a clean, bounded 'not ready' diagnostic.)"
         ),
-        notes="Self-hosted VLM; render does not yet stand up the vLLM server.",
+        notes="Self-hosted VLM; render starts vLLM, but cold start > 30min on this node.",
     ),
     SubmitLiveCase(
         "vlm-eval-benchmark.yaml",
