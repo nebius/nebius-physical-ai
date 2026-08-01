@@ -1844,10 +1844,11 @@ def _bootstrap_agent_stack(
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     # Foxglove embedded-viewer settings (no secrets). CLI flag wins, then the
     # operator environment, then the SDK's documented default embed host.
+    # Left empty unless the operator configured one: the Foxglove-hosted app needs
+    # an account, so a stock deploy renders MCAP with the self-hosted OSS viewer
+    # instead of showing a sign-in wall.
     foxglove_embed_src_value = _env_line_value(
-        foxglove_embed_src
-        or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
-        or DEFAULT_FOXGLOVE_EMBED_SRC
+        foxglove_embed_src or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
     )
     foxglove_org_slug_value = _env_line_value(
         foxglove_org_slug or os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "")

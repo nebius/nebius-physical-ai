@@ -389,7 +389,10 @@ def resolve_foxglove_config(
     state = sim_viz if isinstance(sim_viz, dict) else {}
     assets = sdk_assets_state(assets_dir)
     enabled = _truthy(str(environ.get("NPA_FOXGLOVE_ENABLED", "")), default=True)
-    embed_src = str(environ.get("NPA_FOXGLOVE_EMBED_SRC", "")).strip() or FOXGLOVE_DEFAULT_EMBED_SRC
+    # No implicit default: embedding the Foxglove-hosted app requires an account,
+    # so it is only selected when an operator configured it (flag/env). The
+    # documented default value is offered by the CLI help, not assumed here.
+    embed_src = str(environ.get("NPA_FOXGLOVE_EMBED_SRC", "")).strip()
     org_slug = str(environ.get("NPA_FOXGLOVE_ORG_SLUG", "")).strip()
     color_scheme = str(environ.get("NPA_FOXGLOVE_COLOR_SCHEME", "")).strip().lower()
     if color_scheme not in {"light", "dark", "auto"}:

@@ -236,7 +236,10 @@ def test_sdk_assets_state_reports_missing_and_incomplete(tmp_path: Path) -> None
 def test_resolve_config_available_with_assets(tmp_path: Path) -> None:
     assets = _install_assets(tmp_path)
     config = resolve_foxglove_config(
-        {"NPA_FOXGLOVE_ORG_SLUG": "acme-robotics"},
+        {
+            "NPA_FOXGLOVE_ORG_SLUG": "acme-robotics",
+            "NPA_FOXGLOVE_EMBED_SRC": FOXGLOVE_DEFAULT_EMBED_SRC,
+        },
         assets_dir=assets,
         origin="https://agent.example",
         sim_viz={"foxglove_url": "/foxglove/data/tok-run.mcap", "run_id": "run-7"},
@@ -311,7 +314,10 @@ def test_status_payload_and_describe_context(tmp_path: Path) -> None:
         "mcap_updated_at": "2026-07-30T00:00:00+00:00",
     }
     config = resolve_foxglove_config(
-        {}, assets_dir=assets, origin="https://agent.example", sim_viz=sim_viz
+        {"NPA_FOXGLOVE_EMBED_SRC": FOXGLOVE_DEFAULT_EMBED_SRC},
+        assets_dir=assets,
+        origin="https://agent.example",
+        sim_viz=sim_viz,
     )
     status = foxglove_status_payload(config, sim_viz)
     assert status["available"] is True
@@ -331,3 +337,125 @@ def test_data_url_prefix_is_the_public_path() -> None:
     assert FOXGLOVE_DATA_URL_PREFIX == "/foxglove/data/"
     assert FOXGLOVE_SDK_URL.startswith("/foxglove/")
     assert FOXGLOVE_HOST_MODULE_URL.startswith("/foxglove/")
+
+
+# --------------------------------------------------------------------------- #
+# viewer backend selection (official Foxglove app vs self-hosted OSS viewer)
+# --------------------------------------------------------------------------- #
+
+
+def test_select_viewer_backend_prefers_the_official_app_then_the_oss_viewer() -> None:
+    from npa.agent_backend.foxglove import select_viewer_backend
+
+    backend, reason = select_viewer_backend(
+        {}, sdk_ready=True, embed_src="https://embed.foxglove.dev/", self_hosted_ready=True
+    )
+    assert (backend, reason) == ("foxglove-sdk", "")
+
+    # No embed source: fall back to the viewer that can actually render.
+    backend, reason = select_viewer_backend(
+        {}, sdk_ready=True, embed_src="", self_hosted_ready=True
+    )
+    assert (backend, reason) == ("self-hosted", "")
+
+    # SDK assets missing but the OSS viewer is up — still a working viewer.
+    backend, reason = select_viewer_backend(
+        {}, sdk_ready=False, embed_src="https://embed.foxglove.dev/", self_hosted_ready=True
+    )
+    assert (backend, reason) == ("self-hosted", "")
+
+    # Nothing usable: explain, never pretend.
+    backend, reason = select_viewer_backend(
+        {}, sdk_ready=False, embed_src="", self_hosted_ready=False
+    )
+    assert backend == ""
+    assert "not installed" in reason
+
+
+def test_select_viewer_backend_honors_an_operator_override() -> None:
+    from npa.agent_backend.foxglove import select_viewer_backend
+
+    forced, _ = select_viewer_backend(
+        {"NPA_FOXGLOVE_VIEWER_BACKEND": "self-hosted"},
+        sdk_ready=True,
+        embed_src="https://embed.foxglove.dev/",
+        self_hosted_ready=True,
+    )
+    assert forced == "self-hosted"
+
+    # An override that cannot be served is ignored rather than breaking the pane.
+    fallback, _ = select_viewer_backend(
+        {"NPA_FOXGLOVE_VIEWER_BACKEND": "self-hosted"},
+        sdk_ready=True,
+        embed_src="https://embed.foxglove.dev/",
+        self_hosted_ready=False,
+    )
+    assert fallback == "foxglove-sdk"
+
+
+def test_self_hosted_viewer_url_uses_the_remote_file_contract() -> None:
+    from npa.agent_backend.foxglove import self_hosted_viewer_url
+
+    url = self_hosted_viewer_url("/lichtblick/recordings/sim2real.mcap")
+    assert url.startswith("/lichtblick/?ds=remote-file&ds.url=")
+    assert "sim2real.mcap" in url
+    # No recording yet -> plain viewer, not a malformed data source.
+    assert self_hosted_viewer_url("") == "/lichtblick/"
+
+
+def test_config_exposes_the_self_hosted_backend(tmp_path: Path) -> None:
+    assets = _install_assets(tmp_path)
+    sim_viz = {"mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap", "run_id": "run-9"}
+
+    config = resolve_foxglove_config(
+        {"NPA_FOXGLOVE_EMBED_SRC": ""},
+        assets_dir=assets,
+        origin="https://agent.example",
+        sim_viz=sim_viz,
+        self_hosted_ready=True,
+    )
+
+    assert config["available"] is True
+    assert config["viewer_backend"] == "self-hosted"
+    assert config["self_hosted_ready"] is True
+    assert config["self_hosted_url"].startswith("/lichtblick/?ds=remote-file")
+    assert config["reason"] == ""
+
+
+def test_describe_context_names_the_backend_and_capture_ability(tmp_path: Path) -> None:
+    assets = _install_assets(tmp_path)
+    sim_viz = {"mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap", "run_id": "run-9"}
+
+    self_hosted = resolve_foxglove_config(
+        {"NPA_FOXGLOVE_EMBED_SRC": ""},
+        assets_dir=assets,
+        sim_viz=sim_viz,
+        self_hosted_ready=True,
+    )
+    text = describe_foxglove_context(self_hosted, sim_viz)
+    assert "viewer_backend: `self-hosted`" in text
+    assert "frame capture is possible" in text
+
+    official = resolve_foxglove_config(
+        {"NPA_FOXGLOVE_EMBED_SRC": FOXGLOVE_DEFAULT_EMBED_SRC},
+        assets_dir=assets,
+        sim_viz=sim_viz,
+    )
+    text = describe_foxglove_context(official, sim_viz)
+    assert "viewer_backend: `foxglove-sdk`" in text
+    assert "cross-origin" in text
+
+
+def test_stock_deploy_has_no_implicit_hosted_app(tmp_path: Path) -> None:
+    """An unset embed source must not silently point at the account-gated app."""
+    assets = _install_assets(tmp_path)
+
+    unset = resolve_foxglove_config({}, assets_dir=assets, sim_viz={}, self_hosted_ready=False)
+    assert unset["embed_src"] == ""
+    assert unset["viewer_backend"] == ""
+    assert "NPA_FOXGLOVE_EMBED_SRC" in unset["reason"]
+
+    # ...but with the OSS viewer running the pane still renders.
+    with_oss = resolve_foxglove_config({}, assets_dir=assets, sim_viz={}, self_hosted_ready=True)
+    assert with_oss["viewer_backend"] == "self-hosted"
+    assert with_oss["available"] is True
