@@ -137,6 +137,37 @@ def normalize_resources(
     return out
 
 
+#: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
+#: SkyPilot 0.12 accepts these inside a task's ``config:`` block, and it APPENDS
+#: (rather than replaces) lists inside ``kubernetes.pod_config`` -- so a spec can
+#: add an imagePullSecret or a volume without discarding the cluster-wide ones.
+#: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
+#: arbitrary cluster configuration.
+TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
+
+
+def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a task-level SkyPilot ``config:`` block from a resource profile.
+
+    Vendor container images sometimes need pod-level accommodations that
+    ``resources:`` cannot express -- e.g. NVIDIA's NRE image ships no ``sudo``
+    (which SkyPilot's Kubernetes bootstrap calls unconditionally) and needs a
+    ``/dev/shm`` far larger than the 64 MB Kubernetes default. Declaring those on
+    the resource profile keeps them versioned with the spec instead of requiring a
+    hand-passed global config, which would mean duplicating tenant/project
+    identifiers into a committed file.
+    """
+    kubernetes = resources.get("kubernetes") if isinstance(resources, Mapping) else None
+    if not isinstance(kubernetes, Mapping):
+        return {}
+    selected = {
+        key: kubernetes[key]
+        for key in TASK_CONFIG_KUBERNETES_FIELDS
+        if kubernetes.get(key) not in (None, "", {}, [])
+    }
+    return {"kubernetes": selected} if selected else {}
+
+
 def tool_image_key(tool_ref: str) -> str | None:
     """Return the CONTAINER_IMAGE_NAMES key for a toolRef, if known."""
 
@@ -537,6 +568,18 @@ def default_npa_setup() -> str:
     )
 
 
+#: rerun-sdk requirement installed into NuRec stage pods.
+#:
+#: Must equal npa's own ``viz`` extra in ``npa/pyproject.toml``. There is no import
+#: that can enforce that -- pyproject is data, not code, and parsing it at runtime
+#: from an installed wheel is unreliable -- so the guarantee is provided by
+#: ``test_renderer_nurec_rerun_pin_matches_the_packaged_extra``, which fails if the
+#: two ever diverge. (An earlier version imported a ``_rerun_pin`` symbol that does
+#: not exist and silently fell back to this literal, so its "cannot drift" promise
+#: never actually engaged.)
+NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+
+
 def _sonic_deps_setup() -> str:
     """Install the torch/ONNX stack a SONIC stage needs, if it is not baked in.
 
@@ -641,6 +684,36 @@ def render_setup_for_tool(
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
             "  exit 1\n"
             "fi\n"
+        )
+    if tool_ref.startswith("workbench.nurec"):
+        # These stages run inside NVIDIA's NRE container -- a VENDOR image, so it
+        # carries none of the tool's runtime dependencies: no Hugging Face CLI
+        # (dataset download), no nvidia-ncore (the rig->world pose derivation NRE
+        # requires), no rerun-sdk (the run recording; it is only an optional `viz`
+        # extra of npa), and no ffmpeg (`nre render --export-video`). The image also
+        # ships no `unzip`, which is why the tool extracts with stdlib zipfile.
+        # Installing into the interpreter npa was installed into (recorded by
+        # default_npa_setup) avoids a second, npa-less python winning on PATH.
+        parts.append(
+            "set -e\n"
+            "if ! command -v ffmpeg >/dev/null 2>&1; then\n"
+            "  export DEBIAN_FRONTEND=noninteractive\n"
+            "  apt-get update -qq || true\n"
+            "  apt-get install -y -qq --no-install-recommends ffmpeg || true\n"
+            "fi\n"
+            "npa_nurec_py=python3\n"
+            "if [ -s /tmp/npa-python ]; then npa_nurec_py=\"$(cat /tmp/npa-python)\"; fi\n"
+            # --break-system-packages FIRST: the NRE image is Ubuntu 24.04, whose
+            # interpreter is externally managed (PEP 668), so the plain form always
+            # fails there and only adds a confusing "error:
+            # externally-managed-environment" to the logs before the fallback wins.
+            "npa_nurec_pip() {\n"
+            "  \"$npa_nurec_py\" -m pip install -q \"$@\" --break-system-packages \\\n"
+            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" \\\n"
+            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" --user\n"
+            "}\n"
+            f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
+            "\"$npa_nurec_py\" -c 'import ncore, rerun; print(\"nurec runtime deps ready\")'\n"
         )
     return "".join(parts)
 
@@ -765,6 +838,9 @@ def build_skypilot_task_doc(
             preamble=_vllm_serve_preamble(str(scheduler_task.get("tool_ref") or ""), spec.config),
         ),
     }
+    task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    if task_config:
+        doc["config"] = task_config
     setup = render_setup_for_tool(
         str(scheduler_task.get("tool_ref") or ""),
         config=spec.config,
@@ -776,8 +852,10 @@ def build_skypilot_task_doc(
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
     # it once with `npa configure --src-s3-uri` so the next shell still finds it.
+    import os
+
+    src_uri = resolve_src_s3_uri()
     if not image:
-        src_uri = resolve_src_s3_uri()
         if not src_uri:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} has no workbench image "
@@ -788,19 +866,22 @@ def build_skypilot_task_doc(
         envs["NPA_SRC_S3_URI"] = src_uri
         doc["envs"] = envs
     else:
-        # Image is pinned (baked npa). Opt-in overlay: when NPA_SRC_OVERLAY=1,
-        # propagate the source URI + flag so setup reinstalls branch npa on top
-        # (used to run un-imaged branch code — e.g. a new augment path — on GPU).
-        import os as _os
-
-        if str(_os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"}:
-            src_uri = (
-                _os.environ.get("NPA_SRC_S3_URI") or _os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
-            ).strip()
-            if src_uri:
-                envs["NPA_SRC_S3_URI"] = src_uri
-                envs["NPA_SRC_OVERLAY"] = "1"
-                doc["envs"] = envs
+        # A pinned image is EITHER an NPA workbench image with npa baked in, OR a
+        # VENDOR image that has never heard of npa (e.g. NVIDIA's NRE container,
+        # which is the runtime for the neural-reconstruction workflow). Propagating
+        # the source URI serves both: setup's primary install path is guarded by
+        # `command -v npa`, so it is a no-op when npa is already present and
+        # installs it WITH dependencies when it is not. Without this, a vendor image
+        # fails setup with "npa CLI not found; set NPA_SRC_S3_URI or use a workbench
+        # image" (observed live on the NRE image).
+        if src_uri:
+            envs["NPA_SRC_S3_URI"] = src_uri
+            doc["envs"] = envs
+        # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
+        # used to run un-imaged branch code on GPU without rebuilding the image.
+        if str(os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"} and src_uri:
+            envs["NPA_SRC_OVERLAY"] = "1"
+            doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,

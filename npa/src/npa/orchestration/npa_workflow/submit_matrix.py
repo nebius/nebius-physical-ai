@@ -194,6 +194,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
     ),
     SubmitLiveCase(
+        "nurec-reconstruct.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        # No image_tool: the runtime is NVIDIA's vendor NRE container supplied via
+        # resources.image / image_id, not an NPA-built workbench image.
+        # A ~14 GB NGC image pull on a cold node, then 30k 3DGUT steps and a
+        # novel-view render pass. Far slower than the rest of the gpu tier, so it
+        # carries its own deadline instead of forcing it on every case.
+        max_wait_seconds=5400,
+        notes=(
+            "NuRec/NRE reconstruction on an RT-core GPU: real NCore V4 capture -> "
+            "3DGUT Gaussians -> renderable USDZ -> rig-offset novel views -> "
+            "reports/sim2real.rrd. Needs NGC_API_KEY for the nre-ga container and "
+            "HF_TOKEN for the PhysicalAI capture."
+        ),
+    ),
+    SubmitLiveCase(
         "tokenfactory-rollout-judge.yaml",
         "gpu",
         secret_envs=(

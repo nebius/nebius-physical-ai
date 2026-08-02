@@ -60,6 +60,21 @@ _IMAGE_EXTENSIONS = _WEB_IMAGE_EXTENSIONS | _NON_WEB_IMAGE_EXTENSIONS
 def needs_image_transcode(name: str) -> bool:
     """True when ``name`` is an image a browser cannot render natively (→ PNG)."""
     return Path(str(name or "")).suffix.lower() in _NON_WEB_IMAGE_EXTENSIONS
+# 3D scene/asset artifacts. Deliberately DOWNLOAD-ONLY: no browser renders USDZ
+# or PLY, and the agent ships no 3D-asset viewer, so offering them as an inline
+# preview would produce a broken pane. Stating the set explicitly (rather than
+# letting them fall through the mimetypes guesses below) pins that decision and
+# keeps a future `mimetypes` addition -- e.g. a `model/vnd.usdz+zip` entry -- from
+# silently reclassifying a NuRec reconstruction. A run stays viewable through its
+# `.rrd` / `.png` / `.mp4` / `.json` artifacts.
+_MODEL_EXTENSIONS = {".usdz", ".usd", ".usda", ".usdc", ".ply", ".obj", ".glb", ".gltf"}
+
+
+def is_model_artifact(name: str) -> bool:
+    """True when ``name`` is a 3D scene/asset artifact offered as a download."""
+    return Path(str(name or "")).suffix.lower() in _MODEL_EXTENSIONS
+
+
 _JSON_EXTENSIONS = {".json"}
 _TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
 _RENDER_ORDER = {
@@ -177,6 +192,8 @@ def render_hint_for_object(*, key: str, content_type: str = "") -> str:
         return "video"
     if ext in _IMAGE_EXTENSIONS:
         return "image"
+    if ext in _MODEL_EXTENSIONS:
+        return "download"
     if ext in _JSON_EXTENSIONS:
         return "json"
     if ext in _TEXT_EXTENSIONS:

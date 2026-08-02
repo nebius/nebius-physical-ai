@@ -10,6 +10,12 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
+| `workbench.nurec.check` | `npa workbench nurec check` | `config.nurec_image`, `config.dataset_id` | access-check JSON (NGC pullability, HF rights, RT-core GPU) | no |
+| `workbench.nurec.fetch` | `npa workbench nurec fetch` | `config.dataset_id`, `config.scene` | `config.ncore_uri` (NCore V4 shards + derived rig pose edge) | no |
+| `workbench.nurec.reconstruct` | `npa workbench nurec reconstruct` | `config.ncore_uri`, `config.config_name` | `config.reconstruction_uri` (USDZ, parsed config, metrics), `config.input_uri` | no |
+| `workbench.nurec.render` | `npa workbench nurec render` | `config.reconstruction_uri`, `config.rig_translation_offset` | `config.novel_views_uri` (novel-view PNGs + mp4) | no |
+| `workbench.nurec.visualize` | `npa workbench nurec visualize` | `config.run_root_uri` | `config.rrd_uri` (`reports/sim2real.rrd`) | no |
+| `workbench.nurec.finalize` | `npa workbench nurec finalize` | `config.run_root_uri` | `config.final_report_uri` | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` | no |

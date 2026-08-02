@@ -305,3 +305,75 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
+
+
+def test_rendered_backend_has_no_mangled_regex_escapes(monkeypatch) -> None:
+    """Regex escapes must survive the outer f-string intact.
+
+    ``setup_script`` is one ~6700-line non-raw f-string, so a single-backslash
+    escape inside it is interpreted by the OUTER string first. ``\\s`` and ``\\d``
+    only warn, but ``\\b`` is a valid Python escape and silently becomes a
+    backspace (0x08) -- the emitted word-boundary anchors were real control
+    characters, so intent regexes in the deployed backend could never match.
+    Assert on the rendered text, since the source reads correctly either way.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    control = {c for c in body if c in "\x08\x0c\x0b\x07\x00"}
+    assert not control, (
+        f"rendered backend contains control characters {sorted(map(hex, map(ord, control)))}; "
+        "a single-backslash escape leaked through the outer f-string"
+    )
+    # The word boundaries are present as real two-character regex escapes.
+    assert r"\b(?:stage|stages|step|steps)\b" in body
+    assert r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b" in body
+
+
+def test_agent_module_source_has_no_invalid_escape_sequences() -> None:
+    """``agent.py`` must compile without invalid-escape warnings.
+
+    These are ``SyntaxWarning`` on Python >= 3.12 (noise on every import in the
+    workflow pods) and ``DeprecationWarning`` below it, which is why they went
+    unnoticed. Compiling the source directly catches them on any interpreter.
+    """
+    import warnings
+    from pathlib import Path
+
+    import npa.cli.agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        compile(source, "agent.py", "exec")
+    offenders = [str(w.message) for w in caught if "invalid escape" in str(w.message)]
+    assert not offenders, offenders
+
+
+def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) -> None:
+    """A NuRec run must not inherit the previous run's camera label.
+
+    ``sim_viz`` state persists across artifact loads, and ``camera`` is seeded
+    from it. Loading a reconstruction after a Sim2Real pipeline run therefore
+    reported ``camera="heldout-sim"`` while the very same response carried the
+    NuRec note explaining there is no held-out simulation camera. Observed live
+    on the deployed agent.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    assert "NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+    assert 'NEURAL_RECONSTRUCTION_CAMERA_LABEL = "novel-view"' in body
+    # The label is applied on the neural-reconstruction branch, not inherited.
+    assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+
+
+def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None:
+    """The UI HEADs /api/sim-viz/rrd-blob; a GET-only route answers 405.
+
+    The probe failure is caught and ignored, so the viewer still works -- but it
+    logged a console error on every single page load, which is exactly how real
+    errors get overlooked. Observed live.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    assert '@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])' in body
+    assert '@app.get("/sim-viz/rrd-blob")' not in body

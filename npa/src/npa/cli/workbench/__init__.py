@@ -20,6 +20,7 @@ from npa.cli.fiftyone import app as fiftyone_app
 from npa.cli.genesis import app as genesis_app
 from npa.cli.groot import app as groot_app
 from npa.cli.isaac_lab import app as isaac_lab_app
+from npa.cli.nurec import app as nurec_app
 from npa.cli.workbench.sonic import app as sonic_app
 from npa.cli.workbench.lancedb import app as lancedb_app
 from npa.cli.workbench.detection_training import app as detection_training_app
@@ -60,6 +61,7 @@ app.add_typer(foxglove_app, name="foxglove")
 app.add_typer(genesis_app, name="genesis")
 app.add_typer(groot_app, name="groot")
 app.add_typer(isaac_lab_app, name="isaac-lab")
+app.add_typer(nurec_app, name="nurec")
 app.add_typer(sonic_app, name="sonic")
 app.add_typer(mjlab_app, name="mjlab")
 app.add_typer(lichtblick_app, name="lichtblick")

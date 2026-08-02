@@ -24,6 +24,7 @@ licenses:
   - path: skills/NOTICE-NVIDIA-SKILLS
     applies_to:
       - physical-ai-data-factory
+      - neural-reconstruction
 skills:
   - name: agent-development
     category: atomic
@@ -526,6 +527,24 @@ skills:
           - npa/workflows/workbench/npa-workflows/token-factory-parallel-fanout.yaml
           - npa/workflows/workbench/npa-workflows/token-factory-gate-loop.yaml
           - npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml
+  - name: neural-reconstruction
+    category: workflows
+    when_to_use: "Reconstruct real sensor captures into renderable 3D scenes with NVIDIA Omniverse NuRec / NRE on Nebius: NCore V4 input, 3DGUT Gaussian training, renderable USDZ, novel-view rendering, and the Rerun recording the NPA agent displays. Also for NCore sequences that will not load in NRE and for RT-core GPU routing."
+    path: skills/workflows/neural-reconstruction/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/workbench/nurec/nurec.py
+      - type: file_exists
+        path: npa/src/npa/workbench/nurec/ncore_rig.py
+      - type: cli_help
+        args: ["workbench", "nurec", "reconstruct", "--help"]
+        contains: "config-name"
+      - type: workflow_yaml
+        paths:
+          - npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."
