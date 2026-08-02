@@ -516,34 +516,49 @@ def _provision_object_storage(
 def _prompt_setup_tokens(
     ask: Callable[..., str],
     existing_credentials: Any,
+    *,
+    skip: set[str] = frozenset(),  # type: ignore[assignment]
 ) -> tuple[str, str, str]:
-    """Prompt for the optional HF / Token Factory / NGC keys. Returns the trio."""
-    typer.echo(
-        "\nHugging Face token: create a Read token at "
-        "https://huggingface.co/settings/tokens (it starts with 'hf_'). "
-        "For gated models, also click 'Agree and access repository' on each "
-        "model page while signed in. Guide: docs/workbench/huggingface-token.md."
-    )
-    hf_token = _normalize_pasted_secret(
-        ask(
-            "Hugging Face token (HF_TOKEN)",
-            default=existing_credentials.hf_token,
-            secret=True,
+    """Prompt for the optional HF / Token Factory / NGC keys. Returns the trio.
+
+    A token env-key in ``skip`` was already stored via a flag (``--hf-token``
+    etc.); keep the existing value instead of re-prompting, since an empty piped
+    Enter at the prompt would otherwise wipe the key that was just saved.
+    """
+    if "HF_TOKEN" in skip:
+        typer.echo("\nHugging Face token: kept from --hf-token (not re-prompted).")
+        hf_token = existing_credentials.hf_token
+    else:
+        typer.echo(
+            "\nHugging Face token: create a Read token at "
+            "https://huggingface.co/settings/tokens (it starts with 'hf_'). "
+            "For gated models, also click 'Agree and access repository' on each "
+            "model page while signed in. Guide: docs/workbench/huggingface-token.md."
         )
-    )
-    typer.echo(
-        "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
-        "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
-        "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
-        "Guide: docs/workbench/token-factory-key.md."
-    )
-    token_factory_api_key = _normalize_pasted_secret(
-        ask(
-            "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
-            default=existing_credentials.token_factory_api_key,
-            secret=True,
+        hf_token = _normalize_pasted_secret(
+            ask(
+                "Hugging Face token (HF_TOKEN)",
+                default=existing_credentials.hf_token,
+                secret=True,
+            )
         )
-    )
+    if "NEBIUS_TOKEN_FACTORY_KEY" in skip:
+        typer.echo("Nebius Token Factory API key: kept from --token-factory-key (not re-prompted).")
+        token_factory_api_key = existing_credentials.token_factory_api_key
+    else:
+        typer.echo(
+            "\nNebius Token Factory API key (optional): OpenAI-compatible hosted "
+            "inference, zero GPU. Create one at https://tokenfactory.nebius.com/ -> "
+            "API keys. It starts with 'v1.' and is NOT your Nebius IAM/CLI token. "
+            "Guide: docs/workbench/token-factory-key.md."
+        )
+        token_factory_api_key = _normalize_pasted_secret(
+            ask(
+                "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
+                default=existing_credentials.token_factory_api_key,
+                secret=True,
+            )
+        )
     if token_factory_api_key and not token_factory_api_key.startswith("v1."):
         typer.echo(
             "  Warning: that does not look like a Token Factory key (they start "
@@ -552,19 +567,23 @@ def _prompt_setup_tokens(
             "`npa workbench token-factory verify`; see "
             "docs/workbench/token-factory-key.md."
         )
-    typer.echo(
-        "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
-        "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
-        "account first). The key starts with 'nvapi-'. "
-        "Guide: docs/workbench/ngc-api-key.md."
-    )
-    ngc_api_key = _normalize_pasted_secret(
-        ask(
-            "NVIDIA NGC API key (NGC_API_KEY)",
-            default=existing_credentials.ngc_api_key,
-            secret=True,
+    if "NGC_API_KEY" in skip:
+        typer.echo("NVIDIA NGC API key: kept from --ngc-api-key (not re-prompted).")
+        ngc_api_key = existing_credentials.ngc_api_key
+    else:
+        typer.echo(
+            "\nNVIDIA NGC API key (for GR00T / Cosmos NVIDIA assets): create one at "
+            "https://org.ngc.nvidia.com/setup/api-key (sign in or make a free NGC "
+            "account first). The key starts with 'nvapi-'. "
+            "Guide: docs/workbench/ngc-api-key.md."
         )
-    )
+        ngc_api_key = _normalize_pasted_secret(
+            ask(
+                "NVIDIA NGC API key (NGC_API_KEY)",
+                default=existing_credentials.ngc_api_key,
+                secret=True,
+            )
+        )
     return hf_token, token_factory_api_key, ngc_api_key
 
 
@@ -899,13 +918,15 @@ def _offer_profile_binding(
 
 
 def _run_interactive_configure(
-    *, provision: bool = True, already_written: str = ""
+    *, provision: bool = True, already_written: str = "", preset_tokens: set[str] | None = None
 ) -> None:
     """Prompt for credentials/config and write the NPA dotfiles.
 
     ``already_written`` names what a caller persisted before this flow started
     (currently ``--token-factory-key``), so the bail-out paths below never claim
-    that nothing was saved.
+    that nothing was saved. ``preset_tokens`` names token env-keys already stored
+    via a flag (``HF_TOKEN`` / ``NEBIUS_TOKEN_FACTORY_KEY`` / ``NGC_API_KEY``) so
+    the interactive flow keeps them instead of re-prompting (and risking a wipe).
     """
 
     from npa.clients.config import (
@@ -1175,7 +1196,7 @@ def _run_interactive_configure(
         }
 
     hf_token, token_factory_api_key, ngc_api_key = _prompt_setup_tokens(
-        ask, existing_credentials
+        ask, existing_credentials, skip=preset_tokens or set()
     )
 
     credentials_payload: dict[str, object] = {
@@ -1601,12 +1622,36 @@ def _configure_impl(
         typer.echo("")
         typer.echo(_configured_summary())
         return
+    # Token flags that were persisted above must not be re-prompted (an empty
+    # piped Enter would otherwise wipe them); skip those in the interactive flow.
+    preset_tokens: set[str] = set()
+    if token_factory_key.strip():
+        preset_tokens.add("NEBIUS_TOKEN_FACTORY_KEY")
+    if hf_token.strip():
+        preset_tokens.add("HF_TOKEN")
+    if ngc_api_key.strip():
+        preset_tokens.add("NGC_API_KEY")
+
     should_prompt = interactive if interactive is not None else sys.stdin.isatty()
     if not should_prompt:
+        if already_written:
+            # We DID persist the token flags; dumping the whole setup template as
+            # if nothing happened made scripted `--token-* --no-interactive` runs
+            # look like they failed. Confirm what landed and how to finish the rest.
+            from npa.clients.credentials import CREDENTIALS_PATH
+
+            typer.echo(f"{already_written} saved to {CREDENTIALS_PATH}.")
+            typer.echo(
+                "Run `npa configure` in a terminal (or `npa configure --show` for "
+                "the file layout) to set up the project, bucket and cluster."
+            )
+            return
         typer.echo(_SETUP_GUIDANCE)
         return
     try:
-        _run_interactive_configure(provision=provision, already_written=already_written)
+        _run_interactive_configure(
+            provision=provision, already_written=already_written, preset_tokens=preset_tokens
+        )
     except (EOFError, typer.Abort):
         # Cancelling mid-flow (Ctrl-C / Ctrl-D / no more input) previously exited
         # 0 having written nothing under ~/.npa, so the next cloud command failed

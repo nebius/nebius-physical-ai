@@ -574,6 +574,78 @@ def test_configure_stores_hf_and_ngc_tokens_without_prompting(monkeypatch, tmp_p
     assert saved["ngc"]["api_key"] == "nvapi-test"
 
 
+def test_configure_token_flag_no_interactive_confirms_instead_of_template(monkeypatch, tmp_path) -> None:
+    """`--hf-token --no-interactive` stored the key but dumped the full template (bug 5)."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+
+    result = runner.invoke(app, ["configure", "--hf-token", "hf_flagvalue", "--no-interactive"])
+
+    assert result.exit_code == 0, result.output
+    assert "saved to" in result.output
+    # The whole "Credential setup" template no longer prints as if nothing happened.
+    assert "Credential setup" not in result.output
+    assert yaml.safe_load(creds_path.read_text())["tokens"]["HF_TOKEN"] == "hf_flagvalue"
+
+
+def test_configure_no_tokens_no_interactive_still_shows_template(monkeypatch, tmp_path) -> None:
+    """With nothing stored, `--no-interactive` still prints the setup guidance."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+
+    result = runner.invoke(app, ["configure", "--no-interactive"])
+
+    assert result.exit_code == 0, result.output
+    assert "Credential setup" in result.output
+
+
+def test_prompt_setup_tokens_keeps_flagged_tokens_without_reprompting() -> None:
+    """A token passed via flag is kept, not re-prompted (an empty Enter would wipe it) — bug 6."""
+    from types import SimpleNamespace
+
+    existing = SimpleNamespace(
+        hf_token="hf_kept", token_factory_api_key="v1.kept", ngc_api_key="nvapi-kept"
+    )
+    asked: list[str] = []
+
+    def ask(prompt, *, default="", secret=False):
+        asked.append(prompt)
+        return ""  # a bare Enter — would wipe the key if it reached the store
+
+    hf, tf, ngc = cli_main._prompt_setup_tokens(
+        ask, existing, skip={"HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY", "NGC_API_KEY"}
+    )
+
+    assert (hf, tf, ngc) == ("hf_kept", "v1.kept", "nvapi-kept")
+    assert asked == []  # none of the three were re-prompted
+
+
+def test_prompt_setup_tokens_still_prompts_for_unflagged_tokens() -> None:
+    from types import SimpleNamespace
+
+    existing = SimpleNamespace(hf_token="", token_factory_api_key="", ngc_api_key="")
+    asked: list[str] = []
+
+    def ask(prompt, *, default="", secret=False):
+        asked.append(prompt)
+        return "hf_new" if "HF_TOKEN" in prompt else ""
+
+    hf, _tf, _ngc = cli_main._prompt_setup_tokens(ask, existing, skip={"NGC_API_KEY"})
+
+    assert hf == "hf_new"
+    assert any("HF_TOKEN" in p for p in asked)
+    assert not any("NGC_API_KEY" in p for p in asked)  # NGC was skipped
+
+
 def test_configure_token_factory_key_without_a_nebius_profile(monkeypatch, tmp_path) -> None:
     """Storing only the Token Factory key must not report that nothing was written."""
     import yaml
