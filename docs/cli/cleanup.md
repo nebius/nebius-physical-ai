@@ -13,6 +13,8 @@ Options
 run).
 [default: include-sky]
 --project  <str>  Scope the empty per-alias state-dir report to this alias.
+--skip-jobs  Do not query the SkyPilot managed-job queue.
+--sky-bin  <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.
 --help  Show this message and exit.
 ```
 
@@ -23,6 +25,8 @@ run).
 | `--yes` | -y  Remove the local caches (otherwise just report). |
 | `--include-sky` | --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs |
 | `--project` | <str>  Scope the empty per-alias state-dir report to this alias. |
+| `--skip-jobs` | Do not query the SkyPilot managed-job queue. |
+| `--sky-bin` | <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
