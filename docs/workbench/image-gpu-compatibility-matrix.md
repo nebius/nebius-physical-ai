@@ -59,6 +59,7 @@ The two `no` rows are the whole reason `npa-cosmos` is a port and the default `n
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | supported | supported | supported | supported |
 | `npa-detection-training` | supported | supported | supported | supported | supported |
+| `npa-cosmos3` | supported | supported | supported | supported | supported |
 | `npa-cosmos3-reason` | supported | supported | supported | supported | supported |
 | `npa-cosmos2-transfer` | supported | supported | supported | supported | supported |
 | `npa-cosmos` | supported | supported | **no SASS** | **no SASS** | **no SASS** |
@@ -71,6 +72,8 @@ The two `no` rows are the whole reason `npa-cosmos` is a port and the default `n
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-sonic-mujoco` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-groot` | supported | supported | supported | blocked | blocked |
+| `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
+| `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
 | `npa-fiftyone` | CPU | CPU | CPU | CPU | CPU |
 | `npa-retargeting` | CPU | CPU | CPU | CPU | CPU |
 | `npa-rerun-viewer` | CPU | CPU | CPU | CPU | CPU |

@@ -36,14 +36,30 @@ spec:
         - key: nvidia.com/gpu
           operator: Exists
           effect: NoSchedule
+      # npa-base's final USER is ubuntu (uid 1000); this asserts that rather
+      # than trusting the image, so the job fails fast if a derived image ever
+      # regresses to root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: validate
           image: NPA_IMAGE
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           command:
             - bash
             - -c
             - |
               set -uo pipefail
+              mkdir -p "$TMPDIR" "$XDG_CACHE_HOME" "$CUDA_CACHE_PATH" "$TRITON_CACHE_DIR"
               nvidia-smi || echo "nvidia-smi unavailable"
 
               echo "### positive: require ${NPA_TARGET_ARCH} / ${NPA_TARGET_CAP}"
@@ -82,6 +98,25 @@ spec:
               value: "NPA_CROSS_CAP"
             - name: NPA_ALLOW_NO_TMA
               value: "NPA_ALLOW_NO_TMA"
+            # The root filesystem is read-only, but flash-attn-4's CuTe kernels
+            # JIT-compile at runtime and need somewhere to cache. Point every
+            # cache torch and CUDA use at the scratch volume below.
+            - name: HOME
+              value: /scratch
+            - name: TMPDIR
+              value: /scratch/tmp
+            - name: XDG_CACHE_HOME
+              value: /scratch/.cache
+            - name: CUDA_CACHE_PATH
+              value: /scratch/.nv/ComputeCache
+            - name: TRITON_CACHE_DIR
+              value: /scratch/.triton
           resources:
             limits:
               nvidia.com/gpu: 1
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: scratch
+          emptyDir: {}
