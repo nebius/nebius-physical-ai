@@ -35,6 +35,10 @@ def up_cmd(
     context_name: str = typer.Option(
         "",
         "--context",
+        # `provision-if-absent` and `cluster node-group *` name the same cluster
+        # with --cluster-name; accept it here so copying a command between help
+        # pages does not fail on an unknown option.
+        "--cluster-name",
         help="Kubeconfig context name. Defaults to the Terraform cluster name.",
     ),
     validate: bool = typer.Option(

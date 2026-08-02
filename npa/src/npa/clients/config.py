@@ -463,6 +463,28 @@ def resolve_container_registry(project: str | None = None) -> str:
     return value.rstrip("/") if value else DEFAULT_CONTAINER_REGISTRY
 
 
+def resolve_workflow_src_s3_uri(project: str | None = None) -> str:
+    """Return the staged ``npa`` source prefix used when no workbench image is pinned.
+
+    Staging the source is a one-off setup step, but the URI was previously only
+    readable from the environment, so the next shell failed preflight even though
+    the objects were already in the bucket. Persisting it under the project makes
+    it survive the shell that staged it.
+    """
+
+    yml = _load_yaml()
+    try:
+        proj = _resolve_project_section(yml, project)
+    except ConfigError:
+        proj = {}
+    value = ""
+    if isinstance(proj, dict):
+        value = str(proj.get("src_s3_uri", "") or "")
+    if not value:
+        value = str(yml.get("src_s3_uri", "") or "")
+    return value.strip()
+
+
 # ── Read / write ─────────────────────────────────────────────────────────
 
 

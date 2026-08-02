@@ -724,13 +724,37 @@ def _store_token_factory_key(api_key: str) -> None:
     )
 
 
+def _store_src_s3_uri(uri: str) -> None:
+    from npa.clients.config import default_project_name, write_config
+
+    if not uri.startswith("s3://"):
+        typer.echo(f"Error: --src-s3-uri must be an s3:// URI, got {uri!r}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        project = str(default_project_name() or "")
+    except Exception:  # noqa: BLE001 - fall back to a top-level key when unconfigured
+        project = ""
+    if project:
+        path = write_config({"projects": {project: {"src_s3_uri": uri}}})
+        location = f"projects.{project}.src_s3_uri"
+    else:
+        path = write_config({"src_s3_uri": uri})
+        location = "src_s3_uri"
+    typer.echo(f"Stored staged npa source prefix in {path} under {location}.")
+    typer.echo("Workflow submits now resolve NPA_SRC_S3_URI without re-exporting it.")
+
+
 def _configure_impl(
     *,
     show: bool,
     interactive: Optional[bool],
     provision: bool = True,
     token_factory_key: str = "",
+    src_s3_uri: str = "",
 ) -> None:
+    if src_s3_uri.strip():
+        _store_src_s3_uri(src_s3_uri.strip())
+        return
     if token_factory_key.strip():
         _store_token_factory_key(token_factory_key.strip())
         return
@@ -790,6 +814,15 @@ def configure(
             "under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup)."
         ),
     ),
+    src_s3_uri: str = typer.Option(
+        "",
+        "--src-s3-uri",
+        help=(
+            "Persist the staged npa source prefix (s3://bucket/prefix/npa) in "
+            "~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without "
+            "re-exporting it in every shell (skips interactive setup)."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -797,6 +830,7 @@ def configure(
         interactive=interactive,
         provision=provision,
         token_factory_key=token_factory_key,
+        src_s3_uri=src_s3_uri,
     )
 
 
@@ -834,6 +868,15 @@ def init(
             "under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup)."
         ),
     ),
+    src_s3_uri: str = typer.Option(
+        "",
+        "--src-s3-uri",
+        help=(
+            "Persist the staged npa source prefix (s3://bucket/prefix/npa) in "
+            "~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without "
+            "re-exporting it in every shell (skips interactive setup)."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -841,6 +884,7 @@ def init(
         interactive=interactive,
         provision=provision,
         token_factory_key=token_factory_key,
+        src_s3_uri=src_s3_uri,
     )
 
 

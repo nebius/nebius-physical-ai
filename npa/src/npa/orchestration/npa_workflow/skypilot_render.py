@@ -661,6 +661,26 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     return tuple(hints)
 
 
+def resolve_src_s3_uri() -> str:
+    """Return the staged npa source prefix, preferring the environment over config."""
+
+    import os
+
+    value = (
+        os.environ.get("NPA_SRC_S3_URI")
+        or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
+        or ""
+    ).strip()
+    if value:
+        return value
+    try:
+        from npa.clients.config import resolve_workflow_src_s3_uri
+
+        return resolve_workflow_src_s3_uri()
+    except Exception:  # noqa: BLE001 - a missing/unreadable config is just "unset"
+        return ""
+
+
 def plan_images(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
@@ -754,19 +774,15 @@ def build_skypilot_task_doc(
         doc["setup"] = setup
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
-    # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa.
+    # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
+    # it once with `npa configure --src-s3-uri` so the next shell still finds it.
     if not image:
-        import os
-
-        src_uri = (
-            os.environ.get("NPA_SRC_S3_URI")
-            or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
-            or ""
-        ).strip()
+        src_uri = resolve_src_s3_uri()
         if not src_uri:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} has no workbench image "
-                "and NPA_SRC_S3_URI is unset; set NPA_SRC_S3_URI=s3://bucket/prefix/npa "
+                "and NPA_SRC_S3_URI is unset; set NPA_SRC_S3_URI=s3://bucket/prefix/npa, "
+                "persist it with `npa configure --src-s3-uri s3://bucket/prefix/npa`, "
                 "or pass --image <registry>/npa-<tool>:<tag>"
             )
         envs["NPA_SRC_S3_URI"] = src_uri
