@@ -1,0 +1,67 @@
+# GENERATED — do not edit by hand.
+#   npa/.venv/bin/python npa/docker/workbench/common/refresh_isaac_wheel_pins.py
+#
+# NVIDIA Isaac wheels fetched at FIRST RUN by isaac_bootstrap.sh, never baked into
+# any image layer. Installed with `pip install --no-deps --require-hashes` against
+# --index-url https://pypi.nvidia.com so the set cannot be shadowed from PyPI and a wheel cannot
+# be substituted. Every OSS transitive dependency is baked at build time from PyPI
+# instead (see install_isaac_runtime_base.sh), which is what keeps --no-deps honest.
+#
+# Package set: isaacsim[all,extscache] + isaacsim-kernel + isaaclab (unabridged —
+# see the module docstring for why it is not trimmed).
+# isaacsim  5.1.0.0
+# isaaclab  2.3.2.post1
+# python    cp311   platform x86_64
+
+isaacsim==5.1.0.0 \
+    --hash=sha256:ad2c027831ed5d4a62552735bb799dea4e4604530d2ab9b526ddb6cd19a98c11
+isaacsim-kernel==5.1.0.0 \
+    --hash=sha256:f981290a70ad89f169fb9c47bd55833665677879ebc46ed3992756c617ac02fc
+isaacsim-extscache-kit==5.1.0.0 \
+    --hash=sha256:82c0c43a4a8a62a37c82a6c32a489be6ac2fb52baf17041dcccb80295d94721f
+isaacsim-extscache-kit-sdk==5.1.0.0 \
+    --hash=sha256:be8cb4520eb9c97c4ddd46e1c92885bb9e5dbc581e407930f186a3808eafc038
+isaacsim-extscache-physics==5.1.0.0 \
+    --hash=sha256:a4b450c7b33d2ada42e1736ac48e002103aac0b93e4f618d9fa4c212762dc74b
+isaacsim-app==5.1.0.0 \
+    --hash=sha256:88d0ad9d56439aacd670490dab7cf55c72cece72894e3932a9a0493b12fa60a2
+isaacsim-asset==5.1.0.0 \
+    --hash=sha256:260bb3486e263488fd406c28da37ef79d73da7fd9f9ea6c7a36b111a8a6f8361
+isaacsim-benchmark==5.1.0.0 \
+    --hash=sha256:8353d696c1231524ac263b5700f79fe5f9b8c9dd0ef003580fec5d9c166bc5b3
+isaacsim-code-editor==5.1.0.0 \
+    --hash=sha256:4dbc1833765987aa614e78f4166ef1dcddd5282fe4f395ffc5e3b6ebee653b10
+isaacsim-core==5.1.0.0 \
+    --hash=sha256:cfdd5d82ce455d654c68d37ff4fdd062190e3414289beb6f9b876a10a851b92d
+isaacsim-cortex==5.1.0.0 \
+    --hash=sha256:b2f9b7f2f4aa8b856bb7a5f7808aec90f633b2ee409e709099a0d071c57a6296
+isaacsim-example==5.1.0.0 \
+    --hash=sha256:a537336402f631921da4bee742ad846949824d48c84dacfbc7e8fd97b2d23c04
+isaacsim-gui==5.1.0.0 \
+    --hash=sha256:af0a3e2eb9ecd6c5a6088fcd50a480736c391f72bd38a854cc69a1c13861800b
+isaacsim-replicator==5.1.0.0 \
+    --hash=sha256:8fe63ec5adf9fbe12aef82b4634a9662f8ad933d8f8428c64f11dc71406e4948
+isaacsim-rl==5.1.0.0 \
+    --hash=sha256:d1fdc4f2046a205ba34a3a69c96f5a51744783f74cd824e047f43bc1ee66c7b9
+isaacsim-robot==5.1.0.0 \
+    --hash=sha256:3d7529f76b390210fd3dad66101958f4292f7306c9182b06cf532763341087e2
+isaacsim-robot-motion==5.1.0.0 \
+    --hash=sha256:0163f3d3243f0641502527f066febe22c93e651eb54e911442f88bc3fb37db9c
+isaacsim-robot-setup==5.1.0.0 \
+    --hash=sha256:9d48262259e89cb1d02c325d69cca6ece24919d4736f8a5ac3db861ddb962de0
+isaacsim-ros1==5.1.0.0 \
+    --hash=sha256:a0b541c266c409b7e48388f2f2bfce8a0417735b4fb238dd0b1dbf9f1a9df06e
+isaacsim-ros2==5.1.0.0 \
+    --hash=sha256:0b9ee70c64a54a8ee416de2a785b71270832c15b901f86adf6bd18153dc66662
+isaacsim-sensor==5.1.0.0 \
+    --hash=sha256:3c52d04aa11a213103031a3a53f2a74866a27dc47fd88bbd3eb6c52c65f163f1
+isaacsim-storage==5.1.0.0 \
+    --hash=sha256:57d90579ef9ce8e89e39bd38f30f81577a051c19e5950e8d4a67c3af894fd625
+isaacsim-template==5.1.0.0 \
+    --hash=sha256:76e19875380d9e5432a01b3b14d2d640d1d092069518e36c597eb79ff1a06474
+isaacsim-test==5.1.0.0 \
+    --hash=sha256:b3a1b647d6bec16b649b5d6f4199b0dd8aa3d70fcc5cc9603fef8e6e9bf986dc
+isaacsim-utils==5.1.0.0 \
+    --hash=sha256:becd39be3fc0d3b5abe332febf50c2af518aa99db5582344b53cba6076385116
+isaaclab==2.3.2.post1 \
+    --hash=sha256:53f085b5c8377697d52cb404fb6ca0902771983f790f0839a13709a67cea1919

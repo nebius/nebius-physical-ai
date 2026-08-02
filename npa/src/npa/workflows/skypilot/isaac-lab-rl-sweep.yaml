@@ -19,6 +19,14 @@ resources:
   memory: 64
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "lr-1e-3"
   ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
@@ -33,6 +41,10 @@ setup: |
   set -euo pipefail
   PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
   if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  # Trigger the Isaac bootstrap BEFORE asserting the tree exists: the isaaclab wheel ships
+  # no scripts/, so /workspace/isaaclab is populated on first use of the interpreter, not by
+  # the image. Asserting first is a guaranteed FAILED_SETUP.
+  "${PYTHON_BIN}" -c "pass"
   test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
   "${PYTHON_BIN}" -m pip install --quiet boto3
 run: |
@@ -79,6 +91,14 @@ resources:
   memory: 64
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "lr-3e-4"
   ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
@@ -93,6 +113,10 @@ setup: |
   set -euo pipefail
   PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
   if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  # Trigger the Isaac bootstrap BEFORE asserting the tree exists: the isaaclab wheel ships
+  # no scripts/, so /workspace/isaaclab is populated on first use of the interpreter, not by
+  # the image. Asserting first is a guaranteed FAILED_SETUP.
+  "${PYTHON_BIN}" -c "pass"
   test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
   "${PYTHON_BIN}" -m pip install --quiet boto3
 run: |
@@ -139,6 +163,14 @@ resources:
   memory: 64
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "entropy-0"
   ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
@@ -153,6 +185,10 @@ setup: |
   set -euo pipefail
   PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
   if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  # Trigger the Isaac bootstrap BEFORE asserting the tree exists: the isaaclab wheel ships
+  # no scripts/, so /workspace/isaaclab is populated on first use of the interpreter, not by
+  # the image. Asserting first is a guaranteed FAILED_SETUP.
+  "${PYTHON_BIN}" -c "pass"
   test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
   "${PYTHON_BIN}" -m pip install --quiet boto3
 run: |
@@ -199,6 +235,14 @@ resources:
   memory: 64
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "entropy-0-01"
   ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
@@ -213,6 +257,10 @@ setup: |
   set -euo pipefail
   PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
   if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  # Trigger the Isaac bootstrap BEFORE asserting the tree exists: the isaaclab wheel ships
+  # no scripts/, so /workspace/isaaclab is populated on first use of the interpreter, not by
+  # the image. Asserting first is a guaranteed FAILED_SETUP.
+  "${PYTHON_BIN}" -c "pass"
   test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
   "${PYTHON_BIN}" -m pip install --quiet boto3
 run: |

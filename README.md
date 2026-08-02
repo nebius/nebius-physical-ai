@@ -302,9 +302,11 @@ npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
 | [SONIC image catalog](docs/workbench/sonic-image-catalog.md) | Manifest-driven SONIC variant routing per GPU |
 | [Image reproducibility](docs/security/image-reproducibility.md) | The two-tag strategy (`cuda12`, `cuda13-b300`) and how tags are pinned |
 
-Images that bake NVIDIA Omniverse Kit (`npa-isaac-lab`, `npa-sonic`, `npa-groot`)
-are `redistribution: restricted` — build them into your own registry with your
-own NGC credentials, and never publish them to a public registry.
+Every image declares a `redistribution` class in the packaging contract, which
+decides whether it may leave the owning org. All workbench images are currently
+`public`; the `restricted` class is kept for the next runtime we cannot ship.
+Set the class when you add an image — the packaging-contract test fails a build
+that bakes a non-redistributable runtime while claiming `public`.
 
 ---
 

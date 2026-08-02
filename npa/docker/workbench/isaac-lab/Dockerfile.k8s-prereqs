@@ -1,24 +1,33 @@
 # Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-isaac-lab image.
 #
-# This is the same change the main isaac-lab/Dockerfile now applies, expressed as a
-# derived build so an operator can fix an existing tag without pulling (or rebuilding
-# from) the ~8 GB NVIDIA base:
+# This is the same change the main isaac-lab/Dockerfile applies (via
+# docker/workbench/common/install_isaac_runtime_base.sh), expressed as a derived build so
+# an operator can repair an existing published tag without rebuilding from scratch:
 #
 #   scripts/build-workbench-image-in-cluster.sh \
 #     --base <registry>/npa-isaac-lab:2.3.2.post1 \
 #     --tag  <registry>/npa-isaac-lab:2.3.2.post1-sky1 \
 #     --dockerfile npa/docker/workbench/isaac-lab/Dockerfile.k8s-prereqs
 #
-# Why it is needed: SkyPilot's Kubernetes runtime bootstrap requires a system python3
-# (plus rsync) inside the container. The NVIDIA Isaac base ships none — its interpreter
-# is /isaac-sim/python.sh — and /isaac-sim is mode 750 isaac-sim:isaac-sim, unreadable
-# by the `ubuntu` user the image runs as. Without this, provisioning fails with
-# "Failed to get ssh user for pod ...: container not found (ray-node)".
+# Why it is needed: SkyPilot's Kubernetes runtime bootstrap runs inside the task container
+# and needs a system python3 (plus rsync). All four ingredients below are required -
+# verified by bisecting derived images against a live GPU cluster - and without them
+# provisioning fails with:
+#     KubernetesError: Failed to get ssh user for pod ...: container not found ("ray-node")
 #
-# All four ingredients are required (verified by bisecting derived images live):
-# system python3, /isaac-sim group access, passwordless sudo for the runtime user, and
-# the system interpreter first on PATH. Group membership avoids rewriting multi-GB
-# layers; the image stays non-root. Training still runs through ISAAC_LAB_PYTHON.
+#   1. a system python3 (+ rsync/curl/ssh client);
+#   2. read access to /isaac-sim for the runtime user. Historically that mattered because
+#      NVIDIA's base shipped /isaac-sim as mode 750 isaac-sim:isaac-sim, unreadable by
+#      `ubuntu`. Since Isaac is now fetched at run time, /isaac-sim holds only our own
+#      python.sh shim at mode 0755 - but the group membership is kept so this recipe
+#      still repairs an image built from the old NVIDIA base;
+#   3. passwordless sudo for the runtime user - SkyPilot's in-pod setup shells out to
+#      sudo, and Debian's default %sudo rule prompts for a password;
+#   4. the system interpreter FIRST on PATH - otherwise python3 resolves to the Isaac
+#      interpreter, which cannot import its own site-packages outside its venv.
+#
+# Isaac work is unaffected: it always runs through ISAAC_LAB_PYTHON
+# (/isaac-sim/python.sh). The image stays non-root.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
@@ -33,9 +42,7 @@ RUN apt-get update \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && python3 --version
 
-# SkyPilot's bootstrap must find the SYSTEM interpreter, not Isaac's kit python (which
-# the base image puts earlier on PATH and which cannot import its own site-packages
-# outside /isaac-sim/python.sh).
+# SkyPilot's bootstrap must find the SYSTEM interpreter, not the Isaac venv's python3.11.
 ENV PATH=/usr/bin:$PATH
 
 WORKDIR /workspace/isaaclab

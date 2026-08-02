@@ -1,0 +1,130 @@
+# Pre-populate the Isaac runtime cache once, so ordinary pods start instantly.
+#
+# WHY YOU WANT THIS
+#   The Isaac workbench images ship no NVIDIA Isaac bytes; Isaac Sim and Isaac Lab are
+#   downloaded on first run (see npa/docker/workbench/common/isaac_bootstrap.sh). Measured
+#   on an RTX PRO 6000 node:
+#
+#       cold start   111 s   (~4.5 GB downloaded, 10.04 GiB materialised)
+#       warm start    32 ms
+#
+#   With a per-pod emptyDir every pod pays the cold start, and a node running 8 GPU pods
+#   downloads ~36 GB. Warming a SHARED volume once turns that into one download per
+#   volume and a 32 ms start for everyone. It also lets you run the workload pods with
+#   NPA_ISAAC_CACHE_READONLY=1, so the runtime user never needs write access to the cache
+#   at all - the bootstrap downloads and executes code, so shrinking its write surface in
+#   steady state is worth doing.
+#
+# EULA ACCEPTANCE IS YOURS TO GIVE
+#   This Job is where you, the operator, accept NVIDIA's terms. The images never bake
+#   acceptance; without the two variables below the Job exits 78 and downloads nothing.
+#   See the links in the bootstrap's refusal message.
+#
+# USAGE
+#   1. Pick a volume (see the two options below) and set NPA_ISAAC_CACHE_DIR to its mount.
+#   2. Replace <your-registry> and the image tag.
+#   3. kubectl apply -f warm-isaac-cache.yaml
+#      kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=30m
+#      kubectl logs job/npa-warm-isaac-cache
+#   4. Run your workload pods against the same volume with
+#      NPA_ISAAC_CACHE_READONLY=1 (and optionally NPA_ISAAC_BOOTSTRAP_OFFLINE=1).
+#
+#   Re-run it after changing ISAAC_SIM_VERSION, ISAAC_LAB_VERSION or the wheel manifest:
+#   the cache is version-stamped, so a pin change needs a new tree (the old one is left
+#   alone, so pods still using it are unaffected).
+#
+# VOLUME OPTIONS
+#   a) Shared filesystem PVC (recommended): one download serves every pod on every node.
+#      On Nebius mk8s use the `csi-mounted-fs-path-sc` StorageClass. This is what the
+#      PersistentVolumeClaim below creates.
+#   b) Per-node emptyDir: no PVC to manage, but one download per pod. Only sensible for a
+#      single-pod smoke; GPU nodes have ~890 GiB of ephemeral storage, so it fits, but you
+#      pay 111 s and ~4.5 GB of egress every time.
+#
+# SIZING
+#   The cache is 10.04 GiB per pinned version. Request >= 25 Gi so a version bump can
+#   build the new tree alongside the old one without evicting the pod mid-bootstrap - an
+#   undersized ephemeral-storage request is the classic way to lose a long bootstrap.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: npa-isaac-cache
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: csi-mounted-fs-path-sc
+  resources:
+    requests:
+      storage: 40Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: npa-warm-isaac-cache
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: npa-warm-isaac-cache
+    spec:
+      restartPolicy: Never
+      # Root only so the warmed tree can be owned by root and left read-only for the
+      # workload pods. It is a short-lived init task with no GPU and no network exposure.
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: warm
+          # The job's only legitimate writes are into the mounted cache volume, so the
+          # root filesystem is immutable and /tmp is a separate scratch volume (pip needs
+          # a writable TMPDIR). Flagged by Trivy KSV-0014 on the first draft of this file
+          # — worth honouring rather than ignoring, because this job downloads and unpacks
+          # ~4.5 GB of third-party code as root.
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Any of the Isaac images works; they share the bootstrap.
+          image: cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1
+          command: ["/opt/npa/bin/isaac-bootstrap", "warm"]
+          env:
+            # YOUR acceptance of NVIDIA's terms. Nothing downloads without both.
+            - name: OMNI_KIT_ACCEPT_EULA
+              value: "YES"
+            - name: ISAACSIM_ACCEPT_EULA
+              value: "YES"
+            - name: NPA_ISAAC_CACHE_DIR
+              value: /opt/isaac-cache
+            # Point this at an internal mirror if egress to pypi.nvidia.com is restricted;
+            # the wheels are sha256-pinned, so a mirror is verifiable.
+            # - name: NPA_ISAAC_INDEX_URL
+            #   value: https://pypi.example.internal/nvidia
+          volumeMounts:
+            - name: isaac-cache
+              mountPath: /opt/isaac-cache
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+              ephemeral-storage: 8Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+              ephemeral-storage: 16Gi
+      volumes:
+        - name: isaac-cache
+          persistentVolumeClaim:
+            claimName: npa-isaac-cache
+        # Writable scratch, because the root filesystem is read-only. pip unpacks wheels
+        # here, so size it for the largest one (isaacsim-extscache-kit is ~3 GB) plus room.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 12Gi
+        # Option (b): swap the block above for a per-pod scratch volume. Size it for the
+        # cache plus headroom, or the pod is evicted part-way through the bootstrap.
+        # - name: isaac-cache
+        #   emptyDir:
+        #     sizeLimit: 40Gi

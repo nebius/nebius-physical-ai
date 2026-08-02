@@ -622,6 +622,17 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos-curate", "curate-augmented", "--help"]
         contains: "--curated-uri"
+  - name: solution-licensing
+    category: atomic
+    when_to_use: "Adding or onboarding a solution, tool, container image, model, or dataset: decide whether what we ship may be redistributed (public vs restricted), and record it where the build enforces it."
+    path: skills/atomic/solution-licensing/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/docker/workbench/packaging-contract.yaml
+      - type: file_exists
+        path: npa/tests/docker/test_packaging_contract.py
+      - type: file_exists
+        path: docs/workbench/container-packaging.md
   - name: real-components
     category: atomic
     when_to_use: "Ensure every advertised workbench pipeline stage invokes the real component (Cosmos Transfer, Cosmos Evaluator, Cosmos Curator, FiftyOne, VLM eval), not an echo/manifest stub masquerading as real work."

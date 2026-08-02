@@ -173,6 +173,29 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
         )
 
 
+def test_redistribution_claims_do_not_drift_from_the_contract(entries: list[dict]) -> None:
+    """The manifest must not keep its own stale copy of the redistribution class.
+
+    The Isaac images were re-architected to fetch Isaac Sim at run time and are
+    no longer restricted; a hardcoded ``restricted`` here would outlive that.
+    """
+
+    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    by_dockerfile = {
+        spec["dockerfile"]: spec.get("redistribution")
+        for spec in contract["images"].values()
+    }
+    for entry in entries:
+        claimed = entry.get("redistribution")
+        if claimed is None:
+            continue
+        actual = by_dockerfile.get(entry["dockerfile"])
+        assert claimed == actual, (
+            f"{entry['name']} claims redistribution {claimed!r} but the packaging "
+            f"contract says {actual!r}"
+        )
+
+
 def test_names_match_the_real_container_image_names(entries: list[dict]) -> None:
     """Manifest rows must use the image names the deploy layer actually resolves.
 

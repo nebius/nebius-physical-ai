@@ -73,6 +73,13 @@ making architecture, review, or domain judgments.
 - `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench
  pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM),
  not an echo/manifest stub masquerading as real work.
+- `skills/atomic/solution-licensing/SKILL.md`: when adding a solution, tool,
+ image, model, or dataset — classify what the artifact actually bakes, decide
+ whether it may be redistributed (`public` vs `restricted`), and record it in
+ the packaging contract where the guards enforce it. Verify the claim against the
+ BUILT image with `npa/scripts/scan_image_omniverse_payload.py`, not by reading
+ the Dockerfile: the Isaac images were cleared that way, and two of the three
+ problems it found were invisible in the Dockerfile.
 - `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
   (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
 

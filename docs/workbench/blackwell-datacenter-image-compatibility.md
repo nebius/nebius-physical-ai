@@ -65,7 +65,7 @@ Other scripts and their base overrides: `genesis/build_sm120.sh --base-image`, `
 
 Push new tags to both the primary (`eu-north1`) and mirror (`us-central1`) registries. Resolve the registry through `${NPA_REGISTRY}` or `npa.deploy.images`; never hardcode a registry id.
 
-The packaging contract still applies (`npa/docker/workbench/packaging-contract.yaml`): non-root final user, `EXPOSE`/`HEALTHCHECK` per tier, no baked secrets. Isaac-Sim images stay `redistribution: restricted` and must never be published publicly.
+The packaging contract still applies (`npa/docker/workbench/packaging-contract.yaml`): non-root final user, `EXPOSE`/`HEALTHCHECK` per tier, no baked secrets, and a declared `redistribution` class.
 
 After building, register the tag so the CLI, SDK, and YAML resolve it:
 

@@ -608,18 +608,18 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
     assert "ARG BASE_IMAGE=" in dockerfile
-    assert "ARG INSTALL_ISAACSIM_EXTRA=0" in dockerfile
-    assert "ARG REQUIRE_TORCH_SM120=0" in dockerfile
-    assert "ARG INSTALL_NVIDIA_DRIVER_USERSPACE=1" in dockerfile
-    assert "ARG NPA_DRIVER_PROVISIONING=baked" in dockerfile
+    # Flipped 0 -> 1: with torch installed by us rather than inherited from the
+    # nvcr.io base, a Blackwell-capable build is something we can require, not hope for.
+    assert "ARG REQUIRE_TORCH_SM120=1" in dockerfile
+    # Flipped baked -> host-mounted: the image no longer bakes NVIDIA driver userspace
+    # libraries, so the container runtime injects the host driver -- which is how the
+    # k8s variant always worked.
+    assert "ARG NPA_DRIVER_PROVISIONING=host-mounted" in dockerfile
     assert 'npa.cuda_architectures="${NPA_CUDA_ARCHITECTURES}"' in dockerfile
     assert 'npa.version="${SONIC_VERSION}"' in dockerfile
     assert 'npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}"' in dockerfile
-    assert '"isaaclab[all]==${ISAAC_LAB_VERSION}"' in dockerfile
+    assert "ARG ISAAC_LAB_VERSION=2.3.2.post1" in dockerfile
     assert "npa-torch-constraints.txt" in dockerfile
-    assert '"isaacsim-kernel==${ISAAC_SIM_VERSION}"' in dockerfile
-    assert "--no-deps --ignore-installed" in dockerfile
-    assert "_cuda_getArchFlags" in dockerfile
     assert '"sm_120" not in arches' in dockerfile
     assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
@@ -638,6 +638,20 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "NPA_BUILDX_BUILDER" in build_script
     assert "--driver docker-container" in build_script
     assert 'docker buildx build --builder "$BUILDX_BUILDER"' in build_script
+
+    # The direction that actually matters: none of the baked forms may come back. This
+    # test used to assert their PRESENCE, so without this the re-architecture would have
+    # silently lost its only cli-level regression guard.
+    for baked in (
+        "INSTALL_ISAACSIM_EXTRA",
+        '"isaaclab[all]==${ISAAC_LAB_VERSION}"',
+        '"isaacsim-kernel==${ISAAC_SIM_VERSION}"',
+        "INSTALL_NVIDIA_DRIVER_USERSPACE",
+    ):
+        assert baked not in dockerfile, (
+            f"{baked!r} bakes NVIDIA Isaac or driver userspace into the image; sonic "
+            f"fetches Isaac at first run under the operator's own EULA acceptance"
+        )
     assert 'IMAGE_NAME="npa-sonic"' in build_script
     assert 'IMAGE_NAME="npa-sonic-mujoco"' in build_script
     assert 'LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"' in build_script

@@ -23,6 +23,14 @@ resources:
   memory: 64
   image_id: "docker:${ISAAC_LAB_IMAGE}"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   NPA_RUN_ID: "${NPA_RUN_ID}"
   NPA_OUTPUT_URI: "${NPA_OUTPUT_URI}"
   ISAAC_LAB_TASK: "Isaac-Cartpole-v0"

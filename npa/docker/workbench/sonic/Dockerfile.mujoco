@@ -1,16 +1,31 @@
+# npa-sonic-mujoco: SONIC + MuJoCo eval, derived from npa-sonic.
+#
+# Inherits the runtime-Isaac architecture from its parent and adds no Isaac of its own, so
+# it ships no NVIDIA Isaac bytes either. Its own capability - the MuJoCo eval - needs no
+# Isaac Sim at all, which is why `/entrypoint.sh mujoco-eval` runs on the baked venv and
+# requires neither the ~4.5 GB download nor EULA acceptance. That is a deliberate property
+# of the entrypoint's per-mode interpreter selection, not an accident.
 ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/your-registry-id/npa-sonic:0.1.2
 FROM ${BASE_IMAGE}
 
 ARG NPA_RUNTIME_USER=ubuntu
 ARG SONIC_MUJOCO_VERSION=0.1.3-mvp
+# CRITICAL: pip must run with the IMAGE's python, never with ISAAC_LAB_PYTHON.
+# ISAAC_LAB_PYTHON is /isaac-sim/python.sh, which since the re-architecture is a bootstrap
+# shim: using it here would download 4.5 GB of NVIDIA Isaac Sim during the BUILD and bake
+# it into this image's layers - reintroducing exactly the problem the parent image was
+# rebuilt to remove, in the one place nobody would think to look.
+ARG NPA_IMAGE_PYTHON=/opt/npa/sim/venv/bin/python
 
 LABEL npa.tool="sonic-mujoco" \
       npa.version="${SONIC_MUJOCO_VERSION}" \
+      npa.isaac_provisioning="runtime-fetch-inherited" \
       npa.architecture="sonic-plus-mujoco"
 
 ENV MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
-    NVIDIA_DRIVER_CAPABILITIES=all
+    NVIDIA_DRIVER_CAPABILITIES=all \
+    NPA_IMAGE_PYTHON=${NPA_IMAGE_PYTHON}
 
 SHELL ["/bin/bash", "-lc"]
 USER root
@@ -35,19 +50,33 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY docker/workbench/sonic/entrypoint.sh /entrypoint.sh
 COPY docker/workbench/sonic/mujoco_eval.py /opt/npa/docker/workbench/sonic/mujoco_eval.py
 RUN chmod +x /entrypoint.sh \
-    && "${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}" -m pip install --no-cache-dir \
+    && "${NPA_IMAGE_PYTHON}" -m pip install --no-cache-dir \
       "mujoco>=3.3,<3.4" \
       boto3 \
-      pyyaml \
-    && "${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}" - <<'PY'
+      pyyaml
+
+# Build-time verification. `import gear_sonic` is safe to assert here: gear_sonic does not
+# depend on Isaac Lab (its own pyproject says "Isaac Lab must be installed separately"),
+# and gear_sonic/__init__.py is empty. Asserting `import isaaclab` would be wrong by
+# construction in a runtime-fetch image.
+RUN "${NPA_IMAGE_PYTHON}" - <<'PY'
 import importlib
 import pathlib
 import tempfile
+from importlib import metadata
 
 import mujoco
 
 for module in ("gear_sonic", "torch", "mujoco"):
     importlib.import_module(module)
+
+leaked = sorted(
+    dist.metadata["Name"]
+    for dist in metadata.distributions()
+    if (dist.metadata["Name"] or "").lower().replace("_", "-").startswith(("isaacsim", "isaaclab"))
+)
+if leaked:
+    raise SystemExit(f"FATAL: Isaac packages baked into the image: {leaked}")
 
 xml = """
 <mujoco>
@@ -66,7 +95,7 @@ with tempfile.TemporaryDirectory() as tmp:
     data = mujoco.MjData(model)
     for _ in range(4):
         mujoco.mj_step(model, data)
-print("NPA_SONIC_MUJOCO_BUILD_IMPORTS_OK")
+print("NPA_SONIC_MUJOCO_BUILD_IMPORTS_OK no baked Isaac")
 PY
 
 WORKDIR /opt/sonic

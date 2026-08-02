@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "npa/docker/workbench/**"
+      - "npa/scripts/scan_image_omniverse_payload.py"
       - "**/Dockerfile*"
       - ".trivyignore"
       - "trivy.yaml"
@@ -14,6 +15,15 @@ on:
   schedule:
     # Weekly scan catches newly-disclosed CVEs in existing pinned bases.
     - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      omniverse_payload_scan_image:
+        description: >-
+          Image reference to scan for a baked NVIDIA Omniverse Kit payload, e.g.
+          cr.eu-north1.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1. Needs pull
+          access to that registry. Leave blank to skip.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -37,6 +47,65 @@ jobs:
 
       - name: Run tag consistency check
         run: python npa/docker/workbench/check_tag_consistency.py
+
+  # The four Isaac images are publicly redistributable only because they contain no
+  # NVIDIA Omniverse Kit payload. That claim is about bytes in layers, so the classifier
+  # is unit-tested on every PR (below) and the live scan can be dispatched against a
+  # pushed image, which needs registry credentials and multi-GB pulls.
+  omniverse-payload-classifier:
+    name: Omniverse payload classifier (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # npa/tests/conftest.py imports httpx and several npa modules, so the
+      # package itself has to be installed -- pytest + PyYAML alone abort
+      # collection. Mirrors the install in test.yml.
+      - name: Install npa with test deps
+        run: cd npa && pip install -e ".[dev]"
+
+      - name: Payload-scanner classifier and packaging-guard mutation tests
+        run: |
+          python -m pytest \
+            npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_packaging_contract.py \
+            npa/tests/docker/test_isaac_bootstrap.py \
+            -q
+
+  omniverse-payload-scan:
+    name: Omniverse payload scan (built image)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Scan the built image for a baked Omniverse Kit payload
+        run: |
+          python npa/scripts/scan_image_omniverse_payload.py \
+            "${{ inputs.omniverse_payload_scan_image }}" \
+            --json omniverse-payload-report.json
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: omniverse-payload-report
+          path: omniverse-payload-report.json
 
   dockerfile-static-scan:
     name: Static Dockerfile scan (Trivy config)

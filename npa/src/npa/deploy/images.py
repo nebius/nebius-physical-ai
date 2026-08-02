@@ -51,24 +51,42 @@ CONTAINER_IMAGE_NAMES = {
     "detection-training": "npa-detection-training",
 }
 
-# Tools whose built image bakes NVIDIA Omniverse Kit (Isaac Sim) binaries. Isaac
-# Sim's source is Apache-2.0, but the shipped binary bundles the Omniverse Kit
-# SDK + NVIDIA assets (NVIDIA-proprietary). They are fine to pull inside the
-# owning org (internal-R&D use) and to build-your-own via your own NGC/EULA, but
-# they must NEVER be published to a public/anonymous registry — that would make
-# us the third-party redistributor of Omniverse Kit (needs an NVIDIA AI
-# Enterprise license). Kept in sync with
-# npa/docker/workbench/packaging-contract.yaml (redistribution: restricted) by
-# npa/tests/deploy/test_public_publish.py. ``sonic`` covers all sonic variants
-# (0.1.2, 0.1.2-k8s-runtime) and the derived ``npa-sonic-mujoco`` image.
-OMNIVERSE_RESTRICTED_TOOLS = frozenset({"isaac-lab", "sonic", "groot"})
+# Tools whose built image may NOT be published to a public/anonymous registry,
+# because it bakes a runtime we are not licensed to redistribute.
+#
+# THIS SET IS DELIBERATELY EMPTY, and the mechanism around it is deliberately kept.
+#
+# It used to hold {"isaac-lab", "sonic", "groot"}, because those images baked NVIDIA
+# Omniverse Kit (Isaac Sim): the Isaac Sim SOURCE is Apache-2.0, but the shipped
+# binary bundles the Kit SDK + NVIDIA assets, and both the isaacsim AND isaaclab
+# PyPI packages declare "License: NVIDIA Proprietary Software". Publishing them
+# would have made us the third-party redistributor of Omniverse Kit, which needs
+# an NVIDIA AI Enterprise license.
+#
+# They were re-architected to contain no NVIDIA Isaac bytes at all: Isaac Sim and
+# Isaac Lab are fetched on first run from pypi.nvidia.com, into a cache volume,
+# under the OPERATOR's own EULA acceptance, and the image refuses to start Isaac
+# without it (npa/docker/workbench/common/isaac_bootstrap.sh). NVIDIA delivers to
+# each operator directly, so we are never the redistributor — the same pattern the
+# workbench already uses for gated model weights. Verified mechanically against the
+# built images by npa/scripts/scan_image_omniverse_payload.py.
+#
+# Keeping an empty set rather than deleting the machinery is a deliberate choice:
+# the next runtime we cannot ship needs exactly this, and a mechanism that is
+# deleted when unused has to be rebuilt (and re-reviewed) under time pressure. Its
+# tests monkeypatch a synthetic restricted tool in, so the guard cannot rot while
+# its membership is empty. Kept in sync with packaging-contract.yaml's
+# `redistribution:` fields by npa/tests/deploy/test_public_publish.py.
+OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset()
 
-# Images built FROM a restricted tool image, so they inherit the baked Omniverse
-# Kit and the same no-public-redistribution rule. They are not separate
+# Images built FROM a restricted tool image, so they inherit whatever it bakes and
+# the same no-public-redistribution rule. They are not separate
 # CONTAINER_IMAGE_NAMES entries (they are variants of their parent tool), so they
 # never reach publicly_publishable_tools(); they are listed here so operator-facing
 # output can name every excluded image without hardcoding it at the call site.
-OMNIVERSE_RESTRICTED_DERIVED_IMAGES = frozenset({"sonic-mujoco"})
+# Empty for the same reason as above: ``sonic-mujoco`` inherits sonic's runtime-fetch
+# architecture and adds no Isaac and no Omniverse assets of its own.
+OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Public mirror registry for the OSS-redistributable image subset. Nebius CR does
 # NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
@@ -80,6 +98,22 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = frozenset({"sonic-mujoco"})
 # NPA_REGISTRY to this value.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
 DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+
+# Registry hosts that serve anonymous/public pulls. Resolving a restricted image
+# against one of these is always wrong: either it is not there (we never publish
+# it) or someone has published a non-redistributable runtime to third parties.
+# Private registries are deliberately absent — an operator building the image
+# into their OWN registry is the licensed path, whichever registry that is.
+PUBLIC_REGISTRY_HOSTS = frozenset(
+    {
+        "ghcr.io",
+        "docker.io",
+        "index.docker.io",
+        "registry-1.docker.io",
+        "quay.io",
+        "public.ecr.aws",
+    }
+)
 
 SUPPORTED_TOOL_VERSIONS = {
     # Default LeRobot pin. Selectable additional versions: see
@@ -247,6 +281,14 @@ def container_image_for_tool(
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
     resolved_registry = registry or _primary_registry()
+    if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
+        raise ValueError(
+            f"{tool!r} is not publicly redistributable and is never distributed from a "
+            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
+            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
+            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
+            f"docs/workbench/container-packaging.md."
+        )
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
@@ -323,15 +365,36 @@ def container_image_candidates(
 
 def public_container_registry() -> str:
     """Return the public mirror registry: ``NPA_PUBLIC_REGISTRY`` or the default."""
-    return os.environ.get(PUBLIC_CONTAINER_REGISTRY_ENV, "").strip() or DEFAULT_PUBLIC_CONTAINER_REGISTRY
+    return (
+        os.environ.get(PUBLIC_CONTAINER_REGISTRY_ENV, "").strip()
+        or DEFAULT_PUBLIC_CONTAINER_REGISTRY
+    )
+
+
+def is_public_registry(registry: str) -> bool:
+    """Whether a registry serves anonymous/public pulls.
+
+    True for the well-known public hosts and for whatever registry is configured
+    as our public mirror. A Nebius (or other private) registry is not public: an
+    operator's own registry is exactly where a restricted image is supposed to
+    live.
+    """
+    candidate = registry.strip().rstrip("/")
+    if not candidate:
+        return False
+    host = candidate.split("/", 1)[0].lower()
+    if host in PUBLIC_REGISTRY_HOSTS:
+        return True
+    mirror = public_container_registry().strip().rstrip("/")
+    return bool(mirror) and candidate.lower() == mirror.lower()
 
 
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
-    ``False`` for images that bake NVIDIA Omniverse Kit (Isaac Sim); those are
-    licensed for internal-R&D / build-your-own use only (see
-    ``OMNIVERSE_RESTRICTED_TOOLS``).
+    ``False`` for any tool in ``OMNIVERSE_RESTRICTED_TOOLS`` — images that bake a
+    runtime we may not redistribute, which are licensed for internal-R&D /
+    build-your-own use only. That set is currently empty; see its comment.
     """
     return tool not in OMNIVERSE_RESTRICTED_TOOLS
 
@@ -344,9 +407,10 @@ def omniverse_restricted_image_names() -> list[str]:
 def publicly_publishable_tools() -> list[str]:
     """Return the workbench tools that are OSS-redistributable to a public registry.
 
-    Excludes the Omniverse-Kit-bearing tools (``isaac-lab``, ``sonic``,
-    ``groot``); publishing those publicly would redistribute NVIDIA-proprietary
-    Omniverse Kit to third parties.
+    Excludes anything in ``OMNIVERSE_RESTRICTED_TOOLS``, which is currently empty:
+    the Isaac images now fetch Isaac Sim / Isaac Lab at run time under the
+    operator's own EULA acceptance rather than baking it, so every workbench tool
+    is publishable. See that set's comment for why the exclusion mechanism is kept.
     """
     return sorted(tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool))
 

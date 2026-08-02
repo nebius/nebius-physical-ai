@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from collections.abc import Mapping
 
 
@@ -45,6 +47,28 @@ def require_s3_credentials(
         )
 
 
+#: NVIDIA licence acceptance for the Isaac images, forwarded from the CALLER's environment.
+#:
+#: The Isaac workbench images ship no Isaac Sim and refuse to fetch it (exit 78) unless the
+#: operator has accepted NVIDIA's terms. So a submitter that does not carry that acceptance
+#: cannot run them at all -- which is what a real golden-eval submission discovered.
+#:
+#: This lives in the SHARED builder, not in one caller, because every CLI serverless path
+#: (isaac_lab, groot, genesis, cosmos, fiftyone) and the golden-eval runner go through here.
+#: Fixing it in one place fixes `npa workbench isaac-lab train --runtime serverless` too.
+#:
+#: It must never default to "YES": that would be us accepting on the operator's behalf and
+#: would gut the mechanism the whole runtime-fetch architecture rests on. Unset stays unset,
+#: and the job then fails with the actionable refusal rather than silently consenting.
+ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+
+
+def isaac_eula_env() -> dict[str, str]:
+    """Return whichever Isaac EULA acceptance variables the caller has set."""
+
+    return {name: os.environ[name] for name in ISAAC_EULA_VARS if os.environ.get(name)}
+
+
 def build_serverless_job_env(
     *,
     output_path: str,
@@ -73,6 +97,8 @@ def build_serverless_job_env(
             env["AWS_ENDPOINT_URL"] = endpoint
             env["S3_ENDPOINT_URL"] = endpoint
             env["NEBIUS_S3_ENDPOINT"] = endpoint
+    # Before extra_env, so an explicit caller value still wins.
+    env.update(isaac_eula_env())
     if extra_env:
         env.update({str(key): str(value) for key, value in extra_env.items()})
     return env

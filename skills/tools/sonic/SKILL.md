@@ -46,6 +46,45 @@ workflow composition with retargeting or MJLab.
   non-render training throughput, but it is not the default render-validation
   target.
 
+## Runtime Isaac bootstrap (the container ships no Isaac Sim)
+
+The `npa-sonic` image contains **no NVIDIA Isaac Sim or Isaac Lab code**. It used to bake
+Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on first use of
+`/isaac-sim/python.sh` from `https://pypi.nvidia.com`, into a cache volume, under the
+**operator's own EULA acceptance**. Full rationale:
+`docs/workbench/container-packaging.md` and `skills/atomic/solution-licensing/SKILL.md`.
+
+What this changes in practice:
+
+- **Set both variables, or Isaac will not start.** Missing either
+  `OMNI_KIT_ACCEPT_EULA=YES` or `ISAACSIM_ACCEPT_EULA=YES` makes the container exit **78**
+  with a message naming them. That refusal is deliberate and load-bearing — do not "fix"
+  it by baking acceptance into the image; a guard fails the build if anyone does.
+- **Reach Isaac through `/isaac-sim/python.sh`** (the value of `ISAAC_LAB_PYTHON`). That is
+  the bootstrap shim, and it is what every SkyPilot template, the sim2real engine and the
+  workbench CLI already use. A bare `python3` is the *system* interpreter and will not
+  find Isaac.
+- **Never invoke the shim from a Dockerfile `RUN`.** It would download and bake ~4.5 GB of
+  Isaac into a layer. Build-time work uses the image's own venv python.
+- **Budget the first start.** Measured on RTX PRO 6000: 111 s cold, 32 ms warm, 10.04 GiB
+  of cache. Pre-warm a shared volume once per node/PVC with
+  `npa/docker/workbench/common/warm-isaac-cache.yaml`, then run workload pods with
+  `NPA_ISAAC_CACHE_READONLY=1`. Otherwise every pod pays it, and 8 GPU pods on a node
+  download ~36 GB.
+- `isaac-bootstrap status` reports what is cached without needing acceptance or network;
+  `isaac-bootstrap verify` additionally launches Isaac Sim headless (needs a GPU).
+- No NGC credentials are needed to build or run this image.
+
+Sonic's entrypoint picks its interpreter **per mode**: `smoke`, `eval`, `train`,
+`finetune` and `serve` go through the Isaac bootstrap and therefore need acceptance, while
+`mujoco-eval` and the S3/GPU-proof helpers run on the baked venv and need neither the
+download nor the EULA variables. So `npa-sonic-mujoco`'s eval stays fast and offline.
+
+The image also no longer bakes NVIDIA driver userspace libraries: the container runtime
+injects the host driver and the Vulkan ICD given `NVIDIA_DRIVER_CAPABILITIES=all`
+(verified on RTX PRO 6000 — `vulkaninfo --summary` reports the discrete GPU at driver
+580.95.05). `VK_ICD_FILENAMES` is deliberately not pinned.
+
 ## Gotchas
 
 - Keep `SONIC_GPU_TYPE` and `SONIC_IMAGE_VARIANT` aligned with the image

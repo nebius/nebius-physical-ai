@@ -77,10 +77,15 @@ containers:
       runs_as: ubuntu
       base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
       network: inference + /health endpoints (internal)
-      external_fetch: [github-isaac-gr00t, pypi, huggingface]
+      external_fetch: [github-isaac-gr00t, pypi, huggingface, "pypi.nvidia.com (Isaac paths only, first run, operator EULA)"]
       notes: >-
-        Pulls Isaac-GR00T at a pinned commit; inference server should stay on the
-        internal workbench namespace, not public ingress.
+        Pulls Isaac-GR00T (Apache-2.0) at a pinned commit; inference server should
+        stay on the internal workbench namespace, not public ingress. Bakes NO
+        NVIDIA Isaac Sim or Isaac Lab: /opt/isaac-lab/venv carries only PyTorch and
+        the OSS closure, and Isaac is fetched on first use of /isaac-sim/python.sh
+        under the operator's own EULA acceptance. THIS golden eval is unaffected -
+        GR00T inference runs in GROOT_VENV and needs no Isaac and no EULA
+        acceptance, so it pays no first-run download.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_groot_functional
@@ -205,18 +210,30 @@ containers:
         Isaac Lab RL simulation (headless training/eval), e.g. Isaac-Reach-Franka;
         customer custom-fork support.
     safety:
-      runs_as: root (Isaac Sim base)
-      base_image: nvcr.io/nvidia/isaac-lab:2.3.2
-      network: none (interactive bash)
-      external_fetch: [pypi, nvcr.io]
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+      network: none (interactive bash); first run fetches Isaac from pypi.nvidia.com
+      external_fetch: [pypi, "pypi.nvidia.com (first run, operator EULA)", github-isaaclab]
       notes: >-
-        NGC base image requires registry auth; RT-core/headless routing handled
-        by the workbench. Runs as root inside the NVIDIA base. The image ships a
-        standalone smoke script (it does not install the npa package).
+        Bakes NO NVIDIA Isaac Sim or Isaac Lab. On first use of
+        /isaac-sim/python.sh the bootstrap downloads the pinned, sha256-verified
+        isaacsim/isaaclab wheels (~4.5 GB) plus the BSD-3 Isaac Lab source tree
+        into NPA_ISAAC_CACHE_DIR, and REFUSES (exit 78) unless the operator sets
+        both OMNI_KIT_ACCEPT_EULA=YES and ISAACSIM_ACCEPT_EULA=YES. Measured on
+        RTX PRO 6000: 111 s cold, 32 ms warm, 10.04 GiB of cache. Pre-warm per
+        node/PVC with npa/docker/workbench/common/warm-isaac-cache.yaml. No NGC
+        credentials are needed. RT-core/headless routing handled by the workbench.
+        The image ships a standalone smoke script (it does not install the npa
+        package). Its ENTRYPOINT is bash, so the eval command must be a script
+        path -- `python <file>` would be re-parsed as `bash python <file>`.
     golden_eval:
       kind: container-smoke
-      command: python /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
-      serverless_gpu: h100
+      command: /isaac-sim/python.sh /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
+      # RT cores required: Isaac Lab / SONIC render paths silently produce wrong
+      # results or fail on H100/H200, which have none. rtx6000 is also the only
+      # RT-core platform the serverless project actually offers (gpu-h100-sxm is
+      # not available there at all -- a job requesting it fails with NotFound).
+      serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -410,18 +427,74 @@ containers:
         SONIC whole-body humanoid locomotion policy training/eval/export/serve
         (GR00T-WholeBodyControl).
     safety:
-      runs_as: root (Isaac Sim base)
-      base_image: nvcr.io/nvidia/isaac-lab:2.3.2
-      network: serve endpoint (when in serve mode)
-      external_fetch: [github-gear-sonic, pypi, nvcr.io]
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 (baked) / npa-base:cuda13-b300 (k8s)
+      network: serve endpoint (when in serve mode); first run fetches Isaac from pypi.nvidia.com
+      external_fetch: [github-gear-sonic, pypi, "pypi.nvidia.com (first run, operator EULA)", huggingface]
       notes: >-
-        Self-reporting entrypoint modes; smoke mode writes sonic_smoke_result.json
-        and GPU/image-pull proofs. GPU routing guardrails enforced.
+        Bakes NO NVIDIA Isaac Sim or Isaac Lab, and no NVIDIA driver userspace
+        (the container runtime injects the host driver + Vulkan ICD given
+        NVIDIA_DRIVER_CAPABILITIES=all). gear_sonic source is Apache-2.0; its
+        weights are NVIDIA Open Model License and downloaded at run time with the
+        operator's own HF token. The entrypoint picks its interpreter per mode:
+        smoke/eval/train/finetune/serve go through the Isaac bootstrap and so
+        require OMNI_KIT_ACCEPT_EULA=YES and ISAACSIM_ACCEPT_EULA=YES, while
+        mujoco-eval and the S3/GPU-proof helpers run on the baked venv and need
+        neither. Self-reporting entrypoint modes; smoke mode writes
+        sonic_smoke_result.json and GPU/image-pull proofs. GPU routing guardrails
+        enforced.
     golden_eval:
       kind: entrypoint-smoke
       command: /entrypoint.sh smoke
       artifact: sonic_smoke_result.json
-      serverless_gpu: h100
+      # RT cores required: Isaac Lab / SONIC render paths silently produce wrong
+      # results or fail on H100/H200, which have none. rtx6000 is also the only
+      # RT-core platform the serverless project actually offers (gpu-h100-sxm is
+      # not available there at all -- a job requesting it fails with NotFound).
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 900
+      status: gpu-gated
+
+  sonic-mujoco:
+    image: npa-sonic-mujoco
+    dockerfile: npa/docker/workbench/sonic/Dockerfile.mujoco
+    # A build VARIANT of sonic, not a tool of its own: it is built FROM npa-sonic and
+    # resolves through sonic's image manifest, so it is not a CONTAINER_IMAGE_NAMES key.
+    # It is still separately built and separately published, with a capability its parent
+    # does not exercise, so it gets its own golden eval rather than none at all.
+    variant_of: sonic
+    # Resolves as container_image_for_tool("sonic", image_variant="mujoco"); sonic's image
+    # manifest maps that alias to the sonic-mujoco-h100-mvp entry.
+    image_variant: mujoco
+    physical_ai:
+      useful: true
+      role: >-
+        MuJoCo evaluation of a SONIC whole-body locomotion checkpoint - the
+        cross-simulator check on a policy trained in Isaac Lab, which is where a
+        sim-to-sim gap shows up before a sim-to-real one does.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-sonic (inherits its runtime-fetch Isaac architecture)
+      network: none (entrypoint mode); downloads a checkpoint from S3 when asked
+      external_fetch: [s3]
+      notes: >-
+        Adds MuJoCo to npa-sonic and no Isaac of its own, so it bakes no NVIDIA
+        Isaac Sim or Isaac Lab either. Notably this eval needs NEITHER the Isaac
+        download NOR EULA acceptance: mujoco-eval is one of the entrypoint modes
+        that runs on the baked venv (see the per-mode interpreter selection in
+        sonic/entrypoint.sh), so it is fast and network-free. Its Dockerfile takes
+        an explicit ARG NPA_IMAGE_PYTHON precisely so the BUILD cannot accidentally
+        invoke the bootstrap shim and bake 4.5 GB of Isaac Sim into a layer.
+    golden_eval:
+      kind: entrypoint-smoke
+      command: /entrypoint.sh mujoco-eval
+      artifact: sonic_eval_results.json
+      # RT cores required: Isaac Lab / SONIC render paths silently produce wrong
+      # results or fail on H100/H200, which have none. rtx6000 is also the only
+      # RT-core platform the serverless project actually offers (gpu-h100-sxm is
+      # not available there at all -- a job requesting it fails with NotFound).
+      serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 900
       status: gpu-gated

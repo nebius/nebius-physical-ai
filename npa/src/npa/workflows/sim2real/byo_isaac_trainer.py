@@ -344,6 +344,26 @@ def vlm_reward_overrides(stats: dict[str, Any]) -> dict[str, float]:
     return overrides
 
 
+def _isaac_eula_env_entries() -> list[dict[str, str]]:
+    """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
+
+    The Isaac image ships no Isaac Sim and refuses to fetch it (exit 78) unless
+    OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA are set. These jobs invoke
+    /isaac-sim/python.sh, so without forwarding they cannot run at all.
+
+    Read from the submitting process's environment and never defaulted to "YES": the
+    operator driving the pipeline is the one consenting, and hardcoding acceptance here
+    would put us in the position of accepting on their behalf. Unset stays unset, and the
+    job then fails with the bootstrap's actionable refusal instead of silently consenting.
+    """
+
+    return [
+        {"name": name, "value": os.environ[name]}
+        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+        if os.environ.get(name)
+    ]
+
+
 def build_isaac_job_manifest(
     *,
     job_name: str,
@@ -678,6 +698,7 @@ def build_isaac_job_manifest(
                             ],
                             "env": [
                                 {"name": "AWS_ENDPOINT_URL", "value": s3_endpoint},
+                                *_isaac_eula_env_entries(),
                             ],
                             "command": ["/bin/bash", "-lc"],
                             "args": [script],

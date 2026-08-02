@@ -39,21 +39,67 @@ security:
 # WITHIN the owning org is always permitted; that is not what this gates.
 # Enforced by npa/tests/docker/test_packaging_contract.py.
 redistribution:
-  # Substrings that, if present in a Dockerfile's INSTRUCTIONS, mean the image
-  # bakes NVIDIA Omniverse Kit (Isaac Sim) binaries and therefore must be
-  # "restricted". Comment lines are stripped before matching: prose that merely
-  # names Isaac Sim (e.g. isaac-lab/Dockerfile's "# Tag: nvcr.io/nvidia/isaac-lab"
-  # header) does not bake anything, and must not force an image to "restricted".
-  # Every real baker still matches on an instruction (FROM/ARG base, a pip
-  # install, or an ENV *_ACCEPT_EULA), and images that inherit a restricted parent
-  # without a marker of their own are caught by the parent-inheritance check in
-  # npa/tests/docker/test_packaging_contract.py.
-  omniverse_markers:
-    - "isaacsim"
-    - "isaaclab[isaacsim"
-    - "nvcr.io/nvidia/isaac-lab"
-    - "OMNI_KIT_ACCEPT_EULA"
-    - "ISAACSIM_ACCEPT_EULA"
+  # Patterns that mean a Dockerfile BAKES NVIDIA Omniverse Kit (Isaac Sim) into the
+  # image's layers, and therefore must be "restricted".
+  #
+  # The distinction this encodes is *baked at build time* vs. *fetched at run time*.
+  # The Isaac images now fetch Isaac Sim / Isaac Lab on first run from
+  # pypi.nvidia.com under the operator's own EULA acceptance (see
+  # npa/docker/workbench/common/isaac_bootstrap.sh), so their Dockerfiles still
+  # legitimately mention isaacsim, isaaclab and the EULA variable names - in
+  # bootstrap plumbing, pins, and prose explaining what is NOT baked. A substring
+  # match on those names would fire on every one of them, and weakening it to make
+  # the build pass would have thrown away the guard.
+  #
+  # So these are regexes matched against a NORMALISED Dockerfile: comment lines
+  # stripped and line continuations joined. Joining matters - the sonic Dockerfile
+  # used to spread one `pip install` over 27 backslash-continued lines, so a
+  # per-line matcher would have missed the real installer while still tripping on
+  # a comment.
+  #
+  # Images that inherit a restricted parent without a pattern of their own are
+  # caught separately by the parent-inheritance check in
+  # npa/tests/docker/test_packaging_contract.py (this is how sonic-mujoco is
+  # caught, since its own Dockerfile carries no marker).
+  #
+  # Both directions are mutation-tested: every historical baking form must still be
+  # detected, and every legitimate runtime-fetch reference must not be.
+  omniverse_bake_patterns:
+    - kind: vendor_base_image
+      why: >-
+        Building FROM an NVIDIA Omniverse/Isaac vendor image puts Omniverse Kit in
+        the layers and needs an NGC login to pull.
+      pattern: '(?im)^\s*(FROM|ARG\s+\w*BASE\w*=)[^\n]*nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)'
+    - kind: isaac_wheel_install
+      why: >-
+        Installing the isaacsim / isaaclab wheels at build time bakes them; both
+        declare "License: NVIDIA Proprietary Software".
+      pattern: '(?is)\bRUN\b[^\n]*?\bpip\b[^\n]*?install[^\n]*?(\bisaacsim\b|\bisaaclab\b|isaaclab\[[^]]*isaacsim)'
+    - kind: baked_eula_acceptance
+      why: >-
+        Baking acceptance removes the operator from the licensing decision. The
+        refusal to run without operator-supplied acceptance is the load-bearing
+        legal mechanism, so pre-granting it in the image is itself the violation.
+      pattern: '(?im)^\s*(ENV|ARG)\s+[^\n]*\b(OMNI_KIT_ACCEPT_EULA|ISAACSIM_ACCEPT_EULA|ACCEPT_EULA|PRIVACY_CONSENT)\s*=\s*\S'
+    - kind: kit_payload_copy
+      why: COPY/ADD of an Isaac Sim or Omniverse Kit tree bakes the payload.
+      pattern: '(?im)^\s*(COPY|ADD)\s+[^\n]*(isaac-sim/|isaacsim/|omniverse/|/kit/)'
+    # The two below are attack vectors the runtime-fetch design itself introduces. They
+    # did not exist before and are easy to add by accident, which is the point of
+    # encoding them here rather than trusting review.
+    - kind: bootstrap_invoked_at_build
+      why: >-
+        Running the runtime bootstrap in a RUN layer materialises the whole Isaac
+        install into the image, silently undoing the re-architecture. `status` is
+        fine (it neither accepts a licence nor downloads); ensure/warm/verify are not.
+      pattern: '(?im)^\s*RUN\b[^\n]*\b(isaac-bootstrap|isaac_bootstrap\.sh)\s+(ensure|warm|verify)\b'
+    - kind: isaac_interpreter_invoked_at_build
+      why: >-
+        /isaac-sim/python.sh is the bootstrap shim: it fetches Isaac on first use, so
+        invoking it from a RUN layer downloads and bakes the install. Build-time work
+        must use the image's own venv python (see Dockerfile.mujoco's
+        ARG NPA_IMAGE_PYTHON, which exists exactly because this was a live trap).
+      pattern: '(?im)^\s*RUN\b[^\n]*(/isaac-sim/python\.sh|\bisaac-python\b)'
   classes:
     public:
       description: >
@@ -64,21 +110,23 @@ redistribution:
         be published to a public registry.
     restricted:
       description: >
-        Bakes NVIDIA Omniverse Kit (Isaac Sim) binaries. The Isaac Sim SOURCE is
-        Apache-2.0, but the shipped binary bundles the Omniverse Kit SDK + NVIDIA
-        assets, which are NVIDIA-proprietary (the isaacsim PyPI package lists its
-        license as "NVIDIA Proprietary Software"). Compliant distribution: each
-        deployment BUILDS these into its own registry (build.sh --registry
-        <your-registry> --push), pulling the nvcr.io base / isaacsim wheels with
-        the operator's OWN NGC credentials + EULA acceptance (OMNI_KIT_ACCEPT_EULA)
-        — so NVIDIA delivers Omniverse Kit to each operator under their own
-        acceptance and we ship only the Dockerfile. Internal-org pulls are
-        licensed internal-R&D use. The one thing that is NOT allowed: hosting
-        these PREBUILT on a public/anonymous registry, which strips the NGC/EULA
-        gate and makes us the third-party redistributor (that would require an
-        NVIDIA AI Enterprise license). So: never publish these to a public
-        registry.
-      reason: bundles-omniverse-kit
+        Bakes a runtime we may not redistribute — for NVIDIA Omniverse Kit (Isaac
+        Sim) that means the Kit SDK, models and textures, which are proprietary
+        even though the Isaac Sim SOURCE is Apache-2.0 (both the isaacsim and
+        isaaclab PyPI packages list their license as "NVIDIA Proprietary
+        Software"). Such an image may be built and run by the operator who owns
+        the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
+        public/anonymous registry would make us the third-party redistributor,
+        which requires an NVIDIA AI Enterprise license.
+        NOTE: no image is currently classified restricted. The four Isaac images
+        used to be, and were re-architected to fetch Isaac Sim / Isaac Lab at
+        first run under the operator's own EULA acceptance instead of baking it
+        (npa/docker/workbench/common/isaac_bootstrap.sh), which is what made them
+        publicly redistributable. The class and every guard around it are kept
+        deliberately, with an empty membership, for the next runtime we cannot
+        ship — and the guards are tested against synthetic restricted images so
+        they cannot rot while unused.
+      reason: bakes-a-non-redistributable-runtime
 
 # Relative to npa/docker/workbench/
 images:
@@ -104,12 +152,14 @@ images:
     redistribution: public
   sonic:
     dockerfile: sonic/Dockerfile
+    isaac_runtime_fetch: true
     tier: job
-    redistribution: restricted
+    redistribution: public
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
+    isaac_runtime_fetch: true
     tier: job
-    redistribution: restricted
+    redistribution: public
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
@@ -155,8 +205,9 @@ images:
     redistribution: public
   isaac-lab:
     dockerfile: isaac-lab/Dockerfile
+    isaac_runtime_fetch: true
     tier: interactive
-    redistribution: restricted
+    redistribution: public
   fiftyone:
     dockerfile: fiftyone/Dockerfile
     tier: interactive
@@ -170,10 +221,11 @@ images:
     redistribution: public
   groot:
     dockerfile: groot/Dockerfile
+    isaac_runtime_fetch: true
     tier: interactive
     ports: [8080]
     notes: "EXPOSE 8080 without default server CMD; promote to service when ready."
-    redistribution: restricted
+    redistribution: public
   retargeting:
     dockerfile: retargeting/Dockerfile
     tier: interactive

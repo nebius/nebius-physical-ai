@@ -320,11 +320,10 @@
       "dockerfile": "isaac-lab/Dockerfile",
       "verdict": "blocked",
       "validation": "pending-hardware",
-      "redistribution": "restricted",
       "blocked_reason": "The NVIDIA vendor stack is pinned to x86_64 CUDA 12.8 with torch 2.7.0; B200/B300 support is gated on NVIDIA's x86_64 CUDA 13 alignment. Independently, Isaac Lab's value here is rasterized rendering, which datacenter Blackwell cannot do at all (no RT cores).",
       "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
       "smoke": "headless RL training step (never a render task)",
-      "notes": "Omniverse-restricted: never publish prebuilt to a public registry. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
+      "notes": "Isaac Sim is fetched at first run under the operator's own EULA acceptance rather than baked, so the image is redistributable. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
     },
     {
       "name": "npa-sonic",
@@ -332,7 +331,6 @@
       "build_script": "sonic/build.sh",
       "verdict": "blocked",
       "validation": "pending-hardware",
-      "redistribution": "restricted",
       "blocked_reason": "Same NVIDIA x86_64 CUDA 12.8 pin as Isaac Lab. The k8s variant already builds sm80,sm90,sm120 via NPA_CUDA_ARCHITECTURES, so a compute-only datacenter variant is plausible - cu128 already carries sm_100 - but it is unvalidated.",
       "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
       "smoke": "headless whole-body-control fine-tune step",
@@ -343,7 +341,6 @@
       "dockerfile": "sonic/Dockerfile.mujoco",
       "verdict": "blocked",
       "validation": "pending-hardware",
-      "redistribution": "restricted",
       "inherits_blocker_from": "npa-sonic",
       "blocked_reason": "Built on top of npa-sonic, so it inherits the vendor CUDA 12.8 pin.",
       "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
@@ -356,7 +353,6 @@
       "build_script": "groot/build.sh",
       "verdict": "blocked",
       "validation": "pending-hardware",
-      "redistribution": "restricted",
       "blocked_reason": "GR00T's uv-locked venv and its Isaac Lab side venv both pin the NVIDIA x86_64 CUDA 12.8 stack; B200/B300 is gated on NVIDIA's CUDA 13 alignment.",
       "upstream_tracking": "NVIDIA Isaac GR00T release notes for x86_64 CUDA 13 alignment",
       "smoke": "GR00T finetune step",

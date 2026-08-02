@@ -82,6 +82,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "GPU + image-pull proofs",
         "sonic_smoke_result.json artifact",
     ],
+    "sonic-mujoco": [
+        "MuJoCo EGL rollout of a SONIC checkpoint (cross-simulator check on a policy "
+        "trained in Isaac Lab — where a sim-to-sim gap shows before a sim-to-real one)",
+        "sonic_eval_results.json artifact",
+        "runs on the baked venv: no Isaac Sim download and no EULA acceptance required",
+    ],
     "retargeting": [
         "motion-lib validate_motion_lib on synthetic payload",
     ],
