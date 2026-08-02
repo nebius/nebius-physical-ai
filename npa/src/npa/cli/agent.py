@@ -29,8 +29,14 @@ from npa.cli.agent_quota import (
     _agent_public_ip_quota_result,
 )
 from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
+    _agent_public_login_form_html,
     _lichtblick_default_layout_json,
     _nginx_agent_site_body,
+)
+from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
+    _write_agent_nebius_env,
+    _write_agent_operator_profile,
+    _write_agent_s3_env,
 )
 from npa.cli.agent_iam import report_destroyed_agent_iam
 from npa.cli.agent_inventory import agent_list_cmd
@@ -56,7 +62,7 @@ from npa.clients.network import (
     remove_ingress_for_instance,
 )
 from npa.clients.ssh import SSHClient, SSHError
-from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
+from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
@@ -1274,101 +1280,8 @@ def _write_agent_llm_env(
     )
 
 
-def _write_agent_s3_env(
-    ssh: SSHClient,
-    *,
-    bucket: str,
-    prefix: str = "",
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-    region: str,
-) -> None:
-    """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
-    if not (bucket.strip() and access_key.strip() and secret_key.strip()):
-        return
-    env_lines = [
-        f"NPA_AGENT_S3_BUCKET={bucket.strip()}",
-        f"NPA_AGENT_S3_PREFIX={prefix.strip().strip('/')}",
-        f"NPA_AGENT_S3_ENDPOINT={endpoint.strip()}",
-        f"AWS_ACCESS_KEY_ID={access_key.strip()}",
-        f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
-        f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
-    ]
-    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/s3.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/s3.env"
-    )
 
 
-def _write_agent_operator_profile(
-    ssh: SSHClient,
-    *,
-    ssh_user: str,
-    project_alias: str,
-    project_id: str,
-    tenant_id: str,
-    region: str,
-    tf_api_key: str,
-    s3_bucket: str,
-    s3_prefix: str = "",
-    s3_endpoint: str,
-    s3_access_key: str,
-    s3_secret_key: str,
-    service_account_id: str = "",
-) -> None:
-    """Write ~/.npa/config.yaml + credentials.yaml on the agent VM for operator workflows."""
-    if not (project_alias and project_id and tenant_id and region):
-        return
-    config_payload: dict[str, Any] = {
-        "default_project": project_alias,
-        "projects": {
-            project_alias: {
-                "project_id": project_id,
-                "tenant_id": tenant_id,
-                "region": region,
-            }
-        },
-    }
-    credentials_payload: dict[str, Any] = {"tokens": {}}
-    tokens = credentials_payload["tokens"]
-    if isinstance(tokens, dict):
-        if tf_api_key.strip():
-            tokens["NEBIUS_TOKEN_FACTORY_KEY"] = tf_api_key.strip()
-    storage_payload = {
-        "access_key_id": s3_access_key.strip(),
-        "secret_access_key": s3_secret_key.strip(),
-        "endpoint": s3_endpoint.strip(),
-        "bucket": "s3://" + s3_bucket.strip() + (("/" + s3_prefix.strip().strip("/") + "/") if s3_prefix.strip().strip("/") else ""),
-    }
-    if any(storage_payload.values()):
-        credentials_payload["storage"] = storage_payload
-    if service_account_id.strip():
-        credentials_payload["nebius"] = {"service_account_id": service_account_id.strip()}
-    config_b64 = base64.b64encode(json.dumps(config_payload, indent=2).encode("utf-8")).decode("ascii")
-    creds_b64 = base64.b64encode(json.dumps(credentials_payload, indent=2).encode("utf-8")).decode("ascii")
-    user_home = f"/home/{ssh_user}"
-    targets = [
-        (f"{user_home}/.npa", f"{ssh_user}:{ssh_user}"),
-        ("/root/.npa", "root:root"),
-    ]
-    commands: list[str] = []
-    for npa_dir, owner in targets:
-        config_path = f"{npa_dir}/config.yaml"
-        creds_path = f"{npa_dir}/credentials.yaml"
-        commands.extend(
-            [
-                f"sudo mkdir -p {shlex.quote(npa_dir)}",
-                f"echo {shlex.quote(config_b64)} | base64 -d | sudo tee {shlex.quote(config_path)} >/dev/null",
-                f"echo {shlex.quote(creds_b64)} | base64 -d | sudo tee {shlex.quote(creds_path)} >/dev/null",
-                f"sudo chown -R {shlex.quote(owner)} {shlex.quote(npa_dir)}",
-                f"sudo chmod 700 {shlex.quote(npa_dir)}",
-                f"sudo chmod 600 {shlex.quote(config_path)} {shlex.quote(creds_path)}",
-            ]
-        )
-    ssh.run_or_raise(" && ".join(commands))
 
 
 def _store_project_environment(*, project: str, project_id: str, tenant_id: str, region: str) -> None:
@@ -1387,50 +1300,6 @@ def _store_project_environment(*, project: str, project_id: str, tenant_id: str,
     )
 
 
-def _write_agent_nebius_env(
-    ssh: SSHClient,
-    *,
-    project_alias: str,
-    agent_name: str,
-    project_id: str,
-    tenant_id: str,
-    region: str,
-    service_account_id: str,
-    bucket: str,
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-) -> None:
-    """Stage long-lived Nebius project credentials on the agent VM.
-
-    This stages the S3 access key (HMAC — required for Nebius object storage and
-    not replaceable by an IAM bearer token) plus project identifiers. It does NOT
-    stage any IAM/management token: the VM authenticates to Nebius IAM using its
-    ATTACHED service account, which self-mints fresh tokens via the metadata /
-    token-file sources ``get_iam_token()`` reads. Copying the operator's
-    short-lived token here would go stale on the long-lived VM.
-    """
-    if not (project_id.strip() and access_key.strip() and secret_key.strip()):
-        return
-    env_lines = [
-        f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
-        f"NPA_AGENT_NAME={agent_name.strip()}",
-        f"NEBIUS_PROJECT_ID={project_id.strip()}",
-        f"NEBIUS_TENANT_ID={tenant_id.strip()}",
-        f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
-        f"NEBIUS_SERVICE_ACCOUNT_ID={service_account_id.strip()}",
-        f"NEBIUS_S3_BUCKET={bucket.strip()}",
-        f"NEBIUS_S3_ENDPOINT={endpoint.strip()}",
-        f"AWS_ACCESS_KEY_ID={access_key.strip()}",
-        f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
-        f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
-    ]
-    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/nebius.env"
-    )
 
 
 def _env_line_value(value: str) -> str:
@@ -1552,128 +1421,6 @@ def _agent_mobile_login_help_html() -> str:
     </details>"""
 
 
-def _agent_public_login_form_html(auth_user: str) -> str:
-    """Shared Sign in form for public welcome/login-help pages (mobile-safe basic auth)."""
-    return f"""    <section class="sign-in-panel" aria-labelledby="sign-in-heading">
-      <h2 id="sign-in-heading">Sign in</h2>
-      <p class="muted">Use the form if your browser does not show an HTTP Basic Auth dialog.</p>
-      <form id="npa-sign-in" class="sign-in" autocomplete="on">
-        <label for="npa-user">Username</label>
-        <input id="npa-user" name="username" type="text" value="{auth_user}" autocomplete="username" required>
-        <label for="npa-pass">Password</label>
-        <input id="npa-pass" name="password" type="password" autocomplete="current-password" required>
-        <button type="submit" id="npa-sign-in-btn">Sign in</button>
-        <p id="npa-sign-in-status" class="muted" role="status" aria-live="polite"></p>
-      </form>
-      <p class="muted note">Credentials are not left in the address bar after sign-in.</p>
-    </section>
-    <script>
-    (function () {{
-      try {{
-        if (location.username || location.password) {{
-          const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
-          history.replaceState(null, "", clean);
-        }}
-      }} catch (_err) {{ /* best-effort */ }}
-      var form = document.getElementById("npa-sign-in");
-      var statusEl = document.getElementById("npa-sign-in-status");
-      var btn = document.getElementById("npa-sign-in-btn");
-      if (!form) return;
-
-      function setStatus(msg, isError) {{
-        if (!statusEl) return;
-        statusEl.textContent = msg || "";
-        statusEl.style.color = isError ? "#991b1b" : "#5f6573";
-      }}
-
-      function isMobileUa() {{
-        return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
-      }}
-
-      function destPath() {{
-        var rawPath = String(location.pathname || "/");
-        var normalizedPath = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
-        return (normalizedPath === "/login-help.html" || normalizedPath === "/welcome") ? "/" : normalizedPath;
-      }}
-
-      function basicAuthHeader(user, pass) {{
-        return "Basic " + btoa(unescape(encodeURIComponent(user + ":" + pass)));
-      }}
-
-      function persistBasicAuth(user, pass) {{
-        try {{
-          sessionStorage.setItem("npa_agent_basic_auth", basicAuthHeader(user, pass));
-        }} catch (_err) {{ /* sessionStorage may be unavailable */ }}
-      }}
-
-      function xhrSignIn(user, pass, dest) {{
-        return new Promise(function (resolve, reject) {{
-          var xhr = new XMLHttpRequest();
-          xhr.open("GET", dest, true, user, pass);
-          xhr.onload = function () {{
-            if (xhr.status >= 200 && xhr.status < 400) {{
-              resolve();
-              return;
-            }}
-            if (xhr.status === 401) {{
-              reject(new Error("Invalid username or password."));
-              return;
-            }}
-            reject(new Error("Sign-in failed (HTTP " + xhr.status + ")."));
-          }};
-          xhr.onerror = function () {{
-            reject(new Error("Network error — open /healthz first and accept the certificate warning."));
-          }};
-          xhr.send();
-        }});
-      }}
-
-      function fetchSignIn(user, pass, dest) {{
-        return fetch(dest, {{
-          method: "GET",
-          headers: {{ "Authorization": basicAuthHeader(user, pass) }},
-          credentials: "omit",
-          cache: "no-store",
-        }}).then(function (resp) {{
-          if (!resp.ok) {{
-            throw new Error(resp.status === 401 ? "Invalid username or password." : "Sign-in failed (HTTP " + resp.status + ").");
-          }}
-        }});
-      }}
-
-      function urlEmbedSignIn(user, pass, dest) {{
-        var u = encodeURIComponent(user);
-        var p = encodeURIComponent(pass);
-        location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
-      }}
-
-      form.addEventListener("submit", function (ev) {{
-        ev.preventDefault();
-        var user = document.getElementById("npa-user").value;
-        var pass = document.getElementById("npa-pass").value;
-        var dest = destPath();
-        setStatus("Signing in…", false);
-        if (btn) btn.disabled = true;
-
-        xhrSignIn(user, pass, dest)
-          .catch(function () {{ return fetchSignIn(user, pass, dest); }})
-          .then(function () {{
-            persistBasicAuth(user, pass);
-            window.location.href = dest;
-          }})
-          .catch(function (err) {{
-            if (!isMobileUa()) {{
-              persistBasicAuth(user, pass);
-              urlEmbedSignIn(user, pass, dest);
-              return;
-            }}
-            setStatus((err && err.message) ? err.message : "Sign-in failed on this device.", true);
-            if (btn) btn.disabled = false;
-          }});
-      }});
-    }})();
-    </script>"""
-
 
 # Placeholder token the Lichtblick web bundle ships in its index.html inline
 # script: ``LICHTBLICK_SUITE_DEFAULT_LAYOUT = [/*...PLACEHOLDER*/][0];``. Replacing
@@ -1681,21 +1428,6 @@ def _agent_public_login_form_html(auth_user: str) -> str:
 # the embedded viewer opens with the sim2real point cloud + camera already shown
 # (Lichtblick otherwise hides point-cloud topics and picks no image topic).
 LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
-
-
-def _nginx_agent_site_body(
-    *,
-    backend_port: int,
-    rerun_port: int,
-    lichtblick_port: int = DEFAULT_LICHTBLICK_PORT,
-) -> str:
-    """Render the agent nginx site (policy lives in ``agent_site``)."""
-    return nginx_agent_site_body(
-        backend_port=backend_port,
-        rerun_port=rerun_port,
-        lichtblick_port=lichtblick_port,
-        ui_version=AGENT_UI_VERSION,
-    )
 
 
 def _bootstrap_agent_stack(

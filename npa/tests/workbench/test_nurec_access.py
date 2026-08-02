@@ -668,11 +668,12 @@ def test_renderer_nurec_rerun_pin_matches_the_packaged_extra() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import NUREC_RERUN_PIN
 
     pyproject = (REPO_ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
-    viz_line = next(
-        line for line in pyproject.splitlines() if line.strip().startswith("viz = [")
+    # The `viz` extra is folded into the base install, so the pin is declared there.
+    pin_line = next(
+        line for line in pyproject.splitlines() if "rerun-sdk==" in line
     )
 
-    assert NUREC_RERUN_PIN in viz_line, f"{NUREC_RERUN_PIN} not in: {viz_line}"
+    assert NUREC_RERUN_PIN in pin_line, f"{NUREC_RERUN_PIN} not in: {pin_line}"
 
 
 def test_renderer_does_not_add_nurec_deps_to_other_tools() -> None:

@@ -34,11 +34,12 @@ def _agent_source() -> str:
     """
     from npa.cli import agent as agent_module
     from npa.cli import agent_assets
+    from npa.cli import agent_env_files
     from npa.cli import agent_site as agent_site_module
 
     return "\n".join(
         Path(module.__file__).read_text(encoding="utf-8")
-        for module in (agent_module, agent_assets, agent_site_module)
+        for module in (agent_module, agent_assets, agent_env_files, agent_site_module)
     )
 
 
@@ -554,9 +555,9 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';" in source
     assert "def _lichtblick_default_layout_json" in source
 
-    from npa.cli import agent_site as agent_site_module
+    from npa.cli import agent_assets
 
-    layout = json.loads(agent_site_module._lichtblick_default_layout_json())
+    layout = json.loads(agent_assets._lichtblick_default_layout_json())
     panels = layout["configById"]
     three_d = next(v for k, v in panels.items() if k.startswith("3D!"))
     assert three_d["topics"]["/heldout/points"]["visible"] is True

@@ -8,7 +8,6 @@ import subprocess
 
 import pytest
 from typer.testing import CliRunner
-import yaml
 
 from npa.cli import cleanup as cleanup_cli
 from npa.cli.main import app
