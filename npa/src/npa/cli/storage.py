@@ -104,6 +104,14 @@ def delete_bucket_cmd(
             "~/.npa/config.yaml."
         ),
     ),
+    wait: bool = typer.Option(
+        False,
+        "--wait",
+        help="Poll until the bucket is actually gone (a scheduled purge is async).",
+    ),
+    wait_timeout: int = typer.Option(
+        300, "--wait-timeout", help="Max seconds to wait when --wait is set."
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ) -> None:
     """Delete an object-storage bucket npa provisioned, contents and versions included."""
@@ -171,8 +179,43 @@ def delete_bucket_cmd(
         typer.echo(f"Bucket {target} scheduled for purge in {ttl}.")
     else:
         typer.echo(f"Bucket {target} deleted.")
+    if wait:
+        _wait_for_bucket_gone(resolved_project, bucket_name, target, wait_timeout)
     if prune_config and bucket_name:
         _prune_local_state(bucket_name)
+
+
+def _wait_for_bucket_gone(project_id: str, bucket_name: str, target: str, timeout: int) -> None:
+    """Poll until *bucket_name* no longer exists (a scheduled purge is async).
+
+    `storage bucket delete --ttl` returns while the bucket is still
+    ``SCHEDULED_FOR_DELETION``; --wait blocks until Nebius has actually removed it
+    so a caller can proceed knowing the name is free.
+    """
+    import time
+
+    from npa.clients.nebius import NebiusError, get_bucket_by_name
+
+    if not project_id or not bucket_name:
+        typer.echo("--wait skipped: no project/bucket name to poll.")
+        return
+    deadline = time.monotonic() + max(1, int(timeout))
+    typer.echo(f"Waiting up to {timeout}s for {bucket_name} to be purged...")
+    while time.monotonic() < deadline:
+        try:
+            item = get_bucket_by_name(project_id, bucket_name)
+        except NebiusError:
+            # Transient list failure: keep waiting rather than declaring done.
+            item = {"metadata": {"name": bucket_name}}
+        if item is None:
+            typer.echo(f"Bucket {target} is gone.")
+            return
+        time.sleep(5)
+    typer.echo(
+        f"Bucket {bucket_name} is still present after {timeout}s "
+        "(a scheduled purge can take longer than the wait); it will be removed by "
+        "Nebius. Re-run with a larger --wait-timeout to keep watching."
+    )
 
 
 def _bucket_name_from_uri(value: str) -> str:

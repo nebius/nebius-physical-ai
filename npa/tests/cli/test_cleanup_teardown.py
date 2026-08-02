@@ -93,6 +93,42 @@ def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
     assert creds_path.stat().st_mode & 0o077 == 0
 
 
+def test_bucket_delete_wait_polls_until_the_bucket_is_gone(monkeypatch, tmp_path: Path) -> None:
+    """A scheduled purge is async; --wait blocks until Nebius has removed it."""
+    import time as _time
+
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+    monkeypatch.setattr(_time, "sleep", lambda _s: None)
+
+    calls = {"n": 0}
+
+    def fake_get(project_id, name):
+        calls["n"] += 1
+        # Present for the first two polls, then purged.
+        return {"metadata": {"id": "b", "name": name}} if calls["n"] < 3 else None
+
+    monkeypatch.setattr(nebius_module, "get_bucket_by_name", fake_get)
+
+    result = runner.invoke(
+        app,
+        [
+            "storage", "bucket", "delete",
+            "--name", "npa-bucket-x", "--project-id", "project-a",
+            "--ttl", "1m", "--wait", "--keep-config", "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "scheduled for purge" in result.output
+    assert "Waiting up to" in result.output
+    assert "is gone" in result.output
+    assert calls["n"] >= 3
+
+
 def test_bucket_delete_keeps_credentials_for_another_bucket(monkeypatch, tmp_path: Path) -> None:
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
