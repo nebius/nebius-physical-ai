@@ -1,0 +1,277 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# NuRec / NRE neural reconstruction, expressed declaratively.
+#
+# ---------------------------------------------------------------------------
+# QUICKSTART - copy, paste, run. Walkthrough:
+# docs/workbench/guides/neural-reconstruction.md
+#
+#   # 0. Credentials. NGC_API_KEY pulls the NRE container; HF_TOKEN downloads the
+#   #    capture. Never echo them (see the SKILL's secret-handling section).
+#   export NGC_API_KEY=...  HF_TOKEN=...
+#   export AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...  AWS_ENDPOINT_URL=...
+#
+#   # 1. Cheap preflight: entitlement, real HF download authorization, RT cores.
+#   #    Seconds, and no 14 GB pull.
+#   npa workbench nurec check --json
+#
+#   # 2. Stage the npa source the pods install (the NRE image has no npa in it).
+#   export NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/<tag>
+#
+#   # 3. Submit. ~45 min end to end on one RTX PRO 6000 Blackwell.
+#   RUN_ID="nurec-$(date -u +%Y%m%dt%H%M%S)z"
+#   npa workbench workflow submit \
+#     npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml \
+#     --run-id "$RUN_ID" \
+#     --infra k8s/<your-rt-core-context> \
+#     --var bucket=<your-bucket> \
+#     --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
+#     --secret-env HF_TOKEN --secret-env NGC_API_KEY
+#
+#   # 4. Watch, then open the run in the NPA agent (it auto-selects the .rrd).
+#   sky jobs queue
+#
+# Produces, under s3://<bucket>/<prefix>/:
+#   reconstruction/last.usdz    the renderable scene (~240 MB)
+#   reconstruction/metrics.yaml real PSNR / SSIM / LPIPS
+#   novel_views/*.png           views the reconstruction was NOT trained on
+#   reports/sim2real.rrd        what the agent's Rerun panel displays
+#   reports/final.json          stage-by-stage accounting
+# ---------------------------------------------------------------------------
+#
+# Real sensor capture -> NCore V4 (with the rig pose edge NRE requires) -> 3DGUT
+# Gaussian training -> renderable USDZ -> novel-view renders -> Rerun recording,
+# all under ONE S3 run prefix so the NPA agent's artifact browser and embedded
+# Rerun viewer pick the run up automatically.
+#
+# Every stage is a real `npa workbench nurec <verb>` entrypoint (see
+# npa/src/npa/orchestration/npa_workflow/catalog.py); nothing here is a manifest
+# stub.
+#
+# GPU ROUTING: reconstruction and rasterization are RT-core work. The `gpu`
+# profile targets RTX PRO 6000 Blackwell; L40S is the other valid choice. Never
+# route these stages at H100/H200 - they have no RT cores. See
+# skills/atomic/gpu-selection/SKILL.md.
+#
+# The stages run INSIDE the NGC NRE container (`resources.gpu.image`) because NRE
+# is closed-source: there is no pip/source path, so the container is the runtime.
+# `nvcr.io/nvidia/nre/nre` needs an extra NGC entitlement (402 for a standard
+# key); the `-ga` General Availability repository is what a standard key pulls.
+#
+# EACH STATE RUNS IN ITS OWN POD, so nothing survives in /tmp between stages: the
+# NCore sequence and the trained USDZ travel through S3 (`fetch
+# --publish-sequence` then `reconstruct --ncore-uri`; `reconstruct --output-uri`
+# then `render --artifact-uri`). The single-pod SkyPilot task at
+# npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml shares /tmp instead and so
+# needs none of that.
+#
+# The `resources.gpu.kubernetes.pod_config` below is lifted onto each GPU task as a
+# SkyPilot task-level `config:` block. It is required, not cosmetic: the NRE image
+# ships no `sudo` (which SkyPilot's Kubernetes bootstrap calls unconditionally, so
+# the cluster never finishes provisioning) and needs far more than the 64 MB
+# Kubernetes default /dev/shm.
+
+metadata:
+  name: nurec-reconstruct
+  description: >
+    NVIDIA Omniverse NuRec / Neural Reconstruction Engine on Nebius + SkyPilot:
+    fetch a real NCore V4 capture (deriving the rig->world pose edge NRE
+    requires), train 3DGUT Gaussians into a renderable USDZ, render rig-offset
+    novel views, build reports/sim2real.rrd for the NPA agent's Rerun panel, and
+    finalize. Artifacts land under one S3 run prefix.
+
+config:
+  bucket: example-bucket
+  prefix: "neural-reconstruction/{{run.id}}"
+
+  # --- Runtime container -----------------------------------------------------
+  nurec_image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+
+  # --- Input capture ---------------------------------------------------------
+  # Ungated (CC-BY-4.0) NVIDIA PhysicalAI capture, already in NCore V4.
+  dataset_id: "nvidia/PhysicalAI-NuRec-PPISP"
+  scene: "struktur28"
+  variant: "auto"
+
+  # --- Reconstruction --------------------------------------------------------
+  # Static, camera-only, object-centric 3DGUT recipe shipped in the container. It
+  # already enables the renderable USDZ artifact.
+  config_name: "configs/experimental/3dgut/3dgut_colmap.yaml"
+  mode: trainval
+  # 0 keeps the recipe's own epoch budget.
+  max_epochs: "0"
+  world_size: "1"
+  # The derived rig poses live in their own NCore component instance.
+  poses_component_group: "npa_rig"
+
+  # --- Novel-view rendering --------------------------------------------------
+  # A non-zero rig offset is what makes the rendered views NOVEL rather than a
+  # replay of the training views.
+  rig_translation_offset: "0,0.25,0"
+  rig_rotation_offset: "0,0,0"
+  render_image_scale: "0.5"
+  renderer: "default"
+
+  # --- Local scratch ---------------------------------------------------------
+  cache_dir: "/tmp/npa-nurec-cache"
+  out_dir: "/tmp/npa-nurec-out"
+  render_dir: "/tmp/npa-nurec-out/novel_views"
+
+  # --- S3 artifact layout: one run prefix ------------------------------------
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  ncore_uri: "s3://{{config.bucket}}/{{config.prefix}}/ncore/"
+  # Cross-pod handoff: the published NCore sequence, and the trained USDZ.
+  ncore_sequence_uri: "s3://{{config.bucket}}/{{config.prefix}}/ncore/sequence/"
+  input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  reconstruction_uri: "s3://{{config.bucket}}/{{config.prefix}}/reconstruction/"
+  novel_views_uri: "s3://{{config.bucket}}/{{config.prefix}}/novel_views/"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
+  final_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # RT cores required. Operators on a cluster that advertises a different
+    # product name override with NPA_WORKFLOW_GPU_ACCELERATOR at submit time.
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 8
+    memory: 64Gi
+    image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+    kubernetes:
+      # A ~14 GB compressed image pull dominates first-schedule latency.
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          # Appended to the cluster-wide list, so the registry secret stays.
+          imagePullSecrets:
+            - name: ngc-nvcr-imagepullsecret
+          initContainers:
+            # SkyPilot's runtime setup calls bare `sudo` when it writes the nofile
+            # limits and /etc/fuse.conf (templates/kubernetes-ray.yml.j2). The NRE
+            # image has no sudo, so that step exits 127 and the cluster never
+            # becomes usable even though provisioning otherwise succeeds. The pod
+            # already runs as root, so a shim that execs its arguments is exactly
+            # equivalent to SkyPilot's own `alias sudo=""` root path.
+            # /usr/local/sbin is on the image's PATH and empty.
+            - name: npa-sudo-shim
+              image: "nvcr.io/nvidia/nre/nre-ga:26.04"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  printf '#!/bin/sh\nexec "$@"\n' > /shim/sudo
+                  chmod 0755 /shim/sudo
+              volumeMounts:
+                - name: npa-sudo-shim
+                  mountPath: /shim
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: npa-sudo-shim
+                  mountPath: /usr/local/sbin
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: npa-sudo-shim
+              emptyDir: {}
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: check
+
+states:
+  check:
+    description: >
+      Verify NGC container pullability, real Hugging Face download authorization
+      for the configured dataset, and that the visible GPU actually has RT cores,
+      before any 14 GB image pull or GPU-minute is spent.
+    toolRef: workbench.nurec.check
+    resources: gpu
+    next: fetch
+
+  fetch:
+    description: >
+      Download and unpack the real NCore V4 shards, then derive the rig->world
+      pose edge NRE requires. Object-centric captures carry per-camera
+      '<camera> -> world' poses and no rig node, so NRE refuses to load them; for
+      a single-camera capture the rig IS the camera, so the derived edge is exact.
+      Writes one small extra component store and a meta-file that symlinks the
+      original shards.
+    needs: [check]
+    toolRef: workbench.nurec.fetch
+    resources: gpu
+    outputs:
+      - uri: "{{config.ncore_uri}}manifest.json"
+        schema: npa.nurec.ncore.v1
+    next: reconstruct
+
+  reconstruct:
+    description: >
+      Train a 3DGUT Gaussian reconstruction with NRE and publish the renderable
+      USDZ, the resolved Hydra config, real val metrics (test/psnr, test/ssim,
+      test/lpips) and NRE's validation renders. Also exports the real capture
+      frames with export-ncore-benchmark-gt so the run carries its own input
+      evidence.
+    needs: [fetch]
+    toolRef: workbench.nurec.reconstruct
+    resources: gpu
+    inputs:
+      - uri: "{{config.ncore_uri}}"
+        schema: npa.nurec.ncore.v1
+    outputs:
+      - uri: "{{config.reconstruction_uri}}metrics.yaml"
+        schema: npa.nurec.reconstruction.v1
+    next: render
+
+  render:
+    description: >
+      Render novel views from the trained Gaussians with `nre render`. The rig
+      offset plus --no-replicate-training-views is what makes these views NOVEL;
+      NRE's own default would re-render the training views.
+    needs: [reconstruct]
+    toolRef: workbench.nurec.render
+    resources: gpu
+    inputs:
+      - uri: "{{config.reconstruction_uri}}"
+        schema: npa.nurec.reconstruction.v1
+    outputs:
+      - uri: "{{config.novel_views_uri}}"
+        schema: npa.nurec.novel_views.v1
+    next: visualize
+
+  visualize:
+    description: >
+      Build the run's Rerun recording (reports/sim2real.rrd) from the capture
+      frames, the NRE validation renders and the novel views, so the
+      reconstruction renders in the NPA agent's embedded Rerun viewer (the agent
+      prefers reports/sim2real.rrd).
+    needs: [render]
+    toolRef: workbench.nurec.visualize
+    resources: cpu
+    inputs:
+      - uri: "{{config.run_root_uri}}"
+        schema: npa.nurec.novel_views.v1
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: npa.sim2real.rerun.v1
+    next: finalize
+
+  finalize:
+    description: >
+      Aggregate the run tree into a real final report (stage object counts, and
+      whether the USDZ, novel views, and Rerun recording are present).
+    needs: [visualize]
+    toolRef: workbench.nurec.finalize
+    resources: cpu
+    outputs:
+      - uri: "{{config.final_report_uri}}"
+        schema: npa.sim2real.e2e_report.v1
+    terminal: true

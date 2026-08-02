@@ -1527,3 +1527,31 @@ def format_list_recordings(state: dict[str, Any]) -> str:
 
 def apis_for_intent(intent: str) -> list[str]:
     return list(INTENT_APIS.get(intent, []))
+
+
+#: Keyword -> skill rules for turns the intent router does not classify. Each
+#: entry is ``(required_terms, any_of_terms, skill_name)``: the skill is offered
+#: when every ``required`` term and at least one ``any_of`` term is present.
+#:
+#: Cosmos 3: a "workflow"/"yaml" ask means the declarative npa.workflow spec,
+#: which is a different file from the SkyPilot template of the same name, so the
+#: agent must lead with the spec-authoring skill rather than the SkyPilot one.
+KEYWORD_SKILL_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
+    (("cosmos3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
+    (("cosmos 3",), ("workflow", "yaml", "spec"), "cosmos3-npa-workflow"),
+)
+
+
+def skill_names_for_keywords(user_text: str) -> list[str]:
+    """Return skills to lead with for ``user_text``, most specific first."""
+
+    lowered = str(user_text or "").lower()
+    names: list[str] = []
+    for required, any_of, skill in KEYWORD_SKILL_RULES:
+        if skill in names:
+            continue
+        if all(term in lowered for term in required) and (
+            not any_of or any(term in lowered for term in any_of)
+        ):
+            names.append(skill)
+    return names

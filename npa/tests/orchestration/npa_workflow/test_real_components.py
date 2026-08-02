@@ -6,6 +6,7 @@ real command/module call, or if the augment stage isn't the real Cosmos execute.
 
 from __future__ import annotations
 
+import pathlib
 import re
 
 import typer
@@ -16,6 +17,18 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
 BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
 assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
+
+NUREC_BLUEPRINT = resolve_npa_workflow_spec("nurec-reconstruct.yaml")
+assert NUREC_BLUEPRINT is not None, "nurec-reconstruct.yaml not found in any spec root"
+
+NUREC_SKYPILOT = (
+    pathlib.Path(__file__).resolve().parents[3]
+    / "src"
+    / "npa"
+    / "workflows"
+    / "skypilot"
+    / "nurec-reconstruct.yaml"
+)
 
 # toolRefs that only echo or write a contract/manifest — never advertise as real.
 KNOWN_STUB_TOOLREFS = {
@@ -159,3 +172,85 @@ def test_blueprint_run_shell_cli_flags_match_real_cli() -> None:
                 )
             checked += 1
     assert checked >= 1, "expected at least one npa-workbench run.shell call to validate"
+
+
+# ---------------------------------------------------------------------------------
+# NuRec / NRE neural reconstruction
+# ---------------------------------------------------------------------------------
+def _nurec_states() -> dict:
+    spec = yaml.safe_load(NUREC_BLUEPRINT.read_text(encoding="utf-8"))
+    return spec["states"]
+
+
+def test_nurec_blueprint_uses_no_stub_toolrefs() -> None:
+    for name, state in _nurec_states().items():
+        tool_ref = state.get("toolRef")
+        if tool_ref:
+            assert tool_ref not in KNOWN_STUB_TOOLREFS, (
+                f"stage '{name}' uses stub toolRef '{tool_ref}'; wire the real component"
+            )
+
+
+def test_nurec_blueprint_toolrefs_exist_in_catalog() -> None:
+    for name, state in _nurec_states().items():
+        tool_ref = state.get("toolRef")
+        if tool_ref:
+            assert tool_ref in TOOL_CATALOG, f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+
+
+def test_nurec_blueprint_run_shell_stages_are_real() -> None:
+    for name, state in _nurec_states().items():
+        run = state.get("run")
+        if not run:
+            continue
+        shell = str(run.get("shell", ""))
+        assert any(marker in shell for marker in REAL_RUN_MARKERS), (
+            f"stage '{name}' run.shell is not a real command/module call: {shell[:100]}"
+        )
+
+
+def test_nurec_every_stage_runs_a_real_component() -> None:
+    """No NuRec stage may be a bare description: each one runs a tool or a command."""
+    for name, state in _nurec_states().items():
+        assert state.get("toolRef") or state.get("run"), (
+            f"stage '{name}' advertises work but invokes nothing"
+        )
+
+
+def test_nurec_reconstruct_stage_runs_the_real_nre_training_path() -> None:
+    states = _nurec_states()
+
+    assert states["reconstruct"].get("toolRef") == "workbench.nurec.reconstruct"
+    argv = TOOL_CATALOG["workbench.nurec.reconstruct"].argv_template
+    # Without the recipe and the artifact export there is no renderable scene.
+    assert "--config-name" in argv
+    assert "--export-gt" in argv
+    assert "--output-uri" in argv
+
+
+def test_nurec_render_stage_produces_novel_views_not_training_views() -> None:
+    argv = TOOL_CATALOG["workbench.nurec.render"].argv_template
+
+    assert "--rig-translation-offset" in argv
+    assert "--no-replicate-training-views" in argv
+
+
+def test_nurec_visualize_stage_builds_the_real_rerun_recording() -> None:
+    states = _nurec_states()
+
+    assert states["visualize"].get("toolRef") == "workbench.nurec.visualize"
+    argv = TOOL_CATALOG["workbench.nurec.visualize"].argv_template
+    assert "--output-uri" in argv
+
+
+def test_nurec_skypilot_task_has_no_echo_or_manifest_stub_stage() -> None:
+    """The submitted SkyPilot task must invoke the real tool for every stage."""
+    doc = next(d for d in yaml.safe_load_all(NUREC_SKYPILOT.read_text(encoding="utf-8")) if d)
+    run = doc["run"]
+
+    for verb in ("check", "fetch", "reconstruct", "render", "visualize", "finalize"):
+        assert f"npa workbench nurec {verb}" in run, verb
+    assert "contract_ready" not in run
+    # An `echo` that merely announces a stage is fine; one that stands IN for a
+    # stage is not, so assert the tool call count matches the advertised stages.
+    assert run.count("npa workbench nurec") >= 6

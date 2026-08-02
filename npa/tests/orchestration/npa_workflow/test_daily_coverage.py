@@ -103,3 +103,35 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     # Over one full cycle the rotation visits every GPU twin.
     seen = {rotating_gpu_submit_case(day).spec for day in range(len(cases))}
     assert seen == {c.spec for c in cases}
+
+
+def test_declared_case_budget_survives_the_daily_runner_cap(monkeypatch) -> None:
+    """A case's declared ``max_wait_seconds`` must not be truncated by the daily cap.
+
+    ``scripts/dev-vm-daily-tests.sh`` exports
+    ``NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS=2400`` for every rotating GPU
+    submit. The submit e2e used to compute two different deadlines from that: the
+    CLI got ``case.max_wait_seconds`` while the polling loop got the env value, so
+    a case declaring a longer budget was cancelled at 40 minutes by
+    ``CANCEL_ON_TIMEOUT`` even though the run was healthy. Any workflow slower
+    than the cap (cold multi-GB image pull plus a long train) would go red on
+    whichever day the rotation reached it.
+    """
+    import importlib
+
+    mod = importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS", "2400")
+
+    from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
+
+    declared = [c for c in SUBMIT_LIVE_MATRIX if c.max_wait_seconds]
+    assert declared, "expected at least one case to declare its own budget"
+    for case in declared:
+        assert mod._case_max_wait(case) >= case.max_wait_seconds, (
+            f"{case.spec} would be cancelled at the daily cap despite declaring "
+            f"{case.max_wait_seconds}s"
+        )
+    # And a case that declares nothing still follows the operator's env value.
+    plain = next((c for c in SUBMIT_LIVE_MATRIX if not c.max_wait_seconds), None)
+    if plain is not None:
+        assert mod._case_max_wait(plain) == 2400

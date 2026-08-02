@@ -3559,8 +3559,19 @@ def _apply_loaded_artifact(
     if isinstance(current, dict):
         sim_viz.update(current)
     camera = str(sim_viz.get("camera") or "workspace")
-    if render == "rerun" and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key):
+    # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
+    # guards that exact expression as source text.
+    if (
+        render == "rerun"
+        and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
+        and not is_neural_reconstruction_recording(key)
+    ):
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_neural_reconstruction_recording(key):
+        # Do not inherit the previous run's label: the agent keeps sim_viz state
+        # across loads, so a NuRec run following a Sim2Real one would report
+        # camera="heldout-sim" while its own viewer note says the opposite.
+        camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
     sim_viz.update(
         {{
             "run_id": run_id,
@@ -3591,6 +3602,9 @@ def _apply_loaded_artifact(
                 "captions/ (Token Factory VLM pseudo-labels). Scrub the frame "
                 "timeline to compare original vs augmented."
             )
+        elif is_neural_reconstruction_recording(key):
+            sim_viz["preview_entity"] = NEURAL_RECONSTRUCTION_PREVIEW_ENTITY
+            sim_viz["visualization_note"] = NEURAL_RECONSTRUCTION_VIEWER_NOTE
         elif _is_sim2real_pipeline_recording(key):
             sim_viz["preview_entity"] = "camera"
             sim_viz["visualization_note"] = (
@@ -5005,11 +5019,7 @@ def _load_skill_index() -> tuple[dict[str, str], Path]:
         skills = payload.get("skills")
         if not isinstance(skills, list):
             continue
-        # index.yaml `path:` values are repo-root-relative ("skills/<cat>/<name>/
-        # SKILL.md") and `root:` names the skill tree itself, so the base is the
-        # directory CONTAINING the skill tree. Joining onto candidate.parent
-        # instead yields skills/skills/skills/... and every excerpt silently
-        # comes back empty.
+        # Paths are repo-root-relative: base on the dir CONTAINING skills/.
         root = candidate.parent.parent
         index: dict[str, str] = {{}}
         for entry in skills:
@@ -5055,15 +5065,7 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
         names.append("find-artifacts")
     if ("workflow" in lowered or "yaml" in lowered) and "author-npa-workflow" not in names:
         names.append("author-npa-workflow")
-    # Cosmos 3 workflow asks are about the declarative npa.workflow spec, which
-    # is a different file from the SkyPilot template; lead with that skill so the
-    # agent does not answer with the SkyPilot YAML.
-    if (
-        ("cosmos3" in lowered or "cosmos 3" in lowered)
-        and ("workflow" in lowered or "yaml" in lowered or "spec" in lowered)
-        and "cosmos3-npa-workflow" not in names
-    ):
-        names.insert(0, "cosmos3-npa-workflow")
+    names[:0] = [n for n in skill_names_for_keywords(lowered) if n not in names]
     if (
         "npa-visual-feedback" in lowered
         or "describe this" in lowered
@@ -5119,7 +5121,7 @@ def _maybe_toolground_chat_reply(
         return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
     if intent == "find_artifacts":
         mentioned_run = ""
-        match = re.search(r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b", str(user_text or ""))
+        match = re.search(r"\\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\\b", str(user_text or ""))
         if match:
             mentioned_run = match.group(1)
         try:
@@ -5391,16 +5393,16 @@ def _sim2real_stage_count_from_report(state: dict[str, Any]) -> int:
 
 def _maybe_stage_count_numeric_reply(user_text: str, state: dict[str, Any]) -> str | None:
     lowered = str(user_text or "").lower()
-    if not re.search(r"\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|pipeline|workflow)\b", lowered):
+    if not re.search(r"\\b(?:sim\\s*[- ]?2\\s*[- ]?real|sim2real|pipeline|workflow)\\b", lowered):
         return None
-    if not re.search(r"\b(?:stage|stages|step|steps)\b", lowered):
+    if not re.search(r"\\b(?:stage|stages|step|steps)\\b", lowered):
         return None
-    if not re.search(r"\b(?:count|number|how many)\b", lowered):
+    if not re.search(r"\\b(?:count|number|how many)\\b", lowered):
         return None
     value = _sim2real_stage_count_from_report(state)
     if value <= 0:
         return None
-    match = re.search(r"(?:count|number|stages?|steps?)\s*(?:-|minus)\s*(\d+)", lowered)
+    match = re.search(r"(?:count|number|stages?|steps?)\\s*(?:-|minus)\\s*(\\d+)", lowered)
     if match:
         value -= int(match.group(1))
     return str(value)
@@ -5619,7 +5621,7 @@ def chat(payload: dict):
         }}
     # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
     if (not visual_turn) and re.search(
-        r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
+        r"\\b(?:run|start|submit|launch)\\b.{{0,80}}\\b(?:small|simple|tiny|minimal)\\b.{{0,80}}\\bsim(?:\\s*[- ]?2\\s*[- ]?real|2real)\\b",
         last_content,
         re.IGNORECASE,
     ):
@@ -7703,7 +7705,11 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
 def sim_viz_rrd(run_id: str = ""):
     return _sim_viz_rrd_file_response(run_id=run_id)
 
-@app.get("/sim-viz/rrd-blob")
+# HEAD as well as GET: the UI probes this endpoint with HEAD before choosing the
+# viewer URL, and a GET-only route answers 405, logging a console error on every
+# page load. The probe failure is caught and ignored, so this is cosmetic -- but
+# an error that fires every load trains operators to ignore the console.
+@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])
 def sim_viz_rrd_blob(run_id: str = ""):
     # Authenticated .rrd bytes for parent-page blob URL (Rerun wasm cannot send basic auth).
     return _sim_viz_rrd_file_response(run_id=run_id)

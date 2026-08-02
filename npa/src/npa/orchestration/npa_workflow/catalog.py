@@ -78,6 +78,174 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    # --- NuRec / NRE neural reconstruction -----------------------------------
+    # Every verb is a real entrypoint in npa/src/npa/cli/nurec/__init__.py that
+    # drives the real NVIDIA NRE container; none of these write a manifest stub.
+    "workbench.nurec.check": ToolEntry(
+        name="workbench.nurec.check",
+        description=(
+            "Verify NRE container pullability, real Hugging Face download "
+            "authorization, and that the GPU has RT cores, before any GPU work."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "check",
+            "--image",
+            "{{config.nurec_image}}",
+            "--dataset",
+            "{{config.dataset_id}}",
+            "--scene",
+            "{{config.scene}}",
+            "--variant",
+            "{{config.variant}}",
+            "--require-gpu",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.fetch": ToolEntry(
+        name="workbench.nurec.fetch",
+        description=(
+            "Download and unpack real NCore V4 shards and derive the rig->world "
+            "pose edge NRE requires for object-centric captures."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "fetch",
+            "--dataset",
+            "{{config.dataset_id}}",
+            "--scene",
+            "{{config.scene}}",
+            "--variant",
+            "{{config.variant}}",
+            "--cache-dir",
+            "{{config.cache_dir}}",
+            "--derive-rig",
+            # Each stage is its own pod, so the sequence must travel through S3.
+            # `fetch` publishes under `<ncore_uri>sequence/` and `reconstruct` reads
+            # `config.ncore_sequence_uri`; those two MUST agree. The relationship is
+            # asserted by npa/tests/workbench/test_nurec_access.py::
+            # test_spec_ncore_sequence_uri_matches_what_fetch_publishes, because a
+            # spec that sets only `ncore_uri` would otherwise fail silently in a
+            # different pod with an empty materialization.
+            "--publish-sequence",
+            "--output-uri",
+            "{{config.ncore_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.reconstruct": ToolEntry(
+        name="workbench.nurec.reconstruct",
+        description=(
+            "Train a 3DGUT Gaussian reconstruction with NRE into a renderable "
+            "USDZ, with real val metrics and exported ground-truth frames."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-uri",
+            "{{config.ncore_sequence_uri}}",
+            "--config-name",
+            "{{config.config_name}}",
+            "--mode",
+            "{{config.mode}}",
+            "--poses-component-group",
+            "{{config.poses_component_group}}",
+            "--cache-dir",
+            "{{config.cache_dir}}",
+            "--out-dir",
+            "{{config.out_dir}}",
+            "--max-epochs",
+            "{{config.max_epochs}}",
+            "--world-size",
+            "{{config.world_size}}",
+            "--image",
+            "{{config.nurec_image}}",
+            "--export-gt",
+            "--output-uri",
+            "{{config.reconstruction_uri}}",
+            "--input-uri",
+            "{{config.input_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.render": ToolEntry(
+        name="workbench.nurec.render",
+        description=(
+            "Render novel views from a trained reconstruction with `nre render` "
+            "using a rig offset (not the training views)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "render",
+            "--artifact-uri",
+            "{{config.reconstruction_uri}}",
+            "--out-dir",
+            "{{config.out_dir}}",
+            "--output-dir",
+            "{{config.render_dir}}",
+            "--image-scale",
+            "{{config.render_image_scale}}",
+            "--renderer",
+            "{{config.renderer}}",
+            "--rig-translation-offset",
+            "{{config.rig_translation_offset}}",
+            "--rig-rotation-offset",
+            "{{config.rig_rotation_offset}}",
+            "--no-replicate-training-views",
+            "--output-uri",
+            "{{config.novel_views_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.visualize": ToolEntry(
+        name="workbench.nurec.visualize",
+        description=(
+            "Build the run's Rerun recording (reports/sim2real.rrd) so the "
+            "reconstruction renders in the NPA agent's embedded viewer."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "visualize",
+            "--input-uri",
+            "{{config.run_root_uri}}",
+            "--output-uri",
+            "{{config.rrd_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.finalize": ToolEntry(
+        name="workbench.nurec.finalize",
+        description="Aggregate a NuRec run tree into a real final report.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "finalize",
+            "--input-uri",
+            "{{config.run_root_uri}}",
+            "--output-uri",
+            "{{config.final_report_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.vlm_eval.run": ToolEntry(
         name="workbench.vlm_eval.run",
         description="Score rollout directories with the VLM eval workbench tool.",

@@ -271,6 +271,13 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Static web viewer (caddy static server; no skypilot three-tier YAML).
         "lichtblick",
         "mjlab",
+        # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
+        # passthrough, so the inspect-based CapabilityContract cannot express them.
+        # CLI <-> SDK <-> YAML coherence is enforced instead by
+        # npa/tests/workbench/test_nurec_access.py::
+        # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
+        # argv flag against the real Typer options.
+        "nurec",
         "scenario-gen",
         "sim2real",
         "token-factory",

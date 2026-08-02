@@ -486,3 +486,24 @@ def test_foxglove_grounded_reply_explains_unconfigured_state() -> None:
     assert "--foxglove-embed-src" in reply
     # Never claim a viewer is showing data when it is not configured.
     assert "ready" not in reply.lower().split("foxglove_ready")[0]
+
+
+def test_keyword_skill_rules_lead_with_the_npa_workflow_skill() -> None:
+    """A Cosmos 3 workflow ask must not be answered with the SkyPilot template.
+
+    The two files share a name but differ in shape and submit command, so the
+    declarative-spec skill has to come first for turns the intent router leaves
+    unclassified.
+    """
+    from npa.cli.agent_chat import skill_names_for_keywords
+
+    for text in (
+        "write me a cosmos3 workflow yaml",
+        "cosmos 3 npa spec please",
+        "generate a COSMOS3 WORKFLOW",
+    ):
+        assert skill_names_for_keywords(text) == ["cosmos3-npa-workflow"], text
+
+    # Unrelated or too-generic turns must not pull the skill in.
+    for text in ("write me a workflow yaml", "what is cosmos3", "run cosmos2 transfer"):
+        assert skill_names_for_keywords(text) == [], text
