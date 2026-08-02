@@ -1,0 +1,299 @@
+{
+  "format": "npa_blackwell_dc_image_manifest_v1",
+  "as_of": "2026-08-02T00:00:00Z",
+  "registry_ref": "${NPA_REGISTRY}",
+  "registry_note": "Resolve the registry through npa.deploy.images / npa configure. Additive tags are pushed to both the primary (eu-north1) and mirror (us-central1) registries; never hardcode a registry id here.",
+  "target": {
+    "family": "Blackwell datacenter",
+    "gpus": [
+      {
+        "name": "B200",
+        "codename": "GB100",
+        "compute_capability": "10.0",
+        "sm": "sm_100",
+        "nebius_platform": "gpu-b200-sxm-a"
+      },
+      {
+        "name": "B300 (Blackwell Ultra)",
+        "codename": "GB300",
+        "compute_capability": "10.3",
+        "sm": "sm_103",
+        "nebius_platform": "gpu-b300-sxm",
+        "nebius_region": "uk-south1"
+      }
+    ],
+    "driver_floor": "R570",
+    "cuda_floor": "12.8",
+    "rt_cores": false,
+    "rt_cores_note": "Datacenter Blackwell has no RT cores, exactly like H100/H200. Rasterized rendering (Isaac Lab / SONIC isaac-render) must stay on L40S or RTX PRO 6000; only headless / state-based work routes here.",
+    "sass_compatibility": "SASS is per-arch with no cross-major compatibility. sm_120 (major 12, RTX PRO 6000) binaries and sm_100/sm_103 (major 10) binaries are mutually incompatible, so validating on RTX PRO 6000 does not prove B200/B300. Within a major, minor-version forward compatibility holds: sm_100 SASS runs on sm_103, not the reverse. Build for sm_100 first and confirm on B300.",
+    "arch_knobs": [
+      "Prebuilt torch wheels ship a fixed fat-binary arch set that TORCH_CUDA_ARCH_LIST cannot change; only the wheel index does. cu128/cu130 include sm_100 and sm_120, cu124/cu126 stop at sm_90.",
+      "Source-compiled CUDA extensions (flash-attn from source, Taichi/Genesis, natten, custom ops) obey TORCH_CUDA_ARCH_LIST. Omitting an arch yields 'no kernel image is available for execution on the device' at runtime."
+    ]
+  },
+  "verdicts": {
+    "ready": "The base wheel/toolchain already covers sm_100, so the image needs an additive rebuild plus live validation - no dependency changes.",
+    "port": "Needs a CUDA/torch bump or arch flags before it can target sm_100; the upstream wheels exist.",
+    "blocked": "Upstream does not ship the architecture yet. Track the upstream reason; never stub a fake pass.",
+    "not-applicable": "CPU-only or GPU-agnostic. It already runs on a B200/B300 host; only node-pool scheduling needs confirming."
+  },
+  "validation_states": {
+    "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
+    "pending-hardware": "Wheel arch set confirmed, but not yet run on a real datacenter Blackwell node.",
+    "not-required": "CPU-only image; no arch assertion applies."
+  },
+  "images": [
+    {
+      "name": "npa-base",
+      "dockerfile": "base/cuda13-b300/Dockerfile",
+      "build_script": "base/cuda13-b300/build.sh",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.9.0+cu130",
+      "torch_cuda_arch_list": "8.0 9.0 10.0 10.3 12.0",
+      "source_compiled_extensions": ["flash-attn-4 (CuTe)"],
+      "smoke": "import flash_attn; flash_attn_func on a real device",
+      "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. flash-attn-4 CuTe JIT-compiles at runtime, which is why it also runs on sm_120 - that JIT assumption still needs confirming on real B200/B300 silicon."
+    },
+    {
+      "name": "npa-workbench-cuda-base",
+      "dockerfile": "cuda-base/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.12.1 (cu130, from pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime)",
+      "source_compiled_extensions": [],
+      "smoke": "arch assertion only; children carry the functional smokes",
+      "notes": "No source-compiled extensions, so the wheel arch set is the whole story. Validate through its children (lancedb, detection-training)."
+    },
+    {
+      "name": "npa-lerobot",
+      "dockerfile": "lerobot/Dockerfile",
+      "alternate_dockerfile": "lerobot/Dockerfile.b300",
+      "build_script": "lerobot/build.sh",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.12.1 (bundled cu128) on the default Dockerfile; inherited 2.9.0+cu130 on Dockerfile.b300",
+      "source_compiled_extensions": [],
+      "smoke": "ACT training step on lerobot/pusht",
+      "notes": "Highest-confidence Blackwell path: Dockerfile.b300 is already labelled b300-sm_103 and B300 is Tier-1 in docs/nvidia-platform-architecture-coverage.md. The default Dockerfile starts from cu124 but pip-upgrades torch 2.12.1, so the effective arch set comes from the bundled cu128 wheel and is Blackwell-capable; prefer Dockerfile.b300 when reproducibility matters. Add B200 validation on top of the existing B300 evidence. Diffusion Policy is ~2.5x slower than H200 on B300 because it JITs from sm_100 PTX."
+    },
+    {
+      "name": "npa-lerobot-policy",
+      "dockerfile": "lerobot-policy/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.12.1 (bundled cu128)",
+      "source_compiled_extensions": [],
+      "smoke": "policy inference request against the served endpoint",
+      "notes": "Same wheel story as npa-lerobot: the cu124 base is irrelevant once torch is upgraded."
+    },
+    {
+      "name": "npa-lancedb",
+      "dockerfile": "lancedb/Dockerfile",
+      "build_script": "lancedb/build.sh",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.12.1 (cu130 via npa-workbench-cuda-base)",
+      "source_compiled_extensions": [],
+      "smoke": "CLIP embed into a LanceDB table",
+      "notes": "No custom CUDA build; the CLIP path is pure torch/transformers."
+    },
+    {
+      "name": "npa-detection-training",
+      "dockerfile": "detection-training/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.12.1 (cu130 via npa-workbench-cuda-base)",
+      "source_compiled_extensions": [],
+      "smoke": "one detector training step with COCO metrics",
+      "notes": "torchvision/pycocotools ops only, all shipped as wheels."
+    },
+    {
+      "name": "npa-cosmos3-reason",
+      "dockerfile": "cosmos3-reason/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "inherited 2.9.0+cu130 from npa-base",
+      "source_compiled_extensions": [],
+      "smoke": "VLM reason pass over a real clip",
+      "notes": "Rebuild after the npa-base arch widen lands, then validate. No compiled extensions of its own."
+    },
+    {
+      "name": "npa-cosmos2-transfer",
+      "dockerfile": "cosmos2-transfer/Dockerfile",
+      "build_script": "cosmos2-transfer/build.sh",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "cu128 via `uv sync --extra=cu128`",
+      "source_compiled_extensions": ["flash-attn (from the upstream cu128 lock)"],
+      "smoke": "real video -> video transfer, not a manifest write",
+      "notes": "Already on the cu128 track, which carries sm_100. Validate a genuine transfer so the flash-attn kernels actually execute."
+    },
+    {
+      "name": "npa-cosmos",
+      "dockerfile": "cosmos/Dockerfile",
+      "verdict": "port",
+      "validation": "pending-hardware",
+      "torch": "2.6.0+cu126",
+      "source_compiled_extensions": ["flash-attn 2.6.3+cu126", "natten 0.21.0+cu126"],
+      "port_blocker": "cu126 caps at sm_90, so neither the torch wheel nor the prebuilt flash-attn/natten wheels carry sm_100. Needs cu128 torch plus matching cu128 Blackwell flash-attn/natten wheels from nvidia-cosmos/cosmos-dependencies.",
+      "upstream_tracking": "https://github.com/nvidia-cosmos/cosmos-dependencies",
+      "smoke": "Predict2 inference exercising the natten and flash-attn kernels",
+      "notes": "A Blackwell nightly is reported to exist upstream; confirm the cu128 wheel set publishes sm_100 before attempting the bump."
+    },
+    {
+      "name": "npa-genesis",
+      "dockerfile": "genesis/Dockerfile",
+      "alternate_dockerfile": "genesis/Dockerfile.sm120",
+      "build_script": "genesis/build_sm120.sh",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "torch": "2.6.0+cu124 (default) / inherited 2.9.0+cu130 (sm120 path)",
+      "source_compiled_extensions": ["Taichi (Genesis physics backend)"],
+      "blocked_reason": "Genesis physics runs on Taichi, which has no stable sm_103 support. The torch side is portable (move the default off cu124 onto the cu130 Dockerfile.sm120 path), but the Taichi kernels are the hard gate.",
+      "upstream_tracking": "https://github.com/taichi-dev/taichi - retest sm_100 (B200) first; it may land before sm_103, and once Taichi accepts sm_103 the B300 case follows by forward compat.",
+      "smoke": "gs.init(gpu) plus a FrankaPickPlaceEnv step",
+      "notes": "Do not stub this. Re-test Taichi on B200 (sm_100) on each upstream release; that is the earliest signal. The whole sim2real subtree inherits this blocker."
+    },
+    {
+      "name": "npa-sim2real-envgen",
+      "dockerfile": "sim2real-envgen/Dockerfile",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "inherits_blocker_from": "npa-genesis",
+      "blocked_reason": "Layered on the Genesis sm120 image, so it inherits the Taichi sm_103 gate.",
+      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "smoke": "generate one environment and step it",
+      "notes": "Unblocks automatically when npa-genesis does."
+    },
+    {
+      "name": "npa-reference-policy",
+      "dockerfile": "sim2real-reference-policy/Dockerfile",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "inherits_blocker_from": "npa-genesis",
+      "blocked_reason": "Chained from npa-envgen, which is chained from Genesis; inherits the Taichi sm_103 gate.",
+      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "smoke": "reference policy rollout in a generated env",
+      "notes": "Unblocks automatically when npa-genesis does."
+    },
+    {
+      "name": "npa-loop-eval",
+      "dockerfile": "sim2real-eval/Dockerfile",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "inherits_blocker_from": "npa-genesis",
+      "blocked_reason": "Layered on the Genesis sm120 image; inherits the Taichi sm_103 gate.",
+      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "smoke": "gs.init(gpu) plus a scored evaluation episode",
+      "notes": "This image is why the smoke must be functional rather than a CUDA probe: the loop-eval 0.1.1 sm_120 regression passed an import check and failed on a real step."
+    },
+    {
+      "name": "npa-lerobot-vlm-rl",
+      "dockerfile": "lerobot-vlm-rl/Dockerfile",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "inherits_blocker_from": "npa-genesis",
+      "blocked_reason": "Layered on the Genesis sm120 image; inherits the Taichi sm_103 gate.",
+      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "smoke": "VLM-guided RL step in a Genesis env",
+      "notes": "Unblocks automatically when npa-genesis does."
+    },
+    {
+      "name": "npa-isaac-lab",
+      "dockerfile": "isaac-lab/Dockerfile",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "redistribution": "restricted",
+      "blocked_reason": "The NVIDIA vendor stack is pinned to x86_64 CUDA 12.8 with torch 2.7.0; B200/B300 support is gated on NVIDIA's x86_64 CUDA 13 alignment. Independently, Isaac Lab's value here is rasterized rendering, which datacenter Blackwell cannot do at all (no RT cores).",
+      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "smoke": "headless RL training step (never a render task)",
+      "notes": "Omniverse-restricted: never publish prebuilt to a public registry. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
+    },
+    {
+      "name": "npa-sonic",
+      "dockerfile": "sonic/Dockerfile",
+      "build_script": "sonic/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "redistribution": "restricted",
+      "blocked_reason": "Same NVIDIA x86_64 CUDA 12.8 pin as Isaac Lab. The k8s variant already builds sm80,sm90,sm120 via NPA_CUDA_ARCHITECTURES, so a compute-only datacenter variant is plausible - cu128 already carries sm_100 - but it is unvalidated.",
+      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "smoke": "headless whole-body-control fine-tune step",
+      "notes": "If a datacenter variant is added, extend NPA_CUDA_ARCHITECTURES to include sm100 and register it in npa/src/npa/deploy/sonic_image_manifest.json (gpu_compatibility + gpu_selection). Compute-only first; isaac-render must never route to B200/B300."
+    },
+    {
+      "name": "npa-sonic-mujoco",
+      "dockerfile": "sonic/Dockerfile.mujoco",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "redistribution": "restricted",
+      "inherits_blocker_from": "npa-sonic",
+      "blocked_reason": "Built on top of npa-sonic, so it inherits the vendor CUDA 12.8 pin.",
+      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "smoke": "MuJoCo evaluation episode",
+      "notes": "Unblocks with npa-sonic."
+    },
+    {
+      "name": "npa-groot",
+      "dockerfile": "groot/Dockerfile",
+      "build_script": "groot/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "redistribution": "restricted",
+      "blocked_reason": "GR00T's uv-locked venv and its Isaac Lab side venv both pin the NVIDIA x86_64 CUDA 12.8 stack; B200/B300 is gated on NVIDIA's CUDA 13 alignment.",
+      "upstream_tracking": "NVIDIA Isaac GR00T release notes for x86_64 CUDA 13 alignment",
+      "smoke": "GR00T finetune step",
+      "notes": "cu128 already carries sm_100, so a headless compute-only finetune variant may be reasonable ahead of full vendor alignment - validate compute-only first."
+    },
+    {
+      "name": "npa-fiftyone",
+      "dockerfile": "fiftyone/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "dataset load and app launch",
+      "notes": "CPU-only (python:3.11-slim + bundled mongod). Only confirm it schedules on the B200/B300 node pool."
+    },
+    {
+      "name": "npa-retargeting",
+      "dockerfile": "retargeting/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "retarget a motion clip",
+      "notes": "CPU-only. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-rerun-viewer",
+      "dockerfile": "rerun-viewer/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "serve an .rrd bundle",
+      "notes": "CPU-only viewer. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-lichtblick",
+      "dockerfile": "lichtblick/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "serve the static bundle and load an MCAP",
+      "notes": "Static caddy file server. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-foxglove-embed",
+      "dockerfile": "foxglove-embed/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "serve the @foxglove/embed SDK with CORS and byte ranges",
+      "notes": "Static caddy file server. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-sonic-export",
+      "dockerfile": "sonic-export/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "ONNX export plus eval",
+      "notes": "CPU torch (whl/cpu index) chosen precisely to avoid the blocked cuda13-b300 base. Only confirm node-pool scheduling."
+    }
+  ]
+}

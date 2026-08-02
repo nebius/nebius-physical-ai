@@ -9,19 +9,32 @@ ARG TORCH_VERSION=2.9.0
 ARG TORCHVISION_VERSION=0.24.0
 ARG TORCHAUDIO_VERSION=2.9.0
 ARG FLASH_ATTN_COMMIT=0409f9adcbdebff6cc19eb95f370d40e896980bc
+# SASS is per-arch with no cross-major compatibility, so every architecture a
+# source-compiled extension must run on has to be listed here explicitly:
+#   8.0  = A100 (sm_80)          9.0  = H100/H200 (sm_90)
+#   10.0 = B200 (sm_100)         10.3 = B300 / Blackwell Ultra (sm_103)
+#   12.0 = RTX PRO 6000 (sm_120)
+# Minor-version forward compatibility holds inside a major, so sm_100 SASS also
+# runs on sm_103 - but sm_120 (major 12) and sm_100/sm_103 (major 10) are
+# mutually incompatible, which is why both majors are listed.
+ARG TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3 12.0"
+# Space-separated torch arch tokens (sm_XX) that torch.cuda.get_arch_list() must
+# report for the build to succeed. Empty disables the assertion.
+ARG REQUIRE_TORCH_ARCHS="sm_80 sm_90 sm_100 sm_120"
 
 LABEL npa.image="cuda13-b300" \
       npa.cuda.base="${CUDA_BASE_TAG}" \
       npa.torch.version="${TORCH_VERSION}+cu130" \
       npa.flash_attn_4.commit="${FLASH_ATTN_COMMIT}" \
+      npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};torch_cuda_arch_list=10.3"
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    TORCH_CUDA_ARCH_LIST=10.3 \
+    TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
     CUDA_HOME=/usr/local/cuda \
     HF_HOME=/opt/npa/hf_cache \
     HF_HUB_CACHE=/opt/npa/hf_cache/hub \
@@ -131,17 +144,32 @@ pkg.mkdir(exist_ok=True)
 print("flash-attn-4", metadata.version("flash-attn-4"))
 PY
 
-RUN python - <<'PY'
+ARG REQUIRE_TORCH_ARCHS
+RUN python - "${REQUIRE_TORCH_ARCHS}" <<'PY'
 import importlib.metadata as metadata
+import sys
+
 import torch
 import flash_attn
 from flash_attn import flash_attn_func
 
+arch_list = torch.cuda.get_arch_list()
 print("torch", torch.__version__)
 print("cuda", torch.version.cuda)
+print("arch_list", arch_list)
 print("nvidia-nccl-cu13", metadata.version("nvidia-nccl-cu13"))
 print("flash-attn-4", flash_attn.__version__)
 print("flash_attn_func", flash_attn_func)
+
+required = sys.argv[1].split() if len(sys.argv) > 1 else []
+missing = [arch for arch in required if arch not in arch_list]
+if missing:
+    raise SystemExit(
+        f"torch wheel is missing required architectures {missing}; "
+        f"get_arch_list()={arch_list}. The prebuilt wheel's fat-binary arch set "
+        "cannot be changed by TORCH_CUDA_ARCH_LIST - pick a wheel index that "
+        "ships these architectures (cu128/cu130 carry sm_100 and sm_120)."
+    )
 PY
 
 WORKDIR /workspace
