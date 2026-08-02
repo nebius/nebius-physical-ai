@@ -7,6 +7,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa storage bucket](bucket.md)
 - [npa burst](burst.md)
 - [npa workbench byof](byof.md)
+- [npa cleanup](cleanup.md)
 - [npa cluster](cluster.md)
 - [npa configure](configure.md)
 - [npa convert](convert.md)
