@@ -148,6 +148,9 @@ def inspect_job_blockers(
         cmd[1:1] = ["--context", context.strip()]
     if namespace.strip():
         cmd.extend(["-n", namespace.strip()])
+    else:
+        # SkyPilot's namespace is configurable, so do not assume the context default.
+        cmd.append("--all-namespaces")
     execute = runner or subprocess.run
     try:
         result = execute(
@@ -175,7 +178,8 @@ def inspect_job_blockers(
         items = [item for item in items if _pod_belongs_to_job(item, str(job_id))]
         if not items:
             report.error = (
-                f"no pods found for managed job {job_id}; nothing has been scheduled yet"
+                f"no pods found for managed job {job_id}; it is between tasks, or "
+                "nothing has been scheduled yet"
             )
             return report
     report.blockers = _blockers_from_pods(items)

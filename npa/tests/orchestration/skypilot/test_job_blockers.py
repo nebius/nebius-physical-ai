@@ -216,3 +216,23 @@ def test_no_cluster_and_no_job_id_is_an_error() -> None:
     report = inspect_job_blockers()
 
     assert "no cluster name or job id" in report.error
+
+
+def test_the_lookup_is_not_limited_to_the_context_default_namespace() -> None:
+    # SkyPilot's namespace is configurable, so a default-namespace-only query
+    # would silently report a healthy job.
+    runner = _runner(_pods())
+
+    inspect_job_blockers(job_id="333", runner=runner)
+
+    assert "--all-namespaces" in runner.seen["cmd"]  # type: ignore[attr-defined]
+
+
+def test_an_explicit_namespace_is_honored() -> None:
+    runner = _runner(_pods())
+
+    inspect_job_blockers(cluster_name="sky-abc", namespace="sky", runner=runner)
+
+    cmd = runner.seen["cmd"]  # type: ignore[attr-defined]
+    assert "-n" in cmd and "sky" in cmd
+    assert "--all-namespaces" not in cmd
