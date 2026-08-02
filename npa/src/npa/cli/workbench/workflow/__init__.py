@@ -10,12 +10,16 @@ import tempfile
 import time
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
 
 from npa.cli.workbench.trigger import app as trigger_app
 from npa.orchestration.npa_workflow.spec import load_spec
+
+if TYPE_CHECKING:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 
 app = typer.Typer(
     name="workflow",
@@ -832,7 +836,7 @@ def _is_nebius_registry_image(image: str) -> bool:
 def _preflight_submit_images(
     yaml_path: Path,
     *,
-    options: object,
+    options: SkypilotRenderOptions,
     assume_decision: str,
     enabled: bool,
 ) -> None:

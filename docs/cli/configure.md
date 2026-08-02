@@ -18,6 +18,9 @@ Use --no-provision to enter existing S3 credentials.
 [default: provision]
 --token-factory-key  <str>  Store a Nebius Token Factory API key in ~/.npa/credentials.yaml
 under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup).
+--src-s3-uri  <str>  Persist the staged npa source prefix (s3://bucket/prefix/npa) in
+~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI
+without re-exporting it in every shell (skips interactive setup).
 --help  Show this message and exit.
 ```
 
@@ -29,6 +32,7 @@ under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup).
 | `--interactive` | --no-interactive  Force or disable interactive prompting (defaults to auto-detect |
 | `--provision` | --no-provision  Auto-create a Nebius S3 bucket (when missing) and an access key |
 | `--token-factory-key` | <str>  Store a Nebius Token Factory API key in ~/.npa/credentials.yaml |
+| `--src-s3-uri` | <str>  Persist the staged npa source prefix (s3://bucket/prefix/npa) in |
 | `--help` | Show this message and exit. |
 
 ## Subcommands
