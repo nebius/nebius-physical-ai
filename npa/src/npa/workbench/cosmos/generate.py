@@ -608,28 +608,43 @@ def generate_and_publish(
     is_s3 = target.startswith("s3://")
     local_dir = None if is_s3 else (target or None)
     vision = "" if dry_run else materialize_vision_input(input_path)
-    common = {
-        "mode": mode,
-        "prompt": prompt,
-        "name": name,
-        "checkpoint": checkpoint,
-        "vision_path": vision or str(input_path or "").strip(),
-        "negative_prompt": negative_prompt,
-        "seed": seed,
-        "num_steps": num_steps,
-        "guidance": guidance,
-        "no_guardrails": no_guardrails,
-        "parallelism_preset": parallelism_preset,
-        "environ": environ,
-    }
+    resolved_vision = vision or str(input_path or "").strip()
     if dry_run:
-        plan = generate_plan(output_dir=local_dir, **common)
+        plan = generate_plan(
+            mode=mode,
+            prompt=prompt,
+            output_dir=local_dir,
+            name=name,
+            checkpoint=checkpoint,
+            vision_path=resolved_vision,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            num_steps=num_steps,
+            guidance=guidance,
+            no_guardrails=no_guardrails,
+            parallelism_preset=parallelism_preset,
+            environ=environ,
+        )
         plan.update({"status": "planned", "run_id": run_id, "weights_baked": False})
         if is_s3:
             plan["output_uri"] = target
         return plan
 
-    result = run_cosmos3_generate(output_dir=local_dir, **common)
+    result = run_cosmos3_generate(
+        mode=mode,
+        prompt=prompt,
+        output_dir=local_dir,
+        name=name,
+        checkpoint=checkpoint,
+        vision_path=resolved_vision,
+        negative_prompt=negative_prompt,
+        seed=seed,
+        num_steps=num_steps,
+        guidance=guidance,
+        no_guardrails=no_guardrails,
+        parallelism_preset=parallelism_preset,
+        environ=environ,
+    )
     result["run_id"] = run_id
     if is_s3:
         return publish_generation_to_s3(result, target, run_id=run_id)
