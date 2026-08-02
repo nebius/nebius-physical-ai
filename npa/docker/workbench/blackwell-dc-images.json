@@ -60,8 +60,8 @@
       "source_compiled_extensions": [
         "flash-attn-4 (CuTe)"
       ],
-      "smoke": "import flash_attn; flash_attn_func on a real device",
-      "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. flash-attn-4 CuTe JIT-compiles at runtime, which is why it also runs on sm_120 - that JIT assumption still needs confirming on real B200/B300 silicon.",
+      "smoke": "gpu_capability_smoke.py: device capability + native SASS, bf16 matmul and torch SDPA as controls, then a flash-attn-4 CuTe forward pass checked against SDPA",
+      "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. The flash-attn-4 CuTe JIT was assumed to make this image usable on any Blackwell part; real-GPU testing disproved that for sm_120 - see known_gaps.flash_attn_sm120.",
       "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260802T030943Z",
       "published_digest": "sha256:4769f642e5f4436f598e4578c268673cba1f089273bd0a3535d7e9fc05509e5e",
       "published_registries": [
@@ -342,9 +342,24 @@
         "primary",
         "mirror"
       ],
-      "hardware_run": "not-yet-run",
+      "hardware_run": "Partially run. Validated on a real NVIDIA RTX PRO 6000 Blackwell Server Edition (sm_120) node on the existing Kubernetes GPU pool: capability (12,0) confirmed, native SASS present, bf16 matmul and torch SDPA pass, and the checker correctly REFUSED a b200 target on that device (cross-major guard). flash-attn-4 fails there for the pre-existing reason in known_gaps.flash_attn_sm120. Not yet run on B200 or B300, which is what the sm_100/sm_103 verdicts still need.",
       "hardware_blocker": "Tenant GPU quota is fully consumed by other workloads: compute.instance.gpu.b200 and compute.instance.gpu.h200 both report limit 2 with 2 in use, and B300 serverless instances in uk-south1 reach STARTING then STOPPED without running. The blocker is shared capacity, not the image: the same submission path fails identically on H200, which is a known-good platform.",
       "how_to_finish": "When B200 or B300 capacity frees up, run npa/scripts/validate_blackwell_image.sh <image> --target b200 --gpu on the node, then the image's real capability smoke, and flip this entry's validation to 'validated'."
+    }
+  },
+  "known_gaps": {
+    "flash_attn_sm120": {
+      "summary": "flash-attn-4's CuTe forward kernel cannot execute on sm_120 (RTX PRO 6000 Blackwell). `import flash_attn` succeeds, so an import-only check reports a false pass.",
+      "error": "AttributeError: 'NoneType' object has no attribute '_trait' in cutlass.cute.nvgpu.cpasync.tma_partition, reached from flash_attn/cute/flash_fwd.py epilogue via quack.copy_utils.tma_get_copy_fn",
+      "root_cause": "The kernel partitions its epilogue with a TMA (Tensor Memory Accelerator) copy atom, and that atom is unavailable on workstation Blackwell. TMA is a datacenter feature: sm_90 (Hopper) and sm_100/sm_103 (datacenter Blackwell) have it, sm_120 does not.",
+      "evidence": "Verified on a real NVIDIA RTX PRO 6000 Blackwell Server Edition node (capability (12,0)). All four tested configurations (bf16/fp16, head_dim 64/128, seqlen 64/256) fail at the same line, so it is architecture-wide rather than config-specific. torch SDPA and a bf16 tensor-core matmul both succeed on the same device, which rules out the GPU and the wheel.",
+      "regression": "No. The previously published npa-base:cuda13-b300-sm80-sm90-sm120-latest, built before the arch widen and the CUTLASS pin, fails identically on the same node. This is pre-existing and was hidden by an import-only golden eval.",
+      "affects": [
+        "sm_120 consumers of npa-base"
+      ],
+      "does_not_affect": "sm_100/sm_103 are expected to work because they have TMA, but that is still unverified on real datacenter Blackwell silicon.",
+      "upstream_tracking": "https://github.com/Dao-AILab/flash-attention - flash-attn-4 CuTe TMA path assumes a datacenter architecture",
+      "mitigation": "gpu_capability_smoke.py --allow-no-tma records this as a known gap on non-TMA parts and still fails on datacenter parts, where a TMA failure would be real. Callers on sm_120 should use torch SDPA."
     }
   }
 }

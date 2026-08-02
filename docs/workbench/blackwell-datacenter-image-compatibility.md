@@ -35,7 +35,9 @@ Floor: R570+ driver, CUDA 12.8 or 13.0.
 
 `sm_103` is deliberately absent from that assertion: stock cu130 wheels ship `sm_100` SASS, and B300 is reached by forward compatibility. Asserting `sm_103` would fail a perfectly good wheel.
 
-`npa-base` also builds flash-attn-4 (CuTe), which JIT-compiles at runtime — that is why it also runs on `sm_120`. Treat the JIT as an assumption to verify on real B200/B300 silicon, not as a guarantee.
+`npa-base` also builds flash-attn-4 (CuTe), which JIT-compiles at runtime. That was assumed to make it usable on any Blackwell part; **real-GPU testing disproved it for `sm_120`.** The CuTe forward kernel partitions its epilogue with a TMA (Tensor Memory Accelerator) copy atom, and TMA is a datacenter feature — `sm_90`, `sm_100`, and `sm_103` have it, RTX PRO 6000 (`sm_120`) does not. On `sm_120` the kernel raises `AttributeError: 'NoneType' object has no attribute '_trait'` inside `cpasync.tma_partition`, for every dtype, head dim, and sequence length tried, while torch SDPA and bf16 matmul run fine on the same device.
+
+`import flash_attn` still succeeds, which is exactly why this went unnoticed: the golden eval only imported. It is now a real capability smoke. Details, including the A/B against the previously published image that proves this is pre-existing rather than a regression, are in the `known_gaps` block of `npa/docker/workbench/blackwell-dc-images.json`. Callers on `sm_120` should use torch SDPA.
 
 ## 2. Build, tag, and register
 
@@ -94,7 +96,9 @@ python -c "import torch; cap=torch.cuda.get_device_capability(); \
   assert cap in {(10,0),(10,3)}, cap"   # (10,0)=B200, (10,3)=B300
 ```
 
-**A real capability smoke, not a CUDA probe.** Run the image's golden/functional smoke so the custom kernels actually execute: flash-attn / natten for cosmos and lerobot-b300, `gs.init(gpu)` plus a `FrankaPickPlaceEnv` step for genesis and loop-eval, a real video-to-video transfer for cosmos2-transfer, a CLIP embed for lancedb, a detector training step for detection-training. This is what caught the `loop-eval:0.1.1` `sm_120` regression: the import check passed and the first real step failed.
+**A real capability smoke, not a CUDA probe.** Run the image's golden/functional smoke so the custom kernels actually execute: flash-attn / natten for cosmos and lerobot-b300, `gs.init(gpu)` plus a `FrankaPickPlaceEnv` step for genesis and loop-eval, a real video-to-video transfer for cosmos2-transfer, a CLIP embed for lancedb, a detector training step for detection-training. This is what caught the `loop-eval:0.1.1` `sm_120` regression, and it is what caught the flash-attn TMA gap above — in both cases an import check passed and the first real kernel failed.
+
+For the base image that smoke is committed as `npa/scripts/gpu_capability_smoke.py`. To run it on an already-deployed Kubernetes GPU pool rather than provisioning a node, use `npa/scripts/blackwell-gpu-validation-job.yaml`; it runs the arch check positively for the target architecture, negatively for a different CUDA major (so a pass on the wrong GPU family cannot be mistaken for success), and then the capability smoke.
 
 **Provisioning.** `--gpu-type b300` resolves to `gpu-b300-sxm` (presets `1gpu-24vcpu-346gb` / `8gpu-192vcpu-2768gb`, uk-south1); `--gpu-type b200` resolves to `gpu-b200-sxm` (`1gpu-20vcpu-224gb` / `8gpu-160vcpu-1792gb`, us-central1). Both platform ids and their presets were confirmed against `nebius compute platform list`; a `gpu-b200-sxm-a` variant exists in other regions and stays resolvable. `npa/benchmark_b300_h200.sh` is a working deploy invocation. For host-mounted-driver images, use a Managed K8s pool with the NVIDIA GPU Operator.
 

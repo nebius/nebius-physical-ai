@@ -1,0 +1,98 @@
+# Real-GPU validation of a CUDA 13 Blackwell workbench image on a Kubernetes
+# GPU pool. Reuses an already-deployed node rather than provisioning one.
+#
+# Substitute before applying (envsubst, or edit in place):
+#   NPA_IMAGE          image under test, e.g. ${NPA_REGISTRY}/npa-base:<tag>
+#   NPA_PULL_SECRET    dockerconfigjson secret for that registry
+#   NPA_GPU_INSTANCE   node instance type, e.g. gpu-b200-sxm / gpu-rtx6000
+#   NPA_TARGET_ARCH    SASS the wheel must carry, e.g. sm_100
+#   NPA_TARGET_CAP     capability the device must report, e.g. 10.0
+#   NPA_CROSS_ARCH     a different CUDA major, e.g. sm_120 - the negative test
+#   NPA_CROSS_CAP      that architecture's capability, e.g. 12.0
+#   NPA_ALLOW_NO_TMA   "--allow-no-tma" on sm_120, empty on datacenter parts
+#
+# The job runs three checks so a pass means something:
+#   1. positive - the target architecture must pass with native SASS
+#   2. negative - a different CUDA major must FAIL, proving the checker does not
+#                 hand out a false "Blackwell ready" on the wrong GPU family
+#   3. capability smoke - real kernels execute, not just imports
+#
+# Mount check_torch_gpu_arch.py and gpu_capability_smoke.py at /npa:
+#   kubectl create configmap npa-gpu-validation \
+#     --from-file=npa/scripts/check_torch_gpu_arch.py \
+#     --from-file=npa/scripts/gpu_capability_smoke.py
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: npa-blackwell-gpu-validation
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: NPA_PULL_SECRET
+      nodeSelector:
+        node.kubernetes.io/instance-type: NPA_GPU_INSTANCE
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: validate
+          image: NPA_IMAGE
+          command:
+            - bash
+            - -c
+            - |
+              set -uo pipefail
+              nvidia-smi || echo "nvidia-smi unavailable"
+
+              echo "### positive: require ${NPA_TARGET_ARCH} / ${NPA_TARGET_CAP}"
+              python /npa/check_torch_gpu_arch.py \
+                --require-arch "${NPA_TARGET_ARCH}" \
+                --require-capability "${NPA_TARGET_CAP}" \
+                --require-sass-coverage
+              POSITIVE=$?
+
+              echo "### negative: require ${NPA_CROSS_ARCH} / ${NPA_CROSS_CAP} (must fail)"
+              python /npa/check_torch_gpu_arch.py \
+                --require-arch "${NPA_CROSS_ARCH}" \
+                --require-capability "${NPA_CROSS_CAP}" \
+                --require-sass-coverage
+              NEGATIVE=$?
+
+              echo "### capability smoke"
+              python /npa/gpu_capability_smoke.py \
+                --expect-capability "${NPA_TARGET_CAP}" ${NPA_ALLOW_NO_TMA}
+              SMOKE=$?
+
+              FAILED=0
+              [ "$POSITIVE" -eq 0 ] || { echo "FAIL: positive arch check"; FAILED=1; }
+              [ "$NEGATIVE" -ne 0 ] || { echo "FAIL: cross-major check passed on the wrong arch"; FAILED=1; }
+              [ "$SMOKE" -eq 0 ] || { echo "FAIL: capability smoke"; FAILED=1; }
+              [ "$FAILED" -eq 0 ] && echo "ALL_GPU_VALIDATION_PASSED" || echo "GPU_VALIDATION_FAILED"
+              exit "$FAILED"
+          env:
+            - name: NPA_TARGET_ARCH
+              value: "NPA_TARGET_ARCH"
+            - name: NPA_TARGET_CAP
+              value: "NPA_TARGET_CAP"
+            - name: NPA_CROSS_ARCH
+              value: "NPA_CROSS_ARCH"
+            - name: NPA_CROSS_CAP
+              value: "NPA_CROSS_CAP"
+            - name: NPA_ALLOW_NO_TMA
+              value: "NPA_ALLOW_NO_TMA"
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: scripts
+              mountPath: /npa
+      volumes:
+        - name: scripts
+          configMap:
+            name: npa-gpu-validation
+            defaultMode: 365
