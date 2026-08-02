@@ -750,6 +750,32 @@ def test_launch_failure_pod_config_kubernetes_bug_gets_a_fix_hint() -> None:
     assert "retries it indefinitely" in message
 
 
+def test_submission_dir_and_secret_files_are_owner_only(tmp_path) -> None:
+    """The submission dir + its secret-bearing files must not be world-readable.
+
+    The rendered task YAML / generated SkyPilot config can carry a registry IAM
+    token (SKYPILOT_DOCKER_PASSWORD) and S3 creds; write_text/mkdir honor the
+    umask, so submit tightens them explicitly (security bug 9).
+    """
+    import shutil
+
+    owned = workflow_module._submission_dir("run-owner", None)
+    try:
+        assert (owned.stat().st_mode & 0o077) == 0
+    finally:
+        shutil.rmtree(owned, ignore_errors=True)
+
+    isolated = tmp_path / "sky-config"
+    scoped = workflow_module._submission_dir("run-scoped", isolated)
+    assert (scoped.stat().st_mode & 0o077) == 0
+
+    secret_file = scoped / "workflow.yaml"
+    secret_file.write_text("envs:\n  SKYPILOT_DOCKER_PASSWORD: tok\n")
+    secret_file.chmod(0o644)
+    workflow_module._chmod_owner_only(secret_file)
+    assert (secret_file.stat().st_mode & 0o077) == 0
+
+
 def test_pod_config_classifier_ignores_unrelated_errors() -> None:
     assert workflow_module._looks_like_pod_config_error("some random error") is False
     assert workflow_module._looks_like_pod_config_error("Invalid pod_config: bad") is True

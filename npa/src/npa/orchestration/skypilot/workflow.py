@@ -147,6 +147,8 @@ def submit_workflow(
             owned_submission_dir = submission_dir
         prepared_yaml = submission_dir / "workflow.yaml"
         shutil.copy2(yaml_path, prepared_yaml)
+        # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
+        _chmod_owner_only(prepared_yaml)
         sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
         global_config = apply_controller_override(
             _load_base_config(runtime_config.global_config_path),
@@ -155,6 +157,7 @@ def submit_workflow(
         )
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        _chmod_owner_only(generated_config_path)
         env = sky_environment(runtime_config.isolated_config_dir)
         for key, value in (extra_env or {}).items():
             if value:
@@ -645,6 +648,19 @@ def _load_base_config(config_path: Path | None) -> dict[str, Any]:
     return data
 
 
+def _chmod_owner_only(path: Path, *, is_dir: bool = False) -> None:
+    """Best-effort ``chmod`` to owner-only (0700 dir / 0600 file).
+
+    The submission dir holds the rendered task YAML and generated SkyPilot config,
+    which can carry registry/docker auth and S3 creds. ``write_text`` /
+    ``mkdir`` honor the umask (commonly world-readable), so tighten explicitly.
+    """
+    try:
+        path.chmod(0o700 if is_dir else 0o600)
+    except OSError:  # pragma: no cover - unusual filesystems (e.g. mounted FAT)
+        pass
+
+
 def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
     if isolated_config_dir is None:
         # Successful submissions return this path for debugging; exception paths
@@ -654,6 +670,7 @@ def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
         root = Path(isolated_config_dir) / "submissions" / run_id
         root.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=True)
+    _chmod_owner_only(root, is_dir=True)
     return root
 
 

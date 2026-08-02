@@ -559,6 +559,12 @@ class SkyPilotWaveExecutor:
         with tempfile.TemporaryDirectory(prefix="npa-workflow-wave-") as tmp:
             path = Path(tmp) / f"{job_name}.skypilot.yaml"
             path.write_text(yaml_text, encoding="utf-8")
+            # The rendered task can embed registry/docker auth (a short-lived IAM
+            # token under SKYPILOT_DOCKER_PASSWORD) and S3 creds; keep it owner-only.
+            try:
+                path.chmod(0o600)
+            except OSError:  # pragma: no cover - unusual filesystems
+                pass
             result = self._submit(path, job_name)
         job_id = self._resolve_job_id(
             job_name, str(getattr(result, "job_id", "") or "").strip(), attempt
