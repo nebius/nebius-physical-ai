@@ -11,7 +11,7 @@ There is a second, independent axis: the GPU architecture the image was compiled
 | GPU | Family | Compute capability | SM target | Nebius platform |
 |---|---|---|---|---|
 | RTX PRO 6000 Blackwell | Blackwell workstation (GB20x) | 12.0 | `sm_120` | `gpu-rtx6000` |
-| B200 | Blackwell datacenter (GB100) | 10.0 | `sm_100` | `gpu-b200-sxm-a` / `gpu-b200-sxm` |
+| B200 | Blackwell datacenter (GB100) | 10.0 | `sm_100` | `gpu-b200-sxm` (us-central1) |
 | B300 (Blackwell Ultra) | Blackwell datacenter (GB300) | 10.3 | `sm_103` | `gpu-b300-sxm` (uk-south1) |
 | H100 / H200 | Hopper | 9.0 | `sm_90` | `gpu-h100-sxm` / `gpu-h200-sxm` |
 | L40S | Ada | 8.9 | `sm_89` | `gpu-l40s-a` / `gpu-l40s-d` |

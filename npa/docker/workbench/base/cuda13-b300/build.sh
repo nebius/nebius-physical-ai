@@ -9,9 +9,10 @@ PUSH=0
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-}"
 CUDA_BASE_TAG="${CUDA_BASE_TAG:-13.0.1-cudnn-devel-ubuntu22.04}"
 FLASH_ATTN_COMMIT="${FLASH_ATTN_COMMIT:-0409f9adcbdebff6cc19eb95f370d40e896980bc}"
-# Pinned because flash-attn-4's unbounded quack/cutlass ranges resolve to an
-# incompatible pair; see the Dockerfile comment.
-QUACK_KERNELS_VERSION="${QUACK_KERNELS_VERSION:-0.6.1}"
+# Pinned because flash-attn-4's unbounded cutlass/quack ranges resolve to a pair
+# that fails to import; see the Dockerfile comment. Bump these together.
+CUTLASS_DSL_VERSION="${CUTLASS_DSL_VERSION:-4.5.3}"
+QUACK_KERNELS_VERSION="${QUACK_KERNELS_VERSION:-0.5.0}"
 # Datacenter Blackwell needs both CUDA majors: 10.0/10.3 (B200/B300) and 12.0
 # (RTX PRO 6000). sm_103 is omitted from the assertion because stock cu130
 # wheels ship sm_100 SASS and rely on 10.0 -> 10.3 forward compatibility.
@@ -33,7 +34,7 @@ the build when the prebuilt torch wheel does not report those architectures in
 torch.cuda.get_arch_list(); pass an empty string to skip the assertion.
 
 Equivalent env vars: TORCH_CUDA_ARCH_LIST, REQUIRE_TORCH_ARCHS, CUDA_BASE_TAG,
-FLASH_ATTN_COMMIT, QUACK_KERNELS_VERSION, DOCKER_CONTEXT.
+FLASH_ATTN_COMMIT, CUTLASS_DSL_VERSION, QUACK_KERNELS_VERSION, DOCKER_CONTEXT.
 EOF
 }
 
@@ -93,6 +94,7 @@ BUILD_ARGS=(
   --build-arg "BUILD_TS=${TAG}"
   --build-arg "CUDA_BASE_TAG=${CUDA_BASE_TAG}"
   --build-arg "FLASH_ATTN_COMMIT=${FLASH_ATTN_COMMIT}"
+  --build-arg "CUTLASS_DSL_VERSION=${CUTLASS_DSL_VERSION}"
   --build-arg "QUACK_KERNELS_VERSION=${QUACK_KERNELS_VERSION}"
   --build-arg "TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
   --build-arg "REQUIRE_TORCH_ARCHS=${REQUIRE_TORCH_ARCHS}"

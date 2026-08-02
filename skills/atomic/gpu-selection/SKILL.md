@@ -44,7 +44,7 @@ resources, updates image routing, or reviews render/training placement.
 | GPU | Compute capability | SM | Nebius platform |
 |---|---|---|---|
 | RTX PRO 6000 Blackwell | 12.0 | `sm_120` | `gpu-rtx6000` |
-| B200 | 10.0 | `sm_100` | `gpu-b200-sxm-a` / `gpu-b200-sxm` |
+| B200 | 10.0 | `sm_100` | `gpu-b200-sxm` (us-central1) |
 | B300 (Blackwell Ultra) | 10.3 | `sm_103` | `gpu-b300-sxm` |
 
 A green smoke on RTX PRO 6000 does not prove B200/B300. Within major 10,

@@ -11,7 +11,9 @@
         "codename": "GB100",
         "compute_capability": "10.0",
         "sm": "sm_100",
-        "nebius_platform": "gpu-b200-sxm-a"
+        "nebius_platform": "gpu-b200-sxm",
+        "nebius_region": "us-central1",
+        "nebius_platform_variants": ["gpu-b200-sxm", "gpu-b200-sxm-a"]
       },
       {
         "name": "B300 (Blackwell Ultra)",

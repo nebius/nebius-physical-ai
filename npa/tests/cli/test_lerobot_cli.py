@@ -364,10 +364,11 @@ def test_lerobot_gpu_platform_aliases() -> None:
 def test_lerobot_resolves_datacenter_blackwell() -> None:
     """B200 (sm_100) is routable, not just B300 (sm_103)."""
 
-    assert lerobot._lerobot_gpu_platform("b200") == "gpu-b200-sxm-a"
-    assert lerobot._lerobot_gpu_platform("gpu-b200-sxm") == "gpu-b200-sxm"
-    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm-a", 1) == "1gpu-20vcpu-224gb"
-    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm-a", 8) == "8gpu-160vcpu-1792gb"
+    assert lerobot._lerobot_gpu_platform("b200") == "gpu-b200-sxm"
+    assert lerobot._lerobot_gpu_platform("gpu-b200-sxm-a") == "gpu-b200-sxm-a"
+    # Presets confirmed against the live Nebius compute platform listing.
+    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 1) == "1gpu-20vcpu-224gb"
+    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 8) == "8gpu-160vcpu-1792gb"
 
 
 def test_lerobot_gpu_table_does_not_drift_from_serverless() -> None:

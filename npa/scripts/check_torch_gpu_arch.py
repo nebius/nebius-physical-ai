@@ -6,10 +6,11 @@ apart from ``torch``. It answers the two questions that decide whether an image
 is deployable on a given GPU:
 
 1. Does the prebuilt torch wheel ship SASS for the architecture?
-   ``torch.cuda.get_arch_list()`` is fixed at wheel-build time and cannot be
-   changed by ``TORCH_CUDA_ARCH_LIST``; only picking a different wheel index
-   changes it. cu128/cu130 carry ``sm_100`` and ``sm_120``, cu124/cu126 stop at
-   ``sm_90``.
+   The wheel's arch set is fixed at wheel-build time and cannot be changed by
+   ``TORCH_CUDA_ARCH_LIST``; only picking a different wheel index changes it.
+   cu128/cu130 carry ``sm_100`` and ``sm_120``, cu124/cu126 stop at ``sm_90``.
+   This check reads it without needing a driver, so it also works at image
+   build time.
 2. Is the device we actually landed on the one we meant to validate?
    ``torch.cuda.get_device_capability()`` is the only trustworthy answer -
    a CUDA probe that merely imports torch proves nothing.
@@ -74,6 +75,27 @@ def format_arch(arch: tuple[int, int]) -> str:
     return f"sm_{arch[0]}{arch[1]}"
 
 
+def wheel_arch_list(torch_module) -> list[str]:
+    """Return the SASS/PTX architectures baked into the torch wheel.
+
+    ``torch.cuda.get_arch_list()`` short-circuits to ``[]`` when no CUDA device
+    is visible, which is exactly the situation on a driverless build host - a
+    gate written against it would be silently unenforceable there. The
+    underlying ``_cuda_getArchFlags`` reads the compiled binary and does not
+    need a driver, so prefer it and fall back to the public API.
+    """
+
+    getter = getattr(torch_module._C, "_cuda_getArchFlags", None)
+    if getter is not None:
+        try:
+            flags = getter()
+        except Exception:  # pragma: no cover - depends on the torch build
+            flags = None
+        if flags:
+            return flags.split()
+    return list(torch_module.cuda.get_arch_list())
+
+
 def wheel_arch_set(arch_list: list[str]) -> set[tuple[int, int]]:
     """Parse ``get_arch_list()`` into capability pairs, ignoring PTX-only entries."""
 
@@ -108,7 +130,7 @@ def arch_is_covered(
 def build_report(args: argparse.Namespace) -> tuple[dict, list[str]]:
     import torch
 
-    arch_list = list(torch.cuda.get_arch_list())
+    arch_list = wheel_arch_list(torch)
     available = wheel_arch_set(arch_list)
     failures: list[str] = []
 

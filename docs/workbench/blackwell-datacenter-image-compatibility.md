@@ -13,7 +13,7 @@ Read this before touching a Dockerfile. "Blackwell" is a marketing family coveri
 | GPU | Family | Compute capability | SM target | Nebius platform |
 |---|---|---|---|---|
 | RTX PRO 6000 Blackwell | Blackwell workstation (GB20x) | 12.0 | `sm_120` | `gpu-rtx6000` |
-| B200 | Blackwell datacenter (GB100) | 10.0 | `sm_100` | `gpu-b200-sxm-a` / `gpu-b200-sxm` |
+| B200 | Blackwell datacenter (GB100) | 10.0 | `sm_100` | `gpu-b200-sxm` (us-central1) |
 | B300 (Blackwell Ultra) | Blackwell datacenter (GB300) | 10.3 | `sm_103` | `gpu-b300-sxm` (uk-south1) |
 
 Four rules follow:
@@ -96,7 +96,9 @@ python -c "import torch; cap=torch.cuda.get_device_capability(); \
 
 **A real capability smoke, not a CUDA probe.** Run the image's golden/functional smoke so the custom kernels actually execute: flash-attn / natten for cosmos and lerobot-b300, `gs.init(gpu)` plus a `FrankaPickPlaceEnv` step for genesis and loop-eval, a real video-to-video transfer for cosmos2-transfer, a CLIP embed for lancedb, a detector training step for detection-training. This is what caught the `loop-eval:0.1.1` `sm_120` regression: the import check passed and the first real step failed.
 
-**Provisioning.** `--gpu-type b300` resolves to `gpu-b300-sxm` (presets `1gpu-24vcpu-346gb` / `8gpu-192vcpu-2768gb`, uk-south1); `--gpu-type b200` resolves to `gpu-b200-sxm-a` (`1gpu-20vcpu-224gb` / `8gpu-160vcpu-1792gb`). `npa/benchmark_b300_h200.sh` is a working deploy invocation. For host-mounted-driver images, use a Managed K8s pool with the NVIDIA GPU Operator.
+**Provisioning.** `--gpu-type b300` resolves to `gpu-b300-sxm` (presets `1gpu-24vcpu-346gb` / `8gpu-192vcpu-2768gb`, uk-south1); `--gpu-type b200` resolves to `gpu-b200-sxm` (`1gpu-20vcpu-224gb` / `8gpu-160vcpu-1792gb`, us-central1). Both platform ids and their presets were confirmed against `nebius compute platform list`; a `gpu-b200-sxm-a` variant exists in other regions and stays resolvable. `npa/benchmark_b300_h200.sh` is a working deploy invocation. For host-mounted-driver images, use a Managed K8s pool with the NVIDIA GPU Operator.
+
+Datacenter Blackwell is also offered as `gpu-gb300` (Grace-Blackwell Ultra). That host is aarch64, so the x86_64 workbench images do not run on it — the `sm_103` GPU is the same, but the CPU architecture is not.
 
 **Guardrails before pushing registry or docs changes:**
 

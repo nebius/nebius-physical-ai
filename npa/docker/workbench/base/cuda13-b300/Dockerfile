@@ -9,13 +9,15 @@ ARG TORCH_VERSION=2.9.0
 ARG TORCHVISION_VERSION=0.24.0
 ARG TORCHAUDIO_VERSION=2.9.0
 ARG FLASH_ATTN_COMMIT=0409f9adcbdebff6cc19eb95f370d40e896980bc
-# flash-attn-4 requires quack-kernels>=0.4.0 and nvidia-cutlass-dsl>=4.4.2, both
-# unbounded. Left alone, pip picks the newest cutlass DSL, finds that the newest
-# quack pins an exact older cutlass, and backtracks *quack* instead - landing on
-# an old quack against a new cutlass that fails to import with
-# "module 'cutlass.cute.core' has no attribute 'ThrMma'". Pinning quack cascades
-# its exact cutlass pin and keeps the pair consistent.
-ARG QUACK_KERNELS_VERSION=0.6.1
+# flash-attn-4 requires nvidia-cutlass-dsl>=4.4.2 and quack-kernels>=0.4.0, both
+# unbounded, so pip resolves to whatever is newest. CUTLASS DSL 4.6.x dropped
+# cutlass.cute.core.ThrMma, which this flash-attn commit still references, so an
+# unpinned build installs successfully and then fails on `import flash_attn`
+# with "module 'cutlass.cute.core' has no attribute 'ThrMma'". 4.5.3 is the
+# newest DSL that still exposes it; quack 0.5.0 is the newest quack that accepts
+# a 4.5.x DSL (0.5.3+ pin an exact 4.6 release). Bump all three together.
+ARG CUTLASS_DSL_VERSION=4.5.3
+ARG QUACK_KERNELS_VERSION=0.5.0
 # SASS is per-arch with no cross-major compatibility, so every architecture a
 # source-compiled extension must run on has to be listed here explicitly:
 #   8.0  = A100 (sm_80)          9.0  = H100/H200 (sm_90)
@@ -33,10 +35,11 @@ LABEL npa.image="cuda13-b300" \
       npa.cuda.base="${CUDA_BASE_TAG}" \
       npa.torch.version="${TORCH_VERSION}+cu130" \
       npa.flash_attn_4.commit="${FLASH_ATTN_COMMIT}" \
+      npa.cutlass_dsl.version="${CUTLASS_DSL_VERSION}" \
       npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
       npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -119,12 +122,14 @@ RUN python -m pip install \
       transformers \
       wandb
 
+ARG CUTLASS_DSL_VERSION
 ARG QUACK_KERNELS_VERSION
 RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention \
     && cd /tmp/flash-attention \
     && git checkout "${FLASH_ATTN_COMMIT}" \
     && python -m pip install \
-      "quack-kernels[cu13]==${QUACK_KERNELS_VERSION}" \
+      "nvidia-cutlass-dsl[cu13]==${CUTLASS_DSL_VERSION}" \
+      "quack-kernels==${QUACK_KERNELS_VERSION}" \
       "flash_attn/cute[cu13]" \
     && rm -rf /tmp/flash-attention
 
@@ -164,7 +169,9 @@ import torch
 import flash_attn
 from flash_attn import flash_attn_func
 
-arch_list = torch.cuda.get_arch_list()
+# torch.cuda.get_arch_list() short-circuits to [] with no visible device, which
+# is every build host. _cuda_getArchFlags reads the compiled binary instead.
+arch_list = (torch._C._cuda_getArchFlags() or "").split() or torch.cuda.get_arch_list()
 print("torch", torch.__version__)
 print("cuda", torch.version.cuda)
 print("arch_list", arch_list)
