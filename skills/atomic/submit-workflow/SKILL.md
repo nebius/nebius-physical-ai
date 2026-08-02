@@ -97,6 +97,24 @@ healthy `sky check kubernetes`:
   `PermissionDenied` / `Unauthenticated` even though the `nebius` CLI works.
   `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` before submitting/deploying.
 
+## Teardown
+
+- **Cancel then wait, then tear down.** `sky jobs cancel` only *schedules*
+  cancellation; `sky down` on the jobs controller refuses while any managed job is
+  non-terminal, so cancelling and immediately tearing down fails with
+  `NotSupportedError: In-progress managed jobs found`. `cleanup_all_for_run` and
+  `cleanup_jobs_controller` now wait for the queue to drain and retry that specific
+  error; if you drive `sky` by hand, poll `sky jobs queue --all` first.
+- **A PENDING job may be dead, not slow.** A pod stuck in `ImagePullBackOff` or
+  `Unschedulable` is retried by Kubernetes forever, so the job never becomes FAILED.
+  `npa workbench workflow status` reports the pod-level reason for a PENDING job.
+- **`npa cleanup`** reports what a teardown left behind (local caches, project
+  entries, non-terminal managed jobs, the service accounts `npa configure` creates)
+  and prints the ordered runbook. `--yes` removes the local caches only; it never
+  deletes cloud resources or service accounts.
+- **`npa cluster down`** previews the PodDisruptionBudgets that will hold up the
+  node drain, so a multi-minute silence is expected rather than alarming.
+
 ## Verify
 
 ```bash

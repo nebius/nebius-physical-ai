@@ -7,7 +7,8 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,15 @@ NONTERMINAL_JOB_STATUSES = {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CAN
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
 RUN_ID_MIN_LENGTH = 12
 _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+# `sky jobs cancel` only *schedules* cancellation: the controller still reports the
+# job as CANCELLING for a while afterwards, and `sky down` on the controller refuses
+# to run while any managed job is non-terminal. Cancelling and immediately tearing
+# down therefore fails with the error below even though the operator did exactly
+# what the message asks for. Wait for the cancellation to land instead.
+DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS = 300
+DEFAULT_JOB_DRAIN_INTERVAL_SECONDS = 5.0
+_IN_PROGRESS_JOBS_MARKERS = ("in-progress managed jobs", "in progress managed jobs")
 
 
 class InvalidRunIdError(ValueError):
@@ -80,8 +90,13 @@ def cleanup_jobs_controller(
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
+    job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
 ) -> CleanupResult:
-    """Tear down the managed-jobs controller in the active SkyPilot state."""
+    """Tear down the managed-jobs controller in the active SkyPilot state.
+
+    ``sky down`` refuses while any managed job is non-terminal, and a job that was
+    only just cancelled still counts, so wait for the queue to drain first.
+    """
 
     cleanup = CleanupResult()
     controller_clusters, status_error = _jobs_controller_clusters(
@@ -92,6 +107,20 @@ def cleanup_jobs_controller(
     if status_error:
         cleanup.errors.append(status_error)
         return cleanup
+    if controller_clusters:
+        pending = _nonterminal_job_ids(
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+        )
+        if pending:
+            wait_for_jobs_terminal(
+                pending,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+                timeout=job_drain_timeout,
+            )
     for controller_cluster in controller_clusters:
         controller_name = _cluster_name(controller_cluster)
         down_result = _down_jobs_controller(
@@ -99,6 +128,7 @@ def cleanup_jobs_controller(
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
             sky_bin=sky_bin,
+            job_drain_timeout=job_drain_timeout,
         )
         cleanup.extend(down_result)
         if down_result.ok and _is_kubernetes_controller(controller_cluster):
@@ -139,6 +169,7 @@ def cleanup_all_for_run(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     also_teardown_controller: bool = False,
+    job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
 ) -> CleanupResult:
     """Cancel jobs and tear down this run's clusters.
 
@@ -149,6 +180,7 @@ def cleanup_all_for_run(
 
     _validate_run_id(run_id)
     cleanup = CleanupResult()
+    cancelled: list[str] = []
     for job in _matching_jobs(
         run_id,
         isolated_config_dir=isolated_config_dir,
@@ -156,13 +188,34 @@ def cleanup_all_for_run(
         sky_bin=sky_bin,
     ):
         if str(job.get("status", "")).upper() in NONTERMINAL_JOB_STATUSES:
+            job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
                 _cancel_job(
-                    str(job.get("job_id") or job.get("id")),
+                    job_id,
                     isolated_config_dir=isolated_config_dir,
                     config_path=config_path,
                     sky_bin=sky_bin,
                 )
+            )
+            cancelled.append(job_id)
+
+    # `sky jobs cancel` returns as soon as cancellation is scheduled, so tearing
+    # down immediately races the controller.
+    if cancelled:
+        drained, still_running = wait_for_jobs_terminal(
+            cancelled,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+            timeout=job_drain_timeout,
+        )
+        if not drained:
+            cleanup.errors.append(
+                "managed job(s) "
+                + ", ".join(still_running)
+                + f" were still non-terminal {job_drain_timeout}s after cancel; "
+                "teardown continued, but `sky down` of the jobs controller may refuse "
+                "until they finish cancelling."
             )
 
     for pattern in cluster_name_patterns_for_run(run_id):
@@ -261,6 +314,126 @@ class _SkyPilotWorkflow:
             sky_bin=self.sky_bin,
         )
         return self.cleanup_result
+
+
+def looks_like_in_progress_jobs_error(detail: str) -> bool:
+    """Whether ``sky down`` refused because managed jobs are still non-terminal."""
+
+    lowered = str(detail or "").lower()
+    return any(marker in lowered for marker in _IN_PROGRESS_JOBS_MARKERS)
+
+
+def wait_for_jobs_terminal(
+    job_ids: Sequence[str],
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
+    interval: float = DEFAULT_JOB_DRAIN_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[bool, list[str]]:
+    """Block until the given managed jobs are terminal.
+
+    Returns ``(drained, still_running)``. A queue that cannot be read is treated
+    as drained: cleanup is best-effort and must not stall on a broken controller.
+    """
+
+    wanted = {str(job_id).strip() for job_id in job_ids if str(job_id).strip()}
+    if not wanted:
+        return True, []
+    deadline = time.monotonic() + max(timeout, 0)
+    still_running: list[str] = []
+    while True:
+        jobs, readable = _all_jobs(
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+        )
+        if not readable:
+            return True, []
+        still_running = [
+            job_id
+            for job_id, status in _job_statuses(jobs).items()
+            if job_id in wanted and status in NONTERMINAL_JOB_STATUSES
+        ]
+        if not still_running:
+            return True, []
+        if time.monotonic() >= deadline:
+            return False, sorted(still_running)
+        sleep(max(interval, 0.1))
+
+
+def _job_statuses(jobs: Sequence[dict[str, Any]]) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    for job in jobs or []:
+        if not isinstance(job, dict):
+            continue
+        job_id = str(job.get("job_id") or job.get("id") or "").strip()
+        if not job_id:
+            continue
+        status = str(job.get("status") or "").upper()
+        # A job group reports one row per task; the job is only terminal once
+        # every one of its rows is.
+        if job_id in statuses and statuses[job_id] in NONTERMINAL_JOB_STATUSES:
+            continue
+        statuses[job_id] = status
+    return statuses
+
+
+def _nonterminal_job_ids(
+    *,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: SkyBin,
+) -> list[str]:
+    jobs, readable = _all_jobs(
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
+    )
+    if not readable:
+        return []
+    return sorted(
+        job_id
+        for job_id, status in _job_statuses(jobs).items()
+        if status in NONTERMINAL_JOB_STATUSES
+    )
+
+
+def _all_jobs(
+    *,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: SkyBin,
+) -> tuple[list[dict[str, Any]], bool]:
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
+    result = _run(
+        cmd,
+        isolated_config_dir=runtime_config.isolated_config_dir,
+        config_path=runtime_config.global_config_path,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        return [], False
+    try:
+        payload = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return [], False
+    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    return [job for job in (jobs or []) if isinstance(job, dict)], True
 
 
 def _matching_jobs(
@@ -404,6 +577,7 @@ def _down_jobs_controller(
     isolated_config_dir: Path | None,
     config_path: Path | None,
     sky_bin: SkyBin,
+    job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
 ) -> CleanupResult:
     runtime_config = resolve_config(
         sky_bin=sky_bin,
@@ -411,6 +585,7 @@ def _down_jobs_controller(
         isolated_config_dir=isolated_config_dir,
     )
     cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "down", "--yes", controller_name]
+    cleanup = CleanupResult(commands=[cmd])
     result = _run(
         cmd,
         isolated_config_dir=runtime_config.isolated_config_dir,
@@ -418,7 +593,42 @@ def _down_jobs_controller(
         timeout=900,
         input_text="delete\n",
     )
-    cleanup = CleanupResult(commands=[cmd])
+    if result.returncode != 0 and looks_like_in_progress_jobs_error(
+        _combined_output(result)
+    ):
+        # A job that finished cancelling between our poll and this call still
+        # trips the guard; drain once more and retry rather than reporting a
+        # failure the operator can only fix by waiting and rerunning.
+        pending = _nonterminal_job_ids(
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+        )
+        drained, still_running = wait_for_jobs_terminal(
+            pending,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+            timeout=job_drain_timeout,
+        )
+        if drained:
+            cleanup.commands.append(cmd)
+            result = _run(
+                cmd,
+                isolated_config_dir=runtime_config.isolated_config_dir,
+                config_path=runtime_config.global_config_path,
+                timeout=900,
+                input_text="delete\n",
+            )
+        elif still_running:
+            cleanup.errors.append(
+                f"`sky down {controller_name}` refuses while managed job(s) "
+                + ", ".join(still_running)
+                + " are still non-terminal, and they did not finish cancelling within "
+                f"{job_drain_timeout}s. Suggested action: `sky jobs cancel -a`, wait for "
+                "`sky jobs queue --all` to show them terminal, then rerun teardown."
+            )
+            return cleanup
     if result.returncode == 0:
         cleanup.resources_removed.append(controller_name)
     else:
@@ -552,7 +762,9 @@ def _sanitize_name(value: str) -> str:
 
 
 def _format_command_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
-    stderr = result.stderr.strip()
-    stdout = result.stdout.strip()
-    detail = stderr or stdout or f"exit {result.returncode}"
+    detail = _combined_output(result) or f"exit {result.returncode}"
     return f"{' '.join(cmd)} failed: {detail}"
+
+
+def _combined_output(result: subprocess.CompletedProcess[str]) -> str:
+    return (result.stderr or "").strip() or (result.stdout or "").strip()

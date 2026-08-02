@@ -366,7 +366,10 @@ def test_cleanup_jobs_controller_discovers_exact_name_and_confirms_delete(
 
     assert calls[0][0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
     assert calls[0][1] is None
-    assert calls[1] == ([str(sky_bin), "down", "--yes", "sky-jobs-controller-abc123"], "delete\n")
+    # The managed-job queue is checked before teardown, because `sky down` refuses
+    # while any managed job is still non-terminal.
+    assert calls[1][0] == [str(sky_bin), "jobs", "queue", "--all", "--output", "json"]
+    assert calls[2] == ([str(sky_bin), "down", "--yes", "sky-jobs-controller-abc123"], "delete\n")
     assert result.resources_removed == ["sky-jobs-controller-abc123"]
     assert result.errors == []
 
@@ -442,3 +445,211 @@ def test_no_code_path_sets_autostop_down_true() -> None:
     assert '"down": True' not in sources
     assert "'down': True" not in sources
     assert "down: true" not in sources.lower()
+
+
+# --- `sky jobs cancel` -> `sky down` race -------------------------------------
+#
+# `sky jobs cancel` returns once cancellation is *scheduled*. The controller keeps
+# reporting the job as CANCELLING, and `sky down` on the controller refuses while
+# any managed job is non-terminal, so cancelling and immediately tearing down fails
+# with an error telling the operator to do what they just did.
+
+_IN_PROGRESS_ERROR = (
+    "sky.exceptions.NotSupportedError: In-progress managed jobs found. "
+    "To avoid resource leakage, cancel all jobs first: sky jobs cancel -a"
+)
+
+
+def _queue(*jobs: dict[str, object]) -> str:
+    import json as _json
+
+    return _json.dumps(list(jobs))
+
+
+def test_cleanup_all_for_run_waits_for_cancelled_jobs_before_tearing_down(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    calls: list[list[str]] = []
+    queue_reads = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[1:3] == ["jobs", "queue"]:
+            queue_reads["n"] += 1
+            # First read finds the live job; after cancel it lingers as
+            # CANCELLING, then finally reports CANCELLED.
+            status = {1: "RUNNING", 2: "CANCELLING"}.get(queue_reads["n"], "CANCELLED")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=_queue({"job_id": 7, "name": "run-abc123456789", "status": status}), stderr=""
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cleanup_module.time, "sleep", lambda _seconds: None)
+
+    result = cleanup_all_for_run("run-abc123456789", isolated_config_dir=tmp_path, sky_bin=sky_bin)
+
+    verbs = [cmd[1:3] for cmd in calls]
+    cancel_at = verbs.index(["jobs", "cancel"])
+    down_at = next(i for i, cmd in enumerate(calls) if cmd[1] == "down")
+    # The queue is re-read between cancel and down until the job is terminal.
+    assert ["jobs", "queue"] in verbs[cancel_at:down_at]
+    assert queue_reads["n"] >= 3
+    assert result.errors == []
+
+
+def test_cleanup_all_for_run_reports_a_job_that_never_finishes_cancelling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[1:3] == ["jobs", "queue"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=_queue({"job_id": 7, "name": "run-abc123456789", "status": "CANCELLING"}), stderr=""
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cleanup_module.time, "sleep", lambda _seconds: None)
+
+    result = cleanup_all_for_run(
+        "run-abc123456789", isolated_config_dir=tmp_path, sky_bin=sky_bin, job_drain_timeout=0
+    )
+
+    assert any("still non-terminal" in error for error in result.errors)
+    assert any("7" in error for error in result.errors)
+
+
+def test_controller_teardown_retries_after_the_in_progress_guard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    downs = {"n": 0}
+    queue_reads = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        if cmd[1] == "status":
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='[{"name": "sky-jobs-controller-abc123", "status": "UP"}]', stderr=""
+            )
+        if cmd[1:3] == ["jobs", "queue"]:
+            queue_reads["n"] += 1
+            status = "CANCELLING" if queue_reads["n"] == 1 else "CANCELLED"
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=_queue({"job_id": 2, "status": status}), stderr=""
+            )
+        if cmd[1] == "down":
+            downs["n"] += 1
+            # A job that finished cancelling between the poll and this call still
+            # trips the guard the first time.
+            if downs["n"] == 1:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=_IN_PROGRESS_ERROR)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cleanup_module.time, "sleep", lambda _seconds: None)
+
+    result = cleanup_jobs_controller(isolated_config_dir=tmp_path, sky_bin=sky_bin)
+
+    assert downs["n"] == 2
+    assert result.resources_removed == ["sky-jobs-controller-abc123"]
+    assert result.errors == []
+
+
+def test_controller_teardown_explains_a_job_that_will_not_drain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[1] == "status":
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='[{"name": "sky-jobs-controller-abc123", "status": "UP"}]', stderr=""
+            )
+        if cmd[1:3] == ["jobs", "queue"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=_queue({"job_id": 2, "status": "RUNNING"}), stderr=""
+            )
+        if cmd[1] == "down":
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=_IN_PROGRESS_ERROR)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cleanup_module.time, "sleep", lambda _seconds: None)
+
+    result = cleanup_jobs_controller(
+        isolated_config_dir=tmp_path, sky_bin=sky_bin, job_drain_timeout=0
+    )
+
+    assert result.resources_removed == []
+    joined = " ".join(result.errors)
+    assert "refuses while managed job(s) 2" in joined
+    assert "sky jobs cancel -a" in joined
+
+
+def test_a_readable_queue_that_is_already_terminal_does_not_wait(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    slept: list[float] = []
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=_queue({"job_id": 7, "status": "SUCCEEDED"}), stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    drained, still_running = cleanup_module.wait_for_jobs_terminal(
+        ["7"], isolated_config_dir=tmp_path, sky_bin=sky_bin, sleep=slept.append
+    )
+
+    assert drained is True
+    assert still_running == []
+    assert slept == []
+
+
+def test_an_unreadable_queue_does_not_stall_teardown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # Cleanup is best-effort; a broken controller must not hold teardown hostage.
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="controller unreachable")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    drained, still_running = cleanup_module.wait_for_jobs_terminal(
+        ["7"], isolated_config_dir=tmp_path, sky_bin=sky_bin, sleep=lambda _s: None
+    )
+
+    assert drained is True
+    assert still_running == []
+
+
+def test_a_job_group_is_terminal_only_when_every_task_is(tmp_path) -> None:
+    statuses = cleanup_module._job_statuses(
+        [
+            {"job_id": 3, "task_id": 0, "status": "SUCCEEDED"},
+            {"job_id": 3, "task_id": 1, "status": "RUNNING"},
+        ]
+    )
+
+    assert statuses["3"] == "RUNNING"
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        (_IN_PROGRESS_ERROR, True),
+        ("In progress managed jobs found", True),
+        ("cluster not found", False),
+        ("", False),
+    ],
+)
+def test_in_progress_guard_is_recognized(detail: str, expected: bool) -> None:
+    assert cleanup_module.looks_like_in_progress_jobs_error(detail) is expected

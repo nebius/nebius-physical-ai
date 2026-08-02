@@ -206,6 +206,14 @@ def down_cmd(
     ),
     force: bool = typer.Option(False, "--force", help="Skip confirmation."),
     timeout: int = typer.Option(120, "--timeout", help="Terraform destroy timeout in minutes."),
+    kubeconfig: Path | None = typer.Option(
+        None,
+        "--kubeconfig",
+        help=(
+            "Kubeconfig used to report which PodDisruptionBudgets will hold up the "
+            "node drain. Defaults to the ambient KUBECONFIG."
+        ),
+    ),
 ) -> None:
     """Destroy the Terraform-managed NPA cluster: cloud resources and local state.
 
@@ -226,6 +234,9 @@ def down_cmd(
     tfvars = _read_tfvars(tf_dir)
     _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
+    # The node-group watcher below shows that the drain is progressing; this names
+    # *why* it is slow, which is the part an operator can reason about.
+    _report_drain_blockers(kubeconfig)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     # `Still destroying...` every 10s with no detail made a ~6-minute node-group
     # drain look like a hang. Report node-group state while it happens.
@@ -361,6 +372,26 @@ def kubeconfig_cmd(
         f"Submit against it with `--infra k8s/{context}` (npa resolves this file), "
         f"or export KUBECONFIG={kubeconfig_path} for kubectl."
     )
+
+
+def _report_drain_blockers(kubeconfig: Path | None) -> None:
+    """Warn, before destroy, about budgets that will make the drain look hung.
+
+    Best-effort: a cluster that cannot be reached is simply not described, since
+    the destroy itself does not depend on this.
+    """
+
+    from npa.cluster.drain import blocking_pod_disruption_budgets, describe_drain_expectation
+
+    blockers, error = blocking_pod_disruption_budgets(
+        kubeconfig=str(kubeconfig) if kubeconfig else "",
+    )
+    if error:
+        typer.echo(f"drain-preview: skipped ({error})", err=True)
+        return
+    guidance = describe_drain_expectation(blockers)
+    if guidance:
+        typer.echo(f"drain-preview: {guidance}", err=True)
 
 
 def terraform_status(terraform_dir: Path | None = None) -> dict[str, Any] | None:

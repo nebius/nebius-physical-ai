@@ -226,6 +226,16 @@ first GPU submit.
   hit a stale endpoint — see the `[M] <tool> status without -p/-n` entry in
   [FIXME.md](FIXME.md).
 
+### Tearing it back down
+
+Teardown is an ordered sequence (cancel managed jobs → destroy the agent →
+destroy the cluster → delete the bucket → drop the project entry → clear local
+caches), and missing a step leaves a hung job or a stale cache behind. Run
+`npa cleanup` for a report of what is still there plus the runbook, and
+`npa cleanup --yes` to clear the local caches. It never deletes cloud resources,
+and it reports rather than removes the `lerobot-training` service account
+`npa configure` creates, since that account is often shared with unrelated work.
+
 For the full known-issues surface: [docs/workbench/troubleshooting/known-footguns.md](docs/workbench/troubleshooting/known-footguns.md)
 and the active operational backlog in [FIXME.md](FIXME.md).
 

@@ -90,6 +90,62 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
     return residue
 
 
+# Teardown is an ordered sequence and nothing checks the order. The step most
+# often missed is the first one: a managed job left non-terminal keeps the jobs
+# controller alive and makes `sky down` refuse.
+TEARDOWN_RUNBOOK = (
+    "sky jobs cancel -a  (then wait for `sky jobs queue --all` to show them terminal)",
+    "npa agent destroy --project <alias> --name <name> --yes",
+    "npa cluster down --force",
+    "npa storage bucket delete --project <alias> --yes",
+    "npa configure --forget-project <alias>",
+    "npa skypilot uninstall --yes",
+    "npa cleanup --yes",
+)
+
+
+def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str]:
+    """Return managed jobs that are still non-terminal, and any lookup problem."""
+
+    from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
+    from npa.orchestration.skypilot.cleanup import _nonterminal_job_ids
+
+    try:
+        return (
+            _nonterminal_job_ids(
+                isolated_config_dir=None, config_path=None, sky_bin=sky_bin or None
+            ),
+            "",
+        )
+    except SkyPilotNotInstalledError:
+        return [], "SkyPilot is not installed, so managed jobs were not checked"
+    except (OSError, ValueError) as exc:
+        return [], f"could not read the managed-job queue: {exc}"
+
+
+def _report_managed_jobs(sky_bin: str) -> None:
+    jobs, note = _nonterminal_jobs(sky_bin)
+    if note:
+        typer.echo(f"Managed jobs: {note}")
+        return
+    if not jobs:
+        typer.echo("Managed jobs: none non-terminal.")
+        return
+    typer.echo(f"Managed jobs still non-terminal: {', '.join(jobs)}")
+    typer.echo(
+        "  These block `sky down` of the jobs controller. A job whose pod cannot "
+        "start stays PENDING forever rather than failing, so check it before "
+        "assuming it is still doing work."
+    )
+
+
+def _print_runbook() -> None:
+    typer.echo("")
+    typer.echo("Full teardown order:")
+    for index, step in enumerate(TEARDOWN_RUNBOOK, start=1):
+        typer.echo(f"  {index}. {step}")
+
+
 def _iam_note() -> str:
     """A hint about cloud IAM leftovers npa deliberately does not delete."""
     generic = (
@@ -128,6 +184,16 @@ def cleanup_cmd(
     project: str = typer.Option(
         "", "--project", help="Scope the empty per-alias state-dir report to this alias."
     ),
+    skip_jobs: bool = typer.Option(
+        False,
+        "--skip-jobs",
+        help="Do not query the SkyPilot managed-job queue.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.",
+    ),
 ) -> None:
     """Report (or with --yes remove) local NPA/SkyPilot residue left after teardown."""
     import shutil
@@ -138,10 +204,15 @@ def cleanup_cmd(
     residue = _collect_residue(include_sky=include_sky)
     empty_dirs = _empty_alias_dirs(npa_dir, project)
 
+    if not skip_jobs:
+        _report_managed_jobs(sky_bin)
+
     total = sum(item.size for item in residue)
     if not residue and not empty_dirs:
         typer.echo("No local NPA/SkyPilot residue to clean up.")
         typer.echo(_iam_note())
+        if not yes:
+            _print_runbook()
         return
 
     typer.echo("Local residue after teardown (secret-free; your tokens/config are untouched):")
@@ -156,6 +227,7 @@ def cleanup_cmd(
         typer.echo("")
         typer.echo("Re-run with --yes to remove them (or --keep-sky to leave ~/.sky).")
         typer.echo(_iam_note())
+        _print_runbook()
         return
 
     removed_bin = False
