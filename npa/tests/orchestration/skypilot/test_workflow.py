@@ -634,3 +634,64 @@ def test_verified_job_id_can_be_disabled(monkeypatch, mocker) -> None:
         == "163"
     )
     run.assert_not_called()
+
+
+def test_submit_streams_launch_output_and_names_a_known_hang(tmp_path, monkeypatch) -> None:
+    """A retrying controller must not look like a silent hang.
+
+    ``sky jobs launch`` can retry for the full submit timeout without exiting, so
+    buffering its output to a pipe leaves the operator with a blank terminal.
+    """
+
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    lines: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        if "launch" in cmd:
+            stdout = kwargs.get("stdout")
+            # Real sky writes progress as it goes; the streamer tails the file.
+            stdout.write("Launching managed job 'demo'\n")
+            stdout.write(
+                "Invalid pod_config. Details: Validation error in metadata.labels: "
+                "No module named 'kubernetes.client.models.dict[str, str]'\n"
+            )
+            stdout.flush()
+            return subprocess.CompletedProcess(cmd, 1, stdout=None, stderr=None)
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(SkyPilotSubmitError) as excinfo:
+        submit_workflow(yaml_path, "run-stream", sky_bin=sky_bin, echo=lines.append)
+
+    assert "Launching managed job 'demo'" in lines
+    assert any("kubernetes_client_pod_config" in line for line in lines)
+    assert "npa skypilot bootstrap" in str(excinfo.value)
+
+
+def test_submit_can_run_without_streaming(tmp_path, monkeypatch) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    seen: list[object] = []
+
+    def fake_run(cmd, **kwargs):
+        if "launch" in cmd:
+            seen.append(kwargs.get("stdout"))
+            return subprocess.CompletedProcess(cmd, 0, stdout="Job ID: 7", stderr="")
+        if "queue" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps([{"job_id": 7, "job_name": "run-plain"}]), stderr=""
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = submit_workflow(
+        yaml_path, "run-plain", sky_bin=sky_bin, stream_output=False
+    )
+
+    assert result.status == "SUBMITTED"
+    assert seen == [subprocess.PIPE]
