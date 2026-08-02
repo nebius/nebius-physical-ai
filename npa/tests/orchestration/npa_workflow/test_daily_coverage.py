@@ -69,25 +69,31 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     assert cases, "expected at least one real-GPU-launching workflow twin"
     # Never rotate onto a plan-only stub (those never launch a GPU) or a
     # rotation_skip twin that cannot pass standalone today (each carries a
-    # skip_reason, e.g. sonic-eval needs a prior export; vlm-eval-single needs a
-    # vLLM server the render doesn't wire).
+    # skip_reason, e.g. sonic-eval consumes an ONNX a previous export wrote).
     assert all(not c.plan_only for c in cases)
     assert all(not c.rotation_skip for c in cases)
     assert all(c.tier in {"gpu", "multi"} for c in cases)
     rotation = {c.spec for c in cases}
     # Verified-passing on real GPU (RTXPRO-6000) stay in the rotation.
-    for good in ("mjlab-eval.yaml", "cosmos3-reason.yaml", "tokenfactory-rollout-judge.yaml"):
+    for good in (
+        "mjlab-eval.yaml",
+        "cosmos3-reason.yaml",
+        "tokenfactory-rollout-judge.yaml",
+        # SONIC twins are self-contained now: the in-job train runtime writes a
+        # checkpoint each downstream stage reads back from S3.
+        "sonic-train.yaml",
+        "sonic-export.yaml",
+        "sonic-export-eval.yaml",
+        "sonic-locomotion-finetuning.yaml",
+        "tokenfactory-cosmos-gate.yaml",
+        # Self-hosted vLLM, bounded by serving a 2B VLM and pre-fetching weights.
+        "vlm-eval-single.yaml",
+    ):
         assert good in rotation, f"{good} should be in the rotation"
     # Twins that can't pass as a standalone submit today are excluded.
     for bad in (
         "sonic-eval.yaml",
-        "sonic-export.yaml",
-        "sonic-export-eval.yaml",
-        "sonic-train.yaml",
-        "sonic-locomotion-finetuning.yaml",
-        "vlm-eval-single.yaml",
         "bdd100k-pipeline.yaml",
-        "tokenfactory-cosmos-gate.yaml",
     ):
         assert bad not in rotation, f"{bad} should be excluded from the rotation"
     # Every rotation_skip twin must document why (so the gap stays visible).

@@ -15,6 +15,30 @@ work lives).
 
 ### Medium
 
+#### [M] SkyPilot's runtime bootstrap stalled once in npa-cosmos-curate
+
+- **Surfaced by**: a full-pipeline `physical-ai-data-factory` submit on
+  `npa-rtxpro-mk8s`, 2026-08-01 (managed job 255, image `npa-cosmos-curate:0.1.1`).
+  Stages 1-5 ran through SkyPilot; the `cosmos-curate` stage never left `STARTING`.
+- **What happened**: the pod came up healthy and SkyPilot's setup script completed,
+  but its own runtime bootstrap — `bash --login -c -i '... ~/.sky/.runtime_files
+  ...'` — then sat for over an hour with no ray, pip, or uv child process. That is a
+  different failure from the image-setup one already fixed: the container stays up,
+  so SkyPilot reports `STARTING` rather than `container not found`.
+- **Status: has not recurred.** Two later full submits on `npa-cosmos-curate:0.1.2`
+  (jobs 279 and 282) provisioned and ran the stage through SkyPilot, job 282
+  completing all ten stages. Downgraded from high because the observed impact is now
+  a one-off stall rather than a reproducible block, and left open because the cause
+  was never identified.
+- **Leading hypothesis if it returns**: the image puts its venv first on PATH and
+  `cosmos-xenna` pulls in ray, so `which ray` resolves to
+  `/opt/cosmos-curate/venv/bin/ray` (2.56.1) ahead of the ray in `~/skypilot-runtime`
+  that SkyPilot just installed. A version-mismatched ray on PATH is a known cause of
+  its bootstrap stalling, and the evaluator image, which has no ray, has never
+  stalled. Confirm by running the bootstrap with the venv off PATH before changing
+  anything.
+
+
 #### [M] Add standalone LeRobot library validation test
 
 - **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
@@ -43,6 +67,25 @@ work lives).
   document the API, and cover imports/behavior in tests.
 
 ## Resolved (recent)
+
+#### [H] npa-cosmos2-transfer's inference venv was unusable as its own non-root user
+
+- **Surfaced by**: a live 4-GPU `physical-ai-data-factory` run on `npa-rtxpro-mk8s`,
+  2026-07-31. **Resolved** 2026-08-01 in
+  `npa/docker/workbench/cosmos2-transfer/Dockerfile`.
+- `uv` had installed the venv's CPython as root, so the venv's `bin/python`
+  symlinked into `/root/.local/share/uv/...`; `/root` is 0700, so the image's own
+  `USER ubuntu` got `Permission denied` (exit 126) for every inference call.
+- The fix took three passes, each surfacing the next layer: set
+  `UV_PYTHON_INSTALL_DIR` so a fresh build keeps the interpreter out of `/root`;
+  rewrite `pyvenv.cfg` by directory *prefix*, because uv records the interpreter
+  through a version symlink whose name differs from the resolved path (leaving
+  `sys._home` in `/root`, which failed far away inside `distutils.sysconfig`); and
+  repoint the absolute version symlink that `cp -a` copies verbatim.
+- The build now asserts all three, its usability check exercises
+  `distutils.sysconfig` rather than just importing torch, and
+  `npa/tests/docker/test_cosmos_oss_images.py` runs the relocation block itself
+  against a fixture shaped like the published image.
 
 - 2026-07-22 - FIXME Active bookkeeping: removed seven stale `Status: Fixed`
   entries that were already covered under Resolved (Isaac Lab→LeRobot

@@ -9,6 +9,8 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa cluster](cluster.md)
 - [npa configure](configure.md)
 - [npa convert](convert.md)
+- [npa workbench cosmos-curate](cosmos-curate.md)
+- [npa workbench cosmos-evaluator](cosmos-evaluator.md)
 - [npa workbench cosmos](cosmos.md)
 - [npa workbench cosmos2](cosmos2.md)
 - [npa workbench cosmos3](cosmos3.md)

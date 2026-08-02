@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
@@ -259,6 +259,65 @@ class RunStateStore:
             Body=body,
             ContentType="application/json",
         )
+
+
+SUBMITTED_STATUS = "submitted"
+
+
+def plan_step_records(steps: Sequence[Any]) -> list[dict[str, Any]]:
+    """Build manifest step records for a *submitted* (not locally executed) run.
+
+    Mirrors the interpreter's local-execution records so one manifest schema covers
+    both paths. Carrying ``resources_profile`` is the point: it is what makes a
+    submitted run legible to downstream consumers — the insights backbone derives a
+    run's GPU count from ``resources_profile.accelerators``, so a manifest without it
+    describes a run that looks CPU-only no matter how many accelerators it requested.
+    """
+    records: list[dict[str, Any]] = []
+    for step in steps:
+        record: dict[str, Any] = {
+            "state": getattr(step, "state", ""),
+            "iteration": getattr(step, "iteration", None),
+            "status": SUBMITTED_STATUS,
+            "resources": getattr(step, "resources", "") or "",
+            "resources_profile": dict(getattr(step, "resources_profile", {}) or {}),
+        }
+        for optional in ("tool_ref", "group", "loop_label"):
+            value = getattr(step, optional, "")
+            if value:
+                record[optional] = value
+        records.append(record)
+    return records
+
+
+def persist_submitted_manifest(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    workflow: str,
+    api_version: str = "",
+    steps: Sequence[Any] = (),
+    status: str = SUBMITTED_STATUS,
+) -> str:
+    """Write the run manifest for a cluster-submitted run; return the run prefix URI.
+
+    Returns ``""`` when the spec declares no ``config.bucket`` (there is nowhere to
+    write). Raises on a genuine write failure so callers can surface it — a submit
+    that was already accepted must not be reported as failed, but a silently missing
+    manifest would leave the run invisible to every manifest consumer.
+    """
+    store = store_for_config(config, run_id=run_id)
+    if store is None:
+        return ""
+    manifest = RunManifest(
+        workflow=workflow,
+        run_id=run_id,
+        api_version=api_version,
+        status=status,
+    )
+    manifest.steps = plan_step_records(steps)
+    store.write_manifest(manifest)
+    return store.run_prefix_uri
 
 
 def store_for_config(config: Mapping[str, Any], *, run_id: str) -> RunStateStore | None:

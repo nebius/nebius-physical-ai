@@ -249,6 +249,11 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Tier-0 BYOF onboarding CLI (script-backed; not a FastAPI service).
         "byof",
         "cosmos",
+        # NVIDIA Cosmos OSS wrappers: they drive upstream code in-process (curator
+        # stages) or hosted Token Factory calls (evaluator), so there is no service
+        # tier to keep coherent with a YAML env block.
+        "cosmos-curate",
+        "cosmos-evaluator",
         "data",
         "dataset",
         "fiftyone",

@@ -23,6 +23,11 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 
+#: Where the run bucket keeps the SOMA/G1 motion clips the SONIC retargeting
+#: stage consumes. The upstream dataset is dual-licensed so it is staged once by
+#: an operator rather than vendored; NPA_E2E_SONIC_MOTION_SRC overrides it.
+SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
+
 
 def resolve_spec_path(name: str) -> Path:
     """Resolve a live-submit spec by name across every blueprint root."""
@@ -55,6 +60,7 @@ DYNAMIC_SPECS = frozenset(
 __all__ = [
     "ALL_GOLDEN_SPECS",
     "DYNAMIC_SPECS",
+    "SONIC_MOTION_FIXTURE_PREFIX",
     "SPECS_DIR",
     "SUBMIT_LIVE_MATRIX",
     "SubmitLiveCase",
@@ -187,15 +193,19 @@ def seed_live_workflow_inputs(
     if spec_name == "sonic-locomotion-finetuning.yaml":
         # SONIC retargeting needs a real G1 motion dataset (SOMA/G1 CSV clips,
         # each a directory with joint_pos.csv/body_pos.csv/body_quat.csv). We do
-        # not vendor the dual-licensed upstream data; the operator points
-        # NPA_E2E_SONIC_MOTION_SRC at a staged real dataset (an ``s3://`` prefix
-        # or local directory, e.g. NVlabs/GR00T-WholeBodyControl
+        # not vendor the dual-licensed upstream data, so the run bucket holds a
+        # staged copy under SONIC_MOTION_FIXTURE_PREFIX and
+        # NPA_E2E_SONIC_MOTION_SRC overrides it (an ``s3://`` prefix or a local
+        # directory, e.g. NVlabs/GR00T-WholeBodyControl
         # gear_sonic_deploy/reference/example after ``git lfs pull``).
         src = os.environ.get("NPA_E2E_SONIC_MOTION_SRC", "").strip()
+        if not src and _s3_prefix_has_objects(client, bucket, SONIC_MOTION_FIXTURE_PREFIX):
+            src = f"s3://{bucket}/{SONIC_MOTION_FIXTURE_PREFIX}"
         if not src:
             pytest.skip(
-                "NPA_E2E_SONIC_MOTION_SRC not set; stage a real SOMA/G1 motion "
-                "dataset (soma-csv clips) and point this at it."
+                "no SONIC motion source: stage a real SOMA/G1 motion dataset "
+                f"(soma-csv clips) under s3://{bucket}/{SONIC_MOTION_FIXTURE_PREFIX} "
+                "or point NPA_E2E_SONIC_MOTION_SRC at one."
             )
         _seed_prefix_from_source(src, bucket, f"{marker}/source/", client)
         return
@@ -310,6 +320,11 @@ def write_runtime_evidence(name: str, payload: Any) -> Path:
     path = log_dir / f"runtime-{name}.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return path
+
+
+def _s3_prefix_has_objects(client, bucket: str, prefix: str) -> bool:
+    response = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    return bool(response.get("Contents"))
 
 
 def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client) -> None:
@@ -647,9 +662,25 @@ def _cli_failure_detail(result: Result) -> str:
     return "\n".join(parts)
 
 
+def _slice_json_document(text: str) -> str:
+    """Return the JSON document at the end of a CLI stream.
+
+    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, so
+    advisory lines the command writes to stderr (``Hint: consider
+    --secret-env ...``) sit in front of the ``--output-format json`` payload.
+    """
+
+    if text.lstrip().startswith("{"):
+        return text[text.index("{") :]
+    start = text.find("\n{")
+    if start < 0:
+        raise AssertionError(f"no JSON document in CLI output:\n{text[-4000:]}")
+    return text[start + 1 :]
+
+
 def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None) -> Any:
     assert_cli_ok(result, forbidden=forbidden)
-    return json.loads(result.output)
+    return json.loads(_slice_json_document(result.output or ""))
 
 
 def parse_json_payload(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
@@ -667,10 +698,6 @@ def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, An
     """
 
     assert_cli_ok(result, forbidden=forbidden)
-    text = result.output or ""
-    start = text.find("\n{")
-    start = 0 if text.lstrip().startswith("{") else (start + 1 if start >= 0 else -1)
-    assert start >= 0, f"no JSON summary in runtime output:\n{text[-4000:]}"
-    payload = json.loads(text[start:])
+    payload = json.loads(_slice_json_document(result.output or ""))
     assert isinstance(payload, dict)
     return payload

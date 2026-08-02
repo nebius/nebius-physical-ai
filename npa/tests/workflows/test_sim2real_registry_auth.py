@@ -117,7 +117,7 @@ def test_sibling_refresh_never_aborts_the_run(
 
 
 def test_docker_config_json_uses_iam_username() -> None:
-    payload = docker_config_json(registry_server="cr.eu-north1.nebius.cloud", token="tok")
+    payload = docker_config_json(registry_servers=["cr.eu-north1.nebius.cloud"], token="tok")
     entry = payload["auths"]["cr.eu-north1.nebius.cloud"]
     assert entry["username"] == "iam"
     assert entry["password"] == "tok"

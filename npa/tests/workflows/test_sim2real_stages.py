@@ -97,6 +97,110 @@ def test_augment_stage_uses_seam_reference_for_placeholder_image(tmp_path: Path)
     assert (tmp_path / "augment" / "frames" / "index.json").exists()
 
 
+def test_augment_stage_mirrors_k8s_frame_descriptors(monkeypatch, tmp_path: Path) -> None:
+    def fake_component(config, *, input_uri, output_uri, local_dir):
+        return {
+            "manifest": {
+                "status": "executed",
+                "mode": "descriptor_stub",
+                "frame_count": 2,
+                "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+            },
+            "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+        }
+
+    class FakeClient:
+        def download_directory(self, uri: str, local_dir: str) -> None:
+            frames_dir = Path(local_dir)
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            (frames_dir / "index.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "npa.sim2real.augmented_frames.v1",
+                        "frame_count": 1,
+                        "frames": [{"frame_id": "frame-00000", "uri": f"{uri}frame-00000.json"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (frames_dir / "frame-00000.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "npa.sim2real.augmented_frame.v1",
+                        "frame_id": "frame-00000",
+                        "perturbation": "lighting",
+                        "status": "cosmos2_transfer_executed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.engine.run_cosmos2_transfer_component",
+        fake_component,
+    )
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda: FakeClient(),
+    )
+    config = Sim2RealLoopConfig(
+        run_id="k8s-augment",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        s3_endpoint="https://storage.example.test",
+        trigger_dataset_uri="s3://bucket/triggers/pusht/",
+        augment_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0",
+    )
+
+    result = run_augment_stage(config, tmp_path)
+
+    assert result["component"]["tier"] == "WORKS"
+    assert (tmp_path / "augment" / "frames" / "index.json").is_file()
+    assert (tmp_path / "augment" / "frames" / "frame-00000.json").is_file()
+
+
+def test_augment_stage_keeps_working_when_frame_mirror_lags(monkeypatch, tmp_path: Path) -> None:
+    def fake_component(config, *, input_uri, output_uri, local_dir):
+        return {
+            "manifest": {
+                "status": "executed",
+                "mode": "descriptor_stub",
+                "frame_count": 2,
+                "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+            },
+            "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+        }
+
+    class FakeClient:
+        def download_directory(self, uri: str, local_dir: str) -> None:
+            raise OSError(f"not visible yet: {uri}")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.engine.run_cosmos2_transfer_component",
+        fake_component,
+    )
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda: FakeClient(),
+    )
+    monkeypatch.setattr("npa.workflows.sim2real_stages.time.sleep", lambda _seconds: None)
+    config = Sim2RealLoopConfig(
+        run_id="k8s-augment-lag",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        s3_endpoint="https://storage.example.test",
+        trigger_dataset_uri="s3://bucket/triggers/pusht/",
+        augment_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0",
+    )
+
+    result = run_augment_stage(config, tmp_path)
+
+    assert result["component"]["tier"] == "WORKS"
+    assert "falls back to manifest descriptors" in result["component"]["evidence"]
+    warning = json.loads((tmp_path / "augment" / "frames" / "mirror-warning.json").read_text())
+    assert warning["status"] == "mirror_unavailable"
+
+
 def test_envgen_split_stage_launches_indexed_shards_when_image_ready(
     monkeypatch, tmp_path: Path
 ) -> None:

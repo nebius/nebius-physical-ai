@@ -59,6 +59,18 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
         "structured rollout judgment returned (score + success verdict)",
     ],
+    "cosmos-curate": [
+        "real upstream Cosmos Curator stages run in-process (no Ray, no GPU)",
+        "canonical curator output written: clips/*.mp4 + metas/v0/*.json",
+        "per-clip motion score computed by upstream's MotionFilterStage",
+        "no model weights in the image; fetch-models downloads them with HF_TOKEN",
+    ],
+    "cosmos-evaluator": [
+        "upstream Cosmos Evaluator HallucinationProcessor runs on real clips",
+        "hallucinated motion discriminated: appearance-only passes, new scene fails",
+        "upstream engine and the in-repo port agree on verdict and score",
+        "no model weights needed or present (CV check + hosted VLM endpoint)",
+    ],
     "sonic": [
         "entrypoint smoke mode",
         "GPU + image-pull proofs",

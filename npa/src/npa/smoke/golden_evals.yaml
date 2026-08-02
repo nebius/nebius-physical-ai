@@ -299,6 +299,71 @@ containers:
       timeout_seconds: 1800
       status: blocked-on-upstream
 
+  cosmos-curate:
+    image: npa-cosmos-curate
+    dockerfile: npa/docker/workbench/cosmos-curate/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        NVIDIA Cosmos Curator video curation (clip splitting, transcoding, motion
+        scoring, canonical clip metadata) over augmented physical-AI video — the
+        curation stage of the Physical AI Data Factory blueprint.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm
+      network: none (mode-based entrypoint; fetch-models mode reaches Hugging Face)
+      external_fetch: [pypi, conda-forge, github, huggingface, s3]
+      notes: >-
+        CPU-only. Bakes a pinned upstream cosmos-curate checkout (Apache-2.0) plus
+        the dependency subset its GPU-free stages import, and a conda-forge ffmpeg
+        carrying libopenh264 because upstream's transcoding stage accepts only
+        libopenh264 or h264_nvenc. torch is the CPU wheel: the motion stage runs
+        its CPU code path when no GPU is requested. NO MODEL WEIGHTS ARE BAKED IN;
+        the GPU stages' weights (TransNetV2, InternVideo2, Cosmos-Embed1, CLIP,
+        Qwen) are third-party or NVIDIA models under their own licenses and are
+        downloaded at run time into /config/models by the fetch-models mode using
+        the operator's HF_TOKEN. A build-time check fails if any weight file is
+        present in the image, and the upstream checkout is fetched with
+        GIT_LFS_SKIP_SMUDGE=1.
+    golden_eval:
+      kind: container-smoke
+      command: python /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py
+      serverless_gpu: h100
+      gpu: none
+      timeout_seconds: 900
+      status: ready
+
+  cosmos-evaluator:
+    image: npa-cosmos-evaluator
+    dockerfile: npa/docker/workbench/cosmos-evaluator/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        NVIDIA Cosmos Evaluator grading of synthetic/augmented video — the
+        hallucinated-motion check and the VLM attribute-verification check that
+        gate the Physical AI Data Factory blueprint's augment loop.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm
+      network: >-
+        none for the hallucination check; the attribute-verification check calls
+        the configured Token Factory endpoint
+      external_fetch: [pypi, github, s3]
+      notes: >-
+        CPU-only and weight-free by construction: the hallucination check is
+        classical computer vision, and attribute verification calls a hosted VLM
+        (NEBIUS_TOKEN_FACTORY_KEY) rather than loading a model. Upstream's
+        objects/obstacle check would need EULA-gated Git-LFS weights, so the
+        checkout is fetched with GIT_LFS_SKIP_SMUDGE=1 and that check is not wired;
+        a build-time check fails if any weight file is present in the image.
+    golden_eval:
+      kind: container-smoke
+      command: python /opt/npa/docker/workbench/cosmos-evaluator/smoke_functional.py
+      serverless_gpu: h100
+      gpu: none
+      timeout_seconds: 600
+      status: ready
+
   sonic:
     image: npa-sonic
     dockerfile: npa/docker/workbench/sonic/Dockerfile

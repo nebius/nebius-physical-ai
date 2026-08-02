@@ -118,6 +118,19 @@ images:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job
     redistribution: public
+  cosmos-curate:
+    dockerfile: cosmos-curate/Dockerfile
+    tier: job
+    notes: "Mode-based entrypoint; no model weights baked in (fetch-models mode uses HF_TOKEN)."
+    # Upstream cosmos-curate is Apache-2.0 and its source is redistributable; the
+    # weights it would otherwise need are fetched at run time with the operator's
+    # own token, so nothing license-restricted is baked into this image.
+    redistribution: public
+  cosmos-evaluator:
+    dockerfile: cosmos-evaluator/Dockerfile
+    tier: job
+    notes: "Mode-based entrypoint; the wired checks need no model weights."
+    redistribution: public
   lerobot-vlm-rl:
     dockerfile: lerobot-vlm-rl/Dockerfile
     tier: job

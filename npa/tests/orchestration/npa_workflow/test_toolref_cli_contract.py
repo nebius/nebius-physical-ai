@@ -9,6 +9,7 @@ fine but crashes on real submit). Regression guard for the cosmos2.transfer bug
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 import typer
@@ -34,18 +35,20 @@ def _toolref_flags(tool_ref: str) -> list[str]:
     return [a for a in TOOL_CATALOG[tool_ref].argv_template if a.startswith("--")]
 
 
-@pytest.mark.parametrize(
-    ("tool_ref", "module_path", "command_name"),
-    [
-        ("workbench.cosmos2.transfer", "npa.cli.workbench.cosmos2", "transfer"),
-        ("workbench.cosmos2.transfer_execute", "npa.cli.workbench.cosmos2", "transfer"),
-        ("workbench.cosmos3.reason", "npa.cli.workbench.cosmos3", "reason"),
-        ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
-        ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
-        ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
-        ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
-    ],
-)
+CHECKED_TOOLREFS = [
+    ("workbench.cosmos2.transfer", "npa.cli.workbench.cosmos2", "transfer"),
+    ("workbench.cosmos2.transfer_execute", "npa.cli.workbench.cosmos2", "transfer"),
+    ("workbench.cosmos3.reason", "npa.cli.workbench.cosmos3", "reason"),
+    ("workbench.cosmos_curate.curate", "npa.cli.workbench.cosmos_curate", "curate-augmented"),
+    ("workbench.cosmos_evaluator.evaluate", "npa.cli.workbench.cosmos_evaluator", "evaluate"),
+    ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
+    ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
+    ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
+    ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
+]
+
+
+@pytest.mark.parametrize(("tool_ref", "module_path", "command_name"), CHECKED_TOOLREFS)
 def test_toolref_flags_are_real_cli_options(tool_ref: str, module_path: str, command_name: str) -> None:
     cli_opts = _cli_option_names(module_path, command_name)
     for flag in _toolref_flags(tool_ref):
@@ -55,8 +58,56 @@ def test_toolref_flags_are_real_cli_options(tool_ref: str, module_path: str, com
         )
 
 
+def test_every_toolref_the_data_factory_submits_is_checked() -> None:
+    """The list above is an allowlist, so a new toolRef would silently go unchecked.
+
+    A flag mismatch validates and plans fine and only crashes on a real submit, which
+    for this blueprint means after a GPU stage has already run.
+    """
+
+    import yaml
+
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    blueprint = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    states = yaml.safe_load(blueprint.read_text(encoding="utf-8"))["states"]
+    submitted = {
+        state["toolRef"]
+        for state in states.values()
+        if isinstance(state, dict) and state.get("toolRef")
+    }
+    assert load_spec(blueprint).name  # the blueprint still parses as a spec
+
+    unchecked = sorted(submitted - {ref for ref, _, _ in CHECKED_TOOLREFS})
+    assert not unchecked, (
+        f"the data factory submits {unchecked} but their flags are never checked "
+        "against the real CLI; add them to CHECKED_TOOLREFS"
+    )
+
+
 def test_cosmos2_transfer_uses_uri_flags_not_path() -> None:
     flags = _toolref_flags("workbench.cosmos2.transfer")
     assert "--input-uri" in flags and "--output-uri" in flags
     assert "--input-path" not in flags and "--output-path" not in flags
     assert "--run-id" in flags
+
+
+def test_the_visualize_stage_pins_the_same_rerun_as_npas_viz_extra() -> None:
+    """The stage installs rerun-sdk itself, so its pin must not drift from npa's.
+
+    Two different rerun versions in one run means the recording is written by one and
+    read by another, which is exactly the kind of mismatch that shows up as an empty
+    viewer rather than an error.
+    """
+
+    import re
+
+    repo = Path(__file__).resolve().parents[3]
+    blueprint = (repo / "workflows" / "physical-ai-data-factory.yaml").read_text(encoding="utf-8")
+    pyproject = (repo / "pyproject.toml").read_text(encoding="utf-8")
+
+    in_stage = re.search(r'"rerun-sdk==([0-9.]+)"', blueprint)
+    in_extra = re.search(r'viz = \["rerun-sdk==([0-9.]+)"\]', pyproject)
+    assert in_stage, "the visualize stage no longer installs a pinned rerun-sdk"
+    assert in_extra, "npa no longer declares a pinned rerun-sdk viz extra"
+    assert in_stage.group(1) == in_extra.group(1)
