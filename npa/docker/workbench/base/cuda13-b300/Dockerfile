@@ -9,6 +9,13 @@ ARG TORCH_VERSION=2.9.0
 ARG TORCHVISION_VERSION=0.24.0
 ARG TORCHAUDIO_VERSION=2.9.0
 ARG FLASH_ATTN_COMMIT=0409f9adcbdebff6cc19eb95f370d40e896980bc
+# flash-attn-4 requires quack-kernels>=0.4.0 and nvidia-cutlass-dsl>=4.4.2, both
+# unbounded. Left alone, pip picks the newest cutlass DSL, finds that the newest
+# quack pins an exact older cutlass, and backtracks *quack* instead - landing on
+# an old quack against a new cutlass that fails to import with
+# "module 'cutlass.cute.core' has no attribute 'ThrMma'". Pinning quack cascades
+# its exact cutlass pin and keeps the pair consistent.
+ARG QUACK_KERNELS_VERSION=0.6.1
 # SASS is per-arch with no cross-major compatibility, so every architecture a
 # source-compiled extension must run on has to be listed here explicitly:
 #   8.0  = A100 (sm_80)          9.0  = H100/H200 (sm_90)
@@ -26,9 +33,10 @@ LABEL npa.image="cuda13-b300" \
       npa.cuda.base="${CUDA_BASE_TAG}" \
       npa.torch.version="${TORCH_VERSION}+cu130" \
       npa.flash_attn_4.commit="${FLASH_ATTN_COMMIT}" \
+      npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
       npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -111,10 +119,13 @@ RUN python -m pip install \
       transformers \
       wandb
 
+ARG QUACK_KERNELS_VERSION
 RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention \
     && cd /tmp/flash-attention \
     && git checkout "${FLASH_ATTN_COMMIT}" \
-    && python -m pip install "flash_attn/cute[cu13]" \
+    && python -m pip install \
+      "quack-kernels[cu13]==${QUACK_KERNELS_VERSION}" \
+      "flash_attn/cute[cu13]" \
     && rm -rf /tmp/flash-attention
 
 # flash-attn-4 exposes flash_attn.cute. Provide the legacy root import used by
