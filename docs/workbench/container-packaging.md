@@ -278,8 +278,9 @@ Use one of the two durable credentials instead (GHCR push always uses the built-
 | `NEBIUS_SA_CREDENTIALS_JSON` | authorized-key credentials JSON for a service account with `viewer` on the source registry; the job mints a fresh token per run | no expiry to manage |
 | `NEBIUS_CR_TOKEN` | a static key issued for the registry service | 6 months by default, up to 3 years |
 
-The workflow prefers `NEBIUS_SA_CREDENTIALS_JSON` and falls back to `NEBIUS_CR_TOKEN`.
-Issue a static key with:
+The workflow prefers `NEBIUS_SA_CREDENTIALS_JSON` and falls back to `NEBIUS_CR_TOKEN`; both
+are resolved by `npa/scripts/ci_source_registry_login.sh`, shared by the publish and health
+workflows so the credential path cannot drift between them. Issue a static key with:
 
 ```bash
 nebius iam static-key issue \
@@ -287,12 +288,31 @@ nebius iam static-key issue \
   --service=CONTAINER_REGISTRY
 ```
 
+> **A static key expires and nothing in this repo can see it coming.** Its lifetime is set at
+> issue time (6 months by default) and is *not* readable from the token, unlike an access
+> token's `exp`. So record the expiry date wherever you keep operational reminders — not in
+> the repo, which must not carry tenant identifiers — and rely on the **Public mirror health**
+> workflow for the early warning: it runs the same read-only preflight weekly and goes red on
+> a dead credential, months before anyone next needs to publish. Verify the service account
+> holds `viewer` on the source registry; without it every read is denied.
+
 Either way the credential is checked offline before the two-minute manifest sweep, so an
 expired token is named as such in seconds rather than arriving as a wall of identical
 `UNAUTHORIZED` lines:
 
 ```bash
 printf '%s' "$TOKEN" | python -m npa.deploy.publish_public --describe-credential
+```
+
+That check is a fast diagnostic, not proof the credential *works* — an opaque static key has
+no expiry to read, so it always passes. Prove a credential by reading a real manifest with it,
+and point `DOCKER_CONFIG` at an empty directory first so the read cannot succeed on an ambient
+login you already had:
+
+```bash
+export DOCKER_CONFIG="$(mktemp -d)"
+printf '%s' "$TOKEN" | crane auth login cr.eu-north1.nebius.cloud -u iam --password-stdin
+crane manifest cr.eu-north1.nebius.cloud/<registry-id>/npa-lerobot:<tag> >/dev/null && echo ok
 ```
 
 You do not have to guess whether a real run would work: the `Publish public images`

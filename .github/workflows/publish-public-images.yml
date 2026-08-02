@@ -116,48 +116,9 @@ jobs:
         env:
           NEBIUS_SA_CREDENTIALS_JSON: ${{ secrets.NEBIUS_SA_CREDENTIALS_JSON }}
           NEBIUS_CR_TOKEN: ${{ secrets.NEBIUS_CR_TOKEN }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          set -euo pipefail
-          umask 077
-          token_file="$RUNNER_TEMP/npa-source-registry-token"
-          sa_file="$RUNNER_TEMP/nebius-sa-credentials.json"
-          trap 'rm -f "$token_file" "$sa_file"' EXIT
-
-          if [ -n "${NEBIUS_SA_CREDENTIALS_JSON:-}" ]; then
-            # Minting in-run is the only credential path with no expiry to manage: the SA key
-            # is long-lived and the token it yields only has to outlive this job.
-            echo "Minting a fresh access token from NEBIUS_SA_CREDENTIALS_JSON."
-            curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-            export PATH="$HOME/.nebius/bin:$PATH"
-            printf '%s' "$NEBIUS_SA_CREDENTIALS_JSON" > "$sa_file"
-            nebius profile create \
-              --endpoint api.nebius.cloud \
-              --service-account-file "$sa_file" \
-              --profile publish-public-images
-            nebius --profile publish-public-images iam get-access-token > "$token_file"
-          elif [ -n "${NEBIUS_CR_TOKEN:-}" ]; then
-            printf '%s' "$NEBIUS_CR_TOKEN" > "$token_file"
-          else
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "::notice::Neither NEBIUS_SA_CREDENTIALS_JSON nor NEBIUS_CR_TOKEN is set, so this dry run cannot check the source registry."
-              echo "available=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "A source registry credential (NEBIUS_SA_CREDENTIALS_JSON or NEBIUS_CR_TOKEN) is required to copy" >&2
-            exit 1
-          fi
-
-          # Offline verdict on the credential itself, before the ~2-minute manifest sweep.
-          # An expired access token is the one failure this workflow has actually had, and
-          # it is readable from the token's own `exp` claim -- so report it in a second,
-          # by name, instead of as 23 indistinguishable UNAUTHORIZED lines.
-          python -m npa.deploy.publish_public --describe-credential < "$token_file"
-
-          for host in cr.eu-north1.nebius.cloud cr.us-central1.nebius.cloud; do
-            crane auth login "$host" -u iam --password-stdin < "$token_file"
-          done
-          echo "available=true" >> "$GITHUB_OUTPUT"
+          # A dry run without secrets still reports the plan and says what it could not check.
+          REQUIRE_CREDENTIAL: ${{ inputs.dry_run == false }}
+        run: ./npa/scripts/ci_source_registry_login.sh
 
       # `crane auth login` writes a config file and exits 0 for any string -- it never
       # contacts the registry -- so the step above proves nothing about NEBIUS_CR_TOKEN.
