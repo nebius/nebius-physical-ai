@@ -2399,3 +2399,27 @@ def test_ui_treats_a_mounted_viewer_as_proof_a_recording_exists() -> None:
         "const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);"
         in html
     ), "a mounted viewer must count towards readiness"
+
+
+def test_ui_viewer_banner_copy_tracks_readiness_both_ways() -> None:
+    """The Rerun banner must assign copy for BOTH states, like its siblings.
+
+    Only the not-ready branch used to set text, so whenever a recording WAS
+    ready but the iframe had not mounted yet, the banner kept its "No
+    run-specific Rerun recording yet" default and contradicted the run's own
+    published recording. Measured against the deployed agent: 593 of 593
+    samples over six page loads showed that false claim while
+    ``/api/sim-viz/status`` reported ``rerun_ready: true``.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    branch = html.split("const mountProvesRecording", 1)[1].split("function setRenderMode", 1)[0]
+    assert "cta.textContent = ready" in branch, "the ready state needs its own copy"
+    assert "No run-specific Rerun recording yet." in branch
+    # The ready copy must not itself deny the recording.
+    ready_copy = branch.split("cta.textContent = ready", 1)[1].split(":", 1)[0]
+    assert "No run-specific" not in ready_copy

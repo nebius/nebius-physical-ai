@@ -4192,11 +4192,15 @@
         const mountProvesRecording = Boolean(rerunIframeLoaded && lastRerunRecordingUrl);
         const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);
         cta.hidden = ready && rerunIframeLoaded;
-        if (!ready) {
-          cta.textContent =
-            "No run-specific Rerun recording yet. Use the Run status/logs panel below " +
+        // Always set copy that matches the state, the way the Lichtblick branch
+        // above already does. Previously only the not-ready case assigned text,
+        // so the ready-but-not-yet-mounted window kept the "no recording yet"
+        // default and actively contradicted a run that HAD published one.
+        cta.textContent = ready
+          ? "Rerun recording is ready for this run; the embedded viewer is still " +
+            "loading. Use 'Open full Rerun' if the panel below stays blank."
+          : "No run-specific Rerun recording yet. Use the Run status/logs panel below " +
             "for stage progress and result.";
-        }
       }
       function setRenderMode(mode) {
         const next = String(mode || "rerun");
