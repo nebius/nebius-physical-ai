@@ -178,7 +178,10 @@ config:
   solution_name: "droid-policy-learning"
   capability_name: "rlds_config_generator_contract"
   smoke_artifact_name: "droid_rlds_config_generator.json"
-  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml"
+  # The packaged profile NAME, not a repo path: this stage runs in a pod where the
+  # checkout does not exist. `resolve_byof_profile_path` looks it up inside the
+  # installed package (npa/src/npa/workflows/byof/profiles/).
+  resource_profile_yaml: "byof-solution-smoke-rtxpro-gpu"
   task: "droid_100"
   iterations: 1
   num_envs: 1

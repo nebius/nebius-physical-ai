@@ -188,7 +188,15 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "trigger_uri": "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/",
                     "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
+                    # `sim2real_envgen` takes the RUN ROOT and derives envs/raw,
+                    # envs/train, envs/heldout and envs/manifest beneath it.
+                    "envgen_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
                     "raw_envs_uri": "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/",
+                    "shard_index": "0",
+                    "shard_count": "1",
+                    "train_fraction": "0.8",
+                    "envgen_seed": "42",
+                    "augmented_frames_uri": "",
                 }
             ),
             "resources": OrderedDict(
@@ -240,8 +248,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.raw_envs_uri}}manifest.json",
-                                        "schema": "npa.sim2real.split_manifest.v1",
+                                        "uri": "{{config.raw_envs_uri}}raw-shard-00-summary.json",
+                                        "schema": "npa.sim2real.raw_env_shard_summary.v1",
                                     }
                                 )
                             ],
@@ -469,7 +477,15 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "trigger_uri": "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/",
                     "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
+                    # `sim2real_envgen` takes the RUN ROOT and derives envs/raw,
+                    # envs/train, envs/heldout and envs/manifest beneath it.
+                    "envgen_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
                     "raw_envs_uri": "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/",
+                    "shard_index": "0",
+                    "shard_count": "1",
+                    "train_fraction": "0.8",
+                    "envgen_seed": "42",
+                    "augmented_frames_uri": "",
                     "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/actions/train/",
                     "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/",
                     "heldout_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json",
@@ -519,8 +535,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.raw_envs_uri}}manifest.json",
-                                        "schema": "npa.sim2real.split_manifest.v1",
+                                        "uri": "{{config.raw_envs_uri}}raw-shard-00-summary.json",
+                                        "schema": "npa.sim2real.raw_env_shard_summary.v1",
                                     }
                                 )
                             ],
@@ -937,7 +953,10 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "task_name": "Isaac-Cartpole-v0",
                     "train_steps": 500000,
                     "learning_rate": 0.0003,
-                    "batch_size": 256,
+                    # `workbench.rl.policy_train` passes this as Isaac Lab's real
+                    # `--num-envs` (the vectorized rollout batch dimension); there
+                    # is no `--batch-size` option on that CLI.
+                    "num_envs": 256,
                     "eval_episodes": 50,
                     "success_threshold": 0.85,
                 }

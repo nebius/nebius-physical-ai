@@ -20,13 +20,9 @@ from npa.orchestration.npa_workflow.submit_matrix import (
     selected_submit_cases,
 )
 
+SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-
-#: Where the run bucket keeps the SOMA/G1 motion clips the SONIC retargeting
-#: stage consumes. The upstream dataset is dual-licensed so it is staged once by
-#: an operator rather than vendored; NPA_E2E_SONIC_MOTION_SRC overrides it.
-SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 
 
 def resolve_spec_path(name: str) -> Path:
@@ -49,6 +45,8 @@ ALL_GOLDEN_SPECS = sorted(
 
 DYNAMIC_SPECS = frozenset(
     {
+        "dataset-of-record-smoke.yaml",
+        "dataset-ingest-curate.yaml",
         "sim2real-vlm-rl.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
@@ -190,33 +188,147 @@ def seed_live_workflow_inputs(
             )
         return
 
-    if spec_name == "sonic-locomotion-finetuning.yaml":
-        # SONIC retargeting needs a real G1 motion dataset (SOMA/G1 CSV clips,
-        # each a directory with joint_pos.csv/body_pos.csv/body_quat.csv). We do
-        # not vendor the dual-licensed upstream data, so the run bucket holds a
-        # staged copy under SONIC_MOTION_FIXTURE_PREFIX and
-        # NPA_E2E_SONIC_MOTION_SRC overrides it (an ``s3://`` prefix or a local
-        # directory, e.g. NVlabs/GR00T-WholeBodyControl
-        # gear_sonic_deploy/reference/example after ``git lfs pull``).
-        src = os.environ.get("NPA_E2E_SONIC_MOTION_SRC", "").strip()
-        if not src and _s3_prefix_has_objects(client, bucket, SONIC_MOTION_FIXTURE_PREFIX):
-            src = f"s3://{bucket}/{SONIC_MOTION_FIXTURE_PREFIX}"
+    if spec_name in {"sonic-export.yaml", "sonic-export-eval.yaml"}:
+        # `npa workbench sonic export` needs a loadable torch policy checkpoint. We do
+        # not vendor NVIDIA's gated nvidia/GEAR-SONIC weights, so the operator stages a
+        # small REAL checkpoint once with scripts/stage-sonic-export-fixture.sh (built
+        # in-cluster from npa.workflows.sonic_fixture) and points this at it.
+        src = os.environ.get("NPA_E2E_SONIC_CHECKPOINT_SRC", "").strip()
         if not src:
             pytest.skip(
-                "no SONIC motion source: stage a real SOMA/G1 motion dataset "
-                f"(soma-csv clips) under s3://{bucket}/{SONIC_MOTION_FIXTURE_PREFIX} "
-                "or point NPA_E2E_SONIC_MOTION_SRC at one."
+                "NPA_E2E_SONIC_CHECKPOINT_SRC not set; stage one with "
+                "scripts/stage-sonic-export-fixture.sh --image <registry>/npa-sonic:<tag> "
+                "--uri s3://<bucket>/<prefix>/checkpoint.pt"
             )
-        _seed_prefix_from_source(src, bucket, f"{marker}/source/", client)
+        _seed_object_from_source(src, bucket, f"{marker}/checkpoint.pt", client)
+        return
+
+    if spec_name == "sonic-eval.yaml":
+        # The eval twin scores an ALREADY exported ONNX policy plus its sidecar
+        # metadata. Both come from a real `sonic export` run, so the operator stages the
+        # pair the same way (sonic_policy.onnx + sonic_policy.onnx.metadata.json).
+        src = os.environ.get("NPA_E2E_SONIC_ONNX_SRC", "").strip()
+        if not src:
+            pytest.skip(
+                "NPA_E2E_SONIC_ONNX_SRC not set; run the sonic-export twin live first "
+                "and point this at its sonic_policy.onnx"
+            )
+        _seed_object_from_source(src, bucket, f"{marker}/sonic_policy.onnx", client)
+        # torch.onnx.export splits large tensors into <name>.onnx.data, which
+        # onnxruntime resolves relative to the model file. Copy it when present.
+        from npa.workbench.sonic.staging import (
+            external_data_uri_candidates,
+            sidecar_uri_candidates,
+        )
+
+        for extra in external_data_uri_candidates(src):
+            try:
+                _seed_object_from_source(
+                    extra, bucket, f"{marker}/{extra.rsplit('/', 1)[-1]}", client
+                )
+            except Exception:  # noqa: BLE001 - absent for small graphs
+                continue
+
+        # The exporter's sidecar is `<stem>.metadata.json`; the tool REQUIRES it
+        # (load_export_metadata validates its format), so a missing sidecar is fatal.
+
+        for candidate in sidecar_uri_candidates(src):
+            try:
+                _seed_object_from_source(
+                    candidate, bucket, f"{marker}/sonic_policy.metadata.json", client
+                )
+            except Exception:  # noqa: BLE001 - try the next naming convention
+                continue
+            return
+        pytest.fail(
+            "no export sidecar next to NPA_E2E_SONIC_ONNX_SRC; point it at the "
+            "sonic_policy.onnx a real `sonic export` run produced "
+            f"(tried {list(sidecar_uri_candidates(src))})"
+        )
+
+    if spec_name in {"dataset-of-record-smoke.yaml", "dataset-ingest-curate.yaml"}:
+        # `config.raw_sensor_uri` points at a SHARED fixture path outside the run prefix
+        # (materialize_live_spec only rewrites `prefix:`), so seeding is idempotent. The
+        # generated set satisfies the stricter of the two specs' gates — see
+        # npa.workflows.dataset_fixture.
+        from npa.orchestration.npa_workflow.spec import load_spec
+
+        raw_uri = str(load_spec(resolve_spec_path(spec_name)).config["raw_sensor_uri"])
+        raw_uri = raw_uri.replace("{{config.bucket}}", bucket)
+        from npa.workflows.dataset_fixture import publish as publish_records
+
+        published = publish_records(raw_uri, client=client)
+        print(f"[seed] {published['record_count']} raw sensor records -> {raw_uri}")
+        return
+
+    if spec_name == "insights-smoke.yaml":
+        # This spec reads a SHARED fixture prefix (`insights-fixtures/run/`), not a
+        # run-scoped one, so seeding is idempotent and safe to repeat.
+        _seed_insights_run_prefix(client, bucket=bucket, prefix="insights-fixtures/run/")
+        return
+
+    if spec_name == "insights-aggregate.yaml":
+        # Its run_prefix_uri is `runs/{{run.id}}/`, outside the e2e marker prefix.
+        _seed_insights_run_prefix(client, bucket=bucket, prefix=f"runs/{run_id}/")
+        return
+
+    if spec_name == "retargeting.yaml":
+        # The retargeting tool feeds NVIDIA's upstream SOMA-CSV converter, so it needs a
+        # real motion clip. Prefer a staged real dataset; otherwise synthesize one that
+        # satisfies the upstream `load_csv_motion` contract (see
+        # npa.workflows.motion_fixture). Before this the case failed with
+        # "S3 input contains no objects" (EVIDENCE §6.1).
+        _seed_motion_clips(client, bucket=bucket, prefix=f"{marker}/source/")
+        return
+
+    if spec_name == "sonic-locomotion-finetuning.yaml":
+        _seed_motion_clips(client, bucket=bucket, prefix=f"{marker}/source/")
         return
 
     # VLM-eval GPU twins score a rollout: seed a short RGB frame sequence under
     # the rollouts prefix so the self-hosted VLM has real frames to evaluate.
+    if spec_name == "tokenfactory-scene-to-rollout-judge.yaml":
+        # Three stages, three inputs: a scene for the reasoner and a processor-format policy for
+        # the rollout. The judge's input is produced by the rollout, which is the point.
+        _seed_scene_frame(client, bucket=bucket, marker=marker)
+        src = os.environ.get("NPA_E2E_LEROBOT_POLICY_SRC", "").strip()
+        if not src:
+            pytest.skip("NPA_E2E_LEROBOT_POLICY_SRC not set; see tokenfactory-rollout-judge-combo")
+        _seed_prefix_from_source(src, bucket, f"{marker}/policy/", client)
+        return
+
+    if spec_name == "tokenfactory-rollout-judge-combo.yaml":
+        # The rollout stage needs a policy in LeRobot's PROCESSOR format. The obvious public
+        # choice, `lerobot/diffusion_pusht`, predates it and fails with ProcessorMigrationError
+        # on LeRobot >= 0.6, so seed a checkpoint produced by 0.6 itself (job 256 wrote one;
+        # stage it once and point NPA_E2E_LEROBOT_POLICY_SRC at it).
+        src = os.environ.get("NPA_E2E_LEROBOT_POLICY_SRC", "").strip()
+        if not src:
+            pytest.skip(
+                "NPA_E2E_LEROBOT_POLICY_SRC not set; stage a processor-format LeRobot policy "
+                "prefix (config.json + model.safetensors + policy_{pre,post}processor*.json)"
+            )
+        _seed_prefix_from_source(src, bucket, f"{marker}/policy/", client)
+        return
+
     if spec_name in {
         "vlm-eval-single.yaml",
         "vlm-eval-benchmark.yaml",
+        "vlm-eval-loop.yaml",
+        "vlm-eval-token-factory.yaml",
         "tokenfactory-rollout-judge.yaml",
     }:
+        if spec_name == "vlm-eval-benchmark.yaml":
+            # The benchmark sweeps a *labeled* set, so it needs two rollouts with known
+            # outcomes plus a manifest. The spec's `--dataset` is an S3 URI (a
+            # repo-relative path cannot exist in the pod), so seed the manifest too.
+            _seed_vlm_benchmark_dataset(client, bucket=bucket, marker=marker)
+            return
+        if spec_name == "vlm-eval-loop.yaml":
+            # The loop's whole point is a SET: seed three rollout directories so the
+            # aggregate report has something to aggregate (total_rollouts == 3).
+            _seed_rollout_frames(client, bucket=bucket, marker=marker, episodes=3)
+            return
         _seed_rollout_frames(client, bucket=bucket, marker=marker)
         if spec_name == "tokenfactory-rollout-judge.yaml":
             # This twin also reasons over a captured scene before judging.
@@ -322,9 +434,92 @@ def write_runtime_evidence(name: str, payload: Any) -> Path:
     return path
 
 
-def _s3_prefix_has_objects(client, bucket: str, prefix: str) -> bool:
-    response = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-    return bool(response.get("Contents"))
+def _seed_insights_run_prefix(client, *, bucket: str, prefix: str) -> None:
+    """Seed a run prefix the insights ingester recognises.
+
+    ``workbench.insights.ingest_run`` scans a prefix for known manifest/report schemas
+    and fails with "no known manifest/report schemas found" when it finds none — which is
+    exactly why the insights specs had no live coverage. Two real artifacts are enough:
+
+    * a ``npa.dataset.manifest.v1`` document, which yields record/corruption metrics and
+      a lineage edge (so the store has something to compare and chart);
+    * a bare ``{"decision": ...}`` document, the shape the gate toolRefs write, which the
+      ingester routes to its decision extractor.
+    """
+
+    import json as _json
+
+    manifest = {
+        "schema": "npa.dataset.manifest.v1",
+        "dataset_id": "insights-fixture",
+        "version": "v1",
+        "source": "insights-fixture",
+        "record_count": 24,
+        "quality_stats": {"record_count": 24, "corrupt_count": 2, "completeness": 0.92},
+        "lineage": {"input_uris": [f"s3://{bucket}/{prefix}raw/"]},
+    }
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}dataset/manifest.json",
+        Body=(_json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
+        ContentType="application/json",
+    )
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}gate/decision.json",
+        Body=b'{"decision": "promote_checkpoint"}\n',
+        ContentType="application/json",
+    )
+
+
+def _seed_motion_clips(client, *, bucket: str, prefix: str) -> None:
+    """Seed SOMA/G1 motion clips for the retargeting-backed specs.
+
+    Prefers a real staged dataset (``NPA_E2E_SONIC_MOTION_SRC`` — an ``s3://`` prefix or
+    a local directory, e.g. NVlabs/GR00T-WholeBodyControl's
+    ``gear_sonic_deploy/reference/example`` after ``git lfs pull``). When that is not
+    set, synthesize a clip set that satisfies the upstream ``load_csv_motion`` contract
+    with :mod:`npa.workflows.motion_fixture`, so these twins are live-testable without
+    the dual-licensed upstream data this repo does not vendor.
+    """
+
+    import tempfile
+
+    src = os.environ.get("NPA_E2E_SONIC_MOTION_SRC", "").strip()
+    if src:
+        _seed_prefix_from_source(src, bucket, prefix, client)
+        return
+
+    from npa.workflows.motion_fixture import build_dataset, upload_dataset
+
+    with tempfile.TemporaryDirectory(prefix="npa-motion-fixture-") as tmp:
+        meta = build_dataset(tmp)
+        uploaded = upload_dataset(tmp, f"s3://{bucket}/{prefix}", client=client)
+    print(
+        f"[seed] synthesized {meta['clip_count']} SOMA-CSV clip(s) "
+        f"({len(uploaded)} objects) — set NPA_E2E_SONIC_MOTION_SRC to use real data"
+    )
+
+
+def _seed_object_from_source(source: str, bucket: str, dest_key: str, client) -> None:
+    """Copy ONE object (``s3://`` URI or local file) to ``dest_key``."""
+
+    source = source.strip()
+    if source.startswith("s3://"):
+        without = source[len("s3://") :]
+        src_bucket, _, src_key = without.partition("/")
+        if not src_key:
+            pytest.fail(f"expected an s3:// object URI with a key, got {source!r}")
+        client.copy_object(
+            Bucket=bucket,
+            Key=dest_key,
+            CopySource={"Bucket": src_bucket, "Key": src_key},
+        )
+        return
+    local = Path(source.replace("file://", ""))
+    if not local.is_file():
+        pytest.fail(f"fixture source {source!r} is not an s3:// object URI or a file")
+    client.upload_file(str(local), bucket, dest_key)
 
 
 def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client) -> None:
@@ -422,6 +617,80 @@ def _seed_rollout_frames(
             )
 
 
+def _seed_vlm_benchmark_dataset(client, *, bucket: str, marker: str) -> None:
+    """Seed a labeled two-rollout benchmark set plus its manifest.
+
+    `vlm-eval benchmark` sweeps thresholds/rubrics/models over rollouts with *known*
+    outcomes and reports accuracy per config, so a single unlabeled rollout would make the
+    sweep meaningless. One rollout reaches the target (expected pass) and one stalls short
+    of it (expected fail), which is a real discrimination task for the VLM.
+
+    ``rollout_base_path`` is absolute so the manifest's relative entries resolve to the
+    seeded frames regardless of where the manifest itself is downloaded to.
+    """
+
+    import json
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover
+        pytest.fail(f"Pillow required to seed benchmark fixtures: {exc}")
+
+    frames = 4
+    # (episode id, whether the cube reaches the target)
+    episodes = (("episode_000", True), ("episode_001", False))
+    for episode, succeeds in episodes:
+        for frame in range(frames):
+            image = Image.new("RGB", (320, 240), (30, 30, 30))
+            draw = ImageDraw.Draw(image)
+            draw.rectangle([0, 200, 320, 240], fill=(90, 70, 50))  # table
+            draw.rectangle([250, 150, 300, 200], fill=(40, 200, 40))  # target
+            # The failing episode stops moving a third of the way across.
+            travel = frame if succeeds else min(frame, 1)
+            x = 40 + travel * 70
+            draw.rectangle([x, 150, x + 40, 200], fill=(200, 40, 40))
+            buf = BytesIO()
+            image.save(buf, format="PNG")
+            client.put_object(
+                Bucket=bucket,
+                Key=f"{marker}/rollouts/{episode}/frame_{frame:03d}.png",
+                Body=buf.getvalue(),
+                ContentType="image/png",
+            )
+
+    manifest = {
+        "format": "npa_vlm_eval_benchmark_v1",
+        "rollout_base_path": f"s3://{bucket}/{marker}/rollouts/",
+        # The spec sweeps `default,strict`, so both names must exist in the manifest.
+        "rubrics": {
+            "default": (
+                "Score whether the red cube reaches the green target. Use 1.0 for clear "
+                "contact with the target and 0.0 when the cube stops short."
+            ),
+            "strict": (
+                "Score 1.0 only if the red cube fully overlaps the green target in the "
+                "final frame. Any gap scores 0.0."
+            ),
+        },
+        "items": [
+            {
+                "id": episode,
+                "rollout": episode,
+                "expected_label": "pass" if succeeds else "fail",
+                "task": "push the red cube onto the green target",
+            }
+            for episode, succeeds in episodes
+        ],
+    }
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{marker}/benchmark/benchmark.json",
+        Body=(json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
 def materialize_live_spec(
     tmp_path: Path,
     name: str,
@@ -449,6 +718,15 @@ def materialize_live_spec(
         text = re.sub(
             r'(synthetic_rows:\s*")[^"]*(")',
             lambda m: f"{m.group(1)}{bdd_synth}{m.group(2)}",
+            text,
+        )
+    # Accepting NVIDIA's terms for a live SONIC run is the OPERATOR's act, so the harness reads
+    # it from the environment rather than shipping an accepted spec (EVIDENCE.md §R47).
+    sonic_eula = os.environ.get("NPA_E2E_SONIC_ACCEPT_NVIDIA_EULA", "").strip()
+    if sonic_eula:
+        text = re.sub(
+            r'(sonic_accept_nvidia_eula:\s*")[^"]*(")',
+            lambda m: f"{m.group(1)}{sonic_eula}{m.group(2)}",
             text,
         )
     bdd_epochs = os.environ.get("NPA_E2E_BDD100K_EPOCHS", "").strip()
@@ -661,25 +939,39 @@ def _cli_failure_detail(result: Result) -> str:
     return "\n".join(parts)
 
 
-def _slice_json_document(text: str) -> str:
-    """Return the JSON document at the end of a CLI stream.
+def _json_document_from_stream(text: str) -> Any:
+    """Parse the JSON document out of a CLI stream that may carry prose first.
 
-    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, so
-    advisory lines the command writes to stderr (``Hint: consider
-    --secret-env ...``) sit in front of the ``--output-format json`` payload.
+    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, and the submit
+    path legitimately writes advisory lines there (e.g. "Hint: consider --secret-env
+    NGC_API_KEY"). A bare ``json.loads(result.output)`` then dies with
+    ``Expecting value: line 1 column 1`` and *hides the real result* — which is exactly
+    how a successful ``sonic-export`` submit (job 189) was reported as a test failure.
     """
 
-    if text.lstrip().startswith("{"):
-        return text[text.index("{") :]
-    start = text.find("\n{")
-    if start < 0:
-        raise AssertionError(f"no JSON document in CLI output:\n{text[-4000:]}")
-    return text[start + 1 :]
+    stripped = text.lstrip()
+    if stripped.startswith(("{", "[")):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            # A progress line can start with '[' (e.g. "[runtime] wave ..."), so a
+            # leading bracket does not mean the stream *is* the document.
+            pass
+    for index, line in enumerate(text.splitlines(keepends=True)):
+        if not line.lstrip().startswith(("{", "[")):
+            continue
+        offset = sum(len(part) for part in text.splitlines(keepends=True)[:index])
+        candidate = text[offset:].lstrip()
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    raise AssertionError(f"no JSON document in CLI output:\n{text[-4000:]}")
 
 
 def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None) -> Any:
     assert_cli_ok(result, forbidden=forbidden)
-    return json.loads(_slice_json_document(result.output or ""))
+    return _json_document_from_stream(result.output or "")
 
 
 def parse_json_payload(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
@@ -697,6 +989,10 @@ def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, An
     """
 
     assert_cli_ok(result, forbidden=forbidden)
-    payload = json.loads(_slice_json_document(result.output or ""))
+    payload = _json_document_from_stream(result.output or "")
     assert isinstance(payload, dict)
     return payload
+
+def _s3_prefix_has_objects(client, bucket: str, prefix: str) -> bool:
+    response = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    return bool(response.get("Contents"))

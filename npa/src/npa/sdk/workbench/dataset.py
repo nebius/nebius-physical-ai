@@ -44,13 +44,22 @@ def ingest(
     sensor_schema: dict[str, Any] | None = None,
     source: str = "",
     workflow_run: str = "",
+    lancedb_endpoint: str = "",
+    lance_table: str = "",
+    lance_uri: str = "",
     mode: str | None = None,
     service: bool = False,
     endpoint: str = "",
     token_env: str = DEFAULT_TOKEN_ENV,
     timeout: float = 120.0,
 ) -> IngestResponse:
-    """Ingest raw sensor data and register a versioned dataset manifest."""
+    """Ingest raw sensor data and register a versioned dataset manifest.
+
+    ``lancedb_endpoint`` populates the query index as records are ingested. Without it the
+    manifest is the only source of truth and `dataset query` can only ever return nothing —
+    which is exactly what a live run showed once the service was finally reachable
+    (EVIDENCE.md §R41).
+    """
     request = IngestRequest(
         input_uri=input_uri,
         output_uri=output_uri,
@@ -66,7 +75,12 @@ def ingest(
         )
     from npa.workbench.dataset.ingestion import ingest_dataset
 
-    return ingest_dataset(request)
+    return ingest_dataset(
+        request,
+        lancedb_endpoint=lancedb_endpoint,
+        lance_table=lance_table,
+        lance_uri=lance_uri,
+    )
 
 
 def validate(
@@ -143,6 +157,8 @@ def query(
     min_quality: float | None = None,
     limit: int = DEFAULT_QUERY_LIMIT,
     lancedb_endpoint: str = "",
+    lance_table: str = "",
+    lance_uri: str = "",
     mode: str | None = None,
     service: bool = False,
     endpoint: str = "",
@@ -159,6 +175,8 @@ def query(
         min_quality=min_quality,
         limit=limit,
         lancedb_endpoint=lancedb_endpoint,
+        lance_table=lance_table,
+        lance_uri=lance_uri,
     )
     if _resolve_mode(mode=mode, service=service):
         params = {k: v for k, v in request.model_dump(mode="json").items() if v not in ("", None)}

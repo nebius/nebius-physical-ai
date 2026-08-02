@@ -48,9 +48,165 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.cosmos3": ("HF_TOKEN",),
-    "workbench.sonic": ("HF_TOKEN", "NGC_API_KEY"),
+    # Cosmos-Transfer2.5 downloads its guardrail checkpoints from a gated Hugging Face repo
+    # before it will generate anything. Live job 286 got all the way into examples/inference.py
+    # and died on `hf download nvidia/Cosmos-Guardrail1` with no token.
+    "workbench.cosmos2": ("HF_TOKEN",),
+    # No NGC_API_KEY: `--runtime local` trains in the stage and pulls nothing from NGC, and
+    # hinting a secret the cases do not carry skips the twins instead of running them (#238).
+    "workbench.sonic": ("HF_TOKEN",),
     "workbench.groot": ("HF_TOKEN", "NGC_API_KEY"),
 }
+
+# Optional dependency groups a toolRef's stage needs, declared as npa extras in
+# npa/pyproject.toml. A workbench image bakes these already, but a stage running on
+# SkyPilot's default image (no `--image`, npa installed from NPA_SRC_S3_URI) gets only
+# the base install — and then `npa workbench sonic export` fails with the tool's own
+# message: "SONIC ONNX export requires torch ... or use the npa[sonic] extra".
+# Installing the extra from the SAME source tree is the existing pattern (the renderer
+# already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
+# SONIC specs run without a vendor image at all.
+TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.sonic": "sonic",
+}
+
+#: toolRef prefix -> third-party pip requirements the tool shells out to, with the executable
+#: that proves each is present. `cosmos fetch` runs `huggingface-cli`; the retired
+#: cosmos3-ea-fetch.yaml pip-installed `huggingface_hub[cli]` in its setup, and that one line
+#: was the only load-bearing part of its ~60-line preamble. Dropping it made the stage fail
+#: with "No such file or directory: 'huggingface-cli'" (live job 226).
+#: A requirement is (probe, pip requirement). The probe is an executable name checked with
+#: ``command -v``, or ``python:<module>`` checked with an import — a library has no binary to
+#: look for. `lerobot policy_train` needs the latter: it materialises its dataset with
+#: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
+#: venv, so the library is not necessarily importable there (live job 244).
+TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
+    "workbench.cosmos.check": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
+    "workbench.lerobot.policy_train": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+    ),
+    "workbench.lerobot.policy_rollout": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+    ),
+    # Text-to-image clones the framework and hands its environment to uv, exactly as the
+    # retired template did; the checkpoint download still goes through the HF CLI.
+    "workbench.cosmos3.text_to_image": (
+        ("python:huggingface_hub", "huggingface_hub[cli]>=0.23,<1.0"),
+        # `python:` on purpose. Probing for a `uv` EXECUTABLE passes on SkyPilot's default image
+        # — it ships one in its runtime directory — and then the stage cannot find it, because
+        # that directory is on setup's PATH and not the command's (live job 291:
+        # `[Errno 2] No such file or directory: 'uv'`). Probing the MODULE installs uv into the
+        # interpreter the stage actually uses, which is the thing that has to be true.
+        ("python:uv", "uv>=0.5"),
+    ),
+}
+
+#: Prefix marking a probe as "is this python module importable?" rather than an executable.
+PYTHON_MODULE_PROBE = "python:"
+
+#: toolRef prefix -> the vendor image's own interpreter(s), in preference order.
+#:
+#: A vendor image keeps its libraries in its own environment (`/opt/lerobot/venv`,
+#: `/isaac-sim/python.sh`), while setup installs npa into whatever `python3` resolves to —
+#: SkyPilot's miniconda. The stage then runs a tool that imports the vendor library and fails
+#: with `No module named 'lerobot'` (live job 245). The retired template avoided this by
+#: `source /opt/lerobot/venv/bin/activate` before doing anything.
+#:
+#: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
+#: so the tool and the vendor library share one environment.
+TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
+    # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
+    # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with
+    # `isaaclab is required in the Isaac Lab image: No module named 'isaaclab'`. python.sh is
+    # the vendor's own launcher (it sets the kit's library paths); the kit interpreter is the
+    # fallback for images that do not ship it.
+    "workbench.isaac_lab": (
+        "/isaac-sim/python.sh",
+        "/isaac-sim/kit/python/bin/python3",
+    ),
+}
+
+
+def tool_vendor_interpreters(tool_ref: str) -> tuple[str, ...]:
+    """Return the vendor interpreters this toolRef prefers, most specific match first."""
+
+    if tool_ref in TOOL_REF_VENDOR_INTERPRETERS:
+        return TOOL_REF_VENDOR_INTERPRETERS[tool_ref]
+    best = ""
+    for prefix in TOOL_REF_VENDOR_INTERPRETERS:
+        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(prefix) > len(best):
+            best = prefix
+    return TOOL_REF_VENDOR_INTERPRETERS.get(best, ())
+
+
+def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
+    """Install npa into the vendor image's interpreter and make it the stage interpreter."""
+
+    if not candidates:
+        return ""
+    listed = " ".join(candidates)
+    # Two attempts per candidate, in this order and for opposite reasons.
+    #
+    # --no-deps first, because a vendor image ships a PINNED stack and resolving npa's
+    # requirements inside it can bump torch, after which the vendor's own compiled extensions
+    # stop loading (live job 253: torchcodec's libtorchcodec_core4.so failed with
+    # `undefined symbol: _ZN3c1013MessageLogger…`, the classic torch-ABI mismatch). Where the
+    # vendor environment already carries npa's dependencies — LeRobot's venv does — this is all
+    # that is needed and nothing is perturbed.
+    #
+    # Then WITH deps, because some vendor environments carry almost none of them. Isaac Lab's
+    # Omniverse kit python is one: live job 268 installed npa there with --no-deps, and the
+    # probe still failed because typer/boto3/pydantic were absent. A stage that cannot import
+    # npa is useless, so a perturbed-but-working environment beats a pristine broken one — and
+    # the order means the risky attempt only happens when the safe one was not enough.
+    attempts = (
+        ("--no-deps ", "without dependencies (protects the vendor's pinned stack)"),
+        ("", "with dependencies (the vendor environment lacked them)"),
+    )
+    install_block = ""
+    for flags, why in attempts:
+        install_block += (
+            f'    if ! "$npa_vendor_python" -c \'import npa.workbench\' >/dev/null 2>&1; then\n'
+            f'      echo "installing npa into $npa_vendor_python {why}" >&2\n'
+            f'      "$npa_vendor_python" -m pip install -q {flags}-e "$npa_vendor_src" \\\n'
+            f'        || "$npa_vendor_python" -m pip install -q {flags}-e "$npa_vendor_src" '
+            "--break-system-packages \\\n"
+            f'        || "$npa_vendor_python" -m pip install -q {flags}-e "$npa_vendor_src" '
+            "--user || true\n"
+            "    fi\n"
+        )
+    return (
+        "# Vendor image: its libraries live in its own environment, so npa has to be installed\n"
+        "# there and that interpreter has to be the one the stage runs.\n"
+        f"for npa_vendor_python in {listed}; do\n"
+        '  [ -x "$npa_vendor_python" ] || continue\n'
+        '  npa_vendor_src=""\n'
+        "  if [ -s /tmp/npa-src-root ]; then\n"
+        '    npa_vendor_src="$(cat /tmp/npa-src-root)"\n'
+        "  elif [ -d /opt/nebius-physical-ai/npa ]; then\n"
+        "    npa_vendor_src=/opt/nebius-physical-ai/npa\n"
+        "  elif [ -d /tmp/npa-src ]; then\n"
+        "    npa_vendor_src=/tmp/npa-src\n"
+        "  fi\n"
+        '  if [ -n "$npa_vendor_src" ]; then\n'
+        f"{install_block}"
+        "  fi\n"
+        # `import npa` is not enough: a vendor image may bake a PARTIAL npa on PYTHONPATH for
+        # its own entrypoint, which shadows the real install — `import npa` passes and
+        # `import npa.workbench` fails (live job 250). Probe a real subpackage.
+        "  if \"$npa_vendor_python\" -c 'import npa.workbench' >/dev/null 2>&1; then\n"
+        '    echo "$npa_vendor_python" > /tmp/npa-python\n'
+        '    echo "npa interpreter switched to vendor python: $npa_vendor_python" >&2\n'
+        "    break\n"
+        "  fi\n"
+        # Print WHY. A bare warning sent job 268's debugging down the wrong path: the message
+        # blamed a shadowing partial npa when the real cause was missing dependencies.
+        '  echo "warning: npa.workbench is not importable from $npa_vendor_python:" >&2\n'
+        "  \"$npa_vendor_python\" -c 'import npa.workbench' 2>&1 | tail -3 >&2 || true\n"
+        "done\n"
+    )
 
 
 class NpaWorkflowRenderError(NpaWorkflowError):
@@ -112,6 +268,9 @@ def normalize_resources(
     overrides = dict(accelerator_overrides or {})
 
     out: dict[str, Any] = {}
+    # NOTE: `num_nodes` is deliberately absent. SkyPilot puts it at the TASK level, next
+    # to `resources`, so the renderer lifts it out of the profile in
+    # build_skypilot_task_doc. Adding it here would produce an invalid resources block.
     for key in ("cloud", "accelerators", "cpus", "memory", "use_spot", "region"):
         if key not in resources or resources[key] in (None, ""):
             continue
@@ -140,6 +299,107 @@ def normalize_resources(
     return out
 
 
+def tool_pip_extra(tool_ref: str) -> str:
+    """Return the npa extra a toolRef's stage needs, or ``""``.
+
+    Longest-prefix match, mirroring :func:`tool_image_key`.
+    """
+
+    if not tool_ref:
+        return ""
+    if tool_ref in TOOL_REF_PIP_EXTRAS:
+        return TOOL_REF_PIP_EXTRAS[tool_ref]
+    best = ""
+    for prefix in TOOL_REF_PIP_EXTRAS:
+        if tool_ref == prefix or tool_ref.startswith(prefix + "."):
+            if len(prefix) > len(best):
+                best = prefix
+    return TOOL_REF_PIP_EXTRAS.get(best, "")
+
+
+def tool_pip_requirements(tool_ref: str) -> tuple[tuple[str, str], ...]:
+    """Return (executable, pip requirement) pairs this toolRef shells out to."""
+
+    if tool_ref in TOOL_REF_PIP_REQUIREMENTS:
+        return TOOL_REF_PIP_REQUIREMENTS[tool_ref]
+    best = ""
+    for prefix in TOOL_REF_PIP_REQUIREMENTS:
+        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(prefix) > len(best):
+            best = prefix
+    return TOOL_REF_PIP_REQUIREMENTS.get(best, ())
+
+
+def render_pip_requirements_setup(requirements: Sequence[tuple[str, str]]) -> str:
+    """Install third-party CLIs a tool shells out to, when they are missing.
+
+    Installed only when the executable is absent, so a purpose-built image that already
+    ships it is untouched. Failing here rather than mid-stage is the better signal: the
+    alternative is a FileNotFoundError from a subprocess after the stage has started.
+    """
+
+    if not requirements:
+        return ""
+    lines = [
+        "# Stage needs third-party packages; install any that are missing INTO the interpreter\n"
+        "# the stage will actually run (the vendor one when setup switched to it).\n"
+        "npa_req_python=python3\n"
+        "if [ -s /tmp/npa-python ]; then\n"
+        "  npa_req_python=\"$(cat /tmp/npa-python)\"\n"
+        "fi\n"
+    ]
+    for probe, requirement in requirements:
+        if probe.startswith(PYTHON_MODULE_PROBE):
+            module = probe[len(PYTHON_MODULE_PROBE) :]
+            # A library has no binary to look for, and the interpreter that matters is the one
+            # the shim recorded — a vendor image's own venv is a different one.
+            condition = f"! \"$npa_req_python\" -c 'import {module}' >/dev/null 2>&1"
+            label = module
+        else:
+            condition = f"! command -v {probe} >/dev/null 2>&1"
+            label = probe
+        lines.append(
+            f"if {condition}; then\n"
+            f"  echo 'installing {requirement} for {label}' >&2\n"
+            f"  \"$npa_req_python\" -m pip install -q '{requirement}' \\\n"
+            f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --break-system-packages \\\n"
+            f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --user\n"
+            "fi\n"
+        )
+    return "".join(lines)
+
+
+def render_pip_extra_setup(extra: str) -> str:
+    """Install ``npa[<extra>]`` from the tree setup already installed npa from.
+
+    Idempotent and best-effort *only* in the sense that it reports a clear error: if
+    the extra cannot be installed the stage would fail anyway with a less obvious
+    ImportError, so failing in ``setup`` is the better signal.
+    """
+
+    if not extra:
+        return ""
+    return (
+        f"# Stage needs the npa[{extra}] optional dependency group.\n"
+        "npa_src_root=\"\"\n"
+        "if [ -s /tmp/npa-src-root ]; then\n"
+        "  npa_src_root=\"$(cat /tmp/npa-src-root)\"\n"
+        "elif [ -d /opt/nebius-physical-ai/npa ]; then\n"
+        "  npa_src_root=/opt/nebius-physical-ai/npa\n"
+        "elif [ -d /tmp/npa-src ]; then\n"
+        "  npa_src_root=/tmp/npa-src\n"
+        "fi\n"
+        "if [ -n \"$npa_src_root\" ]; then\n"
+        f"  echo \"installing npa[{extra}] from $npa_src_root\" >&2\n"
+        # Compose with printf, never "${var}[extra]": braced expansions are what the
+        # rendered-YAML placeholder guard (assert_no_unresolved_placeholders) rejects,
+        # because SkyPilot would leave a literal ${NAME} in the document.
+        f"  npa_extra_target=\"$(printf '%s[{extra}]' \"$npa_src_root\")\"\n"
+        "  npa_pip_install -e \"$npa_extra_target\"\n"
+        "else\n"
+        f"  echo 'cannot locate the npa source tree to install npa[{extra}]' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+    )
 #: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
 #: SkyPilot 0.12 accepts these inside a task's ``config:`` block, and it APPENDS
 #: (rather than replaces) lists inside ``kubernetes.pod_config`` -- so a spec can
@@ -221,6 +481,181 @@ def resolve_task_image(
     return container_image_for_tool(tool, **kwargs)
 
 
+#: How long to wait for a self-hosted model server to answer /health, and how often to ask.
+#: The server has to download a multi-GB checkpoint and load it onto the GPU first. The
+#: retired ``vlm-eval.yaml`` allowed 120 x 5 s = 600 s; a *cold* HF download of a 7B
+#: checkpoint routinely exceeds that, so the default is more generous. Override per spec
+#: with ``config.vlm_serve_ready_seconds``.
+DEFAULT_VLM_SERVER_READY_SECONDS = 900
+VLM_SERVER_POLL_INTERVAL_SECONDS = 5
+DEFAULT_VLM_SERVE_PORT = 8000
+
+
+def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
+    """Start and health-check a local vLLM server before the stage's command runs.
+
+    ``vlm_backend: self-hosted`` tells the tool to POST to an OpenAI-compatible endpoint
+    on localhost, but **nothing in a spec starts that server** — so the stage failed live
+    with ``VLM backend request failed: [Errno 111] Connection refused`` (EVIDENCE §5.2b).
+    The retired ``vlm-eval.yaml`` template did the serve/wait/teardown in its ``run:``
+    block; that is exactly the kind of bash a ``toolRef`` cannot carry, so it moves here.
+
+    The defaults deliberately match the tool's own (``DEFAULT_MODEL`` on port 8000, which
+    ``DEFAULT_ENDPOINT_URL`` points at), so a spec needs no extra config to work;
+    ``config.vlm_model`` / ``config.vlm_serve_port`` override them.
+
+    Unbraced ``$var`` throughout: a ``${var}`` would trip
+    :func:`assert_no_unresolved_placeholders`.
+    """
+
+    from npa.workbench.vlm_eval import DEFAULT_MODEL
+
+    model = str(config.get("vlm_model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    port = str(config.get("vlm_serve_port") or DEFAULT_VLM_SERVE_PORT).strip()
+    trust_remote_code = str(config.get("vlm_trust_remote_code") or "1").strip() not in {
+        "0",
+        "false",
+        "False",
+    }
+    trust_flag = " --trust-remote-code" if trust_remote_code else ""
+    interval = VLM_SERVER_POLL_INTERVAL_SECONDS
+    try:
+        ready_seconds = int(config.get("vlm_serve_ready_seconds") or DEFAULT_VLM_SERVER_READY_SECONDS)
+    except (TypeError, ValueError) as exc:
+        raise NpaWorkflowRenderError(
+            f"config.vlm_serve_ready_seconds must be an integer number of seconds, "
+            f"got {config.get('vlm_serve_ready_seconds')!r}"
+        ) from exc
+    if ready_seconds < interval:
+        raise NpaWorkflowRenderError(
+            f"config.vlm_serve_ready_seconds must be at least {interval}, got {ready_seconds}"
+        )
+    attempts = ready_seconds // interval
+    flashinfer_sampler = (
+        "1"
+        if str(config.get("vlm_use_flashinfer_sampler") or "0").strip() in {"1", "true", "True"}
+        else "0"
+    )
+    return (
+        "# Self-hosted VLM backend: serve the model this stage is about to call.\n"
+        # From #236: widen the CLIENT's readiness window too. The preamble health-checks
+        # before the command runs, so this is a second net rather than the only one, but a
+        # cold 7B load can still be finishing when the first request lands.
+        "export NPA_VLM_READY_TIMEOUT_S=1800\n"
+        f"npa_vlm_model={shlex.quote(model)}\n"
+        # From #238: tell the CLIENT which model this preamble is serving. Without it the eval
+        # asks for its own default and a spec that overrode `vlm_model` would score against a
+        # model nobody started.
+        f"export NPA_VLM_SELF_HOSTED_MODEL={model}\n"
+        f"npa_vlm_port={shlex.quote(port)}\n"
+        "npa_vlm_log=/tmp/npa-vlm-server.log\n"
+        # vLLM's FlashInfer sampler JIT-compiles a CUDA extension and shells out to `ninja`
+        # (setup pip-installs it). pip puts console scripts beside the interpreter, which is
+        # not necessarily on PATH in this shell, so add it here — in `run:`, since setup runs
+        # in a different shell.
+        "npa_vlm_scripts=$(python3 -c 'import sysconfig; print(sysconfig.get_path(\"scripts\"))')\n"
+        "export PATH=$npa_vlm_scripts:$PATH\n"
+        # ... and it needs nvcc, which SkyPilot's default image also lacks: the JIT then
+        # failed with "/usr/local/cuda/bin/nvcc: not found" (live job 217). vLLM's own
+        # dependencies include the nvidia-cuda-nvcc wheel, so point CUDA_HOME at it when
+        # there is no system toolkit.
+        "if [ ! -x /usr/local/cuda/bin/nvcc ]; then\n"
+        "  npa_cuda_home=$(python3 - <<'PY'\n"
+        "import pathlib\n"
+        "import sysconfig\n"
+        "\n"
+        "for root in {sysconfig.get_paths()['purelib'], sysconfig.get_paths()['platlib']}:\n"
+        "    candidate = pathlib.Path(root) / 'nvidia' / 'cuda_nvcc'\n"
+        "    if (candidate / 'bin' / 'nvcc').is_file():\n"
+        "        print(candidate)\n"
+        "        break\n"
+        "PY\n"
+        "  )\n"
+        "  if [ -n \"$npa_cuda_home\" ]; then\n"
+        "    export CUDA_HOME=$npa_cuda_home\n"
+        "    export PATH=$npa_cuda_home/bin:$PATH\n"
+        "    echo \"using pip CUDA toolkit at $npa_cuda_home\" >&2\n"
+        "  fi\n"
+        "fi\n"
+        # Belt and braces: the sampler that wants the JIT has a pure-PyTorch equivalent, so
+        # a task image without a compiler must not be able to break server startup at all.
+        # Set config.vlm_use_flashinfer_sampler=1 to opt back in.
+        f"export VLLM_USE_FLASHINFER_SAMPLER={flashinfer_sampler}\n"
+        "echo \"starting vLLM for $npa_vlm_model on port $npa_vlm_port\" >&2\n"
+        "python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 "
+        "--port \"$npa_vlm_port\" --model \"$npa_vlm_model\" "
+        f"--served-model-name \"$npa_vlm_model\"{trust_flag} "
+        "> \"$npa_vlm_log\" 2>&1 &\n"
+        "npa_vlm_pid=$!\n"
+        # Never leave a server (and its GPU memory) behind, on success or failure.
+        "trap 'kill \"$npa_vlm_pid\" 2>/dev/null || true' EXIT\n"
+        # Health-wait in python3, not curl: curl is not guaranteed in every task image,
+        # and python3 is (setup records an interpreter and the shim puts it on PATH).
+        "python3 - \"$npa_vlm_pid\" \"$npa_vlm_port\" \"$npa_vlm_log\" <<'PY'\n"
+        "import os\n"
+        "import sys\n"
+        "import time\n"
+        "import urllib.error\n"
+        "import urllib.request\n"
+        "\n"
+        "pid, port, log_path = int(sys.argv[1]), sys.argv[2], sys.argv[3]\n"
+        f"attempts, interval = {attempts}, {interval}\n"
+        "\n"
+        "def alive() -> bool:\n"
+        "    try:\n"
+        "        os.kill(pid, 0)\n"
+        "    except OSError:\n"
+        "        return False\n"
+        "    return True\n"
+        "\n"
+        "def tail() -> str:\n"
+        "    try:\n"
+        "        with open(log_path, encoding='utf-8', errors='replace') as handle:\n"
+        "            return ''.join(handle.readlines()[-200:])\n"
+        "    except OSError:\n"
+        "        return '(no server log)'\n"
+        "\n"
+        "for attempt in range(attempts):\n"
+        "    try:\n"
+        "        with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=5):\n"
+        "            print(f'vLLM server ready after {attempt * interval}s', file=sys.stderr)\n"
+        "            raise SystemExit(0)\n"
+        "    except SystemExit:\n"
+        "        raise\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    if not alive():\n"
+        "        print('vLLM server exited before becoming ready:', file=sys.stderr)\n"
+        "        print(tail(), file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    time.sleep(interval)\n"
+        "print(f'vLLM server not ready after {attempts * interval}s:', file=sys.stderr)\n"
+        "print(tail(), file=sys.stderr)\n"
+        "raise SystemExit(1)\n"
+        "PY\n"
+    )
+
+
+def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) -> str:
+    """Return shell that must run *inside the stage* before its command.
+
+    The per-toolRef sibling of :func:`render_setup_for_tool`. A background service has to
+    start here rather than in ``setup:``, because SkyPilot runs setup and run as separate
+    shells — a server started in setup is gone by the time the command runs.
+    """
+
+    if not tool_ref.startswith("workbench.vlm_eval"):
+        return ""
+    # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`
+    # fixture scored with backend=stub needs no server. This branch's benchmark twin scores a
+    # real labeled set on the self-hosted backend (EVIDENCE.md §R22), so the decision is made
+    # by the backend the spec asks for, below, rather than by the toolRef's name.
+    backend = str(config.get("vlm_backend") or "").strip().lower()
+    if backend not in {"self-hosted", "self_hosted"}:
+        return ""
+    return render_self_hosted_vlm_preamble(config)
+
+
 def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str:
     """Turn an argv list into a SkyPilot ``run:`` shell script.
 
@@ -286,11 +721,38 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         "    npa_python=\"\"\n"
         "  fi\n"
         "fi\n"
+        # A vendor image can bake a STALE npa source tree on PYTHONPATH, which shadows every
+        # install — editable or not, in any interpreter. Live job 285: the cosmos2-transfer image
+        # ships `PYTHONPATH=/opt/npa/src`, whose npa predates the `cosmos2` subcommand, so the
+        # stage kept running the old CLI no matter what had just been installed. Third image to
+        # do this (lerobot was job 250), so the engine handles it rather than each image.
+        # Prepending the recorded source is a no-op wherever the install already wins.
+        # (no ${...} expansions here: the renderer's placeholder guard rejects them)
+        "if [ -s /tmp/npa-src-root ] && [ -d \"$(cat /tmp/npa-src-root)/src\" ]; then\n"
+        "  npa_src_path=\"$(cat /tmp/npa-src-root)/src\"\n"
+        "  if [ -z \"$PYTHONPATH\" ]; then\n"
+        "    export PYTHONPATH=\"$npa_src_path\"\n"
+        "  else\n"
+        "    case \":$PYTHONPATH:\" in\n"
+        "      *\":$npa_src_path:\"*) : ;;\n"
+        "      *) export PYTHONPATH=\"$npa_src_path:$PYTHONPATH\" ;;\n"
+        "    esac\n"
+        "  fi\n"
+        "  echo \"npa source path: $npa_src_path\" >&2\n"
+        "fi\n"
         "if [ -n \"$npa_python\" ]; then\n"
         "  mkdir -p /tmp/npa-shim\n"
         "  printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$npa_python\" "
         "> /tmp/npa-shim/python3\n"
         "  chmod +x /tmp/npa-shim/python3\n"
+        # ... and `npa` must mean the SAME install. A vendor image can bake its own older npa
+        # whose console script is first on PATH; setup then skips installing (command -v npa
+        # succeeds), the overlay lands in the vendor interpreter, and the stage runs the stale
+        # CLI. Live job 284: `No such command 'cosmos2'. Did you mean 'cosmos'?` — from an npa
+        # predating the subcommand, while the recorded interpreter had the current one.
+        "  printf '#!/bin/sh\\nexec \"%s\" -c \"from npa.cli.main import app_entry; "
+        "app_entry()\" \"$@\"\\n' \"$npa_python\" > /tmp/npa-shim/npa\n"
+        "  chmod +x /tmp/npa-shim/npa\n"
         "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
         # Console scripts installed next to that interpreter must be resolvable by
         # name too, which is the same gap the `npa` symlink in setup works around.
@@ -308,6 +770,8 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "echo 'warning: python3 in this shell cannot import npa' >&2\n"
         "set -u\n"
+        # Per-toolRef preamble (e.g. start a self-hosted model server) runs AFTER the
+        # interpreter shim, so it uses the same python3 the command will.
         f"{preamble_block}"
         f"{quoted}\n"
     )
@@ -329,75 +793,36 @@ def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
     return str(raw).split(",")[0].strip()
 
 
-def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
-    """Background vLLM server launch for a self-hosted ``vlm_eval`` step.
+#: NVIDIA's gate on the Isaac workbench images. They ship no Isaac Sim / Isaac Lab and fetch it
+#: on first run, refusing with exit 78 unless BOTH are YES.
+ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+#: Image keys in TOOL_REF_IMAGE_TOOL that resolve to an Isaac-based image.
+ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "sonic"})
 
-    The npa.workflow render otherwise only installs vLLM (see
-    ``render_setup_for_tool``) but never starts the OpenAI-compatible server the
-    eval client connects to, so :8000 is never up. Launch it in the background
-    on the eval's default endpoint; the client polls ``/v1/models`` and retries
-    connect errors up to ``NPA_VLM_READY_TIMEOUT_S`` (see
-    ``npa.workbench.vlm_eval``), so a cold start is a bounded wait.
+
+def routes_at_an_isaac_image(tool_ref: str) -> bool:
+    """Whether the renderer sends this toolRef's stage to an Isaac-based image."""
+
+    return tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS
+
+
+def isaac_eula_envs(tool_ref: str) -> dict[str, str]:
+    """Declare NVIDIA's acceptance gate for an Isaac stage, EMPTY unless the operator set it.
+
+    Declared rather than omitted so the task documents what it needs and **fails closed** with
+    the actionable message instead of an unexplained exit 78. Never defaulted to YES: accepting
+    NVIDIA's terms is the operator's act, not the repo's.
+
+    This lives in the renderer rather than in each spec because a spec reaches an Isaac image
+    through its ``toolRef``, not by naming an image — so a spec author cannot reasonably be
+    expected to know the routing, and a new Isaac toolRef is covered the moment it is added.
     """
 
-    backend = str(config.get("vlm_backend") or "").strip().lower()
-    if not (tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}):
-        return ""
-    if str(tool_ref).startswith("workbench.vlm_eval.benchmark"):
-        # The benchmark twin runs backend=stub / packaged fixtures; no server.
-        return ""
-    model = self_hosted_vlm_model(config)
-    model_q = shlex.quote(model)
-    ready_timeout = str(config.get("vlm_ready_timeout_s") or DEFAULT_VLM_READY_TIMEOUT_S).strip()
-    return (
-        "# Self-hosted vLLM: launch the OpenAI-compatible server in the background\n"
-        "# on 127.0.0.1:8000; the eval client waits for readiness. Export the\n"
-        "# served model so the client asks for THIS model instead of the library\n"
-        "# default (a mismatch is a 404 from the server). Unbraced/plain\n"
-        "# assignment keeps SkyPilot placeholder lint clean.\n"
-        f"export NPA_VLM_READY_TIMEOUT_S={shlex.quote(ready_timeout)}\n"
-        f"export NPA_VLM_SELF_HOSTED_MODEL={model_q}\n"
-        # vLLM's FlashInfer sampler JIT-compiles a CUDA kernel on first use, and
-        # a task image with a GPU driver does not necessarily ship a CUDA
-        # TOOLKIT: live on RTXPRO-6000 the engine died at warmup with
-        # "/usr/local/cuda/bin/nvcc: not found". The native torch sampler needs
-        # no compiler.
-        "export VLLM_USE_FLASHINFER_SAMPLER=0\n"
-        "python3 -m vllm.entrypoints.openai.api_server "
-        "--host 127.0.0.1 --port 8000 "
-        f"--model {model_q} --served-model-name {model_q} --trust-remote-code "
-        "> /tmp/vllm-server.log 2>&1 &\n"
-        "vllm_pid=$!\n"
-        "trap 'kill \"$vllm_pid\" 2>/dev/null || true' EXIT\n"
-        # Wait for the server here rather than leaving it to the eval client's
-        # retry loop. A server that DIES during startup (live: FlashInfer's JIT
-        # sampling kernel needs ninja, which the image lacked) is otherwise
-        # indistinguishable from one that is still loading, and the job burns the
-        # whole readiness window before reporting a connection error with no
-        # server-side detail.
-        "vllm_deadline=$(( $(date +%s) + NPA_VLM_READY_TIMEOUT_S ))\n"
-        "vllm_ready=0\n"
-        "while [ \"$(date +%s)\" -lt \"$vllm_deadline\" ]; do\n"
-        "  if ! kill -0 \"$vllm_pid\" 2>/dev/null; then\n"
-        "    echo 'vLLM server exited during startup; last 60 log lines:' >&2\n"
-        "    tail -n 60 /tmp/vllm-server.log >&2\n"
-        "    exit 1\n"
-        "  fi\n"
-        "  if python3 -c \"import urllib.request; "
-        "urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)\" "
-        ">/dev/null 2>&1; then\n"
-        "    vllm_ready=1\n"
-        "    break\n"
-        "  fi\n"
-        "  sleep 5\n"
-        "done\n"
-        "if [ \"$vllm_ready\" != 1 ]; then\n"
-        "  echo 'vLLM server never became ready; last 60 log lines:' >&2\n"
-        "  tail -n 60 /tmp/vllm-server.log >&2\n"
-        "  exit 1\n"
-        "fi\n"
-        "echo \"vLLM server ready on 127.0.0.1:8000\" >&2\n"
-    )
+    if not routes_at_an_isaac_image(tool_ref):
+        return {}
+    import os as _os
+
+    return {var: str(_os.environ.get(var) or "").strip() for var in ISAAC_EULA_VARS}
 
 
 def default_npa_setup() -> str:
@@ -413,6 +838,9 @@ def default_npa_setup() -> str:
     return (
         "set -e\n"
         "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+        # Record where npa was installed from so a per-tool extra (see
+        # TOOL_REF_PIP_EXTRAS) can be layered on top of the SAME source tree.
+        "npa_record_src_root() { printf '%s' \"$1\" > /tmp/npa-src-root; }\n"
         # Debian/Ubuntu >= 24.04 mark the system interpreter externally managed
         # (PEP 668), so a plain `pip install` fails with
         # "error: externally-managed-environment". A task container is disposable, so
@@ -429,6 +857,7 @@ def default_npa_setup() -> str:
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "    npa_pip_install -e /opt/nebius-physical-ai/npa\n"
+        "    npa_record_src_root /opt/nebius-physical-ai/npa\n"
         "  else\n"
         "    if [ ! -d /tmp/npa-src ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
         "      npa_pip_install boto3\n"
@@ -468,6 +897,7 @@ def default_npa_setup() -> str:
         "    fi\n"
         "    if [ -d /tmp/npa-src ]; then\n"
         "      npa_pip_install -e /tmp/npa-src\n"
+        "      npa_record_src_root /tmp/npa-src\n"
         "    else\n"
         "      echo 'npa CLI not found; set NPA_SRC_S3_URI or use a workbench image' >&2\n"
         "      exit 1\n"
@@ -512,7 +942,22 @@ def default_npa_setup() -> str:
         "        break\n"
         "    token = resp.get('NextContinuationToken')\n"
         "PY\n"
+        # --no-deps FIRST: the overlay is the same distribution the image already has, so
+        # resolving its requirements would only risk moving a pinned vendor stack.
         "  npa_pip_install -e /tmp/npa-src-overlay --no-deps\n"
+        # ... and WITH deps if the CLI still will not import. An image that installed npa with
+        # its own curated `--no-deps` list leaves the overlay short of whatever that list
+        # omitted: live job 309 died on `No module named 'paramiko'` after a clean overlay of a
+        # tree that declares paramiko as a dependency. Probe the CLI, not `import npa` — npa
+        # imported fine there; it was the command tree that could not load. Same
+        # safe-then-sufficient order as the vendor-interpreter install.
+        "  if ! python3 -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
+        "    echo 'npa CLI is not importable after the overlay; installing its dependencies'"
+        " >&2\n"
+        "    npa_pip_install -e /tmp/npa-src-overlay\n"
+        "  fi\n"
+        # The overlay is the freshest tree, so it is the one worth putting on the import path.
+        "  npa_record_src_root /tmp/npa-src-overlay\n"
         # Same reason as the stage preamble: the install alone is not enough to
         # displace a baked npa, so make the overlay explicit for the rest of setup too
         # (the interpreter recorded below is checked with `import npa`).
@@ -561,12 +1006,22 @@ def default_npa_setup() -> str:
         # non-standard interpreter can leave it outside PATH, so link it where every
         # shell will find it.
         "if [ ! -x /usr/local/bin/npa ]; then\n"
-        "  scripts_dir=\"$(python3 -c 'import sysconfig; "
-        "print(sysconfig.get_path(\"scripts\"))' 2>/dev/null || true)\"\n"
-        "  if [ -n \"$scripts_dir\" ] && [ -x \"$scripts_dir/npa\" ]; then\n"
-        "    ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || "
+        # Look in the USER scheme and $HOME/.local/bin too: npa_pip_install falls back to
+        # `--user` under PEP 668, and the console script then lands outside the default
+        # scripts dir — the judge stage died with `bash: npa: command not found` on an image
+        # where that fallback fired (live job 260).
+        "  for scripts_dir in "
+        "\"$(python3 -c 'import sysconfig; print(sysconfig.get_path(\"scripts\"))' "
+        "2>/dev/null || true)\" "
+        "\"$(python3 -c 'import sysconfig; "
+        "print(sysconfig.get_path(\"scripts\", scheme=\"posix_user\"))' 2>/dev/null || true)\" "
+        "\"$HOME/.local/bin\"; do\n"
+        "    if [ -n \"$scripts_dir\" ] && [ -x \"$scripts_dir/npa\" ]; then\n"
+        "      ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || "
         "sudo -n ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || true\n"
-        "  fi\n"
+        "      break\n"
+        "    fi\n"
+        "  done\n"
         "fi\n"
     )
 
@@ -651,6 +1106,13 @@ def _vllm_install_setup(model: str) -> str:
         "if importlib.util.find_spec('vllm') is None and not pip_install('vllm>=0.8.5'):\n"
         "    raise SystemExit('failed to install vllm for the self-hosted VLM backend')\n"
         "pip_install('hf_transfer')\n"
+        # vLLM's FlashInfer sampler JIT-compiles a CUDA extension on first use and shells out
+        # to `ninja`, which SkyPilot's default image does not ship: the server died during
+        # engine init with FileNotFoundError: 'ninja' (live job 214). The pip package provides
+        # the binary, so no apt or sudo is needed.
+        "import shutil\n"
+        "if shutil.which('ninja') is None:\n"
+        "    pip_install('ninja')\n"
         "os.environ.setdefault('HF_HUB_ENABLE_HF_TRANSFER', '1')\n"
         "try:\n"
         "    from huggingface_hub import snapshot_download\n"
@@ -674,6 +1136,11 @@ def render_setup_for_tool(
     if not options.default_setup:
         return ""
     parts = [default_npa_setup()]
+    parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))
+    extra = tool_pip_extra(tool_ref)
+    if extra:
+        parts.append(render_pip_extra_setup(extra))
+    parts.append(render_pip_requirements_setup(tool_pip_requirements(tool_ref)))
     backend = str(config.get("vlm_backend") or "").strip().lower()
     if tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}:
         parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
@@ -817,6 +1284,7 @@ def build_skypilot_task_doc(
         envs["AWS_ENDPOINT_URL"] = options.aws_endpoint_url
     if image:
         envs["NPA_TASK_IMAGE"] = image.removeprefix("docker:")
+    envs.update(isaac_eula_envs(str(scheduler_task.get("tool_ref") or "")))
     # Opt-in passthrough: when set at submit, propagate Cosmos input-conditioning
     # knobs to stage pods so the augment conditions on the run's real input clip
     # (edge control) instead of the bundled example. Unset by default → no change.
@@ -838,9 +1306,17 @@ def build_skypilot_task_doc(
         "envs": envs,
         "run": render_task_run_script(
             command,
-            preamble=_vllm_serve_preamble(str(scheduler_task.get("tool_ref") or ""), spec.config),
+            preamble=render_run_preamble_for_tool(
+                str(scheduler_task.get("tool_ref") or ""), config=spec.config
+            ),
         ),
     }
+    # Multi-node stages: SkyPilot gang-schedules `num_nodes` identical pods for one task
+    # and exports SKYPILOT_NODE_RANK / SKYPILOT_NODE_IPS into each. Emitted only when the
+    # profile asks for more than one node, so every existing rendered doc is unchanged.
+    num_nodes = int(scheduler_task.get("num_nodes") or 1)
+    if num_nodes > 1:
+        doc["num_nodes"] = num_nodes
     task_config = normalize_task_config(scheduler_task.get("resources") or {})
     if task_config:
         doc["config"] = task_config

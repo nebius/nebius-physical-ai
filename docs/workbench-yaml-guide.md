@@ -10,7 +10,7 @@ one task: the compute it needs, the environment it runs in, and the command it
 executes. Tasks call workbench tool HTTP endpoints via `curl`. SkyPilot
 orchestrates dependencies and schedules tasks on the Nebius MK8s cluster.
 
-The reference pipeline is `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+The reference pipeline is `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
 
 ## Pipeline Structure
 
@@ -282,23 +282,27 @@ Related docs:
 - `docs/workbench/getting-started.md`
 - `docs/demos/bdd100k-lancedb-demo.md`
 - `docs/workbench/cookbooks/bdd100k-pipeline.md`
-- `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`
+- `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`
 
 ## Isaac Lab RL Training
 
 Isaac Lab RL jobs are batch training workloads, not persistent service calls.
 Use the committed SkyPilot consumers:
 
-- `npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml` for one RSL-RL training job.
-- `npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml` for an all-parallel sweep.
-- `npa/scripts/run_isaac_lab_rl.py` to render per-run values and submit.
+- `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml` for one RSL-RL training
+  job, submitted by `npa/scripts/run_isaac_lab_rl.py` (which renders per-run values).
+- `npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml` for a parallel
+  sweep. This is an **`npa.workflow` spec**, not a SkyPilot task YAML: it replaced the
+  raw `execution: parallel` template, which is now retired. Submit it through the
+  engine with `--runtime` so the four variants launch as a SkyPilot JobGroup and the
+  ranking stage acts as a barrier.
 
 Single run:
 
 ```bash
 export NPA_S3_BUCKET=your-bucket-name
 python npa/scripts/run_isaac_lab_rl.py \
-  --yaml npa/src/npa/workflows/skypilot/isaac-lab-rl-train.yaml \
+  --yaml npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml \
   --task Isaac-Cartpole-v0 \
   --iterations 10 \
   --run-id isaac-cartpole-smoke
@@ -317,19 +321,24 @@ The training command uses the Isaac Lab RSL-RL entry point:
   agent.save_interval=1
 ```
 
-Parameter sweep:
+Parameter sweep (through the engine, **not** the single-job runner):
 
 ```bash
-python npa/scripts/run_isaac_lab_rl.py \
-  --yaml npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml \
-  --task Isaac-Cartpole-v0 \
-  --iterations 10 \
-  --run-id isaac-cartpole-sweep
+npa workbench workflow submit \
+  npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml \
+  --run-id isaac-cartpole-sweep --runtime \
+  --var max_concurrency=2 \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+# offline preview of the wave shape (which batches, which barrier):
+npa workbench workflow plan-spec \
+  npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml --run-id demo --waves
 ```
 
-The sweep YAML uses `execution: parallel`, which is the SkyPilot 0.12.2 pattern
-for independent parallel tasks. It avoids a mixed dependency graph and writes
-each variant under:
+The spec's `parallel:` group renders as a SkyPilot JobGroup (`execution: parallel`),
+which is the 0.12.2 pattern for independent parallel tasks; `maxConcurrency` splits a
+group larger than the bound into batches submitted in order. Each variant writes
+under:
 
 ```text
 s3://<bucket>/isaac-lab-rl/<run-id>/<variant>/

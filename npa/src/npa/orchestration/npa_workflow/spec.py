@@ -15,6 +15,11 @@ from npa.orchestration.npa_workflow.predicates import PREDICATES
 #: cluster for hundreds of simultaneous clusters.
 MAX_GROUP_CONCURRENCY = 64
 
+#: Upper bound for a resource profile's ``num_nodes``. Multi-node stages are gang
+#: scheduled, so a typo (80 for 8) asks a shared cluster for a block it cannot fill and
+#: the task sits PENDING instead of failing fast.
+MAX_PROFILE_NODES = 32
+
 API_VERSION = "npa.workflow/v0.0.1"
 API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
 SUPPORTED_API_VERSIONS = frozenset({API_VERSION, API_VERSION_BETA})
@@ -369,10 +374,47 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
         if state.loop:
             _validate_loop_max(state, spec.config)
 
+    _validate_resource_profiles(spec)
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
     _validate_resolvable(spec)
+
+
+def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
+    """Validate resource-profile fields the renderer will act on.
+
+    ``num_nodes`` is the only one that changes the *shape* of the rendered task (a
+    multi-node gang instead of one pod), so a bad value has to fail at validate time
+    rather than at provision time.
+    """
+
+    for name, profile in spec.resources.items():
+        if not isinstance(profile, dict):
+            raise NpaWorkflowError(f"resource profile {name!r} must be a mapping")
+        raw = profile.get("num_nodes")
+        if raw in (None, ""):
+            continue
+        if isinstance(raw, bool):
+            raise NpaWorkflowError(
+                f"resource profile {name!r}: num_nodes must be an integer, not a bool"
+            )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise NpaWorkflowError(
+                f"resource profile {name!r}: num_nodes must be an integer, got {raw!r}"
+            ) from exc
+        if value < 1:
+            raise NpaWorkflowError(
+                f"resource profile {name!r}: num_nodes must be >= 1, got {value}"
+            )
+        if value > MAX_PROFILE_NODES:
+            raise NpaWorkflowError(
+                f"resource profile {name!r}: num_nodes must be <= {MAX_PROFILE_NODES}, "
+                f"got {value} (a gang-scheduled block this large is almost always a typo; "
+                "it would sit PENDING rather than fail)"
+            )
 
 
 def _validate_parallel_group(spec: NpaWorkflowSpec, state: StateSpec) -> None:

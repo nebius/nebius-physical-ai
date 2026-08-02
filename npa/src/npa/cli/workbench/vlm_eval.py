@@ -28,6 +28,7 @@ from npa.workbench.vlm_eval import (
     VlmEvalError,
     benchmark_result_uri_for,
     benchmark_vlm_eval,
+    evaluate_rollout_set,
     evaluate_vlm,
     write_benchmark_report,
     write_result,
@@ -39,8 +40,13 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console(stderr=True)
-WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/vlm-eval.yaml")
-BENCHMARK_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/vlm-eval-benchmark.yaml")
+# The `npa.workflow` specs this tool is driven by. Paths only: `vlm-eval workflow` /
+# `status` print them; `npa workbench workflow submit <path>` runs them.
+NPA_WORKFLOWS = Path("npa/workflows/workbench/npa-workflows")
+WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-single.yaml"
+BENCHMARK_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-benchmark.yaml"
+# Zero-GPU hosted alternative: the `api` backend needs no vLLM server.
+TOKEN_FACTORY_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-token-factory.yaml"
 
 
 class OutputFormat(str, Enum):
@@ -65,6 +71,14 @@ def run_cmd(
     input_path: str = typer.Option(..., "--input-path", help="S3 or local artifact path to score."),
     output_path: str = typer.Option(..., "--output-path", help="S3 or local path for eval JSON."),
     task: str = typer.Option("sim-to-real", "--task", help="Evaluation task label."),
+    task_from: str = typer.Option(
+        "",
+        "--task-from",
+        help=(
+            "Read the task from a reasoning artifact (its `analysis` field) instead of --task, "
+            "so a judge can score a rollout against a plan an earlier stage wrote."
+        ),
+    ),
     backend: BackendName = typer.Option(
         BackendName.self_hosted,
         "--backend",
@@ -122,6 +136,8 @@ def run_cmd(
     """Score a rollout artifact with a VLM backend."""
 
     try:
+        if task_from.strip():
+            task = task_from_reasoning_artifact(task_from)
         result = evaluate_vlm(
             input_path=input_path,
             output_path=output_path,
@@ -147,6 +163,128 @@ def run_cmd(
         _fail(str(exc))
         return
     _emit(payload, output)
+
+
+#: How much of a plan to carry into the judge prompt; the retired template used this budget.
+PLAN_TASK_CHARS = 900
+
+
+def task_from_reasoning_artifact(uri: str) -> str:
+    """Build a judge task from the `analysis` an earlier reasoning stage wrote.
+
+    The retired `tokenfactory-scene-to-rollout-judge.yaml` did this in inline python and passed
+    the result through `--task "$(…)"`. That command substitution IS the three-stage combo — the
+    judge scores the rollout *against the plan the reasoner produced* — and it is exactly what a
+    `toolRef` argv cannot express.
+    """
+
+    import tempfile as _tempfile
+
+    raw = uri.strip()
+    if not raw:
+        _fail("--task-from needs a reasoning artifact URI")
+    if raw.startswith("s3://"):
+        from npa.clients.storage import StorageClient
+
+        with _tempfile.TemporaryDirectory(prefix="npa-plan-") as tmp:
+            local = Path(StorageClient.from_environment().download_path(raw, tmp))
+            payload = _read_reasoning_payload(local, uri)
+    else:
+        payload = _read_reasoning_payload(Path(raw), uri)
+    analysis = str(payload.get("analysis") or "").strip().replace("\n", " ")
+    if not analysis:
+        _fail(f"reasoning artifact has no `analysis` to judge against: {uri}")
+    return (
+        "Judge whether the robot rollout accomplishes this planned task. "
+        f"Plan: {analysis[:PLAN_TASK_CHARS]}"
+    )
+
+
+def _read_reasoning_payload(local: Path, uri: str) -> dict[str, Any]:
+    if not local.is_file():
+        _fail(f"reasoning artifact not found: {uri}")
+    try:
+        return json.loads(local.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _fail(f"reasoning artifact is not readable JSON: {uri} ({exc})")
+        return {}
+
+
+@app.command("loop")
+def loop_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 or local prefix containing one directory per rollout."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 or local prefix for per-rollout results and the report."
+    ),
+    task: str = typer.Option("sim-to-real", "--task", help="Evaluation task label."),
+    backend: BackendName = typer.Option(
+        BackendName.self_hosted,
+        "--backend",
+        help="VLM backend: self-hosted, api, or stub.",
+    ),
+    model: str = typer.Option(DEFAULT_MODEL, "--model", help="VLM model name."),
+    endpoint_url: str = typer.Option(
+        "",
+        "--endpoint-url",
+        help="OpenAI-compatible base URL or /chat/completions URL.",
+    ),
+    api_key_env: str = typer.Option(
+        DEFAULT_API_KEY_ENV,
+        "--api-key-env",
+        help="Environment variable containing the API key for --backend api.",
+    ),
+    frame_selection: FrameSelection = typer.Option(
+        FrameSelection.keyframes,
+        "--frame-selection",
+        help="Rollout frame selection: final, keyframes, or sequence.",
+    ),
+    max_frames: int = typer.Option(
+        DEFAULT_MAX_FRAMES, "--max-frames", help="Maximum frames sent to the VLM per rollout."
+    ),
+    rubric: str = typer.Option(DEFAULT_RUBRIC, "--rubric", help="Scoring rubric text."),
+    rubric_path: str = typer.Option(
+        "", "--rubric-path", help="Path to a scoring rubric text file."
+    ),
+    success_threshold: float = typer.Option(
+        0.8,
+        "--success-threshold",
+        help="Mean-score threshold for the coarse task_success gate.",
+    ),
+    timeout_s: float = typer.Option(
+        DEFAULT_TIMEOUT_S, "--timeout-s", help="VLM request timeout in seconds."
+    ),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Score every rollout under a prefix and write an aggregate task-success report.
+
+    ``run`` scores one rollout: it discovers frames recursively, so a prefix holding many
+    rollouts would blend into a single score. The retired ``sim-to-real-loop.yaml`` did the
+    enumeration and aggregation in bash and `jq`; this is the same behaviour in the tool,
+    where an npa.workflow spec can reach it.
+    """
+
+    try:
+        report = evaluate_rollout_set(
+            input_path=input_path,
+            output_path=output_path,
+            task=task,
+            backend=_enum_value(backend),
+            model=model,
+            endpoint_url=endpoint_url,
+            api_key_env=api_key_env,
+            frame_selection=_enum_value(frame_selection),
+            max_frames=max_frames,
+            rubric=rubric,
+            rubric_path=rubric_path,
+            success_threshold=success_threshold,
+            timeout_s=timeout_s,
+        )
+    except VlmEvalError as exc:
+        _fail(str(exc))
+        return
+    _emit(report, output)
 
 
 @app.command("benchmark")
@@ -250,11 +388,14 @@ def workflow_cmd(
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Show the SkyPilot YAML template for VLM evaluation."""
+    """Show the npa.workflow specs for VLM evaluation."""
 
     _emit(
         {
             "workflow": str(WORKFLOW_PATH),
+            "benchmark_workflow": str(BENCHMARK_WORKFLOW_PATH),
+            # Zero-GPU alternative; `self-hosted` needs a vLLM server, `api` does not.
+            "token_factory_workflow": str(TOKEN_FACTORY_WORKFLOW_PATH),
             "image_env": DEFAULT_VLM_IMAGE_ENV,
             "image": image.strip() or default_vlm_image(),
         },
@@ -277,6 +418,7 @@ def status_cmd(
             "default_frame_selection": DEFAULT_FRAME_SELECTION,
             "workflow": str(WORKFLOW_PATH),
             "benchmark_workflow": str(BENCHMARK_WORKFLOW_PATH),
+            "token_factory_workflow": str(TOKEN_FACTORY_WORKFLOW_PATH),
             "sample_benchmark_dataset": str(DEFAULT_SAMPLE_BENCHMARK_PATH),
         },
         output,

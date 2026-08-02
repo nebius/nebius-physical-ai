@@ -69,4 +69,10 @@ commits = [
     # later; a working-tree scan of HEAD reports no leaks. Allowlisted instead of
     # rewriting a pushed branch's history.
     '''6937efd3d693c4d7d5bb7afa6c6bf79c98281790''',
+    # Historical false positive: generic-api-key read the import line
+    #   `from npa.workbench.cosmos.cosmos3 import Cosmos3AccessConfig, fetch_cosmos3_artifacts`
+    # as an assignment of a long opaque value. HEAD splits it across two imports, so a
+    # working-tree scan is clean; this allowlists the commit rather than rewriting a pushed
+    # branch's history.
+    '''58d3d4e19b94ddb889f64cdf5ef5a91340db4321''',
 ]

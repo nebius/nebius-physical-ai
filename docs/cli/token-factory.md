@@ -17,7 +17,7 @@ models  List models available to the configured Token Factory API key.
 verify  Verify Token Factory authentication with a live models call.
 status  Show Token Factory connection status (no network call).
 list  List Token Factory tool capabilities.
-workflow  Show the checked-in Token Factory SkyPilot workflow templates.
+workflow  Show the checked-in Token Factory npa.workflow specs.
 ```
 
 ## Options
@@ -37,7 +37,7 @@ workflow  Show the checked-in Token Factory SkyPilot workflow templates.
 | `verify` | Verify Token Factory authentication with a live models call. |
 | `status` | Show Token Factory connection status (no network call). |
 | `list` | List Token Factory tool capabilities. |
-| `workflow` | Show the checked-in Token Factory SkyPilot workflow templates. |
+| `workflow` | Show the checked-in Token Factory npa.workflow specs. |
 
 ## Examples
 

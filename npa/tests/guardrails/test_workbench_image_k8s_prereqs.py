@@ -41,25 +41,54 @@ def _build_text(tool: str) -> str:
     return "\n".join(parts)
 
 # Images whose stages are submitted through SkyPilot (npa.workflow / workbench
-# workflows) and therefore must be schedulable in a pod.
-SKYPILOT_HOSTED_IMAGES = ("isaac-lab",)
+# workflows) and therefore must be schedulable in a pod. This list grows as the raw
+# SkyPilot task catalog is retired: once a tool's only workflow surface is an
+# npa.workflow spec, its image MUST be able to host a SkyPilot task.
+SKYPILOT_HOSTED_IMAGES = ("cosmos3-reason", "isaac-lab", "lerobot", "sonic")
+
+#: Images built on an Isaac base, where /isaac-sim is mode 750 owned by
+#: isaac-sim:isaac-sim and the runtime user therefore has to join that GROUP (a
+#: recursive chmod would rewrite multi-GB layers). Not universal: the lerobot image has
+#: no /isaac-sim at all, so requiring the usermod there would pin a no-op.
+ISAAC_BASED_IMAGES = ("isaac-lab", "sonic")
 
 
-#: The four ingredients a SkyPilot-hosted image needs, established by bisecting
-#: derived images against a live Kubernetes GPU cluster. Missing any one of them makes
-#: provisioning fail with `container not found ("ray-node")`.
+#: What every SkyPilot-hosted image needs, established by bisecting derived images against a
+#: live Kubernetes GPU cluster. Missing any one makes provisioning fail with
+#: `container not found ("ray-node")`, which names none of them.
 REQUIRED_INGREDIENTS = (
     ("python3", "SkyPilot's k8s runtime bootstrap needs a system python3"),
     ("rsync", "SkyPilot syncs files with rsync"),
     ("NOPASSWD", "SkyPilot's in-pod setup shells out to sudo without a password"),
-    ("ENV PATH=/usr/bin:$PATH", "the system interpreter must precede a vendor python"),
+)
+
+#: NOT universal, despite being required wherever it applies. An Isaac image's default python3
+#: is a kit interpreter that cannot import its own site-packages outside python.sh, so the
+#: system one has to win. Forcing the same ordering on an image whose OWN python carries npa
+#: breaks it: cosmos3-reason failed setup with "npa is not importable after setup" (job 307).
+PATH_ORDERING_INGREDIENT = (
+    "ENV PATH=/usr/bin:$PATH",
+    "an Isaac kit python cannot import its own site-packages, so the system one must precede it",
 )
 
 
+def _ingredients_for(tool: str) -> tuple[tuple[str, str], ...]:
+    if tool in ISAAC_BASED_IMAGES:
+        return REQUIRED_INGREDIENTS + (PATH_ORDERING_INGREDIENT,)
+    return REQUIRED_INGREDIENTS
+
+
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
-@pytest.mark.parametrize(("token", "why"), REQUIRED_INGREDIENTS)
-def test_dockerfile_has_skypilot_runtime_prerequisites(tool: str, token: str, why: str) -> None:
-    assert token in _build_text(tool), f"{tool}: {why}"
+def test_dockerfile_has_skypilot_runtime_prerequisites(tool: str) -> None:
+    """Follows the Dockerfile into the shared script (#229), per-tool ingredients (this branch).
+
+    The PATH ordering is an ISAAC requirement, not a universal one: forcing /usr/bin first on
+    cosmos3-reason shadowed the vendor's own python and left npa unimportable (live job 307).
+    """
+
+    text = _build_text(tool)
+    for token, why in _ingredients_for(tool):
+        assert token in text, f"{tool}: {why}"
 
 
 def test_the_prereq_guard_is_not_satisfied_by_the_dockerfile_alone() -> None:
@@ -74,7 +103,7 @@ def test_the_prereq_guard_is_not_satisfied_by_the_dockerfile_alone() -> None:
     assert len(combined) > len(dockerfile_only), "no scripts were followed"
     moved = [
         token
-        for token, _ in REQUIRED_INGREDIENTS
+        for token, _ in _ingredients_for("isaac-lab")
         if token not in dockerfile_only and token in combined
     ]
     assert moved, (
@@ -130,25 +159,37 @@ def test_isaac_lab_grants_its_runtime_user_access_to_isaac_sim() -> None:
     )
 
 
-def test_derived_prereq_dockerfile_matches_the_shipped_one() -> None:
+@pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
+def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
     """The derived recipe exists and applies the same prerequisites.
 
-    Operators use it to repair an already-published tag without pulling the ~8 GB base
-    (scripts/build-workbench-image-in-cluster.sh); it must not drift from the image.
+    Operators use it to repair an already-published tag without pulling the multi-GB
+    base (scripts/build-workbench-image-in-cluster.sh); it must not drift from the
+    image.
     """
 
-    derived = DOCKER_ROOT / "isaac-lab" / "Dockerfile.k8s-prereqs"
+    derived = DOCKER_ROOT / tool / "Dockerfile.k8s-prereqs"
     assert derived.is_file(), derived
     text = derived.read_text(encoding="utf-8")
-    for token in (
-        "python3",
-        "rsync",
-        "usermod -aG isaac-sim ubuntu",
-        "NOPASSWD",
-        "ENV PATH=/usr/bin:$PATH",
-        "ARG BASE_IMAGE",
-    ):
-        assert token in text, f"derived prereq Dockerfile is missing {token!r}"
+    for token, _why in (*_ingredients_for(tool), ("ARG BASE_IMAGE", "derived build")):
+        assert token in text, f"{tool}: derived prereq Dockerfile is missing {token!r}"
+    if tool in ISAAC_BASED_IMAGES:
+        assert "usermod -aG isaac-sim" in text, (
+            f"{tool} derives from an Isaac base, where /isaac-sim is mode 750 "
+            "isaac-sim:isaac-sim, so the runtime user must join that group"
+        )
+        # Scheduling is not enough: Kit also has to be able to WRITE. Without these three
+        # directories Isaac boots, fails to save its user config, and then renders nothing
+        # while burning CPU — live job 271 stalled for 45 minutes that way, which is far
+        # harder to diagnose than a pod that never starts.
+        for kit_dir in ("/isaac-sim/kit/data", "/isaac-sim/kit/logs", "/isaac-sim/kit/cache"):
+            assert kit_dir in text, (
+                f"{tool}: {kit_dir} must exist and belong to the runtime user, or Kit stalls"
+            )
+        assert "chown -R ubuntu:ubuntu /isaac-sim/kit/data" in text
+        # Newer bases fetch Isaac at run time and keep Kit's state in /tmp instead, so a
+        # derived recipe must carry that mechanism too: it cannot know which base it repairs.
+        assert "OMNI_USER_DIR" in text and "OMNI_LOG_DIR" in text
 
 
 def test_in_cluster_build_script_is_executable_and_generic() -> None:

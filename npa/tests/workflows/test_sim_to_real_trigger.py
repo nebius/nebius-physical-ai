@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
-import yaml
 
 from npa.workbench import trigger as trigger_sdk
 from npa.workflows.sim_to_real_trigger import (
@@ -19,7 +18,6 @@ from npa.workflows.sim_to_real_trigger import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-TRIGGER_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-trigger.yaml"
 
 
 class MissingObject(Exception):
@@ -177,16 +175,59 @@ def test_sdk_run_once_honors_byo_endpoint_config(tmp_path: Path) -> None:
     assert launcher.launches[0][0].pipeline_render_only is True
 
 
-def test_standalone_trigger_yaml_is_byo_endpoint_and_references_envs() -> None:
-    docs = [doc for doc in yaml.safe_load_all(TRIGGER_YAML.read_text(encoding="utf-8")) if doc is not None]
-    task = docs[0]
-    text = TRIGGER_YAML.read_text(encoding="utf-8")
+def test_the_watcher_launches_the_spec_not_the_retired_pipeline_template() -> None:
+    """`sim-to-real-pipeline.yaml` ran `npa.workflows.sim_to_real real-loop`.
 
-    assert task["envs"]["NPA_TRIGGER_S3_ENDPOINT"] == "https://s3.example.invalid"
-    assert task["envs"]["NPA_TRIGGER_S3_BUCKET"] == "example-bucket"
-    assert task["envs"]["NPA_TRIGGER_PIPELINE_S3_PREFIX"] == "sim-to-real/{run_id}"
-    assert "--s3-endpoint" in task["run"]
-    assert "--pipeline-input-data-uri" in task["run"]
-    assert "--" + "down" not in text
-    assert "auto" + "down" not in text.lower()
-    assert "nebius.cloud" not in text
+    That module raises a `DeprecationWarning` pointing at the staged sim2real engine, so the
+    template was retired rather than ported — wrapping a deprecated path in a new spec would
+    make the new surface its home. Watching a bucket is NOT deprecated, so the watcher stays
+    and now submits the staged loop's own spec.
+    """
+
+    from npa.workflows.sim_to_real_trigger import _pipeline_command
+
+    config = TriggerConfig(
+        s3_endpoint="https://s3.example.invalid",
+        s3_bucket="example-bucket",
+        s3_prefix="datasets/lerobot-pusht/",
+        pipeline_bucket="example-bucket",
+        pipeline_s3_prefix="sim-to-real/{run_id}",
+        pipeline_input_data_uri="s3://example-bucket/datasets/lerobot-pusht/",
+    )
+
+    command = _pipeline_command(config, run_id="trigger-001")
+
+    assert command[:4] == ["npa", "workbench", "workflow", "submit"]
+    assert command[4].endswith("npa-workflows/sim2real-vlm-rl.yaml")
+    assert "run_sim_to_real_pipeline" not in " ".join(command)
+    # The trigger prefix the watch fired on is what the spec's first stage reads.
+    assert "trigger_uri=s3://example-bucket/datasets/lerobot-pusht/" in command
+    assert "bucket=example-bucket" in command
+    assert "prefix=sim-to-real/trigger-001" in command
+
+
+def test_render_only_validates_instead_of_submitting() -> None:
+    """A dry run must not reach a cluster, and must not carry submit-only options."""
+
+    from npa.workflows.sim_to_real_trigger import _pipeline_command
+
+    config = TriggerConfig(
+        s3_endpoint="https://s3.example.invalid",
+        s3_bucket="example-bucket",
+        s3_prefix="datasets/lerobot-pusht/",
+        pipeline_render_only=True,
+        sky_bin="/usr/local/bin/sky",
+    )
+
+    command = _pipeline_command(config, run_id="trigger-002")
+
+    assert command[:4] == ["npa", "workbench", "workflow", "validate-spec"]
+    assert "--submit-timeout" not in command
+    assert "--controller-backend" not in command
+    assert "--sky-bin" not in command
+
+
+def test_the_retired_templates_are_gone() -> None:
+    skypilot = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
+    assert not (skypilot / "sim-to-real-trigger.yaml").exists()
+    assert not (skypilot / "sim-to-real-pipeline.yaml").exists()

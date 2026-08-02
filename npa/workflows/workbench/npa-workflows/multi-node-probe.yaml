@@ -1,0 +1,74 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Reference spec for MULTI-NODE stages: `resources.<profile>.num_nodes`.
+#
+# SkyPilot gang-schedules `num_nodes` identical pods for one task and exports
+# SKYPILOT_NODE_RANK / SKYPILOT_NUM_NODES / SKYPILOT_NODE_IPS into each. Before this
+# field existed, a multi-node block was reachable only through `npa burst submit
+# --nodes`, i.e. outside the workflow surface.
+#
+# `report-nodes` runs on EVERY node and writes nodes/rank-<rank>.json; `verify-nodes`
+# runs once and fails unless it finds one report per expected rank on distinct hosts. The
+# proof is therefore in S3, not in a log line.
+#
+# CPU on purpose: the property under test is the node COUNT, so there is no reason to
+# hold GPUs for it.
+#
+#   npa workbench workflow submit \
+#     npa/workflows/workbench/npa-workflows/multi-node-probe.yaml \
+#     --run-id <run-id> \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: multi-node-probe
+  description: Gang-schedule a multi-node stage and verify every rank reported.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/multi-node-probe"
+  # Kept in config so `--var node_count=N` can widen or narrow the block at submit time.
+  # It must match resources.gang.num_nodes; a guardrail asserts that.
+  node_count: "2"
+
+  nodes_uri: "s3://{{config.bucket}}/{{config.prefix}}/nodes/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+
+resources:
+  gang:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+    num_nodes: 2
+  single:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+
+initial: report-nodes
+
+states:
+  report-nodes:
+    description: Every node in the gang writes its rank report.
+    resources: gang
+    run:
+      shell: >
+        python3 -c "from npa.workflows.multi_node_probe import report_node;
+        report_node('{{config.nodes_uri}}')"
+    outputs:
+      - uri: "{{config.nodes_uri}}"
+        schema: npa.multi_node.node_report.v1
+    next: verify-nodes
+
+  verify-nodes:
+    description: Fail unless one report per rank arrived from a distinct host.
+    needs: [report-nodes]
+    resources: single
+    run:
+      shell: >
+        python3 -c "from npa.workflows.multi_node_probe import verify_nodes;
+        verify_nodes('{{config.nodes_uri}}', '{{config.report_uri}}', '{{config.node_count}}')"
+    outputs:
+      - uri: "{{config.report_uri}}multi_node_report.json"
+        schema: npa.multi_node.verify_report.v1
+    terminal: true

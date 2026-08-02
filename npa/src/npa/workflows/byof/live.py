@@ -12,20 +12,22 @@ from npa.cluster.state import kubeconfig_file, load_cluster_state
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[5]
-# Internal SkyPilot task templates, relocated out of the shown workbench catalog.
-# Resolved package-relative (byof/ -> workflows/ -> skypilot/) so it works from a
-# repo checkout and an installed wheel alike.
-SKYPILOT_DIR = Path(__file__).resolve().parents[1] / "skypilot"
-# BYOF-owned resource profiles that the declarative npa-workflows specs and the
-# BYOF runner depend on. Kept beside this runner (not in the SkyPilot catalog
-# tree) so the npa-workflows tree is self-sufficient and the SkyPilot reference
-# catalog can be deprecated/removed without breaking BYOF live runs.
+# BYOF-owned SkyPilot **resource profiles**: the pod shape a BYOF workload runs in
+# (accelerator, cpu/memory floors, image placeholder, smoke command). They are not
+# workflow templates — the workflow surface is the npa.workflow spec `byof.yaml`, whose
+# `workbench.byof.repo` toolRef passes one of these through
+# `--yaml {{config.resource_profile_yaml}}`.
+#
+# They live beside this runner rather than in the retiring SkyPilot catalog
+# (npa/src/npa/workflows/skypilot/) so that catalog can go away without breaking BYOF
+# live runs. Resolved package-relative so a repo checkout and an installed wheel behave
+# the same. See profiles/README.md.
 BYOF_PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
-DEFAULT_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train.yaml"
-RTXPRO_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train-rtxpro.yaml"
-RTXPRO_SMOKE_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train-rtxpro-smoke.yaml"
-BYOF_DATAGEN_SMOKE_YAML = SKYPILOT_DIR / "byof-datagen-rtxpro-smoke.yaml"
-BYOF_CONTAINER_SMOKE_YAML = SKYPILOT_DIR / "byof-container-smoke-rtxpro.yaml"
+DEFAULT_TRAIN_YAML = BYOF_PROFILES_DIR / "isaac-lab-rl-train.yaml"
+RTXPRO_TRAIN_YAML = BYOF_PROFILES_DIR / "isaac-lab-rl-train-rtxpro.yaml"
+RTXPRO_SMOKE_TRAIN_YAML = BYOF_PROFILES_DIR / "isaac-lab-rl-train-rtxpro-smoke.yaml"
+BYOF_DATAGEN_SMOKE_YAML = BYOF_PROFILES_DIR / "byof-datagen-rtxpro-smoke.yaml"
+BYOF_CONTAINER_SMOKE_YAML = BYOF_PROFILES_DIR / "byof-container-smoke-rtxpro.yaml"
 RTXPRO_SKYPILOT_CONFIG = BYOF_PROFILES_DIR / "skypilot-kubernetes-rtxpro.yaml"
 BYOF_ONBOARD_SKILL = WORKSPACE_ROOT / "skills" / "workflows" / "byof-onboard" / "SKILL.md"
 
@@ -33,6 +35,60 @@ DEFAULT_VALIDATION_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_VALIDATION_REPO_REF = "main"
 DEFAULT_UBUNTU_VALIDATION_REPO_URL = "https://github.com/githubtraining/hellogitworld.git"
 DEFAULT_UBUNTU_VALIDATION_REPO_REF = "master"
+
+
+class ByofProfileError(ValueError):
+    """Raised when a ``--yaml`` resource-profile value cannot be resolved."""
+
+
+def available_byof_profiles() -> tuple[str, ...]:
+    """Return the packaged resource-profile names, without the ``.yaml`` suffix."""
+
+    if not BYOF_PROFILES_DIR.is_dir():  # pragma: no cover - packaging failure
+        return ()
+    return tuple(sorted(path.stem for path in BYOF_PROFILES_DIR.glob("*.yaml")))
+
+
+def resolve_byof_profile_path(value: str | Path) -> Path:
+    """Resolve a ``--yaml`` resource-profile value to a real file.
+
+    Accepts, in order:
+
+    1. an absolute path, or any path that exists relative to the current directory —
+       the operator-host case, unchanged;
+    2. a bare profile **name** (with or without ``.yaml``) packaged under
+       ``BYOF_PROFILES_DIR``;
+    3. a path whose *basename* matches a packaged profile — so a value written as a repo
+       path still resolves from an installed package.
+
+    Cases 2 and 3 exist because a BYOF stage in an npa.workflow spec runs in a pod where
+    the repo is **not** checked out: five specs passed
+    ``npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml``, which can
+    only resolve on a developer's machine. The packaged profile always resolves, so specs
+    name the profile instead of a path (guarded by
+    ``tests/guardrails/test_spec_paths_are_not_repo_relative.py``).
+    """
+
+    raw = str(value).strip()
+    if not raw:
+        raise ByofProfileError("resource profile value is empty")
+
+    candidate = Path(raw)
+    if candidate.is_absolute() or candidate.exists():
+        return candidate
+
+    named = BYOF_PROFILES_DIR / (raw if raw.endswith(".yaml") else f"{raw}.yaml")
+    if named.is_file():
+        return named
+
+    packaged = BYOF_PROFILES_DIR / candidate.name
+    if packaged.is_file():
+        return packaged
+
+    raise ByofProfileError(
+        f"resource profile not found: {raw}. Pass an existing path or one of the packaged "
+        f"profile names: {', '.join(available_byof_profiles())}"
+    )
 
 
 @dataclass(frozen=True)

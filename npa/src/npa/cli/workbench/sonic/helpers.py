@@ -71,6 +71,12 @@ class TrainRuntime(str, Enum):
     vm = "vm"
     container = "container"
     serverless = "serverless"
+    #: Train HERE, in the pod this command is already running in, against the SONIC image's
+    #: own entrypoint. `serverless` provisions a Nebius Job from inside the pod, which a
+    #: workflow stage cannot do: it fails with "--runtime serverless requires --project-id"
+    #: (EVIDENCE.md §R11) and, even given one, would be a workflow launching infrastructure
+    #: that the workflow engine is already responsible for.
+    in_job = "in-job"
 
 
 class DeployMode(str, Enum):

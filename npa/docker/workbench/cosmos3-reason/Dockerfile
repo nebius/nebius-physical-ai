@@ -38,7 +38,31 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
       "transformers>=4.51,<5" \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
-    && chown -R ubuntu:ubuntu /workspace /tmp/hf_home /opt/npa/src /opt/npa/pyproject.toml
+    && chown -R ubuntu:ubuntu /workspace /tmp/hf_home /opt/npa
+
+# --- Schedulable-on-Kubernetes prerequisites -----------------------------------
+#
+# SkyPilot's Kubernetes runtime bootstrap execs into the container and needs a system python3,
+# rsync, and passwordless sudo. Without them provisioning never starts and the only symptom is
+#   KubernetesError: Failed to get ssh user for pod ...: container not found ("ray-node")
+# which says nothing about what is missing (live job 304). The runtime user also needs a
+# writable HOME, because `npa workbench cosmos3 text-to-image` clones the Cosmos framework and
+# lets uv build an environment there before it can generate anything.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && mkdir -p /home/ubuntu && chown -R ubuntu:ubuntu /home/ubuntu \
+    && python3 --version
+
+# NOTE: deliberately NOT `ENV PATH=/usr/bin:$PATH`. The Isaac images need that, because their
+# default python3 is a kit interpreter that cannot import its own site-packages outside
+# python.sh. Here the opposite holds: this image's own python is the one carrying npa and its
+# dependencies, and forcing the bare system python in front of it made setup fail with
+# "npa is not importable after setup" (live job 307). SkyPilot needs a system python3 to EXIST,
+# not to be first.
 
 USER ubuntu
 

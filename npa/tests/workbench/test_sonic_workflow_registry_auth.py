@@ -8,15 +8,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SONIC_TRAIN_STANDALONE_YAML = (
-    ROOT
-    / "npa"
-    / "src"
-    / "npa"
-    / "workflows"
-    / "skypilot"
-    / "sonic-train-standalone.yaml"
-)
+# Frozen raw-task fixture, not a shipped template: what these exercise is the submit
+# WRAPPER's materializer, which still accepts a customer's own SkyPilot YAML.
+# See npa/tests/fixtures/skypilot/README.md.
+SONIC_TRAIN_STANDALONE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-train-standalone.yaml"
 
 
 def _task_docs(plan) -> tuple[dict, dict]:

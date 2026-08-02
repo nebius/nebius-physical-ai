@@ -16,10 +16,9 @@ scene and robot specs. Every step writes local artifacts and, when
 > **Naming: `sim2real` vs `sim-to-real`.** Two related surfaces exist and the
 > spelling is the disambiguator. **`sim2real`** (this directory,
 > `npa workbench sim2real …`, `runbook.yaml`) is the canonical staged
-> VLM-to-RL loop described above. **`sim-to-real`** (hyphenated:
-> `skypilot/sim-to-real-loop.yaml`, `skypilot/sim-to-real-pipeline.yaml`, the
-> H100 quickstart cookbook) is the older standalone training pipeline. If you
-> are unsure which you want, start here — this is the maintained loop.
+> VLM-to-RL loop described above. **`sim-to-real`** (hyphenated) was the older standalone
+> training pipeline; it is retired, because it ran `npa.workflows.sim_to_real real-loop`,
+> which raises a `DeprecationWarning` pointing here. There is now one loop, not two.
 
 Canonical operator routing after CLI namespace cleanup: use
 `npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`

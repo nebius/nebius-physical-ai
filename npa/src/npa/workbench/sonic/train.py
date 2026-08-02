@@ -129,6 +129,7 @@ def train_local(
     device: str = "",
     entrypoint: str = "",
     allow_entrypoint: bool = True,
+    accept_nvidia_eula: bool = False,
     storage_client: "StorageClient | None" = None,
 ) -> dict[str, Any]:
     """Train a SONIC locomotion policy inside the current container."""
@@ -152,6 +153,7 @@ def train_local(
                 embodiment=embodiment,
                 num_envs=num_envs,
                 max_iterations=max_iterations,
+                accept_nvidia_eula=accept_nvidia_eula,
             )
         else:
             result = _run_reference_trainer(
@@ -225,6 +227,11 @@ def _manifest_payload(result: LocalTrainResult, *, data_path: str) -> dict[str, 
     }
 
 
+#: What the SONIC image's entrypoint checks before it will download Isaac Sim / Isaac Lab.
+#: It refuses with "Nothing has been downloaded" until BOTH are YES (live job 323).
+NVIDIA_EULA_ENV = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+
+
 def _run_entrypoint_trainer(
     *,
     entrypoint: str,
@@ -234,10 +241,17 @@ def _run_entrypoint_trainer(
     embodiment: str,
     num_envs: int,
     max_iterations: int,
+    accept_nvidia_eula: bool = False,
 ) -> LocalTrainResult:
     """Run the SONIC image's own trainer in this container."""
 
     env = dict(os.environ)
+    if accept_nvidia_eula:
+        # The image's own gate: it refuses to download Isaac Sim / Isaac Lab until the operator
+        # accepts NVIDIA's terms, and SkyPilot's pod does not inherit the image's docker ENV, so
+        # the acceptance has to travel with the request (live jobs 323/327, EVIDENCE.md §R47).
+        env.update({name: "YES" for name in NVIDIA_EULA_ENV})
+        env.setdefault("ACCEPT_EULA", "Y")
     env.update(
         {
             "SONIC_RUN_REAL_TRAIN": "1",

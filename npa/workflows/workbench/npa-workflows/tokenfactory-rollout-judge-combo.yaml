@@ -1,0 +1,84 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of skypilot/tokenfactory-rollout-judge.yaml.
+#
+# NOT to be confused with the older `tokenfactory-rollout-judge.yaml` spec, which shares the
+# template's name while doing something else entirely (a Cosmos scene reasoner, then a judge over
+# rollouts seeded from outside). EVIDENCE.md §R23 records that mismatch; this spec is the real
+# twin, because it keeps the property the combo exists to demonstrate:
+#
+#   the GPU stage PRODUCES exactly what the zero-GPU hosted judge scores.
+#
+# The rollout runs in the stage's own pod against the vendor image's LeRobot — the renderer
+# installs npa into `/opt/lerobot/venv/bin/python` and makes it the stage interpreter — and
+# publishes its rendered episodes; the judge then reads that prefix through the hosted `api`
+# backend, holding no GPU.
+#
+#   npa workbench workflow submit tokenfactory-rollout-judge-combo.yaml --run-id <id> \
+#     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: tokenfactory-rollout-judge-combo
+  description: >
+    LeRobot policy rollout on a Nebius GPU, then a hosted VLM judges the rendered
+    episodes with no GPU on the scoring side.
+  skypilotTwin: npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "tokenfactory-rollout-judge/{{run.id}}"
+
+  # Producer: the policy to roll out, materialised into the stage's pod. Accepts a local path,
+  # an s3:// prefix, or a Hugging Face model id. NOTE on the obvious public choice: LeRobot >= 0.6
+  # requires the processor format, and `lerobot/diffusion_pusht` is still in the old one — it
+  # fails with `ProcessorMigrationError: Config file 'policy_preprocessor.json' not found`. A
+  # checkpoint produced BY 0.6 already has it, which is what the live case seeds here.
+  policy_checkpoint: "s3://{{config.bucket}}/{{config.prefix}}/policy/"
+  rollout_output_dir: /tmp/lerobot_rollout
+  rollout_env: pusht
+  rollout_episodes: "2"
+  policy_device: cuda
+
+  # Consumer: hosted VLM, zero GPU.
+  vlm_backend: api
+
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+
+resources:
+  rollout-gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: rollout-gpu
+
+states:
+  rollout-gpu:
+    description: Roll out the policy and publish the rendered episodes.
+    toolRef: workbench.lerobot.policy_rollout
+    resources: rollout-gpu
+    outputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.workbench.rollout_set.v1
+    next: judge
+
+  judge:
+    description: Hosted VLM scores the rollouts the GPU stage rendered.
+    needs: [rollout-gpu]
+    toolRef: workbench.vlm_eval.run
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.workbench.rollout_set.v1
+    outputs:
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+        schema: npa.workbench.vlm_eval.report.v1
+    terminal: true

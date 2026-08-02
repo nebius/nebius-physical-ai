@@ -1,9 +1,26 @@
+"""Guardrail: CLI, SDK and the npa.workflow surface stay coherent per capability.
+
+The third tier used to be a raw SkyPilot task YAML ("the YAML declares an ``envs``
+key per CLI flag"). As that catalog is retired, the third tier moves onto the
+surface that survives: the shipped ``npa.workflow`` spec plus the ``toolRef`` argv
+template the engine expands. See ``npa/src/npa/guardrails/three_tier.py`` for why
+that is sharper in one direction and narrower in another, and
+``test_tool_catalog_argv.py`` for the catalog-wide flag check that the narrowing
+buys us.
+
+Each contract pins ``spec_gap``: the CLI parameters a spec author *cannot* set
+today. That is a real capability regression against the SkyPilot YAML, so it is
+recorded per contract rather than quietly dropped, and
+``test_spec_gaps_are_categorised`` forces every entry to have a stated reason.
+"""
+
 from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
 
-from npa.guardrails.skypilot import load_yaml_documents
+import pytest
+
 from npa.guardrails.three_tier import (
     CapabilityContract,
     ParameterContract,
@@ -13,6 +30,109 @@ from npa.guardrails.three_tier import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+SPECS = Path("npa/workflows/workbench/npa-workflows")
+
+
+def _p(cli_param: str, sdk_param: str, cli_flag: str, yaml_env: str = "") -> ParameterContract:
+    return ParameterContract(
+        cli_param=cli_param, sdk_param=sdk_param, cli_flag=cli_flag, yaml_env=yaml_env
+    )
+
+
+# --------------------------------------------------------------------------- gaps
+#
+# Why each parameter is unreachable from a spec today. Categories:
+#
+#   boolean   - the CLI option is a paired/flag-only boolean
+#               (`--headless/--no-headless`, `--verify/--no-verify`,
+#               `--individual/--combined`, bare `--sample-data`). A v0.0.1 argv
+#               template is a fixed list with no conditional rendering, so a
+#               boolean cannot be expressed as `--flag {{config.x}}`. Closing these
+#               needs a spec-level conditional-argv feature.
+#   infra     - the option selects infrastructure (`--image`, `--gpu-type`,
+#               `--image-variant`). The engine already owns image and accelerator
+#               selection through `resources.<profile>`; passing it again inside the
+#               pod would nest infrastructure choices (the same trap DESIGN §7
+#               records for `workbench.rl.policy_train`).
+#   knob      - a plain value the argv template simply does not pass yet. These are
+#               the ones worth closing, tool by tool, with a live run each.
+#
+SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "workflow/trigger/run": {
+        # Where to watch and what has already been seen: driver state, not a stage input.
+        "s3_endpoint": "infra",
+        "s3_bucket": "infra",
+        "s3_prefix": "infra",
+        "watermark_uri": "infra",
+        # Which spec to submit, and how — the driver's own launch settings.
+        "pipeline_yaml": "infra",
+        "pipeline_bucket": "infra",
+        "pipeline_s3_prefix": "infra",
+        "pipeline_input_data_uri": "infra",
+        "pipeline_render_only": "boolean",
+        "task_cloud": "infra",
+        "controller_backend": "infra",
+        "gpu": "infra",
+        "gpu_failover": "infra",
+        "submit_timeout": "knob",
+    },
+    "workflow/trigger/watch": {
+        "s3_endpoint": "infra",
+        "s3_bucket": "infra",
+        "s3_prefix": "infra",
+        # Loop shape: how often to look and when to stop. A stage runs once.
+        "poll_interval": "knob",
+        "max_polls": "knob",
+        "max_launches": "knob",
+    },
+    "sonic/train": {
+        "sample_data": "boolean",
+        "headless": "boolean",
+        "image": "infra",
+        "gpu_type": "infra",
+        "image_variant": "infra",
+        "embodiment": "knob",
+        "num_envs": "knob",
+    },
+    "sonic/export": {
+        "normalize": "knob",
+        "verify": "boolean",
+        "opset": "knob",
+        "axes": "knob",
+        "metadata": "knob",
+        "obs_spec": "knob",
+        "action_spec": "knob",
+        "config": "knob",
+        "parity_atol": "knob",
+    },
+    "sonic/retargeting/run": {
+        "individual": "boolean",
+        "retarget_map": "knob",
+        "frame_rate": "knob",
+        "source_frame_rate": "knob",
+        "max_frames": "knob",
+        "num_workers": "knob",
+    },
+    "vlm-eval/run": {
+        "task": "knob",
+        "model": "knob",
+        "endpoint_url": "knob",
+        "frame_selection": "knob",
+        "max_frames": "knob",
+        "success_threshold": "knob",
+    },
+    "cosmos2/transfer": {
+        "assets_uri": "knob",
+        "scene_spec_uri": "knob",
+        "image": "infra",
+    },
+    "cosmos3/reason": {
+        "image": "infra",
+        "prompt": "knob",
+    },
+}
+
+VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
@@ -22,19 +142,29 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="train_cmd",
         sdk_module="npa.sdk.workbench.sonic",
         sdk_attr="train",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml"),
+        spec_path=SPECS / "sonic-train.yaml",
+        tool_ref="workbench.sonic.train",
+        spec_gap=(
+            "sample_data",
+            "embodiment",
+            "num_envs",
+            "headless",
+            "image",
+            "gpu_type",
+            "image_variant",
+        ),
         params=(
-            ParameterContract("checkpoint", "checkpoint", "SONIC_CHECKPOINT", "--checkpoint"),
-            ParameterContract("data_path", "data_path", "SONIC_DATA_PATH", "--data-path"),
-            ParameterContract("sample_data", "sample_data", "SONIC_SAMPLE_DATA", "--sample-data"),
-            ParameterContract("embodiment", "embodiment", "SONIC_EMBODIMENT", "--embodiment"),
-            ParameterContract("num_envs", "num_envs", "SONIC_NUM_ENVS", "--num-envs"),
-            ParameterContract("headless", "headless", "SONIC_HEADLESS", "--headless"),
-            ParameterContract("max_iterations", "max_iterations", "SONIC_MAX_ITERATIONS", "--max-iterations"),
-            ParameterContract("output_path", "output_path", "SONIC_OUTPUT_PREFIX", "--output-path"),
-            ParameterContract("image", "image", "POLICY_IMAGE", "--image"),
-            ParameterContract("gpu_type", "gpu_type", "SONIC_GPU_TYPE", "--gpu-type"),
-            ParameterContract("image_variant", "image_variant", "SONIC_IMAGE_VARIANT", "--image-variant"),
+            _p("checkpoint", "checkpoint", "--checkpoint"),
+            _p("data_path", "data_path", "--data-path"),
+            _p("sample_data", "sample_data", "--sample-data"),
+            _p("embodiment", "embodiment", "--embodiment"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("headless", "headless", "--headless"),
+            _p("max_iterations", "max_iterations", "--max-iterations"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("image", "image", "--image"),
+            _p("gpu_type", "gpu_type", "--gpu-type"),
+            _p("image_variant", "image_variant", "--image-variant"),
         ),
     ),
     CapabilityContract(
@@ -43,19 +173,31 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="export_cmd",
         sdk_module="npa.sdk.workbench.sonic",
         sdk_attr="export_onnx",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/sonic-export.yaml"),
+        spec_path=SPECS / "sonic-export.yaml",
+        tool_ref="workbench.sonic.export",
+        spec_gap=(
+            "opset",
+            "axes",
+            "normalize",
+            "metadata",
+            "obs_spec",
+            "action_spec",
+            "config",
+            "verify",
+            "parity_atol",
+        ),
         params=(
-            ParameterContract("checkpoint", "checkpoint", "SONIC_CHECKPOINT", "--checkpoint"),
-            ParameterContract("output_path", "output", "SONIC_OUTPUT", "--output"),
-            ParameterContract("opset", "opset", "SONIC_OPSET", "--opset"),
-            ParameterContract("axes", "axes", "SONIC_AXES", "--axes"),
-            ParameterContract("normalize", "normalize", "SONIC_NORMALIZE", "--normalize"),
-            ParameterContract("metadata", "metadata", "SONIC_METADATA", "--metadata"),
-            ParameterContract("obs_spec", "obs_spec", "SONIC_OBS_SPEC", "--obs-spec"),
-            ParameterContract("action_spec", "action_spec", "SONIC_ACTION_SPEC", "--action-spec"),
-            ParameterContract("config", "config", "SONIC_CONFIG", "--config"),
-            ParameterContract("verify", "verify", "SONIC_VERIFY", "--verify"),
-            ParameterContract("parity_atol", "parity_atol", "SONIC_PARITY_ATOL", "--parity-atol"),
+            _p("checkpoint", "checkpoint", "--checkpoint"),
+            _p("output_path", "output", "--output"),
+            _p("opset", "opset", "--opset"),
+            _p("axes", "axes", "--axes"),
+            _p("normalize", "normalize", "--normalize"),
+            _p("metadata", "metadata", "--metadata"),
+            _p("obs_spec", "obs_spec", "--obs-spec"),
+            _p("action_spec", "action_spec", "--action-spec"),
+            _p("config", "config", "--config"),
+            _p("verify", "verify", "--verify"),
+            _p("parity_atol", "parity_atol", "--parity-atol"),
         ),
     ),
     CapabilityContract(
@@ -64,23 +206,27 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.retargeting",
         sdk_attr="run",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/retargeting.yaml"),
+        spec_path=SPECS / "retargeting.yaml",
+        tool_ref="workbench.retargeting.run",
+        spec_gap=(
+            "retarget_map",
+            "frame_rate",
+            "source_frame_rate",
+            "max_frames",
+            "individual",
+            "num_workers",
+        ),
         params=(
-            ParameterContract("input_path", "input_path", "INPUT_MOTION_URI", "--input-path"),
-            ParameterContract("output_path", "output_path", "RETARGETED_MOTION_URI", "--output-path"),
-            ParameterContract("source_format", "source_format", "SOURCE_FORMAT", "--source-format"),
-            ParameterContract("embodiment", "embodiment", "SONIC_EMBODIMENT", "--embodiment"),
-            ParameterContract("retarget_map", "retarget_map", "RETARGET_MAP_URI", "--retarget-map"),
-            ParameterContract("frame_rate", "frame_rate", "RETARGET_FRAME_RATE", "--frame-rate"),
-            ParameterContract(
-                "source_frame_rate",
-                "source_frame_rate",
-                "RETARGET_SOURCE_FRAME_RATE",
-                "--source-frame-rate",
-            ),
-            ParameterContract("max_frames", "max_frames", "RETARGET_MAX_FRAMES", "--max-frames"),
-            ParameterContract("individual", "individual", "RETARGET_INDIVIDUAL", "--individual"),
-            ParameterContract("num_workers", "num_workers", "RETARGET_NUM_WORKERS", "--num-workers"),
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("source_format", "source_format", "--source-format"),
+            _p("embodiment", "embodiment", "--embodiment"),
+            _p("retarget_map", "retarget_map", "--retarget-map"),
+            _p("frame_rate", "frame_rate", "--frame-rate"),
+            _p("source_frame_rate", "source_frame_rate", "--source-frame-rate"),
+            _p("max_frames", "max_frames", "--max-frames"),
+            _p("individual", "individual", "--individual"),
+            _p("num_workers", "num_workers", "--num-workers"),
         ),
     ),
     CapabilityContract(
@@ -89,17 +235,26 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.vlm_eval",
         sdk_attr="run",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/vlm-eval.yaml"),
+        spec_path=SPECS / "vlm-eval-single.yaml",
+        tool_ref="workbench.vlm_eval.run",
+        spec_gap=(
+            "task",
+            "model",
+            "endpoint_url",
+            "frame_selection",
+            "max_frames",
+            "success_threshold",
+        ),
         params=(
-            ParameterContract("input_path", "input_path", "EVAL_INPUT_URI", "--input-path"),
-            ParameterContract("output_path", "output_path", "VLM_EVAL_OUTPUT_URI", "--output-path"),
-            ParameterContract("task", "task", "VLM_EVAL_TASK", "--task"),
-            ParameterContract("backend", "backend", "VLM_BACKEND", "--backend"),
-            ParameterContract("model", "model", "VLM_MODEL", "--model"),
-            ParameterContract("endpoint_url", "endpoint_url", "VLM_ENDPOINT_URL", "--endpoint-url"),
-            ParameterContract("frame_selection", "frame_selection", "VLM_FRAME_SELECTION", "--frame-selection"),
-            ParameterContract("max_frames", "max_frames", "VLM_MAX_FRAMES", "--max-frames"),
-            ParameterContract("success_threshold", "success_threshold", "VLM_SUCCESS_THRESHOLD", "--success-threshold"),
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("task", "task", "--task"),
+            _p("backend", "backend", "--backend"),
+            _p("model", "model", "--model"),
+            _p("endpoint_url", "endpoint_url", "--endpoint-url"),
+            _p("frame_selection", "frame_selection", "--frame-selection"),
+            _p("max_frames", "max_frames", "--max-frames"),
+            _p("success_threshold", "success_threshold", "--success-threshold"),
         ),
     ),
     CapabilityContract(
@@ -108,14 +263,16 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="transfer_cmd",
         sdk_module="npa.sdk.workbench.cosmos2",
         sdk_attr="transfer",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/cosmos2-transfer.yaml"),
+        spec_path=SPECS / "cosmos-synth-fanout-curation.yaml",
+        tool_ref="workbench.cosmos2.transfer",
+        spec_gap=("assets_uri", "scene_spec_uri", "image"),
         params=(
-            ParameterContract("input_uri", "input_uri", "NPA_INPUT_URI", "--input-uri"),
-            ParameterContract("output_uri", "output_uri", "NPA_OUTPUT_URI", "--output-uri"),
-            ParameterContract("assets_uri", "assets_uri", "NPA_ASSETS_URI", "--assets-uri"),
-            ParameterContract("scene_spec_uri", "scene_spec_uri", "NPA_SCENE_SPEC_URI", "--scene-spec-uri"),
-            ParameterContract("image", "image", "COSMOS2_TRANSFER_IMAGE", "--image"),
-            ParameterContract("run_id", "run_id", "NPA_RUN_ID", "--run-id"),
+            _p("input_uri", "input_uri", "--input-uri"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("assets_uri", "assets_uri", "--assets-uri"),
+            _p("scene_spec_uri", "scene_spec_uri", "--scene-spec-uri"),
+            _p("image", "image", "--image"),
+            _p("run_id", "run_id", "--run-id"),
         ),
     ),
     CapabilityContract(
@@ -124,14 +281,16 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="reason_cmd",
         sdk_module="npa.sdk.workbench.cosmos3",
         sdk_attr="reason",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/cosmos3-reason.yaml"),
+        spec_path=SPECS / "cosmos3-reason.yaml",
+        tool_ref="workbench.cosmos3.reason",
+        spec_gap=("image", "prompt"),
         params=(
-            ParameterContract("input_uri", "input_uri", "NPA_INPUT_URI", "--input-uri"),
-            ParameterContract("output_uri", "output_uri", "NPA_OUTPUT_URI", "--output-uri"),
-            ParameterContract("model", "model", "COSMOS3_REASON_MODEL", "--model"),
-            ParameterContract("image", "image", "COSMOS3_REASON_IMAGE", "--image"),
-            ParameterContract("prompt", "prompt", "NPA_REASON_PROMPT", "--prompt"),
-            ParameterContract("run_id", "run_id", "NPA_RUN_ID", "--run-id"),
+            _p("input_uri", "input_uri", "--input-uri"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("model", "model", "--model"),
+            _p("image", "image", "--image"),
+            _p("prompt", "prompt", "--prompt"),
+            _p("run_id", "run_id", "--run-id"),
         ),
     ),
     CapabilityContract(
@@ -140,14 +299,15 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="train_cmd",
         sdk_module="npa.sdk.workbench.detection_training",
         sdk_attr="train",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml"),
+        spec_path=SPECS / "bdd100k-pipeline.yaml",
+        tool_ref="workbench.detection_training.train_nighttime",
         params=(
-            ParameterContract("view", "view", "VIEW_NAME", "--view"),
-            ParameterContract("output_uri", "output_uri", "TRAIN_OUTPUT_URI", "--output-uri"),
-            ParameterContract("lance_uri", "lance_uri", "LANCE_URI", "--lance-uri"),
-            ParameterContract("epochs", "epochs", "TRAIN_EPOCHS", "--epochs"),
-            ParameterContract("batch_size", "batch_size", "TRAIN_BATCH_SIZE", "--batch-size"),
-            ParameterContract("learning_rate", "learning_rate", "TRAIN_LEARNING_RATE", "--learning-rate"),
+            _p("view", "view", "--view"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("lance_uri", "lance_uri", "--lance-uri"),
+            _p("epochs", "epochs", "--epochs"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
         ),
     ),
     CapabilityContract(
@@ -156,55 +316,84 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="eval_cmd",
         sdk_module="npa.sdk.workbench.detection_training",
         sdk_attr="eval",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml"),
+        spec_path=SPECS / "bdd100k-pipeline.yaml",
+        tool_ref="workbench.detection_training.eval_nighttime",
         params=(
-            ParameterContract("eval_view", "eval_view", "VIEW_NAME", "--eval-view"),
-            ParameterContract("output_uri", "output_uri", "EVAL_OUTPUT_URI", "--output-uri"),
-            ParameterContract("lance_uri", "lance_uri", "LANCE_URI", "--lance-uri"),
+            _p("eval_view", "eval_view", "--eval-view"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("lance_uri", "lance_uri", "--lance-uri"),
         ),
     ),
+    # --- the watcher: a DRIVER, so its third tier is the spec it submits --------
+    # `sim-to-real-trigger.yaml` is retired. Its stage ran the watch loop, and the loop's
+    # third tier was that YAML's `envs:`. The loop now submits `sim2real-vlm-rl.yaml`, so the
+    # spec is the third tier — but only for the parameters that describe the RUN. The watch
+    # parameters (where to look, how often, what it has already seen) are driver state with no
+    # stage analogue, which is exactly what `spec_gap` is for.
     CapabilityContract(
         name="workflow/trigger/run",
         cli_module="npa.cli.workbench.trigger",
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="run_once",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/sim-to-real-trigger.yaml"),
+        spec_path=SPECS / "sim2real-vlm-rl.yaml",
+        tool_ref="workbench.cosmos2.transfer",
+        spec_gap=(
+            "s3_endpoint",
+            "s3_bucket",
+            "s3_prefix",
+            "watermark_uri",
+            "pipeline_yaml",
+            "pipeline_bucket",
+            "pipeline_s3_prefix",
+            "pipeline_input_data_uri",
+            "pipeline_render_only",
+            "task_cloud",
+            "controller_backend",
+            "gpu",
+            "gpu_failover",
+            "submit_timeout",
+        ),
         params=(
-            ParameterContract("s3_endpoint", "s3_endpoint", "NPA_TRIGGER_S3_ENDPOINT", "--s3-endpoint"),
-            ParameterContract("s3_bucket", "s3_bucket", "NPA_TRIGGER_S3_BUCKET", "--s3-bucket"),
-            ParameterContract("s3_prefix", "s3_prefix", "NPA_TRIGGER_S3_PREFIX", "--s3-prefix"),
-            ParameterContract("watermark_uri", "watermark_uri", "NPA_TRIGGER_WATERMARK_URI", "--watermark-uri"),
-            ParameterContract("pipeline_yaml", "pipeline_yaml", "NPA_TRIGGER_PIPELINE_YAML", "--pipeline-yaml"),
-            ParameterContract("pipeline_bucket", "pipeline_bucket", "NPA_TRIGGER_PIPELINE_BUCKET", "--pipeline-bucket"),
-            ParameterContract(
+            _p("s3_endpoint", "s3_endpoint", "--s3-endpoint", "NPA_TRIGGER_S3_ENDPOINT"),
+            _p("s3_bucket", "s3_bucket", "--s3-bucket", "NPA_TRIGGER_S3_BUCKET"),
+            _p("s3_prefix", "s3_prefix", "--s3-prefix", "NPA_TRIGGER_S3_PREFIX"),
+            _p("watermark_uri", "watermark_uri", "--watermark-uri", "NPA_TRIGGER_WATERMARK_URI"),
+            _p("pipeline_yaml", "pipeline_yaml", "--pipeline-yaml", "NPA_TRIGGER_PIPELINE_YAML"),
+            _p(
+                "pipeline_bucket",
+                "pipeline_bucket",
+                "--pipeline-bucket",
+                "NPA_TRIGGER_PIPELINE_BUCKET",
+            ),
+            _p(
                 "pipeline_s3_prefix",
                 "pipeline_s3_prefix",
-                "NPA_TRIGGER_PIPELINE_S3_PREFIX",
                 "--pipeline-s3-prefix",
+                "NPA_TRIGGER_PIPELINE_S3_PREFIX",
             ),
-            ParameterContract(
+            _p(
                 "pipeline_input_data_uri",
                 "pipeline_input_data_uri",
-                "NPA_TRIGGER_PIPELINE_INPUT_DATA_URI",
                 "--pipeline-input-data-uri",
+                "NPA_TRIGGER_PIPELINE_INPUT_DATA_URI",
             ),
-            ParameterContract(
+            _p(
                 "pipeline_render_only",
                 "pipeline_render_only",
-                "NPA_TRIGGER_PIPELINE_RENDER_ONLY",
                 "--pipeline-render-only",
+                "NPA_TRIGGER_PIPELINE_RENDER_ONLY",
             ),
-            ParameterContract("task_cloud", "task_cloud", "NPA_TRIGGER_TASK_CLOUD", "--task-cloud"),
-            ParameterContract(
+            _p("task_cloud", "task_cloud", "--task-cloud", "NPA_TRIGGER_TASK_CLOUD"),
+            _p(
                 "controller_backend",
                 "controller_backend",
-                "NPA_TRIGGER_CONTROLLER_BACKEND",
                 "--controller-backend",
+                "NPA_TRIGGER_CONTROLLER_BACKEND",
             ),
-            ParameterContract("gpu", "gpu", "NPA_GPU_TYPE", "--gpu"),
-            ParameterContract("gpu_failover", "gpu_failover", "NPA_GPU_FAILOVER", "--gpu-failover"),
-            ParameterContract("submit_timeout", "submit_timeout", "NPA_TRIGGER_SUBMIT_TIMEOUT", "--submit-timeout"),
+            _p("gpu", "gpu", "--gpu", "NPA_GPU_TYPE"),
+            _p("gpu_failover", "gpu_failover", "--gpu-failover", "NPA_GPU_FAILOVER"),
+            _p("submit_timeout", "submit_timeout", "--submit-timeout", "NPA_TRIGGER_SUBMIT_TIMEOUT"),
         ),
     ),
     CapabilityContract(
@@ -213,17 +402,33 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="watch_cmd",
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="watch",
-        yaml_path=Path("npa/src/npa/workflows/skypilot/sim-to-real-trigger.yaml"),
+        spec_path=SPECS / "sim2real-vlm-rl.yaml",
+        tool_ref="workbench.cosmos2.transfer",
+        spec_gap=(
+            "s3_endpoint",
+            "s3_bucket",
+            "s3_prefix",
+            "poll_interval",
+            "max_polls",
+            "max_launches",
+        ),
         params=(
-            ParameterContract("s3_endpoint", "s3_endpoint", "NPA_TRIGGER_S3_ENDPOINT", "--s3-endpoint"),
-            ParameterContract("s3_bucket", "s3_bucket", "NPA_TRIGGER_S3_BUCKET", "--s3-bucket"),
-            ParameterContract("s3_prefix", "s3_prefix", "NPA_TRIGGER_S3_PREFIX", "--s3-prefix"),
-            ParameterContract("poll_interval", "poll_interval", "NPA_TRIGGER_POLL_INTERVAL", "--poll-interval"),
-            ParameterContract("max_polls", "max_polls", "NPA_TRIGGER_MAX_POLLS", "--max-polls"),
-            ParameterContract("max_launches", "max_launches", "NPA_TRIGGER_MAX_LAUNCHES", "--max-launches"),
+            _p("s3_endpoint", "s3_endpoint", "--s3-endpoint", "NPA_TRIGGER_S3_ENDPOINT"),
+            _p("s3_bucket", "s3_bucket", "--s3-bucket", "NPA_TRIGGER_S3_BUCKET"),
+            _p("s3_prefix", "s3_prefix", "--s3-prefix", "NPA_TRIGGER_S3_PREFIX"),
+            _p("poll_interval", "poll_interval", "--poll-interval", "NPA_TRIGGER_POLL_INTERVAL"),
+            _p("max_polls", "max_polls", "--max-polls", "NPA_TRIGGER_MAX_POLLS"),
+            _p("max_launches", "max_launches", "--max-launches", "NPA_TRIGGER_MAX_LAUNCHES"),
         ),
     ),
 )
+
+#: Capabilities whose third tier is still a raw SkyPilot YAML. This set may only
+#: shrink: every entry is a capability whose npa.workflow twin does not exist yet.
+#: Capabilities whose third tier is still a raw SkyPilot YAML's `envs:`. Empty, and it must
+#: stay that way: the last two (the sim-to-real watcher's run/watch pair) moved onto the spec
+#: they submit when their template retired.
+LEGACY_YAML_TIER: frozenset[str] = frozenset()
 
 
 def test_current_three_tier_contracts_are_coherent() -> None:
@@ -231,6 +436,43 @@ def test_current_three_tier_contracts_are_coherent() -> None:
     for contract in CONTRACTS:
         failures.extend(validate_contract(contract, repo_root=REPO_ROOT))
     assert not failures, "\n".join(failures)
+
+
+def test_no_contract_remains_on_the_legacy_yaml_tier() -> None:
+    """The tier is empty, so the rule flips from "only shrinks" to "must stay empty".
+
+    `LEGACY_YAML_TIER` was the shrinking list of capabilities whose third tier was a raw
+    SkyPilot YAML's `envs:`. It is now empty: every contract points at an npa.workflow spec and
+    a toolRef. Re-adding a `yaml_path` would put a capability back on a surface this work
+    removed, so it fails here rather than being pinned as a straggler.
+    """
+
+    actual = {contract.name for contract in CONTRACTS if contract.yaml_path is not None}
+    assert actual == LEGACY_YAML_TIER, (
+        "a capability moved onto (or off) the legacy SkyPilot-YAML third tier; "
+        f"expected {sorted(LEGACY_YAML_TIER)}, found {sorted(actual)}"
+    )
+    for contract in CONTRACTS:
+        if contract.name in LEGACY_YAML_TIER:
+            continue
+        assert contract.spec_path is not None and contract.tool_ref, (
+            f"{contract.name}: migrated contracts need spec_path + tool_ref"
+        )
+
+
+def test_spec_gaps_are_categorised() -> None:
+    """A pinned capability regression must carry a stated reason, per parameter."""
+
+    for contract in CONTRACTS:
+        reasons = SPEC_GAP_REASONS.get(contract.name, {})
+        assert set(reasons) == set(contract.spec_gap), (
+            f"{contract.name}: SPEC_GAP_REASONS must explain exactly the pinned "
+            f"spec_gap; reasons={sorted(reasons)} gap={sorted(contract.spec_gap)}"
+        )
+        for param, category in reasons.items():
+            assert category in VALID_GAP_CATEGORIES, (
+                f"{contract.name}.{param}: unknown gap category {category!r}"
+            )
 
 
 def test_sim2real_headline_workflow_is_three_tier_coherent() -> None:
@@ -287,44 +529,88 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
     assert discovered == contracted | seam
 
 
-def test_contract_catches_deliberately_broken_yaml_fixture(tmp_path: Path) -> None:
-    source = REPO_ROOT / CONTRACTS[0].yaml_path
-    docs = load_yaml_documents(source)
-    task_doc = docs[1]
-    envs = dict(task_doc["envs"])
-    envs.pop("SONIC_CHECKPOINT")
-    task_doc["envs"] = envs
-    broken = tmp_path / "broken.yaml"
+# ------------------------------------------------------------------ negative controls
+
+
+def _contract(name: str) -> CapabilityContract:
+    return next(contract for contract in CONTRACTS if contract.name == name)
+
+
+def test_contract_catches_an_understated_spec_gap() -> None:
+    """Claiming full spec reachability when the argv does not pass a flag must fail."""
+
+    broken = replace(_contract("cosmos3/reason"), spec_gap=())
+
+    failures = validate_contract(broken, repo_root=REPO_ROOT)
+
+    assert any("spec_gap drifted" in failure for failure in failures), failures
+
+
+def test_contract_catches_a_spec_that_does_not_invoke_the_tool_ref() -> None:
+    """The named spec must actually use the toolRef the contract describes."""
+
+    broken = replace(
+        _contract("cosmos3/reason"),
+        tool_ref="workbench.sonic.eval",
+        spec_gap=(
+            "input_uri",
+            "output_uri",
+            "model",
+            "image",
+            "prompt",
+            "run_id",
+        ),
+    )
+
+    failures = validate_contract(broken, repo_root=REPO_ROOT)
+
+    assert any("does not invoke" in failure for failure in failures), failures
+
+
+def test_contract_catches_an_unknown_tool_ref() -> None:
+    broken = replace(_contract("cosmos3/reason"), tool_ref="workbench.nope.nope")
+
+    failures = validate_contract(broken, repo_root=REPO_ROOT)
+
+    assert any("unknown toolRef" in failure for failure in failures), failures
+
+
+def test_contract_catches_a_missing_third_tier() -> None:
+    broken = replace(_contract("cosmos3/reason"), spec_path=None, tool_ref="")
+
+    failures = validate_contract(broken, repo_root=REPO_ROOT)
+
+    assert any("declares no third tier" in failure for failure in failures), failures
+
+
+def test_the_legacy_yaml_tier_still_fails_loudly_if_anything_returns_to_it(
+    tmp_path: Path,
+) -> None:
+    """No contract uses the legacy tier any more, so its check is exercised synthetically.
+
+    Deleting the last user of a validation path is how that path quietly rots. This keeps the
+    env-based check honest for the day someone adds a `yaml_path` back.
+    """
+
     import yaml
 
-    broken.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
-    broken_contract = replace(CONTRACTS[0], yaml_path=broken)
+    contract = _contract("workflow/trigger/run")
+    legacy_yaml = tmp_path / "legacy.yaml"
+    legacy_yaml.write_text(
+        yaml.safe_dump({"name": "legacy", "envs": {"NPA_TRIGGER_S3_ENDPOINT": "x"}}),
+        encoding="utf-8",
+    )
 
-    failures = validate_contract(broken_contract, repo_root=REPO_ROOT)
+    failures = validate_contract(
+        replace(contract, spec_path=None, tool_ref="", spec_gap=(), yaml_path=legacy_yaml),
+        repo_root=Path("/"),
+    )
 
-    assert any("YAML env missing: SONIC_CHECKPOINT" in failure for failure in failures)
+    assert any("YAML env missing: NPA_TRIGGER_S3_BUCKET" in f for f in failures), failures
 
 
-def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
-    path = REPO_ROOT / "npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml"
-    text = path.read_text(encoding="utf-8")
-    docs = load_yaml_documents(path)
-    task = docs[1]
-    envs = task["envs"]
-
-    assert "image_id" not in task["resources"]
-    assert {
-        "POLICY_IMAGE",
-        "SONIC_GPU_TYPE",
-        "SONIC_IMAGE_VARIANT",
-        "S3_ENDPOINT_URL",
-        "S3_BUCKET",
-    } <= set(envs)
-    assert envs["POLICY_IMAGE"].startswith("example.invalid/")
-    assert envs["SONIC_GPU_TYPE"] == "l40s"
-    assert envs["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
-    assert envs["S3_ENDPOINT_URL"] == ""
-    assert envs["S3_BUCKET"] == "example-bucket"
-    assert "image_id" not in task["resources"]
-    assert "${" not in "\n".join(str(value) for value in envs.values())
-    assert "nebius.cloud" not in text
+@pytest.mark.parametrize("contract", CONTRACTS, ids=lambda c: c.name)
+def test_every_contract_names_a_real_file(contract: CapabilityContract) -> None:
+    target = contract.spec_path or contract.yaml_path
+    assert target is not None
+    assert (REPO_ROOT / target).is_file(), target

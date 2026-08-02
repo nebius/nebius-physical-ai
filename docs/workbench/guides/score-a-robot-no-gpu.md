@@ -74,5 +74,7 @@ credentials — the report shape never changes.
 ## Dig deeper
 
 - Cookbook: [VLM-Eval Loop Runbook](../cookbooks/vlm-eval-loop-runbook.md)
-- Workflow YAML: `npa/src/npa/workflows/skypilot/vlm-eval.yaml`
+- Workflow spec: `npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml` for one
+  rollout, `vlm-eval-loop.yaml` for a whole rollout set, and
+  `vlm-eval-token-factory.yaml` for the zero-GPU hosted backend.
 - Used as the scorer inside the sim-to-real loop: `skills/workflows/sim-to-real/SKILL.md`

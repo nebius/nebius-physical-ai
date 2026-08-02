@@ -1,0 +1,45 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: vlm-eval-loop
+  description: >
+    Score a whole rollout set with a self-hosted VLM and write the aggregate
+    task-success report the sim-to-real loop gates on.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/vlm-eval-loop"
+
+  # `self-hosted` serves the model in-pod: the renderer installs vLLM, starts it, and
+  # health-checks it before this stage's command runs.
+  vlm_backend: self-hosted
+  vlm_task: sim-to-real
+  vlm_frame_selection: keyframes
+  vlm_max_frames: "4"
+  # The coarse gate is the MEAN score across rollouts, as in the template.
+  vlm_success_threshold: "0.8"
+
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 80Gi
+
+initial: score-rollout-set
+
+states:
+  score-rollout-set:
+    description: >
+      Score every rollout directory under the prefix, writing one result per rollout
+      plus the aggregate report.
+    toolRef: workbench.vlm_eval.loop
+    resources: gpu
+    outputs:
+      - uri: "{{config.scores_uri}}task_success_report.json"
+        schema: npa.workbench.vlm_eval.loop_report.v1
+    terminal: true

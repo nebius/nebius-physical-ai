@@ -132,6 +132,50 @@ class QueryTableRequest(BaseModel):
     limit: int = DEFAULT_QUERY_LIMIT
 
 
+class DatasetIndexRequest(BaseModel):
+    """The dataset-of-record's `register` payload.
+
+    The dataset integration has always POSTed `/index` and `/query` while the wrapper exposed
+    `/tables/{name}` and `/query-table`: two halves written against different APIs that never
+    met, because the service was never deployed anywhere a stage could reach it. Live job 313
+    finally reached it and got a 404 (EVIDENCE.md §R41).
+    """
+
+    table: str = DEFAULT_TABLE
+    lance_uri: str = DEFAULT_LANCE_URI
+    records: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DatasetQueryRequest(BaseModel):
+    """The dataset-of-record's facet query: an equality predicate, not a vector search."""
+
+    filter: dict[str, Any] = Field(default_factory=dict)
+    table: str = DEFAULT_TABLE
+    lance_uri: str = DEFAULT_LANCE_URI
+    limit: int = DEFAULT_QUERY_LIMIT
+
+
+def _equality_predicate(filter_spec: dict[str, Any]) -> str:
+    """Turn `{"location": "san-francisco"}` into a SQL predicate, quoting values safely.
+
+    Only equality, and only on values LanceDB can compare: the dataset facet API offers no
+    operators, and accepting arbitrary SQL here would make a query endpoint an injection point.
+    """
+
+    clauses: list[str] = []
+    for key, value in sorted(filter_spec.items()):
+        if not str(key).replace("_", "").replace(".", "").isalnum():
+            raise HTTPException(status_code=400, detail=f"unsupported filter field: {key}")
+        if isinstance(value, bool):
+            clauses.append(f"{key} = {str(value).lower()}")
+        elif isinstance(value, (int, float)):
+            clauses.append(f"{key} = {value}")
+        else:
+            escaped = str(value).replace("'", "''")
+            clauses.append(f"{key} = '{escaped}'")
+    return " AND ".join(clauses)
+
+
 def _list_tables(db: Any) -> list[str]:
     table_names = getattr(db, "table_names", None)
     if callable(table_names):
@@ -236,6 +280,58 @@ def create_app(
             query = query.select(body.select)
         rows = query.to_list()
         return {"table": table_name, "results": rows, "count": len(rows)}
+
+    @app.post("/index")
+    async def index_records(
+        body: DatasetIndexRequest,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        """Append dataset records, creating the table on first write."""
+
+        await require_auth(request, authorization)
+        if not body.records:
+            raise HTTPException(status_code=400, detail="records must not be empty")
+        rows = [dict(record) for record in body.records]
+        if body.table in set(_list_tables(db)):
+            table = db.open_table(body.table)
+            table.add(rows)
+            status = "appended"
+        else:
+            # First write defines the schema, which is what makes `register` idempotent for a
+            # fresh dataset id without a separate create step.
+            db.create_table(body.table, data=rows, mode="create")
+            status = "created"
+        known_tables.add(body.table)
+        return {
+            "status": status,
+            "table": body.table,
+            "lance_uri": body.lance_uri,
+            "rows": len(rows),
+        }
+
+    @app.post("/query")
+    async def query_records(
+        body: DatasetQueryRequest,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        """Facet query by equality predicate, the shape the dataset CLI asks for."""
+
+        await require_auth(request, authorization)
+        if body.limit < 1 or body.limit > 10_000:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 10000")
+        if body.table not in set(_list_tables(db)):
+            # An unregistered dataset is an empty result, not an error: a curation step may
+            # legitimately query before anything has been indexed.
+            return {"table": body.table, "records": [], "count": 0}
+        table = db.open_table(body.table)
+        query = table.search().limit(body.limit)
+        predicate = _equality_predicate(body.filter)
+        if predicate:
+            query = query.where(predicate)
+        rows = query.to_list()
+        return {"table": body.table, "records": rows, "count": len(rows)}
 
     @app.post("/import-bdd100k")
     async def import_bdd100k_endpoint(

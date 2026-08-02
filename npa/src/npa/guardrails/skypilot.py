@@ -14,6 +14,11 @@ import yaml
 
 FORBIDDEN_TEARDOWN_RE = re.compile(r"(^|\s)(--down)(\s|$)|\bautodown\b")
 SKYPILOT_LAUNCH_RE = re.compile(r"\bsubmit_workflow\b|\bsky\s+(jobs\s+launch|launch)\b")
+#: What counts as handling SIGTERM. `install_teardown_signal_handlers` is the shared helper
+#: that installs SIGTERM/SIGINT handlers running the idempotent teardown path; matching only
+#: the literal word "SIGTERM" flagged three runners that *do* call it and cleared one that
+#: merely mentions it in a comment, which trains readers to ignore the warning.
+SIGTERM_HOOK_RE = re.compile(r"\bSIGTERM\b|\btrap \b|\binstall_teardown_signal_handlers\b")
 ENV_REF_RE = re.compile(r"\$\{([A-Z0-9_]+)(?::-[^}]*)?\}")
 PY_ENV_REF_RE = re.compile(
     r"os\.environ(?:\.get)?\(\s*[\"']([A-Z0-9_]+)[\"']|"
@@ -88,7 +93,7 @@ def skypilot_launching_scripts_missing_sigterm(paths: list[Path]) -> list[Path]:
         text = path.read_text(encoding="utf-8")
         if not SKYPILOT_LAUNCH_RE.search(text):
             continue
-        if "SIGTERM" not in text and "trap " not in text:
+        if not SIGTERM_HOOK_RE.search(text):
             missing.append(path)
     return missing
 

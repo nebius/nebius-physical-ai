@@ -40,7 +40,7 @@ states:
     toolRef: workbench.token_factory.reason
     resources: gpu
     outputs:
-      - uri: "{{config.plan_uri}}plan.json"
+      - uri: "{{config.plan_uri}}scene_reasoning.json"
         schema: npa.token_factory.plan.v1
     next: augment-scene
 
@@ -76,7 +76,7 @@ states:
       - uri: "{{config.rollouts_uri}}"
         schema: npa.workbench.rollout_set.v1
     outputs:
-      - uri: "{{config.scores_uri}}report.json"
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
         schema: npa.workbench.vlm_eval.report.v1
 
   quality-gate:

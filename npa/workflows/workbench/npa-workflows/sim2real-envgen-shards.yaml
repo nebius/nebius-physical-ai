@@ -1,0 +1,124 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of the retired skypilot/sim2real-envgen-split.yaml.
+#
+# The template was a single task that read its shard index from Kubernetes' Job completion
+# index (`--shard-index "${JOB_COMPLETION_INDEX:-0}"`), so producing N shards meant submitting
+# it N times, or relying on an indexed Job the workflow surface never modelled. Here the
+# fan-out is declared: a `parallel:` group whose members differ only through `params:`, which
+# the renderer emits as one SkyPilot JobGroup. `split` is the barrier that only runs once
+# every shard reached a terminal state, and it writes the 80/20 train/held-out manifest the
+# template's name promised.
+#
+#   npa workbench workflow submit sim2real-envgen-shards.yaml --run-id <id> --runtime \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+#
+# CPU on purpose: env-shard generation writes a catalog of environment descriptors, it does
+# not render. The template asked for RTXPRO6000:1, which the work never used.
+#
+# The spec also absorbs skypilot/sim2real-actions.yaml as a fourth stage. That template took
+# NPA_TRAIN_ENVS_URI from the operator, which is exactly the slice `split` had just written —
+# the two templates were halves of one pipeline that the raw surface could not join.
+
+metadata:
+  name: sim2real-envgen-shards
+  description: >
+    Sim2Real raw environment generation sharded across concurrent workers, then an
+    80/20 train/held-out split over the combined catalog.
+  # Two templates, one spec: the split template produced the train slice and the actions
+  # template consumed it, but nothing in the raw surface connected them.
+  skypilotTwins:
+    - npa/src/npa/workflows/skypilot/sim2real-envgen-split.yaml
+    - npa/src/npa/workflows/skypilot/sim2real-actions.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real-envgen/{{run.id}}"
+
+  env_count: "64"
+  shard_count: "2"
+  train_fraction: "0.8"
+  envgen_seed: "42"
+  # Optional Cosmos-augmented frame set to condition generation on; empty means none.
+  augmented_frames_uri: ""
+
+  # Action conditioning. `policy_image` is provenance, not a launch target: the shipped
+  # `sim2real_envgen actions` generator writes reference actions on CPU and records the image
+  # (and salts each env's seed with it). The retired sim2real-actions.yaml pinned
+  # `image_id: docker:${POLICY_IMAGE}` and an RTXPRO6000, both of which the implementation never
+  # used — swapping in a real policy container is a resource-profile change here, not a rewrite.
+  action_limit: "32"
+  policy_image: "npa-reference-policy:local"
+
+  # Overridden per shard by the `params:` block of each parallel member.
+  shard_index: "0"
+
+  # The tool takes the run ROOT and derives envs/raw, envs/train, envs/heldout and
+  # envs/manifest beneath it; these mirror what it will write.
+  envgen_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
+  manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/manifest/"
+  # What `split` uploads, and what `actions` conditions.
+  train_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/train/envs.jsonl"
+  actions_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: generate-shards
+
+states:
+  generate-shards:
+    description: Two raw env shards generated concurrently as one JobGroup.
+    parallel:
+      - shard-0
+      - shard-1
+    maxConcurrency: "{{config.shard_count}}"
+    next: split
+
+  shard-0:
+    description: Raw env shard 0.
+    resources: cpu
+    params:
+      shard_index: "0"
+    toolRef: workbench.sim2real_envgen.raw_shard
+    outputs:
+      - uri: "{{config.raw_envs_uri}}raw-shard-00-summary.json"
+        schema: npa.sim2real.raw_env_shard_summary.v1
+
+  shard-1:
+    description: Raw env shard 1.
+    resources: cpu
+    params:
+      shard_index: "1"
+    toolRef: workbench.sim2real_envgen.raw_shard
+    outputs:
+      - uri: "{{config.raw_envs_uri}}raw-shard-01-summary.json"
+        schema: npa.sim2real.raw_env_shard_summary.v1
+
+  split:
+    description: 80/20 train/held-out split over the combined shard catalog.
+    needs: [generate-shards]
+    resources: cpu
+    toolRef: workbench.sim2real_envgen.split
+    outputs:
+      - uri: "{{config.manifest_uri}}split-manifest.json"
+        schema: npa.sim2real.split_manifest.v1
+    next: actions
+
+  actions:
+    description: Condition the train slice on the policy image's action space.
+    needs: [split]
+    resources: cpu
+    toolRef: workbench.sim2real_envgen.actions
+    inputs:
+      - uri: "{{config.train_envs_uri}}"
+        schema: npa.sim2real.env_catalog.v1
+    outputs:
+      - uri: "{{config.actions_uri}}actions-summary.json"
+        schema: npa.sim2real.actions_summary.v1
+    terminal: true

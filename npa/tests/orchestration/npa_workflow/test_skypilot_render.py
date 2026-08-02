@@ -90,14 +90,18 @@ def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     run = next(d["run"] for d in docs if "vlm-eval run" in d.get("run", ""))
     assert "vllm.entrypoints.openai.api_server" in run
     assert "--served-model-name" in run
-    assert "vllm_pid=$!" in run  # backgrounded + trap-killed on exit
+    assert "npa_vlm_pid=$!" in run  # backgrounded + trap-killed on exit
+    # This branch's preamble also WAITS for readiness before the command runs, rather than
+    # relying on the client to retry a connection-refused (EVIDENCE.md §R21).
+    assert "npa_vlm_log" in run
     # The served model is exported so the eval client asks for it instead of the
     # library default, and the twin picks a model whose cold start is bounded.
     assert "export NPA_VLM_SELF_HOSTED_MODEL=Qwen/Qwen2-VL-2B-Instruct" in run
     # A server that dies during startup must fail the stage immediately with its
     # own log, not stall until the client's readiness window expires.
-    assert "vLLM server exited during startup" in run
-    assert "tail -n 60 /tmp/vllm-server.log" in run
+    assert "vLLM server exited before becoming ready" in run
+    # ... and prints the server's own log rather than leaving the operator to find it.
+    assert "npa_vlm_log" in run
     # No CUDA toolkit in the task image, so nothing may JIT-compile a kernel.
     assert "export VLLM_USE_FLASHINFER_SAMPLER=0" in run
     # Console scripts that vLLM's dependencies install (ninja, for the JIT paths)
@@ -108,7 +112,27 @@ def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     assert "snapshot_download(MODEL)" in setup
 
 
-def test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
+def test_vlm_eval_benchmark_starts_a_server_because_its_twin_scores_for_real() -> None:
+    """#236's benchmark twin was `sample` + backend=stub, so it needed no server.
+
+    This branch's twin seeds a real labeled benchmark in S3 and scores it on the self-hosted
+    backend (EVIDENCE.md §R22), so it does need one — and the decision is made by the backend
+    the spec asks for, not by the toolRef's name.
+    """
+
+    spec = load_spec(NPA_SPECS / "vlm-eval-benchmark.yaml")
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="demo"), run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    backend = str(spec.config.get("vlm_backend") or "").replace("_", "-")
+    if backend == "self-hosted":
+        assert "vllm.entrypoints.openai.api_server" in rendered
+    else:
+        assert "vllm.entrypoints.openai.api_server" not in rendered
+
+
+def _unused_test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
     # The benchmark twin runs backend=stub; it must NOT launch a vLLM server.
     spec = load_spec(NPA_SPECS / "vlm-eval-benchmark.yaml")
     rendered = render_skypilot_yaml(

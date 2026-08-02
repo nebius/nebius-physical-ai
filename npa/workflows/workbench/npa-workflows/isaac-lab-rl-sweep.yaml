@@ -1,8 +1,8 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
-# npa.workflow port of the one `execution: parallel` SkyPilot template
-# (npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml).
+# npa.workflow port of the one `execution: parallel` SkyPilot template, which this
+# spec replaced and which has since been retired (see EVIDENCE.md §R3).
 #
 # The template hand-wrote four near-identical task documents that differed only in
 # their Hydra overrides and output prefix. Here that is one `parallel:` group whose
@@ -23,7 +23,6 @@ metadata:
     Isaac Lab RSL-RL hyperparameter sweep — four training variants run
     concurrently as one SkyPilot JobGroup, then a barrier stage ranks their
     metrics, publishes the best variant, and rolls the sweep up in insights.
-  skypilotTwin: npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml
 
 config:
   bucket: example-bucket

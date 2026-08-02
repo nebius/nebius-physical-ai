@@ -15,6 +15,11 @@ The serverless golden eval found this the expensive way — a real submitted job
 which is correct behaviour and a useless test run. At that point none of the twelve
 SkyPilot task templates that use an Isaac image declared the variables either.
 
+Those templates are gone: the npa.workflow specs are the authoring surface now, and a spec
+reaches an Isaac image through its ``toolRef`` rather than by naming the image. So the rule
+follows the surface — the set is derived from the same toolRef-to-image map the renderer uses,
+which means a new Isaac toolRef is covered the moment it is added.
+
 The fix is emphatically NOT to hardcode ``YES`` anywhere in the repo: that would be us
 accepting on the operator's behalf, which is precisely what the re-architecture exists to
 avoid. Instead the variables are declared empty (so a task fails closed, with the
@@ -32,17 +37,48 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
+NPA_WORKFLOWS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
 #: Images whose entrypoints reach Isaac through the bootstrap shim.
 ISAAC_IMAGE_MARKERS = ("npa-isaac-lab", "npa-sonic")
+#: Image keys in the renderer's toolRef map that resolve to an Isaac-based image.
+ISAAC_IMAGE_KEYS = ("isaac-lab", "sonic")
+
+
+def _isaac_tool_refs() -> tuple[str, ...]:
+    """toolRef prefixes the RENDERER routes at an Isaac image.
+
+    Derived rather than listed, so a new Isaac toolRef is covered the moment it is added.
+    """
+
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        ISAAC_IMAGE_TOOLS,
+        TOOL_REF_IMAGE_TOOL,
+    )
+
+    return tuple(
+        prefix for prefix, tool in TOOL_REF_IMAGE_TOOL.items() if tool in ISAAC_IMAGE_TOOLS
+    )
 
 
 def _isaac_templates() -> list[Path]:
-    return sorted(
+    """Raw templates that name an Isaac image, plus specs whose toolRefs route at one."""
+
+    paths = [
         path
         for path in SKYPILOT_DIR.glob("*.yaml")
         if any(marker in path.read_text(encoding="utf-8") for marker in ISAAC_IMAGE_MARKERS)
-    )
+    ]
+    prefixes = _isaac_tool_refs()
+    for path in NPA_WORKFLOWS.glob("*.yaml"):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        refs = [
+            str((state or {}).get("toolRef") or "")
+            for state in (document.get("states") or {}).values()
+        ]
+        if any(ref == p or ref.startswith(p + ".") for ref in refs for p in prefixes):
+            paths.append(path)
+    return sorted(set(paths))
 
 
 def test_there_are_isaac_templates_to_check() -> None:
@@ -50,16 +86,44 @@ def test_there_are_isaac_templates_to_check() -> None:
     assert len(_isaac_templates()) >= 10
 
 
-@pytest.mark.parametrize("path", _isaac_templates(), ids=lambda p: p.name)
-def test_isaac_templates_declare_eula_acceptance(path: Path) -> None:
-    """Declared, so the task documents what it needs and fails closed without it."""
-    text = path.read_text(encoding="utf-8")
+@pytest.mark.parametrize("tool_ref", _isaac_tool_refs())
+def test_the_renderer_declares_eula_acceptance_for_every_isaac_tool_ref(tool_ref: str) -> None:
+    """The spec-surface half of #229's rule, moved to where the routing decision is made.
+
+    A spec reaches an Isaac image through its toolRef, not by naming an image, so asking each
+    spec to declare the variables would ask its author to know the renderer's routing table.
+    The renderer knows it, so the renderer declares them — empty, so the task still fails
+    closed with the actionable message.
+    """
+
+    from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
+
+    envs = isaac_eula_envs(tool_ref)
+    assert set(envs) == set(EULA_VARS), tool_ref
+
+
+def test_the_renderer_declares_nothing_for_a_non_isaac_tool_ref() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
+
+    assert isaac_eula_envs("workbench.lancedb.serve") == {}
+
+
+def test_the_renderer_never_pre_accepts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declared empty unless the OPERATOR set it; never YES from the repo."""
+
     for var in EULA_VARS:
-        assert var in text, (
-            f"{path.name} runs an Isaac image but never declares {var}. The image will "
-            f"exit 78 at first use of /isaac-sim/python.sh. Declare it empty in `envs:` "
-            f"and supply it at launch with --env {var}=YES."
-        )
+        monkeypatch.delenv(var, raising=False)
+    from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
+
+    assert isaac_eula_envs("workbench.sonic.train") == dict.fromkeys(EULA_VARS, "")
+
+
+def test_the_operator_can_supply_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in EULA_VARS:
+        monkeypatch.setenv(var, "YES")
+    from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
+
+    assert isaac_eula_envs("workbench.sonic.train") == dict.fromkeys(EULA_VARS, "YES")
 
 
 @pytest.mark.parametrize("path", _isaac_templates(), ids=lambda p: p.name)

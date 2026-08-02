@@ -361,6 +361,28 @@ def test_lerobot_gpu_platform_aliases() -> None:
     assert lerobot._lerobot_serverless_gpu_preset("gpu-rtx6000", 1) == "1gpu-24vcpu-218gb"
 
 
+def test_lerobot_resolves_datacenter_blackwell() -> None:
+    """B200 (sm_100) is routable, not just B300 (sm_103)."""
+
+    assert lerobot._lerobot_gpu_platform("b200") == "gpu-b200-sxm"
+    assert lerobot._lerobot_gpu_platform("gpu-b200-sxm-a") == "gpu-b200-sxm-a"
+    # Presets confirmed against the live Nebius compute platform listing.
+    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 1) == "1gpu-20vcpu-224gb"
+    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 8) == "8gpu-160vcpu-1792gb"
+
+
+def test_lerobot_gpu_table_does_not_drift_from_serverless() -> None:
+    """One alias table: LeRobot must not keep a second copy that falls behind."""
+
+    from npa.serverless_common.platform import GPU_PLATFORM_ALIASES, GPU_PLATFORM_PRESETS
+
+    for alias, platform in GPU_PLATFORM_ALIASES.items():
+        assert lerobot._lerobot_gpu_platform(alias) == platform
+    for platform, presets in GPU_PLATFORM_PRESETS.items():
+        for count, preset in presets.items():
+            assert lerobot._lerobot_serverless_gpu_preset(platform, count) == preset
+
+
 def test_lerobot_train_container_command_uses_smoke_settings() -> None:
     command = lerobot._lerobot_train_container_command(
         "act",

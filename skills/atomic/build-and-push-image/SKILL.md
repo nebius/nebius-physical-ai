@@ -83,6 +83,28 @@ streams to the registry) over a local build, which additionally unpacks ~30 GB i
 image store. Verify the result with
 `npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py <ref>`.
 
+## GPU Architecture Coverage
+
+An image only runs on a GPU whose architecture it was compiled for, and there
+are two independent knobs:
+
+- A prebuilt torch wheel ships a fixed fat-binary arch set that
+  `TORCH_CUDA_ARCH_LIST` cannot change; only the wheel index does. cu128/cu130
+  include `sm_100` and `sm_120`, cu124/cu126 stop at `sm_90`. Check with
+  `torch.cuda.get_arch_list()`.
+- Source-compiled extensions (flash-attn from source, Taichi, natten, custom
+  ops) obey `TORCH_CUDA_ARCH_LIST` at build time; omitting an arch fails at
+  runtime with `no kernel image is available for execution on the device`.
+
+`npa-base` (`base/cuda13-b300`) builds `8.0 9.0 10.0 10.3 12.0` and asserts the
+wheel reports `sm_80 sm_90 sm_100 sm_120`; override with `build.sh --arch-list`
+/ `--require-archs`. Validate an image with
+`npa/scripts/validate_blackwell_image.sh <image> --target b200|b300 --gpu`.
+Use additive tags that name the architectures
+(`cuda13-b300-sm80-sm90-sm100-sm103-sm120-<UTC>`) and record the per-image
+verdict in `npa/docker/workbench/blackwell-dc-images.json`. Background:
+`docs/workbench/blackwell-datacenter-image-compatibility.md`.
+
 ## Gotchas
 
 - Do not commit concrete registry IDs or private image digests from a live

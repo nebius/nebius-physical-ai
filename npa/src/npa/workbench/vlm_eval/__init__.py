@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 from itertools import product
@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Sequence
 import httpx
 import numpy as np
 from PIL import Image
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
@@ -51,6 +52,9 @@ DEFAULT_RUBRIC = (
     "or ambiguous outcomes."
 )
 RESULT_FILENAME = "vlm_eval_stub.json"
+#: The aggregate report a rollout-SET evaluation writes. Named for compatibility with
+#: the retired sim-to-real-loop.yaml, whose readers key off this filename.
+LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
@@ -189,8 +193,13 @@ __all__ = [
     "VlmStructuredResponse",
     "benchmark_result_uri_for",
     "benchmark_vlm_eval",
+    "VlmLoopRollout",
+    "aggregate_loop_report",
+    "discover_rollouts",
+    "evaluate_rollout_set",
     "evaluate_stub",
     "evaluate_vlm",
+    "loop_report_uri_for",
     "load_benchmark_dataset",
     "parse_structured_response",
     "result_uri_for",
@@ -554,6 +563,187 @@ def result_uri_for(output_path: str) -> str:
     if output_path.endswith(".json"):
         return output_path
     return output_path.rstrip("/") + f"/{RESULT_FILENAME}"
+
+
+def loop_report_uri_for(output_path: str) -> str:
+    """Return the aggregate task-success report URI for an output prefix."""
+
+    if output_path.endswith(".json"):
+        return output_path
+    return output_path.rstrip("/") + f"/{LOOP_REPORT_FILENAME}"
+
+
+def discover_rollouts(input_path: str) -> list[str]:
+    """Return one URI per rollout under ``input_path``, or the prefix itself.
+
+    Mirrors the retired ``sim-to-real-loop.yaml``: it listed the immediate child
+    directories of the rollout prefix and fell back to treating the prefix as a single
+    rollout when there were none. ``evaluate_vlm`` scores *one* rollout — it discovers
+    frames recursively, so pointing it at a prefix of many rollouts would blend them into
+    one score. That is why the set has to be enumerated here.
+    """
+
+    if not input_path.strip():
+        raise VlmEvalError("--input-path is required")
+    if input_path.startswith("s3://"):
+        return _discover_object_rollouts(input_path)
+
+    root = Path(input_path)
+    if not root.exists():
+        raise VlmEvalError(f"rollout input not found: {input_path}")
+    children = sorted(child for child in root.iterdir() if child.is_dir())
+    return [str(child) for child in children] or [str(root)]
+
+
+def _discover_object_rollouts(input_path: str) -> list[str]:
+    from npa.clients.storage import StorageClient
+
+    base = input_path.rstrip("/") + "/"
+    parsed = urlparse(base)
+    bucket, prefix = parsed.netloc, parsed.path.lstrip("/")
+    client = StorageClient.from_environment()
+    # A "directory" in object storage is a common prefix; the delimiter listing is the
+    # object-store equivalent of `find -mindepth 1 -maxdepth 1 -type d`.
+    paginator = client.s3.get_paginator("list_objects_v2")
+    names: list[str] = []
+    saw_object = False
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
+        for common in page.get("CommonPrefixes") or ():
+            child = str(common.get("Prefix") or "")
+            if child and child != prefix:
+                names.append(f"s3://{bucket}/{child}")
+        saw_object = saw_object or bool(page.get("Contents"))
+    if names:
+        return sorted(names)
+    if not saw_object:
+        raise VlmEvalError(f"rollout input contains no objects: {input_path}")
+    return [base]
+
+
+@dataclass(frozen=True)
+class VlmLoopRollout:
+    """One rollout's contribution to the aggregate report."""
+
+    rollout_id: str
+    success: bool
+    score: float
+    rationale: str
+    status: str
+    frame_count: int
+    result_uri: str
+
+
+def evaluate_rollout_set(
+    *,
+    input_path: str,
+    output_path: str,
+    task: str = "sim-to-real",
+    backend: str = DEFAULT_BACKEND,
+    model: str = DEFAULT_MODEL,
+    success_threshold: float = 0.8,
+    frame_selection: str = DEFAULT_FRAME_SELECTION,
+    max_frames: int = DEFAULT_MAX_FRAMES,
+    endpoint_url: str = "",
+    api_key_env: str = DEFAULT_API_KEY_ENV,
+    rubric: str = DEFAULT_RUBRIC,
+    rubric_path: str = "",
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    storage_client: "StorageClient | None" = None,
+) -> dict[str, Any]:
+    """Score every rollout under a prefix and return the aggregate task-success report.
+
+    This is the capability the retired ``sim-to-real-loop.yaml`` implemented in ~80 lines of
+    bash and `jq`, and that ``tests/workbench/test_vlm_eval_loop_e2e.py`` re-implemented in
+    Python: score each rollout, write one result per rollout, then aggregate into a coarse
+    ``task_success`` gate. Field names and the gate rule (``mean_score >=
+    success_threshold``) are kept identical so existing readers of the report keep working.
+    """
+
+    started_at = time.monotonic()
+    rollouts: list[VlmLoopRollout] = []
+    for rollout_uri in discover_rollouts(input_path):
+        rollout_id = _rollout_id_for(rollout_uri)
+        result = evaluate_vlm(
+            input_path=rollout_uri,
+            output_path=_join_uri(output_path.rstrip("/") + "/", f"rollouts/{rollout_id}/"),
+            task=task,
+            backend=backend,
+            model=model,
+            success_threshold=success_threshold,
+            frame_selection=frame_selection,
+            max_frames=max_frames,
+            endpoint_url=endpoint_url,
+            api_key_env=api_key_env,
+            rubric=rubric,
+            rubric_path=rubric_path,
+            timeout_s=timeout_s,
+        )
+        written = write_result(
+            asdict(result), result_uri=result.result_uri, storage_client=storage_client
+        )
+        rollouts.append(
+            VlmLoopRollout(
+                rollout_id=rollout_id,
+                success=bool(result.passed),
+                score=float(result.score),
+                rationale=result.rationale,
+                status=result.status,
+                frame_count=result.frame_count,
+                result_uri=written,
+            )
+        )
+
+    report = aggregate_loop_report(
+        rollouts,
+        model=model,
+        frame_selection=_normalize_frame_selection(frame_selection),
+        success_threshold=success_threshold,
+        output_dir=output_path,
+    )
+    report["latency_s"] = round(time.monotonic() - started_at, 3)
+    report["report_uri"] = write_result(
+        report,
+        result_uri=loop_report_uri_for(output_path),
+        storage_client=storage_client,
+    )
+    return report
+
+
+def aggregate_loop_report(
+    rollouts: Sequence[VlmLoopRollout],
+    *,
+    model: str,
+    frame_selection: str,
+    success_threshold: float,
+    output_dir: str,
+) -> dict[str, Any]:
+    """Aggregate per-rollout results exactly as the retired template's `jq -s` did."""
+
+    total = len(rollouts)
+    passed = sum(1 for rollout in rollouts if rollout.success)
+    mean_score = (sum(rollout.score for rollout in rollouts) / total) if total else 0.0
+    return {
+        "status": "completed",
+        "model": model,
+        "frame_selection": frame_selection,
+        "success_threshold": success_threshold,
+        "output_dir": output_dir,
+        "total_rollouts": total,
+        "passed_rollouts": passed,
+        "success_rate": (passed / total) if total else 0.0,
+        "mean_score": mean_score,
+        # The coarse gate is the MEAN score, not the pass rate — same as the template.
+        "task_success": mean_score >= success_threshold,
+        "rollouts": [asdict(rollout) for rollout in rollouts],
+    }
+
+
+def _rollout_id_for(rollout_uri: str) -> str:
+    """Return the last path segment of a rollout URI (``basename`` for object stores)."""
+
+    trimmed = rollout_uri.rstrip("/")
+    segment = trimmed.rsplit("/", 1)[-1] if "/" in trimmed else trimmed
+    return segment or "rollout"
 
 
 def write_result(

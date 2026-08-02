@@ -1,0 +1,75 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-lerobot image.
+#
+# Same change the main lerobot/Dockerfile now applies, expressed as a derived build so an
+# operator can repair an existing tag without rebuilding the multi-GB torch/LeRobot base:
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-lerobot:<tag> \
+#     --tag  <registry>/npa-lerobot:<tag>-k8s-runtime \
+#     --dockerfile npa/docker/workbench/lerobot/Dockerfile.k8s-prereqs
+#
+# Why it is needed: SkyPilot's Kubernetes runtime bootstrap runs inside the task container.
+# Without a system python3, rsync, passwordless sudo for the runtime user and the system
+# interpreter first on PATH, provisioning fails with
+# "Failed to get ssh user for pod ...: container not found (ray-node)" — the failure the Isaac
+# Lab image hit on npa-rtxpro-mk8s (see ../isaac-lab/Dockerfile.k8s-prereqs for the live
+# bisection).
+#
+# NOTE on the PATH ingredient, which matters more here than for the other images: the shipped
+# lerobot image ends with `ENV PATH=/opt/lerobot/venv/bin:$PATH`, i.e. the VENDOR python first.
+# SkyPilot needs the system python first, so this flips the order — which in turn means npa
+# installs into the system interpreter and a tool importing `lerobot` would fail. That is
+# exactly what `TOOL_REF_VENDOR_INTERPRETERS` in the renderer resolves: the stage's setup
+# installs npa INTO /opt/lerobot/venv/bin/python and records it as the stage interpreter, so the
+# tool and the vendor library share one environment. The two halves are complementary; neither
+# works alone.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Must match the runtime user the shipped lerobot image ends on.
+ARG NPA_RUNTIME_USER=ubuntu
+
+USER root
+
+# NOTE — a derived build has to REPAIR apt first, and cannot avoid it.
+#
+# The published base purges `linux-libc-dev` with `--force-depends` as CVE hardening. That
+# strands `libc6-dev` and, through it, `build-essential`, `libexpat1-dev` and
+# `libstdc++-11-dev`, so apt refuses to install ANYTHING — in-cluster, even plain `rsync` was
+# blocked. Removing the stranded packages one by one just walks the chain.
+#
+# So this recipe runs `--fix-broken`, which reinstates `linux-libc-dev` (kernel *headers*, no
+# executable) to make apt usable again. That is a deliberate, stated trade for repairing an
+# already-published tag. The preferred path is a source rebuild: the main Dockerfile now
+# installs these prerequisites BEFORE the hardening step, so a fresh build needs no repair.
+# The base leaves apt in a BROKEN state on purpose: it purges `linux-libc-dev` with
+# `--force-depends` as CVE hardening, which strands `libc6-dev` depending on a package that is
+# gone. apt then refuses to install ANYTHING ("Unmet dependencies"), which is why even `rsync`
+# was blocked in-cluster. Dropping the stranded build-time `libc6-dev` restores consistency
+# WITHOUT reinstating the purged package, so the hardening survives; a runtime image does not
+# need C headers.
+# --no-install-recommends because this repairs apt rather than adding anything: `--fix-broken`
+# with recommends could pull packages the CVE hardening deliberately removed (Trivy DS-0029).
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-broken
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rsync sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${NPA_RUNTIME_USER}" \
+         > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && test -x /usr/bin/python3 \
+    && /usr/bin/python3 --version
+
+# System interpreter first; the vendor venv stays reachable by absolute path, which is how the
+# renderer's vendor-interpreter setup addresses it.
+ENV PATH=/usr/bin:$PATH
+
+# Drop the baked PARTIAL npa from PYTHONPATH. The shipped image copies only
+# src/npa/__init__.py, src/npa/server and src/npa/smoke into /opt/npa/src for its own server
+# entrypoint, and exports PYTHONPATH=/opt/npa/src. That stub then SHADOWS the real npa a stage
+# installs: `import npa` succeeds while `import npa.workbench` fails with
+# "No module named 'npa.workbench'" (live job 250, after the vendor-interpreter switch worked).
+# A stage brings its own complete npa, so this variant must not pre-empt it.
+ENV PYTHONPATH=
+
+USER ${NPA_RUNTIME_USER}

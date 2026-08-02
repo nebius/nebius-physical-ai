@@ -1,0 +1,55 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of skypilot/cosmos3-text-to-image-inference.yaml.
+#
+# The template carried the entire capability as bash: ~100 lines of shell and heredoc'd python
+# inside its `envs:` block, including the inference command itself as a multi-line environment
+# variable that `run:` executed with `bash -lc "${NPA_COSMOS3_INFER_COMMAND}"`. That is the
+# opposite of a toolRef: nothing about it was reachable from the CLI or the SDK, and nothing
+# about it was tested. The procedure now lives in `npa.workbench.cosmos.text_to_image` behind
+# `npa workbench cosmos3 text-to-image`, and this spec is a single call to it.
+#
+#   npa workbench workflow submit cosmos3-text-to-image.yaml --run-id <id> \
+#     --secret-env HF_TOKEN \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: cosmos3-text-to-image
+  description: >
+    Generate an image from a text prompt with the Cosmos3 framework on a GPU, verify it is a
+    real image, and publish it with a manifest.
+  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "cosmos3-text-to-image/{{run.id}}"
+
+  cosmos_source_repo: https://github.com/NVIDIA/cosmos-framework.git
+  cosmos_model_id: nvidia/Cosmos3-Nano
+  cosmos_cache_dir: /tmp/npa-cosmos3-cache
+
+  t2i_prompt: "a small robot arm sorting colored blocks on a workbench"
+  t2i_checkpoint_name: Cosmos3-Nano
+  t2i_uv_group: cu130-train
+  t2i_seed: "0"
+  t2i_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+
+resources:
+  inference-gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 128Gi
+
+initial: text-to-image
+
+states:
+  text-to-image:
+    description: Fetch the framework and checkpoint, generate, verify, publish.
+    toolRef: workbench.cosmos3.text_to_image
+    resources: inference-gpu
+    outputs:
+      - uri: "{{config.t2i_output_uri}}success.json"
+        schema: npa.cosmos3.text_to_image.v1
+    terminal: true

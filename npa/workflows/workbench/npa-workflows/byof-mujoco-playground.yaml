@@ -278,7 +278,10 @@ config:
   solution_name: "mujoco-playground"
   capability_name: "mjx_cartpole_step"
   smoke_artifact_name: "mujoco_playground_cartpole_step.json"
-  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml"
+  # The packaged profile NAME, not a repo path: this stage runs in a pod where the
+  # checkout does not exist. `resolve_byof_profile_path` looks it up inside the
+  # installed package (npa/src/npa/workflows/byof/profiles/).
+  resource_profile_yaml: "byof-solution-smoke-rtxpro-gpu"
   task: "CartpoleBalance"
   iterations: 1
   num_envs: 1

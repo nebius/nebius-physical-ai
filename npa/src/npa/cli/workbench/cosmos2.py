@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
@@ -20,6 +20,22 @@ app = typer.Typer(
     help="Cosmos2 transfer workflow contracts.",
     no_args_is_help=True,
 )
+
+
+#: What a cosmos2 transfer stage publishes beside its clip; specs declare this path.
+MANIFEST_FILENAME = "manifest.json"
+
+
+def _publish_manifest(client: Any, payload: dict, output_uri: str) -> str:
+    """Upload the stage manifest next to the augmented clip and return its URI."""
+
+    import tempfile as _tempfile
+
+    prefix = output_uri if output_uri.endswith("/") else output_uri + "/"
+    with _tempfile.TemporaryDirectory(prefix="npa-cosmos2-") as tmp:
+        local = Path(tmp) / MANIFEST_FILENAME
+        local.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        return client.upload_file(str(local), prefix + MANIFEST_FILENAME)
 
 
 def _all_augmentations(configs_uri: str) -> list[dict]:
@@ -349,13 +365,20 @@ def transfer_cmd(
                 # Generic single-video publish + sim2real-engine field convention.
                 from npa.clients.storage import StorageClient
 
-                output_video = StorageClient.from_environment().upload_file(
-                    transfer["video_path"], output_uri
-                )
+                client = StorageClient.from_environment()
+                output_video = client.upload_file(transfer["video_path"], output_uri)
                 payload["mode"] = "cosmos_transfer2.5"
                 payload["output_video"] = output_video
                 payload["augmented_video_uri"] = output_video
                 payload["augmented_frames_uri"] = output_uri
+                # Publish the manifest beside the video. Echoing it to stdout leaves the
+                # provenance — prompt, control spec, guidance, whether the run was conditioned
+                # on an input clip — inside a pod that is about to disappear. For a synthetic
+                # data stage that provenance IS the product, and a spec needs something durable
+                # to declare as its output (live job 287 published a 3.9 MB augmented clip and
+                # nothing that said how it was made). The data-factory path already does this
+                # via write_run_manifest; the single-inference path now matches it.
+                payload["manifest_uri"] = _publish_manifest(client, payload, output_uri)
             else:
                 payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
                 payload["augmented_video_uri"] = transfer["video_path"]

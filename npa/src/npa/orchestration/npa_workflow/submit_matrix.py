@@ -5,10 +5,12 @@ sim-to-real monolithic, etc.) are intentionally absent — see
 ``npa/workflows/workbench/npa-workflows/README.md``.
 
 Parallel sweeps are no longer such an exception: ``isaac-lab-rl-sweep.yaml`` is an
-``npa.workflow`` spec in this matrix, verified live on four GPUs. The raw SkyPilot
-template it was ported from is retained as a reference example (and is still
-referenced by docs, a runner script and its own test); retiring it is a separate
-change.
+``npa.workflow`` spec in this matrix, verified live on four GPUs, and the raw SkyPilot
+template it was ported from has been retired.
+
+The raw SkyPilot task catalog is being retired one live-verified twin at a time; the
+remaining templates are pinned in
+``npa/tests/guardrails/test_skypilot_catalog_retirement.py``.
 """
 
 from __future__ import annotations
@@ -119,6 +121,209 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "vlm-eval-token-factory.yaml",
+        "cpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Zero-GPU VLM eval through the hosted `api` backend. This is the VLM eval "
+            "case that can always run: vlm-eval-single asks for `self-hosted`, and "
+            "nothing in that spec starts a vLLM server (pre-existing gap)."
+        ),
+    ),
+    SubmitLiveCase(
+        "scenario-gen-smoke.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Adversarial scenario mining + ranking on the default heuristic adversary "
+            "backend, which is GPU-free and needs no seeded inputs: the policy/base-config "
+            "URIs are recorded in lineage, not read. The rank stage consumes the manifest "
+            "the generate stage wrote."
+        ),
+    ),
+    SubmitLiveCase(
+        "dataset-of-record-smoke.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Dataset-of-record smoke: ingest -> validate -> quality gate -> curate -> "
+            "query. CPU-only; the harness seeds real raw sensor records. Dynamic gate, "
+            "so it is also in DYNAMIC_SPECS."
+        ),
+    ),
+    SubmitLiveCase(
+        "dataset-ingest-curate.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Stricter dataset-of-record variant (completeness_min 0.5, max_corruption_rate "
+            "0.1, location filter). Its `register` stage writes to the in-cluster LanceDB "
+            "service at http://npa-lancedb.workbench.svc.cluster.local:8686 — deploy it with "
+            "`npa workbench lancedb deploy --runtime kubernetes --namespace workbench`."
+        ),
+    ),
+    SubmitLiveCase(
+        "insights-smoke.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Insights lineage + metrics store: ingest a run prefix, compare two runs, "
+            "render a dashboard. CPU-only. The harness seeds a real dataset manifest and "
+            "a decision artifact, the two shapes the ingester recognises."
+        ),
+    ),
+    SubmitLiveCase(
+        "insights-aggregate.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Insights ingest + dashboard over one run prefix. CPU-only.",
+    ),
+    SubmitLiveCase(
+        "cosmos3-text-to-image.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3-reason",
+        notes=(
+            "Clones the Cosmos framework, syncs its uv environment, downloads Cosmos3-Nano and "
+            "generates an image. Needs the Cosmos image rather than SkyPilot's default: "
+            "transformer_engine links against glibc >= 2.32 (job 301), which no LD_LIBRARY_PATH "
+            "can supply."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos2-transfer.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        image_tool="cosmos2-transfer",
+        notes=(
+            "The REAL Cosmos-Transfer2.5 model, not a manifest: --execute makes a missing "
+            "transfer runtime a hard error rather than a silent fall back. Replaces a template "
+            "that held a GPU to print `\"status\": \"contract_ready\"`."
+        ),
+    ),
+    SubmitLiveCase(
+        "isaac-franka-capture-reason.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        image_tool="isaac-lab",
+        notes=(
+            "Isaac Lab renders Franka frames on a GPU, then a hosted Cosmos3 reasoner plans "
+            "from them on CPU. Needs no seeded input: the first stage produces the second's."
+        ),
+    ),
+    SubmitLiveCase(
+        "tokenfactory-scene-to-rollout-judge.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        image_tool="lerobot",
+        notes=(
+            "Three stages, one chain: a hosted reasoner plans from a seeded scene, a GPU rolls "
+            "out a policy, and a hosted VLM judges that rollout AGAINST THAT PLAN "
+            "(`--task-from` reads the reasoner's artifact). Only the middle stage holds a GPU. "
+            "Same LeRobot image requirement as the rollout-judge combo."
+        ),
+    ),
+    SubmitLiveCase(
+        "tokenfactory-rollout-judge-combo.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        image_tool="lerobot",
+        notes=(
+            "The real rollout-judge twin: the GPU stage rolls out a public LeRobot policy in its "
+            "own pod and publishes the rendered episodes, then a hosted VLM scores exactly that "
+            "prefix with no GPU. Needs a hostable LeRobot image whose torch and torchcodec agree "
+            "(NPA_E2E_IMAGE_OVERRIDE_LEROBOT=<registry>/npa-lerobot:0.6.0-k8s-runtime)."
+        ),
+    ),
+    SubmitLiveCase(
+        "tokenfactory-train-triage.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        image_tool="lerobot",
+        notes=(
+            "The producer/consumer combo: LeRobot trains in the stage's own pod (the vendor "
+            "image's LeRobot, one step) and publishes the run's checkpoint AND textual "
+            "artifacts, then a hosted text model triages that run with no GPU. The train stage "
+            "materialises its own dataset from `--dataset-repo-id`, because stages do not share "
+            "a filesystem. Requires a SkyPilot-hostable LeRobot image AND one whose torch and "
+            "torchcodec agree: run with "
+            "NPA_E2E_IMAGE_OVERRIDE_LEROBOT=<registry>/npa-lerobot:0.6.0-k8s-runtime. The 0.5.1 "
+            "image fails at training step 0 with a torchcodec ABI mismatch. Six live iterations "
+            "and five engine gaps to get here - see EVIDENCE.md \u00a7R32-R33."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos-fetch.yaml",
+        "cpu",
+        # setup stages the npa source from S3 with boto3, so the keys are needed even
+        # though nothing in this plan touches object storage.
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(
+            # The spec's defaults name Cosmos3 assets that are gated behind early access and
+            # a licence acceptance. Substituting public ones exercises the identical code
+            # path — a real git clone and a real Hugging Face download into the cache — which
+            # is what a live run of this twin is meant to prove.
+            ("cosmos_source_repo", "https://github.com/githubtraining/hellogitworld.git"),
+            ("cosmos_model_id", "hf-internal-testing/tiny-random-gpt2"),
+        ),
+        notes=(
+            "Cosmos access check then fetch. CPU. Run with public substitutes for the gated "
+            "Cosmos3 source repo and checkpoint; the commands, flags and cache layout are "
+            "the same ones the retired template invoked."
+        ),
+    ),
+    SubmitLiveCase(
+        "sim2real-envgen-shards.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        expected_parallel_tasks=2,
+        notes=(
+            "Shard fan-out: two raw env shards as one JobGroup, then a barrier that splits "
+            "the combined catalog 80/20. Replaces a template that read its shard index from "
+            "a Kubernetes Job completion index. CPU — generation writes env descriptors, it "
+            "does not render. Needs the runtime tier so the group really is concurrent."
+        ),
+    ),
+    SubmitLiveCase(
+        "multi-node-probe.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Multi-node reference: `resources.gang.num_nodes` gang-schedules a real "
+            "2-node stage, then a single-node stage verifies one report per rank landed "
+            "on a distinct host. CPU on purpose — the property is the node count."
+        ),
+    ),
+    SubmitLiveCase(
         "retargeting.yaml",
         "cpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -146,10 +351,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         notes=(
-            "Fixed: the twin now uses the `sample` sentinel, which resolves to "
-            "the packaged benchmark fixture at its install location (a "
-            "repo-relative path did not exist in the rendered job). backend=stub, "
-            "so it validates the submit path without a GPU model."
+            "Labeled sweep on the self-hosted backend, like the template it replaces. The "
+            "harness seeds two rollouts with known outcomes plus an S3 benchmark manifest."
+        ),
+    ),
+    SubmitLiveCase(
+        "vlm-eval-loop.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Rollout-SET scoring plus the aggregate task_success report. `run` scores one "
+            "rollout, so this is the capability that let sim-to-real-loop.yaml retire: the "
+            "harness seeds several rollout directories and the report must count them all."
         ),
     ),
     SubmitLiveCase(
@@ -286,6 +499,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NEBIUS_TOKEN_FACTORY_KEY",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
+                    "HF_TOKEN",
         ),
         requires_token_factory=True,
         notes=(
@@ -301,6 +515,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NEBIUS_TOKEN_FACTORY_KEY",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
+                    "HF_TOKEN",
         ),
         requires_token_factory=True,
         plan_only=True,
@@ -317,6 +532,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sim2real-vlm-rl.yaml",
         "multi",
+        secret_envs=("HF_TOKEN",),
         plan_only=True,
         notes="Stub toolRefs; plan-only until engine wiring lands.",
     ),

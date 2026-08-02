@@ -35,6 +35,9 @@ class OutputFormat(str, Enum):
 class LanceDBRuntime(str, Enum):
     vm = "vm"
     container = "container"
+    #: In-cluster Deployment + Service. The only runtime a workflow STAGE can reach: a pod
+    #: cannot resolve an operator's localhost (EVIDENCE.md §R41).
+    kubernetes = "kubernetes"
     byovm = "byovm"
     cloud = "cloud"
     serverless = "serverless"

@@ -31,9 +31,10 @@ before choosing LeRobot, Isaac Lab, SONIC, or GR00T-specific skills.
   `infer` commands.
 - SDK: use the workbench SDK modules for application code and shared helper
   functions for request construction.
-- YAML: `isaac-lab-rl-train.yaml`, `isaac-lab-rl-sweep.yaml`,
-  `sonic-train-standalone.yaml`, and sim-to-real workflow YAMLs are executable
-  references.
+- YAML: `isaac-lab-rl-train.yaml`, `sonic-train-standalone.yaml`, and sim-to-real
+  workflow YAMLs are executable references. The parallel sweep is now the
+  `npa.workflow` spec `npa-workflows/isaac-lab-rl-sweep.yaml` (`--runtime`); its
+  raw template is retired.
 
 ## Gotchas
 

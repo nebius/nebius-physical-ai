@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: sonic-train
   description: Train or smoke-validate a SONIC locomotion policy.
-  skypilotTwin: npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml
+  skypilotTwin: npa/workflows/workbench/npa-workflows/sonic-train.yaml
 
 config:
   bucket: example-bucket
@@ -13,6 +13,11 @@ config:
   # serverless runtimes each provision MORE infrastructure, which a stage that
   # already holds a GPU cannot do (serverless additionally needs a project id).
   sonic_runtime: local
+  # NVIDIA's Omniverse / Isaac Sim / Software licence terms. `--runtime local` runs the SONIC
+  # image's own trainer when present, and that trainer refuses to download Isaac Sim / Isaac Lab
+  # until this is given — without it the run falls back to the reference trainer.
+  # Empty means NOT accepted; set it to `yes` to accept.
+  sonic_accept_nvidia_eula: ""
   train_iterations: "40"
   checkpoint_uri: "nvidia/GEAR-SONIC"
   data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"

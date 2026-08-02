@@ -45,10 +45,15 @@ app = typer.Typer(
 )
 console = Console(stderr=True)
 
-CAPTION_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/token-factory-caption.yaml")
-GENERATE_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/token-factory-generate.yaml")
-REASON_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/token-factory-cosmos-reason.yaml")
-VLM_EVAL_WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/vlm-eval-token-factory.yaml")
+# The `npa.workflow` specs these commands point operators at. They are paths only —
+# `token-factory workflow` / `status` print them; submitting is
+# `npa workbench workflow submit <path>`. Previously these named raw SkyPilot task
+# templates, which are retired.
+NPA_WORKFLOWS = Path("npa/workflows/workbench/npa-workflows")
+CAPTION_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-caption.yaml"
+GENERATE_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-generate.yaml"
+REASON_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-cosmos-reason.yaml"
+VLM_EVAL_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-token-factory.yaml"
 
 
 class OutputFormat(str, Enum):
@@ -269,7 +274,7 @@ def list_cmd(
 def workflow_cmd(
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Show the checked-in Token Factory SkyPilot workflow templates."""
+    """Show the checked-in Token Factory npa.workflow specs."""
 
     _emit(
         {

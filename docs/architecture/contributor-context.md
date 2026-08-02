@@ -85,7 +85,7 @@ Not all tools run on all GPU types. Document in your tool's SKILL.md:
 
 ## Workflow YAML conventions
 
-Reference: `docs/workbench-yaml-guide.md` and `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+Reference: `docs/workbench-yaml-guide.md` and `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
 
 Key rules:
 - SkyPilot 0.12.2 `envs` block does NOT support self-referencing variable interpolation

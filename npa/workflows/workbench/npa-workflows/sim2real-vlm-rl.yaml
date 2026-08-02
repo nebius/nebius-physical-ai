@@ -22,6 +22,15 @@ config:
   trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
   raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
+  # `npa.workflows.sim2real_envgen` takes the RUN ROOT and derives envs/raw,
+  # envs/train, envs/heldout and envs/manifest under it; passing the raw prefix would
+  # nest a second envs/raw inside it.
+  envgen_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  shard_index: "0"
+  shard_count: "1"
+  train_fraction: "0.8"
+  envgen_seed: "42"
+  augmented_frames_uri: ""
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/"
   heldout_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json"
@@ -54,8 +63,8 @@ states:
     toolRef: workbench.sim2real_envgen.raw_shard
     resources: gpu
     outputs:
-      - uri: "{{config.raw_envs_uri}}manifest.json"
-        schema: npa.sim2real.split_manifest.v1
+      - uri: "{{config.raw_envs_uri}}raw-shard-00-summary.json"
+        schema: npa.sim2real.raw_env_shard_summary.v1
     next: outer
 
   outer:
@@ -92,7 +101,7 @@ states:
     toolRef: workbench.vlm_eval.run
     resources: gpu
     outputs:
-      - uri: "{{config.scores_uri}}report.json"
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
         schema: npa.workbench.vlm_eval.report.v1
 
   heldout:

@@ -37,8 +37,10 @@ TRAIN_TRIAGE_YAML = SKYPILOT / "tokenfactory-train-triage.yaml"
 TRIAGE_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_train_triage.py"
 SWEEP_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_sim_sweep.py"
 
-# Every combo workflow that has a submittable SkyPilot YAML form.
-COMBO_YAMLS = [ROLLOUT_JUDGE_YAML, SCENE_JUDGE_YAML, TRAIN_TRIAGE_YAML]
+# Combo workflows that still have a raw SkyPilot YAML form. train-triage is retired: its twin
+# `npa-workflows/tokenfactory-train-triage.yaml` was verified live (job 256, EVIDENCE.md §R32–R33),
+# and the shape assertions moved onto the spec below.
+COMBO_YAMLS: list = []
 
 
 def _load_module(name: str, path: Path):
@@ -187,34 +189,44 @@ def test_runner_no_smoke_flag() -> None:
 # --- rollout-judge SkyPilot YAML (k8s GPU + Token Factory) ----------------
 
 
-def test_rollout_judge_is_two_stage_gpu_then_hosted_judge() -> None:
-    docs = _docs(ROLLOUT_JUDGE_YAML)
-    assert docs[0] == {"name": "tokenfactory-rollout-judge", "execution": "serial"}
-    gpu_stage, judge_stage = docs[1], docs[2]
+def test_rollout_judge_combo_spec_is_gpu_producer_then_hosted_judge() -> None:
+    """The retired template's contract, on the spec that replaced it.
 
-    # Stage 1 genuinely uses a Nebius k8s GPU.
-    assert gpu_stage["name"] == "rollout-gpu"
-    assert gpu_stage["resources"]["cloud"] == "kubernetes"
-    assert "accelerators" in gpu_stage["resources"]
-    assert "lerobot-eval" in gpu_stage["run"]
-    assert gpu_stage["envs"]["ROLLOUTS_URI"].startswith("s3://")
+    Live proof: job 261 (`npa-wf-multi-tokenfactory-rollout-judge-combo-d4798e41`) — the GPU stage
+    rendered two real MP4 episodes, and the hosted judge scored exactly that prefix from CPU.
+    See EVIDENCE.md §R34.
+    """
 
-    # Stage 2 is zero-GPU hosted Token Factory judging.
-    assert judge_stage["name"] == "tokenfactory-judge"
-    assert judge_stage["resources"]["cloud"] == "kubernetes"
-    assert "accelerators" not in judge_stage["resources"]
-    assert "python3 -m vllm" not in judge_stage["run"]
-    assert "npa workbench vlm-eval run" in judge_stage["run"]
-    assert "--backend api" in judge_stage["run"]
-    assert "--api-key-env NEBIUS_TOKEN_FACTORY_KEY" in judge_stage["run"]
-    # The judge reads exactly what the GPU stage wrote.
-    assert judge_stage["envs"]["ROLLOUTS_URI"] == gpu_stage["envs"]["ROLLOUTS_URI"]
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(
+        ROOT
+        / "npa"
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "tokenfactory-rollout-judge-combo.yaml"
+    )
+    plan = build_plan(spec, run_id="rollout-judge-test")
+    steps = {step.state: step for step in plan.steps if step.argv}
+
+    assert sorted(steps) == ["judge", "rollout-gpu"]
+    # Stage 1 rolls out on a GPU, in the stage's own pod.
+    assert steps["rollout-gpu"].tool_ref == "workbench.lerobot.policy_rollout"
+    assert "accelerators" in spec.resources[steps["rollout-gpu"].resources]
+    # Stage 2 is the hosted backend, holding no GPU.
+    assert steps["judge"].tool_ref == "workbench.vlm_eval.run"
+    assert "accelerators" not in spec.resources[steps["judge"].resources]
+    assert spec.config["vlm_backend"] == "api"
+    # And the judge reads EXACTLY what the rollout wrote — the point of the combo.
+    rollout_argv, judge_argv = steps["rollout-gpu"].argv, steps["judge"].argv
+    rollouts = rollout_argv[rollout_argv.index("--rollouts-s3-uri") + 1]
+    assert judge_argv[judge_argv.index("--input-path") + 1] == rollouts
 
 
-def test_rollout_judge_has_no_hardcoded_infra_ids() -> None:
-    text = ROLLOUT_JUDGE_YAML.read_text(encoding="utf-8")
-    assert "<your-registry-id>" in text
-    assert "<your-bucket-name>" in text
+def test_the_retired_rollout_judge_template_is_gone() -> None:
+    assert not ROLLOUT_JUDGE_YAML.exists(), "tokenfactory-rollout-judge.yaml came back"
 
 
 # --- sim-sweep pure helpers ----------------------------------------------
@@ -376,65 +388,99 @@ def test_sweep_runner_disambiguates_colliding_run_labels() -> None:
 # --- scene-to-rollout-judge SkyPilot YAML (reason -> k8s GPU -> VLM judge) -
 
 
-def test_scene_judge_is_three_stage_reason_gpu_judge() -> None:
-    docs = _docs(SCENE_JUDGE_YAML)
-    assert docs[0] == {"name": "tokenfactory-scene-to-rollout-judge", "execution": "serial"}
-    reason_stage, gpu_stage, judge_stage = docs[1], docs[2], docs[3]
+def test_scene_to_rollout_judge_spec_chains_reason_to_judge() -> None:
+    """The three-stage chain, on the spec that replaced the template.
 
-    # Stage 1: hosted reasoner, zero-GPU.
-    assert reason_stage["name"] == "scene-reason"
-    assert "accelerators" not in reason_stage["resources"]
-    assert "npa workbench token-factory reason" in reason_stage["run"]
-    assert reason_stage["envs"]["PLAN_URI"].startswith("s3://")
+    Live proof: job 262 (`npa-wf-multi-tokenfactory-scene-to-rollout-judge-c9b64b65`), all three
+    stages SUCCEEDED and the judge's task literally contained the reasoner's analysis.
+    See EVIDENCE.md §R35.
+    """
 
-    # Stage 2: genuine Nebius k8s GPU rollout.
-    assert gpu_stage["name"] == "rollout-gpu"
-    assert gpu_stage["resources"]["cloud"] == "kubernetes"
-    assert "accelerators" in gpu_stage["resources"]
-    assert "lerobot-eval" in gpu_stage["run"]
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
 
-    # Stage 3: hosted VLM judge that consumes the plan and the rollout.
-    assert judge_stage["name"] == "scene-judge"
-    assert "accelerators" not in judge_stage["resources"]
-    assert "npa workbench vlm-eval run" in judge_stage["run"]
-    assert "--backend api" in judge_stage["run"]
-    assert judge_stage["envs"]["PLAN_URI"] == reason_stage["envs"]["PLAN_URI"]
-    assert judge_stage["envs"]["ROLLOUTS_URI"] == gpu_stage["envs"]["ROLLOUTS_URI"]
+    spec = load_spec(
+        ROOT
+        / "npa"
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "tokenfactory-scene-to-rollout-judge.yaml"
+    )
+    plan = build_plan(spec, run_id="scene-judge-test")
+    steps = {step.state: step for step in plan.steps if step.argv}
+
+    assert sorted(steps) == ["rollout-gpu", "scene-judge", "scene-reason"]
+    # Only the middle stage holds a GPU.
+    assert "accelerators" not in spec.resources[steps["scene-reason"].resources]
+    assert "accelerators" in spec.resources[steps["rollout-gpu"].resources]
+    assert "accelerators" not in spec.resources[steps["scene-judge"].resources]
+
+    reason_argv = steps["scene-reason"].argv
+    rollout_argv = steps["rollout-gpu"].argv
+    judge_argv = steps["scene-judge"].argv
+    # The judge scores what the rollout rendered ...
+    rollouts = rollout_argv[rollout_argv.index("--rollouts-s3-uri") + 1]
+    assert judge_argv[judge_argv.index("--input-path") + 1] == rollouts
+    # ... against the plan the reasoner wrote. Without this link the third stage is decorative.
+    plan_uri = reason_argv[reason_argv.index("--output-path") + 1]
+    assert judge_argv[judge_argv.index("--task-from") + 1] == f"{plan_uri}scene_reasoning.json"
 
 
-def test_scene_judge_has_no_hardcoded_infra_ids() -> None:
-    text = SCENE_JUDGE_YAML.read_text(encoding="utf-8")
-    assert "<your-registry-id>" in text
-    assert "<your-bucket-name>" in text
+def test_the_retired_scene_judge_template_is_gone() -> None:
+    assert not SCENE_JUDGE_YAML.exists(), "tokenfactory-scene-to-rollout-judge.yaml came back"
+
+
+def test_combo_specs_have_no_hardcoded_infra_ids() -> None:
+    """Every combo is a spec now, and a spec parameterises infra instead of placeholdering it."""
+
+    specs = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+    for name in (
+        "tokenfactory-rollout-judge-combo.yaml",
+        "tokenfactory-scene-to-rollout-judge.yaml",
+        "tokenfactory-train-triage.yaml",
+    ):
+        text = (specs / name).read_text(encoding="utf-8")
+        assert "bucket: example-bucket" in text, name
+        # No registry id anywhere: images come from --registry / the image resolver.
+        assert "nebius.cloud/" not in text, name
 
 
 # --- train-triage SkyPilot YAML (k8s GPU train -> hosted Token Factory triage) -
 
 
-def test_train_triage_yaml_is_two_stage_gpu_then_hosted_triage() -> None:
-    docs = _docs(TRAIN_TRIAGE_YAML)
-    assert docs[0] == {"name": "tokenfactory-train-triage", "execution": "serial"}
-    gpu_stage, triage_stage = docs[1], docs[2]
+def test_train_triage_spec_is_two_stage_gpu_then_hosted_triage() -> None:
+    """The retired template's contract, asserted on the spec that replaced it.
 
-    # Stage 1: a genuine Nebius k8s GPU training run.
-    assert gpu_stage["name"] == "train-gpu"
-    assert gpu_stage["resources"]["cloud"] == "kubernetes"
-    assert "accelerators" in gpu_stage["resources"]
-    assert "lerobot-train" in gpu_stage["run"]
-    assert gpu_stage["envs"]["ARTIFACTS_URI"].startswith("s3://")
+    Live proof: job 256 (`npa-wf-multi-tokenfactory-train-triage-6732d78a`) — train-gpu
+    SUCCEEDED on the LeRobot image and produced a real 206 MB checkpoint, then the CPU triage
+    stage wrote a 2,529-character report from that run's artifacts. See EVIDENCE.md §R32–R33.
+    """
 
-    # Stage 2: zero-GPU hosted Token Factory triage over what the GPU stage wrote.
-    assert triage_stage["name"] == "tokenfactory-triage"
-    assert "accelerators" not in triage_stage["resources"]
-    assert "npa workbench token-factory generate" in triage_stage["run"]
-    assert "summarize_run_artifacts" in triage_stage["run"]
-    assert triage_stage["envs"]["ARTIFACTS_URI"] == gpu_stage["envs"]["ARTIFACTS_URI"]
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(
+        ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "tokenfactory-train-triage.yaml"
+    )
+    plan = build_plan(spec, run_id="train-triage-test")
+    steps = {step.state: step for step in plan.steps if step.argv}
+
+    assert sorted(steps) == ["train-gpu", "triage"]
+    # Stage 1 is a genuine GPU training run, in the stage's own pod.
+    assert steps["train-gpu"].tool_ref == "workbench.lerobot.policy_train"
+    assert "accelerators" in spec.resources[steps["train-gpu"].resources]
+    # Stage 2 is zero-GPU hosted triage over exactly what stage 1 wrote.
+    assert steps["triage"].tool_ref == "workbench.token_factory.triage"
+    assert "accelerators" not in spec.resources[steps["triage"].resources]
+    train_argv, triage_argv = steps["train-gpu"].argv, steps["triage"].argv
+    artifacts = train_argv[train_argv.index("--artifacts-s3-uri") + 1]
+    assert artifacts.startswith("s3://")
+    assert triage_argv[triage_argv.index("--artifacts-uri") + 1] == artifacts
 
 
-def test_train_triage_yaml_has_no_hardcoded_infra_ids() -> None:
-    text = TRAIN_TRIAGE_YAML.read_text(encoding="utf-8")
-    assert "<your-registry-id>" in text
-    assert "<your-bucket-name>" in text
+def test_the_retired_train_triage_template_is_gone() -> None:
+    assert not TRAIN_TRIAGE_YAML.exists(), "tokenfactory-train-triage.yaml came back"
 
 
 # --- CLI / SDK / YAML support matrix for the combos -----------------------
@@ -464,21 +510,34 @@ def test_sdk_exposes_workflow_submit_for_combo_yamls() -> None:
     assert callable(workflow.submit)
 
 
-def test_sdk_workflow_submit_delegates_to_orchestrator(mocker) -> None:
-    """npa.workflow.submit forwards a combo YAML to the SkyPilot orchestrator."""
+def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> None:
+    """npa.workflow.submit forwards a combo YAML to the SkyPilot orchestrator.
+
+    Every combo is a spec now, so this submits one — `workflow.submit` accepts both formats and
+    routes on the apiVersion (DESIGN.md §D5).
+    """
     import types
 
     from npa import workflow
 
+    # Rendering a spec needs somewhere for a stage to get npa from; the submit itself is mocked.
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     fake = types.SimpleNamespace(status="SUBMITTED", job_id="job-1")
     submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow", return_value=fake
     )
 
     workflow.submit(
-        ROLLOUT_JUDGE_YAML,
+        ROOT
+        / "npa"
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "tokenfactory-scene-to-rollout-judge.yaml",
         run_id="rj-test",
         secret_env=["NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID"],
+        # Clear the workbench image pins: resolving them would mint a registry token.
+        image="none",
     )
 
     submit_mock.assert_called_once()

@@ -114,6 +114,36 @@ RUN python -m npa.smoke.test_lerobot_env
 
 USER root
 
+# SkyPilot-on-Kubernetes runtime prerequisites. Installed BEFORE the CVE hardening below:
+# that step purges linux-libc-dev with --force-depends, which strands libc6-dev and its
+# reverse-dependencies and leaves apt refusing to install anything at all (observed
+# in-cluster: even plain `rsync` was blocked). Installing first keeps apt healthy and the
+# hardening intact.
+# SkyPilot prerequisites, so this image can host a workflow stage.
+# SkyPilot's bootstrap runs inside the task container; without these, provisioning fails with
+# "container not found (ray-node)" (see Dockerfile.k8s-prereqs and
+# npa/tests/guardrails/test_workbench_image_k8s_prereqs.py).
+#
+# The PATH line flips the vendor venv OFF the front of PATH, which SkyPilot requires. The
+# vendor python stays reachable by absolute path, and the renderer's
+# TOOL_REF_VENDOR_INTERPRETERS installs npa into it and records it as the stage interpreter —
+# without that half, a tool importing `lerobot` would run under the system python and fail.
+# Only these three packages: this image purges linux-libc-dev as CVE hardening, so pulling
+# anything that depends on libc6-dev (python3-pip, openssh-client) breaks apt. The system
+# python3 the bootstrap needs is already present, so it is asserted rather than installed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rsync sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s ALL=(ALL) NOPASSWD:ALL\n' ubuntu \
+         > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && test -x /usr/bin/python3 \
+    && /usr/bin/python3 --version
+
+ENV PATH=/usr/bin:$PATH
+
+USER root
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade openssl libssl3 \
     && apt-get purge -y --auto-remove \
@@ -127,6 +157,7 @@ RUN apt-get update \
       software-properties-common \
     && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
+
 
 USER ubuntu
 

@@ -394,23 +394,25 @@ def test_author_workflow_flags_padded_placeholder_states() -> None:
     from npa.cli.agent_workflow import author_workflow_from_goal
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
-    # More requested steps than goal-matched tools -> the extra state is padded
-    # from the catalog and flagged as a placeholder for the operator to replace.
-    # Derive the step count from how many catalog tools actually match the goal
-    # keyword so this stays correct as tools are added/removed.
+    # More requested steps than goal-matched tools -> the extra state is padded from the catalog
+    # and flagged as a placeholder for the operator to replace.
     #
-    # The keyword has to match FEWER than the authoring path's hard 1-6 step
-    # bound, or there is no room to request an extra state: plain "cosmos" now
-    # matches six toolRefs (cosmos2 x2, cosmos3 x2, cosmos-curate,
-    # cosmos-evaluator), which caps out. "cosmos3" keeps the headroom.
-    keyword = "cosmos3"
+    # The keyword is chosen rather than fixed. The author caps a workflow at MAX_AUTHORED_STEPS
+    # states, so a keyword matching that many tools leaves no room to pad — which is exactly
+    # what happened when the sixth cosmos toolRef landed and this test started asserting 6 > 6.
     max_steps = 6
-    cosmos_tools = [ref for ref in TOOL_CATALOG if keyword in ref.lower()]
-    n_steps = min(len(cosmos_tools) + 1, max_steps)
-    assert n_steps > len(cosmos_tools), (
-        f"{keyword!r} matches {len(cosmos_tools)} toolRefs, leaving no headroom "
-        f"under the {max_steps}-step bound; pick a narrower goal keyword"
+    keyword = next(
+        (
+            candidate
+            for candidate in ("cosmos", "sonic", "mjlab", "retargeting")
+            if len([ref for ref in TOOL_CATALOG if candidate in ref.lower()]) < max_steps
+        ),
+        "",
     )
+    assert keyword, "no catalog keyword leaves headroom for a padded state"
+    matched = [ref for ref in TOOL_CATALOG if keyword in ref.lower()]
+    n_steps = len(matched) + 1
+    assert n_steps <= max_steps
     result = author_workflow_from_goal(
         f"write me a {n_steps} step npa yaml that uses {keyword}",
         tool_refs=frozenset(TOOL_CATALOG),

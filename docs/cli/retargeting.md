@@ -11,7 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 run  Retarget source motion artifacts into the SONIC embodiment schema.
-workflow  Show the SkyPilot YAML template for retargeting.
+workflow  Show the npa.workflow spec for retargeting.
 status  Show retargeting tool status.
 list  List supported retargeting source formats.
 ```
@@ -27,7 +27,7 @@ list  List supported retargeting source formats.
 | Command | Description |
 | --- | --- |
 | `run` | Retarget source motion artifacts into the SONIC embodiment schema. |
-| `workflow` | Show the SkyPilot YAML template for retargeting. |
+| `workflow` | Show the npa.workflow spec for retargeting. |
 | `status` | Show retargeting tool status. |
 | `list` | List supported retargeting source formats. |
 

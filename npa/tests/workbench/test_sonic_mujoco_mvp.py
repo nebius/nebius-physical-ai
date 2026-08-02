@@ -8,15 +8,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SONIC_MVP_YAML = (
-    ROOT
-    / "npa"
-    / "src"
-    / "npa"
-    / "workflows"
-    / "skypilot"
-    / "sonic-locomotion-finetuning.yaml"
-)
+# Frozen raw-task fixture, not a shipped template: what these exercise is the submit
+# WRAPPER's materializer, which still accepts a customer's own SkyPilot YAML.
+# See npa/tests/fixtures/skypilot/README.md.
+SONIC_MVP_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-locomotion-finetuning.yaml"
 
 
 def _patch_registry_auth(monkeypatch: pytest.MonkeyPatch) -> None:

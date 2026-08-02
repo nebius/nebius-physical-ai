@@ -4,7 +4,7 @@ kind: Workflow
 metadata:
   name: sonic-locomotion-finetuning
   description: Retarget motion, train SONIC, then score with MJLab.
-  skypilotTwin: npa/src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml
+  skypilotTwin: npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml
 
 config:
   bucket: example-bucket
@@ -13,6 +13,11 @@ config:
   source_format: auto
   # Train inside this workflow's own GPU stage; see sonic-train.yaml.
   sonic_runtime: local
+  # NVIDIA's Omniverse / Isaac Sim / Software licence terms. `--runtime local` runs the SONIC
+  # image's own trainer when present, and that trainer refuses to download Isaac Sim / Isaac Lab
+  # until this is given — without it the run falls back to the reference trainer.
+  # Empty means NOT accepted; set it to `yes` to accept.
+  sonic_accept_nvidia_eula: ""
   train_iterations: "40"
   suite: locomotion
   episodes: "8"
@@ -43,7 +48,9 @@ states:
     toolRef: workbench.retargeting.run
     resources: cpu
     outputs:
-      - uri: "{{config.retargeted_uri}}manifest.json"
+      # `retargeting run` writes retargeting_result.json; declaring manifest.json made the
+      # stage SUCCEED while the declared artifact did not exist (test_spec_declared_outputs).
+      - uri: "{{config.retargeted_uri}}retargeting_result.json"
     next: train
 
   train:
@@ -61,5 +68,6 @@ states:
     toolRef: workbench.mjlab.eval
     resources: gpu
     outputs:
-      - uri: "{{config.mjlab_uri}}report.json"
+      # `mjlab eval` writes mjlab_eval.json, not report.json.
+      - uri: "{{config.mjlab_uri}}mjlab_eval.json"
     terminal: true

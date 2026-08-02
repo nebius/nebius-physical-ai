@@ -17,6 +17,7 @@ def submit(
     sky_bin: str = "",
     submit_timeout: int = 1800,
     require_controller_up: bool = False,
+    image: str = "",
     output_format: str = "text",
 ) -> None:
     """Submit a SkyPilot workflow YAML (e.g. a Token Factory + GPU combo).
@@ -24,7 +25,11 @@ def submit(
     Drives ``npa workbench workflow submit`` from Python. ``var`` entries are
     ``KEY=VALUE`` substitutions and ``secret_env`` are environment-variable names
     (e.g. ``NEBIUS_TOKEN_FACTORY_KEY``, ``AWS_ACCESS_KEY_ID``) forwarded to SkyPilot as
-    secrets. Use this to launch the ``tokenfactory-*`` combo YAMLs.
+    secrets. Use this to launch the ``tokenfactory-*`` combos.
+
+    ``image`` mirrors the CLI's ``--image``: an image reference for every stage, or ``"none"``
+    to clear the specs' workbench image pins and run on SkyPilot's default image. Without it a
+    spec that pins workbench images could not be submitted from Python against anything else.
     """
     from npa.cli.workbench.workflow import (
         ControllerBackendOption,
@@ -42,6 +47,7 @@ def submit(
         sky_bin=sky_bin,
         submit_timeout=submit_timeout,
         require_controller_up=require_controller_up,
+        image=image,
         output_format=OutputFormat(output_format),
     )
 

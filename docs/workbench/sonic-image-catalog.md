@@ -61,7 +61,7 @@ before SkyPilot sees it:
 
 ```bash
 npa workbench workflow submit \
-  npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml \
+  npa/workflows/workbench/npa-workflows/sonic-train.yaml \
   --registry "${NPA_REGISTRY}" \
   --gpu-target l40s \
   --s3-endpoint https://storage.eu-north1.nebius.cloud \
@@ -77,7 +77,7 @@ from pathlib import Path
 from npa.sdk.workbench import sonic
 
 sonic.submit_workflow(
-    Path("npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml"),
+    Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
     run_id="sonic-smoke",
     registry="cr.eu-north1.nebius.cloud/<registry-id>",
     gpu_target="gpu-rtx6000",

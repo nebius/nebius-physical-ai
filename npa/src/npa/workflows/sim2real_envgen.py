@@ -371,7 +371,15 @@ def build_policy_image_contract(*, train_envs_uri: str, output_uri: str, default
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Return this module's CLI parser.
+
+    Exposed separately from :func:`main` so a guardrail can check that a catalog
+    ``toolRef`` argv this module is invoked with actually parses. ``--run-id`` is required,
+    and the ``raw-shard`` toolRef used to omit it — a defect no test could see, because the
+    flag audit only understands Typer CLIs invoked as ``npa …``.
+    """
+
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     raw = sub.add_parser("raw-shard")
@@ -390,7 +398,11 @@ def main(argv: list[str] | None = None) -> int:
     contract.add_argument("--train-envs-uri", required=True)
     contract.add_argument("--actions-uri", required=True)
     contract.add_argument("--policy-image", default="npa-reference-policy:local")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     if args.command == "policy-contract":
         print(json.dumps(build_policy_image_contract(train_envs_uri=args.train_envs_uri, output_uri=args.actions_uri, default_policy_image=args.policy_image), indent=2, sort_keys=True))

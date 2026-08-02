@@ -1,0 +1,50 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Zero-GPU VLM scoring: the vlm-eval `api` backend calls hosted Nebius Token Factory
+# instead of serving a model locally, so no accelerator and no vLLM stage is needed.
+#
+# This replaces the raw SkyPilot template of the same name. The template's `envs`
+# (EVAL_INPUT_URI / VLM_EVAL_OUTPUT_URI / VLM_BACKEND) become `config` keys here; the
+# tool resolves the API key from NEBIUS_TOKEN_FACTORY_KEY, which the renderer also
+# checks for in `setup` for every workbench.token_factory-family stage.
+#
+# Submit with:
+#   npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-token-factory.yaml \
+#     --run-id <run-id> \
+#     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: vlm-eval-token-factory
+  description: Score a rollout prefix with the VLM eval tool against hosted Token Factory (zero-GPU).
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/vlm-eval-token-factory"
+  # `api` is the hosted backend; unlike `self-hosted` it needs no vLLM server, which
+  # is why this spec is the cheap, always-runnable VLM eval reference.
+  vlm_backend: api
+
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: score-rollouts
+
+states:
+  score-rollouts:
+    description: Score rollout frames with a hosted Token Factory vision model.
+    toolRef: workbench.vlm_eval.run
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+    outputs:
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+        schema: npa.workbench.vlm_eval.report.v1
+    terminal: true

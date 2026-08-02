@@ -8,43 +8,14 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6"
 EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-retargeting:0.1.1"
-PIPELINE_YAML = (
-    ROOT
-    / "npa"
-    / "src"
-    / "npa"
-    / "workflows"
-    / "skypilot"
-    / "sonic-locomotion-finetuning.yaml"
-)
-RETARGETING_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "retargeting.yaml"
-)
-MJLAB_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "mjlab-eval.yaml"
-SONIC_EXPORT_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-export.yaml"
-)
-SONIC_EVAL_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-eval.yaml"
-)
-SONIC_EXPORT_EVAL_YAML = (
-    ROOT
-    / "npa"
-    / "src"
-    / "npa"
-    / "workflows"
-    / "skypilot"
-    / "sonic-export-eval.yaml"
-)
-SONIC_TRAIN_STANDALONE_YAML = (
-    ROOT
-    / "npa"
-    / "src"
-    / "npa"
-    / "workflows"
-    / "skypilot"
-    / "sonic-train-standalone.yaml"
-)
+# Frozen raw-task fixtures, not shipped templates: the three materializer tests below
+# exercise the submit WRAPPER, which still accepts a customer's own SkyPilot YAML.
+# See npa/tests/fixtures/skypilot/README.md.
+PIPELINE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-locomotion-finetuning.yaml"
+# The raw sonic-export / sonic-eval / sonic-export-eval templates are retired; their
+# npa.workflow specs are the surface now (each live-verified — see EVIDENCE §R4/§R5).
+NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SONIC_TRAIN_STANDALONE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-train-standalone.yaml"
 
 
 def _docs(path: Path) -> list[dict]:
@@ -55,64 +26,6 @@ def _docs(path: Path) -> list[dict]:
     ]
 
 
-def test_sonic_locomotion_pipeline_yaml_is_serial_and_uses_expected_tools() -> None:
-    docs = _docs(PIPELINE_YAML)
-
-    assert docs[0] == {"name": "sonic-locomotion-finetuning", "execution": "serial"}
-    tasks = docs[1:]
-    assert [task["name"] for task in tasks] == [
-        "sonic-retarget-motion",
-        "sonic-g1-finetune",
-        "sonic-mujoco-eval",
-    ]
-    assert "npa workbench sonic retargeting run" in tasks[0]["run"]
-    assert "/entrypoint.sh finetune" in tasks[1]["run"]
-    assert "mujoco-eval" in tasks[2]["run"]
-
-
-def test_sonic_locomotion_pipeline_uses_h100_mujoco_mvp_image() -> None:
-    docs = _docs(PIPELINE_YAML)
-    retarget, train, eval_task = docs[1:]
-
-    assert retarget["resources"] == {
-        "cloud": "kubernetes",
-        "cpus": 4,
-        "memory": 16,
-        "image_id": "docker:${NPA_RETARGETING_IMAGE}",
-    }
-    assert retarget["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
-    assert retarget["envs"]["SOURCE_FORMAT"] == "auto"
-    assert retarget["envs"]["RETARGET_FRAME_RATE"] == "30"
-    assert retarget["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
-    assert retarget["envs"]["AWS_PROFILE"] == "nebius"
-    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
-    assert train["resources"]["cloud"] == "nebius"
-    assert train["resources"]["region"] == "eu-north1"
-    assert train["resources"]["accelerators"] == "H100:1"
-    assert train["resources"]["use_spot"] is True
-    assert train["resources"]["image_id"] == (
-        "docker:example.invalid/npa-sonic-mujoco:0.1.3-mvp"
-    )
-    assert eval_task["resources"]["cloud"] == "nebius"
-    assert eval_task["resources"]["region"] == "eu-north1"
-    assert eval_task["resources"]["accelerators"] == "H100:1"
-    assert eval_task["resources"]["use_spot"] is True
-    assert eval_task["resources"]["image_id"] == (
-        "docker:example.invalid/npa-sonic-mujoco:0.1.3-mvp"
-    )
-    assert train["envs"]["POLICY_IMAGE"] == "example.invalid/npa-sonic-mujoco:0.1.3-mvp"
-    assert eval_task["envs"]["POLICY_IMAGE"] == "example.invalid/npa-sonic-mujoco:0.1.3-mvp"
-    assert train["envs"]["SONIC_GPU_TYPE"] == "h100"
-    assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-mujoco-h100-mvp"
-    assert train["envs"]["AWS_PROFILE"] == "nebius"
-    assert train["envs"]["RETARGETED_MOTION_URI"].endswith("/retargeted/")
-    assert train["envs"]["SONIC_TRAIN_MODE"] == "finetune"
-    assert train["envs"]["SONIC_RUN_REAL_TRAIN"] == "1"
-    assert eval_task["envs"]["SONIC_FINE_TUNED_CHECKPOINT_URI"].endswith(
-        "/training/checkpoints/last.pt"
-    )
-    assert eval_task["envs"]["AWS_PROFILE"] == "nebius"
-    assert eval_task["envs"]["SONIC_MUJOCO_STEPS"] == "64"
 
 
 def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
@@ -229,86 +142,128 @@ def test_sonic_workflow_materializer_supports_docker_payload_mode() -> None:
     assert 'docker run --rm "${docker_gpu_args[@]}"' in task["run"]
 
 
-def test_tool_yamls_match_registered_cli_surfaces() -> None:
-    retarget_docs = _docs(RETARGETING_YAML)
-    mjlab_docs = _docs(MJLAB_YAML)
-    sonic_export_docs = _docs(SONIC_EXPORT_YAML)
-    sonic_eval_docs = _docs(SONIC_EVAL_YAML)
+def test_sonic_locomotion_spec_runs_the_three_stages_in_order() -> None:
+    """Replaces the retired template's serial/task-name assertions.
 
-    assert retarget_docs[0] == {"name": "retargeting", "execution": "serial"}
-    assert retarget_docs[1]["name"] == "retarget-motion"
-    assert "npa workbench sonic retargeting run" in retarget_docs[1]["run"]
-    assert "accelerators" not in retarget_docs[1]["resources"]
-    assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_RETARGETING_IMAGE}"
-    assert retarget_docs[1]["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
-    assert retarget_docs[1]["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
+    The template said `execution: serial` over three named tasks. The spec's equivalent is a
+    plan whose steps carry the three toolRefs in the same order, which is a stronger statement:
+    it is what the engine will actually run, not what a document claims.
+    """
 
-    assert mjlab_docs[0] == {"name": "mjlab-eval", "execution": "serial"}
-    assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"
-    assert "npa workbench mjlab eval" in mjlab_docs[1]["run"]
-    assert mjlab_docs[1]["resources"]["accelerators"] == "H100:1"
-    assert mjlab_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
-    assert mjlab_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
 
-    assert sonic_export_docs[0] == {"name": "sonic-export", "execution": "serial"}
-    assert sonic_export_docs[1]["name"] == "sonic-export-onnx"
-    assert "npa workbench sonic export" in sonic_export_docs[1]["run"]
-    assert sonic_export_docs[1]["resources"]["accelerators"] == "L40S:1"
-    assert sonic_export_docs[1]["envs"]["SONIC_GPU_TARGET"] == "L40S"
-    assert sonic_export_docs[1]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
-    assert sonic_export_docs[1]["envs"]["SONIC_OPSET"] == "17"
-    assert sonic_export_docs[1]["envs"]["SONIC_AXES"] == "dynamic"
-    assert sonic_export_docs[1]["envs"]["SONIC_NORMALIZE"] == "baked"
-    assert sonic_export_docs[1]["envs"]["SONIC_METADATA"] == "sidecar"
+    spec = load_spec(NPA_WORKFLOWS / "sonic-locomotion-finetuning.yaml")
+    steps = build_plan(spec, run_id="probe").steps
+    assert [step.tool_ref for step in steps] == [
+        "workbench.retargeting.run",
+        "workbench.sonic.train",
+        "workbench.mjlab.eval",
+    ]
+    # Serial, in the engine's terms: no step belongs to a `parallel:` fan-out group, so the
+    # scheduler launches them one wave at a time in this order.
+    assert [step.group for step in steps] == ["", "", ""]
 
-    assert sonic_eval_docs[0] == {"name": "sonic-eval", "execution": "serial"}
-    assert sonic_eval_docs[1]["name"] == "sonic-eval-onnx"
-    assert "npa workbench sonic eval" in sonic_eval_docs[1]["run"]
-    assert sonic_eval_docs[1]["resources"]["cloud"] == "nebius"
-    assert sonic_eval_docs[1]["resources"]["accelerators"] == "L40S:1"
-    assert sonic_eval_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
-    assert sonic_eval_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
-    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_BACKEND"] == "reference"
-    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_ENV"] == "smoke"
-    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_GPUS"] == "all"
-    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_GPU_TARGET"] == "L40S"
-    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_IMAGE_VARIANT"] == "sonic-l40s-baked"
-    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_ARGS"] == "eval"
-    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_OUTPUT_PATH"].endswith(
-        "sonic_eval_results.json"
+def test_retargeting_spec_invokes_the_real_cli_surface() -> None:
+    """Replaces the retired retargeting template's raw-YAML assertions.
+
+    The template pinned an image and a source frame rate through `envs`; the spec
+    declares CPU-only resources (retargeting needs no GPU) and reaches the same CLI
+    through its toolRef. The image is chosen by the engine from the resource profile,
+    which is why `--image` is a pinned `spec_gap` (see test_three_tier_contract.py).
+    """
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(NPA_WORKFLOWS / "retargeting.yaml")
+    step = build_plan(spec, run_id="probe").steps[0]
+    argv = " ".join(step.argv)
+
+    assert step.tool_ref == "workbench.retargeting.run"
+    assert "npa workbench sonic retargeting run" in argv
+    assert "accelerators" not in spec.resources[step.resources]
+    for flag in ("--input-path", "--output-path", "--embodiment", "--source-format"):
+        assert flag in argv
+
+
+
+def test_mjlab_eval_spec_invokes_the_real_cli_surface() -> None:
+    """Replaces the retired mjlab-eval template's raw-YAML assertions."""
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(NPA_WORKFLOWS / "mjlab-eval.yaml")
+    step = build_plan(spec, run_id="probe").steps[0]
+    argv = " ".join(step.argv)
+
+    assert step.tool_ref == "workbench.mjlab.eval"
+    assert "npa workbench mjlab eval" in argv
+    assert spec.resources[step.resources]["accelerators"] == "H100:1"
+    for flag in ("--input-path", "--checkpoint", "--output-path", "--suite",
+                 "--embodiment", "--episodes"):
+        assert flag in argv
+
+
+def test_sonic_export_and_eval_specs_invoke_the_real_cli_surfaces() -> None:
+    """Replaces the raw-YAML `envs` assertions for the three retired templates.
+
+    The equivalent contract on the npa.workflow side is: the spec declares the right
+    ``toolRef``, wires every config key the toolRef's argv references (``load_spec``
+    resolves them), and the *result path* is the declared artifact rather than a format
+    word — the bug that made both eval stages succeed while writing nothing (EVIDENCE
+    §R5).
+    """
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    export = load_spec(NPA_WORKFLOWS / "sonic-export.yaml")
+    assert export.name == "sonic-export"
+    assert export.states["export-onnx"].tool_ref == "workbench.sonic.export"
+    # #238 made the export twin self-contained by prepending a train stage, so find the export
+    # step by its toolRef rather than assuming it is first.
+    export_argv = " ".join(
+        next(
+            step.argv
+            for step in build_plan(export, run_id="probe").steps
+            if step.tool_ref == "workbench.sonic.export"
+        )
     )
+    assert "npa workbench sonic export" in export_argv
+    assert "--checkpoint s3://" in export_argv and "--output s3://" in export_argv
 
+    evaluate = load_spec(NPA_WORKFLOWS / "sonic-eval.yaml")
+    assert evaluate.states["eval-onnx"].tool_ref == "workbench.sonic.eval"
+    eval_argv = build_plan(evaluate, run_id="probe").steps[0].argv
+    assert "npa workbench sonic eval" in " ".join(eval_argv)
+    # `--output` is the RESULT PATH; `--output-format` is the format.
+    assert eval_argv[eval_argv.index("--output") + 1].endswith("/eval.json")
+    assert eval_argv[eval_argv.index("--output-format") + 1] == "json"
+    # The env name comes from the spec's config, not a literal the test decides.
+    assert eval_argv[eval_argv.index("--env") + 1] == evaluate.config["env"]
 
-def test_sonic_export_eval_blueprint_chains_real_cli_commands() -> None:
-    docs = _docs(SONIC_EXPORT_EVAL_YAML)
-
-    assert docs[0] == {"name": "sonic-export-eval", "execution": "serial"}
-    assert len(docs) == 2
-
-    task = docs[1]
-    assert task["name"] == "sonic-export-eval"
-    assert task["resources"]["cloud"] == "nebius"
-    assert task["resources"]["accelerators"] == "L40S:1"
-
-    envs = task["envs"]
-    assert envs["POLICY_CKPT"].startswith("s3://")
-    assert envs["OUTPUT_DIR"].startswith("s3://")
-    assert envs["EVAL_BACKEND"] == "reference"
-    assert envs["EVAL_ENV"] == "sonic-locomotion-smoke"
-    assert envs["EPISODES"] == "8"
-    assert envs["CONTAINER_IMAGE"] == ""
-    assert envs["CONTAINER_GPU_TARGET"] == "L40S"
-    assert envs["CONTAINER_IMAGE_VARIANT"] == "sonic-l40s-baked"
-    assert envs["CONTAINER_GPUS"] == "all"
-    assert envs["CONTAINER_ARGS"] == "eval"
-    assert envs["GPU"] == "L40S:1"
-
-    run = task["run"]
-    assert "npa workbench sonic export" in run
-    assert "npa workbench sonic eval" in run
-    assert "NPA_SONIC_E2E_METRICS_JSON_BEGIN" in run
-    assert "--container-image" in run
-    assert "--container-driver-capabilities" in run
+    chained = load_spec(NPA_WORKFLOWS / "sonic-export-eval.yaml")
+    steps = build_plan(chained, run_id="probe").steps
+    # #238 made the chain self-contained by prepending a train stage, so the export twin can
+    # run as a standalone submit instead of needing a checkpoint from somewhere else.
+    assert [step.tool_ref for step in steps] == [
+        "workbench.sonic.train",
+        "workbench.sonic.export",
+        "workbench.sonic.eval",
+    ]
+    # The eval stage consumes exactly what the export stage produced: both argv lists
+    # carry the SAME resolved ONNX URI, so the chain cannot silently drift apart.
+    export_step = next(s for s in steps if s.tool_ref == "workbench.sonic.export")
+    eval_step = next(s for s in steps if s.tool_ref == "workbench.sonic.eval")
+    produced = export_step.argv[export_step.argv.index("--output") + 1]
+    consumed = eval_step.argv[eval_step.argv.index("--onnx") + 1]
+    assert produced.startswith("s3://") and produced.endswith("/sonic_policy.onnx")
+    assert consumed == produced
+    # And the eval result goes to its own declared artifact, not to a format word.
+    assert eval_step.argv[eval_step.argv.index("--output") + 1].endswith("/eval.json")
+    assert eval_step.argv[eval_step.argv.index("--output-format") + 1] == "json"
 
 
 def test_sonic_locomotion_assets_do_not_add_python_runner() -> None:

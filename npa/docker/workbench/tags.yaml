@@ -16,14 +16,27 @@ tag_families:
     status: production
 
   cuda13-b300:
-    description: CUDA 13.x runtime for Blackwell validation images
+    description: >
+      CUDA 13.x runtime for Blackwell images. Covers both Blackwell CUDA
+      majors: datacenter (B200 sm_100, B300 sm_103) and workstation
+      (RTX PRO 6000 sm_120). SASS does not cross a major, so the base builds
+      for all of them; sm_100 SASS reaches sm_103 by forward compatibility.
     gpu_targets:
+      - B200
       - B300
       - RTX PRO 6000
+      - sm_100
+      - sm_103
       - sm_120
     cuda_version: "13.x"
     pytorch_version_min: "2.9"
+    torch_cuda_arch_list: "8.0 9.0 10.0 10.3 12.0"
     status: blocked-on-upstream
+    status_note: >
+      The base and the torch-only images are Blackwell-capable; the family is
+      still marked blocked because the Genesis/Taichi subtree and the NVIDIA
+      vendor stacks are not. Per-image verdicts live in
+      blackwell-dc-images.json.
     blockers:
       - Taichi missing stable sm_103 support
       - flash-attn stable Blackwell wheels not yet available

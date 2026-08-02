@@ -52,11 +52,17 @@ containers:
         No runtime entrypoint or open ports; build-time only. Pinned digestless
         CUDA base tracked by the weekly Trivy base-image CVE scan.
     golden_eval:
-      kind: build-import
-      command: 'python -c "import torch; assert torch.cuda.is_available(); import flash_attn"'
+      # An import check passed on every Blackwell part for months while the
+      # flash-attn-4 CuTe forward kernel could not actually execute on sm_120.
+      # Execute the kernel instead, via the committed capability smoke: it also
+      # asserts the device architecture and that the wheel carries native SASS
+      # for it, with a bf16 matmul and torch SDPA as controls.
+      kind: container-smoke
+      command: 'python /npa/gpu_capability_smoke.py --expect-capability 10.3'
+      script: npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py
       serverless_gpu: b300
       gpu: required
-      timeout_seconds: 120
+      timeout_seconds: 300
       status: blocked-on-upstream
 
   groot:

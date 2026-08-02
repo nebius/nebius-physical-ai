@@ -2,8 +2,8 @@
 
 These back the ``run.shell`` stages of
 ``npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`` — the
-``npa.workflow`` port of the one ``execution: parallel`` SkyPilot template
-(``npa/src/npa/workflows/skypilot/isaac-lab-rl-sweep.yaml``):
+``npa.workflow`` port of the one ``execution: parallel`` SkyPilot template, which is
+now retired (the spec is live-verified on four GPUs; see ``EVIDENCE.md`` §R3):
 
 - :func:`train_variant` runs **one** RSL-RL training variant in-pod (the Isaac Lab
   image's ``train.py`` with Hydra overrides), then uploads the checkpoint, the

@@ -34,6 +34,8 @@ config:
   min_quality: "0.5"
 
   lancedb_endpoint: http://npa-lancedb.workbench.svc.cluster.local:8686
+  # Where the query index lives; empty means manifest-only.
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lance/"
 
   raw_sensor_uri: "s3://{{config.bucket}}/raw-sensor/production/records.json"
   dataset_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"

@@ -1,0 +1,83 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of skypilot/tokenfactory-train-triage.yaml.
+#
+# The combo is: real Nebius GPU compute produces a run, then a *hosted* text model reads that
+# run's artifacts and writes a triage report — zero GPU on the reading side. The
+# producer/consumer dependency is the point, so a twin cannot drop it.
+#
+# Two pieces of the template's bash became tool features rather than being reproduced:
+#   * the train stage's trailing inline-python `rglob` upload of the whole output tree is now
+#     `policy_container train --artifacts-s3-uri` (--checkpoint-s3-uri publishes only weights);
+#   * the triage stage's ~45 lines that downloaded text artifacts, built a prompt with the pure
+#     helpers and then called `token-factory generate --system-prompt "$(cat …)"` are now
+#     `npa.workflows.token_factory_triage run` — that shell substitution is exactly what a
+#     toolRef argv cannot express.
+#
+#   npa workbench workflow submit tokenfactory-train-triage.yaml --run-id <id> \
+#     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: tokenfactory-train-triage
+  description: >
+    LeRobot policy training on a Nebius GPU, then a hosted Token Factory text model
+    triages the run from its real artifacts.
+  skypilotTwin: npa/src/npa/workflows/skypilot/tokenfactory-train-triage.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "tokenfactory-train-triage/{{run.id}}"
+
+  # Producer: LeRobot trains in the stage's own pod against the vendor image's LeRobot.
+  lerobot_dataset: lerobot/pusht
+  lerobot_output_dir: /tmp/lerobot_output
+  train_steps: "1"
+  policy_type: act
+  train_batch_size: "2"
+  policy_device: cuda
+
+  # Consumer: a hosted text model, no GPU.
+  triage_job_name: tokenfactory-train-triage
+  triage_model: ""
+  triage_max_tokens: "900"
+
+  artifacts_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
+  triage_uri: "s3://{{config.bucket}}/{{config.prefix}}/triage/"
+
+resources:
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: train-gpu
+
+states:
+  train-gpu:
+    description: Train a LeRobot policy and publish the run's checkpoint and artifacts.
+    toolRef: workbench.lerobot.policy_train
+    resources: trainer-gpu
+    outputs:
+      - uri: "{{config.artifacts_uri}}"
+        schema: npa.lerobot.training_run.v1
+    next: triage
+
+  triage:
+    description: Hosted text model writes a triage report from the run's real artifacts.
+    needs: [train-gpu]
+    toolRef: workbench.token_factory.triage
+    resources: cpu
+    inputs:
+      - uri: "{{config.artifacts_uri}}"
+        schema: npa.lerobot.training_run.v1
+    outputs:
+      - uri: "{{config.triage_uri}}generations.jsonl"
+        schema: npa.token_factory.generations.v1
+    terminal: true

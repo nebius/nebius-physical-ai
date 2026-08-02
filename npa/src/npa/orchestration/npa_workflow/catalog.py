@@ -262,6 +262,62 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.vlm_backend}}",
         ],
     ),
+    "workbench.vlm_eval.judge_against_plan": ToolEntry(
+        name="workbench.vlm_eval.judge_against_plan",
+        description=(
+            "Score a rollout against the plan an earlier reasoning stage produced."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "vlm-eval",
+            "run",
+            "--input-path",
+            "{{config.rollouts_uri}}",
+            "--output-path",
+            "{{config.scores_uri}}",
+            # The judge's task comes from the reasoner's artifact, not a literal: that is what
+            # makes this a three-stage combo rather than two unrelated stages.
+            "--task-from",
+            "{{config.plan_uri}}scene_reasoning.json",
+            "--backend",
+            "{{config.vlm_backend}}",
+            "--api-key-env",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "--frame-selection",
+            "{{config.vlm_frame_selection}}",
+            "--max-frames",
+            "{{config.vlm_max_frames}}",
+            "--success-threshold",
+            "{{config.vlm_success_threshold}}",
+        ],
+    ),
+    "workbench.vlm_eval.loop": ToolEntry(
+        name="workbench.vlm_eval.loop",
+        description=(
+            "Score every rollout under a prefix and write an aggregate task-success report."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "vlm-eval",
+            "loop",
+            "--input-path",
+            "{{config.rollouts_uri}}",
+            "--output-path",
+            "{{config.scores_uri}}",
+            "--task",
+            "{{config.vlm_task}}",
+            "--backend",
+            "{{config.vlm_backend}}",
+            "--frame-selection",
+            "{{config.vlm_frame_selection}}",
+            "--max-frames",
+            "{{config.vlm_max_frames}}",
+            "--success-threshold",
+            "{{config.vlm_success_threshold}}",
+        ],
+    ),
     "workbench.token_factory.reason": ToolEntry(
         name="workbench.token_factory.reason",
         description="Run Cosmos reasoner over scene inputs.",
@@ -311,6 +367,59 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--execute",
         ],
     ),
+    "workbench.cosmos3.text_to_image": ToolEntry(
+        name="workbench.cosmos3.text_to_image",
+        description="Generate an image from a prompt with the Cosmos3 framework and publish it.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "text-to-image",
+            "--prompt",
+            "{{config.t2i_prompt}}",
+            "--output-uri",
+            "{{config.t2i_output_uri}}",
+            "--model-id",
+            "{{config.cosmos_model_id}}",
+            "--checkpoint-name",
+            "{{config.t2i_checkpoint_name}}",
+            "--source-repo-url",
+            "{{config.cosmos_source_repo}}",
+            "--cache-dir",
+            "{{config.cosmos_cache_dir}}",
+            "--uv-group",
+            "{{config.t2i_uv_group}}",
+            "--seed",
+            "{{config.t2i_seed}}",
+            # The framework's guardrails pull further gated weights; the template defaulted them
+            # off too (NPA_COSMOS3_NO_GUARDRAILS).
+            "--no-guardrails",
+        ],
+    ),
+    "workbench.cosmos.check": ToolEntry(
+        name="workbench.cosmos.check",
+        description="Check Cosmos source and checkpoint access before fetching them.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos",
+            "check",
+            "--source-repo-url",
+            "{{config.cosmos_source_repo}}",
+            "--model-id",
+            "{{config.cosmos_model_id}}",
+            "--cache-dir",
+            "{{config.cosmos_cache_dir}}",
+            "--hf-token-env",
+            "{{config.cosmos_hf_token_env}}",
+            "--reasoning-parser",
+            "{{config.cosmos_reasoning_parser}}",
+            "--tool-call-parser",
+            "{{config.cosmos_tool_call_parser}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.cosmos_evaluator.evaluate": ToolEntry(
         name="workbench.cosmos_evaluator.evaluate",
         description=(
@@ -334,6 +443,30 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.grade_threshold}}",
             "--vlm-model",
             "{{config.caption_model}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.cosmos.fetch": ToolEntry(
+        name="workbench.cosmos.fetch",
+        description="Materialize Cosmos source and checkpoint into a local cache.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos",
+            "fetch",
+            "--source-repo-url",
+            "{{config.cosmos_source_repo}}",
+            "--model-id",
+            "{{config.cosmos_model_id}}",
+            "--cache-dir",
+            "{{config.cosmos_cache_dir}}",
+            "--hf-token-env",
+            "{{config.cosmos_hf_token_env}}",
+            "--reasoning-parser",
+            "{{config.cosmos_reasoning_parser}}",
+            "--tool-call-parser",
+            "{{config.cosmos_tool_call_parser}}",
             "--output",
             "json",
         ],
@@ -369,14 +502,104 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real_envgen.raw_shard",
         description="Generate raw simulation env shard.",
         argv_template=[
-            "python",
+            "python3",
             "-m",
             "npa.workflows.sim2real_envgen",
             "raw-shard",
+            # --run-id is REQUIRED by the module's parser and was missing, so every stage
+            # using this toolRef died with "the following arguments are required: --run-id".
+            # Invisible to the flag audit, which only understands `npa …` Typer commands.
+            "--run-id",
+            "{{run.id}}",
+            # The module takes the RUN ROOT and derives envs/raw, envs/train,
+            # envs/heldout and envs/manifest under it; the raw prefix would nest a
+            # second envs/raw inside itself.
             "--output-uri",
-            "{{config.raw_envs_uri}}",
+            "{{config.envgen_root_uri}}",
             "--env-count",
             "{{config.env_count}}",
+            # The retired sim2real-envgen-split.yaml drove sharding from a Kubernetes Job
+            # completion index; a spec expresses it as a parallel group whose members set
+            # `shard_index` in `params:`.
+            "--shard-index",
+            "{{config.shard_index}}",
+            "--shard-count",
+            "{{config.shard_count}}",
+            "--train-fraction",
+            "{{config.train_fraction}}",
+            "--seed",
+            "{{config.envgen_seed}}",
+            "--augmented-frames-uri",
+            "{{config.augmented_frames_uri}}",
+        ],
+    ),
+    "workbench.isaac_lab.capture_frames": ToolEntry(
+        name="workbench.isaac_lab.capture_frames",
+        description="Capture RGB frames from a headless Isaac Lab task and publish them.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_capture",
+            "--task",
+            "{{config.isaac_task}}",
+            "--output-path",
+            "{{config.scene_uri}}",
+            "--max-steps",
+            "{{config.capture_max_steps}}",
+            "--max-frames",
+            "{{config.capture_max_frames}}",
+        ],
+    ),
+    "workbench.sim2real_envgen.actions": ToolEntry(
+        name="workbench.sim2real_envgen.actions",
+        description="Condition the train slice on a policy image's action space.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real_envgen",
+            "actions",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.envgen_root_uri}}",
+            "--env-count",
+            "{{config.env_count}}",
+            "--seed",
+            "{{config.envgen_seed}}",
+            "--limit",
+            "{{config.action_limit}}",
+            # Recorded as provenance in actions-summary.json and salted into each env's seed;
+            # the shipped generator does not run the image (see the spec's note).
+            "--policy-image",
+            "{{config.policy_image}}",
+            # The split stage's own output, so actions conditions the same train slice rather
+            # than recomputing a split of its own.
+            "--train-envs-uri",
+            "{{config.train_envs_uri}}",
+            "--actions-uri",
+            "{{config.actions_uri}}",
+        ],
+    ),
+    "workbench.sim2real_envgen.split": ToolEntry(
+        name="workbench.sim2real_envgen.split",
+        description="Split the generated env catalog into disjoint train and held-out sets.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real_envgen",
+            "split",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.envgen_root_uri}}",
+            "--env-count",
+            "{{config.env_count}}",
+            "--train-fraction",
+            "{{config.train_fraction}}",
+            "--seed",
+            "{{config.envgen_seed}}",
+            "--augmented-frames-uri",
+            "{{config.augmented_frames_uri}}",
         ],
     ),
     "workbench.sim2real.policy_rollouts": ToolEntry(
@@ -395,9 +618,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real.write_decision",
         description="Write threshold decision artifact for dynamic transitions (demo stub).",
         argv_template=[
-            # python3, not python: the render's interpreter shim only puts a
-            # `python3` that can import npa on PATH, and images without a bare
-            # `python` (the SkyPilot default among them) fail otherwise.
             "python3",
             "-c",
             (
@@ -473,7 +693,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.rl.policy_train": ToolEntry(
         name="workbench.rl.policy_train",
-        description="Train simulator RL policy checkpoint with workbench RL backend.",
+        description=(
+            "Train simulator RL policy checkpoint with workbench RL backend. "
+            "Trainer hyper-parameters go through Isaac Lab's repeatable Hydra "
+            "`--override KEY=VALUE`, which is what the CLI actually accepts."
+        ),
         argv_template=[
             "npa",
             "workbench",
@@ -483,11 +707,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.task_name}}",
             "--steps",
             "{{config.train_steps}}",
-            "--learning-rate",
-            "{{config.learning_rate}}",
-            "--batch-size",
-            "{{config.batch_size}}",
-            "--input-path",
+            # `--num-envs` is the vectorized rollout batch dimension for on-policy
+            # training; it is the real CLI flag for what the specs called
+            # `batch_size` (there is no `--batch-size` option).
+            "--num-envs",
+            "{{config.num_envs}}",
+            "--override",
+            "agent.algorithm.learning_rate={{config.learning_rate}}",
+            # The CLI names this `--data-path`, not `--input-path`.
+            "--data-path",
             "{{config.train_dataset_uri}}",
             "--output-path",
             "{{config.checkpoint_uri}}",
@@ -505,7 +733,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.task_name}}",
             "--checkpoint",
             "{{config.checkpoint_uri}}",
-            "--episodes",
+            # The CLI names this `--num-episodes`, not `--episodes`.
+            "--num-episodes",
             "{{config.eval_episodes}}",
             "--output-path",
             "{{config.eval_report_uri}}",
@@ -638,6 +867,13 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.dataset_source}}",
             "--workflow-run",
             "{{run.id}}",
+            # Populate the query index as records land. Without this the `query` stage has
+            # nothing to find, which is what a live run showed the moment the LanceDB service
+            # became reachable at all (EVIDENCE.md §R41).
+            "--lancedb-endpoint",
+            "{{config.lancedb_endpoint}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
         ],
     ),
     "workbench.dataset.validate": ToolEntry(
@@ -700,6 +936,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.location_of_interest}}",
             "--lancedb-endpoint",
             "{{config.lancedb_endpoint}}",
+            # Ingest writes one table per dataset id; a query that does not name it reads the
+            # service's default and finds nothing (EVIDENCE.md §R41).
+            "--lance-table",
+            "{{config.dataset_id}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
         ],
     ),
     "workbench.dataset.write_quality_decision": ToolEntry(
@@ -905,19 +1147,19 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "npa workbench lancedb create-mv "
                 "--name {{config.rider_view}} "
                 "--filter \"has_rider = true AND split = 'train'\" "
-                "--table {{config.lance_table}} "
+                "--source-table {{config.lance_table}} "
                 "--lance-uri {{config.lance_uri}} "
                 "--service --endpoint {{config.lancedb_endpoint}}; "
                 "npa workbench lancedb create-mv "
                 "--name {{config.nighttime_view}} "
                 "--filter \"timeofday = 'night' AND has_person = true AND split = 'train'\" "
-                "--table {{config.lance_table}} "
+                "--source-table {{config.lance_table}} "
                 "--lance-uri {{config.lance_uri}} "
                 "--service --endpoint {{config.lancedb_endpoint}}; "
                 "npa workbench lancedb create-mv "
                 "--name {{config.distant_view}} "
                 "--filter \"has_person = true AND person_bbox_area_pct < 0.01 AND split = 'train'\" "
-                "--table {{config.lance_table}} "
+                "--source-table {{config.lance_table}} "
                 "--lance-uri {{config.lance_uri}} "
                 "--service --endpoint {{config.lancedb_endpoint}}"
             ),
@@ -943,9 +1185,19 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.train_batch_size}}",
             "--learning-rate",
             "{{config.train_learning_rate}}",
+            "--label-map",
+            "{{config.detection_label_map}}",
             "--service",
             "--endpoint",
             "{{config.detection_endpoint}}",
+            # The retired template polled /status in bash until the run finished;
+            # without the wait, eval would run against a checkpoint that does not
+            # exist yet.
+            "--wait",
+            "--poll-seconds",
+            "{{config.train_poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.train_timeout_seconds}}",
         ],
     ),
     "workbench.detection_training.train_nighttime": ToolEntry(
@@ -968,9 +1220,19 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.train_batch_size}}",
             "--learning-rate",
             "{{config.train_learning_rate}}",
+            "--label-map",
+            "{{config.detection_label_map}}",
             "--service",
             "--endpoint",
             "{{config.detection_endpoint}}",
+            # The retired template polled /status in bash until the run finished;
+            # without the wait, eval would run against a checkpoint that does not
+            # exist yet.
+            "--wait",
+            "--poll-seconds",
+            "{{config.train_poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.train_timeout_seconds}}",
         ],
     ),
     "workbench.detection_training.train_distant": ToolEntry(
@@ -993,9 +1255,19 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.train_batch_size}}",
             "--learning-rate",
             "{{config.train_learning_rate}}",
+            "--label-map",
+            "{{config.detection_label_map}}",
             "--service",
             "--endpoint",
             "{{config.detection_endpoint}}",
+            # The retired template polled /status in bash until the run finished;
+            # without the wait, eval would run against a checkpoint that does not
+            # exist yet.
+            "--wait",
+            "--poll-seconds",
+            "{{config.train_poll_seconds}}",
+            "--timeout-seconds",
+            "{{config.train_timeout_seconds}}",
         ],
     ),
     "workbench.detection_training.eval_rider": ToolEntry(
@@ -1017,6 +1289,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--service",
             "--endpoint",
             "{{config.detection_endpoint}}",
+            # The retired template resolved the checkpoint from /runs and published
+            # <output-uri>/metrics.json itself; --checkpoint-uri above is the
+            # training output prefix to search.
+            "--discover-checkpoint",
+            "--write-canonical-metrics",
+            # Eval must read labels the way training wrote them; BDD100K categories are
+            # strings and one of them is literally "train" (EVIDENCE.md §R46).
+            "--label-map",
+            "{{config.detection_label_map}}",
         ],
     ),
     "workbench.detection_training.eval_nighttime": ToolEntry(
@@ -1038,6 +1319,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--service",
             "--endpoint",
             "{{config.detection_endpoint}}",
+            # The retired template resolved the checkpoint from /runs and published
+            # <output-uri>/metrics.json itself; --checkpoint-uri above is the
+            # training output prefix to search.
+            "--discover-checkpoint",
+            "--write-canonical-metrics",
+            # Eval must read labels the way training wrote them; BDD100K categories are
+            # strings and one of them is literally "train" (EVIDENCE.md §R46).
+            "--label-map",
+            "{{config.detection_label_map}}",
         ],
     ),
     "workbench.detection_training.eval_distant": ToolEntry(
@@ -1059,6 +1349,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--service",
             "--endpoint",
             "{{config.detection_endpoint}}",
+            # The retired template resolved the checkpoint from /runs and published
+            # <output-uri>/metrics.json itself; --checkpoint-uri above is the
+            # training output prefix to search.
+            "--discover-checkpoint",
+            "--write-canonical-metrics",
+            # Eval must read labels the way training wrote them; BDD100K categories are
+            # strings and one of them is literally "train" (EVIDENCE.md §R46).
+            "--label-map",
+            "{{config.detection_label_map}}",
         ],
     ),
     "workbench.fiftyone.launch_app": ToolEntry(
@@ -1131,6 +1430,87 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.vlm_models}}",
             "--format",
             "json",
+        ],
+    ),
+    "workbench.lerobot.policy_train": ToolEntry(
+        name="workbench.lerobot.policy_train",
+        description=(
+            "Train a LeRobot policy IN the stage's own pod, using the vendor image's LeRobot."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workbench.lerobot.policy_container",
+            "train",
+            "--dataset-repo-id",
+            "{{config.lerobot_dataset}}",
+            "--output-dir",
+            "{{config.lerobot_output_dir}}",
+            "--steps",
+            "{{config.train_steps}}",
+            "--policy-type",
+            "{{config.policy_type}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--device",
+            "{{config.policy_device}}",
+            # The checkpoint AND the run's textual artifacts (configs, logs, metrics) go to
+            # the same prefix, so a downstream stage can read the run. The retired template
+            # did the second half in a trailing inline-python block.
+            "--checkpoint-s3-uri",
+            "{{config.artifacts_uri}}",
+            "--artifacts-s3-uri",
+            "{{config.artifacts_uri}}",
+        ],
+    ),
+    "workbench.token_factory.triage": ToolEntry(
+        name="workbench.token_factory.triage",
+        description=(
+            "Digest a run's textual artifacts and have a hosted text model write a triage report."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.token_factory_triage",
+            "run",
+            "--artifacts-uri",
+            "{{config.artifacts_uri}}",
+            "--triage-uri",
+            "{{config.triage_uri}}",
+            "--job-name",
+            "{{config.triage_job_name}}",
+            "--model",
+            "{{config.triage_model}}",
+            "--max-tokens",
+            "{{config.triage_max_tokens}}",
+        ],
+    ),
+    "workbench.lerobot.policy_rollout": ToolEntry(
+        name="workbench.lerobot.policy_rollout",
+        description=(
+            "Roll out a LeRobot policy IN the stage's own pod and publish the rendered episodes."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workbench.lerobot.policy_container",
+            "eval",
+            # A public Hugging Face policy id, an s3:// prefix or a local path; a stage's pod
+            # starts empty, so anything remote is materialised first.
+            "--checkpoint-path",
+            "{{config.policy_checkpoint}}",
+            "--output-dir",
+            "{{config.rollout_output_dir}}",
+            "--env-type",
+            "{{config.rollout_env}}",
+            "--episodes",
+            "{{config.rollout_episodes}}",
+            "--device",
+            "{{config.policy_device}}",
+            # The judge stage reads what this stage rendered; the retired template did the
+            # upload in a trailing inline-python block.
+            "--rollouts-s3-uri",
+            "{{config.rollouts_uri}}",
         ],
     ),
     "workbench.lerobot.eval": ToolEntry(
@@ -1206,6 +1586,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "train",
             "--runtime",
             "{{config.sonic_runtime}}",
+            # NVIDIA's terms are the operator's to accept. `--runtime in-job` downloads Isaac
+            # Sim and Isaac Lab onto the machine, and the SONIC entrypoint refuses until this
+            # is set (live job 327, EVIDENCE.md §R47). A spec is where a reviewer can see it.
+            "--accept-nvidia-eula",
+            "{{config.sonic_accept_nvidia_eula}}",
             "--checkpoint",
             "{{config.checkpoint_uri}}",
             "--data-path",
@@ -1232,6 +1617,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.episodes}}",
             "--env",
             "{{config.env}}",
+            # `--output` on this command is the RESULT PATH (output_path: str), not a
+            # format; `--output-format` is the format. Passing "json" to --output made
+            # the tool write the eval result to a relative `json/` directory inside the
+            # pod, so the spec's declared eval.json artifact never appeared (found live:
+            # runs npa-wf-gpu-sonic-eval-87a704ad / npa-wf-multi-sonic-export-eval-...).
             "--output",
             "{{config.eval_uri}}",
             "--output-format",

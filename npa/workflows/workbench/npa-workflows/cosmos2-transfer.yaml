@@ -1,0 +1,53 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of skypilot/cosmos2-transfer.yaml — and an upgrade, deliberately.
+#
+# The template held an RTXPRO6000 in order to `print(json.dumps(...))` a payload whose own
+# `status` field said `"contract_ready"`. It transferred nothing. Reproducing that faithfully
+# would mean shipping a stub on the new surface, which `skills/atomic/real-components/SKILL.md`
+# exists to prevent, so the twin runs the REAL Cosmos-Transfer2.5 model via `--execute` (which
+# turns a missing transfer runtime into a hard error instead of a silent fall back to reference
+# augmentation).
+#
+# It is also the first spec to use `workbench.cosmos2.transfer_execute`. That toolRef has been
+# in the catalog, unused, while five specs used the manifest-only `workbench.cosmos2.transfer`.
+#
+#   npa workbench workflow submit cosmos2-transfer.yaml --run-id <id> \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: cosmos2-transfer
+  description: >
+    Standalone Cosmos-Transfer2.5 augmentation: run the real model on a GPU and publish the
+    augmented video and frames.
+  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos2-transfer.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "cosmos2-transfer/{{run.id}}"
+
+  trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/"
+  # Optional Config-Gen manifest. Empty means the bundled-example path: the model still runs for
+  # real, it just is not conditioned on a sampled appearance combo.
+  configs_uri: ""
+
+resources:
+  transfer-gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+
+initial: transfer
+
+states:
+  transfer:
+    description: Run Cosmos-Transfer2.5 and publish the augmented clip.
+    toolRef: workbench.cosmos2.transfer_execute
+    resources: transfer-gpu
+    outputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.cosmos2.transfer.v1
+    terminal: true

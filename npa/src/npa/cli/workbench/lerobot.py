@@ -48,6 +48,7 @@ from npa.serverless_common import (
     require_s3_credentials,
     resolve_subnet,
 )
+from npa.serverless_common.platform import GPU_PLATFORM_ALIASES, GPU_PLATFORM_PRESETS
 from npa.workbench.lerobot.version_compat import (
     LeRobotVersionError,
     eval_checkpoint_arg,
@@ -669,38 +670,20 @@ def _split_serverless_env(env: dict[str, str]) -> tuple[dict[str, str], dict[str
 
 
 def _lerobot_gpu_platform(gpu_type: str) -> str:
+    """Resolve a GPU alias to its Nebius platform id.
+
+    Backed by the shared serverless table so LeRobot picks up new platforms
+    (datacenter Blackwell B200/B300, H100) without a second copy drifting.
+    An unrecognized value passes through, letting an operator name a platform
+    the table has not learned yet.
+    """
+
     normalized = gpu_type.strip().lower()
-    aliases = {
-        "h200": "gpu-h200-sxm",
-        "b300": "gpu-b300-sxm",
-        "l40s": "gpu-l40s-a",
-        "gpu-rtx-pro-6000": "gpu-rtx6000",
-        "rtx-pro-6000": "gpu-rtx6000",
-        "rtx6000": "gpu-rtx6000",
-    }
-    return aliases.get(normalized, gpu_type)
+    return GPU_PLATFORM_ALIASES.get(normalized, gpu_type)
 
 
 def _lerobot_serverless_gpu_preset(platform: str, gpu_count: int) -> str:
-    presets = {
-        "gpu-b300-sxm": {
-            1: "1gpu-24vcpu-346gb",
-            8: "8gpu-192vcpu-2768gb",
-        },
-        "gpu-l40s-a": {
-            1: "1gpu-40vcpu-160gb",
-        },
-        "gpu-l40s-d": {
-            1: "1gpu-48vcpu-288gb",
-            2: "2gpu-96vcpu-576gb",
-            4: "4gpu-192vcpu-1152gb",
-        },
-        "gpu-rtx6000": {
-            1: "1gpu-24vcpu-218gb",
-            8: "8gpu-192vcpu-1744gb",
-        },
-    }
-    return presets.get(platform, {}).get(gpu_count, "")
+    return GPU_PLATFORM_PRESETS.get(platform, {}).get(gpu_count, "")
 
 
 def _warn_for_lerobot_gpu_policy(policy_type: str, gpu_type: str) -> None:

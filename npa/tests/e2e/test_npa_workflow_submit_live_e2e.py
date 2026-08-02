@@ -169,6 +169,30 @@ def _run_id_for(case: SubmitLiveCase) -> str:
     return f"npa-wf-{tier}-{stem}-{stamp}"
 
 
+def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
+    """Return the ``--image`` argument this case needs.
+
+    A case that declares ``image_tool`` runs *inside* that workbench image — its stages import
+    the vendor's own libraries, so clearing the pin would put them on SkyPilot's default image
+    where those libraries do not exist. The runtime path already honoured `image_tool`; the
+    submit path did not, so a declared image was silently dropped and a LeRobot stage failed
+    with `No module named 'lerobot'` (live jobs 245/247).
+
+    ``NPA_E2E_IMAGE_OVERRIDE_<TOOL>`` points at a SkyPilot-hostable variant of the same image.
+    """
+
+    if case.image_tool:
+        from npa.deploy.images import container_image_for_tool
+
+        override = os.environ.get(
+            f"NPA_E2E_IMAGE_OVERRIDE_{case.image_tool.upper().replace('-', '_')}", ""
+        ).strip()
+        return ["--image", override or container_image_for_tool(case.image_tool, registry=registry)]
+    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
+        return ["--image", "none"]
+    return []
+
+
 @pytest.mark.parametrize(
     "case",
     one_shot_submit_cases(),
@@ -210,8 +234,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         "--output-format",
         "json",
     ]
-    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
-        plan_args.extend(["--image", "none"])
+    plan_args.extend(_image_args(case, e2e_registry))
     assume = assume_decision_for(case.spec)
     if assume:
         plan_args.extend(["--assume-decision", assume])
@@ -240,10 +263,10 @@ def test_npa_workflow_submit_live_reaches_terminal(
     ]
     if assume:
         submit_args.extend(["--assume-decision", assume])
-    # Workbench images often fail SkyPilot k8s apt-ssh setup; clear pins and
-    # rely on NPA_SRC_S3_URI + default image (validated for Token Factory).
-    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
-        submit_args.extend(["--image", "none"])
+    # Workbench images often fail SkyPilot k8s apt-ssh setup, so pins are cleared by default
+    # and the stage relies on NPA_SRC_S3_URI + the default image — except for a case that
+    # declares `image_tool`, whose stages need the vendor image's own libraries.
+    submit_args.extend(_image_args(case, e2e_registry))
     submit_args.extend(_secret_env_args(case))
 
     if (

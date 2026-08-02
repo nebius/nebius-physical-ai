@@ -29,8 +29,13 @@ iteration without customer-specific names or infrastructure baked into source.
   VLM-eval.
 - SDK: keep workflow submission and config materialization in shared helpers so
   notebooks and services use the same artifact paths.
-- YAML: `sim-to-real-loop.yaml`, `sim-to-real-pipeline.yaml`, and
-  `sim-to-real-trigger.yaml` are the executable workflow references.
+- Workflows: `npa-workflows/vlm-eval-loop.yaml` is the executable reference for the
+  VLM-eval gating loop (scores a whole rollout set and writes
+  `task_success_report.json`). The staged engine is the maintained end-to-end path:
+  `npa-workflows/sim2real-vlm-rl.yaml` for the spec surface, and
+  `npa/workflows/workbench/sim2real/runbook.yaml` for the read-it-without-npa runbook.
+  `sim-to-real-pipeline.yaml` and `sim-to-real-trigger.yaml` are retired — the first ran
+  `npa.workflows.sim_to_real real-loop`, which raises a DeprecationWarning pointing here.
 
 ## Gotchas
 

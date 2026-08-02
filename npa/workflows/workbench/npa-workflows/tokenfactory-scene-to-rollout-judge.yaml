@@ -1,0 +1,101 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of skypilot/tokenfactory-scene-to-rollout-judge.yaml.
+#
+# Three stages, and the *chain* is the point: a hosted reasoner turns scene images into a plan, a
+# Nebius GPU rolls out a policy, and a hosted VLM judges that rollout AGAINST THAT PLAN. The
+# template carried the last link as `--task "$(python3 … scene_reasoning.json)"`, a command
+# substitution no toolRef argv can express; `vlm-eval run --task-from` now reads the reasoner's
+# `analysis` directly, so the link survives the port.
+#
+# Only the middle stage holds a GPU.
+#
+#   npa workbench workflow submit tokenfactory-scene-to-rollout-judge.yaml --run-id <id> \
+#     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: tokenfactory-scene-to-rollout-judge
+  description: >
+    Hosted reasoner plans from scene images, a Nebius GPU rolls out a policy, and a
+    hosted VLM judges the rollout against the plan.
+  skypilotTwin: npa/src/npa/workflows/skypilot/tokenfactory-scene-to-rollout-judge.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "tokenfactory-scene-to-rollout-judge/{{run.id}}"
+
+  reason_task: >-
+    Describe this scene and give a step-by-step plan a tabletop robot arm should follow to
+    complete the most useful manipulation task here.
+  reason_model: nvidia/Cosmos3-Super-Reasoner
+
+  # See tokenfactory-rollout-judge-combo.yaml: LeRobot >= 0.6 needs the processor format, so the
+  # live case seeds a checkpoint produced by 0.6 rather than an older public policy.
+  policy_checkpoint: "s3://{{config.bucket}}/{{config.prefix}}/policy/"
+  rollout_output_dir: /tmp/lerobot_rollout
+  rollout_env: pusht
+  rollout_episodes: "2"
+  policy_device: cuda
+
+  vlm_backend: api
+  vlm_frame_selection: keyframes
+  vlm_max_frames: "4"
+  vlm_success_threshold: "0.6"
+
+  scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
+  plan_uri: "s3://{{config.bucket}}/{{config.prefix}}/plan/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm-judge/"
+
+resources:
+  rollout-gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: scene-reason
+
+states:
+  scene-reason:
+    description: Hosted reasoner turns the scene into a plan.
+    toolRef: workbench.token_factory.reason
+    resources: cpu
+    inputs:
+      - uri: "{{config.scene_uri}}"
+        schema: npa.workbench.scene_frames.v1
+    outputs:
+      - uri: "{{config.plan_uri}}scene_reasoning.json"
+        schema: npa.token_factory.plan.v1
+    next: rollout-gpu
+
+  rollout-gpu:
+    description: Roll out the policy and publish the rendered episodes.
+    needs: [scene-reason]
+    toolRef: workbench.lerobot.policy_rollout
+    resources: rollout-gpu
+    outputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.workbench.rollout_set.v1
+    next: scene-judge
+
+  scene-judge:
+    description: Hosted VLM judges the rollout against the reasoner's plan.
+    needs: [rollout-gpu]
+    toolRef: workbench.vlm_eval.judge_against_plan
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.workbench.rollout_set.v1
+      - uri: "{{config.plan_uri}}scene_reasoning.json"
+        schema: npa.token_factory.plan.v1
+    outputs:
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+        schema: npa.workbench.vlm_eval.report.v1
+    terminal: true

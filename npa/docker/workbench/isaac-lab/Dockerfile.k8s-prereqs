@@ -43,6 +43,25 @@ RUN apt-get update \
     && python3 --version
 
 # SkyPilot's bootstrap must find the SYSTEM interpreter, not the Isaac venv's python3.11.
+# Kit must be able to WRITE, which is a separate thing from being schedulable. On an image
+# built from the OLD NVIDIA base, /isaac-sim holds the payload and `kit/data`/`kit/logs` do not
+# exist while `kit/cache` is root-owned — so as `ubuntu` the app cannot create or write any of
+# them. Isaac still BOOTS, logs
+#     [Error] [omni.kit.app.plugin] failed to open file '.../user.config.json'
+# and then never renders a frame: live job 271 sat at 170% CPU for 45 minutes with an empty
+# output directory, which reads like a slow simulation and is a stalled one.
+#
+# Both halves are applied because a derived build does not know which base it is repairing:
+# the directories (a tiny layer, guarded by `-d /isaac-sim`) and the env vars newer images use
+# to keep Kit's state in /tmp instead.
+RUN if [ -d /isaac-sim ]; then \
+      mkdir -p /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache \
+      && chown -R ubuntu:ubuntu /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache; \
+    fi \
+    && install -d -m 0755 -o ubuntu -g ubuntu /tmp/isaac-sim-cache /tmp/isaac-sim-cache/logs
+ENV OMNI_USER_DIR=/tmp/isaac-sim-cache \
+    OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs
+
 ENV PATH=/usr/bin:$PATH
 
 WORKDIR /workspace/isaaclab

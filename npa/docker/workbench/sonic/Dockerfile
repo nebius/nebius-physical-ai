@@ -329,6 +329,41 @@ RUN id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 || useradd -m -s /bin/bash -u 10
     && chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" /opt/sonic \
     && chown -R "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" /tmp/npa-sonic-output
 
+# --- SkyPilot-on-Kubernetes runtime prerequisites -----------------------------------
+# SkyPilot's Kubernetes runtime bootstrap runs INSIDE this container, so an image that
+# only satisfies SONIC's own needs cannot host a task: provisioning fails with
+#   KubernetesError: Failed to get ssh user for pod ...: container not found ("ray-node")
+# The same four ingredients the Isaac Lab image needs apply here (see
+# npa/docker/workbench/isaac-lab/Dockerfile for the live bisection that established
+# them, and npa/tests/guardrails/test_workbench_image_k8s_prereqs.py):
+#
+#   1. a system python3 plus rsync/curl/ssh client - the base already brings python3,
+#      but not rsync, which SkyPilot uses to sync files into the pod;
+#   2. /isaac-sim readable by the runtime user - it is mode 750 isaac-sim:isaac-sim, so
+#      the user joins that GROUP (a recursive chmod would rewrite multi-GB layers);
+#   3. passwordless sudo for the runtime user - SkyPilot's in-pod setup shells out to
+#      sudo and Debian's default %sudo rule prompts;
+#   4. the system interpreter FIRST on PATH - otherwise python3 can resolve to Isaac's
+#      kit interpreter, which cannot import its own site-packages outside python.sh.
+#
+# This is what makes the npa.workflow SONIC specs (sonic-train / sonic-export /
+# sonic-eval / sonic-export-eval / sonic-locomotion-finetuning) submittable through
+# `npa workbench workflow submit` on a Kubernetes cluster. SONIC itself is unaffected:
+# the entrypoint and training paths keep using their own interpreter.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         rsync openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (getent group isaac-sim >/dev/null 2>&1 \
+        && usermod -aG isaac-sim "${NPA_RUNTIME_USER}" || true) \
+    && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${NPA_RUNTIME_USER}" \
+         > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && python3 --version
+
+ENV PATH=/usr/bin:$PATH
+
 WORKDIR /opt/sonic
 USER ${NPA_RUNTIME_USER}
 ENTRYPOINT ["/entrypoint.sh"]

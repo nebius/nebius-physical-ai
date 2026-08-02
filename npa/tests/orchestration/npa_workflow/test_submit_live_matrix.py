@@ -54,6 +54,38 @@ def test_submit_live_matrix_specs_exist() -> None:
     assert not missing, f"matrix references missing specs: {missing}"
 
 
+def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
+    """A missing secret_env makes the CLI print an advisory line before its JSON.
+
+    That line broke ``json.loads(result.output)`` in the harness and reported a
+    *successful* sonic-export submit (SkyPilot job 189) as a test failure. The parser is
+    now tolerant, and this keeps the matrix honest about what each spec needs.
+    """
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_plan
+
+    helpers = _load_live_helpers()
+    missing: list[str] = []
+    for case in SUBMIT_LIVE_MATRIX:
+        path = resolve_npa_workflow_spec(case.spec)
+        assert path is not None, case.spec
+        spec = load_spec(path)
+        plan = build_plan(
+            spec,
+            run_id="matrix-check",
+            assume_decision=helpers.assume_decision_for(case.spec) or None,
+        )
+        hints = set(secret_env_hints_for_plan(plan.steps))
+        gap = sorted(hints - set(case.secret_envs))
+        if gap:
+            missing.append(f"{case.spec}: {gap}")
+    assert not missing, (
+        "live-matrix cases must declare the secret envs the renderer hints at:\n"
+        + "\n".join(missing)
+    )
+
+
 def test_selected_submit_cases_tier_filter(monkeypatch) -> None:
     monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "cpu")
     monkeypatch.delenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", raising=False)
@@ -122,6 +154,29 @@ def test_runtime_cases_declare_their_secrets_and_are_not_plan_only() -> None:
         assert case.secret_envs, f"{case.spec} must declare the secrets its tasks need"
         assert "AWS_ACCESS_KEY_ID" in case.secret_envs
         assert not case.plan_only
+
+
+def test_every_live_case_declares_the_object_store_credentials_setup_needs() -> None:
+    """`setup:` syncs the npa source from S3 with boto3, so EVERY live case needs the keys.
+
+    Learned the expensive way: `cosmos-fetch` declared only `HF_TOKEN`, because nothing in its
+    *plan* touches object storage — and the run died in **setup** with
+    ``botocore.exceptions.NoCredentialsError`` before either stage started.
+    ``test_matrix_cases_declare_every_secret_the_renderer_hints_at`` cannot see this: the need
+    comes from the source-staging setup, not from a toolRef's argv.
+    """
+
+    required = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+    missing = sorted(
+        f"{case.spec}: {sorted(required - set(case.secret_envs))}"
+        for case in SUBMIT_LIVE_MATRIX
+        if not case.plan_only and not required <= set(case.secret_envs)
+    )
+
+    assert not missing, (
+        "every live case's setup stages npa from NPA_SRC_S3_URI with boto3, so each must "
+        "declare the object-store credentials:\n  " + "\n  ".join(missing)
+    )
 
 
 def test_expected_parallel_tasks_matches_the_spec_fan_out() -> None:

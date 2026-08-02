@@ -33,7 +33,7 @@ config:
 
   train_steps: "500000"
   learning_rate: "0.0003"
-  batch_size: "256"
+  num_envs: "256"
   eval_episodes: "50"
 
   adversarial_set_uri: "s3://{{config.bucket}}/{{config.prefix}}/adversarial/"

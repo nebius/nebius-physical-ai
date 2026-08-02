@@ -388,7 +388,10 @@ config:
   solution_name: "robocasa"
   capability_name: "kitchen_task_registration"
   smoke_artifact_name: "robocasa_kitchen_env_reset.json"
-  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-gpu.yaml"
+  # The packaged profile NAME, not a repo path: this stage runs in a pod where the
+  # checkout does not exist. `resolve_byof_profile_path` looks it up inside the
+  # installed package (npa/src/npa/workflows/byof/profiles/).
+  resource_profile_yaml: "byof-solution-smoke-rtxpro-gpu"
   task: "robocasa/PickPlaceCounterToCabinet"
   iterations: 1
   num_envs: 1

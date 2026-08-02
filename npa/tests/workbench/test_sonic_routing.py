@@ -30,6 +30,14 @@ from npa.workbench.sonic.routing import (
         ("h200", DATACENTER_HEADLESS),
         ("a100", DATACENTER_HEADLESS),
         ("b200", DATACENTER_HEADLESS),
+        ("gpu-b200-sxm-a", DATACENTER_HEADLESS),
+        ("b300", DATACENTER_HEADLESS),
+        ("gpu-b300-sxm", DATACENTER_HEADLESS),
+        ("sm_100", DATACENTER_HEADLESS),
+        ("sm_103", DATACENTER_HEADLESS),
+        # The family name alone must not promote a datacenter part to RT-core.
+        ("NVIDIA B300 Blackwell Ultra", DATACENTER_HEADLESS),
+        ("blackwell-b200", DATACENTER_HEADLESS),
         ("cpu", CPU),
         ("none", CPU),
         ("", UNKNOWN),
@@ -56,13 +64,25 @@ def test_validate_render_allows_empty_for_default_fallback() -> None:
     assert validate_render_gpu_target("") == ""
 
 
-@pytest.mark.parametrize("gpu_target", ["h100", "gpu-h200-sxm", "a100"])
+@pytest.mark.parametrize(
+    "gpu_target",
+    ["h100", "gpu-h200-sxm", "a100", "b200", "gpu-b200-sxm-a", "b300", "gpu-b300-sxm"],
+)
 def test_validate_render_rejects_datacenter_headless(gpu_target: str) -> None:
     with pytest.raises(SonicRoutingError) as excinfo:
         validate_render_gpu_target(gpu_target)
     message = str(excinfo.value)
     assert "RT-core" in message
     assert gpu_target in message
+
+
+@pytest.mark.parametrize("gpu_target", ["b200", "gpu-b300-sxm"])
+def test_datacenter_blackwell_runs_headless_workloads(gpu_target: str) -> None:
+    """No RT cores, but the compute path is fine for state-based training."""
+
+    assert validate_gpu_routing(workload="train", gpu_target=gpu_target) == DATACENTER_HEADLESS
+    assert is_rt_core_target(gpu_target) is False
+    assert is_datacenter_headless_target(gpu_target) is True
 
 
 def test_validate_render_rejects_unknown_gpu() -> None:

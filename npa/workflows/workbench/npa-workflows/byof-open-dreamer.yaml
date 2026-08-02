@@ -536,7 +536,10 @@ config:
   solution_name: "open-dreamer"
   capability_name: "dreamer4_tokenizer_train_two_gpu"
   smoke_artifact_name: "open_dreamer_world_model_2gpu.json"
-  resource_profile_yaml: "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-2gpu.yaml"
+  # The packaged profile NAME, not a repo path: this stage runs in a pod where the
+  # checkout does not exist. `resolve_byof_profile_path` looks it up inside the
+  # installed package (npa/src/npa/workflows/byof/profiles/).
+  resource_profile_yaml: "byof-solution-smoke-rtxpro-2gpu"
   task: "open-dreamer-world-model"
   iterations: 1
   num_envs: 1

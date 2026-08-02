@@ -1,0 +1,51 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-cosmos3-reason image.
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-cosmos3-reason:3.0.1-genuine-sm120 \
+#     --tag  <registry>/npa-cosmos3-reason:3.0.1-genuine-sm120-sky1 \
+#     --dockerfile npa/docker/workbench/cosmos3-reason/Dockerfile.k8s-prereqs
+#
+# Why: SkyPilot's Kubernetes runtime bootstrap execs into the container and needs a system
+# python3, rsync, and passwordless sudo. Without them provisioning never starts and the only
+# symptom is
+#   KubernetesError: Failed to get ssh user for pod ...: container not found ("ray-node")
+# which says nothing about what is missing (live job 304).
+#
+# This image is needed for more than reasoning: `npa workbench cosmos3 text-to-image` builds the
+# Cosmos framework's own uv environment, whose transformer_engine links against glibc >= 2.32.
+# SkyPilot's default image is older, and glibc is the host C library — no LD_LIBRARY_PATH can
+# substitute for it (live job 301). A modern base is the requirement.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && python3 --version
+
+# The runtime user needs a writable HOME: uv puts its managed pythons and caches there, and the
+# text-to-image stage clones the framework and syncs an environment before it can generate.
+RUN mkdir -p /home/ubuntu && chown -R ubuntu:ubuntu /home/ubuntu
+
+# The runtime user must be able to install INTO the environment it runs from. Overlaying a
+# newer npa (or any `pip install -e`) otherwise fails with
+#   [Errno 13] Permission denied: '/opt/npa/venv/bin/npa'
+# and `--user` is not a fallback inside a virtualenv (live job 308). Ownership only; the files
+# are unchanged.
+RUN if [ -d /opt/npa ]; then chown -R ubuntu:ubuntu /opt/npa; fi
+
+# NOTE: deliberately NOT `ENV PATH=/usr/bin:$PATH`. The Isaac images need that, because their
+# default python3 is a kit interpreter that cannot import its own site-packages outside
+# python.sh. Here the opposite holds: this image's own python is the one carrying npa and its
+# dependencies, and forcing the bare system python in front of it made setup fail with
+# "npa is not importable after setup" (live job 307). SkyPilot needs a system python3 to EXIST,
+# not to be first.
+
+USER ubuntu
+ENTRYPOINT ["/bin/bash"]

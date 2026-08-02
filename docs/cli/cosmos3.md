@@ -12,6 +12,7 @@ Options
 Commands
 generate  Run a real Cosmos 3 generation with the omni model.
 reason  Build the Cosmos3 reason stage manifest.
+text-to-image  Generate an image from a prompt with the Cosmos3 framework, and publish it.
 ```
 
 ## Options
@@ -26,6 +27,7 @@ reason  Build the Cosmos3 reason stage manifest.
 | --- | --- |
 | `generate` | Run a real Cosmos 3 generation with the omni model. |
 | `reason` | Build the Cosmos3 reason stage manifest. |
+| `text-to-image` | Generate an image from a prompt with the Cosmos3 framework, and publish it. |
 
 ## Examples
 

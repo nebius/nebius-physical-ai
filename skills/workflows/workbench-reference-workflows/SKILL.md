@@ -28,23 +28,89 @@ artifact contracts, and customer-adaptable pipeline implementations.
 
 ## Current Reference YAMLs
 
-- `bdd100k-pipeline.yaml`: BDD100K ingest, backfill, CLIP embedding,
+This list is machine-checked against the directory by
+`npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so it cannot drift as
+templates retire.
+
   materialized views, training, and evaluation.
-- `cosmos3-ea-fetch.yaml`: Cosmos3 source/checkpoint fetch.
-- `cosmos3-text-to-image-inference.yaml`: H100 text-to-image smoke inference.
-- `isaac-lab-rl-train.yaml`: single Isaac Lab RL job.
-- `isaac-lab-rl-sweep.yaml`: Isaac Lab parameter sweep.
-- `mjlab-eval.yaml`: MJLab evaluation.
-- `retargeting.yaml`: motion retargeting.
-- `sim-to-real-loop.yaml`: iterative sim-to-real loop.
-- `sim-to-real-pipeline.yaml`: full sim-to-real pipeline.
-- `sim-to-real-trigger.yaml`: trigger wrapper for sim-to-real work.
-- `sonic-train-standalone.yaml`: standalone SONIC training.
-- `sonic-export.yaml`: SONIC export.
-- `sonic-eval.yaml`: SONIC evaluation.
-- `sonic-export-eval.yaml`: export plus evaluation.
-- `sonic-locomotion-finetuning.yaml`: retargeting, SONIC, and MJLab flow.
-- `vlm-eval.yaml` and `vlm-eval-benchmark.yaml`: VLM evaluation loops.
+- `cosmos3-generate.yaml`: single-task Cosmos 3 omni-model generation in the
+  `npa-cosmos3` image. Its npa.workflow twin of the same name is the declarative form.
+- `nurec-reconstruct.yaml`: single-pod NuRec/NRE neural reconstruction. Its
+  npa.workflow twin of the same name runs each state in its own pod and hands
+  artifacts over through S3.
+
+## Retired Templates
+
+These raw templates were retired once their `npa.workflow` spec had a live run
+(run ids in `EVIDENCE.md`). Use the spec under
+`npa/workflows/workbench/npa-workflows/`:
+
+- `isaac-lab-rl-sweep.yaml` — parallel GPU sweep (`--runtime`).
+- `cosmos3-reason.yaml` — Cosmos3 reason-stage manifest.
+- `sonic-export.yaml`, `sonic-eval.yaml`, `sonic-export-eval.yaml` — SONIC
+  export/eval. The tools now accept `s3://` inputs and outputs directly, which is
+  what the templates' inline download/upload bash used to do.
+- `token-factory-caption.yaml`, `token-factory-generate.yaml`,
+  `token-factory-cosmos-reason.yaml` — hosted Token Factory stages.
+- `mjlab-eval.yaml` — MJLab locomotion evaluation.
+- `retargeting.yaml` — motion retargeting. The harness synthesizes a SOMA-CSV clip
+  (`npa.workflows.motion_fixture`) when no real motion set is staged.
+- `vlm-eval.yaml`, `vlm-eval-benchmark.yaml` — self-hosted VLM scoring and the labeled
+  sweep. The renderer now starts and health-checks the vLLM server the spec asks for, so
+  no prebuilt serving image is needed.
+- `cosmos3-text-to-image-inference.yaml` — retired to
+  `npa-workflows/cosmos3-text-to-image.yaml`. The procedure it carried as bash inside an `envs:`
+  block is now `npa workbench cosmos3 text-to-image`.
+- `bdd100k-pipeline.yaml` — retired to `npa-workflows/bdd100k-pipeline.yaml`. A live run needs
+  both in-cluster services (`lancedb` and `detection-training`) deployed first.
+- `dataset-ingest-curate.yaml` — retired to `npa-workflows/dataset-ingest-curate.yaml`, whose
+  `register` stage reads back what `ingest` wrote to the in-cluster LanceDB service
+  (`npa workbench lancedb deploy --runtime kubernetes --namespace workbench`).
+- `sim-to-real-pipeline.yaml` / `sim-to-real-trigger.yaml` — retired. The pipeline ran the
+  deprecated `npa.workflows.sim_to_real real-loop`; the maintained path is the staged engine's
+  spec, `npa-workflows/sim2real-vlm-rl.yaml`, which is also what the watcher now submits.
+- `cosmos2-transfer.yaml` — retired to `npa-workflows/cosmos2-transfer.yaml`, which runs the
+  REAL Cosmos-Transfer2.5 model (`--execute`) instead of printing a `contract_ready` payload.
+- `isaac-franka-capture-reason.yaml` — retired to
+  `npa-workflows/isaac-franka-capture-reason.yaml`. The capture code moved into the package
+  (`npa.workflows.isaac_capture`), so the stage no longer needs a repo mounted into the pod.
+- `sim2real-actions.yaml` — retired into `npa-workflows/sim2real-envgen-shards.yaml` as its
+  fourth stage, which conditions the train slice the `split` stage just wrote.
+- `tokenfactory-scene-to-rollout-judge.yaml` — hosted reasoner, GPU rollout, hosted judge. Its
+  twin keeps the chain: `vlm-eval run --task-from` reads the reasoner's artifact, so the judge
+  scores the rollout against the plan rather than a literal string.
+- `tokenfactory-rollout-judge.yaml` — GPU rollout then a hosted VLM judge. Its twin is
+  `npa-workflows/tokenfactory-rollout-judge-combo.yaml`; note the older same-named spec is a
+  *different* workflow (a Cosmos reasoner feeding a judge over externally-seeded rollouts).
+- `tokenfactory-train-triage.yaml` — GPU LeRobot training then a hosted triage report. Its twin
+  `npa-workflows/tokenfactory-train-triage.yaml` trains in the stage's own pod (the renderer
+  switches to the vendor image's interpreter) and triages with
+  `npa.workflows.token_factory_triage`. Needs a SkyPilot-hostable LeRobot image; 0.5.1 ships a
+  torch/torchcodec ABI mismatch, 0.6.0 does not.
+- `cosmos3-ea-fetch.yaml` — Cosmos source/checkpoint fetch. Its twin
+  `npa-workflows/cosmos-fetch.yaml` is the two CLI commands the template wrapped in ~60 lines
+  of setup bash; the renderer installs `huggingface_hub[cli]`, which was the only load-bearing
+  line of that preamble.
+- `sim2real-envgen-split.yaml` — raw env generation + 80/20 split. Its twin
+  `npa-workflows/sim2real-envgen-shards.yaml` declares the shard fan-out as a `parallel:`
+  group instead of relying on a Kubernetes Job completion index, and runs on CPU.
+- `scenario-gen-adversarial.yaml` — adversarial scenario mining. Its twin
+  `npa-workflows/scenario-gen-smoke.yaml` runs the same two CLI commands; the template's GPU
+  image advertised an RL adversary the CLI cannot select.
+- `sim-to-real-loop.yaml` — the rollout-SET loop. Retired via a new tool capability
+  (`npa workbench vlm-eval loop`), because nothing else produced
+  `task_success_report.json`; the spec is `npa-workflows/vlm-eval-loop.yaml`.
+- `isaac-lab-cosmos-sdg-burst-smoke.yaml` — **relocated**, not retired: a single-task input to
+  `npa burst submit-yaml`, now at `npa/src/npa/burst/examples/`. Burst is scoped to one
+  executable task, so there is no plan or stage graph for a spec to describe.
+- `isaac-lab-rl-train-rtxpro.yaml`, `isaac-lab-rl-train-rtxpro-smoke.yaml`,
+  `isaac-lab-rl-train.yaml`, `byof-datagen-rtxpro-smoke.yaml`,
+  `byof-container-smoke-rtxpro.yaml` — **relocated**, not retired: they are BYOF
+  *resource profiles* (a pod shape), not workflows, and now live beside their
+  runner at `npa/src/npa/workflows/byof/profiles/`.
+
+The remaining templates are pinned in
+`npa/tests/guardrails/test_skypilot_catalog_retirement.py`; do not add new ones.
 
 ## Three-Tier Contract
 

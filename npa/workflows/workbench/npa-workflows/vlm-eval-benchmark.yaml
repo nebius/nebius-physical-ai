@@ -4,19 +4,25 @@ kind: Workflow
 metadata:
   name: vlm-eval-benchmark
   description: Sweep a labeled rollout set through vlm-eval and rank configs.
-  skypilotTwin: npa/src/npa/workflows/skypilot/vlm-eval-benchmark.yaml
 
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/vlm-eval-benchmark"
-  vlm_backend: stub
+  # `self-hosted`, like the template this replaces: the renderer installs vLLM and now
+  # also starts and health-checks it before the stage's command runs.
+  vlm_backend: self-hosted
   thresholds: "0.5,0.8,0.9"
   rubrics: "default,strict"
   vlm_models: "Qwen/Qwen2-VL-7B-Instruct"
 
-  # `sample` resolves to the packaged sample fixture at its install location, so
-  # it works inside a rendered job (a repo-relative path does not exist there).
-  benchmark_dataset: "sample"
+  # An S3 manifest, not a path inside the repo: a stage runs in a pod where the repo is
+  # not checked out, so a repo-relative `--dataset` cannot resolve there. Relative
+  # `rollout` entries inside the manifest resolve against this URI's prefix.
+  # #236 added a `sample` sentinel that resolves to the packaged fixture at its install
+  # location. That keeps a repo-relative path out of the pod, but it scores a stub. This twin
+  # seeds a real labeled benchmark in S3 and scores it on the self-hosted backend, which is
+  # what the template it replaces did (EVIDENCE.md §R22).
+  benchmark_dataset: "s3://{{config.bucket}}/{{config.prefix}}/benchmark/benchmark.json"
   benchmark_output: "s3://{{config.bucket}}/{{config.prefix}}/results.json"
 
 resources:

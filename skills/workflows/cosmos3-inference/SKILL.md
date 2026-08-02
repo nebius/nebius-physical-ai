@@ -53,7 +53,7 @@ host.
 ### Raw text-to-image smoke
 
 ```text
-npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml
+npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
 ```
 
 A real H100 text-to-image smoke that needs no prebuilt image: it clones the

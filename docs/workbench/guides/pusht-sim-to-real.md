@@ -62,7 +62,10 @@ uses the policy image and doesn't need LeRobot on your laptop.
 When you're ready to do it for real on an H100:
 
 ```bash
-npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
+npa workbench workflow submit \
+  npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
+  --run-id <run-id> --var bucket=<your-bucket> \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 That wrapper renders `sim-to-real-pipeline.yaml`, submits it on `H100:1`, runs
@@ -111,7 +114,6 @@ you recorded in Genesis, or a [Reachy 2](reachy2-lerobot-policy.md) dataset.
 ## Dig deeper
 
 - **14-stage production loop:** [Sim-to-real workflow](sim2real-workflow.md) · [Data contracts](sim2real-data-contracts.md)
-- Cookbook (legacy module): [Sim-To-Real Pipeline Runbook](../cookbooks/sim-to-real-pipeline.md)
-- Quickstart (legacy H100 proof): [../sim-to-real-quickstart.md](../sim-to-real-quickstart.md)
-- Workflow YAML: `npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml`
+- Spec: `npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml`
+- Runbook (reads without npa in the loop): `npa/workflows/workbench/sim2real/runbook.yaml`
 - Skill: `skills/workflows/sim-to-real/SKILL.md`

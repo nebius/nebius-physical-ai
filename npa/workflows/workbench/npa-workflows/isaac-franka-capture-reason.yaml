@@ -1,0 +1,85 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of skypilot/isaac-franka-capture-reason.yaml.
+#
+# A headless Isaac Lab Franka rollout renders RGB frames on a GPU, then a hosted Cosmos3 reasoner
+# reads those frames on CPU and writes a manipulation plan. Sim pixels in, plan out; the GPU is
+# held only for the render.
+#
+# The template could not run without a repo checkout inside the pod:
+#
+#     REPO_ROOT="${NPA_REPO_ROOT:-/opt/nebius-physical-ai}"
+#     if [ -d "${REPO_ROOT}/npa" ]; then … else
+#       echo "NPA repo not found at ${REPO_ROOT}; mount or bake /opt/nebius-physical-ai" >&2
+#
+# because the capture code lived in `npa/scripts/`. It is now `npa.workflows.isaac_capture`, so
+# the stage runs against the installed package like every other toolRef and the mounting problem
+# disappears.
+#
+#   npa workbench workflow submit isaac-franka-capture-reason.yaml --run-id <id> \
+#     --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+#     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+metadata:
+  name: isaac-franka-capture-reason
+  description: >
+    Headless Isaac Lab Franka rollout renders RGB frames on a GPU, then a hosted Cosmos3
+    reasoner turns them into a step-by-step manipulation plan.
+  skypilotTwin: npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "isaac-franka-capture-reason/{{run.id}}"
+
+  isaac_task: Isaac-Lift-Cube-Franka-v0
+  capture_max_steps: "80"
+  capture_max_frames: "6"
+
+  reason_model: nvidia/Cosmos3-Super-Reasoner
+  reason_task: >-
+    These images are RGB frames from an Isaac Lab simulation of a Franka arm lifting a cube.
+    Describe the scene, identify the robot and objects, and give a step-by-step manipulation
+    plan.
+  reason_max_images: "8"
+  reason_max_tokens: "1024"
+  reason_temperature: "0.2"
+
+  scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
+  plan_uri: "s3://{{config.bucket}}/{{config.prefix}}/reasoning/"
+
+resources:
+  isaac-gpu:
+    cloud: kubernetes
+    accelerators: L40S:1
+    cpus: 16
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: capture
+
+states:
+  capture:
+    description: Headless Franka rollout renders RGB frames.
+    toolRef: workbench.isaac_lab.capture_frames
+    resources: isaac-gpu
+    outputs:
+      - uri: "{{config.scene_uri}}isaac_capture_summary.json"
+        schema: npa.workbench.isaac_capture_summary.v1
+    next: reason
+
+  reason:
+    description: Hosted Cosmos3 reasoner plans from the rendered frames.
+    needs: [capture]
+    toolRef: workbench.token_factory.reason
+    resources: cpu
+    inputs:
+      - uri: "{{config.scene_uri}}"
+        schema: npa.workbench.scene_frames.v1
+    outputs:
+      - uri: "{{config.plan_uri}}scene_reasoning.json"
+        schema: npa.token_factory.plan.v1
+    terminal: true

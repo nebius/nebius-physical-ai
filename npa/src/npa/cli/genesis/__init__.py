@@ -209,7 +209,13 @@ def _serverless_job_env(
 
 
 def _genesis_warn_if_non_hopper_gpu(platform: str) -> None:
-    if platform not in {"gpu-h200-sxm", "gpu-h100-sxm", "gpu-b300-sxm", "gpu-b200-sxm-a"}:
+    if platform not in {
+        "gpu-h200-sxm",
+        "gpu-h100-sxm",
+        "gpu-b300-sxm",
+        "gpu-b200-sxm-a",
+        "gpu-b200-sxm",
+    }:
         console.print(
             "[yellow]Warning:[/yellow] Genesis GPU-parallel simulation performs best on Hopper-class GPUs; "
             "this serverless smoke will still run on the selected platform."

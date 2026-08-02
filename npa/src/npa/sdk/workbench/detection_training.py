@@ -106,6 +106,7 @@ def eval(
     eval_view: str,
     output_uri: str,
     lance_uri: str = DEFAULT_LANCE_URI,
+    label_map: dict[str, int] | None = None,
     mode: str | None = None,
     service: bool = False,
     endpoint: str = "",
@@ -117,6 +118,7 @@ def eval(
         checkpoint_uri=checkpoint_uri,
         eval_view=eval_view,
         lance_uri=lance_uri,
+        label_map=label_map,
         output_uri=output_uri,
     )
     if _resolve_mode(mode=mode, service=service):

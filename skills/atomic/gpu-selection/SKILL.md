@@ -34,16 +34,35 @@ resources, updates image routing, or reviews render/training placement.
 - L40S: Isaac Lab and SONIC render validation on VM hosts.
 - RTX PRO 6000 Blackwell: Isaac Lab and SONIC render validation on Kubernetes
   with mounted NVIDIA GPU Operator drivers.
+- B200 / B300: headless, state-based training and inference only.
 - CPU: Retargeting and many dataset curation/import steps.
+
+## Blackwell Is Two Different Targets
+
+"Blackwell" spans two CUDA majors, and their binaries are mutually incompatible:
+
+| GPU | Compute capability | SM | Nebius platform |
+|---|---|---|---|
+| RTX PRO 6000 Blackwell | 12.0 | `sm_120` | `gpu-rtx6000` |
+| B200 | 10.0 | `sm_100` | `gpu-b200-sxm` (us-central1) |
+| B300 (Blackwell Ultra) | 10.3 | `sm_103` | `gpu-b300-sxm` |
+
+A green smoke on RTX PRO 6000 does not prove B200/B300. Within major 10,
+forward compatibility holds, so `sm_100` SASS runs on `sm_103`: target B200
+first, then confirm on B300. See
+`docs/workbench/blackwell-datacenter-image-compatibility.md` and the per-image
+verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
 
 ## Gotchas
 
-- H100 and H200 lack RT cores; do not route Isaac Lab or SONIC render validation
-  there.
+- H100, H200, and datacenter Blackwell (B200/B300) lack RT cores; do not route
+  Isaac Lab or SONIC render validation there. `npa.workbench.sonic.routing`
+  classifies these as `datacenter-headless` and rejects render workloads.
 - L40S capacity can be constrained; if the task only needs non-render training,
   H100 may be the pragmatic target.
-- B300/Blackwell enablement depends on upstream library support. Treat it as
-  vendor-paced unless current tests prove the path.
+- B200/B300 enablement depends on upstream library support per tool. Treat it as
+  vendor-paced unless current tests prove the path; the Genesis/Taichi subtree
+  and the NVIDIA vendor stacks are still blocked.
 
 ## Verify
 

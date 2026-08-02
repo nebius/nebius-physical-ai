@@ -140,21 +140,26 @@ not carry enough layout information. The metadata records observation/action
 ordering, shapes, units when supplied, normalization stats when not baked,
 opset, axis mode, and control dt when available.
 
-The matching SkyPilot template is
-`npa/src/npa/workflows/skypilot/sonic-export.yaml` (`name: sonic-export`) and
-uses the same settings through `SONIC_OPSET`, `SONIC_AXES`,
-`SONIC_NORMALIZE`, `SONIC_METADATA`, `SONIC_OBS_SPEC`, `SONIC_ACTION_SPEC`, and
-`SONIC_CONFIG`.
+The matching workflow is the `npa.workflow` spec
+`npa/workflows/workbench/npa-workflows/sonic-export.yaml` (`metadata.name:
+sonic-export`). It passes `--checkpoint {{config.checkpoint_uri}}` and
+`--output {{config.onnx_uri}}` to the same CLI, and both accept `s3://` URIs
+directly. The exporter's remaining knobs (`--opset`, `--axes`, `--normalize`,
+`--metadata`, `--obs-spec`, `--action-spec`, `--config`) use their CLI defaults;
+they are the pinned `spec_gap` for this capability (see
+`npa/tests/guardrails/test_three_tier_contract.py`), so set them on the CLI/SDK
+until the toolRef argv carries them.
 
 ## Export Then Eval
 
-`npa/src/npa/workflows/skypilot/sonic-export-eval.yaml` chains export and
-eval in one SkyPilot task. It accepts `POLICY_CKPT`, `OUTPUT_DIR`,
-`EVAL_BACKEND`, `EPISODES`, `CONTAINER_IMAGE`, and `GPU` through `envs`.
+`npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml` chains export and
+eval as two stages of one spec. Its `config` block carries `checkpoint_uri`,
+`onnx_uri`, `eval_uri`, `episodes` and `env`; override any of them at submit time
+with `--var key=value`.
 
-The default `reference` backend uses `EVAL_ENV=sonic-locomotion-smoke`, which
-runs deterministic locomotion rollouts against the exported ONNX policy and
-writes `sonic_eval_results.json`.
+The eval stage's default `reference` backend runs deterministic locomotion
+rollouts against the exported ONNX policy and writes `eval.json` (the artifact the
+spec declares under `outputs:`) to `config.eval_uri`.
 
 ### BYO External Eval Container
 

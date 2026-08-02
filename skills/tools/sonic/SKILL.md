@@ -33,9 +33,13 @@ workflow composition with retargeting or MJLab.
 - CLI: `deploy`, `train`, `export`, `eval`, `serve`, `status`, and `list`.
 - SDK/API: keep train/eval/export/serve request construction shared with service
   payloads and tests where possible.
-- YAML: SONIC workflows live under `npa/src/npa/workflows/skypilot/`, including
-  `sonic-train-standalone.yaml`, `sonic-export.yaml`, `sonic-eval.yaml`,
-  `sonic-export-eval.yaml`, and `sonic-locomotion-finetuning.yaml`.
+- Workflow: SONIC specs live under `npa/workflows/workbench/npa-workflows/`
+  (`sonic-train.yaml`, `sonic-export.yaml`, `sonic-eval.yaml`,
+  `sonic-export-eval.yaml`, `sonic-locomotion-finetuning.yaml`). Submit them with
+  `npa workbench workflow submit`. `sonic export` / `sonic eval` accept `s3://`
+  checkpoints, ONNX policies and outputs, so no staging glue is needed.
+  Only `sonic-train-standalone.yaml` and `sonic-locomotion-finetuning.yaml` still
+  have a raw SkyPilot template under `npa/src/npa/workflows/skypilot/`.
 
 ## Routing And Validation
 

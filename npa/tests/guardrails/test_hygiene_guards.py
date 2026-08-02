@@ -49,6 +49,33 @@ def test_skypilot_launching_scripts_without_sigterm_are_warned() -> None:
         )
 
 
+def test_calling_the_shared_teardown_helper_counts_as_a_sigterm_hook(tmp_path: Path) -> None:
+    """The check matched the literal word, so it flagged scripts that do the right thing.
+
+    `install_teardown_signal_handlers` installs SIGTERM/SIGINT handlers that run the
+    idempotent teardown path. Three runners call it and were warned about anyway, while
+    `run_isaac_lab_rl.py` was cleared only because a *comment* says "SIGTERM" — a check that
+    rewards prose over behaviour teaches readers to ignore it.
+    """
+
+    launcher = tmp_path / "run_thing.py"
+    launcher.write_text(
+        "from npa.orchestration.skypilot.signal_teardown import "
+        "install_teardown_signal_handlers\n"
+        "submit_workflow(spec, run_id)\n"
+        "install_teardown_signal_handlers(guard.teardown)\n",
+        encoding="utf-8",
+    )
+    silent = tmp_path / "run_silent.py"
+    silent.write_text("submit_workflow(spec, run_id)\n", encoding="utf-8")
+    unrelated = tmp_path / "helper.py"
+    unrelated.write_text("print('no launch here')\n", encoding="utf-8")
+
+    missing = skypilot_launching_scripts_missing_sigterm([launcher, silent, unrelated])
+
+    assert missing == [silent]
+
+
 def test_gpu_tests_skip_only_on_explicit_env_flags() -> None:
     violations: list[str] = []
     for path in _test_paths():

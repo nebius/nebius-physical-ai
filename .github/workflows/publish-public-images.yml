@@ -21,12 +21,25 @@
 # real rehearsal: it resolves the plan, proves the source credential, reads every pinned
 # source tag, and runs the gate. Only the copy and the public verification are skipped.
 #
-# Required secret to actually copy:
-#   NEBIUS_CR_TOKEN — a Nebius CR token (static key or access token) with viewer
-#                     on the source registry, used as the docker password (user
-#                     "iam"). GHCR push uses the built-in GITHUB_TOKEN. A dry run
-#                     without it still prints the plan, but says it could not check
-#                     the source registry.
+# SOURCE REGISTRY CREDENTIAL. Nebius CR authenticates `docker login` as user "iam" with
+# either kind of secret below. They differ only in how long they survive, which is the
+# whole game for a workflow that is dispatched by hand months apart:
+#
+#   NEBIUS_SA_CREDENTIALS_JSON — preferred. An authorized-key credentials JSON for a
+#                     service account holding viewer on the source registry. The job
+#                     mints a fresh access token during the run, so nothing expires
+#                     between dispatches and no one has to re-paste anything. Opt-in:
+#                     the job falls back to NEBIUS_CR_TOKEN when this is unset.
+#   NEBIUS_CR_TOKEN — a pre-issued token. This MUST be a long-lived static key
+#                     (`nebius iam static-key issue --service=CONTAINER_REGISTRY`,
+#                     6 months by default), NOT the output of `nebius iam
+#                     get-access-token`: an access token lives 12 hours, so a stored
+#                     one is already dead by the next manual dispatch. That is exactly
+#                     how the first run of this workflow failed — 23 identical
+#                     UNAUTHORIZED reads, nothing published.
+#
+# GHCR push uses the built-in GITHUB_TOKEN. A dry run with neither source secret still
+# prints the plan, but says it could not check the source registry.
 
 name: Publish public images
 
@@ -41,6 +54,14 @@ on:
         description: "Dry run (plan only, no copy)"
         type: boolean
         default: true
+      skip_missing:
+        description: >-
+          Publish what exists, skipping images the source registry does not have yet.
+          The plan comes from the packaging contract (what the repo BUILDS), so a tool
+          that landed before its image was built otherwise blocks every ready image.
+          A denial is never skipped.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -51,10 +72,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -80,27 +101,24 @@ jobs:
 
       - name: Login to GHCR
         if: ${{ inputs.dry_run == false }}
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GH_TOKEN" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # Runs in dry-run too, so the safe rehearsal actually rehearses the credential.
-      # NEBIUS_CR_TOKEN is short-lived, and a dry run that skipped the login could only
-      # ever tell you the plan was well-formed.
-      - name: Login to Nebius source registry
+      # Runs in dry-run too, so the safe rehearsal actually rehearses the credential. A dry
+      # run that skipped this could only ever tell you the plan was well-formed, which was
+      # never the thing that broke.
+      #
+      # Secrets arrive through `env:` rather than `${{ }}` interpolation, which would splice
+      # them into the script text where a quote or newline changes what runs.
+      - name: Authenticate to the Nebius source registry
         id: source-login
-        run: |
-          if [ -z "${{ secrets.NEBIUS_CR_TOKEN }}" ]; then
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
-              echo "::notice::NEBIUS_CR_TOKEN is not set, so this dry run cannot check the source registry."
-              echo "available=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "NEBIUS_CR_TOKEN secret is required to copy from the Nebius source registry" >&2
-            exit 1
-          fi
-          for host in cr.eu-north1.nebius.cloud cr.us-central1.nebius.cloud; do
-            echo "${{ secrets.NEBIUS_CR_TOKEN }}" | crane auth login "$host" -u iam --password-stdin
-          done
-          echo "available=true" >> "$GITHUB_OUTPUT"
+        env:
+          NEBIUS_SA_CREDENTIALS_JSON: ${{ secrets.NEBIUS_SA_CREDENTIALS_JSON }}
+          NEBIUS_CR_TOKEN: ${{ secrets.NEBIUS_CR_TOKEN }}
+          # A dry run without secrets still reports the plan and says what it could not check.
+          REQUIRE_CREDENTIAL: ${{ inputs.dry_run == false }}
+        run: ./npa/scripts/ci_source_registry_login.sh
 
       # `crane auth login` writes a config file and exits 0 for any string -- it never
       # contacts the registry -- so the step above proves nothing about NEBIUS_CR_TOKEN.
@@ -109,7 +127,11 @@ jobs:
       # packages already created. It writes nothing, so it is safe in dry-run.
       - name: Preflight the source registry credential and every pinned tag
         if: ${{ steps.source-login.outputs.available == 'true' }}
-        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}" --preflight
+        run: |
+          python -m npa.deploy.publish_public \
+            --target "${{ steps.target.outputs.value }}" \
+            ${{ inputs.skip_missing && '--skip-missing' || '' }} \
+            --preflight
 
       # Last line of defence before an irreversible action. publish_public trusts the
       # packaging contract, which is a statement about the Dockerfiles; this checks the
@@ -159,7 +181,10 @@ jobs:
       # publish; the summary below turns it into a click-through list.
       - name: Publish and verify
         if: ${{ inputs.dry_run == false }}
-        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}"
+        run: |
+          python -m npa.deploy.publish_public \
+            --target "${{ steps.target.outputs.value }}" \
+            ${{ inputs.skip_missing && '--skip-missing' || '' }}
 
       - name: Write the visibility checklist to the job summary
         if: ${{ failure() && inputs.dry_run == false }}
@@ -183,6 +208,7 @@ jobs:
           # Only the packages that are still private, so the list shrinks as they are flipped.
           python -m npa.deploy.publish_public \
             --target "${{ steps.target.outputs.value }}" \
+            ${{ inputs.skip_missing && '--skip-missing' || '' }} \
             --verify-public --checklist 2>/dev/null \
             | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
           cat >> "$GITHUB_STEP_SUMMARY" <<'MD'

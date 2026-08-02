@@ -191,17 +191,17 @@ sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY npa/src/npa/workflows/skypilot/<your>.yaml
 ```
 
-Worked examples: `tokenfactory-rollout-judge.yaml` (GPU rollout → VLM judge) and
-`tokenfactory-scene-to-rollout-judge.yaml` (reason → GPU rollout → VLM judge).
+Worked examples: `npa-workflows/tokenfactory-rollout-judge-combo.yaml` (GPU rollout → VLM judge) and
+`npa-workflows/tokenfactory-scene-to-rollout-judge.yaml` (reason → GPU rollout → VLM judge).
 
 ## Step 4 — the shipped combos (study these)
 
 | Workflow | Compute (AI Cloud) | Token Factory | CLI | SDK | YAML |
 | --- | --- | --- | --- | --- | --- |
-| train-triage | serverless GPU LeRobot train | text triage report | runner | — | `tokenfactory-train-triage.yaml` (k8s) |
+| train-triage | k8s GPU LeRobot train | text triage report | `workflow submit` | `npa.workflow.submit` | `npa-workflows/tokenfactory-train-triage.yaml` |
 | sim-sweep | N serverless GPU trains (fan-out) | text design + ranking | runner | — | — (fan-out: runner only) |
-| rollout-judge | k8s GPU rollout | VLM judge | `workflow submit` | `npa.workflow.submit` | `tokenfactory-rollout-judge.yaml` |
-| scene-to-rollout-judge | k8s GPU rollout | reason → VLM judge | `workflow submit` | `npa.workflow.submit` | `tokenfactory-scene-to-rollout-judge.yaml` |
+| rollout-judge | k8s GPU rollout | VLM judge | `workflow submit` | `npa.workflow.submit` | `npa-workflows/tokenfactory-rollout-judge-combo.yaml` |
+| scene-to-rollout-judge | k8s GPU rollout | reason → VLM judge | `workflow submit` | `npa.workflow.submit` | `npa-workflows/tokenfactory-scene-to-rollout-judge.yaml` |
 
 How to run each: [cookbooks/tokenfactory-compute-combos.md](./cookbooks/tokenfactory-compute-combos.md).
 
@@ -222,7 +222,7 @@ The **YAML combos** are submittable from the SDK too, via `npa.workflow.submit`:
 from npa import workflow
 
 workflow.submit(
-    "npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml",
+    "npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml",
     run_id="rollout-judge",
     var=[
         "NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1",
@@ -237,7 +237,7 @@ workflow.submit(
 > Python runners because they need cross-stage orchestration — await a Job,
 > download artifacts, build prompts, fan out N variants — that a single serial
 > SkyPilot YAML cannot express. `train-triage` also has an equivalent **k8s
-> YAML** form (`tokenfactory-train-triage.yaml`) for the declarative path.
+> spec** form (`npa-workflows/tokenfactory-train-triage.yaml`) for the declarative path.
 
 ## Checklist for your own combo
 

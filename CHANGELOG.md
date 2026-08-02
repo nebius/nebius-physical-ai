@@ -7,6 +7,245 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Retiring the raw SkyPilot task catalog (36 → 0 templates (of the 36; two arrived mid-sweep from #234/#235))
+
+`npa.workflow/v0.0.1` specs are becoming the only workflow authoring surface.
+SkyPilot remains the execution engine, and `npa workbench workflow submit` still
+accepts a customer's own SkyPilot YAML — what is going away is the shipped catalog
+under `npa/src/npa/workflows/skypilot/`.
+
+- **Retired 23 templates**, each only after its spec reached a terminal `SUCCEEDED` on
+  real infrastructure (run ids in `EVIDENCE.md` §R2–R6, §R10, §R22): `cosmos3-reason.yaml`,
+  `isaac-lab-rl-sweep.yaml`, `sonic-export.yaml`, `sonic-eval.yaml`,
+  `sonic-export-eval.yaml`, `token-factory-caption.yaml`,
+  `token-factory-generate.yaml`, `token-factory-cosmos-reason.yaml`,
+  `vlm-eval-token-factory.yaml`, `mjlab-eval.yaml`, `retargeting.yaml`,
+  `vlm-eval.yaml`, `vlm-eval-benchmark.yaml`, `sim-to-real-loop.yaml`,
+  `scenario-gen-adversarial.yaml`, `sim2real-envgen-split.yaml`, `cosmos3-ea-fetch.yaml`,
+  `tokenfactory-train-triage.yaml`, `tokenfactory-rollout-judge.yaml`,
+  `tokenfactory-scene-to-rollout-judge.yaml`, `sim2real-actions.yaml`,
+  `isaac-franka-capture-reason.yaml`, `cosmos2-transfer.yaml`,
+  `sim-to-real-pipeline.yaml`, `sim-to-real-trigger.yaml`, `dataset-ingest-curate.yaml`,
+  `cosmos3-text-to-image-inference.yaml`, `bdd100k-pipeline.yaml`.
+  `test_skypilot_catalog_retirement.py` pins the remaining set, so the tally is
+  machine-checked and a new raw template needs a deliberate edit.
+- **Multi-node stages.** A resource profile can declare `num_nodes`, so a spec can ask
+  for a real gang-scheduled block; previously that was only reachable through
+  `npa burst submit --nodes`, outside the workflow surface. Additive: a 1-node profile
+  renders exactly as before. Reference spec `npa-workflows/multi-node-probe.yaml`
+  verifies one report per rank from distinct hosts.
+- **`isaac-lab-cosmos-sdg-burst-smoke.yaml` relocated** to `npa/src/npa/burst/examples/`:
+  it is a single-task input to `npa burst submit-yaml`, not a workflow (no plan, no stage
+  graph, nothing for a `toolRef` to describe), and the template said so itself. A guardrail
+  pins one-task-per-file and the survival of its `${VAR}` placeholders, and proves burst
+  accepts it offline.
+- **BYOF resource profiles relocated** from `npa/src/npa/workflows/skypilot/` to
+  `npa/src/npa/workflows/byof/profiles/` (they are pod shapes reached through
+  `byof.yaml`, not workflow templates), and the three BYOF runner scripts gained
+  `--secret-env`, defaulting to the S3 credentials their profiles need for uploads —
+  without which a run provisioned, trained, and then died on `NoCredentialsError`.
+- **Live-matrix coverage:** the two insights specs (`insights-smoke`,
+  `insights-aggregate`) gained entries and now run live — the harness seeds the two
+  artifact shapes `workbench.insights.ingest_run` recognises, which is what was
+  missing; and the two dataset-of-record specs, for which
+  `npa.workflows.dataset_fixture` generates raw sensor records satisfying both specs'
+  quality gates. Uncovered specs: 17 -> 12; matrix cases: 24 -> 31.
+  `scenario-gen-smoke` needed no fixture at all — its adversary backend is
+  deterministic and GPU-free. `dataset-ingest-curate` is `plan_only` for a stated
+  infrastructure reason (its `register` stage needs the LanceDB workbench service,
+  which is not deployed); its other four stages did pass live.
+- **New test fixture:** `npa.workflows.motion_fixture` +
+  `scripts/stage-sonic-motion-fixture.sh` synthesize a valid SOMA-CSV G1 motion clip
+  using only the standard library, so the retargeting-backed specs are live-testable
+  without NVIDIA's dual-licensed motion dataset. `retargeting.yaml`'s live case was
+  previously **failing** for lack of input data.
+- **New spec:** `npa-workflows/vlm-eval-token-factory.yaml` — zero-GPU VLM scoring
+  through the hosted `api` backend. This is the VLM eval path that needs no vLLM
+  server, and it is registered in the live matrix as a `cpu` case.
+- **`outputs:` declarations corrected in eight specs (eleven stages).** A stage can
+  succeed while writing its result somewhere other than the URI the spec declares —
+  `vlm-eval` writes `vlm_eval_stub.json`, `mjlab eval` writes `mjlab_eval.json`, the
+  Cosmos reasoner writes `scene_reasoning.json`, and several specs declared
+  `report.json` / `plan.json`. `test_spec_declared_outputs.py` now compares every
+  stage's declared artifact against the tool's own `*_result_uri_for()` helper.
+- `npa workbench {mjlab,retargeting,token-factory,vlm-eval} workflow|status` print
+  npa.workflow spec paths instead of raw SkyPilot template paths, and
+  `vlm-eval workflow|status` gain a `token_factory_workflow` key. A guardrail asserts
+  every advertised path is a real file.
+- **User-facing behaviour changes:**
+  - `npa workbench sonic export` and `npa workbench sonic eval` now accept `s3://`
+    URIs for `--checkpoint`, `--onnx`, `--obs-spec`, `--action-spec`, `--config` and
+    `--output`, downloading and uploading as needed (including an ONNX's
+    `<name>.onnx.data` external weights). Local paths behave exactly as before.
+    `sonic eval` adds an `onnx_uri` field to its result when the input was an object
+    URI.
+  - `npa workbench isaac-lab train` is now invoked correctly by
+    `workbench.rl.policy_train`: the toolRef passed `--learning-rate`, `--batch-size`
+    and `--input-path`, none of which exist on that command. Trainer hyper-parameters
+    go through Isaac Lab's repeatable Hydra `--override KEY=VALUE`, `batch_size`
+    becomes the real `--num-envs`, and `--input-path` becomes `--data-path`. The three
+    specs that use it rename their `batch_size` config key to `num_envs`.
+  - `workbench.rl.evaluate_policy` passed `--episodes`; the CLI option is
+    `--num-episodes`.
+  - `workbench.sonic.eval` passed `--output json`, conflating the **result path** with
+    the output format, so the eval result was written to a relative `json/` directory
+    inside the pod and the artifact the spec declared never appeared. It now passes
+    `--output <eval_uri> --output-format json`; `sonic-eval.yaml` and
+    `sonic-export-eval.yaml` gain an `eval_uri` config key.
+  - `solutions.toml`'s `sonic-locomotion-finetuning` solution now submits the
+    npa.workflow spec instead of the raw template.
+- **`npa workbench vlm-eval loop`** — score every rollout under a prefix and write the
+  aggregate `task_success_report.json` the sim-to-real loop gates on. `vlm-eval run`
+  scores *one* rollout (it discovers frames recursively), so this capability existed only
+  as ~80 lines of bash inside `sim-to-real-loop.yaml` and, separately, as Python inside a
+  gated GPU test. The report is field-compatible with the template's, including the
+  distinction that `task_success` gates on the **mean** score rather than the pass rate.
+  New spec `npa-workflows/vlm-eval-loop.yaml`.
+- **A self-hosted VLM stage now serves the model it calls.** `vlm_backend: self-hosted`
+  makes the tool POST to localhost, and nothing in a spec started a server — the stage
+  failed with `Connection refused`. The renderer gained a per-`toolRef` **run preamble**
+  (the sibling of its setup hook; a background service cannot start in `setup:`, which
+  SkyPilot runs in a different shell) that starts vLLM, health-checks `/health`, fails
+  fast with the server log if it dies, and traps `EXIT` so no GPU-resident server leaks.
+  It requires nothing of the task image: `ninja` and a CUDA compiler both come from pip,
+  and the JIT-dependent sampler falls back to its pure-PyTorch equivalent.
+  `config.vlm_serve_ready_seconds` (default 900 s) tunes the readiness window.
+- **`detection-training train` gained `--wait` and `--label-map`** — the poll-until-done
+  loop and the category map that `bdd100k-pipeline.yaml`'s template did in bash and that
+  no spec could reach. `--wait` is opt-in; the BDD100K and AV night-scene specs use it, so
+  their eval stages no longer race a checkpoint that does not exist yet.
+- **`vlm-eval-benchmark.yaml`'s twin matched its template in name only:** it passed a
+  **repo path** as `--dataset` (unresolvable in a pod) and ran the `stub` backend, so it
+  never touched a VLM. Both fixed, and the repo-path class of bug is now machine-checked
+  by `test_spec_paths_are_not_repo_relative.py`, which immediately found five `byof-*`
+  specs doing the same thing. `resolve_byof_profile_path()` accepts a packaged profile
+  **name**, so an installed wheel resolves what a checkout does.
+- **`detection-training eval` gained `--discover-checkpoint` and
+  `--write-canonical-metrics`**, and now fails on a non-numeric `mAP`. All three were bash
+  and `jq` inside `bdd100k-pipeline.yaml`, so no spec could reach them: without discovery the
+  eval stage scored the training *directory* instead of the checkpoint training wrote, and
+  without the canonical write the BDD100K spec declared a `metrics.json` nothing produced.
+- **`run_bdd100k_pipeline.py` renders the spec** (`--spec`, with `--yaml` kept as an alias)
+  instead of injecting env vars into raw SkyPilot documents, and its `--mock-endpoints`
+  validation now executes **each plan step's resolved argv** against stand-in services and
+  checks the call *order* — every `POST /train` followed by `GET /status`, every `POST /eval`
+  preceded by `GET /runs`. That drive immediately found two real defects: the
+  `create_failure_views` toolRef passed `--table` to a command whose option is
+  `--source-table` (so `curate-views` could never have run), and the eval prefixes lacked a
+  trailing slash, so the declared artifact URI was
+  `…/eval/bdd100k_rider_train` + `metrics.json` concatenated.
+- **`workbench.sim2real_envgen.raw_shard` could never have run.** It omitted `--run-id`,
+  which the module's parser requires, so every stage using it died on a usage error; three
+  shipped specs referenced it. It was also handed the raw-env prefix where the module expects
+  the **run root** (from which it derives `envs/raw`, `envs/train`, `envs/heldout`,
+  `envs/manifest`), and the four specs using it declared a `manifest.json` that subcommand
+  never writes. All fixed, plus a new `workbench.sim2real_envgen.split` toolRef.
+- **New spec `sim2real-envgen-shards.yaml`** declares the shard fan-out the retired template
+  drove from a Kubernetes Job completion index: a `parallel:` group whose members differ only
+  through `params.shard_index`, with the split as a barrier. Live proof records
+  `max_concurrent_observed: 2` and a split manifest that saw all 64 envs, 32 from each shard.
+- **A `toolRef` can declare third-party CLIs it shells out to**
+  (`TOOL_REF_PIP_REQUIREMENTS`), installed only when `command -v` cannot find them.
+  `cosmos fetch` runs `huggingface-cli`, which the retired template pip-installed in its
+  setup — the one load-bearing line of a ~35-line preamble. New spec `cosmos-fetch.yaml` plus
+  `workbench.cosmos.{check,fetch}` toolRefs; the template's hand-rolled `test -n` token checks
+  are dropped because `cosmos check` reports which access is missing and continues.
+- **Every `toolRef` now invokes `python3`, not `python`.** Five did the latter, which some
+  images do not provide: a stage died with `bash: python: command not found` inside the LeRobot
+  vendor image, having passed on SkyPilot's default image (miniconda supplies `python` there).
+  A guardrail pins it.
+- **`lerobot policy_container train --artifacts-s3-uri`** publishes a run's whole output tree,
+  not just the checkpoint `--checkpoint-s3-uri` uploads, so a downstream stage can read the run.
+- **New `npa.workflows.token_factory_triage`** makes the triage stage executable: it digests a
+  run's textual artifacts and has a hosted text model write the report, replacing ~45 lines of
+  inline bash that ended in `token-factory generate --system-prompt "$(cat …)"`. It fails loudly
+  rather than triaging nothing when a run has no readable text.
+- **A `toolRef` can declare its vendor image's interpreter** (`TOOL_REF_VENDOR_INTERPRETERS`).
+  Setup installs npa into it — with `--no-deps`, so a vendor's pinned stack is never perturbed —
+  and records it as the stage interpreter, so a tool and the vendor library it imports share one
+  environment. Without this, a stage on a vendor image runs the system python and fails with
+  `No module named 'lerobot'`; the probe checks `import npa.workbench` rather than `import npa`,
+  because these images bake a partial npa on `PYTHONPATH` that would otherwise mask the problem.
+- **`npa-lerobot` is SkyPilot-hostable** (plus a `Dockerfile.k8s-prereqs` for repairing a
+  published tag). Note that `0.5.1` fails LeRobot training at step 0 with a torch/torchcodec ABI
+  mismatch; use `0.6.0` or later.
+- **`lerobot eval` gained `--rollouts-s3-uri`** (publish the rendered episodes) and resolves a
+  remote `--checkpoint-path`: a local path, an `s3://` prefix or a Hugging Face model id, because
+  a stage's pod starts empty. Note LeRobot >= 0.6 requires the processor format, so a
+  pre-0.6 public policy such as `lerobot/diffusion_pusht` needs migrating first.
+- **`npa workbench cosmos3 text-to-image`** turns the retired-in-spirit
+  `cosmos3-text-to-image-inference.yaml` bash block into a real command: fetch, uv sync, run the
+  framework's inference as an argv, verify the image, publish it with a manifest. Its template is
+  NOT yet retired — see EVIDENCE.md §R39 for the one remaining blocker.
+- **Hugging Face and uv are resolved as modules, not PATH lookups**, so "installed it, still
+  cannot find it" stops being a failure mode.
+- **PATH ordering (`/usr/bin` first) is an Isaac requirement, not a universal one.** Forcing it
+  on an image whose own python carries npa breaks setup.
+- **`npa` is shimmed to the recorded interpreter**, like `python3` already was, so a vendor
+  image's baked console script cannot run a stale CLI against a fresh library.
+- **The staged npa source goes ahead of a baked one on `PYTHONPATH`.** A source tree on
+  PYTHONPATH shadows every install; three vendor images ship one.
+- **`npa workbench cosmos2 transfer` publishes its manifest to S3** beside the augmented clip
+  instead of only echoing it, so the provenance of a synthetic clip survives the pod.
+- **`npa workbench detection-training deploy` defaults to the ambient kubeconfig.** It used to
+  default `--cluster-name` to a specific profile, so deploys silently landed on another cluster.
+  It also learned the RTX PRO 6000 node label and mints its pull secret instead of copying a
+  docker login that expires.
+- **`detection-training eval` takes `--label-map`,** like `train` already did. Without it a
+  dataset with string categories fails on `int('train')`.
+- **`npa workbench lancedb deploy --runtime kubernetes`** puts the LanceDB service in the
+  cluster, where a workflow stage can reach it. Previously the only runtimes were a local docker
+  daemon, a blocked VM path, and LanceDB Cloud.
+- **The LanceDB wrapper serves `/index` and `/query`**, the paths the dataset-of-record has
+  always posted, and `dataset ingest` can populate the index it later queries.
+- **`sonic train --accept-nvidia-eula`** carries the operator's licence acceptance from the
+  spec (`sonic_accept_nvidia_eula`, empty by default) to the vendor entrypoint, which refuses
+  until it is given. Acceptance is the operator's to make, so nothing asserts it for them.
+- **`npa workbench sonic train --runtime in-job`** trains in the pod the stage is already
+  running in, instead of provisioning a Nebius Job from inside it.
+- **The legacy `sim_to_real` stack is retired.** The watcher survives and submits
+  `npa-workflows/sim2real-vlm-rl.yaml`; `scripts/run_sim_to_real_pipeline.py` and
+  `run_sim_to_real_quickstart.py` are gone with it.
+- **Isaac Lab frame capture is a package module** (`npa.workflows.isaac_capture`) instead of a
+  repo script, so it runs in a pod with no checkout; `npa/scripts/capture_isaac_lab_scene_frames.py`
+  remains as a shim. It also owns its camera framing (`--camera-eye`/`--camera-target`) and
+  renders at 512x512 for VLM consumption.
+- **Isaac images give Kit writable data/cache/log directories.** Without them Isaac boots and
+  then stalls indefinitely without rendering; the k8s-prereqs guardrail now separates "can be
+  scheduled" from "can render".
+- **The vendor npa install falls back to installing dependencies** when `--no-deps` leaves npa
+  unimportable, which is the case in Isaac's kit python.
+- **`vlm-eval run --task-from <artifact>`** scores a rollout against the plan an earlier
+  reasoning stage wrote, reading its `analysis` field. The retired scene-to-rollout-judge
+  template did this with `--task "$(python3 … )"`; without it a three-stage combo's judge would
+  score against a literal string.
+- **`npa.workflow.submit` gained `image=`**, mirroring the CLI's `--image` (including `"none"` to
+  clear workbench pins). A spec that pins images could not previously be submitted from Python
+  against anything else.
+- **The `npa` console script is found when PEP 668 pushes it to `--user`**, which previously made
+  a stage fail with `bash: npa: command not found`.
+- **A LeRobot training failure carries its log** (last 60 lines) instead of naming a path inside
+  a pod that no longer exists.
+- **New guardrails** (none weakened): a catalog-wide check that every `toolRef` argv
+  names real CLI options and passes values its options can mean — including the `npa …`
+  commands **inside** a `bash -c` toolRef, a blind spot where a real defect had shipped;
+  a check that a `python -m` toolRef argv parses against its module's own argparse parser,
+  where a second one hid (a missing required `--run-id`); a
+  check that no spec hands a stage a path inside the repo checkout; a check that the
+  reference-workflows skill's template list matches the directory; the three-tier
+  contract's third tier moved from SkyPilot `envs` onto the spec + toolRef argv, with
+  each contract pinning and *classifying* the parameters a spec cannot set yet; a
+  live-matrix check that each case declares the secrets its plan hints at; and a
+  `solutions.toml` check that every advertised `workflow submit <path>` exists.
+- **Engine:** a `toolRef` can declare an npa extra (`TOOL_REF_PIP_EXTRAS`), installed
+  from the same source tree npa came from, so a SONIC stage runs on SkyPilot's default
+  image without a vendor image.
+- **Images:** the SONIC Dockerfile gains the four SkyPilot-on-Kubernetes prerequisites
+  the Isaac Lab image needed, plus a `Dockerfile.k8s-prereqs` for repairing a
+  published tag in-cluster. The image guardrail now covers `sonic`.
+- **Test fixtures:** `npa.workflows.sonic_fixture` + `scripts/stage-sonic-export-fixture.sh`
+  build a real, tiny SONIC policy checkpoint **in-cluster**, so the SONIC twins are
+  live-testable without NVIDIA's gated `GEAR-SONIC` weights.
 ### NVIDIA Cosmos Evaluator + Cosmos Curator in the Physical AI Data Factory
 
 - The blueprint's evaluate/validate gate now grades with the real
@@ -153,7 +392,6 @@ RTX PRO 6000 GPUs) rather than by reading it.
 - Fixed: a relative Lichtblick `ds.url` was never loaded by the viewer (its
   `remote-file` source silently ignores relative URLs), so the recording URL is now
   always pinned onto the browsed origin.
-
 ### npa.workflow: real parallel execution and a runtime orchestrator
 
 - **Parallel fan-out.** `npa.workflow/v0.0.1` specs can declare a `parallel:`

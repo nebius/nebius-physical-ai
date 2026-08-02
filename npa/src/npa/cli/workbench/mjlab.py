@@ -22,7 +22,9 @@ app = typer.Typer(
 )
 console = Console(stderr=True)
 
-WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/mjlab-eval.yaml")
+# The `npa.workflow` spec this tool is driven by. Path only: `mjlab workflow` /
+# `status` print it, and `npa workbench workflow submit <path>` runs it.
+WORKFLOW_PATH = Path("npa/workflows/workbench/npa-workflows/mjlab-eval.yaml")
 
 
 class OutputFormat(str, Enum):
@@ -99,7 +101,7 @@ def workflow_cmd(
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Show the SkyPilot YAML template for MJLab evaluation."""
+    """Show the npa.workflow spec for MJLab evaluation."""
 
     _emit(
         {

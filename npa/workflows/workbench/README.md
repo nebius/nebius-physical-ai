@@ -46,15 +46,20 @@ are documented in
 
 ## Sim-To-Real
 
-The H100 quickstart submits:
+Submit the staged VLM-to-RL loop:
 
 ```bash
-npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
+npa workbench workflow submit \
+  npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
+  --run-id <run-id> --var bucket=<your-bucket> \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-It renders and runs the internal template
-`npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml`. The deeper reference
-path is documented in `docs/workbench/cookbooks/sim-to-real-pipeline.md`.
+The legacy `sim_to_real` H100 quickstart and its template are retired: that path ran
+`npa.workflows.sim_to_real real-loop`, which raises a `DeprecationWarning` pointing at the
+staged engine. The runbook that reads without npa in the loop is
+[`sim2real/runbook.yaml`](sim2real/runbook.yaml); the deeper reference is
+[`docs/workbench/guides/sim2real-workflow.md`](../../../docs/workbench/guides/sim2real-workflow.md).
 
 ## Submission Pattern
 
@@ -62,7 +67,6 @@ Use the thin Python wrappers under `npa/scripts/` when a workflow needs runtime
 substitution, S3 paths, secret-env injection, GPU validation, or cleanup:
 
 ```bash
-npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py --help
 npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py --help
 npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py --help
 ```
