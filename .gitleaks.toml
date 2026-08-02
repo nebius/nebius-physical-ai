@@ -40,6 +40,14 @@ regexes = [
     '''hf_testsecret123456''',
     '''hf_npae2eworkflowsecret1234567890''',
     '''AKIAABCDEFGHIJKLMNOP''',
+    # Env-var NAME, not a key: generic-api-key matches the `*_API_KEY... = "..."`
+    # shape even when the value is the name of the variable to read the key from.
+    # Same class as the historical NPA_S3_BUCKET false positive noted below.
+    '''NPA_COSMOS3_NGC_API_KEY_ENV''',
+    # Public content-addressable digest of nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04,
+    # pinned in the base-image CVE scan matrix. nebius-generic-id matches it only
+    # because the hex happens to start with "e07".
+    '''e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01''',
 ]
 paths = [
     '''SECURITY\.md''',
