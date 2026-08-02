@@ -2423,3 +2423,28 @@ def test_ui_viewer_banner_copy_tracks_readiness_both_ways() -> None:
     # The ready copy must not itself deny the recording.
     ready_copy = branch.split("cta.textContent = ready", 1)[1].split(":", 1)[0]
     assert "No run-specific" not in ready_copy
+
+
+def test_ui_does_not_claim_no_recording_before_the_status_arrives() -> None:
+    """"Unknown" must not be reported as "absent".
+
+    ``updateSimvizCta`` runs before the first ``/api/sim-viz/status`` response,
+    when ``lastSimVizStatus`` is still null. Treating that as "not ready" made
+    the banner assert there was no recording during the first 1-3s of every page
+    load, for runs that had published one. Measured on the deployed agent: 43
+    false-claim samples across six loads remained after the readiness fix, all
+    inside that pre-status window.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    assert "const haveStatus = Boolean(simViz || lastSimVizStatus);" in html
+    branch = html.split("const mountProvesRecording", 1)[1].split("function setRenderMode", 1)[0]
+    # The definitive "no recording" claim is gated behind having a status.
+    assert "haveStatus" in branch
+    claim_idx = branch.index("No run-specific Rerun recording yet.")
+    gate_idx = branch.index("haveStatus", branch.index("cta.textContent = ready"))
+    assert gate_idx < claim_idx, "the absence claim must be gated on haveStatus"

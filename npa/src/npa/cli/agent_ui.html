@@ -4146,6 +4146,11 @@
         // in the reported screenshot. Keep each mode's message self-consistent.
         const cta = document.getElementById("simvizCta");
         if (!cta) return;
+        // `lastSimVizStatus` starts null, so this distinguishes "no recording"
+        // (known absent) from "we have not asked yet" (unknown). Asserting the
+        // former while still in the latter is what made the banner lie during
+        // the first ~1-3s of every page load.
+        const haveStatus = Boolean(simViz || lastSimVizStatus);
         const status = simViz || lastSimVizStatus || {};
         if (activeRenderMode === "lichtblick") {
           const ready = Boolean(status.lichtblick_ready || status.mcap_uri);
@@ -4199,8 +4204,10 @@
         cta.textContent = ready
           ? "Rerun recording is ready for this run; the embedded viewer is still " +
             "loading. Use 'Open full Rerun' if the panel below stays blank."
-          : "No run-specific Rerun recording yet. Use the Run status/logs panel below " +
-            "for stage progress and result.";
+          : haveStatus
+            ? "No run-specific Rerun recording yet. Use the Run status/logs panel below " +
+              "for stage progress and result."
+            : "Checking this run for a Rerun recording...";
       }
       function setRenderMode(mode) {
         const next = String(mode || "rerun");
