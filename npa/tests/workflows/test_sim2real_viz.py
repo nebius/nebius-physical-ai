@@ -26,7 +26,9 @@ class _FakeRerun:
 
     def __init__(self) -> None:
         self.logged: list[tuple[str, str]] = []
+        self.logged_times: list[tuple[str, str, float]] = []
         self.times: list[float] = []
+        self.current_time = 0.0
         self.saved_path: Path | None = None
         self.disconnected = False
 
@@ -62,10 +64,13 @@ class _FakeRerun:
         return None
 
     def set_time_seconds(self, timeline: str, seconds: float, recording: Any = None) -> None:
+        self.current_time = float(seconds)
         self.times.append(float(seconds))
 
     def log(self, entity_path: str, archetype: dict[str, Any], recording: Any = None) -> None:
-        self.logged.append((entity_path, archetype.get("kind", "?")))
+        kind = archetype.get("kind", "?")
+        self.logged.append((entity_path, kind))
+        self.logged_times.append((entity_path, kind, self.current_time))
 
     def disconnect(self, recording: Any = None) -> None:
         self.disconnected = True
@@ -427,6 +432,22 @@ def test_emit_mcap_raises_when_no_content(tmp_path: Path) -> None:
         )
 
 
+def test_emit_rejects_synthetic_descriptor_only_recording(monkeypatch, tmp_path: Path) -> None:
+    _write_summary_artifacts(tmp_path)
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+
+    with pytest.raises(Sim2RealVizError, match="no real rollout frames"):
+        emit_sim2real_rerun(
+            local_dir=tmp_path,
+            inner_evidence={"iterations": [], "reward_trend": []},
+            heldout_report={"per_env": []},
+            output_rrd=tmp_path / "reports" / "sim2real.rrd",
+        )
+
+    assert any(entity.startswith("synthetic/") for entity, _kind in fake.logged)
+
+
 def _write_test_png(path: Path, *, red: int, green: int, blue: int) -> None:
     import struct
     import zlib
@@ -453,6 +474,66 @@ def _write_test_png(path: Path, *, red: int, green: int, blue: int) -> None:
     png += _chunk(b"IEND", b"")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(png)
+
+
+def _write_summary_artifacts(tmp_path: Path) -> None:
+    (tmp_path / "reports").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "reports" / "sim2real-report.json").write_text(
+        json.dumps({"run_id": "s2r-test", "status": "completed"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "outer_loop").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "outer_loop" / "decision.json").write_text(
+        json.dumps(
+            {
+                "decision": "promote_checkpoint",
+                "success_rate": 1.0,
+                "threshold": 0.5,
+                "checkpoint_uri": "s3://bucket/run/model_latest.pt",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "augment" / "frames").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "augment" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "executed",
+                "mode": "descriptor_stub",
+                "frame_count": 2,
+                "image": "npa-cosmos2-transfer:test",
+                "input_uri": "s3://bucket/input",
+                "output_uri": "s3://bucket/augment",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "augment" / "frames" / "index.json").write_text(
+        json.dumps({"frame_count": 2, "frames": [{"frame_id": "frame-00000"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "envs" / "manifest").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "envs" / "manifest" / "split-manifest.json").write_text(
+        json.dumps({"raw_count": 10, "train_count": 8, "heldout_count": 2, "disjoint": True, "seed": 42}),
+        encoding="utf-8",
+    )
+    (tmp_path / "tokens").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tokens" / "manifest.json").write_text(
+        json.dumps({"train_env_count": 8, "heldout_env_count": 2}),
+        encoding="utf-8",
+    )
+    env_sample = {
+        "env_id": "env-00006",
+        "physics": {"friction": 0.58, "lighting_lux": 700},
+        "scene": {
+            "simready_asset": "simready://warehouse/tabletop_v1",
+            "augmented_frame_uri": "s3://bucket/augment/frame-00006.png",
+        },
+    }
+    for rel in ("envs/train/envs.jsonl", "envs/heldout/envs.jsonl"):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(env_sample) + "\n", encoding="utf-8")
 
 
 def _gradient_rgb(width: int = 48, height: int = 32) -> Any:
@@ -528,6 +609,7 @@ def _encode_png_with_filter(pixels, filter_type: int) -> bytes:
     import zlib
 
     height, width, channels = pixels.shape
+    assert channels == 3
     raw = bytearray()
     prev = [0] * (width * channels)
     for y in range(height):
@@ -566,6 +648,57 @@ def _encode_png_with_filter(pixels, filter_type: int) -> bytes:
         + _chunk(b"IDAT", zlib.compress(bytes(raw)))
         + _chunk(b"IEND", b"")
     )
+
+
+def _write_filtered_rgb_png(path: Path, pixels: Any, filter_types: list[int]) -> None:
+    import struct
+    import zlib
+
+    height, width, channels = pixels.shape
+    assert channels == 3
+    raw = bytearray()
+    previous = [0] * (width * channels)
+    for row_index in range(height):
+        row = [int(value) for value in pixels[row_index].reshape(-1)]
+        filter_type = filter_types[row_index % len(filter_types)]
+        encoded = bytearray()
+        for byte_index, value in enumerate(row):
+            left = row[byte_index - channels] if byte_index >= channels else 0
+            up = previous[byte_index]
+            upper_left = previous[byte_index - channels] if byte_index >= channels else 0
+            if filter_type == 0:
+                predictor = 0
+            elif filter_type == 1:
+                predictor = left
+            elif filter_type == 2:
+                predictor = up
+            elif filter_type == 3:
+                predictor = (left + up) // 2
+            elif filter_type == 4:
+                predictor = viz_module._paeth(left, up, upper_left)
+            else:
+                raise AssertionError(filter_type)
+            encoded.append((value - predictor) & 0xFF)
+        raw.append(filter_type)
+        raw.extend(encoded)
+        previous = row
+
+    def _chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack("!I", len(payload))
+            + tag
+            + payload
+            + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + _chunk(b"IEND", b"")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
 
 
 def _noisy_rgb(width: int = 24, height: int = 18):
@@ -620,6 +753,29 @@ def test_decode_png_matches_pillow_on_filter0(tmp_path: Path) -> None:
     assert int(decoded.mean()) == int(np.array([12, 200, 77]).mean())
 
 
+def test_read_png_reconstructs_filtered_truecolor_rows(monkeypatch, tmp_path: Path) -> None:
+    import numpy as np
+
+    monkeypatch.setattr(viz_module, "_read_png_with_pillow", lambda _path: None)
+    pixels = np.array(
+        [
+            [[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            [[11, 21, 31], [45, 55, 65], [76, 86, 96], [111, 121, 131]],
+            [[12, 22, 32], [47, 57, 67], [81, 91, 101], [118, 128, 138]],
+            [[13, 23, 33], [49, 59, 69], [88, 98, 108], [125, 135, 145]],
+            [[14, 24, 34], [51, 61, 71], [95, 105, 115], [132, 142, 152]],
+        ],
+        dtype=np.uint8,
+    )
+    path = tmp_path / "filtered.png"
+    _write_filtered_rgb_png(path, pixels, [0, 1, 2, 3, 4])
+
+    decoded = viz_module._read_png(path)
+
+    assert decoded is not None
+    assert np.array_equal(decoded, pixels)
+
+
 def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> None:
     actions_dir = tmp_path / "actions"
     rollouts = generate_action_rollouts(actions_dir, count=1, steps_per_rollout=2, seed=3, quality=0.5)
@@ -642,6 +798,7 @@ def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> 
 
 def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_path: Path) -> None:
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    _write_summary_artifacts(tmp_path)
     renders_dir = tmp_path / "eval" / "heldout" / "renders" / "heldout-0000"
     _write_test_png(renders_dir / "camera-000.png", red=40, green=120, blue=200)
     _write_test_png(renders_dir / "camera-001.png", red=50, green=130, blue=210)
@@ -673,12 +830,56 @@ def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_
     assert result.frame_count == 0
     assert "heldout/camera/heldout-0000/camera" in entities
     assert kinds["heldout/camera/heldout-0000/camera"] == "image"
+    assert ("camera", "image", 0.0) in fake.logged_times
+    assert not any(entity.startswith("world/franka") for entity in entities)
     assert not any(
         entity.startswith("rollouts/iter_01/rollout-") and entity.endswith("/camera")
         for entity in entities
     )
     assert "signal/reward_trend" in entities
     assert "heldout/success_rate" in entities
+    assert "summary/run_success" in entities
+    assert "summary/augmentation" in entities
+    assert "summary/artifacts" in entities
+    assert result.synthetic_frame_count > 0
+    assert any(entity.startswith("synthetic/dataset/train/") for entity in entities)
+    assert any(entity.startswith("synthetic/dataset/heldout/") for entity in entities)
+    assert any(entity.startswith("synthetic/augmentation/") for entity in entities)
+    assert "synthetic/preview" in entities
+    visual_index = tmp_path / "reports" / "sim2real-visual-index.json"
+    assert visual_index.is_file()
+    index = json.loads(visual_index.read_text(encoding="utf-8"))
+    assert index["success"]["decision"] == "promote_checkpoint"
+    assert index["augmentation"]["frame_count"] == 2
+    assert index["dataset"]["heldout_count"] == 2
+    assert index["synthetic"]["dataset_sample_count"] == 2
+    assert index["synthetic"]["dataset_descriptor_preview_count"] >= 2
+    assert index["synthetic"]["augmentation_sample_count"] == 1
+
+
+def test_emit_logs_augmentation_previews_from_manifest_without_frame_index(
+    monkeypatch, tmp_path: Path
+) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    _write_summary_artifacts(tmp_path)
+    (tmp_path / "augment" / "frames" / "index.json").unlink()
+
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+    result = emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=tmp_path / "reports" / "sim2real.rrd",
+    )
+
+    entities = [entity for entity, _kind in fake.logged]
+    assert result.synthetic_frame_count > 0
+    assert any(entity.startswith("synthetic/augmentation/frame-") for entity in entities)
+    index = json.loads((tmp_path / "reports" / "sim2real-visual-index.json").read_text(encoding="utf-8"))
+    assert index["augmentation"]["frame_count"] == 2
+    assert index["synthetic"]["augmentation_sample_count"] == 2
+    assert index["synthetic"]["augmentation_descriptor_preview_count"] == 2
 
 
 def test_heldout_render_step_indices_samples_evenly() -> None:
@@ -780,7 +981,12 @@ def test_build_blueprint_one_2d_view_per_heldout_env() -> None:
     viz_module._build_blueprint(
         rrb, heldout_env_ids=["env-00006", "env-00009", "env-00018"]
     )
-    assert any(v["kind"] == "Spatial3DView" and v["origin"] == "world" for v in rrb.views)
+    assert rrb.views[0] == {
+        "kind": "Spatial2DView",
+        "origin": "camera",
+        "name": "Isaac held-out simulation camera",
+    }
+    assert not any(v["kind"] == "Spatial3DView" and v["origin"] == "world" for v in rrb.views)
     heldout_origins = [
         v["origin"] for v in rrb.views
         if v["kind"] == "Spatial2DView" and v["origin"].startswith("heldout/camera/")
@@ -799,6 +1005,20 @@ def test_build_blueprint_without_env_ids_keeps_single_camera_view() -> None:
     assert not any(
         v["origin"].startswith("heldout/camera/") for v in rrb.views
     )
+
+
+def test_build_blueprint_with_synthetic_view() -> None:
+    rrb = _RecordingRRB()
+    viz_module._build_blueprint(
+        rrb,
+        heldout_env_ids=["env-00006"],
+        has_synthetic_data=True,
+    )
+    origins = [view["origin"] for view in rrb.views if view["kind"] == "Spatial2DView"]
+    assert "synthetic/preview" in origins
+    assert "synthetic/dataset/train" in origins
+    assert "synthetic/dataset/heldout" in origins
+    assert "synthetic/augmentation" in origins
 
 
 def test_log_heldout_cameras_time_aligns_envs() -> None:

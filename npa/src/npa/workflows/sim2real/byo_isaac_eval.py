@@ -570,7 +570,19 @@ def build_isaac_eval_job_manifest(
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-eval.log) 2>&1\n'
-        'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
+        'if [ -x /isaac-sim/python.sh ]; then\n'
+        '  PY=/isaac-sim/python.sh\n'
+        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
+        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
+        '#!/usr/bin/env bash\n'
+        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
+        'ISPYEOF\n'
+        '  chmod +x /tmp/isaac-python\n'
+        '  PY=/tmp/isaac-python\n'
+        'else\n'
+        '  PY="$(command -v python3 || command -v python || true)"\n'
+        'fi\n'
+        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
@@ -644,6 +656,10 @@ def build_isaac_eval_job_manifest(
                             "name": "eval",
                             "image": image,
                             "imagePullPolicy": "Always",
+                            # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
+                            # write under the prebuilt workspace; current RTX PRO runtime
+                            # requires root for that path. Keep this scoped to BYO Isaac jobs.
+                            "securityContext": {"runAsUser": 0, "runAsGroup": 0},
                             "resources": {
                                 "limits": {gpu_resource: "1"},
                                 "requests": {gpu_resource: "1"},
@@ -702,7 +718,10 @@ def run_isaac_eval_job(
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
-    job_name = f"s2r-byo-isaac-eval-{run_id}"[:63]
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
+    eval_tag = artifact_tag(_env("NPA_SIM2REAL_EVAL_TAG"))
+    job_name = k8s_job_name("s2r-byo-isaac-eval", run_id, eval_tag)
     per_env_uri = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/per_env_distances.json"
 
     gen = generated_envs or []

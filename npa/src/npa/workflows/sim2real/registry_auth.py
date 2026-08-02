@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 from typing import Any
 
 from npa.clients.nebius_auth import mint_nebius_iam_token, strip_ambient_token_env
@@ -37,33 +38,58 @@ def _registry_server_from_image(image: str) -> str:
     return ""
 
 
-def docker_config_json(*, registry_server: str, token: str) -> dict[str, Any]:
+def docker_config_json(*, registry_servers: Sequence[str], token: str) -> dict[str, Any]:
+    """Return a dockerconfigjson whose ``auths`` covers every given registry host.
+
+    A pull secret holds exactly one dockerconfigjson and ``kubectl apply`` replaces
+    it wholesale, so every host a run pulls from has to be in the same document. One
+    IAM token authenticates all of them, since the token is identity-scoped rather
+    than host-scoped.
+    """
+
     username = "iam"
     auth = base64.b64encode(f"{username}:{token}".encode("utf-8")).decode("ascii")
     return {
         "auths": {
-            registry_server: {
-                "username": username,
-                "password": token,
-                "auth": auth,
-            }
+            server: {"username": username, "password": token, "auth": auth}
+            for server in dict.fromkeys(server for server in registry_servers if server)
         }
     }
 
 
+def _normalize_registry_server(value: str) -> str:
+    server = value.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
+    if not server.startswith("cr.") or ".nebius.cloud" not in server:
+        return ""
+    return server
+
+
 def ensure_nebius_registry_pull_secret(
     *,
-    registry_server: str,
+    registry_server: str = "",
+    registry_servers: Sequence[str] = (),
     secret_name: str = "npa-nebius-registry",
     namespace: str = "default",
     kubeconfig: str = "",
     k8s_context: str = "",
     nebius_cli: str = "nebius",
 ) -> None:
-    """Apply a fresh docker-registry secret so orchestrator pulls do not 401."""
+    """Apply a fresh docker-registry secret so orchestrator pulls do not 401.
 
-    server = registry_server.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
-    if not server.startswith("cr.") or ".nebius.cloud" not in server:
+    Pass every host a run pulls from in one call. Applying them one at a time would
+    leave only the host from the last call, because each apply replaces the secret,
+    and pods pulling from the others would 401 — the failure this refresh exists to
+    prevent.
+    """
+
+    servers = [
+        normalized
+        for normalized in (
+            _normalize_registry_server(value) for value in (registry_server, *registry_servers)
+        )
+        if normalized
+    ]
+    if not servers:
         return
     token = mint_nebius_registry_token(nebius_cli=nebius_cli)
     payload = {
@@ -73,7 +99,7 @@ def ensure_nebius_registry_pull_secret(
         "type": "kubernetes.io/dockerconfigjson",
         "data": {
             ".dockerconfigjson": base64.b64encode(
-                json.dumps(docker_config_json(registry_server=server, token=token)).encode(
+                json.dumps(docker_config_json(registry_servers=servers, token=token)).encode(
                     "utf-8"
                 )
             ).decode("ascii")
@@ -119,14 +145,13 @@ def ensure_registry_pull_secret_for_images(
     kubeconfig: str = "",
     k8s_context: str = "",
 ) -> None:
-    for image in images:
-        server = _registry_server_from_image(image)
-        if server:
-            ensure_nebius_registry_pull_secret(
-                registry_server=server,
-                secret_name=secret_name,
-                namespace=namespace,
-                kubeconfig=kubeconfig,
-                k8s_context=k8s_context,
-            )
-            return
+    servers = [server for server in map(_registry_server_from_image, images) if server]
+    if not servers:
+        return
+    ensure_nebius_registry_pull_secret(
+        registry_servers=servers,
+        secret_name=secret_name,
+        namespace=namespace,
+        kubeconfig=kubeconfig,
+        k8s_context=k8s_context,
+    )

@@ -11,7 +11,7 @@ DEFAULT_COSMOS_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
 DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
-DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-golden-eval-smoke-20260616T033000Z"
+DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-skypilot-ready-20260801T053000Z"
 DEFAULT_VLM_IMAGE_TAG = "3.0.1-genuine-sm120"
 # Reference-image pins. Canonical source of truth is pyproject.toml
 # ([tool.npa.supported-tools], mirrored in npa/src/npa/deploy/images.py); keep

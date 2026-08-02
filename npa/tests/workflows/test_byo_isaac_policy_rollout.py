@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 from npa.workflows.sim2real import byo_isaac_policy_rollout as pr
 
@@ -108,3 +110,43 @@ def test_untrained_job_manifest_skips_download():
     script = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "DOWNLOADED_CKPT" not in script  # no checkpoint -> untrained policy
     assert 'ROLLOUT_CKPT_LOCAL=""' in script
+
+
+def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monkeypatch):
+    captured: dict[str, str] = {}
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    class _FakeS3:
+        def download_file(self, _bucket: str, _key: str, local: str) -> None:
+            Path(local).write_text(json.dumps({"rollouts": []}), encoding="utf-8")
+
+    class _FakeBoto3:
+        def client(self, *_args, **_kwargs):
+            return _FakeS3()
+
+    def fake_build(**kwargs):
+        captured["job_name"] = kwargs["job_name"]
+        captured["out_s3_prefix"] = kwargs["out_s3_prefix"]
+        return {"kind": "Job"}
+
+    monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
+    monkeypatch.setattr(pr, "_kubectl", lambda *a, **k: _Proc())
+    monkeypatch.setattr(pr, "build_isaac_rollout_job_manifest", fake_build)
+    monkeypatch.setattr(pr, "latest_checkpoint_uri", lambda *a, **k: "s3://b/run/model_latest.pt")
+    monkeypatch.setattr(pr, "materialize_rollout_dirs", lambda *a, **k: [])
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
+
+    pr.run_isaac_rollout_job(
+        tmp_path / "actions" / "train" / "outer-02" / "iter-01",
+        run_id="myrun",
+        rollout_count=1,
+        steps_per_rollout=1,
+    )
+
+    assert captured["job_name"].endswith("outer-02-iter-01")
+    assert captured["out_s3_prefix"].endswith("/byo-rollouts/outer-02-iter-01")

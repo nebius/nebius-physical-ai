@@ -64,6 +64,10 @@ class WorkbenchRuntime(str, Enum):
 
 
 class TrainRuntime(str, Enum):
+    #: Train inside the container this command runs in. The only runtime an
+    #: npa.workflow GPU stage can use: the other three delegate to more
+    #: infrastructure, which a stage that already holds a GPU cannot provision.
+    local = "local"
     vm = "vm"
     container = "container"
     serverless = "serverless"

@@ -230,7 +230,7 @@ def test_cli_validate_spec_rejects_missing_config_token(tmp_path: Path) -> None:
         (SPECS / "vlm-eval-single.yaml")
         .read_text(encoding="utf-8")
         .replace(
-            "{{config.scores_uri}}report.json",
+            "{{config.scores_uri}}vlm_eval_stub.json",
             "{{config.does_not_exist}}",
         ),
         encoding="utf-8",

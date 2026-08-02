@@ -330,8 +330,11 @@ def rerun_serve_sdk_version() -> str:
     return override or DEFAULT_RERUN_SERVE_SDK_VERSION
 
 
-def _rerun_remote_cors_flags() -> str:
+def _rerun_remote_cors_flags(image: str) -> str:
     # rerun 0.32+ only; allow remote viewer origins (no hardcoded host/IP ranges).
+    # The current prebuilt 0.31.x viewer rejects this flag and exits before serving.
+    if re.search(r"[:@]0\.31(?:[.\-+@]|$)", image.strip().lower()):
+        return ""
     return "--cors-allow-origin 'http://*:*' "
 
 
@@ -404,7 +407,7 @@ def _rerun_serve_command(config: RerunServeConfig) -> str:
     base_cmd = (
         "rerun /data/sim2real.rrd --serve-web --web-viewer "
         f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT} --port {DEFAULT_GRPC_PORT} --bind 0.0.0.0 "
-        f"{_rerun_remote_cors_flags()}"
+        f"{_rerun_remote_cors_flags(config.rerun_image)}"
     )
     if _rerun_image_has_preinstalled_cli(config.rerun_image):
         return base_cmd

@@ -11,10 +11,12 @@ config:
   prefix: "runs/{{run.id}}/sonic-locomotion"
   embodiment: unitree-g1
   source_format: auto
-  sonic_runtime: serverless
+  # Train inside this workflow's own GPU stage; see sonic-train.yaml.
+  sonic_runtime: local
+  train_iterations: "40"
   suite: locomotion
   episodes: "8"
-  checkpoint_uri: "nvidia/GEAR-SONIC"
+  checkpoint_uri: "{{config.training_uri}}checkpoint.pt"
   data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
 
   motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/"
@@ -50,7 +52,7 @@ states:
     toolRef: workbench.sonic.train
     resources: gpu
     outputs:
-      - uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.json"
+      - uri: "{{config.training_uri}}checkpoint.json"
     next: mjlab
 
   mjlab:

@@ -143,6 +143,60 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--execute",
         ],
     ),
+    "workbench.cosmos_evaluator.evaluate": ToolEntry(
+        name="workbench.cosmos_evaluator.evaluate",
+        description=(
+            "Grade augmented variants with the REAL NVIDIA Cosmos Evaluator checks "
+            "(hallucination + VLM attribute verification, Apache-2.0)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos-evaluator",
+            "evaluate",
+            "--augment-uri",
+            "{{config.rollouts_uri}}",
+            "--output-uri",
+            "{{config.scores_uri}}",
+            "--input-uri",
+            "{{config.input_uri}}",
+            "--configs-uri",
+            "{{config.configs_uri}}",
+            "--threshold",
+            "{{config.grade_threshold}}",
+            "--vlm-model",
+            "{{config.caption_model}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.cosmos_curate.curate": ToolEntry(
+        name="workbench.cosmos_curate.curate",
+        description=(
+            "Curate augmented variants with the REAL NVIDIA Cosmos Curator stages "
+            "(split, transcode, motion-score, canonical clip metadata; Apache-2.0)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos-curate",
+            "curate-augmented",
+            "--augment-uri",
+            "{{config.augment_uri}}",
+            "--curated-uri",
+            "{{config.curated_clips_uri}}",
+            "--report-uri",
+            "{{config.curator_report_uri}}",
+            "--clip-len-s",
+            "{{config.curator_clip_len_s}}",
+            "--min-clip-length-s",
+            "{{config.curator_min_clip_len_s}}",
+            "--motion-filter",
+            "{{config.curator_motion_filter}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.sim2real_envgen.raw_shard": ToolEntry(
         name="workbench.sim2real_envgen.raw_shard",
         description="Generate raw simulation env shard.",
@@ -173,7 +227,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real.write_decision",
         description="Write threshold decision artifact for dynamic transitions (demo stub).",
         argv_template=[
-            "python",
+            # python3, not python: the render's interpreter shim only puts a
+            # `python3` that can import npa on PATH, and images without a bare
+            # `python` (the SkyPilot default among them) fail otherwise.
+            "python3",
             "-c",
             (
                 "from npa.orchestration.npa_workflow.decisions import write_decision; "
@@ -987,6 +1044,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.data_uri}}",
             "--output-path",
             "{{config.training_uri}}",
+            "--max-iterations",
+            "{{config.train_iterations}}",
             "--output",
             "json",
         ],
@@ -1006,6 +1065,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--env",
             "{{config.env}}",
             "--output",
+            "{{config.eval_uri}}",
+            "--output-format",
             "json",
         ],
     ),

@@ -23,6 +23,11 @@ class SubmitLiveCase:
 
     spec: str
     tier: str  # cpu | gpu | multi
+    #: Secrets this twin's stages actually read. The live test SKIPS the case
+    #: when one is missing from the operator env, so listing a secret the
+    #: exercised path never consumes turns an unrelated gap in someone's env
+    #: into a silently no-op day of the daily GPU rotation. List only what the
+    #: twin needs to run; the render's ``SECRET_ENV_HINTS`` cover the rest.
     secret_envs: tuple[str, ...] = ()
     requires_token_factory: bool = False
     plan_only: bool = False
@@ -123,20 +128,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "vlm-eval-single.yaml",
         "gpu",
+        # No HF_TOKEN: the served 2B Qwen2-VL is public, so requiring one would
+        # skip the twin on an operator env that simply never set it.
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        rotation_skip=True,
-        skip_reason=(
-            "vlm_backend=self-hosted. The render now DOES start a background "
-            "vLLM server and the client waits up to NPA_VLM_READY_TIMEOUT_S "
-            "(=1800s, set by the render) for readiness. Confirmed live on "
-            "RTXPRO-6000 (Blackwell/sm_120): the cold start — heavy vLLM+CUDA13 "
-            "install, ~16GB Qwen2-VL-7B weight download, and first-run compile — "
-            "exceeds even the 30-min window, so it is not a fit for the bounded "
-            "daily rotation. Re-include with the model pre-baked/pre-cached into "
-            "the image or a faster node. (The old instant connection-refused is "
-            "fixed; failure is now a clean, bounded 'not ready' diagnostic.)"
+        # A self-hosted VLM cold start is dominated by the vLLM wheel set and the
+        # engine's own warmup, both of which land outside the other twins' range.
+        max_wait_seconds=2400,
+        notes=(
+            "Self-hosted vLLM on the job's own GPU. Bounded by serving the 2B "
+            "Qwen2-VL (config.vlm_model), installing vLLM with uv, pre-fetching "
+            "weights in setup, and having the run script wait for readiness so a "
+            "server that dies during startup fails immediately with its log."
         ),
-        notes="Self-hosted VLM; render starts vLLM, but cold start > 30min on this node.",
     ),
     SubmitLiveCase(
         "vlm-eval-benchmark.yaml",
@@ -158,27 +161,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-train.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
-        rotation_skip=True,
-        skip_reason=(
-            "Confirmed live: fails 'SONIC --runtime serverless requires "
-            "--project-id'. The twin renders `sonic train --runtime serverless` "
-            "INSIDE an already-GPU SkyPilot job; SONIC's runtimes (vm/container/"
-            "serverless) all delegate to more infra rather than training in-job, "
-            "and serverless needs a project id/creds. Re-include once SONIC train "
-            "supports an in-job runtime for the npa.workflow render."
+        notes=(
+            "Trains in-job (`sonic_runtime: local`). The serverless/vm/container "
+            "runtimes delegate to more infrastructure, which a stage that already "
+            "holds a GPU cannot provision."
         ),
     ),
     SubmitLiveCase(
         "sonic-export.yaml",
         "gpu",
+        # No NGC_API_KEY: the in-job trainer pulls nothing from NGC, and gating
+        # on it would skip the twin instead of running it.
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
-        rotation_skip=True,
-        skip_reason=(
-            "Consume-only + env gap. Confirmed live: 'SONIC ONNX export requires "
-            "torch' (job env lacks torch) and it needs a checkpoint.pt from a "
-            "prior sonic-train. Re-include once export runs on the torch-bearing "
-            "SONIC image against a staged checkpoint."
-        ),
+        notes="train (in-job runtime) -> export; self-contained.",
     ),
     SubmitLiveCase(
         "sonic-eval.yaml",
@@ -186,9 +181,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         rotation_skip=True,
         skip_reason=(
-            "Consume-only: evaluates an exported ONNX policy from a prior "
-            "sonic-export. Not runnable standalone (confirmed live: 'ONNX policy "
-            "not found'); sonic-export-eval covers SONIC eval self-contained."
+            "Consume-only by design: a single stage that evaluates an ONNX a "
+            "previous `sonic export` wrote, so a standalone submit has nothing "
+            "to read ('ONNX policy not found'). SONIC eval IS in the rotation "
+            "through sonic-export-eval, which chains train -> export -> eval and "
+            "hands each stage the previous one's S3 artifact."
         ),
     ),
     SubmitLiveCase(
@@ -211,24 +208,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-export-eval.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
-        rotation_skip=True,
-        skip_reason=(
-            "Consume-only: the export stage needs a checkpoint.pt from a prior "
-            "sonic-train (per-run path is empty on a standalone submit), so it "
-            "fails before eval. Re-include once a checkpoint is staged."
+        notes=(
+            "train -> export -> eval, self-contained: the in-job train runtime "
+            "writes checkpoint.pt to S3 and each stage reads the previous "
+            "stage's artifact from there."
         ),
     ),
     SubmitLiveCase(
         "sonic-locomotion-finetuning.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
-        rotation_skip=True,
-        skip_reason=(
-            "retarget → train → mjlab: hits the same SONIC train in-job runtime "
-            "gap as sonic-train, and needs a staged motion source. Re-include "
-            "once SONIC train has an in-job runtime and inputs are staged."
+        notes=(
+            "retarget → train → mjlab. Retargeting consumes the SOMA/G1 motion "
+            "clips staged in the run bucket (see SONIC_MOTION_FIXTURE_PREFIX in "
+            "the live helpers, overridable with NPA_E2E_SONIC_MOTION_SRC); train "
+            "uses the in-job runtime."
         ),
-        notes="retarget → train → mjlab",
     ),
     SubmitLiveCase(
         "isaac-lab-rl-sweep.yaml",
@@ -255,11 +250,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         rotation_skip=True,
         skip_reason=(
-            "11-stage AV pipeline needs the raw-bdd100k demo dataset staged in "
-            "the run bucket and is the longest wall-clock twin; not a bounded "
-            "daily-rotation fit. Run manually with a staged dataset."
+            "Two reasons, both structural. (1) Every stage talks to a workbench "
+            "SERVICE deployed in-cluster (npa-lancedb:8686, "
+            "npa-detection-training:8790); a standalone submit cannot bring "
+            "those up, and it also wants the raw-bdd100k demo dataset in the run "
+            "bucket. (2) 11 sequential stages, each its own cluster: measured "
+            "~2.2 min per stage of provisioning alone on RTXPRO-6000 (from the "
+            "3-stage SONIC chain), so ~25 min before any real work — over the "
+            "rotation's bounded window once CLIP backfill, three trainings and "
+            "three evals are added. Run it manually against a live workbench."
         ),
-        notes="11-stage AV pipeline; longest wall-clock.",
+        notes="11-stage AV pipeline over in-cluster services; longest wall-clock.",
     ),
     SubmitLiveCase(
         "tokenfactory-cosmos-gate.yaml",
@@ -270,13 +271,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "AWS_SECRET_ACCESS_KEY",
         ),
         requires_token_factory=True,
-        rotation_skip=True,
-        skip_reason=(
-            "Confirmed live: FAILED — dynamic Cosmos gate loop needs a staged "
-            "scene input and --assume-decision; not runnable as a bounded "
-            "standalone rotation submit. Run manually with a staged scene."
+        notes=(
+            "Dynamic gate; the harness seeds the scene frames and passes "
+            "--assume-decision (see DYNAMIC_SPECS in the live helpers)."
         ),
-        notes="Dynamic gate; needs --assume-decision.",
     ),
     # --- Plan-only / stub twins (do not burn GPUs on stubs) ---
     SubmitLiveCase(

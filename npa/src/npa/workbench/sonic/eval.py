@@ -115,6 +115,8 @@ class _EvalBundle:
         self.onnx_path = onnx_path
         self.metadata_path = metadata_path
         self.metadata = metadata
+        #: Holds the staging directory when the policy came from object storage.
+        self.staged: tempfile.TemporaryDirectory[str] | None = None
         self.input_name = str(metadata.get("input_name") or "obs")
         self.output_name = str(metadata.get("output_name") or "action")
         self.normalize = str(metadata.get("normalize") or "baked")
@@ -220,7 +222,9 @@ def evaluate_onnx_policy(
         except SonicRoutingError as exc:
             raise SonicEvalError(str(exc)) from exc
 
-    bundle = load_eval_bundle(onnx=onnx, metadata=metadata)
+    bundle = load_eval_bundle(
+        onnx=onnx, metadata=metadata, storage_client=storage_client
+    )
     if backend == REFERENCE_BACKEND:
         result = _run_reference_backend(bundle=bundle, episodes=episodes, env=env)
     else:
@@ -251,8 +255,18 @@ def evaluate_onnx_policy(
     return result
 
 
-def load_eval_bundle(*, onnx: str, metadata: str | None = None) -> _EvalBundle:
-    """Load an exported ONNX policy and its SONIC export metadata sidecar."""
+def load_eval_bundle(
+    *,
+    onnx: str,
+    metadata: str | None = None,
+    storage_client: "StorageClient | None" = None,
+) -> _EvalBundle:
+    """Load an exported ONNX policy and its SONIC export metadata sidecar.
+
+    ``onnx`` (and ``metadata``) may be ``s3://`` URIs, which are staged locally
+    first. Workflow stages run on their own clusters, so the only way an eval
+    stage can see the export stage's ONNX is through object storage.
+    """
 
     onnx = (onnx or "").strip()
     if not onnx:
@@ -260,6 +274,12 @@ def load_eval_bundle(*, onnx: str, metadata: str | None = None) -> _EvalBundle:
             "no ONNX policy provided: sonic eval consumes an exported policy. "
             "Run `sonic export` first (or use the sonic-export-eval workflow, "
             "which chains export -> eval), then pass its .onnx via --onnx."
+        )
+    staged: tempfile.TemporaryDirectory[str] | None = None
+    if onnx.startswith("s3://") or str(metadata or "").startswith("s3://"):
+        staged = tempfile.TemporaryDirectory(prefix="npa-sonic-eval-policy-")
+        onnx, metadata = _stage_remote_policy(
+            onnx, metadata, Path(staged.name), storage_client=storage_client
         )
     onnx_path = Path(onnx)
     if not onnx_path.exists():
@@ -274,9 +294,52 @@ def load_eval_bundle(*, onnx: str, metadata: str | None = None) -> _EvalBundle:
         raise SonicEvalError(
             f"metadata format must be {EXPORT_METADATA_FORMAT}, got {payload.get('format')!r}"
         )
-    return _EvalBundle(
+    bundle = _EvalBundle(
         onnx_path=onnx_path, metadata_path=metadata_path, metadata=payload
     )
+    # Keep the staging directory alive for the lifetime of the bundle; the ONNX
+    # runtime session and the sidecar are read from it.
+    bundle.staged = staged
+    return bundle
+
+
+def _stage_remote_policy(
+    onnx: str,
+    metadata: str | None,
+    dest: Path,
+    *,
+    storage_client: "StorageClient | None",
+) -> tuple[str, str | None]:
+    """Download an ``s3://`` ONNX policy plus its sidecar into ``dest``."""
+
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    local_onnx = onnx
+    if onnx.startswith("s3://"):
+        target = dest / (Path(onnx.rstrip("/")).name or "sonic_policy.onnx")
+        try:
+            local_onnx = str(client.download_path(onnx, str(target)))
+        except Exception as exc:  # noqa: BLE001 - surfaced as an eval error
+            raise SonicEvalError(
+                f"could not stage exported ONNX policy {onnx}: {exc}. sonic eval "
+                "consumes the artifact `sonic export` wrote; chain them in one "
+                "workflow (see sonic-export-eval)."
+            ) from exc
+    remote_metadata = metadata or (
+        onnx.removesuffix(".onnx") + ".metadata.json" if onnx.startswith("s3://") else ""
+    )
+    if not remote_metadata.startswith("s3://"):
+        return local_onnx, metadata
+    target = dest / (Path(remote_metadata).name or "sonic_policy.metadata.json")
+    try:
+        local_metadata = str(client.download_path(remote_metadata, str(target)))
+    except Exception as exc:  # noqa: BLE001 - surfaced as an eval error
+        raise SonicEvalError(
+            f"could not stage SONIC export metadata {remote_metadata}: {exc}. "
+            "`sonic export --metadata sidecar` writes it next to the ONNX."
+        ) from exc
+    return local_onnx, local_metadata
 
 
 def result_uri_for(output: str) -> str:

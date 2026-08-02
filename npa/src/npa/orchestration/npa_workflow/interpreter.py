@@ -871,14 +871,33 @@ def _run_single_state(
         wait_for_trigger(state, ctx, waiter=trigger_waiter)
         record = _dispatch_step(step, step_executor)
     except NpaWorkflowError as exc:
-        record = {
-            "state": step.state,
-            "iteration": step.iteration,
-            "status": "failed",
-            "error": str(exc),
-        }
+        record = _with_resources(
+            {
+                "state": step.state,
+                "iteration": step.iteration,
+                "status": "failed",
+                "error": str(exc),
+            },
+            step,
+        )
     else:
         _record_state_outputs(state, ctx, step)
+    return record
+
+
+def _with_resources(record: dict[str, Any], step: PlanStep) -> dict[str, Any]:
+    """Ensure a step record carries the resolved resource profile.
+
+    Executors describe *what happened*, and the resources a step ran with are part
+    of that record no matter which tier produced it (local subprocess or the runtime
+    tier's SkyPilot wave executor). Manifest consumers depend on it: the insights
+    backbone reads ``resources_profile.accelerators`` to report a run's GPU count.
+    """
+    if not isinstance(record, dict):
+        return record
+    record.setdefault("resources", step.resources)
+    if not record.get("resources_profile"):
+        record["resources_profile"] = dict(step.resources_profile)
     return record
 
 
@@ -887,8 +906,8 @@ def _dispatch_step(step: PlanStep, step_executor: Any | None) -> dict[str, Any]:
 
     if step_executor is None:
         # Module-level lookup keeps monkeypatching `_execute_step` working.
-        return _execute_step(step, execute=True)
-    return step_executor.execute(step)
+        return _with_resources(_execute_step(step, execute=True), step)
+    return _with_resources(step_executor.execute(step), step)
 
 
 def wait_for_trigger(
@@ -954,6 +973,13 @@ def _execute_step(step: PlanStep, *, execute: bool) -> dict[str, Any]:
         "state": step.state,
         "iteration": step.iteration,
         "status": "planned",
+        # The durable run manifest is the record of *how* a step ran, so it must
+        # carry the resolved resource profile (accelerators, cpus, memory). Without
+        # it, consumers of the manifest -- notably the insights backbone, which
+        # derives a run's GPU count from ``resources_profile.accelerators`` -- have
+        # no way to know a step used a GPU.
+        "resources": step.resources,
+        "resources_profile": dict(step.resources_profile),
     }
     if not execute:
         if step.argv:

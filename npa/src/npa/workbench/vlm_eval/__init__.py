@@ -40,6 +40,9 @@ DEFAULT_TIMEOUT_S = 120.0
 # connection-refused. Override with NPA_VLM_READY_TIMEOUT_S.
 DEFAULT_READY_TIMEOUT_S = 600.0
 READY_TIMEOUT_ENV = "NPA_VLM_READY_TIMEOUT_S"
+#: Set by a job that starts its own vLLM server, so the eval client requests the
+#: model that server actually loaded rather than ``DEFAULT_MODEL``.
+SELF_HOSTED_MODEL_ENV = "NPA_VLM_SELF_HOSTED_MODEL"
 DEFAULT_API_KEY_ENV = "VLM_EVAL_API_KEY"
 DEFAULT_RUBRIC = (
     "Score whether the rollout completes the requested physical task. "
@@ -397,6 +400,11 @@ def evaluate_vlm(
         )
 
     effective_model = model or DEFAULT_MODEL
+    if backend == "self-hosted" and effective_model == DEFAULT_MODEL:
+        # The job that started the vLLM server records which model it serves, so
+        # the client asks for that one instead of the 7B default (a mismatch is a
+        # 404 from the server). See `_vllm_serve_preamble` in the workflow render.
+        effective_model = os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
     if backend == "api" and effective_model == DEFAULT_MODEL:
         # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
         # Factory API does not serve it (requests 404); use the vision model

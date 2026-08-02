@@ -472,6 +472,22 @@ def build_isaac_job_manifest(
                 "print('STAGED_ROBOT_USD', dest)\n"
                 "ROBOTDLEOF\n"
             )
+        resume_block = ""
+        resume_local = ""
+        if resume_uri and not physics:
+            resume_local = "/tmp/npa_robot/resume_model.pt"
+            resume_block = (
+                f'echo "ROBOT_RESUME_FROM: {resume_uri}"\n'
+                f'RESUME_URI="{resume_uri}" '
+                f'RESUME_DST="{resume_local}" "$PY" - <<\'ROBOTRESEOF\'\n'
+                "import os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "u = urlparse(os.environ['RESUME_URI'])\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(u.netloc, u.path.lstrip('/'), os.environ['RESUME_DST'])\n"
+                "print('ROBOT_RESUME_DOWNLOADED', os.environ['RESUME_DST'])\n"
+                "ROBOTRESEOF\n"
+            )
         train_block = (
             "mkdir -p /tmp/npa_robot\n"
             "cat > /tmp/npa_robot/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
@@ -479,11 +495,13 @@ def build_isaac_job_manifest(
             "cat > /tmp/npa_robot/runner.py <<'ROBOTRUNEOF'\n"
             + wrapper_src + "\nROBOTRUNEOF\n"
             '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+            + resume_block
             + stage_block
             + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
             f'{robot_spec.get("name")} seed={int(seed)}"\n'
             f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
             f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} ROBOT_SEED={int(seed)}\n'
+            + "export ROBOT_RESUME_CKPT_LOCAL=" + shlex.quote(resume_local) + "\n"
             "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
             + task_cfg_block
             + ent_block
@@ -556,7 +574,19 @@ def build_isaac_job_manifest(
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-train.log) 2>&1\n'
-        'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
+        'if [ -x /isaac-sim/python.sh ]; then\n'
+        '  PY=/isaac-sim/python.sh\n'
+        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
+        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
+        '#!/usr/bin/env bash\n'
+        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
+        'ISPYEOF\n'
+        '  chmod +x /tmp/isaac-python\n'
+        '  PY=/tmp/isaac-python\n'
+        'else\n'
+        '  PY="$(command -v python3 || command -v python || true)"\n'
+        'fi\n'
+        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         f'OUT=/workspace/isaaclab/npa-runs/{run_id}; mkdir -p "$OUT"; cd "$OUT"\n'
         "set +e\n"
         f'{train_block}'
@@ -634,6 +664,10 @@ def build_isaac_job_manifest(
                             "name": "trainer",
                             "image": image,
                             "imagePullPolicy": "Always",
+                            # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
+                            # write under the prebuilt workspace; current RTX PRO runtime
+                            # requires root for that path. Keep this scoped to BYO Isaac jobs.
+                            "securityContext": {"runAsUser": 0, "runAsGroup": 0},
                             "resources": {
                                 "limits": {gpu_resource: "1"},
                                 "requests": {gpu_resource: "1"},
@@ -728,6 +762,68 @@ def _sanitize_tag(tag: str) -> str:
     return cleaned.strip("-")
 
 
+def k8s_job_name(*parts: str, max_length: int = 63) -> str:
+    """Return a Kubernetes-safe Job name from arbitrary run/component parts."""
+
+    raw = "-".join(str(part or "").strip() for part in parts if str(part or "").strip())
+    cleaned: list[str] = []
+    previous_dash = False
+    for char in raw.lower():
+        if char.isalnum():
+            cleaned.append(char)
+            previous_dash = False
+        elif not previous_dash:
+            cleaned.append("-")
+            previous_dash = True
+    name = "".join(cleaned).strip("-")[:max_length].strip("-")
+    return name or "s2r-job"
+
+
+def artifact_tag(value: str, *, default: str = "") -> str:
+    """Return a Kubernetes/S3-safe artifact tag, or ``default`` when empty."""
+
+    return _sanitize_tag(value) or default
+
+
+def artifact_tag_from_output_dir(output_dir: Path, *, default: str = "iter") -> str:
+    """Derive ``outer-XX-iter-YY`` from a component output directory when possible."""
+
+    path = Path(output_dir)
+    name = path.name or default
+    parent = path.parent.name
+    if parent.startswith("outer-") and name.startswith("iter-"):
+        return artifact_tag(f"{parent}-{name}", default=default)
+    return artifact_tag(name, default=default)
+
+
+def latest_byo_checkpoint_uri(bucket: str, run_id: str, *, s3_endpoint: str = "") -> str:
+    """Return the newest same-run BYO trainer model_latest.pt, if any."""
+
+    if not bucket or not run_id:
+        return ""
+    try:
+        import boto3
+
+        s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
+        prefix = f"sim2real-b/{run_id}/byo-trainer/"
+        paginator = s3.get_paginator("list_objects_v2")
+        newest_key = ""
+        newest_ts = None
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []) or []:
+                key = obj["Key"]
+                if not key.endswith("model_latest.pt"):
+                    continue
+                ts = obj.get("LastModified")
+                if newest_ts is None or (ts is not None and ts > newest_ts):
+                    newest_ts = ts
+                    newest_key = key
+        return f"s3://{bucket}/{newest_key}" if newest_key else ""
+    except Exception as exc:  # pragma: no cover - network/credentials
+        print(f"byo_isaac_trainer: checkpoint scan failed: {exc!r}", flush=True)
+        return ""
+
+
 def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     """Submit the Isaac sibling Job, wait, and return an update-result dict."""
 
@@ -742,7 +838,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
     service_account = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
-    job_name = f"s2r-byo-isaac-train-{run_id}"[:63]
+    job_name = k8s_job_name("s2r-byo-isaac-train", run_id)
     # Per-iteration tag (e.g. "outer-02-iter-01") keeps each outer/inner iteration's
     # checkpoint at a DISTINCT S3 path so the prior model survives for the next
     # iteration to resume from (and outer iterations don't overwrite each other).
@@ -847,6 +943,11 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     # so this run continues the SAME policy (stage 11B "more RL" compounds). Ignored on
     # the physics-variant path (different task) — log it so the skip is visible.
     resume_uri = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_URI")
+    if not resume_uri and _env("NPA_BYO_ISAAC_AUTO_RESUME", "1") != "0":
+        resume_uri = latest_byo_checkpoint_uri(bucket, run_id, s3_endpoint=endpoint)
+        if resume_uri:
+            print(f"byo_isaac_trainer: AUTO-RESUME from latest same-run checkpoint {resume_uri}",
+                  flush=True)
     experiment_name = _env("NPA_BYO_ISAAC_EXPERIMENT_NAME", DEFAULT_EXPERIMENT_NAME)
     if resume_uri:
         if physics:

@@ -397,13 +397,22 @@ def test_author_workflow_flags_padded_placeholder_states() -> None:
     # More requested steps than goal-matched tools -> the extra state is padded
     # from the catalog and flagged as a placeholder for the operator to replace.
     # Derive the step count from how many catalog tools actually match the goal
-    # keyword ("cosmos") so this stays correct as cosmos tools are added/removed
-    # (e.g. cosmos2.transfer, cosmos2.transfer_execute, cosmos3.reason).
-    cosmos_tools = [ref for ref in TOOL_CATALOG if "cosmos" in ref.lower()]
-    n_steps = min(len(cosmos_tools) + 1, 6)
-    assert n_steps > len(cosmos_tools), "need headroom for at least one padded state"
+    # keyword so this stays correct as tools are added/removed.
+    #
+    # The keyword has to match FEWER than the authoring path's hard 1-6 step
+    # bound, or there is no room to request an extra state: plain "cosmos" now
+    # matches six toolRefs (cosmos2 x2, cosmos3 x2, cosmos-curate,
+    # cosmos-evaluator), which caps out. "cosmos3" keeps the headroom.
+    keyword = "cosmos3"
+    max_steps = 6
+    cosmos_tools = [ref for ref in TOOL_CATALOG if keyword in ref.lower()]
+    n_steps = min(len(cosmos_tools) + 1, max_steps)
+    assert n_steps > len(cosmos_tools), (
+        f"{keyword!r} matches {len(cosmos_tools)} toolRefs, leaving no headroom "
+        f"under the {max_steps}-step bound; pick a narrower goal keyword"
+    )
     result = author_workflow_from_goal(
-        f"write me a {n_steps} step npa yaml that uses cosmos",
+        f"write me a {n_steps} step npa yaml that uses {keyword}",
         tool_refs=frozenset(TOOL_CATALOG),
     )
     assert len(result["tool_refs"]) == n_steps

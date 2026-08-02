@@ -68,6 +68,21 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "SKYPILOT_DOCKER_SERVER",
     "SKYPILOT_DOCKER_USERNAME",
     "SKYPILOT_DOCKER_PASSWORD",
+    # Operator knobs that product code reads and that therefore change render or
+    # tool behavior. A dev VM sources these from ~/.npa/live-e2e.env for live
+    # submits; without scrubbing, e.g. NPA_E2E_CLEAR_WORKBENCH_IMAGES=1 clears
+    # every image pin and the render tests assert against an unpinned plan.
+    "NPA_E2E_CLEAR_WORKBENCH_IMAGES",
+    "NPA_SRC_S3_URI",
+    "NPA_SRC_OVERLAY",
+    "NPA_WORKFLOW_GPU_ACCELERATOR",
+    "NPA_COSMOS_CONDITION_ON_INPUT",
+    "NPA_COSMOS_VARIANT_PARALLELISM",
+    # Upstream Cosmos OSS checkouts: a dev VM with these exported would let unit
+    # tests import a real checkout and take the upstream code path.
+    "NPA_COSMOS_CURATE_SRC",
+    "NPA_COSMOS_CURATE_WEIGHTS_DIR",
+    "NPA_COSMOS_EVALUATOR_SRC",
 )
 
 

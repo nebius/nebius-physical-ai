@@ -114,3 +114,95 @@ def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
     store = Store(bucket="bucket", prefix="runs/demo", reader=angry_reader, writer=lambda *_: None)
     with pytest.raises(PermissionError):
         store.read_runtime_state()
+
+
+# ── Resource-honest manifests for submitted runs ─────────────────────────────
+# A cluster submit used to leave no `npa.workflow.run.v1` manifest at all, and the
+# manifest the local path did write carried no resource profile -- so a run that
+# requested N accelerators was indistinguishable from a CPU-only run, and the
+# insights `gpus` metric (which reads steps[].resources_profile.accelerators) had
+# no producer anywhere in the system.
+
+
+class _FakeStep:
+    def __init__(self, state, resources="", profile=None, tool_ref="", iteration=None):
+        self.state = state
+        self.resources = resources
+        self.resources_profile = profile or {}
+        self.tool_ref = tool_ref
+        self.iteration = iteration
+        self.group = ""
+        self.loop_label = ""
+
+
+def test_plan_step_records_carry_the_resource_profile() -> None:
+    from npa.orchestration.npa_workflow.run_state import SUBMITTED_STATUS, plan_step_records
+
+    records = plan_step_records(
+        [
+            _FakeStep("train", "trainer-gpu", {"accelerators": "RTXPRO6000:4", "cpus": 16}, "workbench.rl.policy_train"),
+            _FakeStep("aggregate", "control-cpu", {"cpus": 4}),
+        ]
+    )
+    assert records[0]["resources_profile"]["accelerators"] == "RTXPRO6000:4"
+    assert records[0]["tool_ref"] == "workbench.rl.policy_train"
+    assert records[0]["status"] == SUBMITTED_STATUS
+    assert records[1]["resources_profile"] == {"cpus": 4}
+    assert "tool_ref" not in records[1]
+
+
+def test_persist_submitted_manifest_writes_a_resource_honest_manifest() -> None:
+    from npa.orchestration.npa_workflow import run_state as rs
+
+    written: dict[tuple[str, str], bytes] = {}
+
+    class _Store(rs.RunStateStore):
+        def _write(self, key, payload):  # type: ignore[override]
+            written[(self.bucket, key)] = json.dumps(payload).encode("utf-8")
+
+    original = rs.store_for_config
+    rs.store_for_config = lambda config, *, run_id: _Store(  # type: ignore[assignment]
+        bucket=str(config.get("bucket")), prefix=str(config.get("prefix") or run_id)
+    )
+    try:
+        uri = rs.persist_submitted_manifest(
+            {"bucket": "bkt", "prefix": "runs/demo-1"},
+            run_id="demo-1",
+            workflow="demo",
+            api_version="npa.workflow/v0.0.1",
+            steps=[_FakeStep("train", "trainer-gpu", {"accelerators": "H100:2"})],
+        )
+    finally:
+        rs.store_for_config = original
+
+    assert uri == "s3://bkt/runs/demo-1"
+    payload = json.loads(written[("bkt", "runs/demo-1/npa-workflow/manifest.json")])
+    assert payload["schema_version"] == "npa.workflow.run.v1"
+    assert payload["status"] == "submitted"
+    assert payload["steps"][0]["resources_profile"]["accelerators"] == "H100:2"
+
+
+def test_persist_submitted_manifest_without_a_bucket_is_a_no_op() -> None:
+    from npa.orchestration.npa_workflow.run_state import persist_submitted_manifest
+
+    assert persist_submitted_manifest({}, run_id="r", workflow="w", steps=[]) == ""
+
+
+def test_dispatch_step_records_carry_resources_for_any_executor() -> None:
+    """The runtime tier's executor record must still describe the step's resources."""
+    from npa.orchestration.npa_workflow.interpreter import PlanStep, _dispatch_step
+
+    step = PlanStep(
+        state="retrain",
+        resources="trainer-gpu",
+        resources_profile={"accelerators": "RTXPRO6000:2", "cpus": 16},
+    )
+
+    class _WaveExecutor:
+        def execute(self, plan_step):
+            return {"state": plan_step.state, "status": "ok", "job_id": "42"}
+
+    record = _dispatch_step(step, _WaveExecutor())
+    assert record["resources_profile"]["accelerators"] == "RTXPRO6000:2"
+    assert record["resources"] == "trainer-gpu"
+    assert record["job_id"] == "42"

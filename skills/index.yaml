@@ -591,15 +591,21 @@ skills:
           - npa/src/npa/workflows/skypilot/vlm-eval-benchmark.yaml
   - name: physical-ai-data-factory
     category: workflows
-    when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos augment -> evaluate/validate gate -> re-label -> FiftyOne curate -> Rerun visualize."
+    when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos Transfer augment -> Cosmos Evaluator gate -> re-label -> Cosmos Curator + FiftyOne curate -> Rerun visualize."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/physical-ai-data-factory.yaml
+      - type: cli_help
+        args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
+        contains: "--configs-uri"
+      - type: cli_help
+        args: ["workbench", "cosmos-curate", "curate-augmented", "--help"]
+        contains: "--curated-uri"
   - name: real-components
     category: atomic
-    when_to_use: "Ensure every advertised workbench pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM eval), not an echo/manifest stub masquerading as real work."
+    when_to_use: "Ensure every advertised workbench pipeline stage invokes the real component (Cosmos Transfer, Cosmos Evaluator, Cosmos Curator, FiftyOne, VLM eval), not an echo/manifest stub masquerading as real work."
     path: skills/atomic/real-components/SKILL.md
     smoke:
       - type: file_exists

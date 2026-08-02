@@ -10,6 +10,7 @@ from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
+    sync_heldout_renders,
 )
 
 
@@ -182,3 +183,65 @@ def test_regen_mcap_failure_never_breaks_the_rrd_regen(
     assert result.mcap_status == "skipped"
     assert result.local_mcap_path == ""
     assert result.mcap_upload_uri == ""
+
+
+def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> None:
+    run_id = "s2r-real-0725t222636z"
+    config = _config(run_id=run_id)
+    local_dir = tmp_path / "run"
+    report_path = local_dir / "eval" / "heldout" / "report.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(json.dumps({"success_rate": 1.0}), encoding="utf-8")
+
+    class FakePaginator:
+        def paginate(self, *, Bucket: str, Prefix: str, Delimiter: str):
+            if Prefix.endswith(f"{run_id}/byo-eval/"):
+                return [
+                    {
+                        "CommonPrefixes": [
+                            {
+                                "Prefix": (
+                                    f"sim2real-b/{run_id}/byo-eval/"
+                                    f"s2r-byo-isaac-eval-{run_id}/"
+                                )
+                            }
+                        ]
+                    }
+                ]
+            return [{"CommonPrefixes": []}]
+
+    class FakeS3:
+        def get_paginator(self, name: str) -> FakePaginator:
+            assert name == "list_objects_v2"
+            return FakePaginator()
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+        def download_directory(self, uri: str, dest: str) -> None:
+            if uri.endswith(f"/byo-eval/s2r-byo-isaac-eval-{run_id}/renders/"):
+                env_dir = Path(dest) / "env-00006"
+                env_dir.mkdir(parents=True)
+                (env_dir / "camera-000.png").write_bytes(b"png")
+                return
+            raise OSError(uri)
+
+        def download_path(self, uri: str, local_path: str) -> None:
+            if uri.endswith(f"/byo-eval/s2r-byo-isaac-eval-{run_id}/render-manifest.json"):
+                Path(local_path).parent.mkdir(parents=True)
+                Path(local_path).write_text(
+                    json.dumps(
+                        {
+                            "schema": "npa.sim2real.heldout_renders.v1",
+                            "episodes": [{"env_id": "env-00006", "frames": ["camera-000.png"]}],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return
+            raise OSError(uri)
+
+    assert sync_heldout_renders(config, local_dir, heldout_report={"success_rate": 1.0}, client=FakeStorage())
+    assert (local_dir / "eval" / "heldout" / "renders" / "env-00006" / "camera-000.png").is_file()
+    updated_report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert updated_report["render_manifest"]["episodes"][0]["env_id"] == "env-00006"

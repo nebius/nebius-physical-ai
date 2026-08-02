@@ -9,6 +9,11 @@ config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/vlm-eval"
   vlm_backend: self-hosted
+  # A 7B VLM's cold start (wheel resolution + ~16 GB of weights + first load)
+  # does not fit a bounded run. The 2B Qwen2-VL is the same architecture and
+  # the same self-hosted code path at roughly a quarter of the download.
+  vlm_model: Qwen/Qwen2-VL-2B-Instruct
+  vlm_ready_timeout_s: "1500"
 
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
@@ -28,6 +33,8 @@ states:
     toolRef: workbench.vlm_eval.run
     resources: gpu
     outputs:
-      - uri: "{{config.scores_uri}}report.json"
+      # vlm_eval_stub.json is the tool's (legacy-named) result file; it holds a
+      # real score whenever backend != stub.
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
         schema: npa.workbench.vlm_eval.report.v1
     terminal: true
