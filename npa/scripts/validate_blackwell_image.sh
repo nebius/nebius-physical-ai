@@ -2,7 +2,7 @@
 #
 # validate_blackwell_image.sh - check a workbench image against a Blackwell target.
 #
-# Runs npa/scripts/check_torch_gpu_arch.py inside the image. Two modes:
+# Runs npa/docker/workbench/base/cuda13-b300/scripts/check_torch_gpu_arch.py inside the image. Two modes:
 #
 #   build-host mode (no GPU)  - proves the torch wheel ships SASS for the target
 #                               architecture. Enough to catch a cu124/cu126 wheel
@@ -28,7 +28,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHECKER="$SCRIPT_DIR/check_torch_gpu_arch.py"
+# Piped in over stdin rather than run from /npa inside the image, so this also
+# works against images that are not derived from npa-base.
+CHECKER="$SCRIPT_DIR/../docker/workbench/base/cuda13-b300/scripts/check_torch_gpu_arch.py"
 
 IMAGE=""
 TARGET="b200"

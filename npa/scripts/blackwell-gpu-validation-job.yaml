@@ -17,10 +17,7 @@
 #                 hand out a false "Blackwell ready" on the wrong GPU family
 #   3. capability smoke - real kernels execute, not just imports
 #
-# Mount check_torch_gpu_arch.py and gpu_capability_smoke.py at /npa:
-#   kubectl create configmap npa-gpu-validation \
-#     --from-file=npa/scripts/check_torch_gpu_arch.py \
-#     --from-file=npa/scripts/gpu_capability_smoke.py
+# Both scripts are baked into npa-base at /npa, so nothing needs mounting.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -88,11 +85,3 @@ spec:
           resources:
             limits:
               nvidia.com/gpu: 1
-          volumeMounts:
-            - name: scripts
-              mountPath: /npa
-      volumes:
-        - name: scripts
-          configMap:
-            name: npa-gpu-validation
-            defaultMode: 365

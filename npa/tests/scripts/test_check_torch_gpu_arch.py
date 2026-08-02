@@ -13,7 +13,10 @@ from types import ModuleType
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_torch_gpu_arch.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "docker/workbench/base/cuda13-b300/scripts/check_torch_gpu_arch.py"
+)
 
 
 def _load() -> ModuleType:

@@ -13,7 +13,10 @@ from types import ModuleType
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "gpu_capability_smoke.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py"
+)
 
 
 def _load() -> ModuleType:
@@ -72,5 +75,5 @@ def test_golden_eval_runs_this_smoke_rather_than_an_import() -> None:
     evals = yaml.safe_load((root / "src/npa/smoke/golden_evals.yaml").read_text())
     entry = evals["containers"]["base-cuda13-b300"]["golden_eval"]
     assert "gpu_capability_smoke.py" in entry["command"]
-    assert entry["script"] == "npa/scripts/gpu_capability_smoke.py"
+    assert entry["script"] == "npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py"
     assert (root.parent / entry["script"]).is_file()

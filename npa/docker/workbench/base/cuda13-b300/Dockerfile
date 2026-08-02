@@ -160,34 +160,24 @@ pkg.mkdir(exist_ok=True)
 print("flash-attn-4", metadata.version("flash-attn-4"))
 PY
 
-ARG REQUIRE_TORCH_ARCHS
-RUN python - "${REQUIRE_TORCH_ARCHS}" <<'PY'
-import importlib.metadata as metadata
-import sys
+# Baked in so every derived image can validate itself on whatever GPU it lands
+# on, without the caller having to inject a script.
+COPY scripts/check_torch_gpu_arch.py /npa/check_torch_gpu_arch.py
+COPY scripts/gpu_capability_smoke.py /npa/gpu_capability_smoke.py
 
-import torch
+ARG REQUIRE_TORCH_ARCHS
+RUN python /npa/check_torch_gpu_arch.py $(printf -- '--require-arch %s ' ${REQUIRE_TORCH_ARCHS}) \
+    && python - <<'PY'
+import importlib.metadata as metadata
+
 import flash_attn
 from flash_attn import flash_attn_func
 
-# torch.cuda.get_arch_list() short-circuits to [] with no visible device, which
-# is every build host. _cuda_getArchFlags reads the compiled binary instead.
-arch_list = (torch._C._cuda_getArchFlags() or "").split() or torch.cuda.get_arch_list()
-print("torch", torch.__version__)
-print("cuda", torch.version.cuda)
-print("arch_list", arch_list)
+# Import only: the flash-attn-4 CuTe kernel needs a GPU with TMA, so whether it
+# actually runs is decided by /npa/gpu_capability_smoke.py at deploy time.
 print("nvidia-nccl-cu13", metadata.version("nvidia-nccl-cu13"))
 print("flash-attn-4", flash_attn.__version__)
 print("flash_attn_func", flash_attn_func)
-
-required = sys.argv[1].split() if len(sys.argv) > 1 else []
-missing = [arch for arch in required if arch not in arch_list]
-if missing:
-    raise SystemExit(
-        f"torch wheel is missing required architectures {missing}; "
-        f"get_arch_list()={arch_list}. The prebuilt wheel's fat-binary arch set "
-        "cannot be changed by TORCH_CUDA_ARCH_LIST - pick a wheel index that "
-        "ships these architectures (cu128/cu130 carry sm_100 and sm_120)."
-    )
 PY
 
 WORKDIR /workspace

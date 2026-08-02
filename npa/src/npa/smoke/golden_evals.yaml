@@ -59,7 +59,7 @@ containers:
       # for it, with a bf16 matmul and torch SDPA as controls.
       kind: container-smoke
       command: 'python /npa/gpu_capability_smoke.py --expect-capability 10.3'
-      script: npa/scripts/gpu_capability_smoke.py
+      script: npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py
       serverless_gpu: b300
       gpu: required
       timeout_seconds: 300
