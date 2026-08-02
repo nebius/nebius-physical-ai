@@ -10,8 +10,12 @@ regressing.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
+
+try:  # tomllib is stdlib from 3.11; the repo still supports 3.10 via tomli.
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on the 3.10 CI leg
+    import tomli as tomllib
 
 import yaml
 
