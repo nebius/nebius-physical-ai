@@ -92,9 +92,14 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
 
 def _iam_note() -> str:
     """A hint about cloud IAM leftovers npa deliberately does not delete."""
+    generic = (
+        "Cloud IAM (not removed): pre-existing service accounts are left in place; "
+        "remove one deliberately with `nebius iam service-account delete --id <id>`."
+    )
     try:
-        from npa.clients.credentials import CREDENTIALS_PATH
         import yaml
+
+        from npa.clients.credentials import CREDENTIALS_PATH
 
         if CREDENTIALS_PATH.exists():
             data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
@@ -107,11 +112,8 @@ def _iam_note() -> str:
                     f"`nebius iam service-account delete --id {sa_id}`."
                 )
     except Exception:  # noqa: BLE001 - the note is best-effort
-        pass
-    return (
-        "Cloud IAM (not removed): pre-existing service accounts are left in place; "
-        "remove one deliberately with `nebius iam service-account delete --id <id>`."
-    )
+        return generic
+    return generic
 
 
 def cleanup_cmd(
