@@ -26,7 +26,6 @@ from urllib.parse import urlparse
 from npa.workbench.cosmos_curate.pipeline import (
     DEFAULT_CLIP_LEN_S,
     DEFAULT_MIN_CLIP_LEN_S,
-    CuratorRunResult,
     curate_videos,
 )
 from npa.workbench.cosmos_curate.upstream import (

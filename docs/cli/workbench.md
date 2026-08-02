@@ -14,6 +14,8 @@ lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
 cosmos3  Cosmos3 reasoning workflow contracts.
+cosmos-curate  NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips.
+cosmos-evaluator  NVIDIA Cosmos Evaluator: hallucination + attribute-verification grading of augmented video.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
 foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
@@ -50,6 +52,8 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
 | `cosmos3` | Cosmos3 reasoning workflow contracts. |
+| `cosmos-curate` | NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips. |
+| `cosmos-evaluator` | NVIDIA Cosmos Evaluator: hallucination + attribute-verification grading of augmented video. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
 | `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
