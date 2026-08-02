@@ -146,6 +146,33 @@ def test_manifest_classifies_every_packaged_image() -> None:
     )
 
 
+def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> None:
+    """A published tag must be collision-proof and say which architectures it carries.
+
+    Overwriting a tag is the failure mode this guards against: the UTC stamp
+    makes every build a new tag, and the sm markers keep routing auditable.
+    """
+
+    published = [entry for entry in entries if "published_tag" in entry]
+    assert published, "at least npa-base should record the tag that was pushed"
+    for entry in published:
+        tag = entry["published_tag"]
+        name = entry["name"]
+        assert tag.startswith("cuda13-b300-"), (
+            f"{name} tag {tag!r} is outside the tag families in tags.yaml"
+        )
+        assert re.search(r"-\d{8}T\d{6}Z$", tag), (
+            f"{name} tag {tag!r} has no UTC stamp, so a rebuild would overwrite it"
+        )
+        assert "sm100" in tag, f"{name} tag {tag!r} does not advertise sm_100"
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", entry["published_digest"]), (
+            f"{name} has a malformed digest"
+        )
+        assert set(entry["published_registries"]) == {"primary", "mirror"}, (
+            f"{name} must be pushed to both registries"
+        )
+
+
 def test_base_image_covers_both_blackwell_majors(entries: list[dict]) -> None:
     """npa-base gates the tree, so its arch list must span sm_100 and sm_120."""
 

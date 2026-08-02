@@ -13,7 +13,10 @@
         "sm": "sm_100",
         "nebius_platform": "gpu-b200-sxm",
         "nebius_region": "us-central1",
-        "nebius_platform_variants": ["gpu-b200-sxm", "gpu-b200-sxm-a"]
+        "nebius_platform_variants": [
+          "gpu-b200-sxm",
+          "gpu-b200-sxm-a"
+        ]
       },
       {
         "name": "B300 (Blackwell Ultra)",
@@ -58,7 +61,22 @@
         "flash-attn-4 (CuTe)"
       ],
       "smoke": "import flash_attn; flash_attn_func on a real device",
-      "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. flash-attn-4 CuTe JIT-compiles at runtime, which is why it also runs on sm_120 - that JIT assumption still needs confirming on real B200/B300 silicon."
+      "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. flash-attn-4 CuTe JIT-compiles at runtime, which is why it also runs on sm_120 - that JIT assumption still needs confirming on real B200/B300 silicon.",
+      "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260802T030943Z",
+      "published_digest": "sha256:4769f642e5f4436f598e4578c268673cba1f089273bd0a3535d7e9fc05509e5e",
+      "published_registries": [
+        "primary",
+        "mirror"
+      ],
+      "observed_wheel_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ]
     },
     {
       "name": "npa-workbench-cuda-base",
