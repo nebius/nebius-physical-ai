@@ -123,8 +123,8 @@ submit per day**, not the whole `gpu and e2e` suite:
   | `sonic-train` | 3m41s |
   | `sonic-export` | 6m11s |
   | `sonic-locomotion-finetuning` | 7m01s |
-  | `vlm-eval-single` | 7m32s |
-  | `sonic-export-eval` | 9m47s |
+  | `vlm-eval-single` | 8m23s |
+  | `sonic-export-eval` | 8m28s |
   | `tokenfactory-cosmos-gate` | 11m40s |
   | `mjlab-eval` | not re-measured here |
   | `cosmos3-reason` | not re-measured here |
