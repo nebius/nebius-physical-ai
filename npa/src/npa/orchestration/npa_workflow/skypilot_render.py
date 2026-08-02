@@ -225,9 +225,10 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         "  chmod +x /tmp/npa-shim/python3\n"
         "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
         # Console scripts installed next to that interpreter must be resolvable by
-        # name too. Live: vLLM's FlashInfer JIT shells out to `ninja`, which pip
-        # had installed into the interpreter's bin dir — a directory that is not on
-        # the stage shell's PATH, which is the whole reason the shim above exists.
+        # name too, which is the same gap the `npa` symlink in setup works around.
+        # Live: vLLM's FlashInfer JIT shells out to `ninja`, which ships as a vLLM
+        # dependency in the interpreter's bin dir — a directory that is not on the
+        # stage shell's PATH, which is the whole reason the shim above exists.
         # Appended, not prepended, so it cannot shadow a system tool.
         "  npa_scripts=\"$(\"$npa_python\" -c 'import sysconfig; "
         "print(sysconfig.get_path(\"scripts\"))' 2>/dev/null || true)\"\n"
@@ -541,7 +542,6 @@ def _vllm_install_setup(model: str) -> str:
         "python3 - <<'PY'\n"
         "import importlib.util\n"
         "import os\n"
-        "import shutil\n"
         "import subprocess\n"
         "import sys\n"
         "\n"
@@ -561,11 +561,6 @@ def _vllm_install_setup(model: str) -> str:
         "    subprocess.call([sys.executable, '-m', 'pip', 'install', '-q', 'uv'])\n"
         "if importlib.util.find_spec('vllm') is None and not pip_install('vllm>=0.8.5'):\n"
         "    raise SystemExit('failed to install vllm for the self-hosted VLM backend')\n"
-        # FlashInfer JIT-compiles vLLM's sampling kernel on first use and shells out
-        # to ninja; without it the engine dies during warmup with a bare
-        # FileNotFoundError, long after the weights are loaded.
-        "if shutil.which('ninja') is None:\n"
-        "    pip_install('ninja')\n"
         "pip_install('hf_transfer')\n"
         "os.environ.setdefault('HF_HUB_ENABLE_HF_TRANSFER', '1')\n"
         "try:\n"

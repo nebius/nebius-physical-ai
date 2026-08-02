@@ -155,9 +155,9 @@ already paid for itself in real product bugs it surfaced:
 
 - The self-hosted vLLM server was never started by the render (`[Errno 111]
   Connection refused`); once started, a 7B VLM's cold start did not fit a
-  bounded run; and once it fit, the engine died in warmup three different ways
-  (missing `ninja`, `ninja` present but not on the stage's PATH, then
-  `nvcc: not found` for FlashInfer's JIT sampler).
+  bounded run; and once it fit, the engine died in warmup twice — `ninja` (a
+  vLLM dependency) was not on the stage shell's PATH, and then FlashInfer's JIT
+  sampler wanted an `nvcc` the image does not ship.
 - `sonic train` had no runtime that trains in the job it is already running in;
   all three delegated to more infrastructure.
 - `sonic export` / `sonic eval` could not exchange artifacts between stages,
