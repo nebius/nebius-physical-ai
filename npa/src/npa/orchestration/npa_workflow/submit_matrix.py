@@ -23,6 +23,11 @@ class SubmitLiveCase:
 
     spec: str
     tier: str  # cpu | gpu | multi
+    #: Secrets this twin's stages actually read. The live test SKIPS the case
+    #: when one is missing from the operator env, so listing a secret the
+    #: exercised path never consumes turns an unrelated gap in someone's env
+    #: into a silently no-op day of the daily GPU rotation. List only what the
+    #: twin needs to run; the render's ``SECRET_ENV_HINTS`` cover the rest.
     secret_envs: tuple[str, ...] = ()
     requires_token_factory: bool = False
     plan_only: bool = False
@@ -123,7 +128,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "vlm-eval-single.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        # No HF_TOKEN: the served 2B Qwen2-VL is public, so requiring one would
+        # skip the twin on an operator env that simply never set it.
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         # A self-hosted VLM cold start is dominated by the vLLM wheel set and the
         # engine's own warmup, both of which land outside the other twins' range.
         max_wait_seconds=2400,
@@ -163,12 +170,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sonic-export.yaml",
         "gpu",
-        secret_envs=(
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
-            "NGC_API_KEY",
-        ),
+        # No NGC_API_KEY: the in-job trainer pulls nothing from NGC, and gating
+        # on it would skip the twin instead of running it.
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         notes="train (in-job runtime) -> export; self-contained.",
     ),
     SubmitLiveCase(
@@ -203,12 +207,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sonic-export-eval.yaml",
         "multi",
-        secret_envs=(
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
-            "NGC_API_KEY",
-        ),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         notes=(
             "train -> export -> eval, self-contained: the in-job train runtime "
             "writes checkpoint.pt to S3 and each stage reads the previous "

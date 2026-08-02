@@ -115,19 +115,22 @@ submit per day**, not the whole `gpu and e2e` suite:
   GPU-launching twin has been run live on RTXPRO-6000; the rotation cycles the
   verified-passing set:
 
+  Wall clock is the submit test end to end (provision, run, poll to terminal),
+  which is what has to fit `NPA_DAILY_GPU_MAX_WAIT_SECONDS`:
+
   | Twin | Live wall clock |
   | --- | --- |
-  | `mjlab-eval` | — |
-  | `cosmos3-reason` | — |
-  | `tokenfactory-rollout-judge` | — |
-  | `vlm-eval-benchmark` | — |
-  | `isaac-lab-rl-sweep` | — |
   | `sonic-train` | 3m41s |
   | `sonic-export` | 6m11s |
-  | `sonic-export-eval` | 6m33s |
   | `sonic-locomotion-finetuning` | 7m01s |
   | `vlm-eval-single` | 7m32s |
+  | `sonic-export-eval` | 9m47s |
   | `tokenfactory-cosmos-gate` | 11m40s |
+  | `mjlab-eval` | not re-measured here |
+  | `cosmos3-reason` | not re-measured here |
+  | `tokenfactory-rollout-judge` | not re-measured here |
+  | `vlm-eval-benchmark` | not re-measured here |
+  | `isaac-lab-rl-sweep` | not re-measured here |
 
   Two twins stay out, each with an accurate `skip_reason` in
   `submit_matrix.py`: `sonic-eval` is a single consume-only stage whose input is

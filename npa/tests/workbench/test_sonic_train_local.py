@@ -13,6 +13,7 @@ import pytest
 
 from npa.workbench.sonic.train import (
     CHECKPOINT_FILE_NAME,
+    CHECKPOINT_FORMAT,
     MANIFEST_FILE_NAME,
     REFERENCE_TRAINER,
     TRAIN_MANIFEST_FORMAT,
@@ -200,6 +201,107 @@ def test_export_reports_missing_staged_checkpoint(tmp_path: Path) -> None:
             output=str(tmp_path / "onnx"),
             storage_client=storage,
         )
+
+
+def test_checkpoint_holds_weights_not_a_pickled_module(tmp_path: Path) -> None:
+    """The checkpoint must load under torch's restricted unpickler.
+
+    A checkpoint that pickles the module binds the artifact to one class path
+    and can only be read by executing what the file says.
+    """
+
+    torch = pytest.importorskip("torch")
+    train_local(
+        output_path=str(tmp_path / "training"),
+        max_iterations=1,
+        num_envs=8,
+        device="cpu",
+        allow_entrypoint=False,
+    )
+    payload = torch.load(
+        str(tmp_path / "training" / CHECKPOINT_FILE_NAME),
+        map_location="cpu",
+        weights_only=True,
+    )
+    assert payload["format"] == CHECKPOINT_FORMAT
+    assert isinstance(payload["policy"], dict)
+    assert payload["policy"]["class"].endswith("ReferenceLocomotionPolicy")
+    assert isinstance(payload["policy_state_dict"], dict)
+    assert not isinstance(payload["policy"], torch.nn.Module)
+
+
+def test_export_bakes_the_normalization_the_trainer_measured(tmp_path: Path) -> None:
+    """Rebuilding from a state dict must not drop the observation statistics.
+
+    The exported graph takes RAW observations, so if the normalization the
+    trainer measured were lost the ONNX would quietly expect pre-normalized
+    input and every downstream score would be wrong while every check passed.
+    """
+
+    torch = pytest.importorskip("torch")
+    ort = pytest.importorskip("onnxruntime")
+    import numpy as np
+
+    from npa.workbench.sonic import export_onnx
+    from npa.workbench.sonic.reference_policy import (
+        ReferenceLocomotionPolicy,
+        sample_observations,
+    )
+
+    train_local(
+        output_path=str(tmp_path / "training"),
+        max_iterations=1,
+        num_envs=8,
+        device="cpu",
+        allow_entrypoint=False,
+    )
+    exported = export_onnx(
+        checkpoint=str(tmp_path / "training" / CHECKPOINT_FILE_NAME),
+        output=str(tmp_path / "onnx"),
+    )
+
+    payload = torch.load(
+        str(tmp_path / "training" / CHECKPOINT_FILE_NAME),
+        map_location="cpu",
+        weights_only=True,
+    )
+    policy = ReferenceLocomotionPolicy(**payload["policy"]["kwargs"])
+    policy.load_state_dict(payload["policy_state_dict"])
+    policy.eval()
+    stats = payload["normalization"]
+    mean = torch.tensor(stats["mean"])
+    std = torch.sqrt(torch.tensor(stats["var"]))
+
+    obs = sample_observations(4, generator=torch.Generator().manual_seed(7))
+    with torch.no_grad():
+        normalized = torch.clamp(
+            (obs - mean) / std, -float(stats["clip"]), float(stats["clip"])
+        )
+        expected = policy(normalized).numpy()
+        unnormalized = policy(obs).numpy()
+
+    session = ort.InferenceSession(exported.onnx_path, providers=["CPUExecutionProvider"])
+    actual = session.run(["action"], {"obs": obs.numpy().astype("float32")})[0]
+
+    assert np.abs(expected - actual).max() < 1e-4
+    # And the graph is genuinely doing the normalization, not passing through.
+    assert np.abs(unnormalized - actual).max() > 1e-3
+
+
+def test_train_local_cold_starts_from_an_unreadable_checkpoint(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
+    corrupt = tmp_path / "corrupt.pt"
+    corrupt.write_bytes(b"not a torch checkpoint")
+    result = train_local(
+        output_path=str(tmp_path / "training"),
+        checkpoint=str(corrupt),
+        max_iterations=1,
+        num_envs=8,
+        device="cpu",
+        allow_entrypoint=False,
+    )
+    assert result["warm_start"] == ""
+    assert result["status"] == "trained"
 
 
 def test_train_local_warm_start_ignores_hugging_face_ref(tmp_path: Path) -> None:

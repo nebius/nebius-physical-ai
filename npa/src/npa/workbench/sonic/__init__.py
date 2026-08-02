@@ -451,7 +451,7 @@ def _load_policy_from_checkpoint(
     path = Path(checkpoint)
     if not path.exists():
         raise SonicExportError(f"checkpoint not found: {checkpoint}")
-    payload = torch.load(str(path), map_location="cpu", weights_only=False)
+    payload = _load_checkpoint_payload(path, torch)
     if isinstance(payload, torch.nn.Module):
         return payload
     if isinstance(payload, dict):
@@ -466,7 +466,12 @@ def _load_policy_from_checkpoint(
             candidate = payload.get(key)
             if isinstance(candidate, torch.nn.Module):
                 return candidate
-        policy = _instantiate_policy_from_config(config)
+        # ``--config`` wins, then the checkpoint's own description of its policy
+        # class (what `sonic train --runtime local` records), so a state-dict
+        # checkpoint is self-describing instead of needing a matching --config.
+        policy = _instantiate_policy_from_config(config) or _instantiate_policy_from_config(
+            payload
+        )
         if policy is not None:
             state_dict, state_key = _state_dict_from_checkpoint(payload)
             if state_dict is None:
@@ -475,6 +480,7 @@ def _load_policy_from_checkpoint(
                     "the policy class from --config"
                 )
             _load_state_dict(policy, state_dict, state_key)
+            _apply_checkpoint_metadata(policy, payload)
             return policy
     raise SonicExportError(
         "checkpoint does not contain a loadable torch.nn.Module policy. "
@@ -482,6 +488,35 @@ def _load_policy_from_checkpoint(
         "`actor`, or `model` as a module, or --config with policy.class and "
         "policy.kwargs for state-dict checkpoints."
     )
+
+
+def _load_checkpoint_payload(path: Path, torch: Any) -> Any:
+    """Read a checkpoint, preferring torch's restricted unpickler.
+
+    ``weights_only=True`` reads tensors and plain data without executing what
+    the file says, which covers every checkpoint `sonic train` writes. Older
+    checkpoints that pickle the module itself cannot be read that way, so they
+    fall back to the full unpickler — only trust those from your own storage.
+    """
+
+    try:
+        return torch.load(str(path), map_location="cpu", weights_only=True)
+    except Exception:  # noqa: BLE001 - a module-pickling checkpoint needs the full loader
+        return torch.load(str(path), map_location="cpu", weights_only=False)
+
+
+def _apply_checkpoint_metadata(policy: Any, payload: dict[str, Any]) -> None:
+    """Copy the layout/normalization a checkpoint recorded onto the policy.
+
+    A policy rebuilt from a state dict has only what its constructor set, so
+    anything the trainer measured (observation normalization above all) would be
+    lost and the exported graph would silently expect pre-normalized inputs.
+    """
+
+    for key in ("obs_spec", "action_spec", "normalization", "control_dt"):
+        value = payload.get(key)
+        if value is not None:
+            setattr(policy, key, value)
 
 
 def _instantiate_policy_from_config(config: dict[str, Any]) -> Any | None:

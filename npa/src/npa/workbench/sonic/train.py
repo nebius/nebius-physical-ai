@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 CHECKPOINT_FILE_NAME = "checkpoint.pt"
 MANIFEST_FILE_NAME = "checkpoint.json"
 TRAIN_MANIFEST_FORMAT = "npa_sonic_train_manifest_v1"
+CHECKPOINT_FORMAT = "npa_sonic_checkpoint_v1"
 ENTRYPOINT_TRAINER = "sonic-entrypoint"
 REFERENCE_TRAINER = "reference-locomotion"
 DEFAULT_ENTRYPOINT = "/entrypoint.sh"
@@ -354,18 +355,33 @@ def _run_reference_trainer(
         losses.append(iteration_loss / STEPS_PER_ITERATION)
 
     policy = policy.to("cpu").eval()
-    policy.normalization = {
+    normalization = {
         "mean": mean.detach().cpu().tolist(),
         "var": var.detach().cpu().tolist(),
         "epsilon": 1e-6,
         "clip": 10.0,
         "source": "reference-locomotion-train",
     }
+    # Weights plus a description of how to rebuild the actor, never the pickled
+    # module: a pickled module binds the artifact to this exact class path (a
+    # later rename silently breaks old checkpoints) and can only be read back by
+    # executing whatever the file says. `sonic export` reconstructs the class
+    # named here and loads the state dict into it.
     torch.save(
         {
-            "policy": policy,
+            "format": CHECKPOINT_FORMAT,
+            "policy": {
+                "class": f"{ReferenceLocomotionPolicy.__module__}."
+                f"{ReferenceLocomotionPolicy.__qualname__}",
+                "kwargs": {
+                    "observation_dim": DEFAULT_OBS_DIM,
+                    "action_dim": DEFAULT_ACTION_DIM,
+                },
+            },
+            "policy_state_dict": policy.state_dict(),
             "obs_spec": {"name": "obs", "fields": obs_field_spec()},
             "action_spec": {"name": "action", "dim": DEFAULT_ACTION_DIM},
+            "normalization": normalization,
             "control_dt": 0.02,
             "embodiment": embodiment,
         },
@@ -430,12 +446,27 @@ def _load_warm_start(
             local.write_bytes(source.read_bytes())
         if not local.is_file():
             return ""
-        payload = torch.load(str(local), map_location="cpu", weights_only=False)
-        state = payload.get("policy") if isinstance(payload, dict) else payload
-        if state is None:
-            return ""
+        # Everything from here is best-effort: a checkpoint that is corrupt,
+        # written by a different trainer, or shaped for another policy means
+        # "start from scratch", not "fail the training stage".
         try:
-            policy.load_state_dict(state.state_dict())
-        except (AttributeError, RuntimeError):
+            payload = torch.load(str(local), map_location="cpu", weights_only=True)
+            state = _warm_start_state_dict(payload)
+            if state is None:
+                return ""
+            policy.load_state_dict(state)
+        except Exception:  # noqa: BLE001 - any unreadable checkpoint is a cold start
             return ""
     return ref
+
+
+def _warm_start_state_dict(payload: Any) -> dict[str, Any] | None:
+    """Pull a policy state dict out of a checkpoint payload, if there is one."""
+
+    if not isinstance(payload, dict):
+        return None
+    for key in ("policy_state_dict", "state_dict", "model_state_dict"):
+        candidate = payload.get(key)
+        if isinstance(candidate, dict):
+            return candidate
+    return None
