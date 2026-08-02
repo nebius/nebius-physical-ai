@@ -54,6 +54,14 @@ on:
         description: "Dry run (plan only, no copy)"
         type: boolean
         default: true
+      skip_missing:
+        description: >-
+          Publish what exists, skipping images the source registry does not have yet.
+          The plan comes from the packaging contract (what the repo BUILDS), so a tool
+          that landed before its image was built otherwise blocks every ready image.
+          A denial is never skipped.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -158,7 +166,11 @@ jobs:
       # packages already created. It writes nothing, so it is safe in dry-run.
       - name: Preflight the source registry credential and every pinned tag
         if: ${{ steps.source-login.outputs.available == 'true' }}
-        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}" --preflight
+        run: |
+          python -m npa.deploy.publish_public \
+            --target "${{ steps.target.outputs.value }}" \
+            ${{ inputs.skip_missing && '--skip-missing' || '' }} \
+            --preflight
 
       # Last line of defence before an irreversible action. publish_public trusts the
       # packaging contract, which is a statement about the Dockerfiles; this checks the
@@ -208,7 +220,10 @@ jobs:
       # publish; the summary below turns it into a click-through list.
       - name: Publish and verify
         if: ${{ inputs.dry_run == false }}
-        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}"
+        run: |
+          python -m npa.deploy.publish_public \
+            --target "${{ steps.target.outputs.value }}" \
+            ${{ inputs.skip_missing && '--skip-missing' || '' }}
 
       - name: Write the visibility checklist to the job summary
         if: ${{ failure() && inputs.dry_run == false }}
@@ -232,6 +247,7 @@ jobs:
           # Only the packages that are still private, so the list shrinks as they are flipped.
           python -m npa.deploy.publish_public \
             --target "${{ steps.target.outputs.value }}" \
+            ${{ inputs.skip_missing && '--skip-missing' || '' }} \
             --verify-public --checklist 2>/dev/null \
             | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
           cat >> "$GITHUB_STEP_SUMMARY" <<'MD'

@@ -244,10 +244,17 @@ The copy path is bracketed by two checks it runs itself. Before writing anything
 reads every **source** manifest, because `crane auth login` writes a config file and
 exits 0 for any string without ever contacting the registry — so a stale credential
 would otherwise surface partway through the copy loop with some packages already
-created. `UNAUTHORIZED` on *every* image means the credential never resolved to an
-identity at all; `UNAUTHORIZED` on *some* means the identity lacks `viewer` on those
-repositories; `MANIFEST_UNKNOWN` means the pinned tag was never pushed. Run it alone
-with `--preflight`. Locally, mint a fresh source token with:
+created. Run it alone with `--preflight`. The registry's own error code says which
+of three unrelated problems you have:
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `UNAUTHORIZED` on **every** image | the credential resolved to no identity | replace the credential (below) |
+| `UNAUTHORIZED` on **some** images | the identity lacks `viewer` on those repositories | fix the role, not the token |
+| `NAME_UNKNOWN` | no such repository — the image was never built and pushed | build and push it, or `--skip-missing` |
+| `MANIFEST_UNKNOWN` | the repository exists but not this tag — the pin points at an unpushed build | correct the pin, or `--skip-missing` |
+
+Locally, mint a fresh source token with:
 
 ```bash
 nebius iam get-access-token | crane auth login cr.eu-north1.nebius.cloud -u iam --password-stdin
@@ -293,6 +300,34 @@ workflow's default **dry run is a full rehearsal** — it resolves the plan, log
 the source registry, preflights every pinned tag, and runs the Isaac gate, skipping
 only the copy and the public verification. A green dry run means the real run will get
 as far as writing.
+
+### The plan is what we build, not what is pushed
+
+The publish plan is derived from the packaging contract, which records what this repo
+**builds**. The registry holds what someone actually **pushed**. Those two diverge every
+time a new tool lands — Dockerfile, contract entry and version pin merge together, while
+building and pushing the image is a separate manual step (there is no build-and-push
+automation). A brand-new tool is therefore *expected* to be absent from the registry for a
+while, and the preflight reports it as `NAME_UNKNOWN`.
+
+By default that blocks the publish, which is the right default: silently mirroring a subset
+would make a pin regression that dropped an image look exactly like success. When the gap is
+known and intended, publish the ready images anyway:
+
+```bash
+python -m npa.deploy.publish_public --skip-missing            # or the workflow's skip_missing input
+```
+
+It drops only the images the registry has no copy of, prints each one with the reason, and
+copies the rest. Two properties matter here:
+
+- **A denial is never skipped.** `UNAUTHORIZED` / `DENIED` stops the run even with
+  `--skip-missing`, because a credential or role fault would otherwise quietly shrink the
+  published set. Denial also wins when a registry answers `NAME_UNKNOWN` for a repository
+  the identity cannot see.
+- **Skipped images are absent from the mirror**, so a consumer pointing `NPA_REGISTRY` at it
+  gets a pull failure for those tags until the image is built and the workflow re-run.
+  Adding one later costs one more visibility flip.
 
 or the `Publish public images` GitHub Actions workflow (manual dispatch,
 dry-run by default). **Consumers in any tenant** then pull the OSS images by

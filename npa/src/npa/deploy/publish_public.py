@@ -29,6 +29,11 @@ automated (see ``package_settings_url``); the verification prints a click-throug
 expiry offline, because the credential is what actually breaks: a Nebius access token
 lives 12 hours, so anything stored in CI must be a static key issued for
 CONTAINER_REGISTRY instead (see ``describe_credential``).
+
+``--skip-missing`` publishes the images that exist when some pin refers to an image nobody
+has built yet. The plan comes from the packaging contract (what the repo BUILDS) while the
+registry holds what was pushed, so that gap is routine for a young tool; a denial is never
+skipped (see ``classify_preflight_failure``).
 """
 
 from __future__ import annotations
@@ -143,6 +148,37 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
         if not ok:
             failures.append((item, detail))
     return failures
+
+
+# The plan is derived from the packaging contract, which states what the repo BUILDS -- an
+# intent. The registry holds what someone actually pushed. Those diverge whenever a new tool
+# lands (Dockerfile, contract entry and pin merged) before its image is built, and the repo
+# has no build-and-push automation, so the divergence is normal rather than exceptional.
+#
+# The two states need opposite handling, which is why they are classified rather than lumped
+# into "unreadable". A never-pushed image is a legitimate state that must not hold the ready
+# images hostage; a credential or role problem must NEVER be skipped past, because skipping
+# it would silently shrink the published set and look like success.
+_MISSING_MARKERS = ("NAME_UNKNOWN", "MANIFEST_UNKNOWN")
+_DENIED_MARKERS = ("UNAUTHORIZED", "DENIED", "FORBIDDEN")
+
+
+def classify_preflight_failure(detail: str) -> str:
+    """``"missing"``, ``"denied"`` or ``"other"`` for a preflight failure reason.
+
+    ``missing`` means the registry answered authoritatively that it has no such repository
+    (``NAME_UNKNOWN``) or no such tag (``MANIFEST_UNKNOWN``) -- the image was never pushed.
+    ``denied`` covers anything that is about the identity, which is never skippable.
+    """
+    upper = detail.upper()
+    # Denial wins over absence: a registry that hides repositories behind authz can answer
+    # NAME_UNKNOWN for something that exists but is not visible to this identity, and
+    # treating that as "not built yet" would quietly drop a publishable image.
+    if any(marker in upper for marker in _DENIED_MARKERS):
+        return "denied"
+    if any(marker in upper for marker in _MISSING_MARKERS):
+        return "missing"
+    return "other"
 
 
 # --------------------------------------------------------------------------------------
@@ -421,6 +457,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--skip-missing",
+        action="store_true",
+        help=(
+            "Publish the images that exist, skipping any the source registry does not have "
+            "yet (NAME_UNKNOWN / MANIFEST_UNKNOWN), and report exactly which were skipped. "
+            "The plan comes from the packaging contract, which records what this repo BUILDS, "
+            "so a tool that landed before its image was built otherwise blocks every ready "
+            "image. A denial is never skipped — that is a credential or role fault."
+        ),
+    )
+    parser.add_argument(
         "--checklist",
         action="store_true",
         help=(
@@ -460,50 +507,89 @@ def main(argv: list[str] | None = None) -> int:
     for item in plan:
         print(f"  {item.source_ref}  ->  {item.target_ref}")
     if args.verify_public:
+        expected = plan
+        if args.skip_missing:
+            # Otherwise the checklist would list packages for images that were never copied,
+            # linking to settings pages that 404 -- and the run would report "not public"
+            # about something nobody tried to publish.
+            print("\nPreflighting source images to exclude the ones not built yet:")
+            expected = _preflight_or_explain(plan, skip_missing=True)
+            if not expected:
+                return 1
         print("\nVerifying anonymous (unauthenticated) pullability:")
-        failures = verify_public(plan)
+        failures = verify_public(expected)
         if failures:
-            _explain_private_packages(failures, total=len(plan))
+            _explain_private_packages(failures, total=len(expected))
             if args.checklist:
                 print("\n" + visibility_checklist(failures))
             return 1
-        print(f"\nAll {len(plan)} image(s) are publicly pullable.")
+        print(f"\nAll {len(expected)} image(s) are publicly pullable.")
         return 0
 
     if args.preflight:
         print("\nPreflighting source images (authenticated read, nothing written):")
-        return 1 if _preflight_or_explain(plan) else 0
+        return 0 if _preflight_or_explain(plan, skip_missing=args.skip_missing) else 1
 
     if args.dry_run:
         print("(dry run — nothing copied)")
         return 0
 
     print("\nPreflighting source images (authenticated read, nothing written):")
-    if _preflight_or_explain(plan):
+    publishable = _preflight_or_explain(plan, skip_missing=args.skip_missing)
+    if not publishable:
         return 1
-    for item in plan:
+    for item in publishable:
         _crane_copy(item)
-    print(f"\nCopied {len(plan)} image(s).")
+    print(f"\nCopied {len(publishable)} image(s).")
 
     # Copying is not publishing, so do not stop here and report success. Verifying
     # inline means the operator learns the real state -- and gets the click-through
     # list for the one step that cannot be automated -- from the command that did
     # the copy, rather than from a separate invocation they have to know to run.
     print("\nVerifying anonymous (unauthenticated) pullability:")
-    failures = verify_public(plan)
+    failures = verify_public(publishable)
     if failures:
-        _explain_private_packages(failures, total=len(plan), after_copy=True)
+        _explain_private_packages(failures, total=len(publishable), after_copy=True)
         print("\n" + visibility_checklist(failures))
         return 1
-    print(f"\nAll {len(plan)} image(s) are publicly pullable.")
+    print(f"\nAll {len(publishable)} image(s) are publicly pullable.")
     return 0
 
 
-def _preflight_or_explain(plan: list[PublishItem]) -> bool:
-    """Run the source preflight; explain and return True if it failed."""
+def _preflight_or_explain(plan: list[PublishItem], *, skip_missing: bool = False) -> list[PublishItem]:
+    """Run the source preflight and return the items that are safe to copy.
+
+    Returns an empty list when the run must stop. With ``skip_missing`` the never-pushed
+    images are dropped from the returned set instead of failing the run, so a young tool
+    whose image has not been built yet cannot block the images that are ready.
+    """
     failures = preflight_sources(plan)
     if not failures:
-        return False
+        return list(plan)
+
+    by_kind: dict[str, list[tuple[PublishItem, str]]] = {}
+    for item, detail in failures:
+        by_kind.setdefault(classify_preflight_failure(detail), []).append((item, detail))
+    missing = by_kind.get("missing", [])
+    blocking = by_kind.get("denied", []) + by_kind.get("other", [])
+
+    if skip_missing and missing and not blocking:
+        print(
+            f"\nSkipping {len(missing)} of {len(plan)} image(s) that are not in the source "
+            "registry yet (--skip-missing). The packaging contract records what this repo\n"
+            "builds; these have not been built and pushed, so there is nothing to mirror:",
+            file=sys.stderr,
+        )
+        for item, detail in missing:
+            print(f"  {item.source_ref}  ({_missing_reason(detail)})", file=sys.stderr)
+        print(
+            "Build and push them, then re-run to add them to the mirror. Until then they are\n"
+            "absent from the public registry and will fail at pull time for consumers.",
+            file=sys.stderr,
+        )
+        skipped = {item.source_ref for item, _ in missing}
+        return [item for item in plan if item.source_ref not in skipped]
+
     lines = [
         f"\n{len(failures)} of {len(plan)} source image(s) could not be read; nothing was "
         "copied."
@@ -512,10 +598,12 @@ def _preflight_or_explain(plan: list[PublishItem]) -> bool:
     # UNAUTHORIZED could be a per-repository grant, but all of them means the credential
     # never resolved to an identity at all ("failed to get profile"), so there is no point
     # looking at roles or at the tags.
-    if len(failures) == len(plan) and all("UNAUTHORIZED" in detail for _, detail in failures):
+    if len(failures) == len(plan) and all(
+        classify_preflight_failure(detail) == "denied" for _, detail in failures
+    ):
         lines.append(
-            "Every read failed with UNAUTHORIZED, so this is the credential rather than any\n"
-            "single tag or grant — the token did not resolve to an identity.\n"
+            "Every read was denied, so this is the credential rather than any single tag or\n"
+            "grant — the token did not resolve to an identity.\n"
             "In CI, prefer a credential that does not expire between dispatches. An access\n"
             "token from `nebius iam get-access-token` lives 12 HOURS, so a stored one is dead\n"
             "by the next manual run; a static key issued for the registry lasts 6 months:\n"
@@ -526,14 +614,43 @@ def _preflight_or_explain(plan: list[PublishItem]) -> bool:
             "--password-stdin"
         )
     else:
-        lines.append(
-            "UNAUTHORIZED on SOME images means the credential works but its identity lacks\n"
-            "viewer on those repositories — fix the role, not the token.\n"
-            "MANIFEST_UNKNOWN means the pinned tag is not in the source registry — build and\n"
-            "push that image, or correct its pin, before publishing."
-        )
+        if blocking:
+            lines.append(
+                f"{len(blocking)} image(s) failed for a reason that is NOT absence, so nothing "
+                "was skipped:"
+            )
+            lines.extend(f"  {item.source_ref}  {detail}" for item, detail in blocking)
+            lines.append(
+                "A denial on some images means the credential works but its identity lacks\n"
+                "viewer on those repositories — fix the role, not the token."
+            )
+        if missing:
+            lines.append(
+                f"{len(missing)} image(s) are simply not in the source registry:"
+            )
+            lines.extend(
+                f"  {item.source_ref}  ({_missing_reason(detail)})" for item, detail in missing
+            )
+            lines.append(
+                "Build and push those images, or correct their pins. To publish the rest now\n"
+                "and add these once they are built, re-run with --skip-missing (or the\n"
+                "workflow's skip_missing input)."
+            )
     print("\n".join(lines), file=sys.stderr)
-    return True
+    return []
+
+
+def _missing_reason(detail: str) -> str:
+    """Which kind of absence, keeping the registry's own code so the line stays greppable.
+
+    The two need different fixes: no repository at all means the image was never built,
+    while a missing tag means something was pushed but the pin points elsewhere.
+    """
+    if "NAME_UNKNOWN" in detail.upper():
+        return "NAME_UNKNOWN — no such repository; this image has never been pushed"
+    if "MANIFEST_UNKNOWN" in detail.upper():
+        return "MANIFEST_UNKNOWN — repository exists but not this tag; the pin points at an unpushed build"
+    return detail
 
 
 def _explain_private_packages(

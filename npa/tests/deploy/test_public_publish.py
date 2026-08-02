@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -731,7 +732,7 @@ def test_a_wholesale_unauthorized_preflight_blames_the_credential(monkeypatch, c
     err = capsys.readouterr().err
 
     assert rc == 1
-    assert "Every read failed" in err
+    assert "Every read was denied" in err
     assert "static-key issue" in err
     assert "lacks\nviewer" not in err, "a per-repository role hint would misdirect here"
 
@@ -753,4 +754,214 @@ def test_a_partial_preflight_failure_blames_the_role_or_the_tag(monkeypatch, cap
 
     assert rc == 1
     assert "MANIFEST_UNKNOWN" in err
-    assert "Every read failed" not in err
+    assert "Every read was denied" not in err
+
+
+# --------------------------------------------------------------------------------------
+# Images that were never built
+#
+# The plan comes from the packaging contract, which records what this repo BUILDS. The
+# registry holds what someone actually pushed. Run #2 of the workflow found five images in
+# the gap: npa-cosmos-curate, npa-cosmos-evaluator, npa-cosmos3 and npa-foxglove-embed had
+# no repository at all (NAME_UNKNOWN -- landed with a Dockerfile, a contract entry and a pin,
+# but were never built), and npa-cosmos2-transfer had a repository but not the pinned tag
+# (MANIFEST_UNKNOWN). Eighteen images were ready and none of them could be published.
+#
+# Absence is a legitimate state for a young tool, so it must be skippable. A denial never is:
+# skipping it would quietly shrink the published set while reporting success.
+# --------------------------------------------------------------------------------------
+
+# The literal strings Nebius CR returned, so the classifier is pinned against real output.
+_NAME_UNKNOWN = (
+    "NAME_UNKNOWN: repository name not known to registry: Entity Folder not found for "
+    "registry e00example"
+)
+_MANIFEST_UNKNOWN = "MANIFEST_UNKNOWN: manifest unknown: Tag not found for manifest npa-x:null"
+_FAILED_TO_GET_PROFILE = "UNAUTHORIZED: authentication required: failed to get profile"
+
+
+@pytest.mark.parametrize(
+    ("detail", "kind"),
+    [
+        (_NAME_UNKNOWN, "missing"),
+        (_MANIFEST_UNKNOWN, "missing"),
+        (_FAILED_TO_GET_PROFILE, "denied"),
+        ("DENIED: requested access to the resource is denied", "denied"),
+        ("timed out after 60s", "other"),
+        ("crane exited 137", "other"),
+    ],
+)
+def test_preflight_failures_are_classified_by_what_they_require(detail, kind) -> None:
+    from npa.deploy.publish_public import classify_preflight_failure
+
+    assert classify_preflight_failure(detail) == kind
+
+
+def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> None:
+    """A registry may answer NAME_UNKNOWN for a repository the identity cannot see.
+
+    Reading that as "not built yet" would silently drop a publishable image from the mirror,
+    so denial has to win over absence.
+    """
+    from npa.deploy.publish_public import classify_preflight_failure
+
+    assert classify_preflight_failure("UNAUTHORIZED: NAME_UNKNOWN: not visible") == "denied"
+
+
+def _run2_readability(plan):
+    """The exact pass/fail split run #2 saw: 18 readable, 4 absent repos, 1 absent tag."""
+    never_built = {"npa-cosmos-curate", "npa-cosmos-evaluator", "npa-cosmos3", "npa-foxglove-embed"}
+    unpushed_tag = {"npa-cosmos2-transfer"}
+
+    def readable(ref: str, **_: object) -> tuple[bool, str]:
+        image = ref.rsplit("/", 1)[-1].split(":", 1)[0]
+        if image in never_built:
+            return False, _NAME_UNKNOWN
+        if image in unpushed_tag:
+            return False, _MANIFEST_UNKNOWN
+        return True, "ok"
+
+    return readable
+
+
+def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> None:
+    """Silently publishing a subset would be the wrong default: a pin regression that
+    dropped an image would look exactly like success."""
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+
+    def explode(item) -> None:  # pragma: no cover - must not run
+        raise AssertionError("nothing may be copied without --skip-missing")
+
+    monkeypatch.setattr(publish_public, "_crane_copy", explode)
+
+    rc = publish_public.main(["--target", "ghcr.io/example/workbench"])
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "5 of 23" in err
+    # Both codes must survive into the explanation: they need different fixes, and an
+    # operator greps for the registry's own wording.
+    assert "NAME_UNKNOWN" in err and "never been pushed" in err
+    assert "MANIFEST_UNKNOWN" in err and "unpushed build" in err
+    assert "--skip-missing" in err, "the way forward has to be named where it is discovered"
+
+
+def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(monkeypatch, capsys) -> None:
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+    copied: list[str] = []
+    monkeypatch.setattr(publish_public, "_crane_copy", lambda item: copied.append(item.target_ref))
+    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "HTTP 200"))
+
+    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--skip-missing"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert len(copied) == len(plan) - 5
+    for image in ("npa-cosmos3", "npa-foxglove-embed", "npa-cosmos2-transfer"):
+        assert not any(f"/{image}:" in ref for ref in copied), image
+        # Skipping quietly would leave a hole in the mirror nobody knew about.
+        assert image in captured.err, image
+    assert any("/npa-lerobot:" in ref for ref in copied), "ready images must still publish"
+    assert "Copied 18 image(s)." in captured.out
+
+
+def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:
+    """The one case that must still stop the run: mixing absence with a permission fault.
+
+    Skipping the denied image would publish a smaller set and exit 0, which is the silent
+    false success this whole path exists to prevent.
+    """
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    denied = plan[3].source_ref
+
+    def readable(ref: str, **_: object) -> tuple[bool, str]:
+        if ref == denied:
+            return False, _FAILED_TO_GET_PROFILE
+        return (False, _NAME_UNKNOWN) if ref == plan[0].source_ref else (True, "ok")
+
+    monkeypatch.setattr(publish_public, "_crane_manifest_readable", readable)
+
+    def explode(item) -> None:  # pragma: no cover - must not run
+        raise AssertionError("a denial must stop the run even with --skip-missing")
+
+    monkeypatch.setattr(publish_public, "_crane_copy", explode)
+
+    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--skip-missing"])
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "NOT absence" in err
+    assert denied in err, "name the image that blocked the run"
+    assert "lacks" in err and "viewer" in err
+
+
+def test_skip_missing_preflight_alone_reports_success(monkeypatch) -> None:
+    """So a dry run can confirm the publish would proceed before anything is written."""
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+
+    assert (
+        publish_public.main(
+            ["--target", "ghcr.io/example/workbench", "--skip-missing", "--preflight"]
+        )
+        == 0
+    )
+
+
+def test_verify_public_with_skip_missing_ignores_the_unpublished(monkeypatch, capsys) -> None:
+    """The checklist must not list packages nobody tried to publish — those links 404."""
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (False, "HTTP 403"))
+
+    rc = publish_public.main(
+        ["--target", "ghcr.io/example/workbench", "--skip-missing", "--verify-public", "--checklist"]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert captured.out.count("- [ ] ") == len(plan) - 5
+    # Match whole package names: "npa-cosmos3-reason" contains "npa-cosmos3" as a substring
+    # and IS readable, so a substring check would fail for the wrong reason.
+    listed = set(re.findall(r"- \[ \] \[workbench/([^\]]+)\]", captured.out))
+    assert "npa-cosmos3" not in listed
+    assert "npa-cosmos3-reason" in listed, "a readable image whose name shares a prefix stays"
+    assert listed.isdisjoint(
+        {"npa-cosmos3", "npa-cosmos-curate", "npa-cosmos-evaluator", "npa-foxglove-embed",
+         "npa-cosmos2-transfer"}
+    )
+
+
+def test_the_post_copy_verification_only_covers_what_was_copied(monkeypatch, capsys) -> None:
+    """Verifying the skipped ones too would fail a publish that did everything asked of it."""
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+    monkeypatch.setattr(publish_public, "_crane_copy", lambda item: None)
+
+    verified: list[str] = []
+
+    def anon(ref: str, **_: object) -> tuple[bool, str]:
+        verified.append(ref)
+        return True, "HTTP 200"
+
+    monkeypatch.setattr(publish_public, "anonymous_pull_ok", anon)
+
+    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--skip-missing"])
+
+    assert rc == 0
+    assert len(verified) == len(plan) - 5
+    assert not any("npa-cosmos3:" in ref for ref in verified)
