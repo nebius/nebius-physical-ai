@@ -1123,6 +1123,11 @@ def run_workflow_runtime(
             decision_reader=recording_reader,
             step_executor=wave_executor,
             trigger_waiter=waiter,
+            # Share the ledger's store so a runtime run also lands the
+            # `npa.workflow.run.v1` manifest next to `runtime.json`; the runtime
+            # ledger records job/wave timelines, not the per-step resource profile
+            # that manifest consumers (e.g. the insights GPU metric) read.
+            state_store=ledger.store,
         )
         steps = list(report.get("steps") or [])
     except NpaWorkflowError as exc:

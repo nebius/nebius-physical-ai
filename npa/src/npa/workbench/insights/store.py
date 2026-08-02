@@ -31,7 +31,7 @@ from .storage import (
     append_jsonl_uri,
     list_json_uris,
     read_json_uri,
-    read_jsonl_uri,
+    read_jsonl_store,
     uri_join,
 )
 
@@ -60,11 +60,11 @@ def _now() -> str:
 
 
 def read_records(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_uri(records_uri(store_uri))
+    return read_jsonl_store(records_uri(store_uri))
 
 
 def read_edges(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_uri(edges_uri(store_uri))
+    return read_jsonl_store(edges_uri(store_uri))
 
 
 def _persist(
@@ -74,7 +74,13 @@ def _persist(
     *,
     lancedb_endpoint: str = "",
 ) -> tuple[int, int]:
-    """Append records + edges to the store and return the new totals."""
+    """Append records + edges to the store and return the new totals.
+
+    The totals are read **once** before writing and then advanced arithmetically.
+    Reading the whole store back after each write would re-list and re-GET every
+    shard purely to produce a telemetry number, which is the one cost the sharded
+    layout would otherwise add to every ingest.
+    """
     rec_rows: list[dict[str, Any]] = []
     for record in records:
         row = record.model_dump(mode="json")
@@ -84,8 +90,10 @@ def _persist(
         rec_rows.append(row)
     edge_rows = [edge.model_dump(mode="json") for edge in edges]
 
-    total_records = append_jsonl_uri(records_uri(store_uri), rec_rows) if rec_rows else len(read_records(store_uri))
-    total_edges = append_jsonl_uri(edges_uri(store_uri), edge_rows) if edge_rows else len(read_edges(store_uri))
+    previous_records = len(read_records(store_uri))
+    previous_edges = len(read_edges(store_uri))
+    total_records = append_jsonl_uri(records_uri(store_uri), rec_rows, previous_total=previous_records)
+    total_edges = append_jsonl_uri(edges_uri(store_uri), edge_rows, previous_total=previous_edges)
 
     if rec_rows:
         index_metrics_in_lancedb(
@@ -163,6 +171,8 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
     ingested: list[IngestedArtifact] = []
     scanned = 0
 
+    skipped_planned = 0
+
     for uri in uris:
         scanned += 1
         try:
@@ -171,6 +181,11 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
             continue
         if not isinstance(payload, dict):
             continue
+        if (
+            str(payload.get("schema_version", "")) == WORKFLOW_RUN_SCHEMA
+            and str(payload.get("status", "")).strip().lower() == "planned"
+        ):
+            skipped_planned += 1
         records, edges, schema_id = _extract(
             payload,
             source_uri=uri,
@@ -186,6 +201,17 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
         )
 
     if not ingested:
+        # Say *why* nothing was ingested. A planned-only run prefix is a legitimate
+        # thing to point at (`run-spec --persist-state` without `--execute` writes
+        # one), and "no known schemas found" would send the operator looking for a
+        # missing artifact instead of explaining that the run never executed.
+        if skipped_planned:
+            raise InsightsStoreError(
+                f"nothing to ingest under run prefix: {request.input_uri} — found "
+                f"{skipped_planned} npa.workflow.run.v1 manifest(s) with status 'planned'. "
+                "A planned run never executed, so it reports no metrics (including no GPU "
+                "count). Execute or submit the run first."
+            )
         raise InsightsStoreError(
             f"no known manifest/report schemas found under run prefix: {request.input_uri}"
         )
@@ -388,6 +414,12 @@ def _extract_run_manifest(
     run. Non-invasive and value-honest: emits nothing when no step declares an
     accelerator, so CPU-only runs are never labeled with a fabricated GPU count.
     """
+    # A run that was only *planned* never touched an accelerator, so reporting a GPU
+    # count for it would be a fabrication: `run-spec --persist-state` without
+    # `--execute` writes a manifest with the full resource profile and status
+    # "planned". Submitted/running/completed/failed runs did request the hardware.
+    if str(payload.get("status") or "").strip().lower() == "planned":
+        return []
     run_id = str(payload.get("run_id") or workflow_run or "unknown")
     resolved_workflow = workflow or str(payload.get("workflow") or "")
     steps = payload.get("steps") or []
