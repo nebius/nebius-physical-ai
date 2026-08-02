@@ -52,7 +52,9 @@
       "validation": "pending-hardware",
       "torch": "2.9.0+cu130",
       "torch_cuda_arch_list": "8.0 9.0 10.0 10.3 12.0",
-      "source_compiled_extensions": ["flash-attn-4 (CuTe)"],
+      "source_compiled_extensions": [
+        "flash-attn-4 (CuTe)"
+      ],
       "smoke": "import flash_attn; flash_attn_func on a real device",
       "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. flash-attn-4 CuTe JIT-compiles at runtime, which is why it also runs on sm_120 - that JIT assumption still needs confirming on real B200/B300 silicon."
     },
@@ -126,7 +128,9 @@
       "verdict": "ready",
       "validation": "pending-hardware",
       "torch": "cu128 via `uv sync --extra=cu128`",
-      "source_compiled_extensions": ["flash-attn (from the upstream cu128 lock)"],
+      "source_compiled_extensions": [
+        "flash-attn (from the upstream cu128 lock)"
+      ],
       "smoke": "real video -> video transfer, not a manifest write",
       "notes": "Already on the cu128 track, which carries sm_100. Validate a genuine transfer so the flash-attn kernels actually execute."
     },
@@ -136,7 +140,10 @@
       "verdict": "port",
       "validation": "pending-hardware",
       "torch": "2.6.0+cu126",
-      "source_compiled_extensions": ["flash-attn 2.6.3+cu126", "natten 0.21.0+cu126"],
+      "source_compiled_extensions": [
+        "flash-attn 2.6.3+cu126",
+        "natten 0.21.0+cu126"
+      ],
       "port_blocker": "cu126 caps at sm_90, so neither the torch wheel nor the prebuilt flash-attn/natten wheels carry sm_100. Needs cu128 torch plus matching cu128 Blackwell flash-attn/natten wheels from nvidia-cosmos/cosmos-dependencies.",
       "upstream_tracking": "https://github.com/nvidia-cosmos/cosmos-dependencies",
       "smoke": "Predict2 inference exercising the natten and flash-attn kernels",
@@ -150,9 +157,11 @@
       "verdict": "blocked",
       "validation": "pending-hardware",
       "torch": "2.6.0+cu124 (default) / inherited 2.9.0+cu130 (sm120 path)",
-      "source_compiled_extensions": ["Taichi (Genesis physics backend)"],
+      "source_compiled_extensions": [
+        "Taichi (Genesis physics backend)"
+      ],
       "blocked_reason": "Genesis physics runs on Taichi, which has no stable sm_103 support. The torch side is portable (move the default off cu124 onto the cu130 Dockerfile.sm120 path), but the Taichi kernels are the hard gate.",
-      "upstream_tracking": "https://github.com/taichi-dev/taichi - retest sm_100 (B200) first; it may land before sm_103, and once Taichi accepts sm_103 the B300 case follows by forward compat.",
+      "upstream_tracking": "Taichi CUDA codegen for Blackwell: https://github.com/taichi-dev/taichi/pull/8735 and https://github.com/taichi-dev/taichi/issues/8730. Retest sm_100 (B200) first - it may land before sm_103, and once Taichi accepts sm_103 the B300 case follows by forward compat.",
       "smoke": "gs.init(gpu) plus a FrankaPickPlaceEnv step",
       "notes": "Do not stub this. Re-test Taichi on B200 (sm_100) on each upstream release; that is the earliest signal. The whole sim2real subtree inherits this blocker."
     },
@@ -163,7 +172,7 @@
       "validation": "pending-hardware",
       "inherits_blocker_from": "npa-genesis",
       "blocked_reason": "Layered on the Genesis sm120 image, so it inherits the Taichi sm_103 gate.",
-      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "upstream_tracking": "Taichi CUDA codegen for Blackwell: https://github.com/taichi-dev/taichi/pull/8735 and https://github.com/taichi-dev/taichi/issues/8730.",
       "smoke": "generate one environment and step it",
       "notes": "Unblocks automatically when npa-genesis does."
     },
@@ -174,7 +183,7 @@
       "validation": "pending-hardware",
       "inherits_blocker_from": "npa-genesis",
       "blocked_reason": "Chained from npa-envgen, which is chained from Genesis; inherits the Taichi sm_103 gate.",
-      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "upstream_tracking": "Taichi CUDA codegen for Blackwell: https://github.com/taichi-dev/taichi/pull/8735 and https://github.com/taichi-dev/taichi/issues/8730.",
       "smoke": "reference policy rollout in a generated env",
       "notes": "Unblocks automatically when npa-genesis does."
     },
@@ -185,7 +194,7 @@
       "validation": "pending-hardware",
       "inherits_blocker_from": "npa-genesis",
       "blocked_reason": "Layered on the Genesis sm120 image; inherits the Taichi sm_103 gate.",
-      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "upstream_tracking": "Taichi CUDA codegen for Blackwell: https://github.com/taichi-dev/taichi/pull/8735 and https://github.com/taichi-dev/taichi/issues/8730.",
       "smoke": "gs.init(gpu) plus a scored evaluation episode",
       "notes": "This image is why the smoke must be functional rather than a CUDA probe: the loop-eval 0.1.1 sm_120 regression passed an import check and failed on a real step."
     },
@@ -196,7 +205,7 @@
       "validation": "pending-hardware",
       "inherits_blocker_from": "npa-genesis",
       "blocked_reason": "Layered on the Genesis sm120 image; inherits the Taichi sm_103 gate.",
-      "upstream_tracking": "https://github.com/taichi-dev/taichi",
+      "upstream_tracking": "Taichi CUDA codegen for Blackwell: https://github.com/taichi-dev/taichi/pull/8735 and https://github.com/taichi-dev/taichi/issues/8730.",
       "smoke": "VLM-guided RL step in a Genesis env",
       "notes": "Unblocks automatically when npa-genesis does."
     },
