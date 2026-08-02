@@ -7,10 +7,13 @@ GPU_PLATFORM_ALIASES = {
     "gpu-h200-sxm": "gpu-h200-sxm",
     "h100": "gpu-h100-sxm",
     "gpu-h100-sxm": "gpu-h100-sxm",
+    # Datacenter Blackwell. B300 (Blackwell Ultra) is sm_103, B200 is sm_100;
+    # Nebius exposes B200 as two platform variants, so both resolve.
     "b300": "gpu-b300-sxm",
     "gpu-b300-sxm": "gpu-b300-sxm",
     "b200": "gpu-b200-sxm-a",
     "gpu-b200-sxm-a": "gpu-b200-sxm-a",
+    "gpu-b200-sxm": "gpu-b200-sxm",
     "l40s": "gpu-l40s-a",
     "gpu-l40s-a": "gpu-l40s-a",
     "gpu-l40s-d": "gpu-l40s-d",
@@ -34,6 +37,10 @@ GPU_PLATFORM_PRESETS = {
         8: "8gpu-192vcpu-2768gb",
     },
     "gpu-b200-sxm-a": {
+        1: "1gpu-20vcpu-224gb",
+        8: "8gpu-160vcpu-1792gb",
+    },
+    "gpu-b200-sxm": {
         1: "1gpu-20vcpu-224gb",
         8: "8gpu-160vcpu-1792gb",
     },
