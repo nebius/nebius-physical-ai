@@ -24,6 +24,7 @@ from npa.cli.network import app as network_app
 from npa.cli.provision import app as provision_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
+from npa.cli.cleanup import cleanup_cmd as _cleanup_cmd
 from npa.cli.storage import app as storage_app
 from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
@@ -63,6 +64,7 @@ app.add_typer(provision_app, name="provision-if-absent", rich_help_panel="Setup"
 app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
 app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
 app.add_typer(storage_app, name="storage", rich_help_panel="Platform utilities")
+app.command("cleanup", rich_help_panel="Platform utilities")(_cleanup_cmd)
 app.add_typer(soperator_app, name="soperator", rich_help_panel="Platform utilities")
 app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
