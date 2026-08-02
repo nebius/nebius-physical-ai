@@ -130,10 +130,12 @@ def test_an_unreachable_cluster_is_an_error_not_a_clean_bill_of_health() -> None
     assert "unavailable" in report.render()
 
 
-def test_a_job_with_no_cluster_yet_says_so() -> None:
-    report = inspect_job_blockers(job_id="2", cluster_name="")
+def test_a_job_with_no_pods_yet_says_so() -> None:
+    runner = _runner(_pods())
 
-    assert "nothing has been scheduled" in report.error
+    report = inspect_job_blockers(job_id="2", cluster_name="", runner=runner)
+
+    assert "nothing has been scheduled yet" in report.error
 
 
 def test_missing_kubectl_is_reported() -> None:
@@ -170,3 +172,47 @@ def test_render_lists_each_blocked_pod() -> None:
     assert "blockers (2)" in rendered
     assert "worker-0" in rendered and "worker-1" in rendered
     assert "Suggested action:" in rendered
+
+
+# --- lookup by job id ---------------------------------------------------------
+#
+# `sky jobs queue` reports cluster_name_on_cloud as null for a job that never
+# provisioned -- which is exactly the job worth diagnosing. SkyPilot labels its
+# pods `<task>-<job_id>-<user_hash>`, so the job id is enough to find them.
+
+
+def _labelled_pod(label: str, reason: str) -> dict:
+    pod = _waiting_pod(f"{label}-head", reason)
+    pod["metadata"]["labels"] = {CLUSTER_LABEL: label}
+    return pod
+
+
+def test_pods_are_found_by_job_id_when_the_queue_reports_no_cluster() -> None:
+    runner = _runner(
+        _pods(
+            _labelled_pod("train-333-64ce57a0", "ImagePullBackOff"),
+            _labelled_pod("cosmos-curate-332-64ce57a0", "ImagePullBackOff"),
+        )
+    )
+
+    report = inspect_job_blockers(job_id="333", runner=runner)
+
+    assert [blocker.pod for blocker in report.blockers] == ["train-333-64ce57a0-head"]
+    # A bare label selector, filtered client-side by the job id component.
+    assert f"{CLUSTER_LABEL}" in runner.seen["cmd"]  # type: ignore[attr-defined]
+
+
+def test_a_job_id_must_match_a_whole_label_component() -> None:
+    # Job 3 must not match `train-333-abc`.
+    runner = _runner(_pods(_labelled_pod("train-333-64ce57a0", "ImagePullBackOff")))
+
+    report = inspect_job_blockers(job_id="3", runner=runner)
+
+    assert report.blockers == []
+    assert "nothing has been scheduled yet" in report.error
+
+
+def test_no_cluster_and_no_job_id_is_an_error() -> None:
+    report = inspect_job_blockers()
+
+    assert "no cluster name or job id" in report.error

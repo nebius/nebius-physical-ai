@@ -123,16 +123,27 @@ def inspect_job_blockers(
 ) -> JobBlockerReport:
     """Return the pod-level reasons a managed job is not starting.
 
+    ``sky jobs queue`` frequently reports ``cluster_name_on_cloud`` as null -- a
+    job that never provisioned has no cluster recorded, which is exactly the case
+    worth diagnosing. SkyPilot names the pod label ``<task>-<job_id>-<hash>``, so
+    fall back to selecting on the job id when no cluster name is known.
+
     A cluster whose pods cannot be listed is reported as an error rather than as
     "not blocked", so a missing kubectl is never mistaken for a healthy job.
     """
 
     report = JobBlockerReport(job_id=str(job_id), cluster_name=str(cluster_name))
-    if not cluster_name.strip():
-        report.error = "managed job has no cluster yet; nothing has been scheduled"
+    by_job_id = not cluster_name.strip()
+    if by_job_id and not str(job_id).strip():
+        report.error = "no cluster name or job id to look up"
         return report
 
-    cmd = ["kubectl", "get", "pods", "-l", f"{CLUSTER_LABEL}={cluster_name.strip()}", "-o", "json"]
+    cmd = ["kubectl", "get", "pods", "-o", "json"]
+    if by_job_id:
+        # Every SkyPilot pod carries the label; the value is filtered below.
+        cmd[3:3] = ["-l", CLUSTER_LABEL]
+    else:
+        cmd[3:3] = ["-l", f"{CLUSTER_LABEL}={cluster_name.strip()}"]
     if context.strip():
         cmd[1:1] = ["--context", context.strip()]
     if namespace.strip():
@@ -159,12 +170,34 @@ def inspect_job_blockers(
         report.error = "kubectl returned non-json output"
         return report
 
-    report.blockers = _blockers_from_pods(payload.get("items") or [])
+    items = payload.get("items") or []
+    if by_job_id:
+        items = [item for item in items if _pod_belongs_to_job(item, str(job_id))]
+        if not items:
+            report.error = (
+                f"no pods found for managed job {job_id}; nothing has been scheduled yet"
+            )
+            return report
+    report.blockers = _blockers_from_pods(items)
     return report
 
 
 def _as_dict(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _pod_belongs_to_job(item: object, job_id: str) -> bool:
+    """Whether a pod's SkyPilot cluster label names this managed job.
+
+    The label reads ``<task>-<job_id>-<user_hash>``, so the id must match a whole
+    dash-separated component -- job 3 must not match ``train-333-abc``.
+    """
+
+    if not isinstance(item, dict):
+        return False
+    labels = _as_dict(_as_dict(item.get("metadata")).get("labels"))
+    value = str(labels.get(CLUSTER_LABEL) or "")
+    return bool(value) and job_id in value.split("-")
 
 
 def _blockers_from_pods(items: list[object]) -> list[PodBlocker]:

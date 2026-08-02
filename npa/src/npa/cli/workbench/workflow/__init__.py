@@ -1006,15 +1006,19 @@ def _stalled_job_blockers(
     try:
         rows = workflow_task_statuses(job_id, sky_bin=_resolve_sky_bin(sky_bin))
     except Exception:
-        return []
+        rows = []
+    clusters = sorted(
+        {str(row.get("cluster_name") or "").strip() for row in rows} - {""}
+    )
+    # `sky jobs queue` reports a null cluster for a job that never provisioned --
+    # exactly the case worth diagnosing -- so fall back to the job id.
+    reports = (
+        [inspect_job_blockers(job_id=job_id, cluster_name=cluster) for cluster in clusters]
+        if clusters
+        else [inspect_job_blockers(job_id=job_id)]
+    )
     reported: list[dict[str, str]] = []
-    seen_clusters: set[str] = set()
-    for row in rows:
-        cluster = str(row.get("cluster_name") or "").strip()
-        if not cluster or cluster in seen_clusters:
-            continue
-        seen_clusters.add(cluster)
-        report = inspect_job_blockers(job_id=job_id, cluster_name=cluster)
+    for report in reports:
         for blocker in report.blockers:
             reported.append(
                 {
