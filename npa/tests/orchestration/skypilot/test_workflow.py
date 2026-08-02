@@ -733,6 +733,31 @@ def test_launch_failure_unrelated_to_the_controller_stays_raw() -> None:
     assert "sky down" not in message
 
 
+def test_launch_failure_pod_config_kubernetes_bug_gets_a_fix_hint() -> None:
+    """The SkyPilot/kubernetes pod_config bug retries forever; surface it once with a fix."""
+    detail = (
+        "RuntimeError: Invalid pod_config: ... No module named "
+        "'kubernetes.client.models.dict[str, str]'"
+    )
+    result = subprocess.CompletedProcess(
+        args=["sky", "jobs", "launch"], returncode=1, stdout="", stderr=detail
+    )
+
+    message = workflow_module._format_submit_error(["sky", "jobs", "launch"], result)
+
+    assert "kubernetes-client incompatibility" in message
+    assert "npa skypilot uninstall && npa skypilot bootstrap" in message
+    assert "retries it indefinitely" in message
+
+
+def test_pod_config_classifier_ignores_unrelated_errors() -> None:
+    assert workflow_module._looks_like_pod_config_error("some random error") is False
+    assert workflow_module._looks_like_pod_config_error("Invalid pod_config: bad") is True
+    assert workflow_module._looks_like_pod_config_error(
+        "No module named 'kubernetes.client.models.dict[str, str]'"
+    ) is True
+
+
 def test_referenced_kubeconfig_path_prefers_the_real_path() -> None:
     """SkyPilot says "kubeconfig" several times before naming the file.
 

@@ -731,7 +731,42 @@ def _format_submit_error(cmd: list[str], result: subprocess.CompletedProcess[str
     # cannot refresh, so a controller cached against a dead kubeconfig gets past
     # the health check and fails here instead (CachedClusterUnavailable). Attach
     # the same NPA-level recovery steps.
-    return f"{prefix}: {' '.join(cmd)}: {detail}" + _controller_health_remedy(detail)
+    return (
+        f"{prefix}: {' '.join(cmd)}: {detail}"
+        + _pod_config_error_remedy(detail)
+        + _controller_health_remedy(detail)
+    )
+
+
+def _looks_like_pod_config_error(detail: str) -> bool:
+    """Detect the SkyPilot/kubernetes-client pod_config type-resolution failure.
+
+    A too-new ``kubernetes`` client makes SkyPilot 0.12.x fail to render the jobs
+    controller pod with ``Invalid pod_config … No module named
+    'kubernetes.client.models.dict[str, str]'``. The controller retries this
+    *forever* (it is neither a quota nor a capacity problem), so a submit hangs
+    with almost no feedback.
+    """
+    normalized = detail.lower()
+    if "invalid pod_config" in normalized:
+        return True
+    if "kubernetes.client.models" in normalized:
+        return True
+    return "no module named" in normalized and "kubernetes" in normalized
+
+
+def _pod_config_error_remedy(detail: str) -> str:
+    if not _looks_like_pod_config_error(detail):
+        return ""
+    return (
+        "\n\nThis is a SkyPilot/kubernetes-client incompatibility (the pod_config "
+        "type resolver fails with 'No module named kubernetes.client.models…'), not "
+        "a cluster/quota problem — the jobs controller retries it indefinitely, so a "
+        "submit appears to hang. Rebuild the isolated SkyPilot runtime so its "
+        "kubernetes client matches SkyPilot: `npa skypilot uninstall && npa skypilot "
+        "bootstrap` (or `pip install 'kubernetes<31'` into ~/.npa/skypilot-venv), then "
+        "re-submit."
+    )
 
 
 def _command_detail(result: subprocess.CompletedProcess[str]) -> str:
