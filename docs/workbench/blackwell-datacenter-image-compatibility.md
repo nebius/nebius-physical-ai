@@ -102,7 +102,9 @@ python -c "import torch; cap=torch.cuda.get_device_capability(); \
 
 For the base image that smoke is committed as `npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py`. To run it on an already-deployed Kubernetes GPU pool rather than provisioning a node, use `npa/scripts/blackwell-gpu-validation-job.yaml`; it runs the arch check positively for the target architecture, negatively for a different CUDA major (so a pass on the wrong GPU family cannot be mistaken for success), and then the capability smoke.
 
-**Provisioning.** `--gpu-type b300` resolves to `gpu-b300-sxm` (presets `1gpu-24vcpu-346gb` / `8gpu-192vcpu-2768gb`, uk-south1); `--gpu-type b200` resolves to `gpu-b200-sxm` (`1gpu-20vcpu-224gb` / `8gpu-160vcpu-1792gb`, us-central1). Both platform ids and their presets were confirmed against `nebius compute platform list`; a `gpu-b200-sxm-a` variant exists in other regions and stays resolvable. `npa/benchmark_b300_h200.sh` is a working deploy invocation. For host-mounted-driver images, use a Managed K8s pool with the NVIDIA GPU Operator.
+**Provisioning.** `--gpu-type b300` resolves to `gpu-b300-sxm` (presets `1gpu-24vcpu-346gb` / `8gpu-192vcpu-2768gb`, uk-south1); `--gpu-type b200` resolves to `gpu-b200-sxm` (`1gpu-20vcpu-224gb` / `8gpu-160vcpu-1792gb`, us-central1). Both platform ids and their presets were confirmed against `nebius compute platform list`. `npa/benchmark_b300_h200.sh` is a working deploy invocation. For host-mounted-driver images, use a Managed K8s pool with the NVIDIA GPU Operator.
+
+> **Behaviour change:** the bare `b200` alias previously resolved to `gpu-b200-sxm-a`, which the tenant used for validation does not expose. It now resolves to `gpu-b200-sxm`. `gpu-b200-sxm-a` stays independently resolvable, with the same presets, for regions that offer that variant — so only callers passing the bare alias see a different platform id.
 
 Datacenter Blackwell is also offered as `gpu-gb300` (Grace-Blackwell Ultra). That host is aarch64, so the x86_64 workbench images do not run on it — the `sm_103` GPU is the same, but the CPU architecture is not.
 

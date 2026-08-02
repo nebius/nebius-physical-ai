@@ -67,6 +67,11 @@ def parse_arch(token: str) -> tuple[int, int]:
         digits = cleaned
     else:
         raise ValueError(f"cannot parse architecture {token!r}; use sm_100, 10.0, or 100")
+    # The bare form is the sm_ number without its prefix, so the last digit is
+    # the minor version and at least one digit must precede it. A single digit
+    # would mean sm_9, which is not a real architecture.
+    if len(digits) < 2:
+        raise ValueError(f"cannot parse architecture {token!r}; use sm_100, 10.0, or 100")
     # sm_90 -> (9, 0); sm_100 -> (10, 0); sm_103 -> (10, 3).
     return int(digits[:-1]), int(digits[-1])
 
