@@ -972,7 +972,7 @@ def _durable_workflow_status(
         except Exception:
             live_status = ""
     status = _aggregate_stage_status(stages, live_status)
-    return {
+    payload: dict[str, object] = {
         "run_id": manifest.get("run_id") or _display_run_id(run_id),
         "workflow_name": manifest.get("workflow_name", ""),
         "status": status,
@@ -982,6 +982,49 @@ def _durable_workflow_status(
         "manifest_uri": f"{state.uri.rstrip('/')}/manifest.json",
         "stages": stages,
     }
+    blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
+    if blockers:
+        payload["blockers"] = blockers
+    return payload
+
+
+def _stalled_job_blockers(
+    job_id: str, live_status: str, *, sky_bin: str = ""
+) -> list[dict[str, str]]:
+    """Explain a managed job that is not progressing, from its own pods.
+
+    A job whose pod cannot start never becomes FAILED -- Kubernetes retries image
+    pulls and scheduling forever -- so the only way to tell a slow start from a
+    dead one is to ask the pods.
+    """
+
+    if not job_id or live_status.upper() not in {"PENDING", "STARTING"}:
+        return []
+    from npa.orchestration.skypilot.job_blockers import inspect_job_blockers
+    from npa.orchestration.skypilot.workflow import workflow_task_statuses
+
+    try:
+        rows = workflow_task_statuses(job_id, sky_bin=_resolve_sky_bin(sky_bin))
+    except Exception:
+        return []
+    reported: list[dict[str, str]] = []
+    seen_clusters: set[str] = set()
+    for row in rows:
+        cluster = str(row.get("cluster_name") or "").strip()
+        if not cluster or cluster in seen_clusters:
+            continue
+        seen_clusters.add(cluster)
+        report = inspect_job_blockers(job_id=job_id, cluster_name=cluster)
+        for blocker in report.blockers:
+            reported.append(
+                {
+                    "pod": blocker.pod,
+                    "reason": blocker.reason,
+                    "message": blocker.message,
+                    "remedy": report.remedy(),
+                }
+            )
+    return reported
 
 
 def _aggregate_stage_status(stages: dict[str, dict[str, object]], live_status: str) -> str:
@@ -1017,6 +1060,21 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
         typer.echo(f"pod_reason: {result.get('pod_reason')}")
     if result.get("sky_job_id"):
         typer.echo(f"sky_job_id: {result.get('sky_job_id')}")
+    blockers = result.get("blockers")
+    if isinstance(blockers, list) and blockers:
+        # A managed job whose pod cannot start never becomes FAILED, so say why
+        # it is stuck rather than letting PENDING look like slow progress.
+        typer.echo(f"blocked: {len(blockers)} pod(s) cannot start")
+        for blocker in blockers:
+            if not isinstance(blocker, dict):
+                continue
+            detail = f"  {blocker.get('pod')}: {blocker.get('reason')}"
+            if blocker.get("message"):
+                detail = f"{detail} - {blocker.get('message')}"
+            typer.echo(detail)
+        remedy = str((blockers[0] or {}).get("remedy") or "")
+        if remedy:
+            typer.echo(f"  Suggested action: {remedy}")
     typer.echo(f"run_prefix_uri: {result.get('run_prefix_uri')}")
     eval_metrics = result.get("eval_metrics")
     if isinstance(eval_metrics, dict) and eval_metrics:

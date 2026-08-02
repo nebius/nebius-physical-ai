@@ -125,6 +125,14 @@ def down_cmd(
     ),
     force: bool = typer.Option(False, "--force", help="Skip confirmation."),
     timeout: int = typer.Option(120, "--timeout", help="Terraform destroy timeout in minutes."),
+    kubeconfig: Path | None = typer.Option(
+        None,
+        "--kubeconfig",
+        help=(
+            "Kubeconfig used to report which PodDisruptionBudgets will hold up the "
+            "node drain. Defaults to the ambient KUBECONFIG."
+        ),
+    ),
 ) -> None:
     """Destroy the Terraform-managed NPA Kubernetes cluster."""
 
@@ -134,6 +142,7 @@ def down_cmd(
     env = _terraform_env(nebius_bin)
     if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
         raise typer.Exit(1)
+    _report_drain_blockers(kubeconfig)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     _run_stream(
         [terraform_bin, "destroy", "-auto-approve"],
@@ -141,6 +150,26 @@ def down_cmd(
         env=env,
         timeout=timeout * 60,
     )
+
+
+def _report_drain_blockers(kubeconfig: Path | None) -> None:
+    """Warn, before destroy, about budgets that will make the drain look hung.
+
+    Best-effort: a cluster that cannot be reached is simply not described, since
+    the destroy itself does not depend on this.
+    """
+
+    from npa.cluster.drain import blocking_pod_disruption_budgets, describe_drain_expectation
+
+    blockers, error = blocking_pod_disruption_budgets(
+        kubeconfig=str(kubeconfig) if kubeconfig else "",
+    )
+    if error:
+        typer.echo(f"drain-preview: skipped ({error})", err=True)
+        return
+    guidance = describe_drain_expectation(blockers)
+    if guidance:
+        typer.echo(f"drain-preview: {guidance}", err=True)
 
 
 def terraform_status(terraform_dir: Path | None = None) -> dict[str, Any] | None:

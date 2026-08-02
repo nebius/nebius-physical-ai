@@ -277,6 +277,17 @@ def _resolve_project_section(
     ``workbench``.
     """
     projects = yml.get("projects")
+    if project and not (isinstance(projects, dict) and projects):
+        # An explicit alias against an empty/absent `projects` map used to fall
+        # through to the legacy branches, which silently ignored it: the command
+        # then failed downstream complaining it could not tell which Nebius
+        # project to use, never mentioning the alias the operator had passed.
+        # This is what an alias removed by teardown looks like.
+        raise ConfigError(
+            f"Project '{project}' is not configured in ~/.npa/config.yaml "
+            "(no projects are). Pass an explicit --project-id, or run "
+            "`npa configure` to recreate the project entry."
+        )
     if isinstance(projects, dict) and projects:
         if project:
             proj = projects.get(project, {})
