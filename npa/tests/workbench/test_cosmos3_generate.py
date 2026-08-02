@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -121,10 +122,67 @@ def test_require_model_access_demands_operator_hf_token() -> None:
     ) == {"hf_auth": "configured", "ngc_auth": "skipped"}
 
 
-def test_require_model_access_skips_token_for_a_staged_checkpoint() -> None:
-    result = require_model_access(checkpoint="/mnt/checkpoints/cosmos3", environ={})
+def test_require_model_access_skips_token_only_when_nothing_is_fetched() -> None:
+    """A staged checkpoint alone does not exempt the run.
 
+    Guardrails are on by default and pull the gated guardrail models from Hugging
+    Face, so exempting on the checkpoint alone would let the preflight pass and
+    the run die mid-inference — the exact failure this check prevents.
+    """
+
+    with pytest.raises(Cosmos3GenerateError, match="guardrail"):
+        require_model_access(checkpoint="/mnt/checkpoints/cosmos3", environ={})
+
+    result = require_model_access(
+        checkpoint="/mnt/checkpoints/cosmos3", guardrails=False, environ={}
+    )
     assert result["hf_auth"] == "skipped"
+
+
+def test_require_model_access_demands_token_for_guardrails_alone() -> None:
+    with pytest.raises(Cosmos3GenerateError, match="Cosmos-Guardrail1"):
+        require_model_access(checkpoint="s3://bucket/staged-cosmos3", environ={})
+
+
+def test_run_generate_without_guardrails_needs_no_token_for_staged_weights(
+    tmp_path: Path,
+) -> None:
+    """The exemption the docs promise must actually work end to end."""
+
+    _, env = _fake_runtime(tmp_path)
+    env.pop("HF_TOKEN")
+    output_dir = tmp_path / "out"
+
+    def fake_runner(argv, **kwargs):
+        sample = output_dir / "npa-generate"
+        sample.mkdir(parents=True)
+        (sample / "vision.jpg").write_bytes(b"y" * 2048)
+        return subprocess.CompletedProcess(argv, 0)
+
+    result = run_cosmos3_generate(
+        prompt="a robot arm",
+        checkpoint="/mnt/checkpoints/cosmos3",
+        no_guardrails=True,
+        output_dir=output_dir,
+        environ=env,
+        runner=fake_runner,
+    )
+
+    assert result["status"] == "executed"
+    assert result["hf_auth"] == "skipped"
+    assert result["guardrails"] is False
+
+
+def test_staged_checkpoint_tilde_is_expanded(tmp_path: Path) -> None:
+    """``~`` counts as staged, so it must also be expanded before upstream sees it."""
+
+    plan = generate_plan(
+        prompt="a robot arm", checkpoint="~/checkpoints/cosmos3", output_dir=tmp_path
+    )
+
+    assert not plan["checkpoint"].startswith("~")
+    assert plan["checkpoint"].endswith("/checkpoints/cosmos3")
+    assert plan["checkpoint"] in plan["argv"]
 
 
 def test_require_model_access_enforces_ngc_when_demanded() -> None:
@@ -275,3 +333,82 @@ def test_generate_workflow_yaml_runs_the_real_cli_with_guardrails_on() -> None:
     assert "npa workbench cosmos3 generate" in run
     assert "--no-guardrails}" in run  # expanded only when the env is set
     assert "HF_TOKEN" in run
+
+
+def test_video_mode_prefers_the_clip_over_a_larger_poster_frame(tmp_path: Path) -> None:
+    """Largest-file-wins alone would report a poster frame as the result."""
+
+    _, env = _fake_runtime(tmp_path)
+    output_dir = tmp_path / "out"
+
+    def fake_runner(argv, **kwargs):
+        sample = output_dir / "npa-generate"
+        sample.mkdir(parents=True)
+        # The still is deliberately larger than the clip.
+        (sample / "poster.jpg").write_bytes(b"p" * 40_000)
+        (sample / "vision.mp4").write_bytes(b"v" * 8_000)
+        return subprocess.CompletedProcess(argv, 0)
+
+    result = run_cosmos3_generate(
+        mode="text2video",
+        prompt="a robot arm pours water",
+        output_dir=output_dir,
+        environ=env,
+        runner=fake_runner,
+    )
+
+    assert result["output_kind"] == "video"
+    assert Path(result["output_path"]).name == "vision.mp4"
+
+
+def test_video_mode_fails_when_only_an_image_was_produced(tmp_path: Path) -> None:
+    """A mode that silently degrades to the wrong medium must not report success."""
+
+    _, env = _fake_runtime(tmp_path)
+    output_dir = tmp_path / "out"
+
+    def fake_runner(argv, **kwargs):
+        sample = output_dir / "npa-generate"
+        sample.mkdir(parents=True)
+        (sample / "vision.jpg").write_bytes(b"y" * 2048)
+        return subprocess.CompletedProcess(argv, 0)
+
+    with pytest.raises(Cosmos3GenerateError, match="should produce a video"):
+        run_cosmos3_generate(
+            mode="text2video",
+            prompt="a robot arm pours water",
+            output_dir=output_dir,
+            environ=env,
+            runner=fake_runner,
+        )
+
+
+def test_image2image_is_a_supported_mode() -> None:
+    """It is advertised in the CLI, so it must be spec-buildable and vision-gated."""
+
+    spec = build_generate_spec(
+        mode="image2image",
+        prompt="repaint the scene at night",
+        vision_path="/data/frame.png",
+    )
+
+    assert spec["model_mode"] == "image2image"
+    assert spec["vision_path"] == "/data/frame.png"
+    assert "image2image" in GENERATE_MODES
+
+
+def test_verify_env_covers_every_advertised_mode() -> None:
+    """The build-time graph walk must not verify fewer modes than the CLI offers."""
+
+    verify_env = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/cosmos3/verify_env.py"
+    )
+    text = verify_env.read_text(encoding="utf-8")
+    match = re.search(r"^MODES = \((?P<body>.*?)\)$", text, flags=re.M | re.S)
+    assert match, "verify_env.py must declare a MODES tuple"
+    verified = set(re.findall(r'"([a-z0-9]+)"', match.group("body")))
+    assert verified == set(GENERATE_MODES), (
+        f"verify_env verifies {sorted(verified)} but the CLI advertises "
+        f"{sorted(GENERATE_MODES)}"
+    )

@@ -15,7 +15,8 @@ SkyPilot workflow that all share one implementation.
 | `npa.workflow` toolRef | `workbench.cosmos3.generate` |
 | Golden eval | `npa.smoke.test_cosmos3_generate_functional` (`gpu-gated`) |
 
-Modes: `text2image`, `text2video`, `image2video`, `video2video`. The last two
+Modes: `text2image`, `image2image`, `text2video`, `image2video`, `video2video`.
+The last three
 condition on an input asset, so they require `--input-path` (a local path, an
 `http(s)` URL, or an `s3://` URI).
 
@@ -31,9 +32,15 @@ supplies, under the operator's own license acceptance:
 
 | Credential | When | Effect if missing |
 | --- | --- | --- |
-| `HF_TOKEN` (or the env named by `NPA_COSMOS3_HF_TOKEN_ENV`) | Always, for a named checkpoint such as `Cosmos3-Nano` | `generate` refuses to start and names the license you must accept |
+| `HF_TOKEN` (or the env named by `NPA_COSMOS3_HF_TOKEN_ENV`) | For a named checkpoint such as `Cosmos3-Nano`, **and** whenever guardrails are on | `generate` refuses to start and names the assets whose licenses you must accept |
 | `NGC_API_KEY` (or `NPA_COSMOS3_NGC_API_KEY_ENV`) | Only when `NPA_COSMOS3_REQUIRE_NGC=1` | Same fail-fast, naming the NGC key |
-| neither | When `--checkpoint` is a local path or `s3://` URI you already staged | Runs; the token check is skipped |
+| neither | `--checkpoint` is a staged local/`s3://` path **and** `--no-guardrails` | Runs; the token check is skipped |
+
+A run pulls more than the checkpoint from Hugging Face: with guardrails on (the
+default) it also fetches the gated `nvidia/Cosmos-Guardrail1`. So staging a
+checkpoint on its own does **not** remove the token requirement — if it did, the
+preflight would pass and the run would still die mid-inference fetching the
+guardrail models, which is the failure the check exists to prevent.
 
 This is enforced in three places: `require_model_access` refuses to launch
 inference without the token, the build fails if a checkpoint file lands in a

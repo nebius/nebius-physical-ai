@@ -1,5 +1,5 @@
-# npa-cosmos3: Cosmos 3 omni-model generation runtime (text2image / text2video /
-# image2video / video2video) for the workbench.
+# npa-cosmos3: Cosmos 3 omni-model generation runtime (text2image / image2image /
+# text2video / image2video / video2video) for the workbench.
 #
 # WEIGHTS ARE NEVER BAKED. This image ships only the OpenMDW-1.1 cosmos-framework
 # SOURCE at a pinned commit plus its inference environment. Every Cosmos 3

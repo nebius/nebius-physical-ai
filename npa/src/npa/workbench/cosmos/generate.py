@@ -31,6 +31,9 @@ DEFAULT_REPO = "/opt/cosmos3/cosmos-framework"
 DEFAULT_REPO_ENV = "COSMOS3_REPO"
 DEFAULT_CHECKPOINT = "Cosmos3-Nano"
 DEFAULT_CHECKPOINT_ENV = "NPA_COSMOS3_CHECKPOINT"
+# Gated, and fetched from Hugging Face whenever guardrails are enabled, so it
+# drives the credential preflight independently of the checkpoint.
+GUARDRAIL_MODEL_ID = "nvidia/Cosmos-Guardrail1"
 DEFAULT_MODE = "text2image"
 DEFAULT_NAME = "npa-generate"
 DEFAULT_OUTPUT_DIR = "/tmp/npa-cosmos3-generate"
@@ -119,14 +122,21 @@ def _is_local_checkpoint(checkpoint: str) -> bool:
 def require_model_access(
     *,
     checkpoint: str = DEFAULT_CHECKPOINT,
+    guardrails: bool = True,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Verify the operator supplied credentials for the gated weights.
 
     The image ships no weights, so a run must fetch them under the operator's own
-    Hugging Face license acceptance. Raises :class:`Cosmos3GenerateError` when
-    that token is missing, or when NGC access is demanded
-    (``NPA_COSMOS3_REQUIRE_NGC=1``) without an NGC key.
+    Hugging Face license acceptance. A run pulls from Hugging Face for more than
+    the checkpoint: with guardrails on (the default) it also fetches the gated
+    ``nvidia/Cosmos-Guardrail1``. Staging a checkpoint therefore only removes the
+    token requirement when guardrails are off as well — otherwise the preflight
+    would pass and the run would still die mid-inference fetching the guardrail
+    models, which is exactly the failure this check exists to prevent.
+
+    Raises :class:`Cosmos3GenerateError` when the token is missing, or when NGC
+    access is demanded (``NPA_COSMOS3_REQUIRE_NGC=1``) without an NGC key.
     """
 
     env = environ if environ is not None else os.environ
@@ -134,14 +144,22 @@ def require_model_access(
         str(env.get(NGC_API_KEY_ENV_OVERRIDE, "") or "").strip()
         or DEFAULT_NGC_API_KEY_ENV
     )
-    hf_auth = "skipped"
+
+    needs: list[str] = []
     if not _is_local_checkpoint(checkpoint):
+        needs.append(f"the {checkpoint} checkpoint")
+    if guardrails:
+        needs.append(f"the gated guardrail models ({GUARDRAIL_MODEL_ID})")
+
+    hf_auth = "skipped"
+    if needs:
         if not resolve_hf_token(env):
             raise Cosmos3GenerateError(
-                "Cosmos 3 weights are not baked into this image: set HF_TOKEN "
-                f"(or {HF_TOKEN_ENV_OVERRIDE}) to a Hugging Face token that has "
-                f"accepted the {checkpoint} license, or pass a local/s3 "
-                "--checkpoint you already staged."
+                "Cosmos 3 weights are not baked into this image and this run must "
+                f"download {' and '.join(needs)} from Hugging Face. Set HF_TOKEN "
+                f"(or {HF_TOKEN_ENV_OVERRIDE}) to a token that has accepted those "
+                "licenses. A staged local/s3 --checkpoint only removes this "
+                "requirement when --no-guardrails is also passed."
             )
         hf_auth = "configured"
 
@@ -211,11 +229,16 @@ def _resolve_checkpoint(
     checkpoint: str, environ: Mapping[str, str] | None = None
 ) -> str:
     env = environ if environ is not None else os.environ
-    return (
+    value = (
         str(checkpoint or "").strip()
         or str(env.get(DEFAULT_CHECKPOINT_ENV, "") or "").strip()
         or DEFAULT_CHECKPOINT
     )
+    # A staged checkpoint may be written with ~; upstream does not expand it, so
+    # resolve it here rather than handing the framework a path it cannot open.
+    if value.startswith("~"):
+        value = str(Path(value).expanduser())
+    return value
 
 
 def _resolve_output_dir(
@@ -291,17 +314,21 @@ def generate_plan(
     }
 
 
-def _artifact_for(sample_dir: Path) -> tuple[Path | None, str]:
-    """Return the largest generated media file in ``sample_dir`` and its kind.
+def _artifact_for(sample_dir: Path, *, expected_kind: str = "") -> tuple[Path | None, str]:
+    """Return the generated media file in ``sample_dir`` and its kind.
 
     The framework writes the sample under ``<output_dir>/<name>/`` and copies any
     conditioning asset into ``<name>/inputs/``, which is excluded so a
     video2video run never reports its own input as the result.
+
+    Selection prefers the largest file whose kind matches ``expected_kind``, so a
+    video run that also emits a poster frame still reports the clip rather than
+    the (possibly larger) still. Only when the mode's own kind is absent does it
+    fall back to the largest media file of any kind, which lets the caller detect
+    the mismatch instead of silently succeeding with the wrong artifact.
     """
 
-    best: Path | None = None
-    best_size = -1
-    kind = ""
+    candidates: list[tuple[int, Path, str]] = []
     for path in sorted(sample_dir.rglob("*")):
         if not path.is_file():
             continue
@@ -314,9 +341,13 @@ def _artifact_for(sample_dir: Path) -> tuple[Path | None, str]:
             candidate_kind = "image"
         else:
             continue
-        size = path.stat().st_size
-        if size > best_size:
-            best, best_size, kind = path, size, candidate_kind
+        candidates.append((path.stat().st_size, path, candidate_kind))
+
+    if not candidates:
+        return None, ""
+    preferred = [c for c in candidates if c[2] == expected_kind] if expected_kind else []
+    size, best, kind = max(preferred or candidates, key=lambda item: item[0])
+    del size
     return best, kind
 
 
@@ -367,7 +398,11 @@ def run_cosmos3_generate(
             f"{plan['repo']}; run inside the npa-cosmos3 image on a GPU "
             f"(or point {DEFAULT_REPO_ENV} at a framework checkout)."
         )
-    access = require_model_access(checkpoint=plan["checkpoint"], environ=env)
+    access = require_model_access(
+        checkpoint=plan["checkpoint"],
+        guardrails=bool(plan["guardrails"]),
+        environ=env,
+    )
 
     output_root = Path(plan["output_dir"])
     output_root.mkdir(parents=True, exist_ok=True)
@@ -394,12 +429,19 @@ def run_cosmos3_generate(
         )
 
     sample_dir = output_root / str(plan["name"])
-    artifact, kind = _artifact_for(sample_dir)
+    expected = "image" if plan["mode"] in IMAGE_MODES else "video"
+    artifact, kind = _artifact_for(sample_dir, expected_kind=expected)
     if artifact is None:
         raise Cosmos3GenerateError(
             f"cosmos-framework produced no image/video artifact in {sample_dir}"
         )
-    expected = "image" if plan["mode"] in IMAGE_MODES else "video"
+    if kind != expected:
+        # Reporting success with the wrong medium (e.g. a poster frame standing in
+        # for a video) would let a broken run look complete downstream.
+        raise Cosmos3GenerateError(
+            f"mode {plan['mode']} should produce a {expected} artifact but only a "
+            f"{kind} was found in {sample_dir}: {artifact.name}"
+        )
 
     result = dict(plan)
     result.pop("argv", None)

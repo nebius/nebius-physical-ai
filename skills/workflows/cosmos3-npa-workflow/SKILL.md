@@ -1,6 +1,6 @@
 ---
 name: cosmos3-npa-workflow
-description: Use when writing, validating, or submitting an npa.workflow/v0.0.1 YAML that runs Cosmos 3 generation (text2image / text2video / image2video / video2video) in the npa-cosmos3 container. This is the declarative npa.workflow spec, NOT the SkyPilot YAML.
+description: Use when writing, validating, or submitting an npa.workflow/v0.0.1 YAML that runs Cosmos 3 generation (text2image / image2image / text2video / image2video / video2video) in the npa-cosmos3 container. This is the declarative npa.workflow spec, NOT the SkyPilot YAML.
 ---
 
 # Cosmos 3 npa.workflow YAML
@@ -75,7 +75,7 @@ states:
 
 | Config key | CLI flag | Notes |
 | --- | --- | --- |
-| `config.cosmos3_mode` | `--mode` | `text2image`, `text2video`, `image2video`, `video2video` |
+| `config.cosmos3_mode` | `--mode` | `text2image`, `image2image`, `text2video`, `image2video`, `video2video` |
 | `config.prompt` | `--prompt` | required |
 | `config.output_uri` | `--output-path` | `s3://` prefix; the artifact and `generate.json` are published there |
 | `config.cosmos3_checkpoint` | `--checkpoint` | `Cosmos3-Nano` by default |
@@ -141,6 +141,11 @@ Guardrails are on unless `--no-guardrails` is passed; the result manifest
 records `guardrails` so the posture is auditable. The gated checkpoint, the Wan
 VAE, and the guardrail models download at run time under the operator's own
 Hugging Face licence acceptance — never bake weights into the image.
+
+Because guardrails pull the gated `nvidia/Cosmos-Guardrail1`, `HF_TOKEN` is
+required even when `--checkpoint` points at weights you already staged. The
+token check is only skipped when the checkpoint is staged **and**
+`--no-guardrails` is set.
 
 ## Outputs
 

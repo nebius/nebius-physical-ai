@@ -29,8 +29,8 @@ from pathlib import Path
 os.environ.setdefault("COSMOS_TRAINING", "0")
 os.environ.setdefault("COSMOS_DEVICE", "cpu")
 
-MODES = ("text2image", "text2video", "image2video", "video2video")
-VISION_MODES = {"image2video", "video2video"}
+MODES = ("text2image", "image2image", "text2video", "image2video", "video2video")
+VISION_MODES = {"image2image", "image2video", "video2video"}
 WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt")
 WEIGHT_MIN_BYTES = 50 * 1024 * 1024
 
@@ -101,6 +101,7 @@ def _sample_for(mode: str, root: Path) -> Path:
     }
     if mode in VISION_MODES:
         vision = root / ("source.mp4" if mode == "video2video" else "source.png")
+        vision.parent.mkdir(parents=True, exist_ok=True)
         vision.write_bytes(b"\0")
         payload["vision_path"] = str(vision)
     path = root / f"{mode}.json"

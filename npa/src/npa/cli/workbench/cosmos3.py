@@ -54,7 +54,8 @@ def generate_cmd(
         "",
         "--checkpoint",
         help="Checkpoint name (e.g. Cosmos3-Nano), local path, or s3:// URI. "
-        "Named checkpoints download at runtime with the operator's HF token.",
+        "Named checkpoints download at runtime with the operator's HF token; a "
+        "staged path still needs one unless --no-guardrails is also passed.",
     ),
     name: str = typer.Option(DEFAULT_NAME, "--name", help="Sample name / output subdirectory."),
     negative_prompt: str = typer.Option("", "--negative-prompt", help="Optional negative prompt."),

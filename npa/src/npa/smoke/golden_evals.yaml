@@ -277,8 +277,9 @@ containers:
     physical_ai:
       useful: true
       role: >-
-        Cosmos 3 omni-model generation (text2image / text2video / image2video /
-        video2video) for synthetic Physical AI data and world simulation.
+        Cosmos 3 omni-model generation (text2image / image2image / text2video /
+        image2video / video2video) for synthetic Physical AI data and world
+        simulation.
     safety:
       runs_as: ubuntu
       base_image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04

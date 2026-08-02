@@ -1,4 +1,5 @@
-# Cosmos 3 generation (text2image / text2video / image2video / video2video).
+# Cosmos 3 generation (text2image / image2image / text2video / image2video /
+# video2video).
 #
 # Runs the containerized runtime: `npa workbench cosmos3 generate` inside the
 # npa-cosmos3 image, which ships the pinned cosmos-framework plus its cu130
@@ -40,7 +41,8 @@ run: |
   set -euo pipefail
 
   test -n "${NPA_COSMOS3_PROMPT}"
-  # No weights ship in the image; the checkpoint download needs the operator's token.
+  # No weights ship in the image. The checkpoint download needs the operator's
+  # token, and so do the gated guardrail models whenever guardrails are on.
   if [ -z "${HF_TOKEN:-}${HUGGING_FACE_HUB_TOKEN:-}" ]; then
     echo "HF_TOKEN is required: npa-cosmos3 bakes no weights, so the gated" >&2
     echo "Cosmos3 checkpoint downloads at runtime under your own HF license" >&2
