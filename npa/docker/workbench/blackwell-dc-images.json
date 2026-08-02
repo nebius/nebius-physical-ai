@@ -45,7 +45,7 @@
   },
   "validation_states": {
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
-    "pending-hardware": "Wheel arch set confirmed, but not yet run on a real datacenter Blackwell node.",
+    "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
     "not-required": "CPU-only image; no arch assertion applies."
   },
   "images": [
@@ -324,5 +324,27 @@
       "smoke": "ONNX export plus eval",
       "notes": "CPU torch (whl/cpu index) chosen precisely to avoid the blocked cuda13-b300 base. Only confirm node-pool scheduling."
     }
-  ]
+  ],
+  "validation_evidence": {
+    "npa-base": {
+      "built": true,
+      "wheel_arch_check": "passed at image build time (the build asserts sm_80/sm_90/sm_100/sm_120)",
+      "observed_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "pushed_to": [
+        "primary",
+        "mirror"
+      ],
+      "hardware_run": "not-yet-run",
+      "hardware_blocker": "Tenant GPU quota is fully consumed by other workloads: compute.instance.gpu.b200 and compute.instance.gpu.h200 both report limit 2 with 2 in use, and B300 serverless instances in uk-south1 reach STARTING then STOPPED without running. The blocker is shared capacity, not the image: the same submission path fails identically on H200, which is a known-good platform.",
+      "how_to_finish": "When B200 or B300 capacity frees up, run npa/scripts/validate_blackwell_image.sh <image> --target b200 --gpu on the node, then the image's real capability smoke, and flip this entry's validation to 'validated'."
+    }
+  }
 }

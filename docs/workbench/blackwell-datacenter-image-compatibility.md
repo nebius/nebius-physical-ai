@@ -123,3 +123,5 @@ npa/.venv/bin/python -m pytest npa/tests/docker/test_packaging_contract.py \
 6. Update `pyproject.toml`, the manifests, CLI routing, and this page.
 
 **Per-image definition of done:** an additive `sm_100` tag built and pushed to both registries; `get_device_capability()` matching the target on a real B200/B300 node with the real smoke passing; the tag registered and resolvable via CLI/SDK/YAML; guardrails green. Blocked items carry a tracked upstream reason, never a stub — `test_blackwell_dc_manifest.py` fails a `blocked` verdict that names no upstream.
+
+Where each image currently stands, including what has been built and pushed versus what is still waiting on hardware, is in the `validation_evidence` block of `npa/docker/workbench/blackwell-dc-images.json`.
