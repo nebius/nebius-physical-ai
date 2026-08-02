@@ -46,6 +46,77 @@ image pull secret in the SkyPilot namespace, normally `default`.
 
 Category for follow-up: security.
 
+## `sky down` Refuses Right After `sky jobs cancel`
+
+Symptom: `sky jobs cancel -a` succeeds, and an immediate `sky down` of the jobs
+controller fails with `NotSupportedError: In-progress managed jobs found. To avoid
+resource leakage, cancel all jobs first` — telling the operator to do what they
+just did.
+
+Root cause: `sky jobs cancel` returns as soon as cancellation is *scheduled*. The
+controller keeps reporting the job as `CANCELLING` for a while, and `sky down`
+refuses while any managed job is non-terminal.
+
+Mitigation: NPA's teardown now waits for cancelled jobs to reach a terminal state
+before running `sky down`, recognizes this specific error, and retries once the
+queue drains. If a job genuinely will not drain, teardown names the job ids and
+says to wait for `sky jobs queue --all` to show them terminal.
+
+Category for follow-up: platform.
+
+## A Managed Job Sits In PENDING Forever
+
+Symptom: a managed job stays `PENDING` for hours and never becomes `FAILED`,
+burning wall-clock until somebody cancels it by hand.
+
+Root cause: Kubernetes retries image pulls and pod scheduling indefinitely, so a
+worker pod that cannot start never fails — and SkyPilot keeps reporting the job as
+`PENDING`. There is no signal distinguishing "slow to start" from "will never
+start".
+
+Mitigation: `npa workbench workflow status` inspects the pods behind a `PENDING`
+job (via SkyPilot's own `skypilot-cluster-name` label) and reports the container's
+waiting reason — `ImagePullBackOff`, `Unschedulable`, `CreateContainerConfigError`
+— with a remedy. `npa cleanup` also lists non-terminal managed jobs, since one of
+them will block controller teardown.
+
+Category for follow-up: platform.
+
+## Cluster Teardown Goes Quiet For Several Minutes
+
+Symptom: `npa cluster down` appears to hang while draining a node, then completes
+after roughly five to seven minutes.
+
+Root cause: draining respects PodDisruptionBudgets. Single-replica platform add-ons
+(`coredns`, `cilium-operator`, `metrics-server`) declare budgets that allow zero
+disruptions on a small node pool, so eviction retries until their pods reschedule.
+It is expected, but indistinguishable from a hang.
+
+Mitigation: `npa cluster down` now previews the budgets that currently allow no
+evictions and says the wait is expected, so the silence is bounded and explained.
+
+Category for follow-up: platform.
+
+## Teardown Is Six Ordered Steps With No Single Entry Point
+
+Symptom: an environment looks torn down but still has a hung managed job, a local
+SkyPilot venv, empty `~/.npa/agents` / `~/.npa/clusters` directories, or an IAM
+service account nothing removed.
+
+Root cause: teardown spans cancel → agent destroy → cluster down → bucket delete →
+forget project → remove local caches, and nothing checks the order or reports what
+is left.
+
+Mitigation: `npa cleanup` reports residual local state, configured project entries,
+non-terminal managed jobs, and the service accounts `npa configure` creates, then
+prints the ordered runbook. `npa cleanup --yes` removes the purely-local caches
+(`--keep-sky` keeps `~/.sky`). It never deletes cloud resources, and it never
+deletes service accounts — `lerobot-training` in particular is frequently shared
+with unrelated work in the same project, so it is reported for you to remove with
+the Nebius CLI if it really is unused.
+
+Category for follow-up: platform.
+
 ## Literal AWS Endpoint In SkyPilot YAML
 
 Symptom: S3 uploads fail and logs show the literal string `${AWS_ENDPOINT_URL}`

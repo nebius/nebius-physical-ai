@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import json
 import subprocess
+from typing import Any
 
 DEFAULT_TIMEOUT_SECONDS = 60
 
@@ -57,13 +58,12 @@ def blocking_pod_disruption_budgets(
     if context.strip():
         cmd[1:1] = ["--context", context.strip()]
     execute = runner or subprocess.run
-    env_kwargs: dict[str, object] = {}
+    env: dict[str, str] | None = None
     if kubeconfig.strip():
         import os
 
         env = os.environ.copy()
         env["KUBECONFIG"] = kubeconfig.strip()
-        env_kwargs["env"] = env
     try:
         result = execute(
             cmd,
@@ -72,7 +72,7 @@ def blocking_pod_disruption_budgets(
             text=True,
             timeout=timeout,
             check=False,
-            **env_kwargs,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return [], f"could not run kubectl: {exc}"
@@ -87,8 +87,8 @@ def blocking_pod_disruption_budgets(
     for item in payload.get("items") or []:
         if not isinstance(item, dict):
             continue
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-        status = item.get("status") if isinstance(item.get("status"), dict) else {}
+        metadata = _as_dict(item.get("metadata"))
+        status = _as_dict(item.get("status"))
         allowed = status.get("disruptionsAllowed")
         if allowed is None:
             continue
@@ -110,9 +110,13 @@ def blocking_pod_disruption_budgets(
     return blockers, ""
 
 
+def _as_dict(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _as_int(value: object) -> int:
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(str(value))
     except (TypeError, ValueError):
         return 0
 

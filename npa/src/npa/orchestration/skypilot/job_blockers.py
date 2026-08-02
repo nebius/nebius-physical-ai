@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
 import subprocess
+from typing import Any
 
 CLUSTER_LABEL = "skypilot-cluster-name"
 DEFAULT_TIMEOUT_SECONDS = 60
@@ -162,13 +163,17 @@ def inspect_job_blockers(
     return report
 
 
+def _as_dict(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _blockers_from_pods(items: list[object]) -> list[PodBlocker]:
     blockers: list[PodBlocker] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        name = str(((item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}).get("name") or "")
-        status = item.get("status") if isinstance(item.get("status"), dict) else {}
+        name = str(_as_dict(item.get("metadata")).get("name") or "")
+        status = _as_dict(item.get("status"))
         phase = str(status.get("phase") or "")
         if phase in {"Running", "Succeeded"}:
             continue
@@ -178,7 +183,7 @@ def _blockers_from_pods(items: list[object]) -> list[PodBlocker]:
     return blockers
 
 
-def _container_blocker(name: str, phase: str, status: dict) -> PodBlocker | None:
+def _container_blocker(name: str, phase: str, status: dict[str, Any]) -> PodBlocker | None:
     container_lists = (
         status.get("containerStatuses") or [],
         status.get("initContainerStatuses") or [],
@@ -189,7 +194,7 @@ def _container_blocker(name: str, phase: str, status: dict) -> PodBlocker | None
         for container in containers:
             if not isinstance(container, dict):
                 continue
-            waiting = (container.get("state") or {}).get("waiting") or {}
+            waiting = _as_dict(_as_dict(container.get("state")).get("waiting"))
             reason = str(waiting.get("reason") or "")
             # ContainerCreating is normal progress, not a blocker.
             if reason and reason != "ContainerCreating":
@@ -202,7 +207,7 @@ def _container_blocker(name: str, phase: str, status: dict) -> PodBlocker | None
     return None
 
 
-def _scheduling_blocker(name: str, phase: str, status: dict) -> PodBlocker | None:
+def _scheduling_blocker(name: str, phase: str, status: dict[str, Any]) -> PodBlocker | None:
     conditions = status.get("conditions") or []
     if not isinstance(conditions, list):
         return None
