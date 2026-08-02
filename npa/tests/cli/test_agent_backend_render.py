@@ -364,3 +364,16 @@ def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) ->
     assert 'NEURAL_RECONSTRUCTION_CAMERA_LABEL = "novel-view"' in body
     # The label is applied on the neural-reconstruction branch, not inherited.
     assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+
+
+def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None:
+    """The UI HEADs /api/sim-viz/rrd-blob; a GET-only route answers 405.
+
+    The probe failure is caught and ignored, so the viewer still works -- but it
+    logged a console error on every single page load, which is exactly how real
+    errors get overlooked. Observed live.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    assert '@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])' in body
+    assert '@app.get("/sim-viz/rrd-blob")' not in body

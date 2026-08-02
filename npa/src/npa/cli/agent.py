@@ -7704,7 +7704,11 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
 def sim_viz_rrd(run_id: str = ""):
     return _sim_viz_rrd_file_response(run_id=run_id)
 
-@app.get("/sim-viz/rrd-blob")
+# HEAD as well as GET: the UI probes this endpoint with HEAD before choosing the
+# viewer URL, and a GET-only route answers 405, logging a console error on every
+# page load. The probe failure is caught and ignored, so this is cosmetic -- but
+# an error that fires every load trains operators to ignore the console.
+@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])
 def sim_viz_rrd_blob(run_id: str = ""):
     # Authenticated .rrd bytes for parent-page blob URL (Rerun wasm cannot send basic auth).
     return _sim_viz_rrd_file_response(run_id=run_id)

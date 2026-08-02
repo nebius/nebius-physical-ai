@@ -4934,6 +4934,12 @@
         }
         rerunIframeLoaded = true;
         mountedRerunRunKey = mountKey;
+        // Re-evaluate the CTA now that the iframe is up. `cta.hidden` is
+        // `ready && rerunIframeLoaded`, so a status refresh that lands while the
+        // iframe is still booting leaves the "No run-specific Rerun recording
+        // yet" banner painted above a viewer that has in fact loaded, and nothing
+        // else recomputes it. Observed on a real NuRec run.
+        updateSimvizCta(lastSimVizStatus);
         // Uncover without blocking mount latency — splash polling stays in the background.
         scheduleRerunBundleUncover(iframe).catch((err) => {
           console.warn("rerun splash uncover failed", err);

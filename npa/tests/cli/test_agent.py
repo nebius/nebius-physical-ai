@@ -2356,3 +2356,23 @@ def test_ui_script_calls_no_undefined_local_helper() -> None:
     }
     undefined = sorted(called - defined - allowed)
     assert not undefined, f"UI script calls undefined helper(s): {undefined}"
+
+def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:
+    """The "no recording yet" banner must be re-evaluated after the mount.
+
+    ``cta.hidden = ready && rerunIframeLoaded``, and ``rerunIframeLoaded`` flips
+    to true asynchronously. A status refresh landing before that leaves the
+    banner painted above a viewer that has already loaded the recording, because
+    nothing recomputes it. Reproduced on a real NuRec run: absent on first load,
+    present after a reload.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    mount = html.split("rerunIframeLoaded = true;", 1)[1][:600]
+    assert "updateSimvizCta(" in mount, (
+        "the CTA must be recomputed immediately after the iframe mounts"
+    )
