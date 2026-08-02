@@ -244,17 +244,51 @@ The copy path is bracketed by two checks it runs itself. Before writing anything
 reads every **source** manifest, because `crane auth login` writes a config file and
 exits 0 for any string without ever contacting the registry — so a stale credential
 would otherwise surface partway through the copy loop with some packages already
-created. `UNAUTHORIZED` means the token is dead, `MANIFEST_UNKNOWN` means the pinned
-tag was never pushed. Run it alone with `--preflight`, and mint a fresh source token
-with:
+created. `UNAUTHORIZED` on *every* image means the credential never resolved to an
+identity at all; `UNAUTHORIZED` on *some* means the identity lacks `viewer` on those
+repositories; `MANIFEST_UNKNOWN` means the pinned tag was never pushed. Run it alone
+with `--preflight`. Locally, mint a fresh source token with:
 
 ```bash
 nebius iam get-access-token | crane auth login cr.eu-north1.nebius.cloud -u iam --password-stdin
 ```
 
-In CI that token is the `NEBIUS_CR_TOKEN` repository secret (GHCR push uses the
-built-in `GITHUB_TOKEN`). It is short-lived, so re-mint it rather than assuming the
-stored value still works. You do not have to guess: the `Publish public images`
+### The CI credential must not be an access token
+
+**Do not put the output of `nebius iam get-access-token` in a CI secret.** An access
+token lives **12 hours**, and `Publish public images` is dispatched by hand — so a
+stored one is dead long before the next run. That is precisely how the workflow's first
+run failed: all 23 source reads returned `UNAUTHORIZED: authentication required: failed
+to get profile`, which is Nebius CR's way of saying the bearer token resolved to no
+identity. The preflight caught it before anything was written, so nothing was published
+and no package was created.
+
+Use one of the two durable credentials instead (GHCR push always uses the built-in
+`GITHUB_TOKEN`):
+
+| Secret | What it is | Lifetime |
+| --- | --- | --- |
+| `NEBIUS_SA_CREDENTIALS_JSON` | authorized-key credentials JSON for a service account with `viewer` on the source registry; the job mints a fresh token per run | no expiry to manage |
+| `NEBIUS_CR_TOKEN` | a static key issued for the registry service | 6 months by default, up to 3 years |
+
+The workflow prefers `NEBIUS_SA_CREDENTIALS_JSON` and falls back to `NEBIUS_CR_TOKEN`.
+Issue a static key with:
+
+```bash
+nebius iam static-key issue \
+  --account-service-account-id=<service-account-id> \
+  --service=CONTAINER_REGISTRY
+```
+
+Either way the credential is checked offline before the two-minute manifest sweep, so an
+expired token is named as such in seconds rather than arriving as a wall of identical
+`UNAUTHORIZED` lines:
+
+```bash
+printf '%s' "$TOKEN" | python -m npa.deploy.publish_public --describe-credential
+```
+
+You do not have to guess whether a real run would work: the `Publish public images`
 workflow's default **dry run is a full rehearsal** — it resolves the plan, logs in to
 the source registry, preflights every pinned tag, and runs the Isaac gate, skipping
 only the copy and the public verification. A green dry run means the real run will get

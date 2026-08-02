@@ -21,12 +21,25 @@
 # real rehearsal: it resolves the plan, proves the source credential, reads every pinned
 # source tag, and runs the gate. Only the copy and the public verification are skipped.
 #
-# Required secret to actually copy:
-#   NEBIUS_CR_TOKEN — a Nebius CR token (static key or access token) with viewer
-#                     on the source registry, used as the docker password (user
-#                     "iam"). GHCR push uses the built-in GITHUB_TOKEN. A dry run
-#                     without it still prints the plan, but says it could not check
-#                     the source registry.
+# SOURCE REGISTRY CREDENTIAL. Nebius CR authenticates `docker login` as user "iam" with
+# either kind of secret below. They differ only in how long they survive, which is the
+# whole game for a workflow that is dispatched by hand months apart:
+#
+#   NEBIUS_SA_CREDENTIALS_JSON — preferred. An authorized-key credentials JSON for a
+#                     service account holding viewer on the source registry. The job
+#                     mints a fresh access token during the run, so nothing expires
+#                     between dispatches and no one has to re-paste anything. Opt-in:
+#                     the job falls back to NEBIUS_CR_TOKEN when this is unset.
+#   NEBIUS_CR_TOKEN — a pre-issued token. This MUST be a long-lived static key
+#                     (`nebius iam static-key issue --service=CONTAINER_REGISTRY`,
+#                     6 months by default), NOT the output of `nebius iam
+#                     get-access-token`: an access token lives 12 hours, so a stored
+#                     one is already dead by the next manual dispatch. That is exactly
+#                     how the first run of this workflow failed — 23 identical
+#                     UNAUTHORIZED reads, nothing published.
+#
+# GHCR push uses the built-in GITHUB_TOKEN. A dry run with neither source secret still
+# prints the plan, but says it could not check the source registry.
 
 name: Publish public images
 
@@ -51,10 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -80,25 +93,61 @@ jobs:
 
       - name: Login to GHCR
         if: ${{ inputs.dry_run == false }}
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GH_TOKEN" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # Runs in dry-run too, so the safe rehearsal actually rehearses the credential.
-      # NEBIUS_CR_TOKEN is short-lived, and a dry run that skipped the login could only
-      # ever tell you the plan was well-formed.
-      - name: Login to Nebius source registry
+      # Runs in dry-run too, so the safe rehearsal actually rehearses the credential. A dry
+      # run that skipped this could only ever tell you the plan was well-formed, which was
+      # never the thing that broke.
+      #
+      # Secrets arrive through `env:` rather than `${{ }}` interpolation, which would splice
+      # them into the script text where a quote or newline changes what runs.
+      - name: Authenticate to the Nebius source registry
         id: source-login
+        env:
+          NEBIUS_SA_CREDENTIALS_JSON: ${{ secrets.NEBIUS_SA_CREDENTIALS_JSON }}
+          NEBIUS_CR_TOKEN: ${{ secrets.NEBIUS_CR_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [ -z "${{ secrets.NEBIUS_CR_TOKEN }}" ]; then
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
-              echo "::notice::NEBIUS_CR_TOKEN is not set, so this dry run cannot check the source registry."
+          set -euo pipefail
+          umask 077
+          token_file="$RUNNER_TEMP/npa-source-registry-token"
+          sa_file="$RUNNER_TEMP/nebius-sa-credentials.json"
+          trap 'rm -f "$token_file" "$sa_file"' EXIT
+
+          if [ -n "${NEBIUS_SA_CREDENTIALS_JSON:-}" ]; then
+            # Minting in-run is the only credential path with no expiry to manage: the SA key
+            # is long-lived and the token it yields only has to outlive this job.
+            echo "Minting a fresh access token from NEBIUS_SA_CREDENTIALS_JSON."
+            curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+            export PATH="$HOME/.nebius/bin:$PATH"
+            printf '%s' "$NEBIUS_SA_CREDENTIALS_JSON" > "$sa_file"
+            nebius profile create \
+              --endpoint api.nebius.cloud \
+              --service-account-file "$sa_file" \
+              --profile publish-public-images
+            nebius --profile publish-public-images iam get-access-token > "$token_file"
+          elif [ -n "${NEBIUS_CR_TOKEN:-}" ]; then
+            printf '%s' "$NEBIUS_CR_TOKEN" > "$token_file"
+          else
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::notice::Neither NEBIUS_SA_CREDENTIALS_JSON nor NEBIUS_CR_TOKEN is set, so this dry run cannot check the source registry."
               echo "available=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "NEBIUS_CR_TOKEN secret is required to copy from the Nebius source registry" >&2
+            echo "A source registry credential (NEBIUS_SA_CREDENTIALS_JSON or NEBIUS_CR_TOKEN) is required to copy" >&2
             exit 1
           fi
+
+          # Offline verdict on the credential itself, before the ~2-minute manifest sweep.
+          # An expired access token is the one failure this workflow has actually had, and
+          # it is readable from the token's own `exp` claim -- so report it in a second,
+          # by name, instead of as 23 indistinguishable UNAUTHORIZED lines.
+          python -m npa.deploy.publish_public --describe-credential < "$token_file"
+
           for host in cr.eu-north1.nebius.cloud cr.us-central1.nebius.cloud; do
-            echo "${{ secrets.NEBIUS_CR_TOKEN }}" | crane auth login "$host" -u iam --password-stdin
+            crane auth login "$host" -u iam --password-stdin < "$token_file"
           done
           echo "available=true" >> "$GITHUB_OUTPUT"
 
