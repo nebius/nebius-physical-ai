@@ -71,6 +71,16 @@ def up_cmd(
             "reservation selection. Equivalent to TF_VAR_capacity_block_group."
         ),
     ),
+    gpu_nodes: int = typer.Option(
+        -1,
+        "--gpu-nodes",
+        help="Number of GPU nodes (overrides tfvars/TF_VAR_gpu_nodes_count). -1 keeps the configured value.",
+    ),
+    cpu_nodes: int = typer.Option(
+        -1,
+        "--cpu-nodes",
+        help="Number of CPU nodes (overrides tfvars/TF_VAR_cpu_nodes_count). -1 keeps the configured value.",
+    ),
     project: str = typer.Option(
         "",
         "--project",
@@ -95,11 +105,17 @@ def up_cmd(
     typer.echo(f"Terraform directory: {tf_dir}")
     _preflight_terraform_version(terraform_bin)
     tfvars = _read_tfvars(tf_dir)
+    # First-class node-count flags: a runbook can pick "agent XOR 2-GPU cluster"
+    # under a tight compute.instance.count without editing tfvars or exporting
+    # TF_VAR_*. -1 means "leave the configured value alone".
+    _apply_node_count_override(tfvars, "gpu_nodes_count", gpu_nodes)
+    _apply_node_count_override(tfvars, "cpu_nodes_count", cpu_nodes)
     _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
     _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
+    _preflight_instance_count_quota(tfvars, env)
     _preflight_filestore_quota(nebius_bin, tfvars, env)
     _preflight_gpu_capacity(nebius_bin, tfvars, env)
 
@@ -111,6 +127,8 @@ def up_cmd(
         # explicitly so `--capacity-block-group` is not silently dropped by a
         # `capacity_block_group = ""` line in a checked-in tfvars file.
         *_capacity_block_group_var_args(capacity_block_group),
+        *_node_count_var_args(tfvars, "gpu_nodes_count", gpu_nodes),
+        *_node_count_var_args(tfvars, "cpu_nodes_count", cpu_nodes),
         *_ssh_public_key_var_args(tfvars, env),
     ]
     # Terraform prints only `Still creating...` while a node group retries, so a
@@ -754,6 +772,57 @@ def _preflight_filestore_quota(nebius_bin: str, tfvars: dict[str, Any], env: dic
             f"requested {requested_bytes} bytes in {region}. "
             "Provide existing_filestore or raise Shared Filesystem SSD quota before running apply."
         )
+
+
+def _apply_node_count_override(tfvars: dict[str, Any], key: str, value: int) -> None:
+    """Set ``tfvars[key]`` from a ``--gpu-nodes``/``--cpu-nodes`` flag (-1 = keep)."""
+    if value is not None and value >= 0:
+        tfvars[key] = int(value)
+
+
+def _node_count_var_args(tfvars: dict[str, Any], key: str, value: int) -> list[str]:
+    """Return ``-var key=N`` when the flag was given, so it beats a tfvars line."""
+    if value is not None and value >= 0:
+        return ["-var", f"{key}={int(value)}"]
+    return []
+
+
+def _preflight_instance_count_quota(tfvars: dict[str, Any], env: dict[str, str]) -> None:
+    """Predict a ``compute.instance.count`` shortfall before any apply.
+
+    A cluster needs one VM per node (GPU + CPU). Under a tight tenant instance
+    quota — the reported ``compute.instance.count = 2`` — the default shape (an
+    agent, a CPU node and two GPU nodes) cannot fit, and Terraform only surfaces
+    it after creating the network/subnet. Compute the requirement against the
+    live quota (usage counts a running agent VM, so the agent-vs-GPUs tradeoff is
+    captured automatically) and refuse up front. Best-effort: an unreadable quota
+    or missing tenant/region never blocks the apply.
+    """
+    gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
+    cpu_nodes = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 0) or 0)
+    required = gpu_nodes + cpu_nodes
+    if required <= 0:
+        return
+    tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
+    region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
+    if not tenant_id or not region:
+        return
+    from npa.clients.nebius import get_compute_instance_quota
+
+    usage, limit = get_compute_instance_quota(tenant_id, region)
+    if usage is None or limit is None:
+        return
+    free = max(0, limit - usage)
+    if required <= free:
+        return
+    raise typer.BadParameter(
+        f"Cluster needs {required} compute instance(s) ({gpu_nodes} GPU + {cpu_nodes} CPU "
+        f"node(s)), but the tenant compute.instance.count quota in {region} has only {free} "
+        f"free (limit {limit}, in use {usage}). Free instances (e.g. `npa agent destroy` an "
+        f"agent, or delete idle VMs), reduce --gpu-nodes/--cpu-nodes, or ask a tenant admin to "
+        f"raise compute.instance.count. At compute.instance.count={limit}, an agent VM and this "
+        f"cluster cannot both fit — pick agent XOR cluster, or fewer GPU nodes."
+    )
 
 
 def _preflight_gpu_capacity(nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]) -> None:

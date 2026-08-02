@@ -489,6 +489,72 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypa
     assert "default StorageClass compute-csi-default-sc" in result.output
 
 
+def test_preflight_instance_count_quota_refuses_when_insufficient(monkeypatch) -> None:
+    """Predict a compute.instance.count shortfall before any apply (the agent-vs-GPUs case)."""
+    from npa.clients import nebius as nebius_module
+
+    # An agent VM is already running (usage 1) against a limit-2 tenant.
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (1, 2))
+    tfvars = {
+        "gpu_nodes_count": 2,
+        "cpu_nodes_count": 1,
+        "tenant_id": "tenant-x",
+        "region": "us-central1",
+    }
+
+    with pytest.raises(Exception) as excinfo:  # typer.BadParameter
+        tf_mod._preflight_instance_count_quota(tfvars, {})
+
+    message = str(excinfo.value)
+    assert "needs 3 compute instance" in message
+    assert "only 1 free" in message
+    assert "compute.instance.count" in message
+
+
+def test_preflight_instance_count_quota_passes_with_headroom(monkeypatch) -> None:
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 5))
+    tf_mod._preflight_instance_count_quota(
+        {"gpu_nodes_count": 2, "cpu_nodes_count": 1, "tenant_id": "t", "region": "r"}, {}
+    )
+
+
+def test_preflight_instance_count_quota_noop_when_unreadable(monkeypatch) -> None:
+    from npa.clients import nebius as nebius_module
+
+    def _boom(_t, _r):
+        return (None, None)
+
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", _boom)
+    # Must not raise even though nodes are requested.
+    tf_mod._preflight_instance_count_quota(
+        {"gpu_nodes_count": 8, "cpu_nodes_count": 4, "tenant_id": "t", "region": "r"}, {}
+    )
+
+
+def test_preflight_instance_count_quota_noop_without_tenant_or_region(monkeypatch) -> None:
+    from npa.clients import nebius as nebius_module
+
+    def _boom(_t, _r):  # pragma: no cover - must not be reached
+        raise AssertionError("quota lookup should be skipped without tenant/region")
+
+    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", _boom)
+    tf_mod._preflight_instance_count_quota({"gpu_nodes_count": 2}, {})
+
+
+def test_node_count_flag_overrides_tfvars_and_beats_it_with_var() -> None:
+    tfvars: dict = {"gpu_nodes_count": 2}
+    # -1 keeps the configured value; a real value overrides tfvars and adds -var.
+    tf_mod._apply_node_count_override(tfvars, "gpu_nodes_count", -1)
+    assert tfvars["gpu_nodes_count"] == 2
+    assert tf_mod._node_count_var_args(tfvars, "gpu_nodes_count", -1) == []
+
+    tf_mod._apply_node_count_override(tfvars, "gpu_nodes_count", 0)
+    assert tfvars["gpu_nodes_count"] == 0
+    assert tf_mod._node_count_var_args(tfvars, "gpu_nodes_count", 0) == ["-var", "gpu_nodes_count=0"]
+
+
 def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
