@@ -24,15 +24,23 @@ The copy path preflights the source registry first and verifies the result after
 stale credential fails before anything is written and a copy cannot report success while
 nothing is publicly pullable. Making the packages public is the one step that cannot be
 automated (see ``package_settings_url``); the verification prints a click-through list.
+
+``--describe-credential`` reads a source-registry credential on stdin and reports its
+expiry offline, because the credential is what actually breaks: a Nebius access token
+lives 12 hours, so anything stored in CI must be a static key issued for
+CONTAINER_REGISTRY instead (see ``describe_credential``).
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -135,6 +143,87 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
         if not ok:
             failures.append((item, detail))
     return failures
+
+
+# --------------------------------------------------------------------------------------
+# Source credential inspection
+#
+# The source registry credential is the one thing about a publish that expires on its own,
+# and the two credentials Nebius accepts for `docker login -u iam` are wildly different in
+# that respect: an access token from `nebius iam get-access-token` lives 12 HOURS, while a
+# static key issued for CONTAINER_REGISTRY lives 6 months by default. A manual-dispatch
+# workflow holding a stored access token is therefore expired essentially always -- which is
+# exactly how run #1 failed, with 23 identical UNAUTHORIZED lines after a two-minute sweep.
+#
+# An access token is a JWT, so its expiry is readable offline. Checking it before the sweep
+# turns that into an immediate, unambiguous verdict, and -- more importantly -- names the
+# remedy that does not expire again next week.
+# --------------------------------------------------------------------------------------
+
+
+def _decode_jwt_expiry(token: str) -> int | None:
+    """The ``exp`` claim of a JWT-shaped bearer token, or ``None``.
+
+    Best-effort and deliberately non-verifying: the goal is to read the expiry the issuer
+    already put in the token, not to validate it. A static key is an opaque string rather
+    than a JWT, so returning ``None`` is the normal answer for the credential we actually
+    want in CI, and must never be reported as a problem.
+    """
+    parts = token.strip().split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)  # base64url in a JWT is unpadded
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+    expiry = claims.get("exp") if isinstance(claims, dict) else None
+    return expiry if isinstance(expiry, int) else None
+
+
+def describe_credential(token: str, *, now: float | None = None) -> tuple[bool, str]:
+    """Whether ``token`` is usable, and a one-line verdict that never echoes the secret.
+
+    ``False`` is returned only when the credential is *provably* dead — a JWT whose ``exp``
+    has passed. Anything unreadable is reported as usable, because this check exists to
+    convert one specific recurring failure into a fast, precise message, not to become a
+    second gate that can wrongly refuse a working credential.
+    """
+    now = time.time() if now is None else now
+    token = token.strip()
+    if not token:
+        return False, "the credential is empty"
+
+    expiry = _decode_jwt_expiry(token)
+    if expiry is None:
+        return True, (
+            "the credential has no readable expiry, which is expected for a static key "
+            "(`nebius iam static-key issue --service=CONTAINER_REGISTRY`)"
+        )
+    remaining = expiry - now
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expiry))
+    if remaining <= 0:
+        return False, (
+            f"the credential EXPIRED at {stamp} ({_approx_duration(-remaining)} ago). A "
+            "Nebius access token lives 12 hours, so a stored one is dead by the next "
+            "dispatch; issue a long-lived static key instead:\n"
+            "  nebius iam static-key issue --account-service-account-id=<sa-id> "
+            "--service=CONTAINER_REGISTRY"
+        )
+    return True, (
+        f"the credential is an access token valid until {stamp} "
+        f"({_approx_duration(remaining)} left). It will not survive to the next dispatch — "
+        "a static key issued for CONTAINER_REGISTRY lasts 6 months."
+    )
+
+
+def _approx_duration(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    for unit, size in (("d", 86400.0), ("h", 3600.0), ("m", 60.0)):
+        if seconds >= size:
+            return f"{seconds / size:.0f}{unit}"
+    return f"{seconds:.0f}s"
 
 
 # --------------------------------------------------------------------------------------
@@ -321,6 +410,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--describe-credential",
+        action="store_true",
+        help=(
+            "Read a source-registry credential on stdin and report whether it is usable, "
+            "without contacting any registry and without echoing the secret. Exits non-zero "
+            "only when the credential is provably expired. Runs before the preflight so an "
+            "expired 12-hour access token fails in a second with the reason, instead of as "
+            "a wall of UNAUTHORIZED lines."
+        ),
+    )
+    parser.add_argument(
         "--checklist",
         action="store_true",
         help=(
@@ -329,6 +429,13 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+
+    # Before the plan: this mode inspects a credential and touches neither registry, so it
+    # must not require a target registry it has no use for.
+    if args.describe_credential:
+        usable, verdict = describe_credential(sys.stdin.read())
+        print(f"Source registry credential: {verdict}", file=sys.stdout if usable else sys.stderr)
+        return 0 if usable else 1
 
     if not (args.target or "").strip():
         parser.error("no target registry; pass --target or set NPA_PUBLIC_REGISTRY")
@@ -397,17 +504,35 @@ def _preflight_or_explain(plan: list[PublishItem]) -> bool:
     failures = preflight_sources(plan)
     if not failures:
         return False
-    print(
+    lines = [
         f"\n{len(failures)} of {len(plan)} source image(s) could not be read; nothing was "
-        "copied.\n"
-        "UNAUTHORIZED means the source registry credential is missing or expired — mint a\n"
-        "fresh one and log in again:\n"
-        "  nebius iam get-access-token | crane auth login <registry-host> -u iam "
-        "--password-stdin\n"
-        "MANIFEST_UNKNOWN means the pinned tag is not in the source registry — build and\n"
-        "push that image, or correct its pin, before publishing.",
-        file=sys.stderr,
-    )
+        "copied."
+    ]
+    # Whether EVERY read failed is the diagnostic, not just the registry's error code: one
+    # UNAUTHORIZED could be a per-repository grant, but all of them means the credential
+    # never resolved to an identity at all ("failed to get profile"), so there is no point
+    # looking at roles or at the tags.
+    if len(failures) == len(plan) and all("UNAUTHORIZED" in detail for _, detail in failures):
+        lines.append(
+            "Every read failed with UNAUTHORIZED, so this is the credential rather than any\n"
+            "single tag or grant — the token did not resolve to an identity.\n"
+            "In CI, prefer a credential that does not expire between dispatches. An access\n"
+            "token from `nebius iam get-access-token` lives 12 HOURS, so a stored one is dead\n"
+            "by the next manual run; a static key issued for the registry lasts 6 months:\n"
+            "  nebius iam static-key issue --account-service-account-id=<sa-id> "
+            "--service=CONTAINER_REGISTRY\n"
+            "Locally, re-mint and log in again:\n"
+            "  nebius iam get-access-token | crane auth login <registry-host> -u iam "
+            "--password-stdin"
+        )
+    else:
+        lines.append(
+            "UNAUTHORIZED on SOME images means the credential works but its identity lacks\n"
+            "viewer on those repositories — fix the role, not the token.\n"
+            "MANIFEST_UNKNOWN means the pinned tag is not in the source registry — build and\n"
+            "push that image, or correct its pin, before publishing."
+        )
+    print("\n".join(lines), file=sys.stderr)
     return True
 
 

@@ -17,6 +17,8 @@ membership is empty.
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -575,3 +577,180 @@ def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None
         "(https://github.com/orgs/nebius/packages/container/"
         "nebius-physical-ai%2Fnpa-lerobot/settings)"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Source credential expiry
+#
+# The workflow's first real dispatch failed with 23 identical
+# "UNAUTHORIZED ... failed to get profile" reads, because the stored NEBIUS_CR_TOKEN was a
+# `nebius iam get-access-token` value and those live 12 hours. Nothing was published (the
+# preflight held), but the diagnosis cost a two-minute sweep and reads like a registry or
+# permissions problem rather than "the secret is a kind of credential that cannot work
+# here". These pin the offline verdict that replaces that.
+# --------------------------------------------------------------------------------------
+
+
+def _jwt(exp: int | None) -> str:
+    """A JWT-shaped token, unsigned — describe_credential must never verify signatures."""
+
+    def segment(payload: dict[str, object]) -> str:
+        raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+        return raw.rstrip("=")  # real JWTs are unpadded base64url
+
+    claims: dict[str, object] = {"sub": "serviceaccount-abc"}
+    if exp is not None:
+        claims["exp"] = exp
+    return f"{segment({'alg': 'RS256'})}.{segment(claims)}.c2lnbmF0dXJl"
+
+
+def test_an_expired_access_token_is_reported_as_expired_not_as_a_registry_problem() -> None:
+    from npa.deploy.publish_public import describe_credential
+
+    now = 1_800_000_000.0
+    usable, verdict = describe_credential(_jwt(int(now) - 6 * 86400), now=now)
+
+    assert not usable
+    assert "EXPIRED" in verdict
+    assert "6d ago" in verdict
+    # The remedy has to be the credential that does not expire again next week, or the fix
+    # is to paste another 12-hour token and rediscover this in a month.
+    assert "static-key issue" in verdict
+    assert "--service=CONTAINER_REGISTRY" in verdict
+
+
+def test_a_valid_access_token_is_usable_but_still_flagged_as_too_short_lived() -> None:
+    """It works right now, which is the trap: it will not survive to the next dispatch."""
+    from npa.deploy.publish_public import describe_credential
+
+    now = 1_800_000_000.0
+    usable, verdict = describe_credential(_jwt(int(now) + 4 * 3600), now=now)
+
+    assert usable
+    assert "4h left" in verdict
+    assert "next dispatch" in verdict
+
+
+def test_an_opaque_static_key_is_usable_and_is_not_called_a_problem() -> None:
+    """A static key is not a JWT, so having no readable expiry is the GOOD outcome.
+
+    Treating "unreadable" as suspect would turn this diagnostic into a gate that refuses
+    the one credential CI is supposed to use.
+    """
+    from npa.deploy.publish_public import describe_credential
+
+    usable, verdict = describe_credential("nbstatic-opaque-key-value")
+
+    assert usable
+    assert "static key" in verdict
+    assert "EXPIRED" not in verdict
+
+
+def test_a_malformed_credential_is_never_guessed_to_be_expired() -> None:
+    """Three dots and garbage inside must fall back to "no readable expiry", not a verdict."""
+    from npa.deploy.publish_public import describe_credential
+
+    usable, verdict = describe_credential("not-base64.$$$not-json$$$.sig")
+
+    assert usable
+    assert "no readable expiry" in verdict
+
+
+def test_an_empty_credential_is_refused() -> None:
+    from npa.deploy.publish_public import describe_credential
+
+    usable, verdict = describe_credential("   \n")
+
+    assert not usable
+    assert "empty" in verdict
+
+
+def test_describe_credential_never_echoes_the_secret() -> None:
+    """This runs in CI logs, so the verdict must carry the expiry and nothing else."""
+    from npa.deploy.publish_public import describe_credential
+
+    for token in (_jwt(1), _jwt(4_000_000_000), "nbstatic-super-secret", _jwt(None)):
+        _, verdict = describe_credential(token)
+        assert token not in verdict
+        for part in token.split("."):
+            assert len(part) < 8 or part not in verdict
+
+
+def test_the_credential_check_exits_non_zero_on_an_expired_token(monkeypatch, capsys) -> None:
+    """The workflow relies on the exit code to stop before the manifest sweep."""
+    import io
+
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(_jwt(1)))
+    rc = publish_public.main(["--describe-credential"])
+
+    assert rc == 1
+    assert "EXPIRED" in capsys.readouterr().err
+
+
+def test_the_credential_check_needs_no_target_registry(monkeypatch) -> None:
+    """It contacts nothing, so requiring a --target it cannot use would be a papercut that
+    makes the check awkward to run by hand."""
+    import io
+
+    from npa.deploy import publish_public
+
+    monkeypatch.delenv("NPA_PUBLIC_REGISTRY", raising=False)
+    monkeypatch.setattr("sys.stdin", io.StringIO("nbstatic-opaque-key-value"))
+
+    assert publish_public.main(["--target", "", "--describe-credential"]) == 0
+
+
+def test_the_credential_check_copies_nothing(monkeypatch) -> None:
+    import io
+
+    from npa.deploy import publish_public
+
+    def explode(item) -> None:  # pragma: no cover - must not run
+        raise AssertionError("--describe-credential must not copy anything")
+
+    monkeypatch.setattr(publish_public, "_crane_copy", explode)
+    monkeypatch.setattr("sys.stdin", io.StringIO("nbstatic-opaque-key-value"))
+
+    assert publish_public.main(["--describe-credential"]) == 0
+
+
+def test_a_wholesale_unauthorized_preflight_blames_the_credential(monkeypatch, capsys) -> None:
+    """All reads failing is a different diagnosis from some failing, and the old message
+    conflated them — it recommended re-minting a 12-hour token, which is what caused it."""
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_manifest_readable",
+        lambda ref, **_: (False, "UNAUTHORIZED: authentication required: failed to get profile"),
+    )
+
+    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--preflight"])
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "Every read failed" in err
+    assert "static-key issue" in err
+    assert "lacks\nviewer" not in err, "a per-repository role hint would misdirect here"
+
+
+def test_a_partial_preflight_failure_blames_the_role_or_the_tag(monkeypatch, capsys) -> None:
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    broken = plan[0].source_ref
+
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_manifest_readable",
+        lambda ref, **_: (False, "MANIFEST_UNKNOWN: manifest unknown") if ref == broken else (True, "ok"),
+    )
+
+    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--preflight"])
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "MANIFEST_UNKNOWN" in err
+    assert "Every read failed" not in err
