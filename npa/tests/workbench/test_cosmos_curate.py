@@ -519,28 +519,46 @@ def test_a_cache_predating_stamps_is_kept_when_the_registry_vouches_for_it(
     assert model_status([spec], environ=_weights_env(tmp_path))[0].present is True
 
 
-def test_a_checkout_at_another_commit_is_refused_with_the_reason_why(tmp_path: Path) -> None:
+def test_a_checkout_at_another_commit_is_refused(tmp_path: Path) -> None:
     """Upstream's constructor kwargs are not an API, so the commit has to match.
 
     Without this the mismatch imports fine and only shows up later as a TypeError
     from inside an upstream constructor, which reads like a bug in our call.
     """
 
-    from npa.workbench.cosmos_curate.upstream import (
-        PINNED_REVISION,
-        REVISION_STAMP_FILE,
-        probe_availability,
-    )
+    from npa.workbench.cosmos_curate.upstream import REVISION_STAMP_FILE, probe_availability
 
     checkout = tmp_path / "cosmos-curator"
     (checkout / "cosmos_curator" / "pipelines").mkdir(parents=True)
     (checkout / REVISION_STAMP_FILE).write_text("0" * 40, encoding="utf-8")
 
     availability = probe_availability(environ={"NPA_COSMOS_CURATE_SRC": str(checkout)})
-    assert availability.can_run_in_process is False
     assert availability.revision == "0" * 40
-    assert PINNED_REVISION in availability.reason()
-    assert "pipeline.py" in availability.reason()
+    assert availability.revision_ok is False
+    assert availability.can_run_in_process is False
+
+
+def test_a_wrong_commit_says_which_commit_and_which_file_to_revisit() -> None:
+    """The reason has to be actionable, and has to say so on every interpreter.
+
+    Asserted against a constructed availability rather than a probe: on Python
+    < 3.12 the probe reports the version gap first, so driving this through the
+    probe would only exercise the message on some interpreters.
+    """
+
+    from npa.workbench.cosmos_curate.upstream import PINNED_REVISION, CuratorAvailability
+
+    reason = CuratorAvailability(
+        source="/opt/cosmos-curator",
+        revision="0" * 40,
+        python_version="3.12.3",
+        importable=True,
+        ffmpeg="/usr/bin/ffmpeg",
+        encoders=("libopenh264",),
+    ).reason()
+    assert PINNED_REVISION in reason
+    assert "0" * 40 in reason
+    assert "pipeline.py" in reason
 
 
 def test_a_checkout_without_a_stamp_is_not_refused(tmp_path: Path) -> None:
