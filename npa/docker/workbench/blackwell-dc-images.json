@@ -62,8 +62,8 @@
       ],
       "smoke": "gpu_capability_smoke.py: device capability + native SASS, bf16 matmul and torch SDPA as controls, then a flash-attn-4 CuTe forward pass checked against SDPA",
       "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. The flash-attn-4 CuTe JIT was assumed to make this image usable on any Blackwell part; real-GPU testing disproved that for sm_120 - see known_gaps.flash_attn_sm120.",
-      "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260802T030943Z",
-      "published_digest": "sha256:4769f642e5f4436f598e4578c268673cba1f089273bd0a3535d7e9fc05509e5e",
+      "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260802T181419Z",
+      "published_digest": "sha256:cd1d4ff16f55f5e6d09bccfb4b7c3a8a2bef75c7dd13d69d195a9ec90f5da48d",
       "published_registries": [
         "primary",
         "mirror"
@@ -342,9 +342,11 @@
         "primary",
         "mirror"
       ],
-      "hardware_run": "Run on two real GPU architectures by reusing already-deployed Kubernetes pools. On RTX PRO 6000 Blackwell (sm_120): capability (12,0) confirmed, native SASS present, bf16 matmul and torch SDPA pass, and the checker correctly REFUSED a b200 target on that device (cross-major guard). On H100 (sm_90): the full capability smoke passes including the flash-attn-4 CuTe kernel, max abs error 0.00186 vs SDPA. Not yet run on B200 or B300 themselves.",
+      "hardware_run": "Passed on two real GPU architectures, reusing already-deployed Kubernetes pools rather than provisioning. Each run does a positive arch check, a negative cross-major check, and the capability smoke, via npa/scripts/blackwell-gpu-validation-job.yaml. RTX PRO 6000 Blackwell (sm_120, capability (12,0)): ALL_GPU_VALIDATION_PASSED - native SASS present, bf16 matmul and torch SDPA pass, flash-attn recorded as the known TMA gap. H100 80GB HBM3 (sm_90, capability (9,0)): ALL_GPU_VALIDATION_PASSED - full smoke including the flash-attn-4 CuTe kernel at max abs error 0.00186 vs SDPA. On both, the checker correctly REFUSED a b200 target, so a pass on the wrong GPU family cannot be mistaken for Blackwell readiness. Not yet run on B200 or B300.",
       "hardware_blocker": "B200/B300 instances cannot be placed. Serverless jobs submit but their instance cycles STARTING -> STOPPED indefinitely, in both us-central1 (B200) and uk-south1 (B300); a VM deploy failed earlier still on the tenant's public IPv4 quota. The tenant's GPU quota has also read limit 2 / 2 in use for b200 and h200. This is shared capacity, not the image: the same image passes its full capability smoke on H100, and the same submission path fails identically on H200.",
-      "how_to_finish": "When a B200 or B300 node can be placed, run npa/scripts/blackwell-gpu-validation-job.yaml against it (or npa/scripts/validate_blackwell_image.sh <image> --target b200 --gpu), confirm capability (10,0) or (10,3) with the flash-attn kernel passing, and flip this entry's validation to 'validated'."
+      "how_to_finish": "When a B200 or B300 node can be placed, run npa/scripts/blackwell-gpu-validation-job.yaml against it (or npa/scripts/validate_blackwell_image.sh <image> --target b200 --gpu), confirm capability (10,0) or (10,3) with the flash-attn kernel passing, and flip this entry's validation to 'validated'.",
+      "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260802T181419Z",
+      "published_digest": "sha256:cd1d4ff16f55f5e6d09bccfb4b7c3a8a2bef75c7dd13d69d195a9ec90f5da48d"
     }
   },
   "known_gaps": {
