@@ -78,12 +78,19 @@ class SkypilotRenderOptions:
     include_aws_endpoint: bool = True
     gpu_target: str = ""
     image_variant: str = ""
+    # Accelerator specs resolved against the live cluster at submit time, keyed by
+    # the spec's own accelerator string. NPA_WORKFLOW_GPU_ACCELERATOR still wins.
+    gpu_accelerator_overrides: Mapping[str, str] = field(default_factory=dict)
     # When False (``--plan-only``), embed placeholders instead of minting live
     # Nebius registry tokens into rendered YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
 
 
-def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_resources(
+    resources: Mapping[str, Any],
+    *,
+    accelerator_overrides: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     """Map an npa.workflow resource profile onto a SkyPilot ``resources`` block.
 
     On Kubernetes, exact ``cpus`` / ``memory`` often fail prechecks when no node
@@ -95,17 +102,22 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
 
     # Cluster-specific GPU product override: SkyPilot k8s matches on the node's
     # advertised accelerator name, which varies by cluster (e.g. RTXPRO6000 vs
-    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). Let operators override the spec's
-    # accelerators at submit time without editing the committed blueprint.
+    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). A blanket env override still wins so
+    # operators can retarget without editing the committed blueprint; otherwise
+    # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
+    overrides = dict(accelerator_overrides or {})
 
     out: dict[str, Any] = {}
     for key in ("cloud", "accelerators", "cpus", "memory", "use_spot", "region"):
         if key not in resources or resources[key] in (None, ""):
             continue
         value = resources[key]
-        if key == "accelerators" and accel_override:
-            value = accel_override
+        if key == "accelerators":
+            if accel_override:
+                value = accel_override
+            elif str(value).strip() in overrides:
+                value = overrides[str(value).strip()]
         if key == "memory" and isinstance(value, str):
             stripped = value.strip()
             if stripped.lower().endswith("gi"):
@@ -649,6 +661,29 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     return tuple(hints)
 
 
+def plan_images(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> list[str]:
+    """Return the distinct container images a plan's steps will pull, in order."""
+
+    images: list[str] = []
+    for step in steps:
+        scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
+        image = resolve_task_image(
+            str(scheduler_task.get("tool_ref") or ""),
+            scheduler_task.get("resources") or {},
+            options=options,
+        )
+        image = str(image or "").strip()
+        if image and image not in images:
+            images.append(image)
+    return images
+
+
 def build_skypilot_task_doc(
     spec: NpaWorkflowSpec,
     step: PlanStep,
@@ -659,7 +694,10 @@ def build_skypilot_task_doc(
     """Build one SkyPilot task document from a planned step."""
 
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
-    resources = normalize_resources(scheduler_task.get("resources") or {})
+    resources = normalize_resources(
+        scheduler_task.get("resources") or {},
+        accelerator_overrides=options.gpu_accelerator_overrides,
+    )
     image = resolve_task_image(
         str(scheduler_task.get("tool_ref") or ""),
         scheduler_task.get("resources") or {},
@@ -804,22 +842,13 @@ def _inject_nebius_registry_docker_secrets(
                 f"credentials' registry {creds_server!r} (e.g. the primary workbench "
                 f"registry), or set SKYPILOT_DOCKER_* for {server!r}."
             )
-    username = (
-        os.environ.get("SKYPILOT_DOCKER_USERNAME")
-        or os.environ.get("NPA_REGISTRY_USERNAME")
-        or "iam"
-    )
+    from npa.orchestration.skypilot.registry_preflight import resolve_registry_credentials
+
+    username, password = resolve_registry_credentials(mint=False)
     if materialize:
-        password = (
-            os.environ.get("SKYPILOT_DOCKER_PASSWORD")
-            or os.environ.get("NPA_REGISTRY_PASSWORD")
-            or ""
-        )
         if not password:
             try:
-                from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
-
-                password = mint_nebius_registry_token()
+                username, password = resolve_registry_credentials(mint=True)
             except Exception as exc:  # noqa: BLE001
                 raise NpaWorkflowRenderError(
                     "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "

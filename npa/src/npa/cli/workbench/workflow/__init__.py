@@ -15,6 +15,7 @@ import typer
 from rich.console import Console
 
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.orchestration.npa_workflow.spec import load_spec
 
 app = typer.Typer(
     name="workflow",
@@ -201,6 +202,24 @@ def submit_cmd(
         help=(
             "With --runtime: cap concurrent tasks per parallel group "
             "(0 keeps each group's declared maxConcurrency)."
+        ),
+    ),
+    preflight_images: bool = typer.Option(
+        True,
+        "--preflight-images/--no-preflight-images",
+        help=(
+            "For npa.workflow specs: reproduce each step's image pull with this run's "
+            "own registry credentials before submitting, so a 403 fails here instead of "
+            "leaving workers in ImagePullBackOff."
+        ),
+    ),
+    resolve_accelerators: bool = typer.Option(
+        True,
+        "--resolve-accelerators/--no-resolve-accelerators",
+        help=(
+            "For npa.workflow specs on Kubernetes: map the spec's accelerator name "
+            "onto the one the target cluster actually advertises, and fail fast when "
+            "the requested per-task GPU count exceeds what one node can provide."
         ),
     ),
     deploy_if_absent: bool = typer.Option(
@@ -451,6 +470,19 @@ def submit_cmd(
             image_variant=image_variant,
             # Never mint/print live registry tokens for --plan-only.
             materialize_registry_secrets=not plan_only,
+            gpu_accelerator_overrides=_resolve_submit_accelerators(
+                yaml_path,
+                infra=infra,
+                sky_bin=sky_bin,
+                enabled=resolve_accelerators and not plan_only,
+            ),
+        )
+
+        _preflight_submit_images(
+            yaml_path,
+            options=npa_render_options,
+            assume_decision=assume_decision,
+            enabled=preflight_images and not plan_only,
         )
 
         if runtime and not plan_only:
@@ -789,6 +821,138 @@ def _run_npa_workflow_runtime(
 def _default_submit_run_id(yaml_path: Path) -> str:
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(yaml_path).stem).strip("-")
     return stem or "workflow"
+
+
+def _is_nebius_registry_image(image: str) -> bool:
+    value = str(image or "").removeprefix("docker:").strip()
+    host = value.split("/", 1)[0] if "/" in value else ""
+    return host.startswith("cr.") and host.endswith(".nebius.cloud")
+
+
+def _preflight_submit_images(
+    yaml_path: Path,
+    *,
+    options: object,
+    assume_decision: str,
+    enabled: bool,
+) -> None:
+    """Fail before the run starts when a step's image cannot actually be pulled.
+
+    Only Nebius registry images are treated as blocking: those are the ones the
+    credentials this submit injects are authoritative for. Anything else is
+    reported so the operator sees it, but a third-party registry that needs its
+    own in-pod credentials must not block submit.
+    """
+
+    if not enabled:
+        return
+
+    from npa.orchestration.npa_workflow import build_plan
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.skypilot_render import plan_images
+    from npa.orchestration.skypilot.registry_preflight import (
+        check_image_pulls,
+        resolve_registry_credentials,
+    )
+
+    try:
+        spec = load_spec(yaml_path)
+        run_id = f"{spec.name}-preflight"
+        plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+        images = plan_images(spec, plan.steps, run_id=run_id, options=options)
+    except NpaWorkflowError:
+        # Planning problems are reported by the submit path itself with better context.
+        return
+    if not images:
+        return
+
+    try:
+        username, password = resolve_registry_credentials(mint=True)
+    except RuntimeError as exc:
+        typer.echo(f"image-preflight: skipped (no registry credentials: {exc})", err=True)
+        return
+
+    checks = check_image_pulls(images, username=username, password=password)
+    blocking = []
+    for check in checks:
+        if check.ok:
+            continue
+        if _is_nebius_registry_image(check.image):
+            blocking.append(check)
+        else:
+            typer.echo(f"image-preflight: warning: {check.render()}", err=True)
+    if blocking:
+        detail = "\n".join(check.render() for check in blocking)
+        _fail(
+            "image-preflight failed; the run would sit in ImagePullBackOff rather than "
+            f"fail, so it was not submitted:\n{detail}"
+        )
+    typer.echo(f"image-preflight: {len(checks)} image(s) pullable", err=True)
+
+
+def _resolve_submit_accelerators(
+    yaml_path: Path,
+    *,
+    infra: str,
+    sky_bin: str,
+    enabled: bool,
+) -> dict[str, str]:
+    """Map a spec's Kubernetes accelerators onto what the target cluster advertises.
+
+    Returns a possibly empty remap keyed by the spec's own accelerator string. A
+    cluster that cannot be queried is not an error -- submit keeps the spec's
+    values, exactly as before. A cluster that *can* be queried and cannot satisfy
+    the request is fatal, so the run fails here rather than after the CPU stages
+    have already burned time.
+    """
+
+    if not enabled:
+        return {}
+    if os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR", "").strip():
+        # An explicit blanket override is the operator's decision; honor it as-is.
+        return {}
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuCatalogError,
+        UnsatisfiableAcceleratorError,
+        context_from_infra,
+        discover_kubernetes_gpu_catalog,
+        resolve_kubernetes_accelerator,
+        spec_accelerators,
+    )
+
+    try:
+        requested = spec_accelerators(load_spec(yaml_path).resources)
+    except NpaWorkflowError:
+        return {}
+    if not requested:
+        return {}
+
+    context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
+    try:
+        catalog = discover_kubernetes_gpu_catalog(
+            context=context, sky_bin=sky_bin or None
+        )
+    except (KubernetesGpuCatalogError, SkyPilotNotInstalledError) as exc:
+        typer.echo(
+            f"accelerator-resolve: skipped ({exc}); submitting the spec's accelerators as written",
+            err=True,
+        )
+        return {}
+
+    overrides: dict[str, str] = {}
+    for accelerator in requested:
+        try:
+            resolution = resolve_kubernetes_accelerator(accelerator, catalog=catalog)
+        except UnsatisfiableAcceleratorError as exc:
+            _fail(str(exc))
+            return {}
+        if resolution.remapped:
+            overrides[accelerator] = resolution.resolved
+        typer.echo(f"accelerator-resolve: {resolution.describe()}", err=True)
+    return overrides
 
 
 def _parse_submit_vars(var: list[str]) -> dict[str, str]:
@@ -1839,6 +2003,205 @@ def run_spec_cmd(
         if report.get("run_prefix_uri"):
             typer.echo(f"run_prefix_uri: {report['run_prefix_uri']}")
         typer.echo(f"steps: {len(report['plan']['steps'])}")
+
+
+@app.command("preflight-images")
+def preflight_images_cmd(
+    yaml_path: Path = typer.Argument(help="npa.workflow spec path."),
+    registry: str = typer.Option("", "--registry", help="Container registry override."),
+    image: str = typer.Option("", "--image", help="Pin every step to this image."),
+    assume_decision: str = typer.Option(
+        "", "--assume-decision", help="Branch assumption for planning."
+    ),
+    gpu_target: str = typer.Option("", "--gpu-target", help="SONIC GPU target."),
+    image_variant: str = typer.Option("", "--image-variant", help="SONIC image variant."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
+) -> None:
+    """Prove every image this spec pulls is pullable, with the run's own credentials.
+
+    Kubernetes retries image pulls forever, so a registry that answers 403 leaves the
+    job in PENDING/ImagePullBackOff rather than failing. Being able to list a
+    repository's tags is a different permission from pulling it, so this reproduces
+    the actual manifest fetch a worker performs.
+    """
+
+    from npa.orchestration.npa_workflow import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        plan_images,
+    )
+    from npa.orchestration.skypilot.registry_preflight import (
+        check_image_pulls,
+        resolve_registry_credentials,
+    )
+
+    spec = _load_npa_workflow(yaml_path)
+    image_overrides: dict[str, str] = {}
+    if image.strip():
+        image_overrides["*"] = image.strip()
+    options = SkypilotRenderOptions(
+        registry=registry,
+        image_overrides=image_overrides,
+        gpu_target=gpu_target,
+        image_variant=image_variant,
+        materialize_registry_secrets=False,
+    )
+    run_id = f"{spec.name}-preflight"
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    images = plan_images(spec, plan.steps, run_id=run_id, options=options)
+    if not images:
+        typer.echo("images: none pinned by this spec")
+        return
+
+    try:
+        username, password = resolve_registry_credentials(mint=True)
+    except RuntimeError as exc:
+        typer.echo(
+            f"registry credentials unavailable ({exc}); checking anonymously",
+            err=True,
+        )
+        username, password = "iam", ""
+
+    checks = check_image_pulls(images, username=username, password=password)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                [
+                    {
+                        "image": check.image,
+                        "status": check.status,
+                        "http_status": check.http_status,
+                        "detail": check.detail,
+                        "remedy": check.remedy,
+                    }
+                    for check in checks
+                ],
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        for check in checks:
+            typer.echo(check.render())
+    failed = [check for check in checks if not check.ok]
+    if failed:
+        _fail(
+            f"{len(failed)} of {len(checks)} image(s) cannot be pulled with this run's credentials"
+        )
+
+
+@app.command("gpus")
+def gpus_cmd(
+    cluster: str = typer.Option(
+        "",
+        "--cluster",
+        "--cluster-name",
+        help="NPA cluster name. Resolves ~/.npa/clusters/<name>/kubeconfig.",
+    ),
+    context: str = typer.Option(
+        "",
+        "--context",
+        help="Kubernetes context to inspect. Defaults to KUBECONTEXT or every context.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.",
+    ),
+    spec: Path | None = typer.Option(
+        None,
+        "--spec",
+        help="npa.workflow spec whose accelerators should be resolved against the cluster.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
+) -> None:
+    """Print the accelerator names this cluster advertises to SkyPilot.
+
+    Kubernetes clusters name GPUs after their node labels, so the string a spec
+    must use is discovered rather than guessed. Run this once after `npa configure`
+    and export the printed NPA_WORKFLOW_GPU_ACCELERATOR line.
+    """
+
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuCatalogError,
+        UnsatisfiableAcceleratorError,
+        discover_kubernetes_gpu_catalog,
+        resolve_kubernetes_accelerator,
+        spec_accelerators,
+    )
+
+    resolved_context = context.strip() or os.environ.get("KUBECONTEXT", "").strip()
+    env_backup: str | None = None
+    if cluster.strip():
+        from npa.cluster.state import kubeconfig_file
+
+        kubeconfig = kubeconfig_file(cluster.strip())
+        if not kubeconfig.exists():
+            _fail(f"Kubeconfig not found for cluster {cluster!r}: {kubeconfig}")
+            return
+        env_backup = os.environ.get("KUBECONFIG")
+        os.environ["KUBECONFIG"] = str(kubeconfig)
+    try:
+        catalog = discover_kubernetes_gpu_catalog(
+            context=resolved_context, sky_bin=sky_bin or None
+        )
+    except KubernetesGpuCatalogError as exc:
+        _fail(str(exc))
+        return
+    finally:
+        if cluster.strip():
+            if env_backup is None:
+                os.environ.pop("KUBECONFIG", None)
+            else:
+                os.environ["KUBECONFIG"] = env_backup
+
+    resolutions: list[dict[str, object]] = []
+    if spec is not None:
+        for accelerator in spec_accelerators(_load_npa_workflow(spec).resources):
+            try:
+                resolution = resolve_kubernetes_accelerator(accelerator, catalog=catalog)
+            except UnsatisfiableAcceleratorError as exc:
+                resolutions.append({"requested": accelerator, "error": str(exc)})
+                continue
+            resolutions.append(
+                {
+                    "requested": resolution.requested,
+                    "resolved": resolution.resolved,
+                    "remapped": resolution.remapped,
+                }
+            )
+
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "context": catalog.context,
+                    "accelerators": {
+                        name: sorted(quantities)
+                        for name, quantities in catalog.quantities_by_accelerator.items()
+                    },
+                    "spec_resolutions": resolutions,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if catalog.is_empty:
+        typer.echo("accelerators: none advertised")
+        return
+    typer.echo(f"context: {catalog.context or 'all'}")
+    for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
+        quantities = sorted(catalog.quantities_by_accelerator[name])
+        offered = ", ".join(str(value) for value in quantities)
+        typer.echo(f"  {name}: requestable per node {offered}")
+        typer.echo(f"    export NPA_WORKFLOW_GPU_ACCELERATOR={name}:{quantities[0]}")
+    for item in resolutions:
+        if item.get("error"):
+            typer.echo(f"  {item['requested']}: {item['error']}")
+        else:
+            typer.echo(f"  {item['requested']} -> {item['resolved']}")
 
 
 app.add_typer(trigger_app, name="trigger")

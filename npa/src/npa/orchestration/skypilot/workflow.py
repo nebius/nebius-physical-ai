@@ -6,8 +6,11 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -27,6 +30,10 @@ from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
     ControllerBackend,
     apply_controller_override,
+)
+from npa.orchestration.skypilot.diagnostics import (
+    SkyPilotDiagnosis,
+    diagnose_skypilot_output,
 )
 
 
@@ -119,6 +126,8 @@ def submit_workflow(
     timeout: int = 1800,
     controller_preflight_timeout: int = 300,
     controller_preflight_interval: float = 15.0,
+    stream_output: bool = True,
+    echo: Callable[[str], None] | None = None,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
 
@@ -126,6 +135,7 @@ def submit_workflow(
     submission_dir: Path | None = None
     owned_submission_dir: Path | None = None
     prepared_yaml: Path | None = None
+    streamer: _LaunchStreamer | None = None
     try:
         runtime_config = resolve_config(
             sky_bin=sky_bin,
@@ -178,19 +188,22 @@ def submit_workflow(
             require_existing=require_controller_up,
             cwd=stable_cwd,
         )
-        result = subprocess.run(
+        streamer = (
+            _LaunchStreamer(echo or _default_launch_echo) if stream_output else None
+        )
+        result, streamed_diagnoses = _run_launch(
             cmd,
             env=env,
             cwd=stable_cwd,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             timeout=timeout,
-            check=False,
+            log_dir=submission_dir,
+            streamer=streamer,
         )
         if result.returncode != 0:
             _cleanup_owned_submission_dir(owned_submission_dir)
-            raise SkyPilotSubmitError(_format_submit_error(cmd, result))
+            raise SkyPilotSubmitError(
+                _format_submit_error(cmd, result, streamed=streamed_diagnoses)
+            )
         combined = f"{result.stdout}\n{result.stderr}"
         job_id = _verified_job_id(
             _parse_job_id(combined),
@@ -210,7 +223,10 @@ def submit_workflow(
         )
     except subprocess.TimeoutExpired as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
-        raise SkyPilotSubmitError(f"sky jobs launch timed out after {timeout}s") from exc
+        message = f"sky jobs launch timed out after {timeout}s"
+        for diagnosis in streamer.diagnoses if streamer is not None else ():
+            message = f"{message}\n{diagnosis.render()}"
+        raise SkyPilotSubmitError(message) from exc
     except SkyPilotSubmitError:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise
@@ -416,6 +432,141 @@ def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
     return rows
 
 
+class _LaunchStreamer:
+    """Tee ``sky jobs launch`` output to the operator while it is still running.
+
+    SkyPilot buffers nothing useful into its exit status: a controller stuck in a
+    retry loop simply never returns. Capturing stdout/stderr to a pipe therefore
+    leaves the operator staring at a blank terminal for the full submit timeout.
+    Writing to files and tailing them keeps ``subprocess.run`` (so callers and
+    tests that stub it are unaffected) while still showing progress live.
+    """
+
+    _POLL_SECONDS = 0.25
+
+    def __init__(self, echo: Callable[[str], None]) -> None:
+        self._echo = echo
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._paths: list[Path] = []
+        self._offsets: dict[Path, int] = {}
+        self._pending: dict[Path, str] = {}
+        self.diagnoses: list[SkyPilotDiagnosis] = []
+
+    def watch(self, paths: Sequence[Path]) -> None:
+        self._paths = list(paths)
+        self._offsets = {path: 0 for path in self._paths}
+        self._pending = {path: "" for path in self._paths}
+        self._thread = threading.Thread(target=self._run, name="sky-launch-stream", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        self._drain()
+        for path, pending in self._pending.items():
+            if pending.strip():
+                self._emit(pending)
+            self._pending[path] = ""
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._drain()
+            self._stop.wait(self._POLL_SECONDS)
+
+    def _drain(self) -> None:
+        for path in self._paths:
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    handle.seek(self._offsets[path])
+                    chunk = handle.read()
+                    self._offsets[path] = handle.tell()
+            except OSError:
+                continue
+            if not chunk:
+                continue
+            buffered = self._pending[path] + chunk
+            *lines, self._pending[path] = buffered.split("\n")
+            for line in lines:
+                self._emit(line)
+
+    def _emit(self, line: str) -> None:
+        text = line.rstrip()
+        if text:
+            self._echo(text)
+        diagnosis = diagnose_skypilot_output(text)
+        if diagnosis is not None and all(
+            existing.code != diagnosis.code for existing in self.diagnoses
+        ):
+            self.diagnoses.append(diagnosis)
+            self._echo(f"npa: detected {diagnosis.code}. {diagnosis.render()}")
+
+
+def _default_launch_echo(line: str) -> None:
+    print(line, file=sys.stderr, flush=True)
+
+
+def _run_launch(
+    cmd: Sequence[str],
+    *,
+    env: Mapping[str, str],
+    cwd: str | None,
+    timeout: int,
+    log_dir: Path,
+    streamer: _LaunchStreamer | None,
+) -> tuple[subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]]:
+    """Run ``sky jobs launch``, streaming output when a streamer is supplied."""
+
+    if streamer is None:
+        result = subprocess.run(
+            list(cmd),
+            env=dict(env),
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        return result, []
+
+    out_path = log_dir / "sky-launch.stdout.log"
+    err_path = log_dir / "sky-launch.stderr.log"
+    with out_path.open("w", encoding="utf-8") as out_handle, err_path.open(
+        "w", encoding="utf-8"
+    ) as err_handle:
+        streamer.watch([out_path, err_path])
+        try:
+            result = subprocess.run(
+                list(cmd),
+                env=dict(env),
+                cwd=cwd,
+                text=True,
+                stdout=out_handle,
+                stderr=err_handle,
+                timeout=timeout,
+                check=False,
+            )
+        finally:
+            streamer.stop()
+    # A stubbed subprocess.run returns captured text directly and never touches
+    # the files; prefer whichever side is actually populated.
+    stdout = result.stdout or _read_text(out_path)
+    stderr = result.stderr or _read_text(err_path)
+    return (
+        subprocess.CompletedProcess(list(cmd), result.returncode, stdout, stderr),
+        list(streamer.diagnoses),
+    )
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _wait_for_healthy_jobs_controller(
     sky_executable: str,
     *,
@@ -600,10 +751,22 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _format_submit_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
+def _format_submit_error(
+    cmd: Sequence[str],
+    result: subprocess.CompletedProcess[str],
+    *,
+    streamed: Sequence[SkyPilotDiagnosis] = (),
+) -> str:
     detail = _command_detail(result)
     prefix = "SkyPilot auth failure during jobs launch" if _looks_like_auth_error(detail) else "sky jobs launch failed"
-    return f"{prefix}: {' '.join(cmd)}: {detail}"
+    message = f"{prefix}: {' '.join(cmd)}: {detail}"
+    diagnoses = list(streamed)
+    diagnosis = diagnose_skypilot_output(f"{result.stdout or ''}\n{result.stderr or ''}")
+    if diagnosis is not None and all(item.code != diagnosis.code for item in diagnoses):
+        diagnoses.append(diagnosis)
+    for item in diagnoses:
+        message = f"{message}\n{item.render()}"
+    return message
 
 
 def _command_detail(result: subprocess.CompletedProcess[str]) -> str:

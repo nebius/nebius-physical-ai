@@ -22,9 +22,20 @@ def _write_executable(path: Path, body: str) -> Path:
     return path
 
 
-def _fake_installed_venv(path: Path, *, version: str = "0.12.2") -> Path:
+def _fake_installed_venv(
+    path: Path, *, version: str = "0.12.2", kubernetes_version: str = "30.1.0"
+) -> Path:
     bin_dir = path / "bin"
-    _write_executable(bin_dir / "python", "#!/bin/sh\nexit 0\n")
+    # inspect_venv probes the venv python for `import sky` and the kubernetes
+    # client version; both go through the same interpreter stub.
+    _write_executable(
+        bin_dir / "python",
+        "#!/bin/sh\n"
+        'case "$2" in\n'
+        f"  *kubernetes*) printf '{kubernetes_version}\\n' ;;\n"
+        "esac\n"
+        "exit 0\n",
+    )
     _write_executable(bin_dir / "pip", "#!/bin/sh\nexit 0\n")
     _write_executable(bin_dir / "sky", f"#!/bin/sh\nprintf 'SkyPilot {version}\\n'\n")
     return path
@@ -261,3 +272,115 @@ def test_verify_fails_clearly_on_missing_kubeconfig(
 
     assert result.exit_code == 1
     assert "Kubeconfig not found" in result.output
+
+
+@pytest.mark.parametrize(
+    ("version", "supported"),
+    [
+        (None, True),
+        ("", True),
+        ("30.1.0", True),
+        ("31.0.0", True),
+        # SkyPilot 0.12.2 already excludes 32.0.0 itself.
+        ("32.0.0", False),
+        ("32.0.1", True),
+        ("35.0.0", True),
+        # 36.0.0 renamed the generated openapi type names, which turns every
+        # pod_config into an import of `kubernetes.client.models.dict[str, str]`.
+        ("36.0.0", False),
+        ("36.0.3", False),
+        ("37.1.0", False),
+    ],
+)
+def test_kubernetes_client_supported_matches_measured_breakage(
+    version: str | None, supported: bool
+) -> None:
+    assert skypilot_cli.kubernetes_client_supported(version) is supported
+
+
+def test_skypilot_install_package_pins_kubernetes_client(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    venv = tmp_path / "sky-venv"
+    _write_executable(venv / "bin" / "python", "#!/bin/sh\nexit 0\n")
+    _write_executable(venv / "bin" / "pip", "#!/bin/sh\nexit 0\n")
+    state = skypilot_cli.inspect_venv(venv)
+    installs: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if cmd[1:4] == ["-m", "pip", "install"]:
+            installs.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(skypilot_cli.subprocess, "run", fake_run)
+
+    skypilot_cli._install_package(state, "skypilot==0.12.2")
+
+    assert any(
+        cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs
+    ), installs
+    assert "<36" in skypilot_cli.KUBERNETES_CLIENT_SPEC
+
+
+def test_skypilot_bootstrap_repairs_a_reused_venv_with_a_broken_client(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv", kubernetes_version="36.0.3")
+    installs: list[list[str]] = []
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
+        if cmd[1:4] == ["-m", "pip", "install"]:
+            installs.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+
+    result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+
+    assert result.exit_code == 0, result.output
+    assert [cmd[-1] for cmd in installs] == [skypilot_cli.KUBERNETES_CLIENT_SPEC]
+
+
+def test_skypilot_bootstrap_leaves_a_good_client_alone(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv", kubernetes_version="31.0.0")
+    installs: list[list[str]] = []
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
+        if cmd[1:4] == ["-m", "pip", "install"]:
+            installs.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+
+    result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+
+    assert result.exit_code == 0, result.output
+    assert installs == []
+
+
+def test_skypilot_status_reports_and_fails_on_a_broken_client(tmp_path: Path) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv", kubernetes_version="36.0.3")
+
+    result = runner.invoke(app, ["skypilot", "status", "--path", str(venv)])
+
+    assert result.exit_code == 1, result.output
+    assert "kubernetes_client: 36.0.3" in result.output
+    assert "pod_config" in result.output
+
+
+def test_skypilot_verify_fails_on_a_broken_client(tmp_path: Path) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv", kubernetes_version="36.0.3")
+
+    result = runner.invoke(app, ["skypilot", "verify", "--path", str(venv)])
+
+    assert result.exit_code == 1, result.output
+    assert "npa skypilot bootstrap" in result.output
