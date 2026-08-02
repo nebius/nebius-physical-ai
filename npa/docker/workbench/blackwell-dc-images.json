@@ -76,6 +76,16 @@
         "sm_100",
         "sm_120",
         "compute_120"
+      ],
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
       ]
     },
     {
@@ -95,20 +105,38 @@
       "build_script": "lerobot/build.sh",
       "verdict": "ready",
       "validation": "pending-hardware",
-      "torch": "2.12.1 (bundled cu128) on the default Dockerfile; inherited 2.9.0+cu130 on Dockerfile.b300",
+      "torch": "2.12.1+cu130 (measured in the published 0.5.1 image)",
       "source_compiled_extensions": [],
       "smoke": "ACT training step on lerobot/pusht",
-      "notes": "Highest-confidence Blackwell path: Dockerfile.b300 is already labelled b300-sm_103 and B300 is Tier-1 in docs/nvidia-platform-architecture-coverage.md. The default Dockerfile starts from cu124 but pip-upgrades torch 2.12.1, so the effective arch set comes from the bundled cu128 wheel and is Blackwell-capable; prefer Dockerfile.b300 when reproducibility matters. Add B200 validation on top of the existing B300 evidence. Diffusion Policy is ~2.5x slower than H200 on B300 because it JITs from sm_100 PTX."
+      "notes": "Highest-confidence Blackwell path. The default Dockerfile starts from a cu124 base but pip-upgrades torch, and the published npa-lerobot:0.5.1 image measures 2.12.1+cu130 carrying sm_100 and sm_120 - so the cu124 base is irrelevant and the effective arch set is Blackwell-capable. Dockerfile.b300 is a separate, explicitly labelled b300-sm_103 build on npa-base; prefer it when reproducibility matters. B300 was previously validated for ACT PushT training (docs/b300-validation-matrix.md, 2026-05-14). Diffusion Policy is ~2.5x slower than H200 on B300 because it JITs from sm_100 PTX.",
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
     },
     {
       "name": "npa-lerobot-policy",
       "dockerfile": "lerobot-policy/Dockerfile",
       "verdict": "ready",
       "validation": "pending-hardware",
-      "torch": "2.12.1 (bundled cu128)",
+      "torch": "2.12.1+cu130 (measured in the published 0.1.1 image)",
       "source_compiled_extensions": [],
       "smoke": "policy inference request against the served endpoint",
-      "notes": "Same wheel story as npa-lerobot: the cu124 base is irrelevant once torch is upgraded."
+      "notes": "Same wheel story as npa-lerobot: the cu124 base is irrelevant once torch is upgraded.",
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
     },
     {
       "name": "npa-lancedb",
@@ -119,7 +147,16 @@
       "torch": "2.12.1 (cu130 via npa-workbench-cuda-base)",
       "source_compiled_extensions": [],
       "smoke": "CLIP embed into a LanceDB table",
-      "notes": "No custom CUDA build; the CLIP path is pure torch/transformers."
+      "notes": "No custom CUDA build; the CLIP path is pure torch/transformers.",
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
     },
     {
       "name": "npa-detection-training",
@@ -129,7 +166,16 @@
       "torch": "2.12.1 (cu130 via npa-workbench-cuda-base)",
       "source_compiled_extensions": [],
       "smoke": "one detector training step with COCO metrics",
-      "notes": "torchvision/pycocotools ops only, all shipped as wheels."
+      "notes": "torchvision/pycocotools ops only, all shipped as wheels.",
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
     },
     {
       "name": "npa-cosmos3-reason",
@@ -139,7 +185,17 @@
       "torch": "inherited 2.9.0+cu130 from npa-base",
       "source_compiled_extensions": [],
       "smoke": "VLM reason pass over a real clip",
-      "notes": "Rebuild after the npa-base arch widen lands, then validate. No compiled extensions of its own."
+      "notes": "Rebuild after the npa-base arch widen lands, then validate. No compiled extensions of its own.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ]
     },
     {
       "name": "npa-cosmos2-transfer",
@@ -164,10 +220,20 @@
         "flash-attn 2.6.3+cu126",
         "natten 0.21.0+cu126"
       ],
-      "port_blocker": "cu126 caps at sm_90, so neither the torch wheel nor the prebuilt flash-attn/natten wheels carry sm_100. Needs cu128 torch plus matching cu128 Blackwell flash-attn/natten wheels from nvidia-cosmos/cosmos-dependencies.",
+      "port_blocker": "Measured arch set of the published npa-cosmos:1.0.9 image is sm_50..sm_90 with no sm_100, confirming cu126 caps at Hopper. Neither the torch wheel nor the prebuilt flash-attn/natten wheels carry sm_100. Needs cu128 torch plus matching cu128 Blackwell flash-attn/natten wheels from nvidia-cosmos/cosmos-dependencies.",
       "upstream_tracking": "https://github.com/nvidia-cosmos/cosmos-dependencies",
       "smoke": "Predict2 inference exercising the natten and flash-attn kernels",
-      "notes": "A Blackwell nightly is reported to exist upstream; confirm the cu128 wheel set publishes sm_100 before attempting the bump."
+      "notes": "A Blackwell nightly is reported to exist upstream; confirm the cu128 wheel set publishes sm_100 before attempting the bump.",
+      "measured_torch": "2.6.0+cu126",
+      "measured_arch_list": [
+        "sm_50",
+        "sm_60",
+        "sm_70",
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90"
+      ]
     },
     {
       "name": "npa-genesis",
@@ -183,10 +249,20 @@
       "blocked_reason": "Genesis physics runs on Taichi, which has no stable sm_103 support. The torch side is portable (move the default off cu124 onto the cu130 Dockerfile.sm120 path), but the Taichi kernels are the hard gate.",
       "upstream_tracking": "Taichi CUDA codegen for Blackwell: https://github.com/taichi-dev/taichi/pull/8735 and https://github.com/taichi-dev/taichi/issues/8730. Retest sm_100 (B200) first - it may land before sm_103, and once Taichi accepts sm_103 the B300 case follows by forward compat.",
       "smoke": "gs.init(gpu) plus a FrankaPickPlaceEnv step",
-      "notes": "Do not stub this. Re-test Taichi on B200 (sm_100) on each upstream release; that is the earliest signal. The whole sim2real subtree inherits this blocker."
+      "notes": "Do not stub this. Re-test Taichi on B200 (sm_100) on each upstream release; that is the earliest signal. The whole sim2real subtree inherits this blocker.",
+      "measured_torch": "2.6.0+cu124",
+      "measured_arch_list": [
+        "sm_50",
+        "sm_60",
+        "sm_70",
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90"
+      ]
     },
     {
-      "name": "npa-sim2real-envgen",
+      "name": "npa-envgen",
       "dockerfile": "sim2real-envgen/Dockerfile",
       "verdict": "blocked",
       "validation": "pending-hardware",
@@ -213,10 +289,20 @@
       "verdict": "blocked",
       "validation": "pending-hardware",
       "inherits_blocker_from": "npa-genesis",
-      "blocked_reason": "Layered on the Genesis sm120 image; inherits the Taichi sm_103 gate.",
+      "blocked_reason": "Layered on the Genesis sm120 image; inherits the Taichi sm_103 gate. The torch side is fine - the published 0.1.3-genuine-sm120 image measures 2.9.0+cu130 carrying sm_100 and sm_120 - so Taichi is the only thing holding it back.",
       "upstream_tracking": "Taichi CUDA codegen for Blackwell: https://github.com/taichi-dev/taichi/pull/8735 and https://github.com/taichi-dev/taichi/issues/8730.",
       "smoke": "gs.init(gpu) plus a scored evaluation episode",
-      "notes": "This image is why the smoke must be functional rather than a CUDA probe: the loop-eval 0.1.1 sm_120 regression passed an import check and failed on a real step."
+      "notes": "This image is why the smoke must be functional rather than a CUDA probe: the loop-eval 0.1.1 sm_120 regression passed an import check and failed on a real step.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ]
     },
     {
       "name": "npa-lerobot-vlm-rl",
@@ -364,5 +450,6 @@
       "mitigation": "gpu_capability_smoke.py --allow-no-tma records this as a known gap on non-TMA parts and still fails on datacenter parts, where a TMA failure would be real. Callers on sm_120 should use torch SDPA.",
       "positive_control": "The same image on a real NVIDIA H100 80GB HBM3 node (capability (9,0), which has TMA) runs flash_attn_func successfully with max abs error 0.00186 against torch SDPA. Same wheel, same flash-attn build, same CUTLASS pin - only the architecture differs. That isolates the cause to TMA availability and shows the kernel path itself is sound."
     }
-  }
+  },
+  "measurement_note": "measured_arch_list is torch._C._cuda_getArchFlags() read from the published image on 2026-08-02. It is the wheel's fixed fat-binary arch set, so it decides which GPUs the image can execute on regardless of TORCH_CUDA_ARCH_LIST. Reproduce with npa/scripts/validate_blackwell_image.sh <image> --target b200."
 }

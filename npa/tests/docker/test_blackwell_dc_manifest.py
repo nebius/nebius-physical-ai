@@ -173,6 +173,76 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
         )
 
 
+def test_names_match_the_real_container_image_names(entries: list[dict]) -> None:
+    """Manifest rows must use the image names the deploy layer actually resolves.
+
+    A plausible-looking alias (npa-sim2real-envgen for npa-envgen) makes the
+    manifest impossible to cross-reference against a registry.
+    """
+
+    from npa.deploy.images import CONTAINER_IMAGE_NAMES
+
+    known = set(CONTAINER_IMAGE_NAMES.values())
+    # Base and helper images are not deployable tools, so they are not in the map.
+    not_deployable_tools = {
+        "npa-base",
+        "npa-workbench-cuda-base",
+        "npa-sonic-mujoco",
+        "npa-sonic-export",
+    }
+    unknown = [
+        entry["name"]
+        for entry in entries
+        if entry["name"] not in known and entry["name"] not in not_deployable_tools
+    ]
+    assert not unknown, (
+        f"{unknown} are not in CONTAINER_IMAGE_NAMES; use the real npa-* image name"
+    )
+
+
+def test_compatibility_matrix_lists_every_image(entries: list[dict]) -> None:
+    """The published matrix must not quietly fall behind the manifest."""
+
+    matrix = (ROOT / "docs/workbench/image-gpu-compatibility-matrix.md").read_text(
+        encoding="utf-8"
+    )
+    missing = [entry["name"] for entry in entries if f"`{entry['name']}`" not in matrix]
+    assert not missing, (
+        f"these images have a verdict but no row in the compatibility matrix: {missing}"
+    )
+
+
+def test_compatibility_matrix_is_linked_from_the_readme() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "docs/workbench/image-gpu-compatibility-matrix.md" in readme
+    assert "## Container registry" in readme
+
+
+def test_measured_arch_lists_back_the_verdicts(entries: list[dict]) -> None:
+    """A measured wheel arch set and the image's verdict must agree.
+
+    An image whose wheel carries no sm_100 cannot be 'ready' for datacenter
+    Blackwell, and one that does carry it should not be filed as needing a port.
+    """
+
+    for entry in entries:
+        arch_list = entry.get("measured_arch_list")
+        if arch_list is None:
+            continue
+        covers_sm100 = "sm_100" in arch_list
+        verdict = entry["verdict"]
+        if verdict == "ready":
+            assert covers_sm100, (
+                f"{entry['name']} is 'ready' but its measured wheel {arch_list} "
+                "has no sm_100"
+            )
+        if verdict == "port":
+            assert not covers_sm100, (
+                f"{entry['name']} is filed as 'port' but its measured wheel already "
+                f"carries sm_100 ({arch_list}); re-check the verdict"
+            )
+
+
 def test_base_image_covers_both_blackwell_majors(entries: list[dict]) -> None:
     """npa-base gates the tree, so its arch list must span sm_100 and sm_120."""
 
