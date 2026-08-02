@@ -143,3 +143,57 @@ def test_run_all_script_dry_run() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "lerobot" in proc.stdout
+
+
+# --------------------------------------------------------------------------------------
+# Candidate-image validation
+#
+# A golden eval could only ever exercise whatever the CANONICAL tag pointed at, so there
+# was no way to prove a rebuilt image works before promoting its tag over the one running
+# workloads resolve. That forces "promote, then test", which is backwards for an image
+# whose whole point is a redistribution claim. run_container_eval now forwards a
+# registry/tag override to the serverless submitter.
+# --------------------------------------------------------------------------------------
+
+
+def test_run_container_eval_forwards_registry_and_tag(monkeypatch) -> None:
+    from npa.smoke import batch
+
+    seen: dict[str, object] = {}
+
+    def fake_submit(tool, **kwargs):
+        seen.update({"tool": tool, **kwargs})
+        return {"tool": tool, "ok": True, "status": "COMPLETED", "image": "x"}
+
+    monkeypatch.setattr(
+        "npa.smoke.serverless_runner.submit_golden_eval", fake_submit, raising=False
+    )
+    result = batch.run_container_eval(
+        "lerobot",
+        serverless=True,
+        registry="cr.eu-north1.nebius.cloud/example",
+        tag="0.5.1-rtfetch-rc3",
+    )
+
+    assert result.ok
+    assert seen["registry"] == "cr.eu-north1.nebius.cloud/example"
+    assert seen["tag"] == "0.5.1-rtfetch-rc3"
+
+
+def test_run_container_eval_defaults_to_the_canonical_image(monkeypatch) -> None:
+    """Overrides must be opt-in; the default must stay the pinned canonical image."""
+    from npa.smoke import batch
+
+    seen: dict[str, object] = {}
+
+    def fake_submit(tool, **kwargs):
+        seen.update(kwargs)
+        return {"tool": tool, "ok": True, "status": "COMPLETED", "image": "x"}
+
+    monkeypatch.setattr(
+        "npa.smoke.serverless_runner.submit_golden_eval", fake_submit, raising=False
+    )
+    batch.run_container_eval("lerobot", serverless=True)
+
+    assert seen["registry"] is None
+    assert seen["tag"] is None

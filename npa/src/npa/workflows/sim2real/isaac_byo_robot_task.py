@@ -1218,6 +1218,10 @@ try:
         os._exit(44)
     env = RslRlVecEnvWrapper(env)
     runner = OnPolicyRunner(env, acfg, log_dir=OUT, device="cuda:0")
+    resume_ckpt = os.environ.get("ROBOT_RESUME_CKPT_LOCAL", "").strip()
+    if resume_ckpt and os.path.isfile(resume_ckpt):
+        runner.load(resume_ckpt)
+        print("ROBOT_RESUME_LOADED", resume_ckpt, flush=True)
     runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
     # Defensive explicit save (learn saves at save_interval; ensure one exists).
     try:

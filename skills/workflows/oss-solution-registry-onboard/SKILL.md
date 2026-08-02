@@ -40,6 +40,9 @@ Load these as needed before making decisions:
   solution namespace boundary.
 - `skills/atomic/testing-conventions/SKILL.md` — run validation with
   `npa/.venv/bin/python` and report exact evidence.
+- `skills/atomic/solution-licensing/SKILL.md` — satisfy the License admission
+  gate below: classify what the image actually bakes, decide whether it may be
+  redistributed, and record it in the packaging contract.
 - Relevant tool skill (`skills/tools/isaac-lab`, `lerobot`, `genesis`,
   `cosmos`, `groot`, `sonic`, `fiftyone`, `lancedb`, `mjlab`, or
   `retargeting`) when the upstream repo depends on that stack.
@@ -334,7 +337,7 @@ A solution is registry-ready only after all applicable gates pass:
 | Gate | Requirement |
 | --- | --- |
 | Documentation | Upstream docs read and cited for every claimed capability |
-| License | Upstream license and asset/model/data restrictions recorded |
+| License | Upstream license and asset/model/data restrictions recorded, and the image's redistribution class set per `skills/atomic/solution-licensing/SKILL.md` |
 | Packaging | BYOF image builds and includes `npa_source_metadata.json` |
 | Registry | Image pushed to the resolved Nebius registry; no hardcoded registry IDs |
 | Contract | Inputs, outputs, runtime, GPU, credentials, and failure modes documented |

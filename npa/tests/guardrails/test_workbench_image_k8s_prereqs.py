@@ -19,6 +19,27 @@ import pytest
 
 DOCKER_ROOT = Path(__file__).resolve().parents[2] / "docker" / "workbench"
 
+
+def _build_text(tool: str) -> str:
+    """Everything a tool's build actually executes: its Dockerfile plus the scripts it runs.
+
+    The prerequisites below used to sit literally in isaac-lab/Dockerfile. They now live in
+    docker/workbench/common/install_isaac_runtime_base.sh, which the Dockerfile COPYs and
+    RUNs, because isaac-lab and sonic share that layer. A guard that only read the
+    Dockerfile would have started passing vacuously the moment the layer was factored out -
+    so it follows the Dockerfile into the scripts instead, and keeps checking the same
+    facts about the same image.
+    """
+    dockerfile = DOCKER_ROOT / tool / "Dockerfile"
+    assert dockerfile.is_file(), dockerfile
+    text = dockerfile.read_text(encoding="utf-8")
+    parts = [text]
+    for script in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+        # Only scripts this Dockerfile actually invokes count towards the guard.
+        if script.name in text:
+            parts.append(script.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
 # Images whose stages are submitted through SkyPilot (npa.workflow / workbench
 # workflows) and therefore must be schedulable in a pod.
 SKYPILOT_HOSTED_IMAGES = ("isaac-lab",)
@@ -38,10 +59,28 @@ REQUIRED_INGREDIENTS = (
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
 @pytest.mark.parametrize(("token", "why"), REQUIRED_INGREDIENTS)
 def test_dockerfile_has_skypilot_runtime_prerequisites(tool: str, token: str, why: str) -> None:
-    dockerfile = DOCKER_ROOT / tool / "Dockerfile"
-    assert dockerfile.is_file(), dockerfile
-    text = dockerfile.read_text(encoding="utf-8")
-    assert token in text, f"{tool}: {why}"
+    assert token in _build_text(tool), f"{tool}: {why}"
+
+
+def test_the_prereq_guard_is_not_satisfied_by_the_dockerfile_alone() -> None:
+    """Pin that the guard genuinely follows the Dockerfile into the shared script.
+
+    Without this, someone could "fix" a failure by reading only the Dockerfile again and
+    the guard would silently stop checking anything - which is exactly what happened when
+    the layer was factored out.
+    """
+    dockerfile_only = (DOCKER_ROOT / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    combined = _build_text("isaac-lab")
+    assert len(combined) > len(dockerfile_only), "no scripts were followed"
+    moved = [
+        token
+        for token, _ in REQUIRED_INGREDIENTS
+        if token not in dockerfile_only and token in combined
+    ]
+    assert moved, (
+        "expected at least one prerequisite to live in the shared script rather than the "
+        "Dockerfile; if they have all moved back, simplify this guard deliberately"
+    )
 
 
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
@@ -63,20 +102,31 @@ def test_skypilot_hosted_image_stays_non_root(tool: str) -> None:
 
 
 def test_isaac_lab_grants_its_runtime_user_access_to_isaac_sim() -> None:
-    """/isaac-sim is 750 isaac-sim:isaac-sim, so the pod user needs the group.
+    """The runtime user must be able to traverse /isaac-sim and reach the interpreter.
 
-    Group membership (not a recursive chown/chmod) keeps the fix to a tiny layer
-    instead of rewriting multi-GB Isaac layers.
+    Historically /isaac-sim came from NVIDIA's base image at mode 750 isaac-sim:isaac-sim,
+    unreadable by ``ubuntu``, and group membership was the cheap fix (a recursive
+    chown/chmod would have rewritten multi-GB Isaac layers). The image no longer bakes
+    Isaac Sim, so /isaac-sim is our own directory holding only the bootstrap shim - but
+    the requirement is unchanged and still asserted, because the failure it prevents is
+    silent: /isaac-sim/python.sh resolves empty and every Isaac job exits 127.
     """
 
-    text = (DOCKER_ROOT / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
-    assert "usermod -aG isaac-sim ubuntu" in text
-    # Check instructions only: the rationale comment names the approach it avoids.
+    text = _build_text("isaac-lab")
+    assert "usermod -aG isaac-sim" in text, (
+        "the runtime user must be in the isaac-sim group so it can traverse /isaac-sim"
+    )
+    # Check instructions only: the rationale comments name the approach they avoid.
     instructions = "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("#")
     )
     assert "chmod -R" not in instructions, (
-        "a recursive chmod would rewrite multi-GB Isaac layers; use group membership"
+        "a recursive chmod would rewrite multi-GB layers; use group membership"
+    )
+    # And the shim must actually be installed there, executable, for any of that to help.
+    assert "/isaac-sim/python.sh" in text
+    assert "install -d -m 0755 /isaac-sim" in text, (
+        "/isaac-sim must be world-traversable now that it is our own directory"
     )
 
 

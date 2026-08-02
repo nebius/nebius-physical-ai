@@ -20,7 +20,12 @@ from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
+    # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
+    # (differently built) Cosmos-Reason VLM image. Exact match wins over the prefix.
+    "workbench.cosmos3.generate": "cosmos3",
     "workbench.cosmos3": "cosmos3-reason",
+    "workbench.cosmos_curate": "cosmos-curate",
+    "workbench.cosmos_evaluator": "cosmos-evaluator",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.fiftyone": "fiftyone",
@@ -40,6 +45,8 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
+    # Attribute verification generates and answers its questions on Token Factory.
+    "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.cosmos3": ("HF_TOKEN",),
     "workbench.sonic": ("HF_TOKEN", "NGC_API_KEY"),
     "workbench.groot": ("HF_TOKEN", "NGC_API_KEY"),
@@ -121,6 +128,37 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
+#: SkyPilot 0.12 accepts these inside a task's ``config:`` block, and it APPENDS
+#: (rather than replaces) lists inside ``kubernetes.pod_config`` -- so a spec can
+#: add an imagePullSecret or a volume without discarding the cluster-wide ones.
+#: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
+#: arbitrary cluster configuration.
+TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
+
+
+def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a task-level SkyPilot ``config:`` block from a resource profile.
+
+    Vendor container images sometimes need pod-level accommodations that
+    ``resources:`` cannot express -- e.g. NVIDIA's NRE image ships no ``sudo``
+    (which SkyPilot's Kubernetes bootstrap calls unconditionally) and needs a
+    ``/dev/shm`` far larger than the 64 MB Kubernetes default. Declaring those on
+    the resource profile keeps them versioned with the spec instead of requiring a
+    hand-passed global config, which would mean duplicating tenant/project
+    identifiers into a committed file.
+    """
+    kubernetes = resources.get("kubernetes") if isinstance(resources, Mapping) else None
+    if not isinstance(kubernetes, Mapping):
+        return {}
+    selected = {
+        key: kubernetes[key]
+        for key in TASK_CONFIG_KUBERNETES_FIELDS
+        if kubernetes.get(key) not in (None, "", {}, [])
+    }
+    return {"kubernetes": selected} if selected else {}
+
+
 def tool_image_key(tool_ref: str) -> str | None:
     """Return the CONTAINER_IMAGE_NAMES key for a toolRef, if known."""
 
@@ -171,12 +209,18 @@ def resolve_task_image(
     return container_image_for_tool(tool, **kwargs)
 
 
-def render_task_run_script(command: Sequence[str]) -> str:
-    """Turn an argv list into a SkyPilot ``run:`` shell script."""
+def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str:
+    """Turn an argv list into a SkyPilot ``run:`` shell script.
+
+    ``preamble`` is shell inserted just before the command (after the npa
+    interpreter shim), e.g. to launch a self-hosted server the command connects
+    to.
+    """
 
     if not command:
         raise NpaWorkflowRenderError("cannot render empty command for SkyPilot task")
     quoted = " ".join(shlex.quote(str(part)) for part in command)
+    preamble_block = f"{preamble.rstrip(chr(10))}\n" if preamble.strip() else ""
     return (
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
@@ -204,6 +248,24 @@ def render_task_run_script(command: Sequence[str]) -> str:
         # imported npa fine, while the stage's non-login shell got the raw kit python
         # and failed). The shim is a no-op when the recorded interpreter is already
         # what python3 means.
+        # A branch overlay has to actually win. Installing it editable only shadows a
+        # baked npa if pip's uninstall removes whatever path hook the image left
+        # behind, and that is not guaranteed: a workbench image whose own npa was
+        # installed by a different pip/backend keeps a .pth pointing at the baked tree,
+        # the overlay install reports success, and the stage silently runs the image's
+        # older code (live: `No such command 'cosmos2'` from an image built for
+        # cosmos2). PYTHONPATH is checked before site-packages, so state the intent
+        # instead of relying on the install to displace it.
+        # Written without ${...} so the rendered YAML stays free of anything SkyPilot
+        # would read as one of its own placeholders.
+        "if [ -d /tmp/npa-src-overlay/src ]; then\n"
+        "  if [ -n \"$PYTHONPATH\" ]; then\n"
+        "    PYTHONPATH=\"/tmp/npa-src-overlay/src:$PYTHONPATH\"\n"
+        "  else\n"
+        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
+        "  fi\n"
+        "  export PYTHONPATH\n"
+        "fi\n"
         "npa_python=\"\"\n"
         "if [ -s /tmp/npa-python ]; then\n"
         "  npa_python=\"$(cat /tmp/npa-python)\"\n"
@@ -218,12 +280,111 @@ def render_task_run_script(command: Sequence[str]) -> str:
         "> /tmp/npa-shim/python3\n"
         "  chmod +x /tmp/npa-shim/python3\n"
         "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
+        # Console scripts installed next to that interpreter must be resolvable by
+        # name too, which is the same gap the `npa` symlink in setup works around.
+        # Live: vLLM's FlashInfer JIT shells out to `ninja`, which ships as a vLLM
+        # dependency in the interpreter's bin dir — a directory that is not on the
+        # stage shell's PATH, which is the whole reason the shim above exists.
+        # Appended, not prepended, so it cannot shadow a system tool.
+        "  npa_scripts=\"$(\"$npa_python\" -c 'import sysconfig; "
+        "print(sysconfig.get_path(\"scripts\"))' 2>/dev/null || true)\"\n"
+        "  if [ -n \"$npa_scripts\" ] && [ -d \"$npa_scripts\" ]; then\n"
+        "    export PATH=\"$PATH:$npa_scripts\"\n"
+        "  fi\n"
         "  echo \"using npa interpreter $npa_python for this stage\" >&2\n"
         "fi\n"
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "echo 'warning: python3 in this shell cannot import npa' >&2\n"
         "set -u\n"
+        f"{preamble_block}"
         f"{quoted}\n"
+    )
+
+
+#: Readiness budget the eval client waits for a self-hosted server, in seconds.
+#: Override per spec with ``config.vlm_ready_timeout_s``.
+DEFAULT_VLM_READY_TIMEOUT_S = 1800
+
+
+def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
+    """Which VLM a self-hosted stage serves. ``config.vlm_model`` wins."""
+
+    try:
+        from npa.workbench.vlm_eval import DEFAULT_MODEL as _default_model
+    except Exception:  # pragma: no cover - fallback keeps render import-light
+        _default_model = "Qwen/Qwen2-VL-7B-Instruct"
+    raw = config.get("vlm_model") or config.get("vlm_models") or _default_model
+    return str(raw).split(",")[0].strip()
+
+
+def _vllm_serve_preamble(tool_ref: str, config: Mapping[str, Any]) -> str:
+    """Background vLLM server launch for a self-hosted ``vlm_eval`` step.
+
+    The npa.workflow render otherwise only installs vLLM (see
+    ``render_setup_for_tool``) but never starts the OpenAI-compatible server the
+    eval client connects to, so :8000 is never up. Launch it in the background
+    on the eval's default endpoint; the client polls ``/v1/models`` and retries
+    connect errors up to ``NPA_VLM_READY_TIMEOUT_S`` (see
+    ``npa.workbench.vlm_eval``), so a cold start is a bounded wait.
+    """
+
+    backend = str(config.get("vlm_backend") or "").strip().lower()
+    if not (tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}):
+        return ""
+    if str(tool_ref).startswith("workbench.vlm_eval.benchmark"):
+        # The benchmark twin runs backend=stub / packaged fixtures; no server.
+        return ""
+    model = self_hosted_vlm_model(config)
+    model_q = shlex.quote(model)
+    ready_timeout = str(config.get("vlm_ready_timeout_s") or DEFAULT_VLM_READY_TIMEOUT_S).strip()
+    return (
+        "# Self-hosted vLLM: launch the OpenAI-compatible server in the background\n"
+        "# on 127.0.0.1:8000; the eval client waits for readiness. Export the\n"
+        "# served model so the client asks for THIS model instead of the library\n"
+        "# default (a mismatch is a 404 from the server). Unbraced/plain\n"
+        "# assignment keeps SkyPilot placeholder lint clean.\n"
+        f"export NPA_VLM_READY_TIMEOUT_S={shlex.quote(ready_timeout)}\n"
+        f"export NPA_VLM_SELF_HOSTED_MODEL={model_q}\n"
+        # vLLM's FlashInfer sampler JIT-compiles a CUDA kernel on first use, and
+        # a task image with a GPU driver does not necessarily ship a CUDA
+        # TOOLKIT: live on RTXPRO-6000 the engine died at warmup with
+        # "/usr/local/cuda/bin/nvcc: not found". The native torch sampler needs
+        # no compiler.
+        "export VLLM_USE_FLASHINFER_SAMPLER=0\n"
+        "python3 -m vllm.entrypoints.openai.api_server "
+        "--host 127.0.0.1 --port 8000 "
+        f"--model {model_q} --served-model-name {model_q} --trust-remote-code "
+        "> /tmp/vllm-server.log 2>&1 &\n"
+        "vllm_pid=$!\n"
+        "trap 'kill \"$vllm_pid\" 2>/dev/null || true' EXIT\n"
+        # Wait for the server here rather than leaving it to the eval client's
+        # retry loop. A server that DIES during startup (live: FlashInfer's JIT
+        # sampling kernel needs ninja, which the image lacked) is otherwise
+        # indistinguishable from one that is still loading, and the job burns the
+        # whole readiness window before reporting a connection error with no
+        # server-side detail.
+        "vllm_deadline=$(( $(date +%s) + NPA_VLM_READY_TIMEOUT_S ))\n"
+        "vllm_ready=0\n"
+        "while [ \"$(date +%s)\" -lt \"$vllm_deadline\" ]; do\n"
+        "  if ! kill -0 \"$vllm_pid\" 2>/dev/null; then\n"
+        "    echo 'vLLM server exited during startup; last 60 log lines:' >&2\n"
+        "    tail -n 60 /tmp/vllm-server.log >&2\n"
+        "    exit 1\n"
+        "  fi\n"
+        "  if python3 -c \"import urllib.request; "
+        "urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)\" "
+        ">/dev/null 2>&1; then\n"
+        "    vllm_ready=1\n"
+        "    break\n"
+        "  fi\n"
+        "  sleep 5\n"
+        "done\n"
+        "if [ \"$vllm_ready\" != 1 ]; then\n"
+        "  echo 'vLLM server never became ready; last 60 log lines:' >&2\n"
+        "  tail -n 60 /tmp/vllm-server.log >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "echo \"vLLM server ready on 127.0.0.1:8000\" >&2\n"
     )
 
 
@@ -340,6 +501,15 @@ def default_npa_setup() -> str:
         "    token = resp.get('NextContinuationToken')\n"
         "PY\n"
         "  npa_pip_install -e /tmp/npa-src-overlay --no-deps\n"
+        # Same reason as the stage preamble: the install alone is not enough to
+        # displace a baked npa, so make the overlay explicit for the rest of setup too
+        # (the interpreter recorded below is checked with `import npa`).
+        "  if [ -n \"$PYTHONPATH\" ]; then\n"
+        "    PYTHONPATH=\"/tmp/npa-src-overlay/src:$PYTHONPATH\"\n"
+        "  else\n"
+        "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
+        "  fi\n"
+        "  export PYTHONPATH\n"
         "fi\n"
         # Record the interpreter that can actually import npa, i.e. the one pip just
         # installed into (it has npa AND its dependencies). Stage bodies use it via a
@@ -389,6 +559,98 @@ def default_npa_setup() -> str:
     )
 
 
+#: rerun-sdk requirement installed into NuRec stage pods.
+#:
+#: Must equal npa's own ``viz`` extra in ``npa/pyproject.toml``. There is no import
+#: that can enforce that -- pyproject is data, not code, and parsing it at runtime
+#: from an installed wheel is unreliable -- so the guarantee is provided by
+#: ``test_renderer_nurec_rerun_pin_matches_the_packaged_extra``, which fails if the
+#: two ever diverge. (An earlier version imported a ``_rerun_pin`` symbol that does
+#: not exist and silently fell back to this literal, so its "cannot drift" promise
+#: never actually engaged.)
+NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+
+
+def _sonic_deps_setup() -> str:
+    """Install the torch/ONNX stack a SONIC stage needs, if it is not baked in.
+
+    The npa-sonic image already ships them, and the check below makes this a
+    no-op there. On the default SkyPilot image (which is what a workflow run
+    with ``--image none`` uses) SONIC train/export/eval would otherwise fail
+    with "requires torch" after the cluster is already up.
+    """
+
+    return (
+        "python3 - <<'PY'\n"
+        "import importlib.util\n"
+        "import subprocess\n"
+        "import sys\n"
+        "\n"
+        "REQUIRED = (\n"
+        "    ('torch', 'torch>=2.12.1'),\n"
+        "    ('onnx', 'onnx>=1.16'),\n"
+        "    ('onnxscript', 'onnxscript>=0.5'),\n"
+        "    ('onnxruntime', 'onnxruntime>=1.18'),\n"
+        ")\n"
+        "missing = [spec for module, spec in REQUIRED if importlib.util.find_spec(module) is None]\n"
+        "if missing:\n"
+        "    base = [sys.executable, '-m', 'pip', 'install', '-q', *missing]\n"
+        "    for extra in ([], ['--break-system-packages'], ['--user']):\n"
+        "        if subprocess.call(base + extra) == 0:\n"
+        "            break\n"
+        "    else:\n"
+        "        raise SystemExit('failed to install SONIC dependencies: ' + ', '.join(missing))\n"
+        "PY\n"
+    )
+
+
+def _vllm_install_setup(model: str) -> str:
+    """Install vLLM and pre-fetch the served weights during ``setup``.
+
+    Two things dominate a self-hosted cold start on a fresh node: resolving and
+    downloading the vLLM + CUDA wheel set, and pulling the model weights. Use
+    ``uv`` for the former (it resolves and downloads in parallel; plain pip took
+    long enough that the eval's readiness window expired) and ``hf_transfer``
+    for the latter, so the ``run`` phase only has to load already-local weights.
+    """
+
+    return (
+        f"export NPA_VLM_SETUP_MODEL={shlex.quote(model)}\n"
+        "python3 - <<'PY'\n"
+        "import importlib.util\n"
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "\n"
+        "MODEL = os.environ['NPA_VLM_SETUP_MODEL']\n"
+        "\n"
+        "def pip_install(*packages):\n"
+        "    for prefix in (\n"
+        "        [sys.executable, '-m', 'uv', 'pip', 'install', '--python', sys.executable],\n"
+        "        [sys.executable, '-m', 'pip', 'install', '-q'],\n"
+        "        [sys.executable, '-m', 'pip', 'install', '-q', '--break-system-packages'],\n"
+        "    ):\n"
+        "        if subprocess.call([*prefix, *packages]) == 0:\n"
+        "            return True\n"
+        "    return False\n"
+        "\n"
+        "if importlib.util.find_spec('uv') is None:\n"
+        "    subprocess.call([sys.executable, '-m', 'pip', 'install', '-q', 'uv'])\n"
+        "if importlib.util.find_spec('vllm') is None and not pip_install('vllm>=0.8.5'):\n"
+        "    raise SystemExit('failed to install vllm for the self-hosted VLM backend')\n"
+        "pip_install('hf_transfer')\n"
+        "os.environ.setdefault('HF_HUB_ENABLE_HF_TRANSFER', '1')\n"
+        "try:\n"
+        "    from huggingface_hub import snapshot_download\n"
+        "except ImportError:\n"
+        "    print('huggingface_hub unavailable; vLLM will fetch weights at startup')\n"
+        "else:\n"
+        "    print('pre-fetching', MODEL, flush=True)\n"
+        "    snapshot_download(MODEL)\n"
+        "PY\n"
+    )
+
+
 def render_setup_for_tool(
     tool_ref: str,
     *,
@@ -402,16 +664,9 @@ def render_setup_for_tool(
     parts = [default_npa_setup()]
     backend = str(config.get("vlm_backend") or "").strip().lower()
     if tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}:
-        parts.append(
-            "python3 - <<'PY'\n"
-            "import importlib.util\n"
-            "import subprocess\n"
-            "import sys\n"
-            "\n"
-            "if importlib.util.find_spec('vllm') is None:\n"
-            "    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'vllm>=0.8.5'])\n"
-            "PY\n"
-        )
+        parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
+    if tool_ref.startswith("workbench.sonic"):
+        parts.append(_sonic_deps_setup())
     if tool_ref.startswith("workbench.token_factory"):
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(
@@ -420,6 +675,36 @@ def render_setup_for_tool(
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
             "  exit 1\n"
             "fi\n"
+        )
+    if tool_ref.startswith("workbench.nurec"):
+        # These stages run inside NVIDIA's NRE container -- a VENDOR image, so it
+        # carries none of the tool's runtime dependencies: no Hugging Face CLI
+        # (dataset download), no nvidia-ncore (the rig->world pose derivation NRE
+        # requires), no rerun-sdk (the run recording; it is only an optional `viz`
+        # extra of npa), and no ffmpeg (`nre render --export-video`). The image also
+        # ships no `unzip`, which is why the tool extracts with stdlib zipfile.
+        # Installing into the interpreter npa was installed into (recorded by
+        # default_npa_setup) avoids a second, npa-less python winning on PATH.
+        parts.append(
+            "set -e\n"
+            "if ! command -v ffmpeg >/dev/null 2>&1; then\n"
+            "  export DEBIAN_FRONTEND=noninteractive\n"
+            "  apt-get update -qq || true\n"
+            "  apt-get install -y -qq --no-install-recommends ffmpeg || true\n"
+            "fi\n"
+            "npa_nurec_py=python3\n"
+            "if [ -s /tmp/npa-python ]; then npa_nurec_py=\"$(cat /tmp/npa-python)\"; fi\n"
+            # --break-system-packages FIRST: the NRE image is Ubuntu 24.04, whose
+            # interpreter is externally managed (PEP 668), so the plain form always
+            # fails there and only adds a confusing "error:
+            # externally-managed-environment" to the logs before the fallback wins.
+            "npa_nurec_pip() {\n"
+            "  \"$npa_nurec_py\" -m pip install -q \"$@\" --break-system-packages \\\n"
+            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" \\\n"
+            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" --user\n"
+            "}\n"
+            f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
+            "\"$npa_nurec_py\" -c 'import ncore, rerun; print(\"nurec runtime deps ready\")'\n"
         )
     return "".join(parts)
 
@@ -493,8 +778,14 @@ def build_skypilot_task_doc(
         "name": scheduler_task["name"],
         "resources": resources,
         "envs": envs,
-        "run": render_task_run_script(command),
+        "run": render_task_run_script(
+            command,
+            preamble=_vllm_serve_preamble(str(scheduler_task.get("tool_ref") or ""), spec.config),
+        ),
     }
+    task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    if task_config:
+        doc["config"] = task_config
     setup = render_setup_for_tool(
         str(scheduler_task.get("tool_ref") or ""),
         config=spec.config,
@@ -505,14 +796,12 @@ def build_skypilot_task_doc(
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa.
-    if not image:
-        import os
+    import os
 
-        src_uri = (
-            os.environ.get("NPA_SRC_S3_URI")
-            or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
-            or ""
-        ).strip()
+    src_uri = (
+        os.environ.get("NPA_SRC_S3_URI") or os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
+    ).strip()
+    if not image:
         if not src_uri:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} has no workbench image "
@@ -522,19 +811,22 @@ def build_skypilot_task_doc(
         envs["NPA_SRC_S3_URI"] = src_uri
         doc["envs"] = envs
     else:
-        # Image is pinned (baked npa). Opt-in overlay: when NPA_SRC_OVERLAY=1,
-        # propagate the source URI + flag so setup reinstalls branch npa on top
-        # (used to run un-imaged branch code — e.g. a new augment path — on GPU).
-        import os as _os
-
-        if str(_os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"}:
-            src_uri = (
-                _os.environ.get("NPA_SRC_S3_URI") or _os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
-            ).strip()
-            if src_uri:
-                envs["NPA_SRC_S3_URI"] = src_uri
-                envs["NPA_SRC_OVERLAY"] = "1"
-                doc["envs"] = envs
+        # A pinned image is EITHER an NPA workbench image with npa baked in, OR a
+        # VENDOR image that has never heard of npa (e.g. NVIDIA's NRE container,
+        # which is the runtime for the neural-reconstruction workflow). Propagating
+        # the source URI serves both: setup's primary install path is guarded by
+        # `command -v npa`, so it is a no-op when npa is already present and
+        # installs it WITH dependencies when it is not. Without this, a vendor image
+        # fails setup with "npa CLI not found; set NPA_SRC_S3_URI or use a workbench
+        # image" (observed live on the NRE image).
+        if src_uri:
+            envs["NPA_SRC_S3_URI"] = src_uri
+            doc["envs"] = envs
+        # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
+        # used to run un-imaged branch code on GPU without rebuilding the image.
+        if str(os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"} and src_uri:
+            envs["NPA_SRC_OVERLAY"] = "1"
+            doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
         doc,
         materialize=options.materialize_registry_secrets,

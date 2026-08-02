@@ -78,6 +78,174 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    # --- NuRec / NRE neural reconstruction -----------------------------------
+    # Every verb is a real entrypoint in npa/src/npa/cli/nurec/__init__.py that
+    # drives the real NVIDIA NRE container; none of these write a manifest stub.
+    "workbench.nurec.check": ToolEntry(
+        name="workbench.nurec.check",
+        description=(
+            "Verify NRE container pullability, real Hugging Face download "
+            "authorization, and that the GPU has RT cores, before any GPU work."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "check",
+            "--image",
+            "{{config.nurec_image}}",
+            "--dataset",
+            "{{config.dataset_id}}",
+            "--scene",
+            "{{config.scene}}",
+            "--variant",
+            "{{config.variant}}",
+            "--require-gpu",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.fetch": ToolEntry(
+        name="workbench.nurec.fetch",
+        description=(
+            "Download and unpack real NCore V4 shards and derive the rig->world "
+            "pose edge NRE requires for object-centric captures."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "fetch",
+            "--dataset",
+            "{{config.dataset_id}}",
+            "--scene",
+            "{{config.scene}}",
+            "--variant",
+            "{{config.variant}}",
+            "--cache-dir",
+            "{{config.cache_dir}}",
+            "--derive-rig",
+            # Each stage is its own pod, so the sequence must travel through S3.
+            # `fetch` publishes under `<ncore_uri>sequence/` and `reconstruct` reads
+            # `config.ncore_sequence_uri`; those two MUST agree. The relationship is
+            # asserted by npa/tests/workbench/test_nurec_access.py::
+            # test_spec_ncore_sequence_uri_matches_what_fetch_publishes, because a
+            # spec that sets only `ncore_uri` would otherwise fail silently in a
+            # different pod with an empty materialization.
+            "--publish-sequence",
+            "--output-uri",
+            "{{config.ncore_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.reconstruct": ToolEntry(
+        name="workbench.nurec.reconstruct",
+        description=(
+            "Train a 3DGUT Gaussian reconstruction with NRE into a renderable "
+            "USDZ, with real val metrics and exported ground-truth frames."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-uri",
+            "{{config.ncore_sequence_uri}}",
+            "--config-name",
+            "{{config.config_name}}",
+            "--mode",
+            "{{config.mode}}",
+            "--poses-component-group",
+            "{{config.poses_component_group}}",
+            "--cache-dir",
+            "{{config.cache_dir}}",
+            "--out-dir",
+            "{{config.out_dir}}",
+            "--max-epochs",
+            "{{config.max_epochs}}",
+            "--world-size",
+            "{{config.world_size}}",
+            "--image",
+            "{{config.nurec_image}}",
+            "--export-gt",
+            "--output-uri",
+            "{{config.reconstruction_uri}}",
+            "--input-uri",
+            "{{config.input_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.render": ToolEntry(
+        name="workbench.nurec.render",
+        description=(
+            "Render novel views from a trained reconstruction with `nre render` "
+            "using a rig offset (not the training views)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "render",
+            "--artifact-uri",
+            "{{config.reconstruction_uri}}",
+            "--out-dir",
+            "{{config.out_dir}}",
+            "--output-dir",
+            "{{config.render_dir}}",
+            "--image-scale",
+            "{{config.render_image_scale}}",
+            "--renderer",
+            "{{config.renderer}}",
+            "--rig-translation-offset",
+            "{{config.rig_translation_offset}}",
+            "--rig-rotation-offset",
+            "{{config.rig_rotation_offset}}",
+            "--no-replicate-training-views",
+            "--output-uri",
+            "{{config.novel_views_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.visualize": ToolEntry(
+        name="workbench.nurec.visualize",
+        description=(
+            "Build the run's Rerun recording (reports/sim2real.rrd) so the "
+            "reconstruction renders in the NPA agent's embedded viewer."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "visualize",
+            "--input-uri",
+            "{{config.run_root_uri}}",
+            "--output-uri",
+            "{{config.rrd_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.nurec.finalize": ToolEntry(
+        name="workbench.nurec.finalize",
+        description="Aggregate a NuRec run tree into a real final report.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "finalize",
+            "--input-uri",
+            "{{config.run_root_uri}}",
+            "--output-uri",
+            "{{config.final_report_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.vlm_eval.run": ToolEntry(
         name="workbench.vlm_eval.run",
         description="Score rollout directories with the VLM eval workbench tool.",
@@ -143,6 +311,60 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--execute",
         ],
     ),
+    "workbench.cosmos_evaluator.evaluate": ToolEntry(
+        name="workbench.cosmos_evaluator.evaluate",
+        description=(
+            "Grade augmented variants with the REAL NVIDIA Cosmos Evaluator checks "
+            "(hallucination + VLM attribute verification, Apache-2.0)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos-evaluator",
+            "evaluate",
+            "--augment-uri",
+            "{{config.rollouts_uri}}",
+            "--output-uri",
+            "{{config.scores_uri}}",
+            "--input-uri",
+            "{{config.input_uri}}",
+            "--configs-uri",
+            "{{config.configs_uri}}",
+            "--threshold",
+            "{{config.grade_threshold}}",
+            "--vlm-model",
+            "{{config.caption_model}}",
+            "--output",
+            "json",
+        ],
+    ),
+    "workbench.cosmos_curate.curate": ToolEntry(
+        name="workbench.cosmos_curate.curate",
+        description=(
+            "Curate augmented variants with the REAL NVIDIA Cosmos Curator stages "
+            "(split, transcode, motion-score, canonical clip metadata; Apache-2.0)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos-curate",
+            "curate-augmented",
+            "--augment-uri",
+            "{{config.augment_uri}}",
+            "--curated-uri",
+            "{{config.curated_clips_uri}}",
+            "--report-uri",
+            "{{config.curator_report_uri}}",
+            "--clip-len-s",
+            "{{config.curator_clip_len_s}}",
+            "--min-clip-length-s",
+            "{{config.curator_min_clip_len_s}}",
+            "--motion-filter",
+            "{{config.curator_motion_filter}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.sim2real_envgen.raw_shard": ToolEntry(
         name="workbench.sim2real_envgen.raw_shard",
         description="Generate raw simulation env shard.",
@@ -173,7 +395,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real.write_decision",
         description="Write threshold decision artifact for dynamic transitions (demo stub).",
         argv_template=[
-            "python",
+            # python3, not python: the render's interpreter shim only puts a
+            # `python3` that can import npa on PATH, and images without a bare
+            # `python` (the SkyPilot default among them) fail otherwise.
+            "python3",
             "-c",
             (
                 "from npa.orchestration.npa_workflow.decisions import write_decision; "
@@ -523,6 +748,29 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.insights_store_uri}}",
             "--workflow-run",
             "{{run.id}}",
+        ],
+    ),
+    "workbench.foxglove.convert": ToolEntry(
+        name="workbench.foxglove.convert",
+        description=(
+            "Pack a run's frames, JSON metrics, and logs into a real MCAP recording "
+            "(Foxglove well-known schemas) for the embedded Foxglove viewer."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "foxglove",
+            "convert-run",
+            "--input-path",
+            "{{config.run_artifacts_path}}",
+            "--output-path",
+            "{{config.mcap_output_path}}",
+            "--run-id",
+            "{{run.id}}",
+            "--fps",
+            "{{config.mcap_fps}}",
+            "--output",
+            "json",
         ],
     ),
     "workbench.insights.ingest_run": ToolEntry(
@@ -964,6 +1212,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.data_uri}}",
             "--output-path",
             "{{config.training_uri}}",
+            "--max-iterations",
+            "{{config.train_iterations}}",
             "--output",
             "json",
         ],
@@ -983,6 +1233,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--env",
             "{{config.env}}",
             "--output",
+            "{{config.eval_uri}}",
+            "--output-format",
             "json",
         ],
     ),
@@ -998,6 +1250,30 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.checkpoint_uri}}",
             "--output",
             "{{config.onnx_uri}}",
+        ],
+    ),
+    "workbench.cosmos3.generate": ToolEntry(
+        name="workbench.cosmos3.generate",
+        description=(
+            "Generate an image or video with the Cosmos 3 omni model (real "
+            "inference in the npa-cosmos3 image; gated weights download at "
+            "runtime with the operator's HF token)."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "generate",
+            "--mode",
+            "{{config.cosmos3_mode}}",
+            "--prompt",
+            "{{config.prompt}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--checkpoint",
+            "{{config.cosmos3_checkpoint}}",
+            "--run-id",
+            "{{run.id}}",
         ],
     ),
     "workbench.cosmos3.reason": ToolEntry(

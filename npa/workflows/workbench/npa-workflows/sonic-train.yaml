@@ -9,7 +9,11 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/sonic-train"
-  sonic_runtime: serverless
+  # `local` trains inside this GPU stage's own container. The vm / container /
+  # serverless runtimes each provision MORE infrastructure, which a stage that
+  # already holds a GPU cannot do (serverless additionally needs a project id).
+  sonic_runtime: local
+  train_iterations: "40"
   checkpoint_uri: "nvidia/GEAR-SONIC"
   data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
@@ -29,6 +33,6 @@ states:
     toolRef: workbench.sonic.train
     resources: gpu
     outputs:
-      - uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.json"
+      - uri: "{{config.training_uri}}checkpoint.json"
         schema: npa.workbench.sonic.checkpoint.v1
     terminal: true

@@ -93,6 +93,9 @@ def _venv_has_torch(py: Path) -> bool:
     try:
         if not py.exists():
             return False
+    except OSError:
+        return False
+    try:
         proc = subprocess.run(
             [str(py), "-c", "import torch, flash_attn"],
             capture_output=True,

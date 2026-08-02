@@ -1,19 +1,32 @@
-# Mirror the OSS-redistributable workbench images to a PUBLIC registry.
+# Mirror the publicly-redistributable workbench images to a PUBLIC registry.
 #
 # Nebius Container Registry has no anonymous/public mode, so "public exposure"
-# means mirroring the publicly-redistributable subset to a public-capable
-# registry (GHCR by default). This workflow is license-guarded: it runs
-# `python -m npa.deploy.publish_public`, which only ever copies
-# `images.publicly_publishable_tools()` and HARD-refuses the Omniverse-Kit
-# images (isaac-lab, sonic, sonic-mujoco, groot) — those are NVIDIA-proprietary
-# and must not be redistributed to third parties.
+# means mirroring to a public-capable registry (GHCR by default). This workflow
+# runs `python -m npa.deploy.publish_public`, which copies exactly
+# `images.publicly_publishable_tools()`.
 #
-# Manual dispatch only (never auto-publishes). Defaults to dry-run.
+# THE ISAAC IMAGES ARE NOW IN THAT SET. This comment previously said the opposite
+# -- that the workflow "HARD-refuses" isaac-lab/sonic/sonic-mujoco/groot as
+# NVIDIA-proprietary. That was true when they baked Omniverse Kit. They no longer
+# do: they ship no NVIDIA Isaac bytes and fetch Isaac Sim / Isaac Lab at first run
+# under the OPERATOR's own EULA acceptance. See docs/workbench/container-packaging.md.
 #
-# Required secret to actually copy (not needed for dry-run):
+# That reclassification rests on the canonical tags resolving to the runtime-fetch
+# images. If a canonical tag still points at an old Omniverse-baked build, this
+# workflow would publish proprietary content -- irreversibly, because GHCR package
+# visibility cannot be undone. The "Gate" step below checks that mechanically before
+# any copy happens; do not remove it.
+#
+# Manual dispatch only (never auto-publishes). Defaults to dry-run, and the dry run is a
+# real rehearsal: it resolves the plan, proves the source credential, reads every pinned
+# source tag, and runs the gate. Only the copy and the public verification are skipped.
+#
+# Required secret to actually copy:
 #   NEBIUS_CR_TOKEN — a Nebius CR token (static key or access token) with viewer
 #                     on the source registry, used as the docker password (user
-#                     "iam"). GHCR push uses the built-in GITHUB_TOKEN.
+#                     "iam"). GHCR push uses the built-in GITHUB_TOKEN. A dry run
+#                     without it still prints the plan, but says it could not check
+#                     the source registry.
 
 name: Publish public images
 
@@ -69,17 +82,114 @@ jobs:
         if: ${{ inputs.dry_run == false }}
         run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # Runs in dry-run too, so the safe rehearsal actually rehearses the credential.
+      # NEBIUS_CR_TOKEN is short-lived, and a dry run that skipped the login could only
+      # ever tell you the plan was well-formed.
       - name: Login to Nebius source registry
-        if: ${{ inputs.dry_run == false }}
+        id: source-login
         run: |
           if [ -z "${{ secrets.NEBIUS_CR_TOKEN }}" ]; then
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::notice::NEBIUS_CR_TOKEN is not set, so this dry run cannot check the source registry."
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "NEBIUS_CR_TOKEN secret is required to copy from the Nebius source registry" >&2
             exit 1
           fi
           for host in cr.eu-north1.nebius.cloud cr.us-central1.nebius.cloud; do
             echo "${{ secrets.NEBIUS_CR_TOKEN }}" | crane auth login "$host" -u iam --password-stdin
           done
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish
+      # `crane auth login` writes a config file and exits 0 for any string -- it never
+      # contacts the registry -- so the step above proves nothing about NEBIUS_CR_TOKEN.
+      # This reads every source manifest, which fails in seconds on an expired token or a
+      # pin that was never pushed, rather than partway through the copy loop with some
+      # packages already created. It writes nothing, so it is safe in dry-run.
+      - name: Preflight the source registry credential and every pinned tag
+        if: ${{ steps.source-login.outputs.available == 'true' }}
+        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}" --preflight
+
+      # Last line of defence before an irreversible action. publish_public trusts the
+      # packaging contract, which is a statement about the Dockerfiles; this checks the
+      # actual images the canonical tags resolve to right now.
+      #
+      # History-only because a full filesystem scan streams ~69 GB across these five and
+      # would not finish on a hosted runner. It is the weaker check -- it catches a build
+      # that RAN an Isaac install, not payload that arrived by COPY -- so it is a gate,
+      # not the proof. The full scan runs in omniverse-payload-scan (image-security-scan.yml).
+      # Also runs in dry-run (it only reads), so the rehearsal exercises the whole safety
+      # chain rather than leaving the gate to fire for the first time on the real run.
+      - name: Gate — the Isaac canonical tags must not be Omniverse-baked
+        if: ${{ steps.source-login.outputs.available == 'true' }}
+        run: |
+          set -euo pipefail
+          source_registry="cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
+          failed=0
+          for ref in \
+            "npa-isaac-lab:2.3.2.post1" \
+            "npa-sonic:0.1.2" \
+            "npa-sonic:0.1.2-k8s-runtime" \
+            "npa-sonic-mujoco:0.1.3-mvp" \
+            "npa-groot:0.1.0"; do
+            echo "::group::$ref"
+            if ! python npa/scripts/scan_image_omniverse_payload.py --history-only \
+                 "${source_registry}/${ref}"; then
+              echo "::error::${ref} shows a build-time Isaac install — refusing to publish"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "Refusing to publish. A canonical tag resolves to an Omniverse-baked image."
+            echo "Promote the runtime-fetch builds first:"
+            echo "  ./npa/scripts/promote_isaac_rtfetch_tags.sh --i-have-sign-off"
+            exit 1
+          fi
+
+      # Pushing is not publishing. A new GHCR container package is PRIVATE, and a package
+      # linked to a repository inherits that repository's access permissions but NOT its
+      # visibility -- so even a public repo yields private packages. GitHub exposes no REST
+      # API to change visibility for organisation-owned packages, so it cannot be automated
+      # here; it is a one-time manual step per package, and it is irreversible.
+      #
+      # publish_public copies and then verifies inline, so this step fails when the copy
+      # worked but nothing is publicly pullable. That is the expected outcome of the FIRST
+      # publish; the summary below turns it into a click-through list.
+      - name: Publish and verify
         if: ${{ inputs.dry_run == false }}
         run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}"
+
+      - name: Write the visibility checklist to the job summary
+        if: ${{ failure() && inputs.dry_run == false }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
+          ## Images copied, but not yet public
+
+          If the failing step was **Publish and verify**, the copy succeeded and the packages
+          are **private** — GHCR's default for a newly created package. This cannot be
+          automated: GitHub has no REST API to set visibility for organisation-owned
+          packages.
+
+          Open each link below, then **Danger Zone → Change visibility → Public**. It is
+          one-time (visibility persists across later pushes to the same package).
+
+          > **This is irreversible.** A public package cannot be made private again, and
+          > deleting a tag does not undo publication. Confirm the redistribution
+          > classification before doing it — see `docs/workbench/container-packaging.md`.
+
+          MD
+          # Only the packages that are still private, so the list shrinks as they are flipped.
+          python -m npa.deploy.publish_public \
+            --target "${{ steps.target.outputs.value }}" \
+            --verify-public --checklist 2>/dev/null \
+            | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
+          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
+
+          Re-run this workflow with `dry_run=false` to re-verify, or run locally:
+
+          ```
+          npa/.venv/bin/python -m npa.deploy.publish_public --verify-public
+          ```
+          MD

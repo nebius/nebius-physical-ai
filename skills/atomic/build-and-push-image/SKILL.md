@@ -41,6 +41,48 @@ Security baseline: non-root final USER, no secrets in layers, digest-pinned
 bases where possible, Trivy scan coverage. Service images should expose ports
 and prefer a `HEALTHCHECK` or K8s probe on `/health`.
 
+## Redistribution Class
+
+Every image in the packaging contract also declares
+`redistribution: public | restricted`, which decides whether it may leave the
+owning org:
+
+- `public` — OSS-redistributable, may be mirrored to a public registry. **All 19
+  workbench images are currently `public`.**
+- `restricted` — bakes a runtime we may not redistribute. Currently **empty**: the four
+  Isaac images (`isaac-lab`, `sonic`, `sonic-mujoco`, `groot`) used to be restricted
+  because they baked Omniverse Kit, and were re-architected to fetch Isaac Sim / Isaac
+  Lab at first run under the operator's own EULA acceptance instead. The class and its
+  guards are kept for the next runtime we cannot ship.
+
+When adding an image, set its class. `npa/tests/docker/test_packaging_contract.py` fails
+the build if a Dockerfile **bakes** Omniverse Kit (or is built `FROM` a restricted image)
+while claiming `public`. Keep `images.OMNIVERSE_RESTRICTED_TOOLS` in sync; it is what
+`npa.deploy.publish_public` uses to decide what may be mirrored publicly.
+
+Note the distinction the guard encodes: **baked at build time** vs. **fetched at run
+time**. Mentioning `isaacsim` in bootstrap plumbing is fine; installing it in a `RUN`
+layer is not. Two of its patterns exist specifically because the runtime-fetch design
+created new ways to bake by accident — `RUN isaac-bootstrap ensure` and
+`RUN /isaac-sim/python.sh ...` both materialise the whole install into a layer. If you
+need a build-time interpreter in an Isaac image, use the image's own venv python (see
+`Dockerfile.mujoco`'s `ARG NPA_IMAGE_PYTHON`), never the shim.
+
+### Building an Isaac image
+
+No NGC credentials are needed — nothing credentialed is left to pull:
+
+```bash
+npa/docker/workbench/isaac-lab/build.sh --registry cr.<region>.nebius.cloud/<id> --push
+npa/docker/workbench/sonic/build.sh --registry cr.<region>.nebius.cloud/<id> --push --variant baked
+```
+
+Two practical notes from doing this on the dev VM: an Isaac image build can peak at ~90 GB
+of scratch, so `docker builder prune -af` between builds, and prefer `--push` (buildx
+streams to the registry) over a local build, which additionally unpacks ~30 GB into the
+image store. Verify the result with
+`npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py <ref>`.
+
 ## Gotchas
 
 - Do not commit concrete registry IDs or private image digests from a live

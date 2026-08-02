@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 import httpx
@@ -34,6 +35,14 @@ DEFAULT_ENDPOINT_URL = "http://127.0.0.1:8000/v1"
 DEFAULT_FRAME_SELECTION = "keyframes"
 DEFAULT_MAX_FRAMES = 4
 DEFAULT_TIMEOUT_S = 120.0
+# A self-hosted vLLM server cold-starts and loads weights for minutes; the eval
+# client must wait for it to become reachable instead of failing on the first
+# connection-refused. Override with NPA_VLM_READY_TIMEOUT_S.
+DEFAULT_READY_TIMEOUT_S = 600.0
+READY_TIMEOUT_ENV = "NPA_VLM_READY_TIMEOUT_S"
+#: Set by a job that starts its own vLLM server, so the eval client requests the
+#: model that server actually loaded rather than ``DEFAULT_MODEL``.
+SELF_HOSTED_MODEL_ENV = "NPA_VLM_SELF_HOSTED_MODEL"
 DEFAULT_API_KEY_ENV = "VLM_EVAL_API_KEY"
 DEFAULT_RUBRIC = (
     "Score whether the rollout completes the requested physical task. "
@@ -208,6 +217,12 @@ def benchmark_vlm_eval(
 ) -> VlmBenchmarkReport:
     """Run a labeled VLM-eval sweep and rank configs by label agreement."""
 
+    # Resolve the packaged sample fixture from its install location so callers
+    # (and the npa.workflow twin) get a working default regardless of CWD. A
+    # repo-relative path does not exist inside a rendered job; the ``sample``/
+    # ``default`` sentinels (and empty) map to the packaged fixture.
+    if dataset.strip().lower() in {"", "sample", "default"}:
+        dataset = str(DEFAULT_SAMPLE_BENCHMARK_PATH)
     benchmark_dataset = load_benchmark_dataset(dataset, default_task=task)
     threshold_values = _normalize_thresholds(thresholds)
     model_values = _normalize_strings(models, label="models")
@@ -385,6 +400,11 @@ def evaluate_vlm(
         )
 
     effective_model = model or DEFAULT_MODEL
+    if backend == "self-hosted" and effective_model == DEFAULT_MODEL:
+        # The job that started the vLLM server records which model it serves, so
+        # the client asks for that one instead of the 7B default (a mismatch is a
+        # 404 from the server). See `_vllm_serve_preamble` in the workflow render.
+        effective_model = os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
     if backend == "api" and effective_model == DEFAULT_MODEL:
         # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
         # Factory API does not serve it (requests 404); use the vision model
@@ -1056,6 +1076,17 @@ def _build_prompt(
     )
 
 
+def _ready_timeout_s() -> float:
+    raw = os.environ.get(READY_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_READY_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_READY_TIMEOUT_S
+    return value if value > 0 else DEFAULT_READY_TIMEOUT_S
+
+
 def _call_openai_compatible(
     *,
     backend: str,
@@ -1088,21 +1119,62 @@ def _call_openai_compatible(
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
     }
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            response = client.post(url, headers=headers, json=request)
-            response.raise_for_status()
-            data = response.json()
-    except httpx.HTTPError as exc:
-        raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise VlmEvalError("VLM backend returned non-JSON response") from exc
+    data = _post_with_readiness_retry(
+        url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
+    )
 
     try:
         message = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmEvalError("VLM backend response missing choices[0].message.content") from exc
     return parse_structured_response(str(message))
+
+
+def _post_with_readiness_retry(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    backend: str,
+    timeout_s: float,
+) -> Any:
+    """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
+
+    A self-hosted vLLM server started alongside the eval job needs minutes to
+    load weights; retry transient connection failures with backoff up to the
+    readiness deadline so a cold start is a bounded wait, not an instant
+    connection-refused. Hosted (``api``) backends are expected to be up and fail
+    fast. This lives in the request path so callers that stub
+    ``_call_openai_compatible`` in tests never incur the wait.
+    """
+
+    is_self_hosted = backend == "self-hosted"
+    ready_timeout = _ready_timeout_s()
+    deadline = time.monotonic() + (ready_timeout if is_self_hosted else 0.0)
+    delay = 2.0
+    last_conn_error = ""
+    while True:
+        try:
+            with httpx.Client(timeout=timeout_s) as client:
+                response = client.post(url, headers=headers, json=request)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            last_conn_error = str(exc) or exc.__class__.__name__
+            if is_self_hosted and time.monotonic() < deadline:
+                time.sleep(delay)
+                delay = min(delay * 1.5, 15.0)
+                continue
+            if is_self_hosted:
+                raise VlmEvalError(
+                    f"VLM backend not ready at {url} after {ready_timeout:.0f}s "
+                    f"(last: {last_conn_error})"
+                ) from exc
+            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise VlmEvalError("VLM backend returned non-JSON response") from exc
 
 
 def _resolve_endpoint_url(*, backend: str, endpoint_url: str) -> str:

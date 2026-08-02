@@ -50,6 +50,24 @@ Project resolution: `npa.workflows.byof.live.resolve_byof_project()` — never h
 
 Override Ubuntu default: `NPA_BYOF_UBUNTU_BASE_IMAGE` or `--base-image ubuntu:24.04`.
 
+The `isaac-lab` profile **no longer implies `restricted`**. It used to bake NVIDIA
+Omniverse Kit, so anything built on it inherited a no-public-redistribution rule; the
+image now contains no NVIDIA Isaac bytes and fetches Isaac Sim / Isaac Lab at first run
+under the operator's own EULA acceptance, so a BYOF solution built on it can be `public`
+too — provided the solution's *own* dependencies allow it. Classify the result per
+`skills/atomic/solution-licensing/SKILL.md` before promoting it; inheritance is no longer
+the reason to say no, but it is also no longer a reason to skip the question.
+
+Two consequences worth knowing when your BYOF solution runs on the `isaac-lab` base:
+
+- Anything that imports `isaaclab`/`isaacsim` must run through `/isaac-sim/python.sh`
+  (the value of `ISAAC_LAB_PYTHON`), which bootstraps Isaac on first use. Using a bare
+  `python3` will not find Isaac.
+- Your task must set `OMNI_KIT_ACCEPT_EULA=YES` and `ISAACSIM_ACCEPT_EULA=YES`, or the
+  container exits 78 with an explanatory message. First start downloads ~4.5 GB and
+  materialises ~10 GiB of cache; pre-warm it with
+  `npa/docker/workbench/common/warm-isaac-cache.yaml` if you are iterating.
+
 ## Operator Entrypoint
 
 Preferred CLI (Tier 0 of `docs/architecture/oss-onboarding-ladder.md`):

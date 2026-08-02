@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from contextlib import contextmanager
 from pathlib import Path
@@ -863,7 +864,20 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert f"ARG ISAAC_LAB_VERSION={ISAAC_LAB_VERSION}" in dockerfile
     assert f"ARG COSMOS_REASON_REVISION={COSMOS_REASON_REVISION}" in dockerfile
     assert "git -C \"${GROOT_REPO}\" checkout \"${GROOT_REPO_REF}\"" in dockerfile
-    assert "isaaclab[isaacsim,all]==${ISAAC_LAB_VERSION}" in dockerfile
+    # Was: a build-time `pip install "isaaclab[isaacsim,all]==${ISAAC_LAB_VERSION}"`.
+    # groot now fetches Isaac at first run, so the pin travels to the bootstrap instead of
+    # to a RUN layer. The pin is still asserted above (ARG ISAAC_LAB_VERSION); what is
+    # asserted here is that it reaches the bootstrap and that the baked form is gone.
+    # The Isaac Sim pin is not a Python constant anywhere, so assert the thing that can
+    # actually drift: the Dockerfile's ARG must match the bootstrap's default, or the image
+    # would advertise one version and fetch another at first run.
+    bootstrap = (PACKAGE_ROOT / "docker/workbench/common/isaac_bootstrap.sh").read_text()
+    sim_pin = re.search(r'ISAAC_SIM_VERSION:-([\d.]+)', bootstrap)
+    assert sim_pin, "isaac_bootstrap.sh no longer carries a default ISAAC_SIM_VERSION"
+    assert f"ARG ISAAC_SIM_VERSION={sim_pin.group(1)}" in dockerfile
+    assert "docker/workbench/common/isaac_bootstrap.sh" in dockerfile
+    assert "isaaclab[isaacsim,all]==${ISAAC_LAB_VERSION}" not in dockerfile
+    assert "isaaclab[isaacsim,all]==" not in dockerfile
     assert "GROOT_MODEL_DIR=/opt/groot-data/models" in dockerfile
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B" not in dockerfile
     assert "--platform linux/amd64" in build_script

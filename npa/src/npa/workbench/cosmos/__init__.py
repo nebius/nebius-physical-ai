@@ -13,6 +13,13 @@ from npa.workbench.cosmos.cosmos3 import (
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
 )
+from npa.workbench.cosmos.generate import (
+    GENERATE_MODES as GENERATE_MODES,
+    Cosmos3GenerateError as Cosmos3GenerateError,
+    cosmos3_generate_available,
+    generate_plan,
+    run_cosmos3_generate,
+)
 
 ensure_ingress = make_cli_wrapper(
     "npa.cli.cosmos", "ensure_ingress_cmd", "Ensure ingress for a Cosmos workbench."
@@ -46,6 +53,9 @@ __all__ = [
     "check_cosmos3_access",
     "fetch_cosmos3_artifacts",
     "build_cosmos3_inference_args",
+    "cosmos3_generate_available",
+    "generate_plan",
+    "run_cosmos3_generate",
     "ensure_ingress",
     "register_byovm",
     "check",

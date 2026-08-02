@@ -12,6 +12,14 @@ resources:
   # manifest variant selected by SONIC_GPU_TARGET and SONIC_IMAGE_VARIANT.
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   NPA_PIPELINE_RUN_ID: "<run-id>"
   SONIC_GPU_TARGET: "L40S"
   SONIC_IMAGE_VARIANT: "sonic-l40s-baked"

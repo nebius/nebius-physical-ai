@@ -23,9 +23,21 @@ class SubmitLiveCase:
 
     spec: str
     tier: str  # cpu | gpu | multi
+    #: Secrets this twin's stages actually read. The live test SKIPS the case
+    #: when one is missing from the operator env, so listing a secret the
+    #: exercised path never consumes turns an unrelated gap in someone's env
+    #: into a silently no-op day of the daily GPU rotation. List only what the
+    #: twin needs to run; the render's ``SECRET_ENV_HINTS`` cover the rest.
     secret_envs: tuple[str, ...] = ()
     requires_token_factory: bool = False
     plan_only: bool = False
+    #: Skip this twin in the bounded daily GPU rotation because it cannot pass as
+    #: a standalone submit today (needs a prior workflow's artifact, an input not
+    #: staged into the job, or infra the npa.workflow render doesn't yet wire).
+    #: The twin stays in the matrix for manual/plan runs; ``skip_reason`` explains
+    #: the gap so it can be re-included once fixed.
+    rotation_skip: bool = False
+    skip_reason: str = ""
     notes: str = ""
     #: Submit through the runtime orchestrator (``submit --runtime``) instead of
     #: the one-shot serial path. Required for specs with a ``parallel:`` group or
@@ -116,13 +128,29 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "vlm-eval-single.yaml",
         "gpu",
+        # No HF_TOKEN: the served 2B Qwen2-VL is public, so requiring one would
+        # skip the twin on an operator env that simply never set it.
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        notes="Self-hosted VLM; renderer injects vLLM setup.",
+        # A self-hosted VLM cold start is dominated by the vLLM wheel set and the
+        # engine's own warmup, both of which land outside the other twins' range.
+        max_wait_seconds=2400,
+        notes=(
+            "Self-hosted vLLM on the job's own GPU. Bounded by serving the 2B "
+            "Qwen2-VL (config.vlm_model), installing vLLM with uv, pre-fetching "
+            "weights in setup, and having the run script wait for readiness so a "
+            "server that dies during startup fails immediately with its log."
+        ),
     ),
     SubmitLiveCase(
         "vlm-eval-benchmark.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Fixed: the twin now uses the `sample` sentinel, which resolves to "
+            "the packaged benchmark fixture at its install location (a "
+            "repo-relative path did not exist in the rendered job). backend=stub, "
+            "so it validates the submit path without a GPU model."
+        ),
     ),
     SubmitLiveCase(
         "mjlab-eval.yaml",
@@ -133,21 +161,54 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-train.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        notes=(
+            "Trains in-job (`sonic_runtime: local`). The serverless/vm/container "
+            "runtimes delegate to more infrastructure, which a stage that already "
+            "holds a GPU cannot provision."
+        ),
     ),
     SubmitLiveCase(
         "sonic-export.yaml",
         "gpu",
+        # No NGC_API_KEY: the in-job trainer pulls nothing from NGC, and gating
+        # on it would skip the twin instead of running it.
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        notes="train (in-job runtime) -> export; self-contained.",
     ),
     SubmitLiveCase(
         "sonic-eval.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        rotation_skip=True,
+        skip_reason=(
+            "Consume-only by design: a single stage that evaluates an ONNX a "
+            "previous `sonic export` wrote, so a standalone submit has nothing "
+            "to read ('ONNX policy not found'). SONIC eval IS in the rotation "
+            "through sonic-export-eval, which chains train -> export -> eval and "
+            "hands each stage the previous one's S3 artifact."
+        ),
     ),
     SubmitLiveCase(
         "cosmos3-reason.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+    ),
+    SubmitLiveCase(
+        "nurec-reconstruct.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        # No image_tool: the runtime is NVIDIA's vendor NRE container supplied via
+        # resources.image / image_id, not an NPA-built workbench image.
+        # A ~14 GB NGC image pull on a cold node, then 30k 3DGUT steps and a
+        # novel-view render pass. Far slower than the rest of the gpu tier, so it
+        # carries its own deadline instead of forcing it on every case.
+        max_wait_seconds=5400,
+        notes=(
+            "NuRec/NRE reconstruction on an RT-core GPU: real NCore V4 capture -> "
+            "3DGUT Gaussians -> renderable USDZ -> rig-offset novel views -> "
+            "reports/sim2real.rrd. Needs NGC_API_KEY for the nre-ga container and "
+            "HF_TOKEN for the PhysicalAI capture."
+        ),
     ),
     SubmitLiveCase(
         "tokenfactory-rollout-judge.yaml",
@@ -164,12 +225,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sonic-export-eval.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        notes=(
+            "train -> export -> eval, self-contained: the in-job train runtime "
+            "writes checkpoint.pt to S3 and each stage reads the previous "
+            "stage's artifact from there."
+        ),
     ),
     SubmitLiveCase(
         "sonic-locomotion-finetuning.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
-        notes="retarget → train → mjlab",
+        notes=(
+            "retarget → train → mjlab. Retargeting consumes the SOMA/G1 motion "
+            "clips staged in the run bucket (see SONIC_MOTION_FIXTURE_PREFIX in "
+            "the live helpers, overridable with NPA_E2E_SONIC_MOTION_SRC); train "
+            "uses the in-job runtime."
+        ),
     ),
     SubmitLiveCase(
         "isaac-lab-rl-sweep.yaml",
@@ -194,7 +265,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "bdd100k-pipeline.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        notes="11-stage AV pipeline; longest wall-clock.",
+        rotation_skip=True,
+        skip_reason=(
+            "Two reasons, both structural. (1) Every stage talks to a workbench "
+            "SERVICE deployed in-cluster (npa-lancedb:8686, "
+            "npa-detection-training:8790); a standalone submit cannot bring "
+            "those up, and it also wants the raw-bdd100k demo dataset in the run "
+            "bucket. (2) 11 sequential stages, each its own cluster: measured "
+            "~2.2 min per stage of provisioning alone on RTXPRO-6000 (from the "
+            "3-stage SONIC chain), so ~25 min before any real work — over the "
+            "rotation's bounded window once CLIP backfill, three trainings and "
+            "three evals are added. Run it manually against a live workbench."
+        ),
+        notes="11-stage AV pipeline over in-cluster services; longest wall-clock.",
     ),
     SubmitLiveCase(
         "tokenfactory-cosmos-gate.yaml",
@@ -205,7 +288,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "AWS_SECRET_ACCESS_KEY",
         ),
         requires_token_factory=True,
-        notes="Dynamic gate; needs --assume-decision.",
+        notes=(
+            "Dynamic gate; the harness seeds the scene frames and passes "
+            "--assume-decision (see DYNAMIC_SPECS in the live helpers)."
+        ),
     ),
     # --- Plan-only / stub twins (do not burn GPUs on stubs) ---
     SubmitLiveCase(
@@ -261,6 +347,41 @@ def selected_submit_cases() -> list[SubmitLiveCase]:
         for case in SUBMIT_LIVE_MATRIX
         if case.tier in tiers and (not specs or case.spec in specs)
     ]
+
+
+def gpu_submit_cases(
+    *, include_plan_only: bool = False, include_skipped: bool = False
+) -> list[SubmitLiveCase]:
+    """Real-GPU-launching twins, sorted by spec for a deterministic rotation.
+
+    Excludes ``plan_only`` stub twins (they never launch a GPU) and
+    ``rotation_skip`` twins (they cannot pass as a standalone submit today — see
+    each ``skip_reason``), unless asked, so the daily rotation only ever picks a
+    case that actually exercises a GPU and can succeed on its own.
+    """
+
+    cases = [
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.tier in {"gpu", "multi"}
+        and (include_plan_only or not case.plan_only)
+        and (include_skipped or not case.rotation_skip)
+    ]
+    return sorted(cases, key=lambda c: c.spec)
+
+
+def rotating_gpu_submit_case(day_index: int) -> SubmitLiveCase | None:
+    """Pick one real-GPU twin for ``day_index`` (round-robins over days).
+
+    Lets the daily runner exercise a *different* real GPU workflow E2E each day
+    at bounded cost (one managed job) instead of the whole ``gpu and e2e`` blast,
+    cycling through every GPU twin over the rotation window.
+    """
+
+    cases = gpu_submit_cases()
+    if not cases:
+        return None
+    return cases[day_index % len(cases)]
 
 
 def runtime_submit_cases() -> list[SubmitLiveCase]:

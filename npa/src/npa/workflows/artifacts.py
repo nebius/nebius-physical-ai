@@ -43,7 +43,9 @@ except Exception:  # pragma: no cover - embedded backend fallback
         return value
 
 _RERUN_EXTENSIONS = {".rrd"}
-_MCAP_EXTENSIONS = {".mcap"}
+# Recording formats the embedded MCAP viewers open directly. MCAP is the
+# canonical one; Lichtblick/Foxglove also read ROS 1 bags, ROS 2 db3 and PX4 ulog.
+_MCAP_EXTENSIONS = {".mcap", ".bag", ".db3", ".ulg", ".ulog"}
 _VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
 # Browser-native image formats an <img> tag can render directly.
 _WEB_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -58,15 +60,31 @@ _IMAGE_EXTENSIONS = _WEB_IMAGE_EXTENSIONS | _NON_WEB_IMAGE_EXTENSIONS
 def needs_image_transcode(name: str) -> bool:
     """True when ``name`` is an image a browser cannot render natively (→ PNG)."""
     return Path(str(name or "")).suffix.lower() in _NON_WEB_IMAGE_EXTENSIONS
+# 3D scene/asset artifacts. Deliberately DOWNLOAD-ONLY: no browser renders USDZ
+# or PLY, and the agent ships no 3D-asset viewer, so offering them as an inline
+# preview would produce a broken pane. Stating the set explicitly (rather than
+# letting them fall through the mimetypes guesses below) pins that decision and
+# keeps a future `mimetypes` addition -- e.g. a `model/vnd.usdz+zip` entry -- from
+# silently reclassifying a NuRec reconstruction. A run stays viewable through its
+# `.rrd` / `.png` / `.mp4` / `.json` artifacts.
+_MODEL_EXTENSIONS = {".usdz", ".usd", ".usda", ".usdc", ".ply", ".obj", ".glb", ".gltf"}
+
+
+def is_model_artifact(name: str) -> bool:
+    """True when ``name`` is a 3D scene/asset artifact offered as a download."""
+    return Path(str(name or "")).suffix.lower() in _MODEL_EXTENSIONS
+
+
 _JSON_EXTENSIONS = {".json"}
 _TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
 _RENDER_ORDER = {
     "rerun": 0,
-    "video": 1,
-    "image": 2,
-    "json": 3,
-    "text": 4,
-    "download": 5,
+    "mcap": 1,
+    "video": 2,
+    "image": 3,
+    "json": 4,
+    "text": 5,
+    "download": 6,
 }
 
 
@@ -174,6 +192,8 @@ def render_hint_for_object(*, key: str, content_type: str = "") -> str:
         return "video"
     if ext in _IMAGE_EXTENSIONS:
         return "image"
+    if ext in _MODEL_EXTENSIONS:
+        return "download"
     if ext in _JSON_EXTENSIONS:
         return "json"
     if ext in _TEXT_EXTENSIONS:
@@ -214,6 +234,9 @@ def artifact_media_type(filename: str) -> str:
     name = str(filename or "").strip()
     suffix = Path(name).suffix.lower()
     explicit = {
+        # MCAP has no registered IANA type; Foxglove selects its reader from the
+        # URL extension, and octet-stream keeps byte-range streaming intact.
+        ".mcap": "application/octet-stream",
         ".mp4": "video/mp4",
         ".webm": "video/webm",
         ".mov": "video/quicktime",

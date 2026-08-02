@@ -28,16 +28,17 @@ runner = CliRunner()
 def _agent_source() -> str:
     """Source of the agent deploy path: agent.py plus its sibling modules.
 
-    The nginx site body and the embedded viewer layout live in
-    `npa.cli.agent_assets` (agent.py is under a size ratchet), so assertions
-    about what the bootstrap emits have to look at both.
+    agent.py is under a size ratchet, so pieces of it live elsewhere: the nginx
+    site policy in `npa.cli.agent_site` and the embedded viewer layout in
+    `npa.cli.agent_assets`. Source-scanning assertions must see all three.
     """
     from npa.cli import agent as agent_module
     from npa.cli import agent_assets
+    from npa.cli import agent_site as agent_site_module
 
     return "\n".join(
         Path(module.__file__).read_text(encoding="utf-8")
-        for module in (agent_module, agent_assets)
+        for module in (agent_module, agent_assets, agent_site_module)
     )
 
 
@@ -453,7 +454,6 @@ def test_bootstrap_enables_public_https_nginx() -> None:
 
 
 def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
-
     source = _agent_source()
     assert "location /rerun/recordings/" in source
     assert "auth_basic off" in source
@@ -465,7 +465,6 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
 
 
 def test_bootstrap_embeds_lichtblick_viewer() -> None:
-
     source = _agent_source()
     # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
     assert "location /lichtblick/recordings/" in source
@@ -498,7 +497,6 @@ def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
     visits read those recordings off this host; the embed is same-origin and needs
     no CORS grant at all.
     """
-
 
     source = _agent_source()
     recordings_location = source.split("location /lichtblick/recordings/ {{", 1)[1].split(
@@ -549,8 +547,6 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
 
 
 def test_bootstrap_injects_lichtblick_default_layout() -> None:
-    from npa.cli import agent as agent_module
-
     source = _agent_source()
     # The viewer document is exact-matched so nginx can inject a default layout via
     # the upstream-provided placeholder, so the point cloud + camera show on load.
@@ -558,7 +554,9 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';" in source
     assert "def _lichtblick_default_layout_json" in source
 
-    layout = json.loads(agent_module._lichtblick_default_layout_json())
+    from npa.cli import agent_site as agent_site_module
+
+    layout = json.loads(agent_site_module._lichtblick_default_layout_json())
     panels = layout["configById"]
     three_d = next(v for k, v in panels.items() if k.startswith("3D!"))
     assert three_d["topics"]["/heldout/points"]["visible"] is True
@@ -915,7 +913,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
-    assert "resolveRerunRrdUrl" in source
+    # The authenticated blob endpoint is the fallback when the public recording
+    # copy is not published yet. (This used to assert `resolveRerunRrdUrl`, a
+    # helper that no longer existed — the call sites raised ReferenceError inside
+    # a catch, so the substring assertion passed while the fallback was dead.)
+    assert "resolveRerunRecordingUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
     assert "resolve_rrd_proxy_target" in source or "rrd_proxy_uri_allowed" in source
@@ -1437,6 +1439,10 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
+                '<button id="renderModeFoxglove"></button>'
+                '<div id="viewerPaneFoxglove"><div id="foxgloveHost"></div></div>'
+                '<script>function ensureFoxgloveViewer(){} function mountFoxgloveViewer(){} '
+                'fetch("/api/foxglove/config");</script>'
                 '<button id="describeVisual"></button>'
                 '<button id="chatDrawerToggle" class="chat-fab"></button>'
                 '<button id="chatDrawerClose"></button>'
@@ -3182,3 +3188,136 @@ def test_public_ip_quota_gate_skips_an_agent_that_already_has_its_ip(monkeypatch
 
     # Must not raise, and must not even read the quota.
     _agent_check_public_ip_quota("project-x", "tenant-x", "us-central1", agent_exists=True)
+def test_ui_script_calls_no_undefined_local_helper() -> None:
+    """Catch a helper that was deleted (or renamed) but is still called.
+
+    `node --check` only proves the script *parses*; calling a removed function is
+    a runtime ReferenceError that silently breaks a whole handler. Two real cases
+    motivated this: a merge dropped `applyViewerChromeForMode` while `refresh()`
+    still called it (aborting the refresh loop mid-way), and `resolveRerunRrdUrl`
+    had been gone for a while behind a try/catch.
+
+    Scope is deliberately narrow — bare calls to camelCase names, which is what
+    this UI's own helpers look like — so prose and member calls do not trip it.
+    """
+    import re
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    defined = set(re.findall(r"function\s+([A-Za-z_$][\w$]*)\s*\(", script))
+    defined |= set(re.findall(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", script))
+    called = set(re.findall(r"(?<![.\w$])([a-z][a-z0-9]*(?:[A-Z][A-Za-z0-9]*)+)\s*\(", script))
+
+    # Browser globals plus names provided by the dynamically imported glue module.
+    allowed = {
+        "clearInterval",
+        "clearTimeout",
+        "createImageBitmap",
+        "decodeURIComponent",
+        "drawImage",
+        "encodeURIComponent",
+        "isFinite",
+        "isNaN",
+        "localStorage",
+        "mountFoxgloveViewer",
+        "mountSelfHostedViewer",
+        "parseFloat",
+        "parseInt",
+        "requestAnimationFrame",
+        "setInterval",
+        "setTimeout",
+        "structuredClone",
+    }
+    undefined = sorted(called - defined - allowed)
+    assert not undefined, f"UI script calls undefined helper(s): {undefined}"
+
+def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:
+    """The "no recording yet" banner must be re-evaluated after the mount.
+
+    ``cta.hidden = ready && rerunIframeLoaded``, and ``rerunIframeLoaded`` flips
+    to true asynchronously. A status refresh landing before that leaves the
+    banner painted above a viewer that has already loaded the recording, because
+    nothing recomputes it. Reproduced on a real NuRec run: absent on first load,
+    present after a reload.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    mount = html.split("rerunIframeLoaded = true;", 1)[1][:600]
+    assert "updateSimvizCta(" in mount, (
+        "the CTA must be recomputed immediately after the iframe mounts"
+    )
+
+
+def test_ui_treats_a_mounted_viewer_as_proof_a_recording_exists() -> None:
+    """Readiness must not depend on the status fetch alone.
+
+    Recomputing the CTA after the mount is not enough: the recompute reads
+    ``lastSimVizStatus``, which is still empty while the first sim-viz fetch is
+    in flight, so the banner went on claiming "no recording yet" above a viewer
+    that had already decoded and rendered one. Measured at 0.5-4s of overlap on
+    every page load. A mounted iframe holding a resolved recording URL is the
+    more direct evidence, so it has to feed ``ready`` too.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    assert "const mountProvesRecording = Boolean(rerunIframeLoaded && lastRerunRecordingUrl);" in html
+    assert (
+        "const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);"
+        in html
+    ), "a mounted viewer must count towards readiness"
+
+
+def test_ui_viewer_banner_copy_tracks_readiness_both_ways() -> None:
+    """The Rerun banner must assign copy for BOTH states, like its siblings.
+
+    Only the not-ready branch used to set text, so whenever a recording WAS
+    ready but the iframe had not mounted yet, the banner kept its "No
+    run-specific Rerun recording yet" default and contradicted the run's own
+    published recording. Measured against the deployed agent: 593 of 593
+    samples over six page loads showed that false claim while
+    ``/api/sim-viz/status`` reported ``rerun_ready: true``.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    branch = html.split("const mountProvesRecording", 1)[1].split("function setRenderMode", 1)[0]
+    assert "cta.textContent = ready" in branch, "the ready state needs its own copy"
+    assert "No run-specific Rerun recording yet." in branch
+    # The ready copy must not itself deny the recording.
+    ready_copy = branch.split("cta.textContent = ready", 1)[1].split(":", 1)[0]
+    assert "No run-specific" not in ready_copy
+
+
+def test_ui_does_not_claim_no_recording_before_the_status_arrives() -> None:
+    """"Unknown" must not be reported as "absent".
+
+    ``updateSimvizCta`` runs before the first ``/api/sim-viz/status`` response,
+    when ``lastSimVizStatus`` is still null. Treating that as "not ready" made
+    the banner assert there was no recording during the first 1-3s of every page
+    load, for runs that had published one. Measured on the deployed agent: 43
+    false-claim samples across six loads remained after the readiness fix, all
+    inside that pre-status window.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    assert "const haveStatus = Boolean(simViz || lastSimVizStatus);" in html
+    branch = html.split("const mountProvesRecording", 1)[1].split("function setRenderMode", 1)[0]
+    # The definitive "no recording" claim is gated behind having a status.
+    assert "haveStatus" in branch
+    claim_idx = branch.index("No run-specific Rerun recording yet.")
+    gate_idx = branch.index("haveStatus", branch.index("cta.textContent = ready"))
+    assert gate_idx < claim_idx, "the absence claim must be gated on haveStatus"

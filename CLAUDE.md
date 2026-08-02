@@ -27,6 +27,9 @@ making architecture, review, or domain judgments.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
  and query production sensor data as a versioned, lineage-tracked dataset
  (FiftyOne curation + LanceDB query index).
+- `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the
+ `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings
+ (convert/inspect/publish), and the `npa-foxglove-embed` container.
 - `skills/tools/insights/SKILL.md`: lineage graph + common metrics store over
  workflow-run artifacts — non-invasive ingest-run, query, compare, lineage
  traversal, and dashboard (CPU-only, append-only S3 JSONL, LanceDB-optional).
@@ -52,8 +55,16 @@ making architecture, review, or domain judgments.
  toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workflows/physical-ai-data-factory/SKILL.md`: author, run, submit, or
  view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
- OSMO): annotate → Cosmos augment → evaluate/validate gate → re-label →
- FiftyOne curate → Rerun visualize.
+ OSMO): annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label →
+ Cosmos Curator + FiftyOne curate → Rerun visualize. The evaluator and curator
+ are the real Apache-2.0 NVIDIA projects, wrapped as
+ `npa workbench cosmos-evaluator` and `npa workbench cosmos-curate`; see
+ `skills/NOTICE-NVIDIA-COSMOS-OSS` for which upstream code runs where.
+- `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural
+ reconstruction on Nebius — NCore V4 capture (including deriving the
+ `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable
+ USDZ → rig-offset novel views → `reports/sim2real.rrd`. RT-core GPU only
+ (L40S / RTX PRO 6000, never H100/H200).
 - `skills/workflows/onboard-world-model/SKILL.md`: generic playbook for
  onboarding and containerizing a world model (learned action-conditioned
  simulator) as a multi-GPU BYOF registry candidate — containerize, stage a real
@@ -62,6 +73,13 @@ making architecture, review, or domain judgments.
 - `skills/atomic/real-components/SKILL.md`: ensure every advertised workbench
  pipeline stage invokes the real component (Cosmos Transfer, FiftyOne, VLM),
  not an echo/manifest stub masquerading as real work.
+- `skills/atomic/solution-licensing/SKILL.md`: when adding a solution, tool,
+ image, model, or dataset — classify what the artifact actually bakes, decide
+ whether it may be redistributed (`public` vs `restricted`), and record it in
+ the packaging contract where the guards enforce it. Verify the claim against the
+ BUILT image with `npa/scripts/scan_image_omniverse_payload.py`, not by reading
+ the Dockerfile: the Isaac images were cleared that way, and two of the three
+ problems it found were invisible in the Dockerfile.
 - `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
   (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
 
@@ -70,7 +88,7 @@ create a new split skill tree.
 
 ### Partner Capability Roadmap
 
-Onboarding NVIDIA Physical AI / Omniverse capabilities (NuRec, CAD-to-SimReady, USD tooling, defect-image SDG, video data augmentation, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`. Those are not yet implemented in the workbench; add each as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
+Onboarding NVIDIA Physical AI / Omniverse capabilities (CAD-to-SimReady, USD tooling, defect-image SDG, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`; those are not yet implemented in the workbench. **NuRec/NRE has landed** (`skills/workflows/neural-reconstruction/SKILL.md`), as has video data augmentation (`skills/workflows/physical-ai-data-factory/SKILL.md`). Add each remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
 
 ## Project Instructions
 

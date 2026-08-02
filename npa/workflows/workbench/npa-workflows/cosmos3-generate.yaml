@@ -1,0 +1,39 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-generate
+  description: >-
+    Generate a Physical AI image with the Cosmos 3 omni model in the npa-cosmos3
+    container. The image ships the framework but no weights, so the run needs an
+    HF_TOKEN secret to fetch the checkpoint at runtime.
+  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos3-generate.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cosmos3-generate"
+
+  cosmos3_mode: text2image
+  cosmos3_checkpoint: Cosmos3-Nano
+  prompt: "a robot arm sorting colored blocks on a white workbench in a bright robotics lab"
+
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/generated/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 80Gi
+
+initial: generate
+
+states:
+  generate:
+    description: Run a real Cosmos 3 generation and publish the artifact to S3.
+    toolRef: workbench.cosmos3.generate
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}generate.json"
+        schema: npa.cosmos3.generate.v1
+    terminal: true

@@ -79,8 +79,18 @@ def run_container_eval(
     execute: bool = False,
     gpu: str = "",
     timeout: str = "40m",
+    registry: str | None = None,
+    tag: str | None = None,
     on_state_change: Callable[[object], None] | None = None,
 ) -> ContainerRunResult:
+    """Run one container's golden eval.
+
+    ``registry``/``tag`` override the resolved image so a CANDIDATE build can be validated
+    through the real serverless path before its tag is promoted. Without them the only
+    image a golden eval could ever exercise was whatever the canonical tag pointed at,
+    which makes "prove it works, then promote" impossible — you would have to promote
+    first and test afterwards.
+    """
     spec = container(name)
     ge = spec.golden_eval
     mode = "dry-run"
@@ -107,6 +117,8 @@ def run_container_eval(
                 name,
                 gpu_type=gpu or None,
                 timeout=timeout,
+                registry=registry,
+                tag=tag,
                 on_state_change=on_state_change,
             )
         except ServerlessClientError as exc:

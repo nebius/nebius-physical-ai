@@ -93,6 +93,94 @@ def test_cosmos3_fetch_cli_exits_nonzero_on_failed_result(mocker) -> None:
     assert payload["checkpoint"] == "skipped"
 
 
+def test_cosmos3_generate_dry_run_plans_with_guardrails_on(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos3",
+            "generate",
+            "--prompt",
+            "a robot arm sorting blocks",
+            "--output-path",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "planned"
+    assert payload["mode"] == "text2image"
+    assert payload["guardrails"] is True
+    assert payload["weights_baked"] is False
+    assert "--no-guardrails" not in payload["argv"]
+    assert "cosmos_framework.scripts.inference" in payload["argv"]
+
+
+def test_cosmos3_generate_dry_run_opts_out_of_guardrails_explicitly(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos3",
+            "generate",
+            "--prompt",
+            "a robot arm sorting blocks",
+            "--output-path",
+            str(tmp_path / "out"),
+            "--no-guardrails",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["guardrails"] is False
+    assert "--no-guardrails" in payload["argv"]
+
+
+def test_cosmos3_generate_fails_clearly_without_the_runtime(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("COSMOS3_REPO", str(tmp_path / "missing"))
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos3",
+            "generate",
+            "--prompt",
+            "a robot arm sorting blocks",
+            "--output-path",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "runtime is not present" in result.output
+
+
+def test_cosmos3_generate_rejects_a_conditioned_mode_without_input(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos3",
+            "generate",
+            "--mode",
+            "video2video",
+            "--prompt",
+            "a robot arm sorting blocks",
+            "--output-path",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--input-path" in result.output
+
+
 def test_cosmos3_skill_commands_are_not_cli_surface() -> None:
     result = runner.invoke(
         app,

@@ -82,14 +82,18 @@ fi
 case "$VARIANT" in
   baked)
     TAG_SUFFIX=""
-    BASE_IMAGE_DEFAULT="nvcr.io/nvidia/isaac-lab:2.3.2@sha256:388dbc806f48359a964cb9f807feb226da95d0a107f470fdcad9780ea10fe6f2"
+    # Docker Hub CUDA, digest-pinned and freely redistributable. Was
+    # nvcr.io/nvidia/isaac-lab, which baked Omniverse Kit and needed an NGC login.
+    BASE_IMAGE_DEFAULT="nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
-    INSTALL_NVIDIA_DRIVER_USERSPACE=1
-    INSTALL_ISAACSIM_EXTRA=0
-    REQUIRE_TORCH_SM120=0
-    NPA_DRIVER_PROVISIONING="baked"
-    NPA_CUDA_ARCHITECTURES="sm80,sm90"
-    NPA_ISAAC_LAB_INSTALL_MODE="preinstalled-isaac-sim"
+    NPA_ISAAC_VENV="/opt/npa/sim/venv"
+    NPA_ISAAC_SKIP_TORCH=0
+    REQUIRE_TORCH_SM120=1
+    # The container runtime injects the host driver + Vulkan ICD given
+    # NVIDIA_DRIVER_CAPABILITIES=all; nothing driver-related is baked any more.
+    NPA_DRIVER_PROVISIONING="host-mounted"
+    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm120"
+    NPA_ISAAC_LAB_INSTALL_MODE="runtime-fetch-isaac-sim"
     NPA_RUNTIME_USER="ubuntu"
     ;;
   k8s)
@@ -99,13 +103,16 @@ case "$VARIANT" in
     else
       BASE_IMAGE_DEFAULT="npa-base:cuda13-b300-sm80-sm90-sm120-latest"
     fi
-    ISAAC_LAB_PYTHON="/opt/npa/venv/bin/python"
-    INSTALL_NVIDIA_DRIVER_USERSPACE=0
-    INSTALL_ISAACSIM_EXTRA=1
+    # Isaac always goes through the bootstrap shim, in both variants, so the k8s task
+    # templates need no change. The base image's own python venv is reused for
+    # everything else (NPA_ISAAC_SKIP_TORCH=1 keeps its CUDA-matched cu130 torch).
+    ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
+    NPA_ISAAC_VENV="/opt/npa/venv"
+    NPA_ISAAC_SKIP_TORCH=1
     REQUIRE_TORCH_SM120=1
     NPA_DRIVER_PROVISIONING="host-mounted"
     NPA_CUDA_ARCHITECTURES="sm80,sm90,sm120"
-    NPA_ISAAC_LAB_INSTALL_MODE="pip-isaacsim-on-cuda13-sm120"
+    NPA_ISAAC_LAB_INSTALL_MODE="runtime-fetch-isaac-sim"
     NPA_RUNTIME_USER="root"
     IMAGE_NAME="npa-sonic"
     DOCKERFILE="$SCRIPT_DIR/Dockerfile"
@@ -115,8 +122,13 @@ case "$VARIANT" in
     TAG_SUFFIX=""
     BASE_IMAGE_DEFAULT=""
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
-    INSTALL_NVIDIA_DRIVER_USERSPACE=0
-    INSTALL_ISAACSIM_EXTRA=0
+    # The mujoco layer must pip-install with the IMAGE's python, never with
+    # ISAAC_LAB_PYTHON: that is now a bootstrap shim, so using it here would download
+    # 4.5 GB of Isaac Sim during the BUILD and bake it into a layer -- exactly what this
+    # whole change exists to prevent.
+    NPA_IMAGE_PYTHON_DEFAULT="/opt/npa/sim/venv/bin/python"
+    NPA_ISAAC_VENV="/opt/npa/sim/venv"
+    NPA_ISAAC_SKIP_TORCH=1
     REQUIRE_TORCH_SM120=0
     NPA_DRIVER_PROVISIONING="inherited"
     NPA_CUDA_ARCHITECTURES="inherited"
@@ -181,6 +193,14 @@ else:
 PY
 )"
 
+BOOTSTRAP="$SCRIPT_DIR/../common/isaac_bootstrap.sh"
+ISAAC_SIM_VERSION="$(sed -n 's/^ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
+ISAAC_LAB_SRC_COMMIT="$(sed -n 's/^ISAAC_LAB_SRC_COMMIT="${NPA_ISAAC_LAB_SRC_COMMIT:-\(.*\)}"$/\1/p' "$BOOTSTRAP")"
+if [ -z "$ISAAC_SIM_VERSION" ] || [ -z "$ISAAC_LAB_SRC_COMMIT" ]; then
+  echo "ERROR: could not read the Isaac pins out of $BOOTSTRAP" >&2
+  exit 1
+fi
+
 if [ -z "${IMAGE_NAME:-}" ]; then
   IMAGE_NAME="npa-sonic"
 fi
@@ -213,8 +233,10 @@ BUILD_ARGS=(
   --build-arg "SONIC_VERSION=${VERSION}"
   --build-arg "ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION}"
   --build-arg "ISAAC_LAB_PYTHON=${ISAAC_LAB_PYTHON}"
-  --build-arg "INSTALL_NVIDIA_DRIVER_USERSPACE=${INSTALL_NVIDIA_DRIVER_USERSPACE}"
-  --build-arg "INSTALL_ISAACSIM_EXTRA=${INSTALL_ISAACSIM_EXTRA}"
+  --build-arg "ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION}"
+  --build-arg "ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT}"
+  --build-arg "NPA_ISAAC_VENV=${NPA_ISAAC_VENV}"
+  --build-arg "NPA_ISAAC_SKIP_TORCH=${NPA_ISAAC_SKIP_TORCH}"
   --build-arg "REQUIRE_TORCH_SM120=${REQUIRE_TORCH_SM120}"
   --build-arg "NPA_DRIVER_PROVISIONING=${NPA_DRIVER_PROVISIONING}"
   --build-arg "NPA_CUDA_ARCHITECTURES=${NPA_CUDA_ARCHITECTURES}"
@@ -224,6 +246,7 @@ BUILD_ARGS=(
 
 if [ "$VARIANT" = "mujoco" ]; then
   BUILD_ARGS+=(--build-arg "SONIC_MUJOCO_VERSION=${IMAGE_TAG}")
+  BUILD_ARGS+=(--build-arg "NPA_IMAGE_PYTHON=${NPA_IMAGE_PYTHON:-$NPA_IMAGE_PYTHON_DEFAULT}")
 fi
 
 if [ -n "$REGISTRY" ]; then

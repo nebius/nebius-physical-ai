@@ -473,6 +473,26 @@ os._exit(0)
 '''
 
 
+def _isaac_eula_env_entries() -> list[dict[str, str]]:
+    """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
+
+    The Isaac image ships no Isaac Sim and refuses to fetch it (exit 78) unless
+    OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA are set. These jobs invoke
+    /isaac-sim/python.sh, so without forwarding they cannot run at all.
+
+    Read from the submitting process's environment and never defaulted to "YES": the
+    operator driving the pipeline is the one consenting, and hardcoding acceptance here
+    would put us in the position of accepting on their behalf. Unset stays unset, and the
+    job then fails with the bootstrap's actionable refusal instead of silently consenting.
+    """
+
+    return [
+        {"name": name, "value": os.environ[name]}
+        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+        if os.environ.get(name)
+    ]
+
+
 def build_isaac_eval_job_manifest(
     *,
     job_name: str,
@@ -570,7 +590,19 @@ def build_isaac_eval_job_manifest(
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-eval.log) 2>&1\n'
-        'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
+        'if [ -x /isaac-sim/python.sh ]; then\n'
+        '  PY=/isaac-sim/python.sh\n'
+        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
+        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
+        '#!/usr/bin/env bash\n'
+        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
+        'ISPYEOF\n'
+        '  chmod +x /tmp/isaac-python\n'
+        '  PY=/tmp/isaac-python\n'
+        'else\n'
+        '  PY="$(command -v python3 || command -v python || true)"\n'
+        'fi\n'
+        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
@@ -644,6 +676,10 @@ def build_isaac_eval_job_manifest(
                             "name": "eval",
                             "image": image,
                             "imagePullPolicy": "Always",
+                            # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
+                            # write under the prebuilt workspace; current RTX PRO runtime
+                            # requires root for that path. Keep this scoped to BYO Isaac jobs.
+                            "securityContext": {"runAsUser": 0, "runAsGroup": 0},
                             "resources": {
                                 "limits": {gpu_resource: "1"},
                                 "requests": {gpu_resource: "1"},
@@ -652,7 +688,8 @@ def build_isaac_eval_job_manifest(
                                 {"secretRef": {"name": "hf-ngc-tokens"}},
                                 {"secretRef": {"name": "npa-storage-credentials"}},
                             ],
-                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}],
+                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}]
+                            + _isaac_eula_env_entries(),
                             "command": ["/bin/bash", "-lc"],
                             "args": [script],
                         }
@@ -702,7 +739,10 @@ def run_isaac_eval_job(
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
-    job_name = f"s2r-byo-isaac-eval-{run_id}"[:63]
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
+    eval_tag = artifact_tag(_env("NPA_SIM2REAL_EVAL_TAG"))
+    job_name = k8s_job_name("s2r-byo-isaac-eval", run_id, eval_tag)
     per_env_uri = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/per_env_distances.json"
 
     gen = generated_envs or []

@@ -8,6 +8,13 @@ const agentSourcePath = path.join(repoRoot, "src/npa/cli/agent.py");
 const agentUiPath = path.join(repoRoot, "src/npa/cli/agent_ui.html");
 const generatedDir = path.join(__dirname, ".generated");
 const generatedUiPath = path.join(generatedDir, "agent-ui.html");
+// Real @foxglove/embed browser build (devDependency) + the repo's glue module,
+// served exactly the way the agent VM serves them (/foxglove/sdk, /foxglove/app).
+const foxgloveSdkDir = path.join(__dirname, "node_modules/@foxglove/embed/dist");
+const foxgloveHostModulePath = path.join(
+  repoRoot,
+  "src/npa/cli/assets/foxglove/npa-foxglove-host.js"
+);
 
 function extractPythonConstant(source, name, fallback) {
   const re = new RegExp(`^${name}\\s*=\\s*"([^"]*)"`, "m");
@@ -84,6 +91,55 @@ function startMockServer(port) {
     if (url.pathname === "/rerun/recordings/sim2real.rrd") {
       res.writeHead(200, { "content-type": "application/octet-stream" });
       res.end(Buffer.alloc(128, 1));
+      return;
+    }
+    // Foxglove embed assets: the REAL @foxglove/embed npm build (devDependency),
+    // the repo's shared glue module, and a protocol-accurate stand-in for the
+    // Foxglove application (the licensed viewer cannot run in CI).
+    if (url.pathname.startsWith("/foxglove/sdk/")) {
+      const name = path.basename(url.pathname);
+      const sdkFile = path.join(foxgloveSdkDir, name);
+      if (!fs.existsSync(sdkFile)) {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end(`missing SDK asset: ${name} (run npm install in npa/tests/browser)`);
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(fs.readFileSync(sdkFile));
+      return;
+    }
+    if (url.pathname === "/foxglove/app/npa-foxglove-host.js") {
+      res.writeHead(200, {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(fs.readFileSync(foxgloveHostModulePath));
+      return;
+    }
+    if (url.pathname === "/mock-foxglove-app/" || url.pathname === "/mock-foxglove-app") {
+      const fixturePath = path.join(__dirname, "cypress/fixtures/mock_foxglove_app.html");
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(fs.readFileSync(fixturePath, "utf8"));
+      return;
+    }
+    if (url.pathname === "/foxglove/data/" || url.pathname.startsWith("/foxglove/data/")) {
+      // MCAP magic + filler; enough for a range-capable static response.
+      const body = Buffer.concat([
+        Buffer.from([0x89, 0x4d, 0x43, 0x41, 0x50, 0x30, 0x0d, 0x0a]),
+        Buffer.alloc(120, 7),
+      ]);
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "accept-ranges": "bytes",
+        "access-control-allow-origin": "*",
+      });
+      res.end(body);
       return;
     }
     if (url.pathname === "/lichtblick/" || url.pathname === "/lichtblick") {

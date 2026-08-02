@@ -574,3 +574,95 @@ def _write_pick_place_rollout(root: Path) -> Path:
         draw.line((20, 72, x_pos + 8, y_pos + 16), fill=(55, 80, 140), width=3)
         image.save(root / f"frame-{index:03d}.png")
     return root
+
+
+class _FakeResp:
+    def __init__(self, status_code: int, payload) -> None:
+        self.status_code = status_code
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self):
+        return self._payload
+
+
+_OK_PAYLOAD = {
+    "choices": [{"message": {"content": '{"success": true, "score": 0.9, "rationale": "ok"}'}}]
+}
+
+
+class _FakeClient:
+    """Minimal httpx.Client stand-in: fail `fail_times` ConnectErrors, then 200."""
+
+    calls = 0
+    fail_times = 0
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def post(self, url, headers=None, json=None):
+        type(self).calls += 1
+        if type(self).calls <= type(self).fail_times:
+            raise __import__("httpx").ConnectError("Connection refused")
+        return _FakeResp(200, _OK_PAYLOAD)
+
+
+def _call_single(backend: str):
+    return vlm_eval._call_openai_compatible(
+        backend=backend,
+        model="m",
+        endpoint_url="http://127.0.0.1:8000/v1",
+        api_key_env="VLM_EVAL_API_KEY",
+        prompt="p",
+        frames=[],
+        timeout_s=5.0,
+    )
+
+
+def test_self_hosted_retries_connect_errors_then_succeeds(monkeypatch) -> None:
+    # Cold-start warmup: transient connection-refused must be retried, not fatal.
+    _FakeClient.calls = 0
+    _FakeClient.fail_times = 3
+    monkeypatch.setenv("NPA_VLM_READY_TIMEOUT_S", "100")
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(vlm_eval.time, "sleep", lambda _d: None)
+    result = _call_single("self-hosted")
+    assert _FakeClient.calls == 4  # 3 refused + 1 success
+    assert result.score == 0.9
+
+
+def test_api_backend_does_not_retry_connect_error(monkeypatch) -> None:
+    # Hosted API is expected up: a connect error fails fast with the old message.
+    _FakeClient.calls = 0
+    _FakeClient.fail_times = 10_000
+    monkeypatch.setenv("VLM_EVAL_API_KEY", "test-key")  # get past api-key check
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(vlm_eval.time, "sleep", lambda _d: None)
+    with pytest.raises(vlm_eval.VlmEvalError, match="request failed"):
+        _call_single("api")
+    assert _FakeClient.calls == 1  # no retry
+
+
+def test_self_hosted_readiness_times_out_with_clear_message(monkeypatch) -> None:
+    _FakeClient.calls = 0
+    _FakeClient.fail_times = 10_000
+    monkeypatch.setenv("NPA_VLM_READY_TIMEOUT_S", "20")
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(vlm_eval.time, "sleep", lambda _d: None)
+    clock = {"t": 0.0}
+
+    def _now() -> float:
+        clock["t"] += 5.0
+        return clock["t"]
+
+    monkeypatch.setattr(vlm_eval.time, "monotonic", _now)
+    with pytest.raises(vlm_eval.VlmEvalError, match="not ready"):
+        _call_single("self-hosted")

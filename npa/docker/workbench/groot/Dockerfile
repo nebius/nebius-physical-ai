@@ -1,3 +1,16 @@
+# npa-groot: NVIDIA Isaac-GR00T inference, with NVIDIA Isaac fetched at FIRST RUN.
+#
+# This image contains no NVIDIA Isaac Sim or Isaac Lab code. It used to bake
+# `isaaclab[isaacsim,all]` into /opt/isaac-lab/venv (then delete extscache to claw back
+# some size), which put Omniverse Kit in the layers and made the image
+# non-redistributable. Isaac is now downloaded from https://pypi.nvidia.com on first use
+# of /isaac-sim/python.sh, under the OPERATOR's own EULA acceptance; see
+# npa/docker/workbench/common/isaac_bootstrap.sh.
+#
+# GR00T inference itself is unaffected and needs no Isaac and no EULA acceptance: it runs
+# in GROOT_VENV (`python -m npa.smoke.test_groot_functional`). Only the Isaac Lab
+# simulation paths pay the first-run download.
+#
 # Digest pinned 2026-05-12. Tag: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 # To update: re-resolve via registry API and update digest below.
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
@@ -5,6 +18,8 @@ FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac
 ARG GROOT_RUNTIME_VERSION=0.1.0
 ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6
 ARG ISAAC_LAB_VERSION=2.3.2.post1
+ARG ISAAC_SIM_VERSION=5.1.0.0
+ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
 ARG COSMOS_REASON_MODEL=nvidia/Cosmos-Reason2-2B
 ARG COSMOS_REASON_REVISION=9ce19a195e423419c349abfc86fd07178b230561
 
@@ -12,13 +27,22 @@ LABEL npa.tool="groot" \
       npa.version="${GROOT_RUNTIME_VERSION}" \
       npa.groot_ref="${GROOT_REPO_REF}" \
       npa.isaac_lab_version="${ISAAC_LAB_VERSION}" \
+      npa.isaac_provisioning="runtime-fetch" \
+      npa.architecture="no-baked-omniverse-kit" \
       npa.cosmos_reason_revision="${COSMOS_REASON_REVISION}"
 
+# NOTE the absence of ACCEPT_EULA / ISAACSIM_ACCEPT_EULA / OMNI_KIT_ACCEPT_EULA /
+# PRIVACY_CONSENT. All four used to be baked here. Acceptance is now the operator's to
+# give at run time, which is the whole legal mechanism, and
+# npa/tests/docker/test_packaging_contract.py fails the build if any of them reappears.
 ENV DEBIAN_FRONTEND=noninteractive \
-    ACCEPT_EULA=Y \
-    ISAACSIM_ACCEPT_EULA=YES \
-    OMNI_KIT_ACCEPT_EULA=YES \
-    PRIVACY_CONSENT=Y \
+    ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION} \
+    NPA_ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT} \
+    NPA_ISAAC_CACHE_DIR=/opt/isaac-cache \
+    NPA_ISAAC_BASE_PYTHON=/opt/isaac-lab/venv/bin/python \
+    NPA_IMAGE_PYTHON=/opt/isaac-lab/venv/bin/python \
+    NPA_ISAAC_WHEELS_FILE=/opt/npa/docker/workbench/common/isaac-nvidia-wheels.txt \
+    ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
     GROOT_RUNTIME_VERSION=${GROOT_RUNTIME_VERSION} \
     GROOT_REPO_REF=${GROOT_REPO_REF} \
     ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION} \
@@ -214,12 +238,25 @@ RUN cd "${GROOT_REPO}" \
       "wheel>=0.46.2" \
     && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true)
 
-RUN python3.11 -m venv /opt/isaac-lab/venv \
-    && /opt/isaac-lab/venv/bin/python -m pip install --upgrade pip setuptools wheel \
-    && /opt/isaac-lab/venv/bin/python -m pip install \
-      "isaaclab[isaacsim,all]==${ISAAC_LAB_VERSION}" \
-      --extra-index-url https://pypi.nvidia.com \
-    && /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
+# The Isaac side of the image: python3.11 + PyTorch + the OSS dependency closure Isaac
+# needs, the runtime-fetch bootstrap, and the /isaac-sim/python.sh shim. What used to be
+# here instead was `pip install "isaaclab[isaacsim,all]"` - i.e. Omniverse Kit, in the
+# layers. The venv path is unchanged so the e2e shell harnesses keep working.
+USER root
+COPY docker/workbench/common /opt/npa/docker/workbench/common
+RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
+    && NPA_RUNTIME_USER=ubuntu \
+       NPA_ISAAC_VENV=/opt/isaac-lab/venv \
+       NPA_ISAAC_SKIP_TORCH=0 \
+       REQUIRE_TORCH_SM120=1 \
+       NPA_INSTALL_SKYPILOT_PREREQS=0 \
+       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    && chown -R ubuntu:ubuntu /opt/isaac-lab
+# common/ deliberately stays root-owned 0755: the bootstrap downloads and executes code at
+# run time, so the runtime user must not be able to rewrite it.
+USER ubuntu
+
+RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "GitPython>=3.1.50" \
       "PyJWT>=2.13.0" \
       "aiohttp>=3.13.3" \
@@ -260,19 +297,28 @@ Path("/opt/groot/server.py").write_text(_build_server_py(DEFAULT_MODEL, DEFAULT_
 print(f"GROOT_BUILD_IMPORT_OK {actual}")
 PY
 
+# Assert the ABSENCE of a baked Isaac install - the inverse of the old
+# ISAAC_LAB_BUILD_IMPORT_OK check, which is exactly the assertion a runtime-fetch image
+# must not be able to make. The bootstrap verifies the versions after it installs.
 RUN /opt/isaac-lab/venv/bin/python - <<'PY' \
     && "${GROOT_VENV}/bin/python" -m py_compile \
       /opt/groot/server.py \
       /opt/npa/docker/workbench/groot/smoke_env.py \
       /opt/npa/docker/workbench/groot/smoke_functional.py
-import os
+import importlib.util
 from importlib import metadata
 
-expected = os.environ["ISAAC_LAB_VERSION"]
-actual = metadata.version("isaaclab")
-if actual != expected:
-    raise RuntimeError(f"expected isaaclab {expected}, found {actual}")
-print(f"ISAAC_LAB_BUILD_IMPORT_OK {actual}")
+leaked = sorted(
+    dist.metadata["Name"]
+    for dist in metadata.distributions()
+    if (dist.metadata["Name"] or "").lower().replace("_", "-").startswith(("isaacsim", "isaaclab"))
+)
+if leaked:
+    raise SystemExit(f"FATAL: Isaac packages baked into the image: {leaked}")
+for module in ("isaacsim", "isaaclab"):
+    if importlib.util.find_spec(module) is not None:
+        raise SystemExit(f"FATAL: {module} is importable at build time; it must be runtime-fetched")
+print("NPA_GROOT_NO_BAKED_ISAAC_OK")
 PY
 
 USER root
@@ -289,10 +335,9 @@ RUN apt-get update \
       software-properties-common \
     && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /opt/nvidia/nsight-compute \
-    && rm -rf /opt/isaac-lab/venv/lib/python3.11/site-packages/isaacsim/extscache \
-    && find /opt/isaac-lab/venv/lib/python3.11/site-packages/isaacsim \
-      -type d \( -name "pip_prebundle" -o -name "pip_prebundle_*" -o -name "pip_requests" \) \
-      -prune -exec rm -rf {} + \
+    `# The isaacsim extscache / pip_prebundle cleanup that used to be here existed only` \
+    `# to claw back size from a BAKED Isaac install. There is no baked Isaac any more,` \
+    `# so it is gone rather than kept as a no-op.` \
     && rm -rf /home/ubuntu/.cache /root/.cache \
     && rm -rf /var/lib/apt/lists/*
 

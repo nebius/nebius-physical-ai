@@ -14,6 +14,14 @@ resources:
   # image with npa plus upstream SONIC data_process scripts.
   image_id: "docker:${NPA_RETARGETING_IMAGE}"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   NPA_RETARGETING_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-retargeting:0.1.1"
   NPA_RETARGETING_UPSTREAM_REF: "a9d20b2ac0949244d94461a1a3263f38c5027c4a"
   NPA_PIPELINE_RUN_ID: "<run-id>"
@@ -67,6 +75,14 @@ resources:
   memory: 200
   image_id: "docker:example.invalid/npa-sonic-mujoco:0.1.3-mvp"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   POLICY_IMAGE: "example.invalid/npa-sonic-mujoco:0.1.3-mvp"
   SONIC_PAYLOAD_MODE: "direct"
   SONIC_GPU_TYPE: "h100"
@@ -247,6 +263,14 @@ resources:
   memory: 200
   image_id: "docker:example.invalid/npa-sonic-mujoco:0.1.3-mvp"
 envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
   POLICY_IMAGE: "example.invalid/npa-sonic-mujoco:0.1.3-mvp"
   SONIC_PAYLOAD_MODE: "direct"
   SONIC_GPU_TYPE: "h100"

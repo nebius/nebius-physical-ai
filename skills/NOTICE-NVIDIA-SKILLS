@@ -14,10 +14,37 @@ NVIDIA agent skills:
   - skills/physical-ai-neural-reconstruction     (Apache-2.0)
   - skills/physical-ai-defect-image-generation   (CC-BY-4.0 AND Apache-2.0)
 
+The NPA `neural-reconstruction` skill and the capability it documents
+(`npa/src/npa/workbench/nurec/`, `npa/src/npa/cli/nurec/`,
+`npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml`) drive NVIDIA's public
+NuRec / Neural Reconstruction Engine containers and public PhysicalAI datasets
+from Nebius infrastructure. The recipe knowledge was adapted from the NVIDIA
+Omniverse NuRec agent skills and the NVIDIA NCore data library:
+
+  https://github.com/NVIDIA/nurec-skills   (License: Apache-2.0 AND CC-BY-4.0)
+  - skills/nre
+  - skills/ncore
+  - skills/physical-ai-datasets
+  https://github.com/NVIDIA/ncore          (License: Apache-2.0)
+  - tools/data_converter/colmap
+  https://github.com/NVIDIA/skills         (License: Apache-2.0)
+  - skills/physical-ai-neural-reconstruction, pinned at commit 0122ea0
+    (2026-08-01). The NuRec router skill. Its capability picker table, its
+    easy-mix-ups list, its safe secret-verification pattern, and several
+    troubleshooting rows were adapted into
+    skills/workflows/neural-reconstruction/SKILL.md. Upstream is a router that
+    executes nothing and defers to sibling skills; the NPA skill is the
+    workbench implementation, so the picker is re-pointed at real
+    `npa workbench nurec` verbs and rows NPA does not implement are marked as
+    upstream-owned rather than reproduced.
+
+NPA does not redistribute NVIDIA source, container images, or model weights. NRE
+runs from the public NGC `-ga` repositories with the operator's own NGC API key.
+
 NPA does not use NVIDIA OSMO. The upstream skills orchestrate on OSMO; the NPA
-skill orchestrates on SkyPilot and composes existing NPA workbench tools. Only
-the NPA-native `physical-ai-data-factory` workflow is shipped as a live skill;
-the other capabilities remain design/roadmap in
+skills orchestrate on SkyPilot and compose existing NPA workbench tools. The
+NPA-native `physical-ai-data-factory` and `neural-reconstruction` capabilities are
+shipped as live skills; the remaining capabilities stay design/roadmap in
 `docs/architecture/partner-skills-roadmap.md` until they land on Nebius +
 SkyPilot with tests.
 

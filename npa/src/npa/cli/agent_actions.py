@@ -233,31 +233,99 @@ def action_digest(action: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    """Best-effort extraction of a single JSON object from model output.
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
-    Accepts raw JSON, fenced ```json blocks, or a JSON object embedded in prose.
-    Returns ``None`` when nothing parseable is found.
+
+def strip_reasoning_trace(text: str) -> str:
+    """Drop ``<think>`` reasoning traces from model output.
+
+    Reasoning models on Token Factory (Cosmos 3, Qwen 3 — the cheap planner tier)
+    emit a ``<think>...</think>`` block before the answer, and that block routinely
+    contains JSON-looking snippets while the model deliberates over tool args. Those
+    stray braces must never be mistaken for the planner's actual decision.
+
+    Mirrors ``npa.clients.token_factory.split_reasoning`` semantics; reimplemented
+    locally because this module is embedded verbatim into the agent-VM backend and
+    cannot import from the wider package.
+    """
+    raw = str(text or "")
+    stripped = _THINK_BLOCK_RE.sub(" ", raw)
+    if "<think>" in stripped and "</think>" not in stripped:
+        # Truncated mid-thought (finish_reason=length): nothing after it is usable.
+        stripped = stripped.split("<think>", 1)[0]
+    return stripped.strip()
+
+
+def _balanced_json_spans(text: str) -> list[str]:
+    """Return balanced ``{...}`` spans in order of appearance.
+
+    A greedy ``\\{.*\\}`` match spans from the first brace anywhere in the text to
+    the last one, which silently corrupts output that mixes prose (or a reasoning
+    trace) with JSON. Brace matching that honors string literals and escapes is the
+    only way to recover the real object.
+    """
+    spans: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                spans.append(text[start : index + 1])
+                start = -1
+    return spans
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Best-effort extraction of the planner's JSON object from model output.
+
+    Accepts raw JSON, fenced ```json blocks, or an object embedded in prose or
+    trailing a ``<think>`` trace. Candidates are tried reasoning-stripped first and
+    last-object-first (the decision is emitted last), and an object carrying
+    ``tool``/``final`` wins over an incidental one (e.g. an args dict the model
+    echoed while reasoning). Returns ``None`` when nothing parseable is found.
     """
     raw = str(text or "").strip()
     if not raw:
         return None
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    visible = strip_reasoning_trace(raw)
     candidates: list[str] = []
-    if fenced:
-        candidates.append(fenced.group(1))
-    candidates.append(raw)
-    brace = re.search(r"\{.*\}", raw, re.DOTALL)
-    if brace:
-        candidates.append(brace.group(0))
+    for source in (visible, raw):
+        if not source:
+            continue
+        candidates.extend(match.group(1) for match in _FENCED_JSON_RE.finditer(source))
+        candidates.append(source)
+        candidates.extend(reversed(_balanced_json_spans(source)))
+    fallback: dict[str, Any] | None = None
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
         except (ValueError, TypeError):
             continue
-        if isinstance(parsed, dict):
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("tool") or parsed.get("final") is not None:
             return parsed
-    return None
+        if fallback is None:
+            fallback = parsed
+    return fallback
 
 
 def _message_content(data: Any) -> str:
@@ -316,7 +384,15 @@ def _planner_messages(
         '{\"thought\": \"...\", \"final\": \"<markdown answer grounded in observations>\"}\n'
         "Rules: only call tools from the catalog; prefer read-only tools first; "
         "never claim a run/stage is complete unless an observation confirms it; "
-        "state-changing tools will require operator confirmation.\n\n"
+        "state-changing tools will require operator confirmation.\n"
+        # Faithfulness rule: measured 4/5 unfaithful scalar answers without it --
+        # the planner reported "40" (a metric value that appeared elsewhere in the
+        # same observation) when the observation's total_records was 73.
+        "Grounding: every number, run id, and URI in your final answer must be "
+        "copied verbatim from an observation field. Name the field you took it "
+        "from. Never sum, average, recompute, or estimate a value the tools "
+        "already returned, and never fill a gap with a plausible-looking value: "
+        "if an observation does not contain the answer, say so.\n\n"
         "Tool catalog:\n" + "\n".join(catalog_lines)
     )
     if live_context:
@@ -334,6 +410,138 @@ def _planner_messages(
     ]
 
 
+PLAN_RETRY_NUDGE = (
+    "Your previous reply could not be parsed. Reply with ONE JSON object and nothing "
+    "else — no prose, no reasoning trace, no code fence. Either "
+    '{"thought": "...", "tool": "<name>", "args": {...}} or '
+    '{"thought": "...", "final": "<answer grounded in the observations>"}.'
+)
+
+NO_PLAN_REPLY = "Could not determine a next action from the planner."
+
+
+def summarize_observations(observations: Sequence[Mapping[str, Any]]) -> str:
+    """Deterministically report what the tools actually returned (no model call).
+
+    Used when the planner cannot produce a final answer: throwing away real tool
+    observations and replying with a bare "no plan" is both unhelpful and unsafe —
+    it hides the very evidence the answer must be grounded in. This states only what
+    the observations contain (an empty result set is reported as "no runs found"),
+    so it can never invent a run, metric, or value.
+    """
+    lines: list[str] = []
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        tool = str(observation.get("tool") or "tool")
+        if observation.get("rejected"):
+            lines.append(f"- `{tool}`: rejected ({observation['rejected']}).")
+            continue
+        result = observation.get("result", observation.get("error"))
+        if not isinstance(result, Mapping):
+            lines.append(f"- `{tool}`: {str(result)[:200]}")
+            continue
+        if result.get("error"):
+            lines.append(f"- `{tool}`: error — {str(result['error'])[:200]}")
+            continue
+        if "count" in result:
+            count = result.get("count")
+            raw_records = result.get("records")
+            records = raw_records if isinstance(raw_records, list) else []
+            run_ids: list[str] = []
+            for record in records:
+                if isinstance(record, Mapping):
+                    run_id = str(record.get("run_id") or "")
+                    if run_id and run_id not in run_ids:
+                        run_ids.append(run_id)
+            if not count:
+                lines.append(f"- `{tool}`: no runs found (0 matching records in the store).")
+            else:
+                detail = f" across runs: {', '.join(run_ids[:10])}" if run_ids else ""
+                lines.append(f"- `{tool}`: {count} matching record(s){detail}.")
+            continue
+        if "total_records" in result:
+            total = result.get("total_records")
+            runs = result.get("runs") if isinstance(result.get("runs"), list) else []
+            if not total:
+                lines.append(f"- `{tool}`: store is empty (0 records) — no runs found.")
+            else:
+                detail = f"; runs: {', '.join(str(r) for r in runs[:10])}" if runs else ""
+                lines.append(f"- `{tool}`: {total} record(s) in the store{detail}.")
+            continue
+        try:
+            compact = json.dumps(result, sort_keys=True)
+        except (TypeError, ValueError):
+            compact = str(result)
+        lines.append(f"- `{tool}`: {compact[:400]}")
+    if not lines:
+        return ""
+    return (
+        "The planner did not return a usable next step. Here is exactly what the "
+        "read-only tools returned:\n" + "\n".join(lines)
+    )
+
+
+# Fields that identify a metric record well enough for the planner to act on it
+# (pick a run, compare a pair) without carrying every URI/lineage blob.
+_RECORD_SUMMARY_FIELDS = (
+    "run_id",
+    "metric_name",
+    "value",
+    "unit",
+    "workflow",
+    "stage",
+    "tool",
+    "labels",
+)
+
+#: Smallest set that still lets the planner act on a record (pick a run, compare a
+#: pair). Used when even one fully-summarized record exceeds the size budget.
+_RECORD_IDENTITY_FIELDS = ("run_id", "metric_name", "value")
+
+
+def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[str, Any] | None:
+    """Shrink a record-bearing observation while keeping its structure intact.
+
+    Dropping to a flat text preview is what breaks the planner: it can no longer
+    read run ids out of the result, so it either stalls or invents a placeholder
+    id. Keeping the identifying fields of as many records as fit preserves the
+    grounding the next tool call needs.
+    """
+    records = observation.get("records")
+    if not isinstance(records, list) or not records:
+        return None
+    base = {key: value for key, value in observation.items() if key != "records"}
+    # Widest field set first; the identity-only set is the last line of defence so
+    # that even a single record carrying a huge labels blob still yields a readable
+    # run id instead of collapsing to a text preview -- the exact failure this
+    # summarizer exists to prevent.
+    for fields in (_RECORD_SUMMARY_FIELDS, _RECORD_IDENTITY_FIELDS):
+        summarized = [
+            {field: record.get(field) for field in fields if field in record}
+            for record in records
+            if isinstance(record, Mapping)
+        ]
+        if not summarized:
+            continue
+        kept = len(summarized)
+        while kept > 0:
+            candidate = dict(base)
+            candidate["records"] = summarized[:kept]
+            if kept < len(summarized):
+                candidate["records_omitted"] = len(summarized) - kept
+            candidate["records_summarized"] = True
+            try:
+                if len(json.dumps(candidate, sort_keys=True)) <= limit:
+                    return candidate
+            except (TypeError, ValueError):
+                return None
+            # Halve while there is room to, then try a single record before
+            # falling through to the narrower field set.
+            kept = kept // 2 if kept > 1 else 0
+    return None
+
+
 def _observe(observation: Any, *, limit: int = 4000) -> Any:
     """Bound the size of a tool observation fed back into the planner."""
     try:
@@ -342,6 +550,10 @@ def _observe(observation: Any, *, limit: int = 4000) -> Any:
         text = str(observation)
     if len(text) <= limit:
         return observation
+    if isinstance(observation, Mapping):
+        summarized = _summarize_records(observation, limit=limit)
+        if summarized is not None:
+            return summarized
     return {"truncated": True, "preview": text[:limit]}
 
 
@@ -392,6 +604,7 @@ def run_action_loop(
     proposed_action: dict[str, Any] | None = None
 
     hard_cap = max(1, int(max_steps))
+    plan_retry_used = False
     goal_text = str(goal or "").strip()
     if not goal_text:
         return {
@@ -427,6 +640,21 @@ def run_action_loop(
             break
         total_tokens += _tokens_from(data)
         plan = _extract_json_object(_message_content(data))
+        if not isinstance(plan, dict) and not plan_retry_used:
+            # One bounded corrective re-ask before abandoning the turn: a single
+            # unparseable planner reply must not discard the observations already
+            # gathered. Costs at most one extra cheap call per loop.
+            plan_retry_used = True
+            try:
+                retry_data = model_call(
+                    list(messages) + [{"role": "user", "content": PLAN_RETRY_NUDGE}],
+                    tier=tier,
+                )
+            except Exception:  # noqa: BLE001 - fall through to the no-plan handling
+                retry_data = None
+            if retry_data is not None:
+                total_tokens += _tokens_from(retry_data)
+                plan = _extract_json_object(_message_content(retry_data))
         if not isinstance(plan, dict):
             steps.append(
                 {
@@ -434,10 +662,12 @@ def run_action_loop(
                     "phase": "plan",
                     "status": "error",
                     "error": "planner did not return a JSON object",
+                    "retried": plan_retry_used,
                 }
             )
             stopped_reason = STOP_NO_PLAN
-            reply = "Could not determine a next action from the planner."
+            # Prefer a truthful, observation-grounded answer over a bare failure.
+            reply = summarize_observations(observations) or NO_PLAN_REPLY
             break
 
         if plan.get("final") is not None and not plan.get("tool"):
@@ -544,10 +774,13 @@ def run_action_loop(
     else:
         stopped_reason = STOP_MAX_STEPS
         if not reply:
+            summary = summarize_observations(observations)
             reply = (
                 "Reached the maximum number of steps without a final answer. "
                 "Observations gathered are in the step trace."
             )
+            if summary:
+                reply = f"{reply}\n\n{summary}"
 
     ok = stopped_reason in {STOP_DONE, STOP_NEEDS_CONFIRMATION}
     return {

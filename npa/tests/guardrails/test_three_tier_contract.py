@@ -249,9 +249,17 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Tier-0 BYOF onboarding CLI (script-backed; not a FastAPI service).
         "byof",
         "cosmos",
+        # NVIDIA Cosmos OSS wrappers: they drive upstream code in-process (curator
+        # stages) or hosted Token Factory calls (evaluator), so there is no service
+        # tier to keep coherent with a YAML env block.
+        "cosmos-curate",
+        "cosmos-evaluator",
         "data",
         "dataset",
         "fiftyone",
+        # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
+        # SkyPilot task surface (the viewer runs in the browser / static image).
+        "foxglove",
         "genesis",
         "golden-eval",
         "groot",
@@ -263,6 +271,13 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Static web viewer (caddy static server; no skypilot three-tier YAML).
         "lichtblick",
         "mjlab",
+        # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
+        # passthrough, so the inspect-based CapabilityContract cannot express them.
+        # CLI <-> SDK <-> YAML coherence is enforced instead by
+        # npa/tests/workbench/test_nurec_access.py::
+        # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
+        # argv flag against the real Typer options.
+        "nurec",
         "scenario-gen",
         "sim2real",
         "token-factory",

@@ -49,6 +49,42 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "per_env_distances.json" in args           # uploads measured distances
 
 
+def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
+    captured: dict[str, str] = {}
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def fake_build(**kwargs):
+        captured["job_name"] = kwargs["job_name"]
+        captured["per_env_s3_uri"] = kwargs["per_env_s3_uri"]
+        captured["renders_s3_prefix"] = kwargs["renders_s3_prefix"]
+        return {"kind": "Job"}
+
+    monkeypatch.setattr(ev, "build_isaac_eval_job_manifest", fake_build)
+    monkeypatch.setattr(ev, "_kubectl", lambda *a, **k: _Proc())
+    monkeypatch.setattr(ev, "_download_json", lambda _uri: {"object_goal_distances": [0.01]})
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
+    monkeypatch.setenv("NPA_SIM2REAL_EVAL_TAG", "outer-02")
+
+    rows = ev.run_isaac_eval_job(
+        "myrun",
+        checkpoint_uri="s3://bkt/run/model_latest.pt",
+        num_envs=1,
+        generated_envs=[],
+    )
+
+    assert rows[0]["success"] is True
+    assert captured["job_name"].endswith("outer-02")
+    assert captured["per_env_s3_uri"].endswith(
+        "/byo-eval/s2r-byo-isaac-eval-myrun-outer-02/per_env_distances.json"
+    )
+    assert captured["renders_s3_prefix"].endswith("/byo-eval/s2r-byo-isaac-eval-myrun-outer-02/renders")
+
+
 def test_dryrun_main_writes_normalizable_report(tmp_path, monkeypatch):
     """Dry-run output must flow through the engine's _normalize_heldout_report."""
 
