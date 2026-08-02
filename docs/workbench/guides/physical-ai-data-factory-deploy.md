@@ -277,11 +277,11 @@ npa workbench workflow submit "$SPEC" --run-id preflight --plan-only \
   --var bucket=<your-artifact-bucket> | grep -E 'image_id|accelerators'
 ```
 
-> **If your shell sources `~/.npa/live-e2e.env`, `unset
-> NPA_E2E_CLEAR_WORKBENCH_IMAGES` first.** The submit CLI honors it by clearing
-> *every* image pin, which silently drops the Cosmos Transfer GPU image, the
-> evaluator, and the curator — the run then "succeeds" having done none of the real
-> work. The plan-only `image_id` check above catches this.
+> **Do not submit with cleared workbench images.** The submit CLI no longer treats
+> `NPA_E2E_CLEAR_WORKBENCH_IMAGES` as a global override; it only clears image pins
+> when you pass `--image none` explicitly. The plan-only `image_id` check above
+> catches accidental unpinned submits before a run silently skips the real Cosmos
+> Transfer, evaluator, or curator images.
 
 Also `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN`: the Nebius provider prefers an
 ambient (often expired) token over the fresh CLI one.

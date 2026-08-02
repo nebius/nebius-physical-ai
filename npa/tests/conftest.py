@@ -70,8 +70,8 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "SKYPILOT_DOCKER_PASSWORD",
     # Operator knobs that product code reads and that therefore change render or
     # tool behavior. A dev VM sources these from ~/.npa/live-e2e.env for live
-    # submits; without scrubbing, e.g. NPA_E2E_CLEAR_WORKBENCH_IMAGES=1 clears
-    # every image pin and the render tests assert against an unpinned plan.
+    # submits; without scrubbing, e.g. GPU accelerator or source-overlay values
+    # make render tests assert against the operator's live profile.
     "NPA_E2E_CLEAR_WORKBENCH_IMAGES",
     "NPA_SRC_S3_URI",
     "NPA_SRC_OVERLAY",

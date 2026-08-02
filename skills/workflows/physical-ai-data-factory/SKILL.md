@@ -208,8 +208,8 @@ the image and as the image's own user, `$(prefix_cmd) apt install openssh-server
 rsync -y` then `service ssh restart`, where `prefix_cmd` is `sudo` for a non-root
 user. An image missing `sudo` or those packages fails that script, the container
 exits, and SkyPilot reports `container not found ("ray-node")` — which reads like a
-scheduling fault and is the reason operators reached for
-`NPA_E2E_CLEAR_WORKBENCH_IMAGES=1`. All three Cosmos images install
+scheduling fault and is the reason operators historically reached for unpinned
+submits. All three Cosmos images install
 `openssh-server`, `rsync`, and `sudo` and grant their user passwordless sudo;
 `npa/tests/docker/test_cosmos_oss_images.py` fails if that regresses. The same test
 covers the entrypoint contract: a bare `ENTRYPOINT ["/bin/bash"]` swallows the args
