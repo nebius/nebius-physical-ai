@@ -106,6 +106,8 @@ B200 and B300 instances could not be placed in this tenant during validation: se
 
 Runs 1 and 2 used [`npa/scripts/blackwell-gpu-validation-job.yaml`](../../npa/scripts/blackwell-gpu-validation-job.yaml) against already-deployed Kubernetes GPU pools. Each does three checks, so a pass means something: the target architecture must pass *with native SASS*, a different CUDA major must **fail** (proving the checker cannot hand out a false "Blackwell ready" on the wrong GPU family), and then the capability smoke runs real kernels.
 
+The job runs non-root with dropped capabilities and a read-only root filesystem. flash-attn-4's CuTe kernels JIT-compile at runtime, so `HOME` and every torch/CUDA cache point at a scratch `emptyDir`; the H100 run above confirms the kernel still compiles and executes under those constraints.
+
 ## The import check that lied
 
 `npa-base`'s golden eval used to be `python -c "import torch; assert torch.cuda.is_available(); import flash_attn"`. It passed on every Blackwell part for months. The first time anyone executed the kernel — run 2 above — it failed on `sm_120`.
