@@ -4183,7 +4183,14 @@
           cta.hidden = true;
           return;
         }
-        const ready = Boolean(status.rerun_ready || status.rrd_uri);
+        // A mounted iframe that resolved a recording URL is itself proof a
+        // recording exists -- more direct evidence than the status endpoint.
+        // Deriving readiness from the status alone meant that during boot, while
+        // the first sim-viz fetch was still in flight, the banner claimed "no
+        // recording yet" directly above a viewer that had already decoded and
+        // rendered it. Measured at 0.5-4s of overlap on every single page load.
+        const mountProvesRecording = Boolean(rerunIframeLoaded && lastRerunRecordingUrl);
+        const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);
         cta.hidden = ready && rerunIframeLoaded;
         if (!ready) {
           cta.textContent =

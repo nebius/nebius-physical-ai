@@ -2376,3 +2376,26 @@ def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:
     assert "updateSimvizCta(" in mount, (
         "the CTA must be recomputed immediately after the iframe mounts"
     )
+
+
+def test_ui_treats_a_mounted_viewer_as_proof_a_recording_exists() -> None:
+    """Readiness must not depend on the status fetch alone.
+
+    Recomputing the CTA after the mount is not enough: the recompute reads
+    ``lastSimVizStatus``, which is still empty while the first sim-viz fetch is
+    in flight, so the banner went on claiming "no recording yet" above a viewer
+    that had already decoded and rendered one. Measured at 0.5-4s of overlap on
+    every page load. A mounted iframe holding a resolved recording URL is the
+    more direct evidence, so it has to feed ``ready`` too.
+    """
+    from pathlib import Path
+
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    assert "const mountProvesRecording = Boolean(rerunIframeLoaded && lastRerunRecordingUrl);" in html
+    assert (
+        "const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);"
+        in html
+    ), "a mounted viewer must count towards readiness"
