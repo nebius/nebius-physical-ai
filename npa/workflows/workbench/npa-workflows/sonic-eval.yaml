@@ -10,9 +10,13 @@ config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/sonic-eval"
   episodes: "8"
-  env: smoke
+  env: locomotion-smoke
 
+  # Consume-only twin: point onnx_uri at an ONNX a previous `sonic export`
+  # wrote. sonic-export-eval runs the whole train -> export -> eval chain when
+  # there is nothing to consume yet.
   onnx_uri: "s3://{{config.bucket}}/{{config.prefix}}/sonic_policy.onnx"
+  eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval.json"
 
 resources:
   gpu:
@@ -28,7 +32,10 @@ states:
     description: Evaluate an exported SONIC ONNX locomotion policy.
     toolRef: workbench.sonic.eval
     resources: gpu
+    inputs:
+      - uri: "{{config.onnx_uri}}"
+        schema: npa.workbench.sonic.onnx.v1
     outputs:
-      - uri: "s3://{{config.bucket}}/{{config.prefix}}/eval.json"
+      - uri: "{{config.eval_uri}}"
         schema: npa.workbench.sonic.eval.v1
     terminal: true

@@ -228,6 +228,27 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     assert service["spec"]["ports"][1]["port"] == DEFAULT_GRPC_PORT
 
 
+def test_manifest_omits_cors_flag_for_preinstalled_rerun_031_image(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.rerun_serve.resolve_project_storage",
+        return_value=_storage(),
+    )
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        rerun_image="registry.example/npa-rerun-viewer:0.31.4",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    manifest = build_rerun_serve_manifest(config)
+    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    rerun_container = next(
+        c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "rerun"
+    )
+
+    assert "--cors-allow-origin" not in rerun_container["command"][-1]
+    assert "pip install" not in rerun_container["command"][-1]
+
+
 def test_public_viewer_url_points_at_external_grpc_proxy() -> None:
     url = public_viewer_url("203.0.113.10", http_port=9090, grpc_port=9876)
     assert url.startswith("http://203.0.113.10:9090/?url=")

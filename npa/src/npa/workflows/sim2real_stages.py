@@ -6,6 +6,7 @@ import json
 import os
 import random
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -103,8 +104,16 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
         )
         manifest = result["manifest"]
         augmented_frames_uri = result["augmented_frames_uri"]
+        mirrored = _mirror_augment_frames(augmented_frames_uri, augment_dir)
         tier = "WORKS"
-        evidence = "Executed Cosmos Transfer 2.5 via sibling Kubernetes job."
+        evidence = (
+            "Executed Cosmos Transfer 2.5 via sibling Kubernetes job and mirrored frame descriptors locally."
+            if mirrored
+            else (
+                "Executed Cosmos Transfer 2.5 via sibling Kubernetes job; local frame mirror was unavailable, "
+                "so final visualization falls back to manifest descriptors."
+            )
+        )
     else:
         manifest, augmented_frames_uri = _reference_augment_local(
             config, local_dir, input_uri=input_uri
@@ -361,6 +370,39 @@ def _reference_augment_local(
     manifest["augmented_frames_uri"] = output_uri
     manifest["frame_count"] = frame_count
     return manifest, output_uri
+
+
+def _mirror_augment_frames(frames_uri: str, augment_dir: Path, *, attempts: int = 6) -> bool:
+    """Mirror remote augmentation descriptors/images into the orchestrator tree."""
+
+    uri = str(frames_uri or "").strip()
+    if not uri.startswith("s3://"):
+        return False
+    from npa.clients.storage import StorageClient, StorageError
+
+    frames_dir = Path(augment_dir) / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    last_error = ""
+    client = StorageClient.from_environment()
+    for attempt in range(attempts):
+        try:
+            client.download_directory(uri.rstrip("/") + "/", str(frames_dir))
+        except (OSError, StorageError) as exc:
+            last_error = repr(exc)
+        if (frames_dir / "index.json").is_file() or any(frames_dir.glob("frame-*.*")):
+            return True
+        if attempt + 1 < attempts:
+            time.sleep(2)
+    _write_json(
+        frames_dir / "mirror-warning.json",
+        {
+            "schema": "npa.sim2real.augment_mirror_warning.v1",
+            "status": "mirror_unavailable",
+            "frames_uri": uri,
+            "last_error": last_error,
+        },
+    )
+    return False
 
 
 def _mirror_env_manifests(

@@ -107,15 +107,36 @@ submit per day**, not the whole `gpu and e2e` suite:
 
 - `daily_workflow_e2e.py gpu-case` picks today's GPU workflow twin from
   `submit_matrix.gpu_submit_cases()`, rotating by day-of-year so every twin is
-  exercised over the window. `plan_only` stubs and `rotation_skip` twins (each
-  with a documented `skip_reason`) are excluded so the rotation only picks a
-  case that can actually pass standalone. All 12 GPU-launching twins were run
-  live on RTXPRO-6000: the rotation currently cycles the **verified-passing**
-  set — `mjlab-eval`, `cosmos3-reason`, `tokenfactory-rollout-judge` — while the
-  rest are `rotation_skip` with reasons (self-hosted vLLM not served,
-  consume-only inputs like an exported ONNX/checkpoint, SONIC's lack of an
-  in-job train runtime, unstaged datasets/scenes). See each `skip_reason` in
-  `submit_matrix.py` and the follow-ups below.
+  exercised over the window, and prints which live test can drive it
+  (`<spec>\t<one-shot|runtime>`) — a twin with a parallel group or a
+  decision-driven loop is only collected by the runtime test. `plan_only` stubs
+  and `rotation_skip` twins (each with a documented `skip_reason`) are excluded
+  so the rotation only picks a case that can actually pass standalone. Every
+  GPU-launching twin has been run live on RTXPRO-6000; the rotation cycles the
+  verified-passing set:
+
+  Wall clock is the submit test end to end (provision, run, poll to terminal),
+  which is what has to fit `NPA_DAILY_GPU_MAX_WAIT_SECONDS`:
+
+  | Twin | Live wall clock |
+  | --- | --- |
+  | `sonic-train` | 3m41s |
+  | `sonic-export` | 6m11s |
+  | `sonic-locomotion-finetuning` | 7m01s |
+  | `vlm-eval-single` | 8m23s |
+  | `sonic-export-eval` | 8m28s |
+  | `tokenfactory-cosmos-gate` | 11m40s |
+  | `mjlab-eval` | not re-measured here |
+  | `cosmos3-reason` | not re-measured here |
+  | `tokenfactory-rollout-judge` | not re-measured here |
+  | `vlm-eval-benchmark` | not re-measured here |
+  | `isaac-lab-rl-sweep` | not re-measured here |
+
+  Two twins stay out, each with an accurate `skip_reason` in
+  `submit_matrix.py`: `sonic-eval` is a single consume-only stage whose input is
+  an ONNX a previous export wrote (SONIC eval is covered in the rotation by the
+  `sonic-export-eval` chain), and `bdd100k-pipeline` drives 11 sequential stages
+  against workbench services deployed in-cluster.
 - The runner submits just that twin via the sanctioned
   `test_npa_workflow_submit_live_reaches_terminal` path with a bounded wait and
   `NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1`, so a stuck job is cancelled
@@ -127,13 +148,24 @@ submit per day**, not the whole `gpu and e2e` suite:
 Bound the wait with `NPA_DAILY_GPU_MAX_WAIT_SECONDS` (default 2400),
 `NPA_DAILY_GPU_POLL_SECONDS` (30), and `NPA_DAILY_GPU_PYTEST_TIMEOUT` (2600).
 
-**Validated live on the dev VM (2026-07-30):** `gpu:vlm-eval-single.yaml`
-submitted Nebius managed job `npa-wf-gpu-vlm-eval-single-*` onto
-`1x RTXPRO-6000-BLACKWELL-SERVER-EDITION` (cluster `npa-rtxpro-mk8s`), reached a
-terminal state, and self-cleaned with no leftover cluster. That run surfaced a
-real product issue (self-hosted vLLM server not ready → `VLM backend request
-failed: [Errno 111] Connection refused`) — exactly the kind of signal the daily
-GPU rotation is meant to catch.
+**Validated live on the dev VM.** Each twin above submitted a Nebius managed job
+onto `1x RTXPRO-6000-BLACKWELL-SERVER-EDITION` (cluster `npa-rtxpro-mk8s`),
+reached `SUCCEEDED`, and self-cleaned with no leftover cluster. The rotation has
+already paid for itself in real product bugs it surfaced:
+
+- The self-hosted vLLM server was never started by the render (`[Errno 111]
+  Connection refused`); once started, a 7B VLM's cold start did not fit a
+  bounded run; and once it fit, the engine died in warmup twice — `ninja` (a
+  vLLM dependency) was not on the stage shell's PATH, and then FlashInfer's JIT
+  sampler wanted an `nvcc` the image does not ship.
+- `sonic train` had no runtime that trains in the job it is already running in;
+  all three delegated to more infrastructure.
+- `sonic export` / `sonic eval` could not exchange artifacts between stages,
+  because each stage runs on its own cluster.
+- The sim2real decision writer invoked a bare `python`, which is not on PATH in
+  the image the rotation actually uses.
+- The runner sourced `npa-cloud-env.sh` after `live-e2e.env`, and that script
+  unsets `AWS_ACCESS_KEY_ID`, so every GPU twin silently **skipped**.
 
 ## Fresh checkout and separate process
 

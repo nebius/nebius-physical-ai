@@ -267,36 +267,52 @@ run_e2e_shard() {
 
 run_gpu_daily() {
   local py="$1"
-  local day spec
+  local day case_line spec driver
   day="$(date -u +%j)"
   day=$((10#$day))
-  spec="$("$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" gpu-case --day-index "$day" 2>/dev/null | tr -d '[:space:]')"
+  case_line="$("$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" gpu-case --day-index "$day" 2>/dev/null)"
+  spec="$(printf '%s' "$case_line" | cut -f1 | tr -d '[:space:]')"
+  driver="$(printf '%s' "$case_line" | cut -f2 | tr -d '[:space:]')"
   if [[ -z "$spec" ]]; then
     log "GPU e2e: no real-GPU workflow twin available; skipping"
     return 0
   fi
-  log "GPU e2e: today's rotating real-GPU workflow submit = ${spec} (day-of-year ${day})"
+  log "GPU e2e: today's rotating real-GPU workflow submit = ${spec} (day-of-year ${day}, driver ${driver:-one-shot})"
   # Registry + accelerator remap (e.g. H100:1=RTXPRO6000:1) and SkyPilot creds
   # live in the operator's env files on the dev VM.
+  # npa-cloud-env.sh FIRST: it ends by unsetting AWS_ACCESS_KEY_ID /
+  # AWS_SECRET_ACCESS_KEY / AWS_ENDPOINT_URL so workbench VM deploys do not
+  # inherit region-specific S3 globals. Sourcing it after live-e2e.env wiped the
+  # very credentials the submit test requires, and every GPU twin then SKIPPED
+  # with "AWS_ACCESS_KEY_ID required for live submit" instead of running.
+  # shellcheck source=/dev/null
+  [[ -f "${HOME}/bin/npa-cloud-env.sh" ]] && . "${HOME}/bin/npa-cloud-env.sh"
   set -a
   # shellcheck source=/dev/null
   [[ -f "${HOME}/.npa/live-e2e.env" ]] && . "${HOME}/.npa/live-e2e.env"
   set +a
-  # shellcheck source=/dev/null
-  [[ -f "${HOME}/bin/npa-cloud-env.sh" ]] && . "${HOME}/bin/npa-cloud-env.sh"
   export NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN:-${HOME}/.npa/skypilot-venv/bin/sky}"
+  # A twin with a parallel group or a decision-driven loop is only collected by
+  # the runtime test; running the one-shot test for it collects nothing and
+  # pytest exits 5.
+  local node='tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal'
+  local runtime_flag=0
+  if [[ "$driver" == "runtime" ]]; then
+    node='tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_runtime_live_reaches_terminal'
+    runtime_flag=1
+  fi
   # One managed job, self-cleaning, cancel-on-timeout so no GPU leaks unattended.
   (
     cd "${CI_REPO_DIR}/npa"
     NPA_INTEGRATION_E2E=1 \
     NPA_E2E_NPA_WORKFLOW_SUBMIT=1 \
+    NPA_E2E_NPA_WORKFLOW_RUNTIME="$runtime_flag" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS="gpu,multi" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS="$spec" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS="${NPA_DAILY_GPU_MAX_WAIT_SECONDS:-2400}" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS="${NPA_DAILY_GPU_POLL_SECONDS:-30}" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1 \
-      "$py" -m pytest \
-        'tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal' \
+      "$py" -m pytest "$node" \
         -o addopts= -q -s --timeout="${NPA_DAILY_GPU_PYTEST_TIMEOUT:-2600}"
   )
 }

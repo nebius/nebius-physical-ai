@@ -69,25 +69,31 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     assert cases, "expected at least one real-GPU-launching workflow twin"
     # Never rotate onto a plan-only stub (those never launch a GPU) or a
     # rotation_skip twin that cannot pass standalone today (each carries a
-    # skip_reason, e.g. sonic-eval needs a prior export; vlm-eval-single needs a
-    # vLLM server the render doesn't wire).
+    # skip_reason, e.g. sonic-eval consumes an ONNX a previous export wrote).
     assert all(not c.plan_only for c in cases)
     assert all(not c.rotation_skip for c in cases)
     assert all(c.tier in {"gpu", "multi"} for c in cases)
     rotation = {c.spec for c in cases}
     # Verified-passing on real GPU (RTXPRO-6000) stay in the rotation.
-    for good in ("mjlab-eval.yaml", "cosmos3-reason.yaml", "tokenfactory-rollout-judge.yaml"):
+    for good in (
+        "mjlab-eval.yaml",
+        "cosmos3-reason.yaml",
+        "tokenfactory-rollout-judge.yaml",
+        # SONIC twins are self-contained now: the in-job train runtime writes a
+        # checkpoint each downstream stage reads back from S3.
+        "sonic-train.yaml",
+        "sonic-export.yaml",
+        "sonic-export-eval.yaml",
+        "sonic-locomotion-finetuning.yaml",
+        "tokenfactory-cosmos-gate.yaml",
+        # Self-hosted vLLM, bounded by serving a 2B VLM and pre-fetching weights.
+        "vlm-eval-single.yaml",
+    ):
         assert good in rotation, f"{good} should be in the rotation"
     # Twins that can't pass as a standalone submit today are excluded.
     for bad in (
         "sonic-eval.yaml",
-        "sonic-export.yaml",
-        "sonic-export-eval.yaml",
-        "sonic-train.yaml",
-        "sonic-locomotion-finetuning.yaml",
-        "vlm-eval-single.yaml",
         "bdd100k-pipeline.yaml",
-        "tokenfactory-cosmos-gate.yaml",
     ):
         assert bad not in rotation, f"{bad} should be excluded from the rotation"
     # Every rotation_skip twin must document why (so the gap stays visible).
@@ -97,3 +103,35 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     # Over one full cycle the rotation visits every GPU twin.
     seen = {rotating_gpu_submit_case(day).spec for day in range(len(cases))}
     assert seen == {c.spec for c in cases}
+
+
+def test_declared_case_budget_survives_the_daily_runner_cap(monkeypatch) -> None:
+    """A case's declared ``max_wait_seconds`` must not be truncated by the daily cap.
+
+    ``scripts/dev-vm-daily-tests.sh`` exports
+    ``NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS=2400`` for every rotating GPU
+    submit. The submit e2e used to compute two different deadlines from that: the
+    CLI got ``case.max_wait_seconds`` while the polling loop got the env value, so
+    a case declaring a longer budget was cancelled at 40 minutes by
+    ``CANCEL_ON_TIMEOUT`` even though the run was healthy. Any workflow slower
+    than the cap (cold multi-GB image pull plus a long train) would go red on
+    whichever day the rotation reached it.
+    """
+    import importlib
+
+    mod = importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS", "2400")
+
+    from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
+
+    declared = [c for c in SUBMIT_LIVE_MATRIX if c.max_wait_seconds]
+    assert declared, "expected at least one case to declare its own budget"
+    for case in declared:
+        assert mod._case_max_wait(case) >= case.max_wait_seconds, (
+            f"{case.spec} would be cancelled at the daily cap despite declaring "
+            f"{case.max_wait_seconds}s"
+        )
+    # And a case that declares nothing still follows the operator's env value.
+    plain = next((c for c in SUBMIT_LIVE_MATRIX if not c.max_wait_seconds), None)
+    if plain is not None:
+        assert mod._case_max_wait(plain) == 2400

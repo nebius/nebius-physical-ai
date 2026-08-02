@@ -84,6 +84,7 @@ flowchart TB
     isaac["isaac-lab: headless env + step"]
     cosmos["cosmos: model load + infer"]
     transfer["cosmos2-transfer: CUDA venv probe"]
+    c3["cosmos3: real text2image generation"]
     sonic["sonic: entrypoint smoke artifact"]
     s2r["envgen / reference-policy / loop-eval rollouts"]
     groot["groot: GR00T inference"]
@@ -106,6 +107,7 @@ flowchart TB
 | `isaac-lab` | `2.3.2.post1` | container-smoke | version; runtime; manipulation env; step | required | gpu-gated |
 | `cosmos` | `1.0.9` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-golden-eval-smoke-*` | container-smoke | venv torch; CUDA; GPU matmul probe | required | gpu-gated |
+| `cosmos3` | `1.2.2-cu130` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
 | `cosmos3-reason` | `3.0.1-genuine-sm120` | container-smoke | CUDA; Reason cache wiring | optional | blocked-on-upstream |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
@@ -226,6 +228,7 @@ pipeline. Key safety notes are condensed below.
 | `isaac-lab` | Isaac Lab RL sim (headless train/eval) | `container-smoke` | required | gpu-gated |
 | `cosmos` | Cosmos world-model serving (text2world) | `container-smoke` | required | gpu-gated |
 | `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `container-smoke` | required | gpu-gated |
+| `cosmos3` | Cosmos 3 omni-model generation (image/video) | `container-smoke` | required | gpu-gated |
 | `cosmos3-reason` | Cosmos-Reason1 VLM reasoning stage | `workflow-smoke` | optional | blocked-on-upstream |
 | `sonic` | SONIC whole-body humanoid locomotion | `entrypoint-smoke` | required | gpu-gated |
 | `retargeting` | CPU motion retargeting for SONIC locomotion | `build-import` | none | ready |
@@ -239,8 +242,15 @@ pipeline. Key safety notes are condensed below.
 
 ## Safety review highlights
 
+- **`cosmos3` sudo grant** — `cosmos3` runs as `ubuntu` but ships `sudo` +
+  `openssh-server` with a NOPASSWD sudoers entry for that user. SkyPilot's
+  Kubernetes bootstrap overrides the entrypoint and installs an SSH runtime as
+  the pod user, so without them the image cannot host a SkyPilot k8s task. This
+  is a deliberate trade: the pod user can escalate inside its own container, so
+  treat the container boundary (not the user) as the trust boundary for this
+  image, as for any image whose orchestrator needs in-pod package installs.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
-  `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`, `loop-eval`) run as the unprivileged `ubuntu`
+  `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`, `loop-eval`) run as the unprivileged `ubuntu`
   user. `isaac-lab` and `sonic` inherit `root` from the `nvcr.io/nvidia/isaac-lab`
   base; `lancedb` and `detection-training` run as `root` from the PyTorch base.
   `foxglove-embed` runs as `nobody` on a digest-pinned caddy base.
@@ -277,6 +287,9 @@ Run these inside the corresponding built image (or via
 - `isaac-lab` — `python -m npa.smoke.test_isaac_lab_functional` (env: `test_isaac_lab_env`)
 - `cosmos` — `python -m npa.smoke.test_cosmos_functional` (env: `test_cosmos_env`)
 - `cosmos2-transfer` — `bash /opt/cosmos2-transfer/smoke_functional.sh` (venv CUDA probe)
+- `cosmos3` — `npa workbench cosmos3 generate --help` (job entrypoint; the eval
+  itself runs a real text2image generation and needs an operator HF token, since
+  the image bakes no weights)
 - `cosmos3-reason` — `python -m npa.workflows.sim2real_loop inner-loop --help`
 - `sonic` — `/entrypoint.sh smoke` (artifact: `sonic_smoke_result.json`)
 - `retargeting` — `python -c "import npa.workbench.retargeting"`

@@ -13,21 +13,31 @@ kind: Workflow
 #                                       captioning of source video frames)
 #   Stage 2b Augment & Multiply      -> augment            (Cosmos Transfer 2.5,
 #                                       appearance-only re-render; GPU tier)
-#            Evaluate & Validate      -> grade loop         (Token Factory VLM
-#                                       attribute verification + promote/loop gate;
-#                                       the structural "hallucination" check is the
-#                                       classical CPU checker folded into the gate)
+#            Evaluate & Validate      -> grade loop         (NVIDIA Cosmos Evaluator:
+#                                       hallucination check + VLM attribute
+#                                       verification, then the promote/loop gate)
 #   Stage 3  Pseudo-Label Augmented  -> annotate-augmented (re-caption the augmented
 #                                       clips so the amplified set ships labeled)
-#   Stage 4  Curation                -> curate             (Voxel51 / FiftyOne review)
+#   Stage 4  Curation                -> cosmos-curate      (NVIDIA Cosmos Curator:
+#                                       split / transcode / motion-score / catalog)
+#                                    -> curate             (Voxel51 / FiftyOne review
+#                                       over the curated set)
 #            Finalize                 -> finalize          (graded-dataset report)
 #
+# The three NVIDIA components the blueprint names are all the real open-source
+# projects, not stand-ins: Cosmos Transfer 2.5 augments, Cosmos Evaluator
+# (https://github.com/nvidia-cosmos/cosmos-evaluator) grades, and Cosmos Curator
+# (https://github.com/nvidia-cosmos/cosmos-curate) curates. Both evaluator and
+# curator are Apache-2.0; see skills/NOTICE-NVIDIA-COSMOS-OSS.
+#
 # Runtime placement (see docs/workbench/guides/physical-ai-data-factory.md):
-#   Token Factory (zero-GPU, hosted): captioning, attribute verification. Verified
-#     models: Qwen/Qwen2.5-VL-72B-Instruct (VLM), nvidia/Cosmos3-Super-Reasoner
+#   Token Factory (zero-GPU, hosted): captioning, and the Cosmos Evaluator
+#     attribute-verification check's LLM + VLM calls. Verified models:
+#     Qwen/Qwen2.5-VL-72B-Instruct (VLM), nvidia/Cosmos3-Super-Reasoner
 #     (Cosmos-family critic), meta-llama/Llama-3.3-70B-Instruct (LLM).
 #   GPU (Nebius Managed K8s): Cosmos Transfer 2.5 augmentation only.
-#   CPU: config sampling, structural check, curation, finalize.
+#   CPU: config sampling, the evaluator's hallucination check, Cosmos Curator
+#     curation, FiftyOne review, finalize.
 #
 # Orchestration is SkyPilot (npa workbench workflow submit); every stage hands off
 # through S3 under a single run prefix so input / intermediate / output artifacts
@@ -39,9 +49,10 @@ metadata:
   description: >
     NVIDIA Physical AI Data Factory implemented on Nebius + SkyPilot without OSMO:
     config-gen -> annotate (Token Factory VLM) -> augment (Cosmos Transfer 2.5, GPU)
-    -> evaluate/validate gate loop -> re-label augmented -> FiftyOne curation ->
-    finalize. Pure composition of existing workbench tools; artifacts land under one
-    S3 run prefix for NPA-agent artifact viewing.
+    -> evaluate/validate gate loop (Cosmos Evaluator) -> re-label augmented ->
+    Cosmos Curator curation -> FiftyOne review -> finalize. Pure composition of
+    existing workbench tools; artifacts land under one S3 run prefix for NPA-agent
+    artifact viewing.
 
 config:
   bucket: example-bucket
@@ -50,8 +61,16 @@ config:
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
   n_augmentations: "2"            # augmented variants sampled per source video
   refinement_iterations: "2"      # max evaluate/validate passes before promote
-  grade_threshold: "0.5"          # min VLM attribute score to promote (else loop_back)
+  grade_threshold: "0.5"          # min Cosmos Evaluator score to promote (else loop_back)
   default_decision: promote_checkpoint
+
+  # --- Cosmos Curator knobs (Stage 4) ---
+  # Fixed-stride clip length the curator segments each augmented variant into, and
+  # the floor below which a trailing segment is dropped. motion_filter=score-only
+  # records upstream's motion scores without discarding low-motion clips.
+  curator_clip_len_s: "3"
+  curator_min_clip_len_s: "1"
+  curator_motion_filter: score-only
 
   # --- Models (verified available on Nebius Token Factory) ---
   caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
@@ -78,6 +97,11 @@ config:
   # augment_uri) -- i.e. "the data to curate". The curate stage itself runs a
   # real run.shell report over augment_uri (not the fiftyone.launch_app toolRef).
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  # Cosmos Curator writes its own canonical tree (clips/ metas/v0/ processed_videos/)
+  # under curated_clips_uri, and its summary under curator_report_uri; the FiftyOne
+  # review stage reads that summary and merges it into the curation report.
+  curated_clips_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator/"
+  curator_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json"
   curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
   # run_root_uri = the run prefix (holds input/ + cosmos_augmented/ + labeled_*/);
   # the visualize stage reads it to build a Rerun recording.
@@ -166,45 +190,53 @@ states:
   grade:
     description: >
       Augment & Evaluate refinement loop. Each iteration: augment (Cosmos Transfer
-      2.5, GPU) -> attribute-verify (VLM) -> quality-gate. Loops back to RE-AUGMENT on
-      failure, up to refinement_iterations, and breaks as soon as the gate promotes.
-      augment lives INSIDE the loop so loop_back genuinely re-renders (the gate's
-      loop_back decision drives another augment pass via loop.until).
+      2.5, GPU) -> evaluate (Cosmos Evaluator) -> quality-gate. Loops back to
+      RE-AUGMENT on failure, up to refinement_iterations, and breaks as soon as the
+      gate promotes. augment lives INSIDE the loop so loop_back genuinely re-renders
+      (the gate's loop_back decision drives another augment pass via loop.until).
     needs: [annotate-original]
     loop:
       max: "{{config.refinement_iterations}}"
       until: promote_checkpoint
     sequence:
       - augment
-      - attribute-verify
+      - evaluate
       - quality-gate
     next: annotate-augmented
 
-  attribute-verify:
-    description: VLM-based attribute verification of the augmented clips (Token Factory).
-    # Runs the REAL vlm_eval tool with --backend api (config.vlm_backend). Its
-    # output file is named vlm_eval_stub.json -- a LEGACY filename of the vlm_eval
-    # tool (RESULT_FILENAME), NOT a stubbed stage; grade_gate imports that same
-    # constant so producer and consumer stay in sync.
-    toolRef: workbench.vlm_eval.run
+  evaluate:
+    description: >
+      Evaluate & Validate — the REAL NVIDIA Cosmos Evaluator
+      (https://github.com/nvidia-cosmos/cosmos-evaluator, Apache-2.0) grades every
+      augmented variant with two of its checks:
+        * attribute verification — an LLM writes one multiple-choice question per
+          sampled appearance attribute and a VLM answers it from a frame of the
+          variant, so a variant that ignored its prompt fails. Both calls run on
+          Token Factory (zero GPU).
+        * hallucination — compares per-frame dynamic masks of the source clip and
+          the variant and scores hallucinated motion (CPU pixel work). It only
+          contributes to the score for input-conditioned variants, where the two
+          clips really are the same scene.
+      The report's `score` is what the quality gate thresholds on.
+    toolRef: workbench.cosmos_evaluator.evaluate
     resources: cpu
     inputs:
       - uri: "{{config.rollouts_uri}}"
-        schema: npa.sim2real.augment.v1
+        schema: npa.cosmos2.transfer.v1
     outputs:
-      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
-        schema: npa.workbench.vlm_eval.report.v1
+      - uri: "{{config.scores_uri}}cosmos_evaluator.json"
+        schema: npa.cosmos_evaluator.report.v1
 
   quality-gate:
     description: >
-      Real quality gate — read the VLM attribute-verification score and write a
+      Real quality gate — read the Cosmos Evaluator score and write a
       promote_checkpoint / loop_back decision. The enclosing `grade` loop reads this
       decision (loop.until: promote_checkpoint): promote breaks the loop and proceeds
-      to annotate-augmented; loop_back re-runs the loop body (augment -> verify ->
+      to annotate-augmented; loop_back re-runs the loop body (augment -> evaluate ->
       gate). No explicit transitions here -- the loop drives control flow, and
       transitions on a loop-sequence member are not evaluated at runtime.
     writesDecision: true
-    needs: [attribute-verify]
+    needs: [evaluate]
     resources: cpu
     run:
       shell: >
@@ -232,18 +264,43 @@ states:
     outputs:
       - uri: "{{config.labeled_augmented_uri}}captions.json"
         schema: npa.token_factory.captions.v1
+    next: cosmos-curate
+
+  cosmos-curate:
+    description: >
+      Stage 4a - Curation with the REAL NVIDIA Cosmos Curator
+      (https://github.com/nvidia-cosmos/cosmos-curate, Apache-2.0). Upstream's own
+      stages run over the promoted variants: VideoDownloader ->
+      FixedStrideExtractorStage -> ClipTranscodingStage -> MotionVectorDecodeStage +
+      MotionFilterStage -> ClipWriterStage. The result is upstream's canonical
+      output tree (clips/, metas/v0/, processed_videos/) under curated_clips_uri
+      plus a summary at curator_report_uri, which the FiftyOne review stage merges.
+      Runs in the npa-cosmos-curate image, which bakes the pinned upstream checkout
+      and an ffmpeg carrying libopenh264. Without that image the stage records
+      `engine: unavailable` with the reason instead of pretending to curate.
+    needs: [annotate-augmented]
+    toolRef: workbench.cosmos_curate.curate
+    resources: cpu
+    inputs:
+      - uri: "{{config.augment_uri}}"
+        schema: npa.cosmos2.transfer.v1
+    outputs:
+      - uri: "{{config.curator_report_uri}}"
+        schema: npa.cosmos_curate.curation.v1
     next: curate
 
   curate:
     description: >
-      Stage 4 - Curation (Voxel51 / FiftyOne). Run REAL FiftyOne Brain curation
-      over the augmented + graded scenario variants: build a fiftyone.Dataset,
-      compute per-variant uniqueness, detect near-duplicates, and record which
-      variants are kept vs dropped, plus clip/frame counts and per-clip coverage.
+      Stage 4b - Curation review (Voxel51 / FiftyOne). Run REAL FiftyOne Brain
+      curation over the augmented + graded scenario variants: build a
+      fiftyone.Dataset, compute per-variant uniqueness, detect near-duplicates, and
+      record which variants are kept vs dropped, plus clip/frame counts and per-clip
+      coverage. The Cosmos Curator summary from the previous stage is merged in, so
+      one report carries both the curator's clip catalog and the review decisions.
       When FiftyOne is available (the curate stage runs in the npa-fiftyone image)
       the report's curation_engine is "fiftyone-brain"; otherwise it degrades to
       the report-only counts path so the pipeline never regresses.
-    needs: [annotate-augmented]
+    needs: [cosmos-curate]
     resources: cpu
     inputs:
       - uri: "{{config.lance_uri}}"
@@ -251,7 +308,8 @@ states:
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import curate;
-        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}')"
+        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}',
+        curator_report_uri='{{config.curator_report_uri}}')"
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1
@@ -262,10 +320,16 @@ states:
       Build a Rerun recording (reports/sim2real.rrd) from the run's input +
       augmented frames and captions so the run renders in the NPA agent's
       embedded Rerun viewer (the agent prefers reports/sim2real.rrd).
+      rerun-sdk is npa's optional `viz` extra, and this stage runs on the default
+      image with a plain `pip install -e` of the staged source, so the extra is not
+      there -- install it first or the stage fails at import. The pin matches
+      pyproject's `viz` extra; a guardrail test keeps the two together.
     needs: [curate]
     resources: cpu
     run:
       shell: >
+        python3 -c "import rerun" 2>/dev/null ||
+        python3 -m pip install --quiet "rerun-sdk==0.31.4";
         python3 -c "from npa.workflows.data_factory_viz import build_run_rrd;
         print(build_run_rrd('{{config.run_root_uri}}', '{{config.rrd_uri}}'))"
     outputs:

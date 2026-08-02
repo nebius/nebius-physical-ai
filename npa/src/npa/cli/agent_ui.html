@@ -4146,6 +4146,11 @@
         // in the reported screenshot. Keep each mode's message self-consistent.
         const cta = document.getElementById("simvizCta");
         if (!cta) return;
+        // `lastSimVizStatus` starts null, so this distinguishes "no recording"
+        // (known absent) from "we have not asked yet" (unknown). Asserting the
+        // former while still in the latter is what made the banner lie during
+        // the first ~1-3s of every page load.
+        const haveStatus = Boolean(simViz || lastSimVizStatus);
         const status = simViz || lastSimVizStatus || {};
         if (activeRenderMode === "lichtblick") {
           const ready = Boolean(status.lichtblick_ready || status.mcap_uri);
@@ -4183,13 +4188,26 @@
           cta.hidden = true;
           return;
         }
-        const ready = Boolean(status.rerun_ready || status.rrd_uri);
+        // A mounted iframe that resolved a recording URL is itself proof a
+        // recording exists -- more direct evidence than the status endpoint.
+        // Deriving readiness from the status alone meant that during boot, while
+        // the first sim-viz fetch was still in flight, the banner claimed "no
+        // recording yet" directly above a viewer that had already decoded and
+        // rendered it. Measured at 0.5-4s of overlap on every single page load.
+        const mountProvesRecording = Boolean(rerunIframeLoaded && lastRerunRecordingUrl);
+        const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);
         cta.hidden = ready && rerunIframeLoaded;
-        if (!ready) {
-          cta.textContent =
-            "No run-specific Rerun recording yet. Use the Run status/logs panel below " +
-            "for stage progress and result.";
-        }
+        // Always set copy that matches the state, the way the Lichtblick branch
+        // above already does. Previously only the not-ready case assigned text,
+        // so the ready-but-not-yet-mounted window kept the "no recording yet"
+        // default and actively contradicted a run that HAD published one.
+        cta.textContent = ready
+          ? "Rerun recording is ready for this run; the embedded viewer is still " +
+            "loading. Use 'Open full Rerun' if the panel below stays blank."
+          : haveStatus
+            ? "No run-specific Rerun recording yet. Use the Run status/logs panel below " +
+              "for stage progress and result."
+            : "Checking this run for a Rerun recording...";
       }
       function setRenderMode(mode) {
         const next = String(mode || "rerun");
@@ -4934,6 +4952,12 @@
         }
         rerunIframeLoaded = true;
         mountedRerunRunKey = mountKey;
+        // Re-evaluate the CTA now that the iframe is up. `cta.hidden` is
+        // `ready && rerunIframeLoaded`, so a status refresh that lands while the
+        // iframe is still booting leaves the "No run-specific Rerun recording
+        // yet" banner painted above a viewer that has in fact loaded, and nothing
+        // else recomputes it. Observed on a real NuRec run.
+        updateSimvizCta(lastSimVizStatus);
         // Uncover without blocking mount latency — splash polling stays in the background.
         scheduleRerunBundleUncover(iframe).catch((err) => {
           console.warn("rerun splash uncover failed", err);

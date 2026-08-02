@@ -90,6 +90,9 @@ jobs:
           - name: nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04
             image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
             purge_linux_libc_dev: true
+          - name: nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04
+            image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01
+            purge_linux_libc_dev: true
           - name: python-3-11-slim-trixie
             image: python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
             purge_linux_libc_dev: false

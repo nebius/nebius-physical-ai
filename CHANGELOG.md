@@ -7,6 +7,71 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### NVIDIA Cosmos Evaluator + Cosmos Curator in the Physical AI Data Factory
+
+- The blueprint's evaluate/validate gate now grades with the real
+  [Cosmos Evaluator](https://github.com/nvidia-cosmos/cosmos-evaluator)
+  (Apache-2.0) instead of the generic `vlm_eval` scorer. New
+  `npa workbench cosmos-evaluator` runs two of upstream's checks per augmented
+  variant: attribute verification (upstream's LLM question generation + VLM
+  answering protocol, pointed at Nebius Token Factory) and the hallucination check
+  (dynamic-mask motion comparison against the source clip, CPU only). The
+  hallucination check delegates to upstream's own `HallucinationProcessor` when a
+  checkout is importable and otherwise runs an in-repo port of the same algorithm;
+  each result records which engine produced it, and the two agree to ~1e-3.
+- Curation now runs the real
+  [Cosmos Curator](https://github.com/nvidia-cosmos/cosmos-curate) (Apache-2.0)
+  before FiftyOne review. New `npa workbench cosmos-curate` drives upstream's own
+  stage classes in-process — no Ray scheduler, no GPU — and produces upstream's
+  canonical `clips/` + `metas/v0/` + `processed_videos/` tree with real per-clip
+  motion scores. `plan-pipeline` prints upstream's documented `video-pipeline
+  split` command for operators running the full curator container.
+- Both tools are containerized as mode-based workbench images, and **neither bakes
+  model weights**: upstream's source is Apache-2.0 and redistributable, its weights
+  are not. Each Dockerfile ends with a check that fails if a weight file is present,
+  both upstream checkouts are fetched with `GIT_LFS_SKIP_SMUDGE=1`, and a guardrail
+  test fails if a Dockerfile grows a build-time model download.
+  - `npa-cosmos-evaluator` (456 MB, CPU) needs no weights at all — its golden eval,
+    a real hallucination run against upstream's own processor, passes with
+    `--network none`. Upstream's objects check would need EULA-gated Git-LFS
+    weights, so it stays unwired.
+  - `npa-cosmos-curate` (CPU) bakes a pinned upstream checkout, the dependency
+    subset its GPU-free stages import, and a conda-forge ffmpeg carrying
+    `libopenh264` (upstream's transcoding stage accepts only `libopenh264` or
+    `h264_nvenc`). Its GPU stages' weights are downloaded at run time into a
+    `/config/models` volume by the new `fetch-models` mode using the operator's
+    `HF_TOKEN`; the model ids and pinned revisions come from upstream's own
+    registry, so a pin moves only when the checkout does. Where the curator cannot
+    run, the stage records `engine: unavailable` plus the reason rather than
+    emitting a report that implies curation happened.
+- New `npa workbench cosmos-curate fetch-models` / `models`: download the curator's
+  weights with your own Hugging Face token, and report each capability's model set,
+  what is already on disk, and which of `HF_TOKEN` / `NGC_API_KEY` is visible.
+- **Workbench images now satisfy SkyPilot's Kubernetes provisioner.** Its per-pod
+  setup runs `sudo apt install openssh-server rsync` and `service ssh restart` inside
+  the image; images lacking those exited and SkyPilot reported the misleading
+  `container not found ("ray-node")`, which is why operators disabled image pins
+  wholesale with `NPA_E2E_CLEAR_WORKBENCH_IMAGES=1`. All three Cosmos images install
+  them with passwordless sudo, and their entrypoints exec the arguments Kubernetes
+  passes rather than swallowing them.
+- **`npa-cosmos2-transfer`'s inference venv is usable by the non-root user it runs
+  as.** `uv` had installed the interpreter under `/root` (0700), so every inference
+  call failed with `Permission denied`. The image now keeps the interpreter in
+  `UV_PYTHON_INSTALL_DIR`, rewrites `pyvenv.cfg` by directory prefix (uv records it
+  through a version symlink, so matching the resolved path left `sys._home` in
+  `/root`), and repoints the absolute symlink `cp -a` copies verbatim. The build
+  asserts each of those and exercises `distutils.sysconfig`, which is the import path
+  that actually broke.
+- The workflow submit path refreshes the cluster's Nebius registry pull secret before
+  launching, since that secret holds a short-lived IAM token and a stale one fails
+  every private image pull with a 401 that SkyPilot reports as
+  resources-unavailable.
+- `grade_gate` reads `cosmos_evaluator.json` and still accepts the older `vlm_eval`
+  report, so runs in flight keep grading. The FiftyOne review report gains a
+  `cosmos_curator` block with the curator's run-level summary.
+- Attribution: `skills/NOTICE-NVIDIA-COSMOS-OSS` records which upstream modules
+  run, which are reimplemented, and where NPA substitutes its own endpoint.
+
 ### Insights + agent: make "which runs used N gpus" answerable from real runs
 
 Found by operating the stack against live infra (8 real runs, 3 of them on 1/2/4

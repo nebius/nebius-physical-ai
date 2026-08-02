@@ -305,3 +305,139 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
+
+
+def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
+    """The skill loader must resolve real SKILL.md files from skills/index.yaml.
+
+    ``index.yaml`` paths are repo-root-relative, so joining them onto the index's
+    own directory produced ``skills/skills/skills/...`` and every excerpt came
+    back empty — silently disabling skill injection for the whole agent. Execute
+    the rendered loader against the real repo tree so that stays fixed.
+    """
+    pytest.importorskip("fastapi")
+    import importlib.util
+    import sys
+
+    setup_script = _capture_setup_script(monkeypatch)
+
+    def _extract(remote_path: str) -> str:
+        match = re.search(
+            r"cat <<'PY' \| sudo tee " + re.escape(remote_path) + r" >/dev/null\n(.*?)\nPY\n",
+            setup_script,
+            flags=re.DOTALL,
+        )
+        assert match, f"bootstrap does not write {remote_path}"
+        return match.group(1)
+
+    package = tmp_path / "agent_backend"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    for name in ("memory", "retrieval", "trace", "foxglove", "foxglove_routes"):
+        (package / f"{name}.py").write_text(
+            _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
+        )
+    backend_path = tmp_path / "backend.py"
+    backend_path.write_text(_extract("/opt/npa-agent/backend.py"), encoding="utf-8")
+
+    repo_root = Path(__file__).resolve().parents[3]
+    monkeypatch.syspath_prepend(str(tmp_path))
+    # _skill_index_candidates() falls back to Path.cwd()/"skills"/"index.yaml".
+    monkeypatch.chdir(repo_root)
+    spec = importlib.util.spec_from_file_location("npa_rendered_skill_backend", backend_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    try:
+        spec.loader.exec_module(module)
+
+        index, root = module._load_skill_index()
+        assert index, "skill index did not load"
+        assert (root / index["cosmos3-npa-workflow"]).is_file(), (
+            f"skill paths do not resolve from root={root}"
+        )
+
+        excerpt = module._skill_excerpt("cosmos3-npa-workflow")
+        assert excerpt, "cosmos3-npa-workflow excerpt is empty"
+        assert "npa.workflow" in excerpt
+
+        # A Cosmos 3 workflow ask must reach for the npa.workflow skill first,
+        # not the SkyPilot-oriented one.
+        names, context = module._resolve_skill_context(
+            user_text="write me a cosmos3 workflow yaml", intent=None
+        )
+        assert names[0] == "cosmos3-npa-workflow", names
+        assert "npa.workflow" in context
+    finally:
+        sys.modules.pop("npa_rendered_skill_backend", None)
+
+
+def test_rendered_backend_has_no_mangled_regex_escapes(monkeypatch) -> None:
+    """Regex escapes must survive the outer f-string intact.
+
+    ``setup_script`` is one ~6700-line non-raw f-string, so a single-backslash
+    escape inside it is interpreted by the OUTER string first. ``\\s`` and ``\\d``
+    only warn, but ``\\b`` is a valid Python escape and silently becomes a
+    backspace (0x08) -- the emitted word-boundary anchors were real control
+    characters, so intent regexes in the deployed backend could never match.
+    Assert on the rendered text, since the source reads correctly either way.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    control = {c for c in body if c in "\x08\x0c\x0b\x07\x00"}
+    assert not control, (
+        f"rendered backend contains control characters {sorted(map(hex, map(ord, control)))}; "
+        "a single-backslash escape leaked through the outer f-string"
+    )
+    # The word boundaries are present as real two-character regex escapes.
+    assert r"\b(?:stage|stages|step|steps)\b" in body
+    assert r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b" in body
+
+
+def test_agent_module_source_has_no_invalid_escape_sequences() -> None:
+    """``agent.py`` must compile without invalid-escape warnings.
+
+    These are ``SyntaxWarning`` on Python >= 3.12 (noise on every import in the
+    workflow pods) and ``DeprecationWarning`` below it, which is why they went
+    unnoticed. Compiling the source directly catches them on any interpreter.
+    """
+    import warnings
+    from pathlib import Path
+
+    import npa.cli.agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        compile(source, "agent.py", "exec")
+    offenders = [str(w.message) for w in caught if "invalid escape" in str(w.message)]
+    assert not offenders, offenders
+
+
+def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) -> None:
+    """A NuRec run must not inherit the previous run's camera label.
+
+    ``sim_viz`` state persists across artifact loads, and ``camera`` is seeded
+    from it. Loading a reconstruction after a Sim2Real pipeline run therefore
+    reported ``camera="heldout-sim"`` while the very same response carried the
+    NuRec note explaining there is no held-out simulation camera. Observed live
+    on the deployed agent.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    assert "NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+    assert 'NEURAL_RECONSTRUCTION_CAMERA_LABEL = "novel-view"' in body
+    # The label is applied on the neural-reconstruction branch, not inherited.
+    assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+
+
+def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None:
+    """The UI HEADs /api/sim-viz/rrd-blob; a GET-only route answers 405.
+
+    The probe failure is caught and ignored, so the viewer still works -- but it
+    logged a console error on every single page load, which is exactly how real
+    errors get overlooked. Observed live.
+    """
+    body = _render_backend_body(monkeypatch)
+
+    assert '@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])' in body
+    assert '@app.get("/sim-viz/rrd-blob")' not in body

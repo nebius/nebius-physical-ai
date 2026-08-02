@@ -1562,6 +1562,7 @@ def _run_policy_rollouts_via_command(
             "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
             "NPA_SIM2REAL_STEPS_PER_ROLLOUT": str(config.steps_per_rollout),
             "NPA_SIM2REAL_OUTPUT_DIR": str(actions_dir),
+            "NPA_SIM2REAL_ROLLOUT_TAG": f"outer-{outer_iteration:02d}-iter-{iteration:02d}",
         },
     )
     invocation = _run_component_command(
@@ -1887,6 +1888,9 @@ def _refresh_registry_pull_secret_for_sibling_job(
     later sibling Jobs (augment/train/eval/heldout). IAM registry tokens expire,
     so stale ``npa-nebius-registry`` secrets cause mid-pipeline ImagePullBackOff.
     """
+
+    if _bool_value(os.environ.get("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH", "0")):
+        return
 
     from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
 
@@ -3164,6 +3168,7 @@ def run_heldout_eval(
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
+        "NPA_SIM2REAL_EVAL_TAG": f"outer-{outer_iteration:02d}",
     }
     # BYO robot: opt the held-out eval into the SAME robot-swapped Lift variant the
     # policy trained on. This sets NPA_BYO_ROBOT_TASK=1 (+ the robot uri/source/preset)
@@ -5511,5 +5516,3 @@ def _redacted_config(config: Sim2RealLoopConfig) -> dict[str, Any]:
     payload = asdict(config)
     payload["output_dir"] = str(config.output_dir) if config.output_dir else None
     return payload
-
-

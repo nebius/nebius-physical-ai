@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import copy
 from importlib import import_module
 import json
 from pathlib import Path
-from typing import Any
+import tempfile
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from npa.clients.storage import StorageClient
 
 DEFAULT_EXPORT_OPSET = 17
 DEFAULT_EXPORT_AXES = "dynamic"
@@ -75,14 +80,115 @@ def export_onnx(
     sample_observation: Any | None = None,
     verify: bool = False,
     parity_atol: float = 1e-4,
+    storage_client: "StorageClient | None" = None,
 ) -> SonicExportResult:
     """Export a deterministic SONIC policy action path as ONNX.
 
     The ONNX graph has one float32 input named ``obs`` and one float32 output
     named ``action``. Policy loading is lazy so importing the SDK does not
     require torch, onnx, or onnxruntime.
+
+    ``checkpoint`` and ``output`` may be ``s3://`` URIs: a remote checkpoint is
+    staged locally first, and the ONNX plus its metadata sidecar are uploaded
+    afterwards. That is what lets an npa.workflow chain train -> export -> eval
+    across stages that each run on their own cluster.
     """
 
+    with ExitStack() as stack:
+        local_checkpoint = _stage_checkpoint(checkpoint, stack, storage_client)
+        remote_output = output.startswith("s3://")
+        local_output = (
+            str(Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="npa-sonic-onnx-"))))
+            if remote_output
+            else output
+        )
+        result = _export_onnx_local(
+            checkpoint=local_checkpoint,
+            checkpoint_label=checkpoint,
+            output=local_output,
+            opset=opset,
+            axes=axes,
+            normalize=normalize,
+            metadata=metadata,
+            obs_spec=obs_spec,
+            action_spec=action_spec,
+            config=config,
+            control_dt=control_dt,
+            policy=policy,
+            sample_observation=sample_observation,
+            verify=verify,
+            parity_atol=parity_atol,
+        )
+        if not remote_output:
+            return result
+        return _upload_export(result, output, storage_client=storage_client)
+
+
+def _stage_checkpoint(
+    checkpoint: str,
+    stack: ExitStack,
+    storage_client: "StorageClient | None",
+) -> str:
+    """Download an ``s3://`` checkpoint into a temp dir; pass others through."""
+
+    if not checkpoint.startswith("s3://"):
+        return checkpoint
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    tmp = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="npa-sonic-ckpt-")))
+    target = tmp / (Path(checkpoint.rstrip("/")).name or "checkpoint.pt")
+    try:
+        return str(client.download_path(checkpoint, str(target)))
+    except Exception as exc:  # noqa: BLE001 - surfaced as an export error
+        raise SonicExportError(
+            f"could not stage SONIC checkpoint {checkpoint}: {exc}. The export "
+            "stage consumes a checkpoint written by `sonic train`; chain them in "
+            "one workflow (see sonic-export-eval) or stage one first."
+        ) from exc
+
+
+def _upload_export(
+    result: SonicExportResult,
+    output: str,
+    *,
+    storage_client: "StorageClient | None",
+) -> SonicExportResult:
+    """Upload the exported ONNX and its sidecar, returning s3 paths."""
+
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    onnx_target = output if output.endswith(".onnx") else output.rstrip("/") + "/sonic_policy.onnx"
+    onnx_uri = client.upload_file(result.onnx_path, onnx_target)
+    metadata_uri = ""
+    if result.metadata_path:
+        metadata_uri = client.upload_file(
+            result.metadata_path, onnx_uri.removesuffix(".onnx") + ".metadata.json"
+        )
+    return SonicExportResult(
+        **{**asdict(result), "onnx_path": onnx_uri, "metadata_path": metadata_uri}
+    )
+
+
+def _export_onnx_local(
+    *,
+    checkpoint: str,
+    checkpoint_label: str,
+    output: str,
+    opset: int,
+    axes: str,
+    normalize: str,
+    metadata: str,
+    obs_spec: str | dict[str, Any] | None,
+    action_spec: str | dict[str, Any] | None,
+    config: str | dict[str, Any] | None,
+    control_dt: float | None,
+    policy: Any | None,
+    sample_observation: Any | None,
+    verify: bool,
+    parity_atol: float,
+) -> SonicExportResult:
     axes = _validate_choice("axes", axes, AXES_MODES)
     normalize = _validate_choice("normalize", normalize, NORMALIZE_MODES)
     metadata = _validate_choice("metadata", metadata, METADATA_MODES)
@@ -165,13 +271,15 @@ def export_onnx(
             opset_version=opset,
         )
 
+    _inline_external_data(output_path)
+
     control_dt_value = (
         control_dt
         if control_dt is not None
         else _control_dt(policy_model, config_payload)
     )
     metadata_payload = _build_metadata(
-        checkpoint=checkpoint,
+        checkpoint=checkpoint_label or checkpoint,
         onnx_path=str(output_path),
         opset=opset,
         axes=axes,
@@ -209,7 +317,7 @@ def export_onnx(
 
     return SonicExportResult(
         status="exported",
-        checkpoint=checkpoint,
+        checkpoint=checkpoint_label or checkpoint,
         onnx_path=str(output_path),
         metadata_path=metadata_path,
         opset=opset,
@@ -343,7 +451,7 @@ def _load_policy_from_checkpoint(
     path = Path(checkpoint)
     if not path.exists():
         raise SonicExportError(f"checkpoint not found: {checkpoint}")
-    payload = torch.load(str(path), map_location="cpu", weights_only=False)
+    payload = _load_checkpoint_payload(path, torch)
     if isinstance(payload, torch.nn.Module):
         return payload
     if isinstance(payload, dict):
@@ -358,7 +466,12 @@ def _load_policy_from_checkpoint(
             candidate = payload.get(key)
             if isinstance(candidate, torch.nn.Module):
                 return candidate
-        policy = _instantiate_policy_from_config(config)
+        # ``--config`` wins, then the checkpoint's own description of its policy
+        # class (what `sonic train --runtime local` records), so a state-dict
+        # checkpoint is self-describing instead of needing a matching --config.
+        policy = _instantiate_policy_from_config(config) or _instantiate_policy_from_config(
+            payload
+        )
         if policy is not None:
             state_dict, state_key = _state_dict_from_checkpoint(payload)
             if state_dict is None:
@@ -367,6 +480,7 @@ def _load_policy_from_checkpoint(
                     "the policy class from --config"
                 )
             _load_state_dict(policy, state_dict, state_key)
+            _apply_checkpoint_metadata(policy, payload)
             return policy
     raise SonicExportError(
         "checkpoint does not contain a loadable torch.nn.Module policy. "
@@ -374,6 +488,35 @@ def _load_policy_from_checkpoint(
         "`actor`, or `model` as a module, or --config with policy.class and "
         "policy.kwargs for state-dict checkpoints."
     )
+
+
+def _load_checkpoint_payload(path: Path, torch: Any) -> Any:
+    """Read a checkpoint, preferring torch's restricted unpickler.
+
+    ``weights_only=True`` reads tensors and plain data without executing what
+    the file says, which covers every checkpoint `sonic train` writes. Older
+    checkpoints that pickle the module itself cannot be read that way, so they
+    fall back to the full unpickler — only trust those from your own storage.
+    """
+
+    try:
+        return torch.load(str(path), map_location="cpu", weights_only=True)
+    except Exception:  # noqa: BLE001 - a module-pickling checkpoint needs the full loader
+        return torch.load(str(path), map_location="cpu", weights_only=False)
+
+
+def _apply_checkpoint_metadata(policy: Any, payload: dict[str, Any]) -> None:
+    """Copy the layout/normalization a checkpoint recorded onto the policy.
+
+    A policy rebuilt from a state dict has only what its constructor set, so
+    anything the trainer measured (observation normalization above all) would be
+    lost and the exported graph would silently expect pre-normalized inputs.
+    """
+
+    for key in ("obs_spec", "action_spec", "normalization", "control_dt"):
+        value = payload.get(key)
+        if value is not None:
+            setattr(policy, key, value)
 
 
 def _instantiate_policy_from_config(config: dict[str, Any]) -> Any | None:
@@ -611,6 +754,43 @@ def _without_internal_normalizer(policy: Any) -> Any:
         if hasattr(clone, attr):
             setattr(clone, attr, None)
     return clone
+
+
+#: Protobuf caps a single serialized message at 2 GiB; stay under it when
+#: folding external initializers back into the .onnx.
+MAX_INLINE_ONNX_BYTES = 1_500_000_000
+
+
+def _inline_external_data(onnx_path: Path) -> None:
+    """Fold torch's spilled initializer file back into the ``.onnx``.
+
+    The exporter writes large initializers to a sibling ``<name>.onnx.data``.
+    A workflow stage hands the next stage a single object over S3, so an
+    exported policy that silently depends on a neighbouring file loads fine on
+    the machine that produced it and fails everywhere else.
+    """
+
+    external = sorted(onnx_path.parent.glob(onnx_path.name + "*.data"))
+    if not external:
+        return
+    total = onnx_path.stat().st_size + sum(item.stat().st_size for item in external)
+    if total > MAX_INLINE_ONNX_BYTES:
+        raise SonicExportError(
+            f"exported policy is {total} bytes across {len(external) + 1} files; "
+            "it cannot be packed into a single self-contained .onnx. Export to a "
+            "local directory and publish the whole directory instead."
+        )
+    try:
+        import onnx
+    except ImportError as exc:
+        raise SonicExportError(
+            "the exported policy has external initializer data and packing it "
+            "into one file requires onnx. Install the npa[sonic] extra."
+        ) from exc
+    model = onnx.load(str(onnx_path), load_external_data=True)
+    onnx.save(model, str(onnx_path), save_as_external_data=False)
+    for item in external:
+        item.unlink()
 
 
 def _resolve_onnx_path(output: str) -> Path:
@@ -860,6 +1040,10 @@ def _jsonable(value: Any) -> Any:
 
 
 from npa.workbench.sonic.eval import evaluate_onnx_policy  # noqa: E402
+from npa.workbench.sonic.train import (  # noqa: E402
+    SonicTrainError as SonicTrainError,
+    train_local,
+)
 from npa.workbench.sonic.routing import (  # noqa: E402
     SonicRoutingError as SonicRoutingError,
     classify_gpu_target,
@@ -879,6 +1063,7 @@ __all__ = [
     "is_datacenter_headless_target",
     "is_rt_core_target",
     "load_export_metadata",
+    "train_local",
     "validate_gpu_routing",
     "validate_onnx_parity",
     "validate_render_gpu_target",

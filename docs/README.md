@@ -11,6 +11,7 @@ Nebius Physical AI.
 | [hackathon-isaac-token-factory.md](hackathon-isaac-token-factory.md) | **Hackathon combo** — Isaac Lab Franka sim frames + Token Factory reasoner (workflow + SDK example) |
 | [workbench/](workbench/) | Workbench solution docs, including getting started, cookbooks, and troubleshooting |
 | [workbench/kubernetes.md](workbench/kubernetes.md) | User setup and operational guide for running Workbench on managed Kubernetes |
+| [workbench/cosmos3-generate.md](workbench/cosmos3-generate.md) | Cosmos 3 generation (`npa-cosmos3`) — build, run via CLI/SDK/workflow, and the runtime-credential posture that keeps weights out of the image |
 | [../npa/workflows/workbench/npa-workflows/README.md](../npa/workflows/workbench/npa-workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
 | [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |

@@ -1,0 +1,275 @@
+# NuRec / NRE neural reconstruction: real sensor capture -> 3DGUT Gaussians ->
+# renderable USDZ -> novel-view renders -> Rerun recording, all under ONE S3 run
+# prefix so the NPA agent's artifact browser and embedded Rerun viewer pick the
+# run up automatically.
+#
+# The reconstruction and the rasterizer are RT-core work, so this task MUST be
+# routed at an RT-core GPU (RTX PRO 6000 Blackwell here, L40S is the other valid
+# choice). Never route it at H100/H200 - they have no RT cores. See
+# skills/atomic/gpu-selection/SKILL.md.
+#
+# Unlike the cosmos3-* workflows, NRE is a closed-source NGC container: there is
+# no source/pip path, so the container IS the runtime and the task runs inside it
+# (the established pattern for every containerized workbench tool - cosmos2,
+# vlm-eval, isaac-lab, sonic, byof, dataset). `nvcr.io/nvidia/nre/nre` needs an
+# extra NGC entitlement (402 Payment Required for a standard key); the `-ga`
+# General Availability repositories are the ones a standard NGC key can pull.
+#
+# Stages, each a real `npa workbench nurec` entrypoint:
+#   check       NGC container pullability + HF download rights + RT-core GPU
+#   fetch       real NCore V4 shards, plus the derived rig->world pose edge
+#   reconstruct NRE 3DGUT training -> artifacts/<step>.usdz + val metrics + GT frames
+#   render      `nre render` novel views with a rig offset (NOT training views)
+#   visualize   reports/sim2real.rrd via npa.workflows.data_factory_viz
+#   finalize    reports/final.json aggregate
+#
+# Submit (the wrapper substitutes ${...} placeholders; SkyPilot 0.12.2 does not):
+#   npa workbench workflow submit npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml \
+#     --run-id neural-reconstruction-<scene>-<yyyymmdd>t<hhmmss>z \
+#     --var NPA_NUREC_IMAGE=nvcr.io/nvidia/nre/nre-ga:26.04 \
+#     --var NPA_NUREC_RUN_ID=<run-id> \
+#     --var NPA_NUREC_RUN_URI=s3://<bucket>/<prefix>/neural-reconstruction/<run-id> \
+#     --var NPA_SRC_S3_URI=s3://<bucket>/npa-src/<tag> \
+#     --infra k8s/<rt-core-context>
+name: nurec-reconstruct
+resources:
+  cloud: kubernetes
+  # RT cores required. Canonical alternative: L40S:1.
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 8+
+  memory: 64+
+  # The NRE container is the runtime; it is Ubuntu 24.04 and runs as root, which
+  # is what SkyPilot's Kubernetes bootstrap requires.
+  image_id: "docker:${NPA_NUREC_IMAGE}"
+  # No disk_size: SkyPilot rejects it on Kubernetes. The pod uses node ephemeral
+  # storage (the RT-core nodes expose ~1 TB, and the image alone is ~30 GB).
+config:
+  kubernetes:
+    # A ~14 GB compressed image pull dominates first-schedule latency on a node
+    # that has not cached it yet.
+    provision_timeout: 2400
+    pod_config:
+      spec:
+        # Appended to the cluster-wide list, so the Nebius registry secret stays.
+        imagePullSecrets:
+          - name: ngc-nvcr-imagepullsecret
+        initContainers:
+          # SkyPilot's runtime setup calls `sudo` unconditionally when it writes
+          # the nofile limits and /etc/fuse.conf
+          # (templates/kubernetes-ray.yml.j2). The NRE image ships no `sudo`
+          # binary, so that step exits 127 and the cluster never reaches a
+          # usable state even though provisioning otherwise succeeds. The pod
+          # already runs as root, so a shim that execs its arguments is exactly
+          # equivalent to SkyPilot's own `alias sudo=""` root path. It is dropped
+          # into /usr/local/sbin, which is on the image's PATH and empty.
+          - name: npa-sudo-shim
+            image: "${NPA_NUREC_IMAGE}"
+            command:
+              - /bin/sh
+              - -c
+              - |
+                printf '#!/bin/sh\nexec "$@"\n' > /shim/sudo
+                chmod 0755 /shim/sudo
+            volumeMounts:
+              - name: npa-sudo-shim
+                mountPath: /shim
+        containers:
+          - name: ray-node
+            volumeMounts:
+              - name: npa-sudo-shim
+                mountPath: /usr/local/sbin
+              # NRE wants a large /dev/shm for training and rendering; the
+              # Kubernetes default is 64 MB.
+              - name: dshm
+                mountPath: /dev/shm
+        volumes:
+          - name: npa-sudo-shim
+            emptyDir: {}
+          - name: dshm
+            emptyDir:
+              medium: Memory
+              sizeLimit: 64Gi
+envs:
+  # --- Runtime container -----------------------------------------------------
+  NPA_NUREC_IMAGE: "nvcr.io/nvidia/nre/nre-ga:26.04"
+  NPA_NUREC_ENTRYPOINT: "/app/run"
+  NPA_NUREC_FFMPEG_EXE: "/usr/bin/ffmpeg"
+
+  # --- Input capture ---------------------------------------------------------
+  # Ungated (CC-BY-4.0) NVIDIA PhysicalAI capture that ships real photographs
+  # already in NCore V4 - the format NRE consumes.
+  NPA_NUREC_DATASET: "nvidia/PhysicalAI-NuRec-PPISP"
+  NPA_NUREC_SCENE: "struktur28"
+  NPA_NUREC_VARIANT: "auto"
+
+  # --- Reconstruction --------------------------------------------------------
+  # Static, camera-only, object-centric 3DGUT recipe shipped in the container.
+  NPA_NUREC_CONFIG_NAME: "configs/experimental/3dgut/3dgut_colmap.yaml"
+  NPA_NUREC_MODE: "trainval"
+  # 0 keeps the recipe's own epoch budget.
+  NPA_NUREC_MAX_EPOCHS: "0"
+  NPA_NUREC_WORLD_SIZE: "1"
+  NPA_NUREC_AUX_DATA: "0"
+  NPA_NUREC_CAMERA_IDS: ""
+  NPA_NUREC_LIDAR_IDS: ""
+  # Rig frame derived from this camera; empty picks the longest trajectory.
+  NPA_NUREC_REFERENCE_CAMERA: ""
+
+  # --- Novel-view rendering --------------------------------------------------
+  # A non-zero rig offset is what makes the rendered views NOVEL.
+  NPA_NUREC_RIG_TRANSLATION_OFFSET: "0,0.25,0"
+  NPA_NUREC_RIG_ROTATION_OFFSET: "0,0,0"
+  NPA_NUREC_RENDER_IMAGE_SCALE: "0.5"
+  NPA_NUREC_RENDER_FRAME_STEP: "1"
+  NPA_NUREC_RENDERER: "default"
+
+  # --- Local scratch (all under /tmp) ---------------------------------------
+  NPA_NUREC_CACHE: "/tmp/npa-nurec-cache"
+  NPA_NUREC_OUT: "/tmp/npa-nurec-out"
+  NPA_NUREC_RENDER_DIR: "/tmp/npa-nurec-out/novel_views"
+  NPA_RUNTIME_PIP_FLAGS: "--break-system-packages"
+
+  # --- Run identity + artifact destination ----------------------------------
+  # These are ${...} placeholders, not defaults: `npa workbench workflow submit
+  # --var KEY=VALUE` substitutes them textually (SkyPilot 0.12.2 does not
+  # interpolate env values itself). A literal default here would SHADOW the
+  # substitution and the stage would run with an empty value.
+  #
+  # <run_id> embeds the submit timestamp so the agent's run picker dates the run
+  # by when it STARTED (npa.workflows.artifacts._run_started_at).
+  NPA_NUREC_RUN_ID: "${NPA_NUREC_RUN_ID}"
+  NPA_NUREC_RUN_URI: "${NPA_NUREC_RUN_URI}"
+  NPA_SRC_S3_URI: "${NPA_SRC_S3_URI}"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+  AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+
+  # --- Secrets: supplied at submit time via --var, never committed ----------
+  HF_TOKEN: "${HF_TOKEN}"
+  NGC_API_KEY: "${NGC_API_KEY}"
+setup: |
+  set -euo pipefail
+  export DEBIAN_FRONTEND=noninteractive
+  # ffmpeg backs `nre render --export-video`; the NRE image ships none.
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    apt-get update -qq || true
+    apt-get install -y -qq --no-install-recommends ffmpeg || true
+  fi
+
+  # Ubuntu 24.04 marks the system interpreter externally managed (PEP 668) and a
+  # task container is disposable, so --break-system-packages is the right call
+  # here. NRE itself is a self-contained Bazel binary with its own runfiles
+  # interpreter, so nothing installed below can perturb it.
+  npa_pip() {
+    python3 -m pip install -q "$@" ${NPA_RUNTIME_PIP_FLAGS} || python3 -m pip install -q "$@" --user
+  }
+  npa_pip "boto3>=1.34" "awscli>=1.32" "huggingface_hub>=0.30" "nvidia-ncore" "rerun-sdk" "pillow>=10.0" "pyyaml>=6.0"
+
+  # Stage the npa source (the established NPA_SRC_S3_URI mechanism) and install it
+  # so every stage below is a real `npa workbench nurec` entrypoint.
+  if ! command -v npa >/dev/null 2>&1; then
+    if [ -d /opt/nebius-physical-ai/npa ]; then
+      npa_pip -e /opt/nebius-physical-ai/npa
+    else
+      test -n "${NPA_SRC_S3_URI}"
+      python3 - <<'PY'
+  import os, pathlib
+  from urllib.parse import urlparse
+  import boto3
+  from botocore.client import Config
+
+  uri = os.environ['NPA_SRC_S3_URI'].rstrip('/')
+  parsed = urlparse(uri if '://' in uri else f's3://{uri}')
+  bucket, prefix = parsed.netloc, parsed.path.lstrip('/')
+  dest = pathlib.Path('/tmp/npa-src')
+  dest.mkdir(parents=True, exist_ok=True)
+  kwargs = {'config': Config(signature_version='s3v4')}
+  if os.environ.get('AWS_ENDPOINT_URL'):
+      kwargs['endpoint_url'] = os.environ['AWS_ENDPOINT_URL']
+  s3 = boto3.client('s3', **kwargs)
+  token = None
+  count = 0
+  while True:
+      kw = {'Bucket': bucket, 'Prefix': prefix}
+      if token:
+          kw['ContinuationToken'] = token
+      resp = s3.list_objects_v2(**kw)
+      for obj in resp.get('Contents') or ():
+          key = obj['Key']
+          rel = key[len(prefix):].lstrip('/') if prefix else key
+          if not rel or key.endswith('/'):
+              continue
+          out = dest / rel
+          out.parent.mkdir(parents=True, exist_ok=True)
+          s3.download_file(bucket, key, str(out))
+          count += 1
+      if not resp.get('IsTruncated'):
+          break
+      token = resp.get('NextContinuationToken')
+  print(f'staged {count} npa source objects to {dest}', flush=True)
+  PY
+      npa_pip -e /tmp/npa-src
+    fi
+  fi
+  npa --help >/dev/null
+  python3 -c "import ncore, rerun; print('runtime deps ready')"
+run: |
+  set -euo pipefail
+  test -n "${NPA_NUREC_RUN_ID}"
+  test -n "${NPA_NUREC_RUN_URI}"
+  # Length-only secret checks: never echo a token value.
+  test -n "${NGC_API_KEY}" && echo "NGC_API_KEY: set (${#NGC_API_KEY} chars)"
+  test -n "${HF_TOKEN}" && echo "HF_TOKEN: set (${#HF_TOKEN} chars)"
+
+  RUN="${NPA_NUREC_RUN_URI%/}"
+
+  echo "=== stage 1/6: check (container + dataset rights + RT-core GPU) ==="
+  npa workbench nurec check --require-gpu --output json
+
+  echo "=== stage 2/6: fetch real NCore V4 shards + derive the rig pose edge ==="
+  npa workbench nurec fetch \
+    --output-uri "${RUN}/ncore/" \
+    --output json | tee /tmp/npa-nurec-fetch.json
+  NCORE_JSON="$(python3 -c "import json;print(json.load(open('/tmp/npa-nurec-fetch.json'))['ncore_json'])")"
+  POSES_GROUP="$(python3 -c "import json;print(json.load(open('/tmp/npa-nurec-fetch.json'))['poses_component_group'])")"
+  CAMERA="$(python3 -c "import json;print(json.load(open('/tmp/npa-nurec-fetch.json'))['reference_camera'])")"
+  echo "ncore=${NCORE_JSON} poses_group=${POSES_GROUP} reference_camera=${CAMERA}"
+
+  echo "=== stage 3/6: reconstruct (NRE 3DGUT -> renderable USDZ) ==="
+  npa workbench nurec reconstruct \
+    --ncore-json "${NCORE_JSON}" \
+    --poses-component-group "${POSES_GROUP}" \
+    --camera-id "${CAMERA}" \
+    --output-uri "${RUN}/reconstruction/" \
+    --input-uri "${RUN}/input/" \
+    --output json | tee /tmp/npa-nurec-reconstruct.json
+  USDZ="$(python3 -c "import json;print(json.load(open('/tmp/npa-nurec-reconstruct.json'))['usdz_path'])")"
+
+  echo "=== stage 4/6: render novel views (rig-offset, not training views) ==="
+  npa workbench nurec render \
+    --artifact-path "${USDZ}" \
+    --output-dir "${NPA_NUREC_RENDER_DIR}" \
+    --camera-id "${CAMERA}" \
+    --image-scale "${NPA_NUREC_RENDER_IMAGE_SCALE}" \
+    --frame-step "${NPA_NUREC_RENDER_FRAME_STEP}" \
+    --renderer "${NPA_NUREC_RENDERER}" \
+    --rig-translation-offset "${NPA_NUREC_RIG_TRANSLATION_OFFSET}" \
+    --rig-rotation-offset "${NPA_NUREC_RIG_ROTATION_OFFSET}" \
+    --output-uri "${RUN}/novel_views/" \
+    --output json
+
+  echo "=== stage 5/6: visualize (reports/sim2real.rrd) ==="
+  npa workbench nurec visualize \
+    --input-uri "${RUN}/" \
+    --output-uri "${RUN}/reports/sim2real.rrd" \
+    --output json
+
+  echo "=== stage 6/6: finalize (reports/final.json) ==="
+  npa workbench nurec finalize \
+    --input-uri "${RUN}/" \
+    --output-uri "${RUN}/reports/final.json" \
+    --run-id "${NPA_NUREC_RUN_ID}" \
+    --output json
+
+  echo "=== run tree ==="
+  npa workbench nurec status --run-uri "${RUN}/" --output json
