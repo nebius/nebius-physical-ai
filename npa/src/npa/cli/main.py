@@ -1586,6 +1586,24 @@ def _forget_project(alias: str) -> None:
         )
     else:
         typer.echo(f"No project '{cleaned}' in ~/.npa/config.yaml; nothing to remove.")
+def _store_src_s3_uri(uri: str) -> None:
+    from npa.clients.config import default_project_name, write_config
+
+    if not uri.startswith("s3://"):
+        typer.echo(f"Error: --src-s3-uri must be an s3:// URI, got {uri!r}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        project = str(default_project_name() or "")
+    except Exception:  # noqa: BLE001 - fall back to a top-level key when unconfigured
+        project = ""
+    if project:
+        path = write_config({"projects": {project: {"src_s3_uri": uri}}})
+        location = f"projects.{project}.src_s3_uri"
+    else:
+        path = write_config({"src_s3_uri": uri})
+        location = "src_s3_uri"
+    typer.echo(f"Stored staged npa source prefix in {path} under {location}.")
+    typer.echo("Workflow submits now resolve NPA_SRC_S3_URI without re-exporting it.")
 
 
 def _configure_impl(
@@ -1598,7 +1616,11 @@ def _configure_impl(
     ngc_api_key: str = "",
     env_output: bool = False,
     forget_project: str = "",
+    src_s3_uri: str = "",
 ) -> None:
+    if src_s3_uri.strip():
+        _store_src_s3_uri(src_s3_uri.strip())
+        return
     if forget_project.strip():
         # Deconfigure a single project: the inverse of the stanza configure
         # writes. Storage credentials (host-scoped) and a deleted bucket's
@@ -1741,6 +1763,15 @@ def configure(
             "cloud resources and their credentials first."
         ),
     ),
+    src_s3_uri: str = typer.Option(
+        "",
+        "--src-s3-uri",
+        help=(
+            "Persist the staged npa source prefix (s3://bucket/prefix/npa) in "
+            "~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without "
+            "re-exporting it in every shell (skips interactive setup)."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -1752,6 +1783,7 @@ def configure(
         ngc_api_key=ngc_api_key,
         env_output=env_output,
         forget_project=forget_project,
+        src_s3_uri=src_s3_uri,
     )
 
 
@@ -1814,6 +1846,15 @@ def init(
             "eval \"$(npa configure --show --env)\"."
         ),
     ),
+    src_s3_uri: str = typer.Option(
+        "",
+        "--src-s3-uri",
+        help=(
+            "Persist the staged npa source prefix (s3://bucket/prefix/npa) in "
+            "~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without "
+            "re-exporting it in every shell (skips interactive setup)."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -1824,6 +1865,7 @@ def init(
         hf_token=hf_token,
         ngc_api_key=ngc_api_key,
         env_output=env_output,
+        src_s3_uri=src_s3_uri,
     )
 
 

@@ -31,6 +31,14 @@ SKYPILOT_VERSION = REQUIRED_SKYPILOT_VERSION
 UTC = timezone.utc
 SKYPILOT_EXTRAS = ("nebius", "kubernetes")
 SKYPILOT_PACKAGE = f"skypilot[{','.join(SKYPILOT_EXTRAS)}]=={SKYPILOT_VERSION}"
+# SkyPilot 0.12.2 declares `kubernetes!=32.0.0,>=20.0.0` with no upper bound, so a
+# fresh bootstrap resolves the newest client. Client 36.0.0 renamed the generated
+# `openapi_types` entries from `dict(str, str)` to `dict[str, str]`, which SkyPilot's
+# PodValidator turns into an import of `kubernetes.client.models.dict[str, str]`.
+# Every pod_config then fails validation and the managed-jobs controller retries
+# forever, so pin the client below the break.
+KUBERNETES_CLIENT_MAX_EXCLUSIVE = "36"
+KUBERNETES_CLIENT_SPEC = f"kubernetes>=20.0.0,!=32.0.0,<{KUBERNETES_CLIENT_MAX_EXCLUSIVE}"
 DEFAULT_VENV_PATH = Path.home() / ".npa" / "skypilot-venv"
 VENV_PATH_ENV = "NPA_SKYPILOT_VENV_PATH"
 PYTHON_ENV = "NPA_SKYPILOT_PYTHON"
@@ -71,10 +79,17 @@ class VenvState:
     version: str | None
     importable: bool
     marker_path: Path
+    kubernetes_version: str | None = None
 
     @property
     def installed(self) -> bool:
         return self.version == SKYPILOT_VERSION and self.importable and self.has_sky
+
+    @property
+    def kubernetes_compatible(self) -> bool:
+        """Whether the installed kubernetes client works with SkyPilot's pod_config."""
+
+        return kubernetes_client_supported(self.kubernetes_version)
 
 
 @dataclass(frozen=True)
@@ -228,6 +243,11 @@ def status_cmd(
     typer.echo(f"version: {state.version}")
     typer.echo(f"marker: {state.marker_path}")
     typer.echo(f"marker_age: {marker_age}")
+    typer.echo(f"kubernetes_client: {state.kubernetes_version or 'not installed'}")
+
+    if not state.kubernetes_compatible:
+        _fail(kubernetes_client_remedy(state.kubernetes_version))
+        return
 
     result = _run_no_raise([str(state.sky_bin), "check"])
     summary = _summarize_completed_process(result)
@@ -265,6 +285,10 @@ def verify_cmd(
     if not state.installed:
         detail = f"found version {state.version}" if state.version else "sky binary missing or not executable"
         _fail(f"SkyPilot {SKYPILOT_VERSION} is not ready in {state.path}: {detail}. Run `npa skypilot bootstrap`.")
+        return
+
+    if not state.kubernetes_compatible:
+        _fail(kubernetes_client_remedy(state.kubernetes_version))
         return
 
     check_env = _verify_kube_env(kubeconfig=kubeconfig, cluster=cluster)
@@ -329,6 +353,11 @@ def bootstrap_skypilot(
             "or choose a new --path."
         )
     if state.installed:
+        # A venv bootstrapped before the pin existed still holds a broken client;
+        # repair it in place rather than reusing it into another controller hang.
+        if not state.kubernetes_compatible:
+            _pin_skypilot_kubernetes(state)
+            state = inspect_venv(path)
         _write_marker(state, package_spec=package_spec, expected_version=expected_version, extras=extras, reused=True)
         return BootstrapResult(path=state.path, sky_bin=state.sky_bin, installed=True, reused=True, marker_path=state.marker_path)
 
@@ -377,6 +406,7 @@ def inspect_venv(path: Path | str) -> VenvState:
     has_sky = _is_executable(sky_bin)
     version = _sky_version(sky_bin) if has_sky else None
     importable = _sky_importable(python_bin) if has_python else False
+    kubernetes_version = _kubernetes_client_version(python_bin) if has_python else None
     return VenvState(
         path=resolved,
         python_bin=python_bin,
@@ -389,6 +419,7 @@ def inspect_venv(path: Path | str) -> VenvState:
         version=version,
         importable=importable,
         marker_path=resolved / MARKER_FILE,
+        kubernetes_version=kubernetes_version,
     )
 
 
@@ -506,6 +537,7 @@ def _install_package(state: VenvState, package_spec: str) -> None:
         # Click that breaks `sky launch --docker` flag parsing (backend_name=False).
         # Re-pin after install so bootstrap stays launchable.
         _pin_skypilot_click(state)
+        _pin_skypilot_kubernetes(inspect_venv(state.path))
         return
     detail = _combined_output(result) or "no output"
     if _looks_like_network_failure(detail):
@@ -515,6 +547,61 @@ def _install_package(state: VenvState, package_spec: str) -> None:
         )
     raise SkyPilotBootstrapError(
         f"pip failed while installing {package_spec}: {detail}. "
+        "Suggested action: inspect the pip error above, fix the environment, and rerun bootstrap."
+    )
+
+
+def kubernetes_client_supported(version: str | None) -> bool:
+    """Whether ``version`` of the kubernetes client is usable by SkyPilot.
+
+    An unknown version is treated as supported: bootstrap should not fail closed
+    on a client it could not introspect.
+    """
+
+    if not version:
+        return True
+    match = re.match(r"\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
+    if not match:
+        return True
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    patch = int(match.group(3) or 0)
+    if major >= int(KUBERNETES_CLIENT_MAX_EXCLUSIVE):
+        return False
+    return (major, minor, patch) != (32, 0, 0)
+
+
+def kubernetes_client_remedy(version: str | None) -> str:
+    """One-line remedy for an incompatible kubernetes client in the SkyPilot venv."""
+
+    return (
+        f"SkyPilot's isolated venv has kubernetes client {version or 'unknown'}, which "
+        "breaks pod_config validation ("
+        "\"Invalid pod_config ... No module named 'kubernetes.client.models.dict[str, str]'\") "
+        "and makes the managed-jobs controller retry forever. "
+        f"Suggested action: rerun `npa skypilot bootstrap`, or pin manually with "
+        f"`pip install '{KUBERNETES_CLIENT_SPEC}'` in the SkyPilot venv."
+    )
+
+
+def _pin_skypilot_kubernetes(state: VenvState) -> None:
+    """Keep the kubernetes client below the version that breaks pod_config validation."""
+
+    if state.kubernetes_compatible and state.kubernetes_version:
+        return
+    result = _run_no_raise(
+        [str(state.python_bin), "-m", "pip", "install", KUBERNETES_CLIENT_SPEC]
+    )
+    if result.returncode == 0:
+        return
+    detail = _combined_output(result) or "no output"
+    if _looks_like_network_failure(detail):
+        raise SkyPilotBootstrapError(
+            f"Network failure while pinning the kubernetes client for SkyPilot: {detail}. "
+            "Suggested action: verify package index connectivity and rerun bootstrap."
+        )
+    raise SkyPilotBootstrapError(
+        f"pip failed while pinning the kubernetes client for SkyPilot: {detail}. "
         "Suggested action: inspect the pip error above, fix the environment, and rerun bootstrap."
     )
 
@@ -554,6 +641,8 @@ def _write_marker(
         "package": package_spec,
         "sky_bin": str(state.sky_bin),
         "reused_existing_venv": reused,
+        "kubernetes_client": state.kubernetes_version,
+        "kubernetes_client_spec": KUBERNETES_CLIENT_SPEC,
     }
     state.marker_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
@@ -568,6 +657,16 @@ def _sky_version(sky_bin: Path) -> str | None:
 def _sky_importable(python_bin: Path) -> bool:
     result = _run_no_raise([str(python_bin), "-c", "import sky"])
     return result.returncode == 0
+
+
+def _kubernetes_client_version(python_bin: Path) -> str | None:
+    result = _run_no_raise(
+        [str(python_bin), "-c", "import kubernetes; print(kubernetes.__version__)"]
+    )
+    if result.returncode != 0:
+        return None
+    value = (result.stdout or "").strip().splitlines()
+    return value[0].strip() if value else None
 
 
 def _run_no_raise(

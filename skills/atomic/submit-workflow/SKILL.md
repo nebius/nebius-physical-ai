@@ -48,7 +48,9 @@ healthy `sky check kubernetes`:
 - **`NPA_SRC_S3_URI` (or `--image`)** for CPU tool steps and `run.shell` states —
   they have no heavy workbench image and install npa from that source tarball,
   else render fails with "planned step has no workbench image and NPA_SRC_S3_URI
-  is unset".
+  is unset". Persist it once with `npa configure --src-s3-uri s3://bucket/prefix/npa`
+  so a new shell resolves it from `~/.npa/config.yaml` instead of failing preflight
+  on already-staged objects (`scripts/stage-npa-src.sh` does this for you).
 - **`--assume-decision promote_checkpoint`** for specs with a dynamic gate/loop.
 - **`--var key=value`** to override `config` (e.g. `--var bucket=<real-bucket>`;
   the reference specs default to `bucket: example-bucket`).
@@ -65,10 +67,31 @@ healthy `sky check kubernetes`:
   must be deterministic. Parallel sweeps stay SkyPilot-only in v0.0.1.
 - **GPU accelerator name is cluster-specific.** Specs use canonical
   `RTXPRO6000:1`, but a cluster may only advertise the raw label (e.g.
-  `RTXPRO-6000-BLACKWELL-SERVER-EDITION`). A mismatch fails with
-  `FAILED_PRECHECKS` / "cluster does not contain any instances satisfying the
-  request" — not a capacity problem. Run `sky gpus list` and resubmit with the
-  cluster's exact accelerator name (this is the "retry GPU types" path).
+  `RTXPRO-6000-BLACKWELL-SERVER-EDITION`), and the name changes while the NVIDIA
+  GPU operator is still labelling nodes (`nebius.com/gpu-name: RTX6000` first,
+  `nvidia.com/gpu.product` after). A mismatch fails with `FAILED_PRECHECKS` /
+  "cluster does not contain any instances satisfying the request" — not a capacity
+  problem. Submit now remaps this automatically; use
+  `npa workbench workflow gpus --cluster <name>` to see the names yourself, or
+  `--no-resolve-accelerators` to submit the spec's values verbatim.
+- **`NAME:N` needs N GPUs on one node.** SkyPilot places all GPUs of a task on a
+  single node, so `NAME:2` can never schedule on 2 nodes × 1 GPU no matter how many
+  nodes exist. `workflow gpus` prints the requestable quantity per node; submit
+  rejects anything above it. Multi-GPU fan-out docs assume N GPUs per pod, which is
+  a different cluster shape from "N single-GPU node presets".
+- **A registry `403` stalls rather than fails.** Kubernetes retries image pulls
+  forever, so an unpullable image leaves the job in `PENDING`/`ImagePullBackOff`.
+  Listing a repository's tags is a *different permission* from pulling it, so a
+  `200` on `/v2/<repo>/tags/list` proves nothing. Submit reproduces each planned
+  pull with the credentials it injects and refuses to launch on a `403`; run it
+  standalone with `npa workbench workflow preflight-images <spec.yaml>`, or skip
+  with `--no-preflight-images`.
+- **A silent 15-minute submit is usually the kubernetes client.** SkyPilot 0.12.2
+  does not cap the client version, and client 36+ makes every `pod_config` fail
+  validation, so the managed-jobs controller retries forever. `npa skypilot
+  bootstrap` pins a working client and repairs an existing venv; `npa skypilot
+  status` reports the installed version. Submit streams SkyPilot output live and
+  names this failure when it appears.
 - **Stale `NEBIUS_IAM_TOKEN` breaks sky/terraform.** The Nebius provider prefers
   an ambient (often expired) `NEBIUS_IAM_TOKEN` over the fresh CLI token, giving
   `PermissionDenied` / `Unauthenticated` even though the `nebius` CLI works.

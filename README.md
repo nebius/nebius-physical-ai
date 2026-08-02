@@ -194,9 +194,28 @@ first GPU submit.
   [FTUE-AUDIT.md § friction 1](FTUE-AUDIT.md#friction-points-ordered).
 - **GPU routing matters.** Isaac Lab needs an **RT-core** GPU (L40S / RTX
   Pro 6000), not an H100. See [docs/workbench/troubleshooting/known-footguns.md § L40S Capacity](docs/workbench/troubleshooting/known-footguns.md#l40s-capacity-is-on-demand-zero).
+- **Ask the cluster what its GPUs are called.** Kubernetes names accelerators
+  after node labels, so the same card can appear as `RTXPRO6000` in a spec and
+  `RTXPRO-6000-BLACKWELL-SERVER-EDITION` on the cluster. Run
+  `npa workbench workflow gpus --cluster <name>` once after `npa configure`; it
+  prints the exact names and the `export NPA_WORKFLOW_GPU_ACCELERATOR=<name>:<qty>`
+  line to use. `submit` also remaps this automatically. Note the printed
+  *requestable quantity per node*: SkyPilot puts all GPUs of one task on one
+  node, so `NAME:2` cannot be scheduled on a fleet of 1-GPU nodes no matter how
+  many nodes you add.
 - **Registry pull secrets expire silently.** A `401` on image pull usually
-  means the `npa-nebius-registry` pull secret needs refreshing. See
+  means the `npa-nebius-registry` pull secret needs refreshing; a `403` means the
+  credentials are valid but not permitted to pull that repository — and being able
+  to list its tags does not rule that out. Kubernetes retries image pulls forever,
+  so either one leaves the job in `PENDING`/`ImagePullBackOff` instead of failing.
+  Run `npa workbench workflow preflight-images <spec.yaml>` to reproduce the pull
+  with the run's own credentials before spending GPU time (`submit` runs it by
+  default). See
   [known-footguns.md § Registry Pull Secret](docs/workbench/troubleshooting/known-footguns.md#registry-pull-secret-expires-silently).
+- **Bootstrap SkyPilot with `npa skypilot bootstrap`.** It pins a kubernetes
+  client SkyPilot can actually use; a newer one makes the managed-jobs controller
+  reject every `pod_config` and retry forever, which looks like a hung submit.
+  `npa skypilot status` reports the installed client version.
 - **Prefer `npa workbench workflow submit` for multi-stage jobs.** Pass
   `npa.workflow` specs (or legacy runbooks); avoid hand-editing scheduler
   YAML. See [FTUE-AUDIT.md § friction 4](FTUE-AUDIT.md#friction-points-ordered).
