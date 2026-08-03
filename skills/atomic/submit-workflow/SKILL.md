@@ -79,6 +79,15 @@ healthy `sky check kubernetes`:
   nodes exist. `workflow gpus` prints the requestable quantity per node; submit
   rejects anything above it. Multi-GPU fan-out docs assume N GPUs per pod, which is
   a different cluster shape from "N single-GPU node presets".
+- **A workflow's images are not shipped into your registry.** `npa configure` picks
+  (or creates) a project registry; nothing mirrors workbench images into it, so a
+  spec that pins them needs them built and pushed once per registry. Run
+  `npa workbench workflow preflight-images <spec.yaml>` — it reports each image as
+  `ok`/`not_found`/`forbidden` and prints the build command for the tag
+  `npa/src/npa/deploy/images.py` pins (the guide's tags are pinned to those by
+  `tests/guardrails/test_paidf_image_tags_match_code.py`). `submit` runs the same
+  check **before `deployIfAbsent`**, so a registry without the images costs no
+  cluster time.
 - **A registry `403` stalls rather than fails.** Kubernetes retries image pulls
   forever, so an unpullable image leaves the job in `PENDING`/`ImagePullBackOff`.
   Listing a repository's tags is a *different permission* from pulling it, so a
