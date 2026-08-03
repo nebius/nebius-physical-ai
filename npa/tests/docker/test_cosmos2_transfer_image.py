@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 from npa.deploy.images import supported_tool_version
@@ -198,6 +200,9 @@ def test_build_script_resolves_registry_without_committed_identifier() -> None:
 
 
 def test_procedural_fixture_is_real_multistep_video(tmp_path: Path) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg and ffprobe are required for procedural-video validation")
+
     result = generate_fixture(
         tmp_path,
         width=320,
