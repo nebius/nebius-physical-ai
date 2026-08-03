@@ -251,12 +251,15 @@ first GPU submit.
 ### Tearing it back down
 
 Teardown is an ordered sequence (cancel managed jobs → destroy the agent →
-destroy the cluster → delete the bucket → drop the project entry → clear local
-caches), and missing a step leaves a hung job or a stale cache behind. Run
-`npa cleanup` for a report of what is still there plus the runbook, and
-`npa cleanup --yes` to clear the local caches. It never deletes cloud resources,
-and it reports rather than removes the `lerobot-training` service account
-`npa configure` creates, since that account is often shared with unrelated work.
+destroy the cluster → delete the bucket → remove NPA-owned storage IAM → drop
+the project entry → clear local state), and missing a step leaves a hung job,
+credential, or cache behind. Run `npa cleanup` for a report plus the exact
+runbook. Plain `npa cleanup --yes` keeps credentials; the explicit
+`npa cleanup --full --yes` scope also removes saved Hugging Face, Token Factory,
+and NGC credentials and prunes an empty `~/.npa` tree. Cloud resources remain
+separate: `npa storage service-account delete` removes `lerobot-training` only
+when configure recorded that NPA created that exact identity, and refuses
+legacy, reused, mismatched, or user-managed accounts.
 
 For the full known-issues surface: [docs/workbench/troubleshooting/known-footguns.md](docs/workbench/troubleshooting/known-footguns.md)
 and the active operational backlog in [FIXME.md](FIXME.md).

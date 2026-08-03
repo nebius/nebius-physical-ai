@@ -640,8 +640,20 @@ npa agent destroy --project "$PROJECT" --name <agent-name> --yes
 npa cluster down --terraform-dir deploy/cluster --project "$PROJECT" --force
 
 # 3. Object storage. A versioned bucket cannot be deleted immediately, so this
-#    schedules the purge and drops the now-dead S3 keys from ~/.npa.
-npa storage bucket delete --project "$PROJECT" --yes
+#    schedules the purge, waits for completion, and drops the dead S3 keys.
+npa storage bucket delete --project "$PROJECT" --yes --wait
+
+# 4. Storage IAM. This deletes only the exact lerobot-training account whose
+#    create-time NPA ownership record matches this project. Inspect first if wanted:
+npa storage service-account delete --project "$PROJECT" --dry-run
+npa storage service-account delete --project "$PROJECT" --yes
+
+# 5. Remove the project stanza after every project-scoped cloud command has run.
+npa configure --forget-project "$PROJECT"
+
+# 6. Remove known shared-service credentials, caches, the SkyPilot venv/state,
+#    and empty ~/.npa residue. Non-empty/unrelated local data is preserved.
+npa cleanup --full --yes
 ```
 
 Notes:
@@ -657,11 +669,12 @@ Notes:
   (other agents share it, so it is kept while any remain). A deploy that rolled
   back still created them, which is why this is the default; `--keep-iam` reports
   them with the `nebius iam …` commands instead.
-- The `lerobot-training` service account and access key that `npa configure`
-  provisions for workflow storage are **not** removed by any of the above; delete
-  them with `nebius iam v2 access-key delete --id <id>` and
-  `nebius iam service-account delete --id <id>` when you are done with the
-  project.
+- **Storage IAM deletion is ownership-gated.** Configure records provenance only
+  when NPA's create call made `lerobot-training`. The storage service-account
+  command refuses an ID-only legacy record, a mismatched project, or an account
+  configure reused. It also refuses to run while bucket credentials remain, which
+  is why bucket deletion comes first. Nebius CLI's raw
+  `nebius iam service-account delete --id <id>` command has no `--yes` flag.
 
 ## 9. Where to go next
 

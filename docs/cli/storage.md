@@ -11,6 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 bucket  Object-storage buckets.
+service-account  NPA-owned object-storage service accounts.
 ```
 
 ## Options
@@ -24,6 +25,7 @@ bucket  Object-storage buckets.
 | Command | Description |
 | --- | --- |
 | `bucket` | Object-storage buckets. |
+| `service-account` | NPA-owned object-storage service accounts. |
 
 ## Examples
 

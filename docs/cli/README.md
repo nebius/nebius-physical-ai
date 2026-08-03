@@ -40,6 +40,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa rerun](rerun.md)
 - [npa workbench sonic retargeting](retargeting.md)
 - [npa workbench scenario-gen](scenario-gen.md)
+- [npa storage service-account](service-account.md)
 - [npa skypilot](skypilot.md)
 - [npa workbench sonic](sonic.md)
 - [npa soperator](soperator.md)

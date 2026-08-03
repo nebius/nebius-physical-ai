@@ -173,26 +173,33 @@ it is progressing and why it is slow.
 
 Category for follow-up: platform.
 
-## Teardown Is Six Ordered Steps With No Single Entry Point
+## Teardown Is Seven Ordered Steps With No Single Entry Point
 
 Symptom: an environment looks torn down but still has a hung managed job, a local
 SkyPilot venv, empty `~/.npa/agents` / `~/.npa/clusters` directories, or an IAM
 service account nothing removed.
 
 Root cause: teardown spans cancel → agent destroy → cluster down → bucket delete →
-forget project → remove local caches, and nothing checks the order or reports what
-is left.
+owned storage-IAM delete → forget project → remove local state, and nothing checks
+the order or reports what is left.
 
 Mitigation: `npa cleanup` reports residual local state (with sizes), empty per-alias
 state directories, and any managed job still non-terminal — the step most often
 missed, because such a job keeps the jobs controller alive — then prints the ordered
 runbook. `npa cleanup --yes` removes the local caches and clears
-`skypilot.sky_bin` from `config.yaml` (`--keep-sky` keeps `~/.sky`).
+`skypilot.sky_bin` from `config.yaml` (`--keep-sky` keeps `~/.sky`) while
+preserving credentials. The deliberately broader `npa cleanup --full --yes`
+also removes the locally saved Hugging Face, Token Factory, and NGC entries and
+prunes empty `config.yaml`, `clusters/`, and `~/.npa`; non-empty or unrelated
+data is preserved. Cleanup already owns the isolated SkyPilot venv, so there is
+no dead `npa skypilot uninstall` step afterwards.
 
-It never deletes cloud resources and never deletes service accounts. The
-`lerobot-training` account `npa configure` provisions is removed by no destroy path,
-but it is frequently shared with unrelated work in the same project, so it is
-reported with the `nebius iam …` command rather than deleted for you.
+Cloud IAM stays explicit. Configure records provenance only when its create call
+made `lerobot-training`; after bucket deletion,
+`npa storage service-account delete --project <alias> --dry-run` shows the exact
+account/access keys and `--yes` removes them. An ID or familiar account name alone
+is not ownership proof, so legacy, reused, mismatched, and user-managed identities
+are left untouched.
 
 Category for follow-up: platform.
 
