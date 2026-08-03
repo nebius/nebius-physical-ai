@@ -1247,7 +1247,9 @@ def _submit_prerequisites(
     — each as a separate run. Collect them so the operator sees the whole list
     once.
     """
-    from npa.orchestration.npa_workflow.src_staging import resolve_src_uri_from_env
+    # Same resolver the renderer uses, so a prefix persisted with
+    # `npa configure --src-s3-uri` satisfies the check without re-exporting it.
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_src_s3_uri
 
     missing: list[tuple[str, str]] = []
 
@@ -1273,7 +1275,7 @@ def _submit_prerequisites(
     # every task to SkyPilot's default image, so it needs the source too.
     image_value = str(image or "").strip().lower()
     image_pins_tasks = bool(image_value) and image_value not in {"none", "default", "-"}
-    if not image_pins_tasks and not resolve_src_uri_from_env():
+    if not image_pins_tasks and not resolve_src_s3_uri():
         missing.append(
             (
                 "npa source for image-less steps (NPA_SRC_S3_URI is unset)",

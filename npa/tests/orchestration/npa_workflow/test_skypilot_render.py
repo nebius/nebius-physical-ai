@@ -556,6 +556,10 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
             "--plan-only",
             "--registry",
             "cr.example.invalid/reg",
+            # This spec's steps keep their workbench images (that is the assertion
+            # below), but the prerequisite check cannot know that before planning
+            # and asks for a source it will not need.
+            "--skip-preflight",
         ],
     )
 
