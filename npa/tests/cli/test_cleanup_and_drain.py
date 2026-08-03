@@ -332,3 +332,120 @@ def test_status_output_shows_the_blocked_pods() -> None:
     assert "blocked: 1 pod(s) cannot start" in output
     assert "worker-0: ImagePullBackOff - 403 Forbidden" in output
     assert "Suggested action: check pull permission" in output
+
+
+# --- FTUE gaps from the third README walkthrough ------------------------------
+
+
+def _option_names(command_path: list[str]) -> set[str]:
+    import typer.main
+
+    command = typer.main.get_command(app)
+    for name in command_path:
+        command = command.commands[name]  # type: ignore[attr-defined]
+    names: set[str] = set()
+    for param in command.params:
+        names.update(getattr(param, "opts", ()))
+    return names
+
+
+def test_provision_if_absent_accepts_the_same_node_flags_as_cluster_up() -> None:
+    # The README steers first-timers at provision-if-absent, but a 2x1-GPU shape
+    # needed `cluster up --gpu-nodes 2`, which was not in the copy-paste path.
+    assert "--gpu-nodes" in _option_names(["provision-if-absent"])
+    assert "--cpu-nodes" in _option_names(["provision-if-absent"])
+
+
+def test_node_flags_reach_the_cluster_up_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    import inspect
+
+    from npa import provisioning
+    from npa.cli.cluster.terraform_lifecycle import up_cmd
+
+    expected_params = set(inspect.signature(up_cmd).parameters)
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *a, **k: False)
+
+    def fake_up(**kwargs):  # noqa: ANN003 - test stub
+        seen.update(kwargs)
+
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd", fake_up, raising=False
+    )
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda project: (
+            "demo",
+            type("E", (), {"project_id": "p", "tenant_id": "t"})(),
+            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            "cr.example.invalid/reg",
+        ),
+    )
+    monkeypatch.setattr(provisioning, "_runtime_env", lambda *a, **k: __import__("contextlib").nullcontext())
+
+    provisioning.provision_if_absent(skip_s3=True, gpu_nodes=2, cpu_nodes=1)
+
+    assert seen["gpu_nodes"] == 2
+    assert seen["cpu_nodes"] == 1
+    # Every Typer parameter must be passed explicitly, or omitted ones arrive as
+    # OptionInfo sentinels and reach the Terraform overrides as objects.
+    assert expected_params <= set(seen)
+
+
+def test_dry_run_reports_the_requested_node_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa import provisioning
+
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *a, **k: False)
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda project: (
+            "demo",
+            type("E", (), {"project_id": "p", "tenant_id": "t"})(),
+            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            "cr.example.invalid/reg",
+        ),
+    )
+
+    result = provisioning.provision_if_absent(
+        skip_s3=True, dry_run=True, gpu_nodes=2, cpu_nodes=1
+    )
+
+    assert any("gpu_nodes=2" in action and "cpu_nodes=1" in action for action in result.actions)
+
+
+def test_an_unavailable_capacity_api_does_not_advertise_the_dead_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `nebius capacity resource-advice list` can answer Unavailable; telling the
+    # operator to run it is then the one thing that cannot help.
+    import subprocess
+
+    from npa.cli.cluster import capacity
+
+    def capture(args):  # noqa: ANN001 - test stub
+        if "resource-advice" in args:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="Unavailable")
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout='{"items": [{"metadata": {"name": "q"}, "spec": {"limit": "2"}, "status": {"usage": "2"}}]}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(capacity, "gpu_quota_headroom", lambda *a, **k: (2, 2))
+
+    message = capacity.gpu_capacity_error(
+        capture,
+        nebius_bin="nebius",
+        tenant_id="tenant-x",
+        region="us-central1",
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        required_gpus=2,
+    )
+
+    assert message is not None
+    assert "did not answer" in message
+    assert "see what is available with" not in message

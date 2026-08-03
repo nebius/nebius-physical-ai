@@ -474,6 +474,31 @@ def submit_cmd(
         _warn_placeholder_bucket(
             spec_config, quiet=output_format == OutputFormat.json
         )
+        image_overrides: dict[str, str] = {}
+        # ``none`` / ``default`` clears workbench image pins so tasks use the
+        # SkyPilot default image (needed when registry images fail k8s apt-ssh).
+        image_value = image.strip()
+        if image_value.lower() in {"none", "default", "-"}:
+            image_overrides["*"] = ""
+        elif image_value:
+            image_overrides["*"] = image_value
+
+        # Which images a run pulls depends only on the registry and the overrides,
+        # never on the cluster -- so check them before provisioning rather than
+        # after, and a registry missing the workbench images costs no GPU time.
+        _preflight_submit_images(
+            yaml_path,
+            options=SkypilotRenderOptions(
+                registry=registry,
+                image_overrides=image_overrides,
+                gpu_target=gpu_target,
+                image_variant=image_variant,
+                materialize_registry_secrets=False,
+            ),
+            assume_decision=assume_decision,
+            enabled=preflight_images and not plan_only,
+        )
+
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
                 ensure_infra_present,
@@ -517,15 +542,6 @@ def submit_cmd(
                 "context from `kubectl config get-contexts`."
             )
             return
-        image_overrides: dict[str, str] = {}
-        # ``none`` / ``default`` clears workbench image pins so tasks use the
-        # SkyPilot default image (needed when registry images fail k8s apt-ssh).
-        image_value = image.strip()
-        if image_value.lower() in {"none", "default", "-"}:
-            image_overrides["*"] = ""
-        elif image_value:
-            image_overrides["*"] = image_value
-
         npa_render_options = SkypilotRenderOptions(
             registry=registry,
             image_overrides=image_overrides,
@@ -543,13 +559,6 @@ def submit_cmd(
                 sky_bin=sky_bin,
                 enabled=resolve_accelerators and not plan_only,
             ),
-        )
-
-        _preflight_submit_images(
-            yaml_path,
-            options=npa_render_options,
-            assume_decision=assume_decision,
-            enabled=preflight_images and not plan_only,
         )
 
         if runtime and not plan_only:

@@ -28,6 +28,8 @@ skipping one is what makes a first submit fail. The run needs **no dataset**:
 `seed_default_input=true` seeds its own frames for the mandatory caption stage.
 
 ```bash
+set -o pipefail   # `npa ... | tee run.log` otherwise reports 0 for a failed submit
+
 # Fill BUCKET / PROJECT / KUBE_CONTEXT from ~/.npa instead of hand-substituting
 # them (`npa configure --show --env` prints NPA_* assignments and no secrets;
 # `npa configure --show` prints the same values in a readable block).
@@ -49,22 +51,31 @@ npa provision-if-absent --project "$PROJECT"          # --dry-run first to previ
 npa skypilot bootstrap
 npa skypilot verify --cluster <your-cluster-name>     # sanity-check the kubeconfig
 
-# 3. Publish the npa package for the image-less (Token Factory / run.shell)
+# 3. The three Cosmos images this spec pins are NOT in a registry you just
+#    created. This reports each as ok / not_found / forbidden and prints the
+#    build command for anything missing (see section 4). Submit runs the same
+#    check before provisioning, so a missing image costs no GPU time.
+npa workbench workflow preflight-images npa/workflows/physical-ai-data-factory.yaml
+
+# 4. Publish the npa package for the image-less (Token Factory / run.shell)
 #    steps. `submit --stage-src` below does this inline; run it standalone to
 #    reuse one copy across submits.
 npa workbench workflow stage-src --bucket "$BUCKET"
 export NPA_SRC_S3_URI="s3://$BUCKET/npa-src/npa/"
 
-# 4. Secrets must be exported for --secret-env to forward them.
+# 5. Secrets must be exported for --secret-env to forward them. HF_TOKEN is not
+#    optional: the curator fetches its weights with it at run time.
 export NEBIUS_TOKEN_FACTORY_KEY=<your-token-factory-key>
 export AWS_ACCESS_KEY_ID=<...> AWS_SECRET_ACCESS_KEY=<...>
+export HF_TOKEN=<your-hugging-face-token>
 
-# 5. Submit.
+# 6. Submit. (`set -o pipefail` above: piping to `tee` otherwise reports success
+#    for a submit that printed `Error:` and exited 1.)
 npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
   --run-id "$RUN_ID" --var bucket="$BUCKET" --var seed_default_input=true \
   --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
-  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env HF_TOKEN \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -332,11 +343,27 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 
 ---
 
-## 4. Build and push the two Cosmos OSS images
+## 4. Build and push the Cosmos images (required — a fresh registry has none)
 
-Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`
-(already published), while `evaluate` and `cosmos-curate` need images this repo
-builds. Build and push both once per branch:
+Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`,
+`evaluate` needs `npa-cosmos-evaluator`, and `curate` needs `npa-cosmos-curate`.
+
+**None of them exist in a registry you just created.** `npa configure` selects
+(or creates) a project registry; it does not mirror these images into it, so a
+first run against a new project must build and push all three. `npa-cosmos2-transfer`
+is published in some long-lived NPA registries, which is why the earlier
+per-project registry can appear to have it — check rather than assume:
+
+```bash
+npa workbench workflow preflight-images npa/workflows/physical-ai-data-factory.yaml
+```
+
+That reports each image as `ok` / `not_found` / `forbidden` and prints the exact
+build command for anything missing. `npa workbench workflow submit` runs the same
+check before it provisions anything, so a missing image costs no GPU time.
+
+Build and push what it reports missing (tags below track
+`npa/src/npa/deploy/images.py`, which is what submit pulls):
 
 ```bash
 REGISTRY="$(npa configure --show 2>/dev/null | grep -o 'cr\.[^ ]*' | head -1)"   # or your NPA_REGISTRY
@@ -345,9 +372,10 @@ printf '%s' "$(nebius iam get-access-token)" \
 
 docker buildx create --name npa-cosmos-oss --driver docker-container   # scoped cache
 for tool in cosmos-evaluator cosmos-curate; do
+  # Tag must match npa/src/npa/deploy/images.py; submit pulls exactly that tag.
   docker buildx build --builder npa-cosmos-oss --push \
     -f "npa/docker/workbench/$tool/Dockerfile" \
-    -t "$REGISTRY/npa-$tool:0.1.0" npa
+    -t "$REGISTRY/npa-$tool:0.1.2" npa
 done
 docker buildx rm npa-cosmos-oss
 ```
@@ -357,15 +385,15 @@ stages fetch theirs at run time with your Hugging Face token:
 
 ```bash
 docker run --rm -e HF_TOKEN="$HF_TOKEN" -v curator-weights:/config/models \
-  "$REGISTRY/npa-cosmos-curate:0.1.0" fetch-models --models split-annotate
+  "$REGISTRY/npa-cosmos-curate:0.1.2" fetch-models --models split-annotate
 ```
 
 Confirm all three images are pullable before spending GPU time — a missing one
 surfaces late, as a stage failure:
 
 ```bash
-for ref in npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z \
-           npa-cosmos-evaluator:0.1.0 npa-cosmos-curate:0.1.0; do
+for ref in npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z \
+           npa-cosmos-evaluator:0.1.2 npa-cosmos-curate:0.1.2; do
   docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"
 done
 ```

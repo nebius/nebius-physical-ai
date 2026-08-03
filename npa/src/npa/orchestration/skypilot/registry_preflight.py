@@ -305,10 +305,7 @@ def check_image_pull(
             status="not_found",
             http_status=status,
             detail=detail or "manifest not found",
-            remedy=(
-                f"the tag {reference.reference!r} does not exist in "
-                f"{reference.registry}/{reference.repository}; build and push it, or pin a tag that exists"
-            ),
+            remedy=_missing_image_remedy(reference),
         )
     return ImagePullCheck(
         image=reference.raw,
@@ -316,6 +313,33 @@ def check_image_pull(
         http_status=status,
         detail=detail or f"unexpected registry response {status}",
         remedy=f"inspect https://{reference.registry}/v2/{reference.repository}/manifests/{reference.reference}",
+    )
+
+
+def _missing_image_remedy(reference: ImageReference) -> str:
+    """Explain a missing tag, with the build command when it is a workbench image.
+
+    A fresh project's registry has none of these images, and the deploy guide's
+    tags can drift from the ones the code pins -- so name the command that builds
+    the exact tag this run asked for.
+    """
+
+    base = (
+        f"the tag {reference.reference!r} does not exist in "
+        f"{reference.registry}/{reference.repository}"
+    )
+    try:
+        from npa.deploy.images import build_and_push_command
+
+        command = build_and_push_command(reference.raw)
+    except Exception:  # noqa: BLE001 - the remedy must never be the thing that fails
+        command = ""
+    if not command:
+        return f"{base}; build and push it, or pin a tag that exists"
+    return (
+        f"{base}. This is an NPA workbench image, so build and push it after "
+        f"`printf '%s' \"$(nebius iam get-access-token)\" | docker login "
+        f"{reference.registry} -u iam --password-stdin`:\n    {command}"
     )
 
 

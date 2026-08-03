@@ -17,6 +17,12 @@ Options
 --skip-s3  Do not ensure S3.
 --validate  --skip-validate  Run post-apply Kubernetes validation. [default: validate]
 --sky-smoke  --skip-sky-smoke  Run a SkyPilot GPU smoke task. [default: skip-sky-smoke]
+--gpu-nodes  <int>  Number of GPU nodes, matching `npa cluster up`. -1 keeps the
+configured value.
+[default: -1]
+--cpu-nodes  <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the
+configured value.
+[default: -1]
 --dry-run  Resolve settings and print intended actions only.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
 --output-format  <text|json>  Output format. [default: text]
@@ -36,6 +42,8 @@ Options
 | `--skip-s3` | Do not ensure S3. |
 | `--validate` | --skip-validate  Run post-apply Kubernetes validation. [default: validate] |
 | `--sky-smoke` | --skip-sky-smoke  Run a SkyPilot GPU smoke task. [default: skip-sky-smoke] |
+| `--gpu-nodes` | <int>  Number of GPU nodes, matching `npa cluster up`. -1 keeps the |
+| `--cpu-nodes` | <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |
 | `--output-format` | <text\|json>  Output format. [default: text] |

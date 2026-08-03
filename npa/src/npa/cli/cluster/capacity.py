@@ -175,6 +175,32 @@ def capacity_advice_items(
     return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 
+def capacity_advice_reachable(
+    capture: CaptureFn, *, nebius_bin: str, tenant_id: str
+) -> bool:
+    """Whether `capacity resource-advice list` answered at all.
+
+    The service can return ``Unavailable``, which is indistinguishable from "no
+    matching entry" once the payload is parsed -- so the remedy would tell an
+    operator to run the very command that had just failed.
+    """
+
+    result = capture(
+        [
+            nebius_bin,
+            "capacity",
+            "resource-advice",
+            "list",
+            "--parent-id",
+            tenant_id,
+            "--all",
+            "--format",
+            "json",
+        ]
+    )
+    return getattr(result, "returncode", 0) == 0
+
+
 def gpu_capacity_error(
     capture: CaptureFn,
     *,
@@ -239,9 +265,18 @@ def gpu_capacity_error(
             "or try preemptible capacity (`gpu_nodes_preemptible = true`), a smaller "
             "`gpu_nodes_preset`, or another `gpu_nodes_platform`"
         )
-    remedies.append(
-        "see what is available with `nebius capacity resource-advice list "
-        f"--parent-id {tenant_id} --all`"
-    )
+    if advice or capacity_advice_reachable(
+        capture, nebius_bin=nebius_bin, tenant_id=tenant_id
+    ):
+        remedies.append(
+            "see what is available with `nebius capacity resource-advice list "
+            f"--parent-id {tenant_id} --all`"
+        )
+    else:
+        remedies.append(
+            "the capacity advice API did not answer, so there is no availability "
+            "hint to act on here -- raise the quota, or try preemptible/another "
+            "platform and let the apply tell you"
+        )
     lines.append("Fix: " + "; ".join(remedies) + ".")
     return " ".join(lines)

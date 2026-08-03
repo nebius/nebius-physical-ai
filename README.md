@@ -118,13 +118,24 @@ Running a workflow on Nebius GPUs needs a cluster, an orchestrator, and a copy o
 `npa` the workers can install. This is every step, once, on a fresh account:
 
 ```bash
+set -o pipefail                                # or `| tee` hides a failing submit
 npa configure                                  # Nebius profile + ~/.npa files
 npa workbench health preflight                 # HF / NGC / S3 / Token Factory
-npa provision-if-absent --project <alias>      # bucket + GPU cluster if missing
+npa provision-if-absent --project <alias> --gpu-nodes 2   # bucket + GPU cluster if missing
 npa skypilot bootstrap                         # orchestrator (saves skypilot.sky_bin)
+npa workbench workflow preflight-images <spec.yaml>       # build/push anything missing
 npa workbench workflow stage-src --bucket <b>  # npa source for image-less steps
 npa workbench workflow submit <spec.yaml> --var bucket=<b> --infra k8s/<context> ...
 ```
+
+**A workflow's container images are not shipped into your registry.** `npa configure`
+selects (or creates) a project registry; it does not mirror workbench images into
+it, so a spec that pins them (the Physical AI Data Factory pins three Cosmos
+images) needs them built and pushed once per registry.
+`npa workbench workflow preflight-images <spec.yaml>` reports each image as
+`ok` / `not_found` / `forbidden` and prints the exact build command for anything
+missing. `submit` runs the same check **before it provisions anything**, so a
+registry without them costs no GPU time.
 
 `submit` verifies these up front and prints **everything** still missing in one
 list (with the command that fixes each), so you are not discovering them one

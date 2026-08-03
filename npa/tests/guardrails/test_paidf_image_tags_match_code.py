@@ -1,0 +1,119 @@
+"""The PAIDF deploy guide must build the tags submit actually pulls.
+
+A first run against a fresh project has to build all three Cosmos images. The
+guide's build/verify commands drifted from `npa/src/npa/deploy/images.py`
+(`:0.1.0` and a `golden-eval-smoke` transfer tag vs the `:0.1.2` /
+`skypilot-ready` pins), so following the guide to the letter still produced a
+registry submit could not pull.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
+    build_and_push_command,
+    supported_tool_version,
+    tool_for_image_name,
+)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEPLOY_GUIDE = REPO_ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
+PAIDF_TOOLS = ("cosmos2-transfer", "cosmos-evaluator", "cosmos-curate")
+
+
+@pytest.mark.parametrize("tool", PAIDF_TOOLS)
+def test_the_guide_never_names_a_tag_the_code_does_not_pin(tool: str) -> None:
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    image_name = CONTAINER_IMAGE_NAMES[tool]
+    pinned = supported_tool_version(tool)
+
+    mentioned = {
+        line.split(f"{image_name}:", 1)[1].split()[0].strip("\"'`,;)")
+        for line in guide.splitlines()
+        if f"{image_name}:" in line
+    }
+
+    assert mentioned, f"the guide never mentions {image_name}"
+    assert mentioned == {pinned}, (
+        f"{image_name} tags in the deploy guide {sorted(mentioned)} do not match "
+        f"images.py ({pinned})"
+    )
+
+
+def test_the_guide_does_not_claim_the_transfer_image_is_already_published() -> None:
+    # A fresh project's registry returns NAME_UNKNOWN for all three.
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+
+    assert "(already published)" not in guide
+
+
+def test_the_guide_points_at_the_image_preflight() -> None:
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+
+    assert "preflight-images" in guide
+
+
+@pytest.mark.parametrize("tool", PAIDF_TOOLS)
+def test_a_missing_image_yields_a_build_command_for_the_pinned_tag(tool: str) -> None:
+    image_name = CONTAINER_IMAGE_NAMES[tool]
+    reference = f"cr.eu-north1.nebius.cloud/e000/{image_name}:whatever-was-requested"
+
+    command = build_and_push_command(reference)
+
+    assert f"npa/docker/workbench/{tool}/Dockerfile" in command
+    # The remedy names the tag the code pins, not the one that was missing.
+    assert command.endswith(
+        f"-t cr.eu-north1.nebius.cloud/e000/{image_name}:{supported_tool_version(tool)} npa"
+    )
+
+
+def test_a_third_party_image_gets_no_build_command() -> None:
+    assert build_and_push_command("nvcr.io/nvidia/pytorch:24.01") == ""
+    assert build_and_push_command("") == ""
+
+
+def test_image_names_round_trip_to_tools() -> None:
+    for tool, name in CONTAINER_IMAGE_NAMES.items():
+        assert tool_for_image_name(name) == tool
+    assert tool_for_image_name("not-an-npa-image") == ""
+
+
+def test_the_quick_start_checks_images_before_submitting() -> None:
+    """The copy-paste path went straight to submit and failed on missing images."""
+
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    quick_start = guide.split("## 5. Submit", 1)[0]
+
+    assert "preflight-images" in quick_start
+
+
+def test_the_quick_start_forwards_the_hugging_face_token() -> None:
+    # The curator fetches weights with it; the early block omitted it while a
+    # later section included it, so a first submit silently lacked HF.
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    quick_start = guide.split("## 5. Submit", 1)[0]
+
+    assert "--secret-env HF_TOKEN" in quick_start
+
+
+def test_shell_examples_do_not_let_a_pipe_swallow_a_failed_submit() -> None:
+    # `npa ... | tee run.log` reports 0 for a submit that printed `Error:`.
+    guide = DEPLOY_GUIDE.read_text(encoding="utf-8")
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "set -o pipefail" in guide
+    assert "set -o pipefail" in readme
+
+
+def test_the_readme_path_names_the_image_step() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    whole_path = readme.split("### The whole path, in order", 1)[1].split("###", 1)[0]
+
+    assert "preflight-images" in whole_path
+    # A 2x1-GPU fleet needed `--gpu-nodes 2`, which the copy-paste path lacked.
+    assert "--gpu-nodes" in whole_path

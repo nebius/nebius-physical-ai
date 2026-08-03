@@ -33,6 +33,16 @@ def provision_if_absent_cmd(
     skip_s3: bool = typer.Option(False, "--skip-s3", help="Do not ensure S3."),
     validate: bool = typer.Option(True, "--validate/--skip-validate", help="Run post-apply Kubernetes validation."),
     sky_smoke: bool = typer.Option(False, "--sky-smoke/--skip-sky-smoke", help="Run a SkyPilot GPU smoke task."),
+    gpu_nodes: int = typer.Option(
+        -1,
+        "--gpu-nodes",
+        help="Number of GPU nodes, matching `npa cluster up`. -1 keeps the configured value.",
+    ),
+    cpu_nodes: int = typer.Option(
+        -1,
+        "--cpu-nodes",
+        help="Number of CPU nodes, matching `npa cluster up`. -1 keeps the configured value.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Resolve settings and print intended actions only."),
     timeout: int = typer.Option(120, "--timeout", help="Terraform apply timeout in minutes."),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
@@ -50,6 +60,8 @@ def provision_if_absent_cmd(
         sky_smoke=sky_smoke,
         dry_run=dry_run,
         timeout=timeout,
+        gpu_nodes=gpu_nodes,
+        cpu_nodes=cpu_nodes,
     )
     payload = result.to_dict()
     if output_format == OutputFormat.json:

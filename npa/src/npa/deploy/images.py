@@ -292,6 +292,42 @@ def container_image_for_tool(
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
+def tool_for_image_name(image_name: str) -> str:
+    """Reverse ``CONTAINER_IMAGE_NAMES``: ``npa-cosmos-curate`` -> ``cosmos-curate``."""
+
+    wanted = str(image_name or "").strip()
+    if not wanted:
+        return ""
+    for tool, name in CONTAINER_IMAGE_NAMES.items():
+        if name == wanted:
+            return tool
+    return ""
+
+
+def build_and_push_command(image: str) -> str:
+    """Return the buildx command that produces ``image``, or "" if it is not ours.
+
+    A missing workbench image is the one preflight failure whose fix is entirely
+    mechanical, so the remedy carries the command rather than pointing at a guide
+    whose tags can drift from these pins.
+    """
+
+    ref = str(image or "").removeprefix("docker:").strip()
+    if "/" not in ref:
+        return ""
+    repository = ref.rsplit("/", 1)[-1]
+    image_name = repository.rsplit(":", 1)[0] if ":" in repository else repository
+    tool = tool_for_image_name(image_name)
+    if not tool:
+        return ""
+    registry = ref.rsplit("/", 1)[0]
+    tag = supported_tool_version(tool)
+    return (
+        f"docker buildx build --push -f npa/docker/workbench/{tool}/Dockerfile "
+        f"-t {registry}/{image_name}:{tag} npa"
+    )
+
+
 def registry_from_id(registry_id: str) -> str:
     """Build a full registry locator from a bare Nebius registry id.
 

@@ -45,6 +45,8 @@ def provision_if_absent(
     sky_smoke: bool = False,
     dry_run: bool = False,
     timeout: int = 120,
+    gpu_nodes: int = -1,
+    cpu_nodes: int = -1,
 ) -> ProvisionIfAbsentResult:
     """Ensure configured S3 and Kubernetes exist, without teardown or mutation."""
     alias, environment, storage, registry = _resolve_project_runtime(project)
@@ -74,19 +76,34 @@ def provision_if_absent(
     elif not environment.project_id or not environment.tenant_id:
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
     elif dry_run:
-        actions.append(f"k8s:dry-run terraform apply {terraform_dir or 'deploy/cluster'}")
+        shape = ", ".join(
+            f"{name}={count}"
+            for name, count in (("gpu_nodes", gpu_nodes), ("cpu_nodes", cpu_nodes))
+            if count >= 0
+        )
+        actions.append(
+            f"k8s:dry-run terraform apply {terraform_dir or 'deploy/cluster'}"
+            + (f" ({shape})" if shape else "")
+        )
     else:
         with _runtime_env(alias, environment, storage, registry):
             from npa.cli.cluster.terraform_lifecycle import up_cmd
 
+            # Every parameter is passed explicitly: `up_cmd` is a Typer command,
+            # so an omitted one arrives as an OptionInfo sentinel rather than its
+            # default (the §23 bug), and `gpu_nodes`/`cpu_nodes` would reach the
+            # Terraform override as objects.
             up_cmd(
                 terraform_dir=terraform_dir,
                 kubeconfig=kubeconfig_path,
                 context_name=context,
+                project=alias or "",
                 validate=validate,
                 sky_smoke=sky_smoke,
                 sky_gpus="",
                 capacity_block_group="",
+                gpu_nodes=gpu_nodes,
+                cpu_nodes=cpu_nodes,
                 validation_timeout=60,
                 timeout=timeout,
             )

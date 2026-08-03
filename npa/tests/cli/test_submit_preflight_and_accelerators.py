@@ -288,3 +288,47 @@ def test_catalog_helper_reports_max_per_node() -> None:
 
     assert catalog.max_per_node("H100") == 8
     assert catalog.max_per_node("A100") == 0
+
+
+def test_the_image_check_runs_before_any_provisioning() -> None:
+    """A registry missing the workbench images must cost no cluster time.
+
+    The check only needs the registry and the --image overrides, never the
+    cluster, so it belongs ahead of deployIfAbsent.
+    """
+
+    import inspect
+
+    source = inspect.getsource(workflow_cli.submit_cmd)
+    preflight_at = source.index("_preflight_submit_images(")
+    provision_at = source.index("if deploy_if_absent:")
+
+    assert preflight_at < provision_at
+
+
+def test_a_missing_workbench_image_carries_its_build_command(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from npa.deploy.images import supported_tool_version
+    from npa.orchestration.skypilot.registry_preflight import check_image_pull
+
+    class Missing:
+        def __call__(self, url, headers, timeout):  # noqa: ANN001 - test stub
+            if "Authorization" not in headers:
+                return 401, {"www-authenticate": 'Bearer realm="https://cr.x/v2/token/",service="cr.x"'}, b""
+            if "/v2/token/" in url:
+                import json as _json
+
+                return 200, {}, _json.dumps({"token": "t"}).encode()
+            return 404, {}, b'{"errors":[{"code":"MANIFEST_UNKNOWN","message":"unknown"}]}'
+
+    check = check_image_pull(
+        "cr.eu-north1.nebius.cloud/e000/npa-cosmos-curate:some-old-tag",
+        password="token",
+        fetcher=Missing(),
+    )
+
+    assert check.status == "not_found"
+    assert "docker buildx build" in check.remedy
+    assert f"npa-cosmos-curate:{supported_tool_version('cosmos-curate')}" in check.remedy
+    assert "docker login" in check.remedy
