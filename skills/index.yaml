@@ -553,7 +553,7 @@ skills:
         contains: "config-name"
       - type: workflow_yaml
         paths:
-          - npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml
+          - npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml

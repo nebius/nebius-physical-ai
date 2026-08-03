@@ -3309,3 +3309,31 @@ Preflight that stayed green before the live run:
 
 * Renderer/smoke: `152 passed in 27.52s`
 * Plan-only submit matrix: `42 passed in 8.99s`
+
+## R54. `nurec-reconstruct.yaml` relocated after the #234 author decision
+
+The raw NuRec/NRE task was **not deleted**. It moved from the retiring catalog to:
+
+```text
+npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml
+```
+
+Decision provenance: PR #234 was authored by `timothy-le7` and explicitly shipped both forms:
+
+* a single-pod SkyPilot task, live run `neural-reconstruction-struktur28-20260731t051728z`,
+  terminal success with a renderable USDZ, novel views, `reports/sim2real.rrd`, and real
+  metrics (`PSNR 31.24 / SSIM 0.832 / LPIPS 0.268`);
+* the declarative `npa.workflow` twin, live runs `nurec-npa-20260731t184541z`,
+  `nurec-npa-20260801t171139z`, and `nurec-npa-20260801t220210z`, all end-to-end successful.
+
+The same PR records the behavioral distinction: the declarative spec runs each state in its own
+pod and must hand the NCore sequence and reconstruction through S3, while the single-pod task
+shares `/tmp`. That is a separate execution mode, not an unverified duplicate.
+
+Relocation guardrails added:
+
+* `npa/src/npa/workbench/nurec/examples/README.md` documents that this is a single-pod example,
+  not a workflow authoring catalog.
+* `npa/tests/guardrails/test_nurec_examples.py` pins the one-file set, asserts one SkyPilot task
+  per file, requires substitution placeholders to remain, and forbids the file from returning to
+  `npa/src/npa/workflows/skypilot/`.

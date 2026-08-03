@@ -17,7 +17,16 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SKILL_ROOT = REPO_ROOT / "skills"
 SKILL_INDEX = SKILL_ROOT / "index.yaml"
 SKILL_PATH = SKILL_ROOT / "workflows" / "neural-reconstruction" / "SKILL.md"
-WORKFLOW = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "nurec-reconstruct.yaml"
+WORKFLOW = (
+    REPO_ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workbench"
+    / "nurec"
+    / "examples"
+    / "nurec-reconstruct.yaml"
+)
 SPEC = (
     REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "nurec-reconstruct.yaml"
 )

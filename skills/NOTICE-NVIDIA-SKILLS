@@ -16,7 +16,7 @@ NVIDIA agent skills:
 
 The NPA `neural-reconstruction` skill and the capability it documents
 (`npa/src/npa/workbench/nurec/`, `npa/src/npa/cli/nurec/`,
-`npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml`) drive NVIDIA's public
+`npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml`) drive NVIDIA's public
 NuRec / Neural Reconstruction Engine containers and public PhysicalAI datasets
 from Nebius infrastructure. The recipe knowledge was adapted from the NVIDIA
 Omniverse NuRec agent skills and the NVIDIA NCore data library:

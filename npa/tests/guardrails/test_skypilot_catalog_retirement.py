@@ -1,4 +1,4 @@
-"""Guardrail: the raw SkyPilot task catalog only ever shrinks.
+"""Guardrail: the raw SkyPilot task catalog has no remaining templates.
 
 `npa.workflow/v0.0.1` specs are becoming the only workflow authoring surface. The
 raw SkyPilot task templates under ``npa/src/npa/workflows/skypilot/`` are being
@@ -10,8 +10,9 @@ set. Two properties matter to a reviewer:
 * **A machine-checked tally.** Each retirement PR shows the count going down in a
   single readable diff, instead of a prose claim in a PR body.
 
-Deleting an entry from ``REMAINING`` is the *last* step of a retirement: the twin
-spec must already have a live run recorded in ``EVIDENCE.md``.
+Deleting an entry from ``REMAINING`` is the *last* step of a retirement or
+relocation: the twin must already have a live run recorded in ``EVIDENCE.md``, or
+the file must move to a guarded non-catalog home.
 """
 
 from __future__ import annotations
@@ -21,23 +22,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 
-#: Raw SkyPilot task templates still shipped, with the reason each one survives.
-#: Retirement tally: started at 36.
+#: Raw SkyPilot task templates still shipped in the retiring catalog.
+#: Retirement tally: started at 36, now 0 remain.
 REMAINING: dict[str, str] = {
     # --- loaded and launched by a shipped runner script ---
     # --- referenced by a CLI/SDK path pointer or shipped data ---
     # --- no npa.workflow twin authored yet ---
     # --- twin exists but is NOT live-verified yet ---
-    # --- arrived AFTER this sweep, via #234 ---
-    "nurec-reconstruct.yaml": (
-        "added by #234 while this retirement was in flight, and caught here on merge rather "
-        "than in review, which is what this guardrail is for. It is NOT simply a twinned "
-        "template: the npa.workflow spec of the same name runs each state in its OWN pod and "
-        "hands artifacts over through S3, while this one is a SINGLE-POD task whose stages "
-        "share /tmp. The spec has a live-matrix case; whether the single-pod variant should "
-        "survive alongside it is #234's call, so it is listed rather than deleted. See "
-        "EVIDENCE.md \u00a7R49"
-    ),
+    # --- no entries remain ---
     # --- RETIRED here: twin live-verified, see EVIDENCE.md -----------------------
     # cosmos3-reason.yaml     job 182            npa-wf-gpu-cosmos3-reason-af7ded35
     # isaac-lab-rl-sweep.yaml jobs 185/186/187   npa-wf-multi-isaac-lab-rl-sweep-c4b86dc5
@@ -145,6 +137,13 @@ REMAINING: dict[str, str] = {
     #   npa.workflow twin produced generated/generate.json plus a non-flat 960x960
     #   generated/vision.jpg, with guardrails true, hf_auth configured, and weights_baked
     #   false. See EVIDENCE.md \u00a7R53.
+    #
+    # nurec-reconstruct.yaml  RELOCATED (not deleted)
+    #   PR #234 author timothy-le7 deliberately shipped and live-verified both a single-pod
+    #   raw SkyPilot task and an npa.workflow spec. The spec exercises cross-pod S3 handoff;
+    #   the single-pod task shares /tmp. The raw task now lives at
+    #   npa/src/npa/workbench/nurec/examples/ with its own README and guardrail. See
+    #   EVIDENCE.md \u00a7R54 and npa/tests/guardrails/test_nurec_examples.py.
     #
     # Phase 2c: RELOCATED (not deleted) to npa/src/npa/workflows/byof/profiles/ —
     # they are BYOF resource profiles reached through byof.yaml's toolRef, not
