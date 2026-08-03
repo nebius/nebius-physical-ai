@@ -99,9 +99,9 @@ case "$VARIANT" in
   k8s)
     TAG_SUFFIX="-k8s-runtime"
     if [ -n "$REGISTRY" ]; then
-      BASE_IMAGE_DEFAULT="${REGISTRY}/npa-base:cuda13-b300-sm80-sm90-sm120-latest"
+      BASE_IMAGE_DEFAULT="${REGISTRY}/npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"
     else
-      BASE_IMAGE_DEFAULT="npa-base:cuda13-b300-sm80-sm90-sm120-latest"
+      BASE_IMAGE_DEFAULT="npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"
     fi
     # Isaac always goes through the bootstrap shim, in both variants, so the k8s task
     # templates need no change. The base image's own python venv is reused for
@@ -111,7 +111,7 @@ case "$VARIANT" in
     NPA_ISAAC_SKIP_TORCH=1
     REQUIRE_TORCH_SM120=1
     NPA_DRIVER_PROVISIONING="host-mounted"
-    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm120"
+    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm100,sm103,sm120"
     NPA_ISAAC_LAB_INSTALL_MODE="runtime-fetch-isaac-sim"
     NPA_RUNTIME_USER="root"
     IMAGE_NAME="npa-sonic"
@@ -159,15 +159,15 @@ try:
     import tomllib
 except ModuleNotFoundError:
     text = Path("pyproject.toml").read_text()
-    section = text.split("[tool.npa.supported-tools]", 1)[1]
+    section = text.split("[tool.npa.package-versions]", 1)[1]
     match = re.search(r'^sonic\s*=\s*"([^"]+)"', section, re.MULTILINE)
     if not match:
-        raise SystemExit("Could not find [tool.npa.supported-tools].sonic")
+        raise SystemExit("Could not find [tool.npa.package-versions].sonic")
     print(match.group(1))
 else:
     with Path("pyproject.toml").open("rb") as handle:
         data = tomllib.load(handle)
-    print(data["tool"]["npa"]["supported-tools"]["sonic"])
+    print(data["tool"]["npa"]["package-versions"]["sonic"])
 PY
 )"
 

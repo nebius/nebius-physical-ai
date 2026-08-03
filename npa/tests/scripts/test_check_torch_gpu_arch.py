@@ -100,7 +100,7 @@ def test_majors_never_cross(checker: ModuleType) -> None:
 
 
 def test_hopper_capped_wheel_misses_blackwell(checker: ModuleType) -> None:
-    """cu124/cu126 stop at sm_90, which is the whole reason npa-cosmos is a PORT."""
+    """cu124/cu126 stop at sm_90, which forced the historical npa-cosmos port."""
 
     cu126 = checker.wheel_arch_set(["sm_70", "sm_75", "sm_80", "sm_86", "sm_90"])
     assert checker.arch_is_covered((10, 0), cu126, exact=False) is False

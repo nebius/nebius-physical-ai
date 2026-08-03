@@ -21,7 +21,7 @@
 #
 # EXAMPLES
 #   # On the dev VM, before pushing a tag:
-#   validate_blackwell_image.sh npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-latest
+#   validate_blackwell_image.sh npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
 #
 #   # On a real B300 node:
 #   validate_blackwell_image.sh "$NPA_REGISTRY/npa-lerobot:0.5.1" --target b300 --gpu

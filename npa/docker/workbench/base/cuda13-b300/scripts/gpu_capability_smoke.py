@@ -9,7 +9,9 @@ That gap went unnoticed for months because the golden eval only imported.
 Checks, in order:
 
 1. The device is the architecture we meant to validate, and the wheel carries
-   native SASS for it (so kernels are not silently PTX-JIT-ing).
+   compatible native SASS for it (so kernels are not silently PTX-JIT-ing).
+   This includes same-major forward compatibility: ``sm_100`` SASS runs on an
+   ``sm_103`` B300, while SASS never crosses a CUDA major.
 2. A bf16 tensor-core matmul produces finite results. This is the control: if
    it fails, the GPU or the wheel is wrong, not the kernel under test.
 3. torch SDPA runs, as a second control on the attention shape itself.
@@ -33,6 +35,35 @@ import sys
 
 # Architectures with the Tensor Memory Accelerator that flash-attn-4 CuTe needs.
 TMA_CAPABLE = {(9, 0), (10, 0), (10, 3)}
+
+
+def _parse_sass_arch(flag: str) -> tuple[int, int] | None:
+    """Parse an ``sm_*`` wheel flag, ignoring PTX-only entries."""
+
+    if not flag.startswith("sm_"):
+        return None
+    digits = flag.removeprefix("sm_")
+    if len(digits) < 2 or not digits.isdigit():
+        return None
+    return int(digits[:-1]), int(digits[-1])
+
+
+def covering_sass_arch(
+    capability: tuple[int, int], arch_flags: list[str]
+) -> tuple[int, int] | None:
+    """Return the best native SASS that covers a device without PTX JIT.
+
+    Minor-version forward compatibility applies only within one CUDA major, so
+    ``sm_100`` covers ``sm_103`` but ``sm_90`` and ``sm_120`` do not.
+    """
+
+    available = [arch for flag in arch_flags if (arch := _parse_sass_arch(flag))]
+    compatible = [
+        arch
+        for arch in available
+        if arch[0] == capability[0] and arch[1] <= capability[1]
+    ]
+    return max(compatible, default=None)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,12 +100,21 @@ def main(argv: list[str] | None = None) -> int:
         if capability != expected:
             failures.append(f"expected capability {expected}, landed on {capability}")
 
-    if device_arch not in arch_flags:
+    covering_sass = covering_sass_arch(capability, arch_flags)
+    if covering_sass is None:
         failures.append(
-            f"no native SASS for {device_arch} in {arch_flags}; kernels would PTX-JIT"
+            f"no compatible native SASS for {device_arch} in {arch_flags}; "
+            "kernels would PTX-JIT"
         )
     else:
-        print(f"native SASS present for {device_arch}")
+        covering_arch = f"sm_{covering_sass[0]}{covering_sass[1]}"
+        if covering_sass == capability:
+            print(f"native SASS present for {device_arch}")
+        else:
+            print(
+                f"compatible native SASS {covering_arch} covers {device_arch} "
+                "by same-major forward compatibility"
+            )
 
     torch.manual_seed(0)
 

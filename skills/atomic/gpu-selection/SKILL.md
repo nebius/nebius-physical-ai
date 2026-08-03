@@ -61,8 +61,10 @@ verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
 - L40S capacity can be constrained; if the task only needs non-render training,
   H100 may be the pragmatic target.
 - B200/B300 enablement depends on upstream library support per tool. Treat it as
-  vendor-paced unless current tests prove the path; the Genesis/Taichi subtree
-  and the NVIDIA vendor stacks are still blocked.
+  vendor-paced unless current tests prove the path. The 2026-08-03 final
+  Genesis/Sim2Real tags passed real kernel compilation and physics smokes on
+  both B200 and B300; the NVIDIA Isaac vendor stacks and the per-image Cosmos
+  blockers in `blackwell-dc-images.json` remain separate constraints.
 
 ## Verify
 

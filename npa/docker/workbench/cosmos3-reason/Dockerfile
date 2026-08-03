@@ -1,7 +1,7 @@
-ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm120-latest
+ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
 FROM ${BASE_IMAGE}
 
-ARG COSMOS3_REASON_VERSION=3.0.1-genuine-sm120
+ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 
 LABEL npa.tool="cosmos3-reason" \
       npa.version="${COSMOS3_REASON_VERSION}"
@@ -28,6 +28,8 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
 USER root
 
+# Do not recursively chown the inherited /opt/npa/venv: overlayfs would copy
+# the complete CUDA/PyTorch environment into this child layer.
 RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && python -m pip install tomli \
     && python -m pip install \
@@ -38,7 +40,8 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
       "transformers>=4.51,<5" \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
-    && chown -R ubuntu:ubuntu /workspace /tmp/hf_home /opt/npa
+    && chown -R ubuntu:ubuntu \
+      /workspace /tmp/hf_home /opt/npa/src /opt/npa/pyproject.toml
 
 # --- Schedulable-on-Kubernetes prerequisites -----------------------------------
 #
@@ -48,6 +51,12 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
 # which says nothing about what is missing (live job 304). The runtime user also needs a
 # writable HOME, because `npa workbench cosmos3 text-to-image` clones the Cosmos framework and
 # lets uv build an environment there before it can generate anything.
+# npa-base deliberately purges linux-libc-dev as final-image CVE hardening,
+# leaving its build-time libc6-dev dependency unsatisfied. Repair that
+# relationship temporarily, install everything, then reapply the purge.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --fix-broken
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
@@ -55,7 +64,9 @@ RUN apt-get update \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && mkdir -p /home/ubuntu && chown -R ubuntu:ubuntu /home/ubuntu \
-    && python3 --version
+    && python3 --version \
+    && dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # NOTE: deliberately NOT `ENV PATH=/usr/bin:$PATH`. The Isaac images need that, because their
 # default python3 is a kit interpreter that cannot import its own site-packages outside

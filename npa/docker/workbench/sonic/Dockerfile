@@ -80,6 +80,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-lc"]
 USER root
 
+# The CUDA 13 npa-base variant deliberately purges linux-libc-dev as final-image
+# CVE hardening. Repair the stranded build-time dependency before this derived
+# image's apt installs; the final runtime layer reapplies the purge below.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --fix-broken
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       ca-certificates \
@@ -207,7 +213,7 @@ import os
 from importlib import metadata
 from pathlib import Path
 
-for module in ("gear_sonic", "sonic", "torch", "numpy", "scipy"):
+for module in ("gear_sonic", "sonic", "torch", "numpy", "scipy", "lxml.etree", "open3d"):
     importlib.import_module(module)
 
 # No NVIDIA Isaac bytes may ship in this image; that is the whole point.
@@ -360,7 +366,9 @@ RUN apt-get update \
     && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${NPA_RUNTIME_USER}" \
          > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
-    && python3 --version
+    && python3 --version \
+    && dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/usr/bin:$PATH
 

@@ -1,8 +1,8 @@
 # Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-cosmos3-reason image.
 #
 #   scripts/build-workbench-image-in-cluster.sh \
-#     --base <registry>/npa-cosmos3-reason:3.0.1-genuine-sm120 \
-#     --tag  <registry>/npa-cosmos3-reason:3.0.1-genuine-sm120-sky1 \
+#     --base <registry>/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z \
+#     --tag  <registry>/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z-sky1 \
 #     --dockerfile npa/docker/workbench/cosmos3-reason/Dockerfile.k8s-prereqs
 #
 # Why: SkyPilot's Kubernetes runtime bootstrap execs into the container and needs a system

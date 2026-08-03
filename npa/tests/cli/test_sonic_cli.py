@@ -596,7 +596,10 @@ def test_sonic_container_image_name_resolves() -> None:
     ) == ("registry.example/npa-sonic:0.1.2")
     assert container_image_for_tool(
         "sonic", registry="registry.example", gpu_target="gpu-rtx6000"
-    ) == ("registry.example/npa-sonic:0.1.2-k8s-runtime")
+    ) == (
+        "registry.example/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
+        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
     assert sonic_image_variant_for_gpu("NVIDIA RTX PRO 6000 Blackwell") == (
         "sonic-k8s-host-mounted"
     )
@@ -605,6 +608,7 @@ def test_sonic_container_image_name_resolves() -> None:
 def test_sonic_container_build_script_uses_supported_version() -> None:
     dockerfile = (PACKAGE_ROOT / "docker/workbench/sonic/Dockerfile").read_text()
     build_script = (PACKAGE_ROOT / "docker/workbench/sonic/build.sh").read_text()
+    requirements = (PACKAGE_ROOT / "docker/workbench/sonic/requirements.txt").read_text()
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
     assert "ARG BASE_IMAGE=" in dockerfile
@@ -622,17 +626,21 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "npa-torch-constraints.txt" in dockerfile
     assert '"sm_120" not in arches' in dockerfile
     assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
+    assert '"lxml.etree"' in dockerfile
+    assert "lxml>=5.3,<7" in requirements
+    assert '"open3d"' in dockerfile
+    assert "open3d>=0.19,<0.20" in requirements
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
     assert 'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
     assert "git sparse-checkout set" in dockerfile
     assert '"/gear_sonic/**"' in dockerfile
     assert 'rm -rf "${SONIC_HOME}/.git"' in dockerfile
-    assert 'data["tool"]["npa"]["supported-tools"]["sonic"]' in build_script
+    assert 'data["tool"]["npa"]["package-versions"]["sonic"]' in build_script
     assert "--platform linux/amd64" in build_script
     assert "--variant" in build_script
     assert "--push" in build_script
     assert "--base-image" in build_script
-    assert "cuda13-b300-sm80-sm90-sm120-latest" in build_script
+    assert "cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest" in build_script
     assert 'TAG_SUFFIX="-k8s-runtime"' in build_script
     assert 'REQUIRE_TORCH_SM120=1' in build_script
     assert "NPA_BUILDX_BUILDER" in build_script

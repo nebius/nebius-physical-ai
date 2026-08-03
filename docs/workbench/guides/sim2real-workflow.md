@@ -155,7 +155,7 @@ that owns the token.
    export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig
    npa/.venv/bin/python - <<'PY'
    from npa.cli.workbench.detection_training import _ensure_image_pull_secret
-   reg = "<your-registry>/npa-cosmos3-reason:3.0.1-genuine-sm120"
+   reg = "<your-registry>/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
    for name in ("npa-nebius-registry", "agent-sa"):
        _ensure_image_pull_secret(image=reg, secret_name=name, namespace="default",
                                  kubeconfig="~/.npa/clusters/<context>/kubeconfig")

@@ -66,6 +66,16 @@ def test_without_the_flag_nothing_is_excused(smoke: ModuleType) -> None:
         assert (False and capability not in smoke.TMA_CAPABLE) is False
 
 
+def test_b300_is_covered_by_sm100_sass(smoke: ModuleType) -> None:
+    flags = ["sm_75", "sm_90", "sm_100", "sm_120", "compute_120"]
+    assert smoke.covering_sass_arch((10, 3), flags) == (10, 0)
+
+
+def test_sass_coverage_never_crosses_a_cuda_major(smoke: ModuleType) -> None:
+    assert smoke.covering_sass_arch((10, 3), ["sm_90", "sm_120"]) is None
+    assert smoke.covering_sass_arch((12, 0), ["sm_100"]) is None
+
+
 def test_golden_eval_runs_this_smoke_rather_than_an_import() -> None:
     """The base image's golden eval must execute a kernel, not just import."""
 

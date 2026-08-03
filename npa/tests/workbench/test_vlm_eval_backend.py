@@ -64,6 +64,9 @@ class LiveGpuEndpoint:
 def live_gpu_endpoint(tmp_path_factory: pytest.TempPathFactory) -> LiveGpuEndpoint:
     """Serve Qwen2-VL-7B through vLLM on a live SkyPilot GPU cluster."""
 
+    if os.environ.get("NPA_RUN_VLM_LIVE_GPU") != "1":
+        pytest.skip("set NPA_RUN_VLM_LIVE_GPU=1 to allow this test to create a live GPU cluster")
+
     sky_bin = _resolve_sky_bin()
     if sky_bin is None:
         pytest.skip("SkyPilot CLI not found; set NPA_SKYPILOT_BIN to run the live GPU test")

@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-envgen:0.1.2
+ARG BASE_IMAGE=npa-envgen:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.title="npa-reference-policy"

@@ -45,8 +45,11 @@ workflow composition with retargeting or MJLab.
 ## Routing And Validation
 
 - Use the baked `npa-sonic:0.1.2` image for L40S VM targets.
-- Use the host-mounted `npa-sonic:0.1.2-k8s` image for RTX PRO 6000 Blackwell
-  Kubernetes targets with NVIDIA GPU Operator mounted drivers.
+- Use the host-mounted image selected by
+  `npa/src/npa/deploy/sonic_image_manifest.json` for RTX PRO 6000 Blackwell
+  Kubernetes targets with NVIDIA GPU Operator mounted drivers. The CUDA 13
+  image inherits the truthful `sm80-sm90-sm100-sm103-sm120` base alias; do not
+  reconstruct that tag in callers.
 - SONIC render validation requires RT-capable GPUs. H100 can be useful for
   non-render training throughput, but it is not the default render-validation
   target.
@@ -90,12 +93,23 @@ injects the host driver and the Vulkan ICD given `NVIDIA_DRIVER_CAPABILITIES=all
 (verified on RTX PRO 6000 — `vulkaninfo --summary` reports the discrete GPU at driver
 580.95.05). `VK_ICD_FILENAMES` is deliberately not pinned.
 
+The image must carry `lxml` and `open3d` in its baked Python environment. The real
+training path imports both while constructing the motion library, although the pinned
+upstream training extra declares neither. Keep the Dockerfile's build-time import
+assertions and the one-iteration real fine-tune smoke together; an import-only SONIC
+check is not enough.
+
 ## Gotchas
 
 - Keep `SONIC_GPU_TYPE` and `SONIC_IMAGE_VARIANT` aligned with the image
   manifest. Do not assume one image works across VM and Kubernetes targets.
 - Known issue: job ID reuse anomaly. Treat it as a deferred investigation unless
   the task directly targets scheduler identity handling.
+- The CUDA 13 Kubernetes image's real fine-tune smoke currently reaches Isaac
+  environment construction on RTX PRO 6000 but can fail in the runtime-fetched
+  URDF extension while opening `/tmp/IsaacLab/.../pelvis.tmp.usd`; a same-pod
+  warm retry reproduced it on 2026-08-03. Do not count native-SASS, imports, or
+  environment startup as SONIC capability validation: require the checkpoint.
 - CUDA 13 alignment is vendor-paced on NVIDIA x86_64 CUDA 13 and is not a
   Nebius-blocked item.
 

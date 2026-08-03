@@ -91,7 +91,8 @@ are two independent knobs:
 - A prebuilt torch wheel ships a fixed fat-binary arch set that
   `TORCH_CUDA_ARCH_LIST` cannot change; only the wheel index does. cu128/cu130
   include `sm_100` and `sm_120`, cu124/cu126 stop at `sm_90`. Check with
-  `torch.cuda.get_arch_list()`.
+  `torch._C._cuda_getArchFlags()`. `torch.cuda.get_arch_list()` returns `[]`
+  when the build host has no visible GPU and is not valid build-time evidence.
 - Source-compiled extensions (flash-attn from source, Taichi, natten, custom
   ops) obey `TORCH_CUDA_ARCH_LIST` at build time; omitting an arch fails at
   runtime with `no kernel image is available for execution on the device`.
@@ -104,6 +105,36 @@ Use additive tags that name the architectures
 (`cuda13-b300-sm80-sm90-sm100-sm103-sm120-<UTC>`) and record the per-image
 verdict in `npa/docker/workbench/blackwell-dc-images.json`. Background:
 `docs/workbench/blackwell-datacenter-image-compatibility.md`.
+
+The current alias for that contract is
+`cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest`. Its `v2` generation is
+additive: it was introduced after physical B300 testing proved that the first
+five-architecture alias baked an older validator which incorrectly demanded a
+literal `sm_103` wheel entry. The v2 image bakes the same-major `sm_100` →
+`sm_103` SASS rule. Never repoint either historical alias; introduce a new
+truthful generation if another published contract must be superseded. Retain
+`cuda13-b300-sm80-sm90-sm120-latest` and the first five-architecture alias only
+where historical evidence refers to them.
+
+### Registry-native parent rebases
+
+A registry-native parent rebase is an allowed recovery when the dev VM cannot
+materialize a very large, otherwise unchanged child image. Use it only when all
+of these are true:
+
+- the child Dockerfile instructions and application payload are unchanged
+  except for selecting the replacement parent image;
+- the child does not compile CUDA extensions during its build;
+- the old child's layer list starts with the exact old parent layer list;
+- the rebased child's layer list starts with the exact new parent layer list,
+  and its remaining child-layer suffix is byte-for-byte identical;
+- provenance labels are updated, the tag is additive, both registry digests
+  match, and the exact final tag passes its baked validators plus a real GPU
+  capability smoke.
+
+Describe this result as **rebased**, not rebuilt. Never use this shortcut for a
+changed Dockerfile, a child that compiles extensions, or as a substitute for
+physical GPU execution.
 
 ## Gotchas
 

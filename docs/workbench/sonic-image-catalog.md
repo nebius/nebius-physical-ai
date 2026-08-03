@@ -90,7 +90,7 @@ sonic.submit_workflow(
 ## Related BYO Images
 
 The VLM eval workflows use `NPA_VLM_IMAGE` for the serving image. The committed
-default is `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9`,
+default is `${NPA_REGISTRY}/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z`,
 a pushed CUDA/PyTorch Workbench image; set `NPA_VLM_IMAGE` to a prebuilt VLM or
 vLLM image when you need pinned serving dependencies.
 

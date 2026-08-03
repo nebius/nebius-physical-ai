@@ -13,9 +13,9 @@ usage() {
   cat <<'EOF'
 Usage: build_sm120.sh --base-image IMAGE [--registry REGISTRY] [--tag TAG] [--push]
 
-Builds an additive Genesis image for Blackwell sm_120 validation. The default
-tag is npa-genesis:0.4.6-sm80-sm90-sm120-<UTC>. Registry pushes use the same
-tag under REGISTRY/npa-genesis.
+Builds an additive Genesis image on the widened CUDA 13 base. The default tag
+is npa-genesis:0.4.6-sm80-sm90-sm100-sm103-sm120-<UTC>. Registry pushes use
+the same tag under REGISTRY/npa-genesis.
 EOF
 }
 
@@ -56,7 +56,7 @@ if [[ -z "${BASE_IMAGE}" ]]; then
 fi
 
 if [[ -z "${TAG}" ]]; then
-  TAG="0.4.6-sm80-sm90-sm120-$(date -u +%Y%m%dT%H%M%SZ)"
+  TAG="0.4.6-sm80-sm90-sm100-sm103-sm120-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
 
 LOCAL_IMAGE="npa-genesis:${TAG}"

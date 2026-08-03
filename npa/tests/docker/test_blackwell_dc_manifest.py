@@ -115,6 +115,20 @@ def test_gpu_entries_declare_a_real_capability_smoke(entries: list[dict]) -> Non
         assert entry.get("smoke", "").strip(), f"{entry['name']} declares no capability smoke"
 
 
+def test_lerobot_b300_uses_the_supported_python_and_cuda_stack() -> None:
+    dockerfile = (WORKBENCH_DOCKER / "lerobot" / "Dockerfile.b300").read_text(
+        encoding="utf-8"
+    )
+    assert "python3.12 -m venv /opt/lerobot/venv" in dockerfile
+    assert "torch==2.9.0" in dockerfile
+    assert "torchvision==0.24.0" in dockerfile
+    assert "torchcodec==0.8.1" in dockerfile
+    assert "/opt/npa/venv/bin" in dockerfile, "the inherited base validator venv must remain usable"
+    assert dockerfile.index("pip install \\") < dockerfile.index(
+        "dpkg --purge --force-depends linux-libc-dev"
+    ), "build-time Linux headers must survive until evdev has compiled"
+
+
 def test_cpu_entries_need_no_arch_validation(entries: list[dict]) -> None:
     for entry in [item for item in entries if item["verdict"] == "not-applicable"]:
         assert entry["validation"] == "not-required", (
@@ -158,8 +172,8 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
     for entry in published:
         tag = entry["published_tag"]
         name = entry["name"]
-        assert tag.startswith("cuda13-b300-"), (
-            f"{name} tag {tag!r} is outside the tag families in tags.yaml"
+        assert tag.startswith(("cuda13-b300-", "cu128-torch27-sm100-")), (
+            f"{name} tag {tag!r} is outside the published Blackwell tag families"
         )
         assert re.search(r"-\d{8}T\d{6}Z$", tag), (
             f"{name} tag {tag!r} has no UTC stamp, so a rebuild would overwrite it"

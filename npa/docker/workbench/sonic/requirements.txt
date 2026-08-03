@@ -5,3 +5,9 @@ msgpack>=1.0
 msgpack-numpy>=0.4
 tyro>=0.8
 docstring-parser==0.16
+# GR00T-WholeBodyControl imports lxml while constructing the real training
+# environment, but its upstream training extra does not declare it.
+lxml>=5.3,<7
+# The same upstream motion-library module imports Open3D at module load time;
+# the training extra does not declare it either.
+open3d>=0.19,<0.20
