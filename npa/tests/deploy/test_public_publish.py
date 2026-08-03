@@ -530,6 +530,197 @@ def test_a_copy_exits_zero_only_once_the_packages_are_public(monkeypatch) -> Non
     assert publish_public.main(["--target", "ghcr.io/example/workbench"]) == 0
 
 
+def test_crane_copy_skips_a_target_with_the_exact_source_digest(monkeypatch, capsys) -> None:
+    """Repeat publishes must prove equality without invoking the registry write path."""
+    from npa.deploy import publish_public
+    from npa.deploy.publish_public import PublishItem
+
+    item = PublishItem(
+        tool="lerobot",
+        source_ref="source.example/npa-lerobot:1.0",
+        target_ref="target.example/npa-lerobot:1.0",
+    )
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_digest",
+        lambda ref, **_: (True, "sha256:identical"),
+    )
+
+    def no_copy(*args, **kwargs) -> None:  # pragma: no cover - must not run
+        raise AssertionError(f"matching digests must not invoke crane copy: {args}")
+
+    monkeypatch.setattr(publish_public.subprocess, "run", no_copy)
+
+    assert publish_public._crane_copy(item) is False
+    assert "Already current; skipping copy" in capsys.readouterr().out
+
+
+def test_crane_digest_returns_the_registry_digest(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    class Result:
+        returncode = 0
+        stdout = "sha256:current\n"
+        stderr = ""
+
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
+
+    def run(args, **kwargs):  # noqa: ANN001, ANN202 - subprocess test double
+        calls.append((args, kwargs))
+        return Result()
+
+    monkeypatch.setattr(publish_public.subprocess, "run", run)
+
+    assert publish_public._crane_digest("registry.example/image:1") == (
+        True,
+        "sha256:current",
+    )
+    assert calls[0][0] == ["/usr/bin/crane", "digest", "registry.example/image:1"]
+    assert calls[0][1]["check"] is False
+
+
+def test_crane_digest_preserves_the_registry_error(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "Error: fetching digest\nMANIFEST_UNKNOWN: manifest unknown\n"
+
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
+    monkeypatch.setattr(publish_public.subprocess, "run", lambda *args, **kwargs: Result())
+
+    assert publish_public._crane_digest("registry.example/image:missing") == (
+        False,
+        "MANIFEST_UNKNOWN: manifest unknown",
+    )
+
+
+def test_crane_copy_updates_a_target_with_a_different_digest(monkeypatch, capsys) -> None:
+    from npa.deploy import publish_public
+    from npa.deploy.publish_public import PublishItem
+
+    item = PublishItem(
+        tool="lerobot",
+        source_ref="source.example/npa-lerobot:1.0",
+        target_ref="target.example/npa-lerobot:1.0",
+    )
+    digests = {
+        item.source_ref: (True, "sha256:new"),
+        item.target_ref: (True, "sha256:old"),
+    }
+    calls: list[list[str]] = []
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_digest",
+        lambda ref, **_: digests[ref],
+    )
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        lambda args, **kwargs: calls.append(args),
+    )
+
+    assert publish_public._crane_copy(item) is True
+    assert calls == [["/usr/bin/crane", "copy", item.source_ref, item.target_ref]]
+    assert "Digest changed; copying" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "target_error",
+    [
+        "MANIFEST_UNKNOWN: manifest unknown",
+        "NAME_UNKNOWN: repository name not known",
+        "DENIED: requested access to the resource is denied",
+    ],
+)
+def test_crane_copy_creates_a_missing_or_pull_denied_target(
+    monkeypatch, target_error: str
+) -> None:
+    """A first GHCR push can create a package the pull path cannot read yet."""
+    from npa.deploy import publish_public
+    from npa.deploy.publish_public import PublishItem
+
+    item = PublishItem(
+        tool="lerobot",
+        source_ref="source.example/npa-lerobot:1.0",
+        target_ref="target.example/npa-lerobot:1.0",
+    )
+    digests = {
+        item.source_ref: (True, "sha256:new"),
+        item.target_ref: (False, target_error),
+    }
+    calls: list[list[str]] = []
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_digest",
+        lambda ref, **_: digests[ref],
+    )
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        lambda args, **kwargs: calls.append(args),
+    )
+
+    assert publish_public._crane_copy(item) is True
+    assert calls == [["/usr/bin/crane", "copy", item.source_ref, item.target_ref]]
+
+
+def test_crane_copy_refuses_an_unknown_target_digest_failure(monkeypatch) -> None:
+    """A transient read failure must not turn into a blind repeat write."""
+    from npa.deploy import publish_public
+    from npa.deploy.publish_public import PublishItem
+
+    item = PublishItem(
+        tool="lerobot",
+        source_ref="source.example/npa-lerobot:1.0",
+        target_ref="target.example/npa-lerobot:1.0",
+    )
+    digests = {
+        item.source_ref: (True, "sha256:new"),
+        item.target_ref: (False, "timed out after 60s"),
+    }
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_digest",
+        lambda ref, **_: digests[ref],
+    )
+
+    with pytest.raises(RuntimeError, match="refusing to copy"):
+        publish_public._crane_copy(item)
+
+
+def test_repeat_publish_skips_all_matching_copies_but_still_verifies(
+    monkeypatch, capsys
+) -> None:
+    """Incrementality removes writes, not the final anonymous-public assertion."""
+    from npa.deploy import publish_public
+
+    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    verified: list[str] = []
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+    monkeypatch.setattr(publish_public, "_crane_copy", lambda item: False)
+
+    def public(ref: str, **_: object) -> tuple[bool, str]:
+        verified.append(ref)
+        return True, "HTTP 200"
+
+    monkeypatch.setattr(publish_public, "anonymous_pull_ok", public)
+
+    assert publish_public.main(["--target", "ghcr.io/example/workbench"]) == 0
+    output = capsys.readouterr().out
+    assert "Copied 0 image(s)." in output
+    assert f"Skipped {len(plan)} already-current image(s)." in output
+    assert verified == [item.target_ref for item in plan]
+
+
 def test_settings_url_encodes_the_repository_nested_package_name() -> None:
     from npa.deploy.publish_public import package_settings_url
 
