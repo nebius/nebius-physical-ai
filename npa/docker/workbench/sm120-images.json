@@ -1,6 +1,6 @@
 {
   "format": "npa_sm120_image_manifest_v1",
-  "as_of": "2026-08-03T00:05:00Z",
+  "as_of": "2026-08-03T05:05:26Z",
   "registry": "${NPA_REGISTRY}",
   "target": {
     "gpu": "RTX PRO 6000 Blackwell",
@@ -9,54 +9,54 @@
   "images": [
     {
       "name": "npa-base",
-      "tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-latest",
-      "source_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260802T234708Z",
-      "digest": "sha256:91e3f0142faad06426ceea76d03f237b5c83e236e65aef726b614764ff6bb71d",
+      "tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest",
+      "source_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
+      "digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
       "purpose": "CUDA 13/PyTorch 2.9 base with the asserted sm_80/sm_90/sm_100/sm_103/sm_120 source-build contract."
     },
     {
       "name": "npa-genesis",
-      "tag": "0.4.6-sm80-sm90-sm100-sm103-sm120-latest",
-      "source_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "digest": "sha256:090a277eff2f65e48574854c7990ecbc68199e0f179c07d4751be18098e6d92b",
+      "tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "source_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca",
       "purpose": "Genesis/Sim2Real base layered on the sm_120 CUDA 13 runtime."
     },
     {
       "name": "npa-envgen",
-      "tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "source_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "digest": "sha256:cb7084b90985e68bf4c5dea47be2ea3604d4c600434f5c3bc0704b86acfb7eea",
+      "tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "source_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376",
       "purpose": "Sim2Real environment generation image."
     },
     {
       "name": "npa-reference-policy",
-      "tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "source_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "digest": "sha256:eeefe3026f5818be06999221f941685c446554f4d8b202161cc52f3a075c9853",
+      "tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "source_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6",
       "purpose": "Reference BYO-compatible Sim2Real action policy image."
     },
     {
       "name": "npa-loop-eval",
-      "tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "digest": "sha256:90fd842a1480ca32915b703d7f488473092350d435c6d00ce4faf40580ca56de",
+      "tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a",
       "purpose": "Sim2Real evaluation image."
     },
     {
       "name": "npa-lerobot-vlm-rl",
-      "tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "digest": "sha256:31e92462d8609f9e3a121dd8e6a1758dfefee46649f2ba5d668e74fad1a04140",
+      "tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5",
       "purpose": "LeRobot VLM/RL image layered on the sm_120 Genesis runtime."
     },
     {
       "name": "npa-cosmos3-reason",
-      "tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "digest": "sha256:cfe762e437da7607ee4c379c4ed85fc0cdcc77cd3bf784589bba6eb8a4ca3df9",
+      "tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9",
       "purpose": "Cosmos3 reasoning image layered on the sm_120 CUDA 13 runtime."
     },
     {
       "name": "npa-sonic",
-      "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T012052Z",
-      "digest": "sha256:fd45bf6dd6e395e5c39cfdc7811e43a029df6923788cc94f8687eabb460b5f37",
+      "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
       "purpose": "SONIC host-mounted-driver Kubernetes runtime for RTX PRO 6000."
     }
   ]

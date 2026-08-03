@@ -598,7 +598,7 @@ def test_sonic_container_image_name_resolves() -> None:
         "sonic", registry="registry.example", gpu_target="gpu-rtx6000"
     ) == (
         "registry.example/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
-        "sm80-sm90-sm100-sm103-sm120-20260803T012052Z"
+        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert sonic_image_variant_for_gpu("NVIDIA RTX PRO 6000 Blackwell") == (
         "sonic-k8s-host-mounted"
@@ -640,7 +640,7 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "--variant" in build_script
     assert "--push" in build_script
     assert "--base-image" in build_script
-    assert "cuda13-b300-sm80-sm90-sm100-sm103-sm120-latest" in build_script
+    assert "cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest" in build_script
     assert 'TAG_SUFFIX="-k8s-runtime"' in build_script
     assert 'REQUIRE_TORCH_SM120=1' in build_script
     assert "NPA_BUILDX_BUILDER" in build_script

@@ -1220,7 +1220,7 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
 
     assert config.augment_image == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     assert config.vlm_image == (
-        "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z"
+        "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert "cosmos3" not in config.augment_image
 
@@ -1237,7 +1237,7 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
     )
     assert (
         config.vlm_image
-        == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z"
+        == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
 
 

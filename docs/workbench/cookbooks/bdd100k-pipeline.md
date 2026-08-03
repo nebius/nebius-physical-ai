@@ -280,7 +280,7 @@ configured S3 credentials to list and read this prefix.
 
 The committed YAML pins the first-party LanceDB and detection-training images:
 
-- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3`
+- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
 - `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z`
 
 The optional final FiftyOne app can still be replaced with a BYO registry image:

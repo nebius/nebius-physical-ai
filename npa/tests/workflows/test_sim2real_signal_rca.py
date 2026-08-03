@@ -113,11 +113,11 @@ def test_signal_diversity_report_accepts_varied_batch() -> None:
     ("image", "expected"),
     [
         (
-            "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
+            "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
             "IfNotPresent",
         ),
         (
-            "npa-loop-eval:cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
+            "npa-loop-eval:cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
             "IfNotPresent",
         ),
         ("npa-loop-eval:0.1.1", "IfNotPresent"),
@@ -133,7 +133,7 @@ def test_image_pull_policy_env_override(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("NPA_SIM2REAL_IMAGE_PULL_POLICY", "Never")
     assert (
         _image_pull_policy(
-            "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z"
+            "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
         )
         == "Never"
     )
@@ -155,7 +155,7 @@ def test_component_pod_info_captures_image_digests(
                             "name": "component",
                             "ready": False,
                             "restartCount": 0,
-                            "image": "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
+                            "image": "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
                             "imageID": digest,
                             "state": {"terminated": {"exitCode": 0}},
                         }

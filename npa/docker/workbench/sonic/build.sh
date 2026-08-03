@@ -99,9 +99,9 @@ case "$VARIANT" in
   k8s)
     TAG_SUFFIX="-k8s-runtime"
     if [ -n "$REGISTRY" ]; then
-      BASE_IMAGE_DEFAULT="${REGISTRY}/npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-latest"
+      BASE_IMAGE_DEFAULT="${REGISTRY}/npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"
     else
-      BASE_IMAGE_DEFAULT="npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-latest"
+      BASE_IMAGE_DEFAULT="npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"
     fi
     # Isaac always goes through the bootstrap shim, in both variants, so the k8s task
     # templates need no change. The base image's own python venv is reused for

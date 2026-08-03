@@ -1,7 +1,7 @@
-ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-latest
+ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
 FROM ${BASE_IMAGE}
 
-ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z
+ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 
 LABEL npa.tool="cosmos3-reason" \
       npa.version="${COSMOS3_REASON_VERSION}"
@@ -28,6 +28,8 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
 USER root
 
+# Do not recursively chown the inherited /opt/npa/venv: overlayfs would copy
+# the complete CUDA/PyTorch environment into this child layer.
 RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && python -m pip install tomli \
     && python -m pip install \
@@ -38,7 +40,8 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
       "transformers>=4.51,<5" \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
-    && chown -R ubuntu:ubuntu /workspace /tmp/hf_home /opt/npa
+    && chown -R ubuntu:ubuntu \
+      /workspace /tmp/hf_home /opt/npa/src /opt/npa/pyproject.toml
 
 # --- Schedulable-on-Kubernetes prerequisites -----------------------------------
 #

@@ -482,8 +482,14 @@ INTENT_APIS: dict[str, list[str]] = {
 }
 
 _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
-    "cosmos": ("npa-cosmos", "1.0.9"),
-    "lancedb": ("npa-lancedb", "0.30.3"),
+    "cosmos": (
+        "npa-cosmos",
+        "cu128-torch27-sm100-1.0.9-20260803T002017Z",
+    ),
+    "lancedb": (
+        "npa-lancedb",
+        "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
+    ),
     "isaac-lab": ("npa-isaac-lab", "2.3.2.post1"),
 }
 

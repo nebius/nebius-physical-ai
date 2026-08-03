@@ -5,8 +5,8 @@
   "supported_versions": ["0.5.1", "0.6.0"],
   "versions": {
     "0.5.1": {
-      "image_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T000551Z",
-      "image_digest": "sha256:fbb538643a0cc1b4ae9f80f5b33ea074ba9ca9c3764664a0c85c3f43f1e249f1",
+      "image_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "image_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
       "pip_extras": "pusht,libero",
       "train_env_eval_flag": "eval_freq",
       "eval_checkpoint_flag": "policy.path",

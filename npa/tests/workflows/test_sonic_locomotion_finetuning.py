@@ -18,7 +18,7 @@ NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 SONIC_TRAIN_STANDALONE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-train-standalone.yaml"
 EXPECTED_SONIC_IMAGE = (
     "registry.example/workbench/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
-    "sm80-sm90-sm100-sm103-sm120-20260803T012052Z"
+    "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 )
 
 

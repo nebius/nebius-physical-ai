@@ -336,7 +336,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     assert task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert envs["POLICY_IMAGE"] == (
         "registry.example/workbench/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
-        "sm80-sm90-sm100-sm103-sm120-20260803T012052Z"
+        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert envs["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
