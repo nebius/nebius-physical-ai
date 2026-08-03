@@ -635,7 +635,13 @@ def forget_project(alias: str) -> bool:
     yml["projects"] = projects
     if yml.get("default_project") == cleaned:
         remaining = list(projects.keys())
-        yml["default_project"] = remaining[0] if remaining else "default"
+        if remaining:
+            yml["default_project"] = remaining[0]
+        else:
+            # Pointing `default_project` at the literal "default" once the last
+            # project is gone leaves a dangling alias that resolves to nothing;
+            # an absent key is the honest "no project configured".
+            yml.pop("default_project", None)
     _write_config_replace(yml)
     return True
 

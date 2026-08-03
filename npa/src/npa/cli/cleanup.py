@@ -94,13 +94,16 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
 # often missed is the first one: a managed job left non-terminal keeps the jobs
 # controller alive and makes `sky down` refuse.
 TEARDOWN_RUNBOOK = (
-    "sky jobs cancel -a  (then wait for `sky jobs queue --all` to show them terminal)",
+    "sky jobs cancel -a  (then wait for `sky jobs queue --all` to show them terminal; "
+    "with no controller it errors 'No in-progress managed jobs' -- that is success)",
     "npa agent destroy --project <alias> --name <name> --yes",
     "npa cluster down --force",
-    "npa storage bucket delete --project <alias> --yes",
+    "npa storage bucket delete --project <alias> --yes --wait",
     "npa configure --forget-project <alias>",
-    "npa skypilot uninstall --yes",
-    "npa cleanup --yes",
+    # `npa cleanup` reads the managed-job queue through SkyPilot, so removing
+    # SkyPilot first silently drops that safety check.
+    "npa cleanup --yes            (local caches; keep this before the uninstall)",
+    "npa skypilot uninstall --yes (last: cleanup needs it to see managed jobs)",
 )
 
 
@@ -141,7 +144,7 @@ def _report_managed_jobs(sky_bin: str) -> None:
 
 def _print_runbook() -> None:
     typer.echo("")
-    typer.echo("Full teardown order:")
+    typer.echo("Full teardown order (npa cleanup does NOT run these; they touch cloud resources):")
     for index, step in enumerate(TEARDOWN_RUNBOOK, start=1):
         typer.echo(f"  {index}. {step}")
 
@@ -174,7 +177,13 @@ def _iam_note() -> str:
 
 def cleanup_cmd(
     yes: bool = typer.Option(
-        False, "--yes", "-y", help="Remove the local caches (otherwise just report)."
+        False,
+        "--yes",
+        "-y",
+        help=(
+            "Remove the local caches (otherwise just report). Local only: this never "
+            "deletes cloud resources -- see the printed runbook for those."
+        ),
     ),
     include_sky: bool = typer.Option(
         True,
@@ -195,7 +204,12 @@ def cleanup_cmd(
         help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.",
     ),
 ) -> None:
-    """Report (or with --yes remove) local NPA/SkyPilot residue left after teardown."""
+    """Report (or with --yes remove) local NPA/SkyPilot residue left after teardown.
+
+    Local only. Cloud resources (agent VM, cluster, bucket, IAM) are removed by
+    the commands in the printed runbook -- `--yes` never deletes anything in the
+    cloud, which the report says explicitly so it is not mistaken for a teardown.
+    """
     import shutil
 
     from npa.clients.config import clear_skypilot_bin

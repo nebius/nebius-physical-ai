@@ -106,7 +106,7 @@ def test_cleanup_names_a_managed_job_that_still_blocks_teardown(
 def test_cleanup_prints_the_ordered_runbook(npa_home: Path) -> None:
     result = runner.invoke(app, ["cleanup", "--skip-jobs"])
 
-    assert "Full teardown order:" in result.output
+    assert "Full teardown order" in result.output
     for step in ("sky jobs cancel", "agent destroy", "cluster down"):
         assert step in result.output
 
@@ -115,7 +115,7 @@ def test_cleanup_prints_the_runbook_when_it_finds_nothing(npa_home: Path) -> Non
     result = runner.invoke(app, ["cleanup", "--skip-jobs"])
 
     assert "No local NPA/SkyPilot residue" in result.output
-    assert "Full teardown order:" in result.output
+    assert "Full teardown order" in result.output
 
 
 # --- PodDisruptionBudget drain guidance --------------------------------------
@@ -449,3 +449,153 @@ def test_an_unavailable_capacity_api_does_not_advertise_the_dead_command(
     assert message is not None
     assert "did not answer" in message
     assert "see what is available with" not in message
+
+
+def test_the_runbook_keeps_cleanup_before_the_skypilot_uninstall(npa_home: Path) -> None:
+    """Order matters: cleanup reads the managed-job queue through SkyPilot.
+
+    Uninstalling SkyPilot first turns that safety check into "SkyPilot is not
+    installed", so a job still holding the controller goes unnoticed.
+    """
+
+    result = runner.invoke(app, ["cleanup", "--skip-jobs"])
+
+    order = result.output.index("npa cleanup --yes")
+    assert order < result.output.index("npa skypilot uninstall")
+
+
+def test_the_report_says_it_does_not_touch_the_cloud(npa_home: Path) -> None:
+    # `--yes` only clears local caches; the runbook made it look like teardown.
+    result = runner.invoke(app, ["cleanup", "--skip-jobs"])
+
+    assert "does NOT run these" in result.output
+
+
+def test_an_empty_managed_job_queue_is_not_presented_as_a_failure(npa_home: Path) -> None:
+    # `sky jobs cancel -a` raises ClusterNotUpError("No in-progress managed jobs")
+    # when no controller exists; the runbook says so rather than leaving an
+    # operator to wonder whether teardown already broke.
+    result = runner.invoke(app, ["cleanup", "--skip-jobs"])
+
+    assert "that is success" in result.output
+
+
+def test_forgetting_the_last_project_leaves_no_dangling_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import yaml as _yaml
+
+    from npa.clients import config as config_module
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        _yaml.safe_dump({"default_project": "test-rtx", "projects": {"test-rtx": {"project_id": "p"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", path)
+
+    assert config_module.forget_project("test-rtx") is True
+
+    stored = _yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert stored.get("projects") == {}
+    # Pointing at the literal "default" would name a project that does not exist.
+    assert "default_project" not in stored
+
+
+def test_forgetting_one_of_several_projects_repoints_the_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import yaml as _yaml
+
+    from npa.clients import config as config_module
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        _yaml.safe_dump(
+            {"default_project": "a", "projects": {"a": {"project_id": "1"}, "b": {"project_id": "2"}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", path)
+
+    config_module.forget_project("a")
+
+    stored = _yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert stored["default_project"] == "b"
+
+
+# --- a purge that Nebius scheduled but did not carry out ----------------------
+
+
+def _bucket(state: str, purge_at: str) -> dict:
+    return {
+        "metadata": {"id": "bucket-1", "name": "npa-bucket-78978bfd"},
+        "status": {"state": state, "purge_at": purge_at},
+    }
+
+
+def test_a_stalled_purge_is_not_reported_as_merely_slow(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Past purge_at with the objects still there is a stall, not a slow wait."""
+
+    from npa.cli import storage as storage_cli
+
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_bucket_by_name",
+        lambda project, name: _bucket("SCHEDULED_FOR_DELETION", "2000-01-01T00:00:00Z"),
+    )
+    monkeypatch.setattr(storage_cli, "_bucket_item", lambda p, n: _bucket(
+        "SCHEDULED_FOR_DELETION", "2000-01-01T00:00:00Z"
+    ))
+
+    storage_cli._wait_for_bucket_gone("p", "npa-bucket-78978bfd", "target", 0)
+
+    out = capsys.readouterr().out
+    assert "purge_at has already passed" in out
+    assert "stalled" in out
+    assert "will be removed by" not in out
+
+
+def test_a_purge_still_within_its_window_reads_as_slow(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from npa.cli import storage as storage_cli
+
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_bucket_by_name",
+        lambda project, name: _bucket("SCHEDULED_FOR_DELETION", "2999-01-01T00:00:00Z"),
+    )
+    monkeypatch.setattr(storage_cli, "_bucket_item", lambda p, n: _bucket(
+        "SCHEDULED_FOR_DELETION", "2999-01-01T00:00:00Z"
+    ))
+
+    storage_cli._wait_for_bucket_gone("p", "npa-bucket-78978bfd", "target", 0)
+
+    out = capsys.readouterr().out
+    assert "will be removed by" in out
+    assert "stalled" not in out
+
+
+def test_the_reported_state_is_the_one_the_api_returns(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cli import storage as storage_cli
+
+    monkeypatch.setattr(storage_cli, "_bucket_item", lambda p, n: _bucket(
+        "SCHEDULED_FOR_DELETION", "2999-01-01T00:00:00Z"
+    ))
+
+    assert storage_cli._scheduled_deletion_state("p", "b") == "SCHEDULED_FOR_DELETION"
+    assert storage_cli._purge_is_overdue("p", "b") is False
+
+
+def test_a_missing_bucket_has_no_state_and_is_not_overdue(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cli import storage as storage_cli
+
+    monkeypatch.setattr(storage_cli, "_bucket_item", lambda p, n: None)
+
+    assert storage_cli._scheduled_deletion_state("p", "b") == ""
+    assert storage_cli._purge_is_overdue("p", "b") is False

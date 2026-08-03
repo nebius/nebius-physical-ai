@@ -173,6 +173,17 @@ def delete_bucket_cmd(
                 f"Bucket {target} is not empty (objects or non-current versions remain). "
                 f"Re-run with --ttl {DEFAULT_PURGE_TTL} to schedule the purge."
             ) from exc
+        # Once a purge is scheduled the API is inconsistent: `delete` answers
+        # NoSuchBucket while `list`/`get` still return the bucket as
+        # SCHEDULED_FOR_DELETION. Re-deleting is then a no-op, not a failure.
+        pending = _scheduled_deletion_state(resolved_project, bucket_name)
+        if "nosuchbucket" in message.replace(" ", "").lower() and pending:
+            typer.echo(f"Bucket {target} is already {pending}.")
+            if wait:
+                _wait_for_bucket_gone(resolved_project, bucket_name, target, wait_timeout)
+            if prune_config and bucket_name:
+                _prune_local_state(bucket_name)
+            return
         raise typer.BadParameter(f"Bucket delete failed: {message}") from exc
 
     if str(ttl or "").strip():
@@ -211,11 +222,67 @@ def _wait_for_bucket_gone(project_id: str, bucket_name: str, target: str, timeou
             typer.echo(f"Bucket {target} is gone.")
             return
         time.sleep(5)
+    state = _scheduled_deletion_state(project_id, bucket_name) or "still present"
+    overdue = _purge_is_overdue(project_id, bucket_name)
+    if overdue:
+        # Saying "it will be removed by Nebius" is not true once purge_at has
+        # passed and the objects are still there; that is a platform-side stall.
+        typer.echo(
+            f"Bucket {bucket_name} is {state} and its purge_at has already passed, "
+            f"so the purge has stalled rather than merely being slower than the {timeout}s "
+            "wait. The name stays reserved until Nebius clears it; raise it with Nebius "
+            "support if it does not resolve."
+        )
+        return
     typer.echo(
-        f"Bucket {bucket_name} is still present after {timeout}s "
+        f"Bucket {bucket_name} is {state} after {timeout}s "
         "(a scheduled purge can take longer than the wait); it will be removed by "
         "Nebius. Re-run with a larger --wait-timeout to keep watching."
     )
+
+
+def _bucket_item(project_id: str, bucket_name: str) -> dict | None:
+    from npa.clients.nebius import NebiusError, get_bucket_by_name
+
+    if not project_id or not bucket_name:
+        return None
+    try:
+        return get_bucket_by_name(project_id, bucket_name)
+    except NebiusError:
+        return None
+
+
+def _scheduled_deletion_state(project_id: str, bucket_name: str) -> str:
+    """Return a human state (e.g. ``SCHEDULED_FOR_DELETION``) when still listed."""
+
+    item = _bucket_item(project_id, bucket_name)
+    if not isinstance(item, dict):
+        return ""
+    raw_status = item.get("status")
+    status: dict = raw_status if isinstance(raw_status, dict) else {}
+    return str(status.get("state") or status.get("status") or "").strip()
+
+
+def _purge_is_overdue(project_id: str, bucket_name: str) -> bool:
+    """Whether the bucket is still listed past its own ``purge_at``."""
+
+    from datetime import datetime, timezone
+
+    item = _bucket_item(project_id, bucket_name)
+    if not isinstance(item, dict):
+        return False
+    raw_status = item.get("status")
+    status: dict = raw_status if isinstance(raw_status, dict) else {}
+    raw = str(status.get("purge_at") or status.get("purgeAt") or "").strip()
+    if not raw:
+        return False
+    try:
+        purge_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if purge_at.tzinfo is None:
+        purge_at = purge_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) > purge_at
 
 
 def _bucket_name_from_uri(value: str) -> str:
