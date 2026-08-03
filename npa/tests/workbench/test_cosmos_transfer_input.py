@@ -122,6 +122,28 @@ def test_run_cosmos_transfer_refuses_missing_token_before_env_or_download(
     assert called is False
 
 
+def test_run_cosmos_transfer_accepts_small_guardrailed_video(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "examples").mkdir(parents=True)
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
+    monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+
+    def fake_run(cmd, *_args, **kwargs):
+        out = cmd[cmd.index("-o") + 1]
+        outdir = Path(kwargs["cwd"]) / out
+        outdir.mkdir(parents=True)
+        (outdir / "small.mp4").write_bytes(b"x" * 8_932)
+
+    monkeypatch.setattr(tx.subprocess, "run", fake_run)
+
+    result = tx.run_cosmos_transfer(run_id="small", spec="assets/custom.json")
+
+    assert result["video_bytes"] == 8_932
+    assert result["video_path"].endswith("small.mp4")
+
+
 def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatch) -> None:
     video = tmp_path / "out.mp4"
     video.write_bytes(b"x" * 200_000)
