@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from npa.cli import agent_actions
 from npa.cli import agent_chat
@@ -232,3 +232,117 @@ def run_suite(scenarios: list[Scenario] | None = None) -> dict[str, Any]:
         "avg_tokens": round(sum(r.tokens for r in results) / float(total), 4),
     }
     return {"results": [r.to_dict() for r in results], "scorecard": scorecard}
+
+
+_SCORECARD_DIRECTIONS = {
+    "success_rate": "higher",
+    "avg_steps": "lower",
+    "avg_tokens": "lower",
+}
+
+
+def scorecard_regressions(
+    current: Mapping[str, Any], baseline: Mapping[str, Any]
+) -> list[str]:
+    """Describe competitive-scorecard regressions relative to a committed baseline."""
+    regressions: list[str] = []
+    for metric, direction in _SCORECARD_DIRECTIONS.items():
+        if metric not in current or metric not in baseline:
+            regressions.append(f"{metric} is missing from current or baseline scorecard")
+            continue
+        current_value = float(current[metric])
+        baseline_value = float(baseline[metric])
+        regressed = (
+            current_value < baseline_value
+            if direction == "higher"
+            else current_value > baseline_value
+        )
+        if regressed:
+            comparator = "below" if direction == "higher" else "above"
+            regressions.append(
+                f"{metric}={current_value} is {comparator} baseline={baseline_value}"
+            )
+    return regressions
+
+
+def assert_scorecard_not_regressed(
+    current: Mapping[str, Any], baseline: Mapping[str, Any]
+) -> None:
+    regressions = scorecard_regressions(current, baseline)
+    if regressions:
+        raise AssertionError("agent eval scorecard regressed: " + "; ".join(regressions))
+
+
+def _reply_and_tools(response: Mapping[str, Any] | str) -> tuple[str, list[str], int]:
+    if isinstance(response, str):
+        return response, [], 0
+    reply = str(response.get("reply") or response.get("answer") or "")
+    tools = [str(tool) for tool in response.get("tools_used", []) if tool]
+    usage = response.get("usage") if isinstance(response.get("usage"), Mapping) else {}
+    return reply, tools, int(usage.get("total_tokens") or 0)
+
+
+def _observed_run_ids(observation: Mapping[str, Any]) -> list[str]:
+    run_ids: list[str] = []
+    for record in observation.get("records", []):
+        if not isinstance(record, Mapping):
+            continue
+        run_id = str(record.get("run_id") or "").strip()
+        if run_id and run_id not in run_ids:
+            run_ids.append(run_id)
+    return run_ids
+
+
+def run_operate_eval(
+    *,
+    run_id: str,
+    empty_store_uri: str,
+    store_uri: str,
+    submit: Callable[[str], Mapping[str, Any]],
+    ingest: Callable[[Mapping[str, Any], str, str], Mapping[str, Any]],
+    observe: Callable[[str], Mapping[str, Any]],
+    ask: Callable[[str], Mapping[str, Any] | str],
+) -> dict[str, Any]:
+    """Round-trip submit → ingest → ask with every asserted value observed.
+
+    All side effects are injected. CI uses local fixtures and deterministic agent
+    summaries; the gated live adapter submits the CPU-only Insights smoke workflow.
+    """
+    empty_answer = ask(empty_store_uri)
+    empty_reply, empty_tools, empty_tokens = _reply_and_tools(empty_answer)
+    empty_ok = "no runs found" in empty_reply.lower() and run_id not in empty_reply
+
+    submission = submit(run_id)
+    ingestion = ingest(submission, store_uri, run_id)
+    observation = observe(store_uri)
+    observed_ids = _observed_run_ids(observation)
+
+    populated_answer = ask(store_uri)
+    populated_reply, populated_tools, populated_tokens = _reply_and_tools(populated_answer)
+    populated_ok = (
+        run_id in observed_ids
+        and run_id in populated_reply
+        and "insights_query" in populated_tools
+    )
+    return {
+        "success": empty_ok and populated_ok,
+        "empty": {
+            "ok": empty_ok,
+            "reply": empty_reply,
+            "tools_used": empty_tools,
+        },
+        "submission": dict(submission),
+        "ingestion": dict(ingestion),
+        "observation": dict(observation),
+        "observed_run_ids": observed_ids,
+        "populated": {
+            "ok": populated_ok,
+            "reply": populated_reply,
+            "tools_used": populated_tools,
+        },
+        "scorecard": {
+            "success_rate": 1.0 if empty_ok and populated_ok else 0.0,
+            "avg_steps": 4.0,
+            "avg_tokens": float(empty_tokens + populated_tokens) / 2.0,
+        },
+    }

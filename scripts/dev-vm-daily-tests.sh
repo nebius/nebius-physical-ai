@@ -191,6 +191,19 @@ run_workflow_coverage_gate() {
   "$py" "$helper" check
 }
 
+run_agent_eval_gate() {
+  local py="$1"
+  log "e2e-daily [agent-eval]: defend the committed zero-token scorecard"
+  (
+    cd "${CI_REPO_DIR}/npa"
+    NPA_AGENT_CHAT_LIVE=0 "$py" -m pytest \
+      tests/agent_eval/test_agent_eval_scorecard.py \
+      tests/cli/test_agent_backend_render.py \
+      tests/guardrails/test_agent_no_hardcoded_data.py \
+      -q
+  )
+}
+
 run_workflow_plan_smoke() {
   local py="$1"
   log "e2e-daily [2/5]: validate + plan every npa.workflow spec (all >= 4-step workflows, no GPU)"
@@ -320,6 +333,7 @@ run_gpu_daily() {
 run_e2e_daily() {
   local py="$1"
   log "Tier=e2e-daily: comprehensive >= 4-step workflow coverage + all-image check + rotating S3 e2e subset"
+  run_agent_eval_gate "$py"
   run_workflow_coverage_gate "$py"
   run_workflow_plan_smoke "$py"
   run_image_reachability "$py"
