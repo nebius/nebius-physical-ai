@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+
+import yaml
 
 from npa.cli import agent as agent_module
 from npa.cli import agent_actions
@@ -388,6 +391,63 @@ def test_author_workflow_from_goal_composes_cosmos_from_live_catalog() -> None:
     assert "npa.workflow/v0.0.1" in result["yaml"]
     # Two cosmos tools match a 2-step cosmos goal, so no padding.
     assert result["padded_tool_refs"] == []
+
+
+def test_author_workflow_semantically_chains_curate_train_eval() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
+
+    result = author_workflow_from_goal(
+        "3-step npa yaml: curate a dataset then train then eval",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert result["yaml"], "runnable authoring must return the validated YAML"
+    refs = result["tool_refs"]
+    assert len(refs) == 3
+    assert "curat" in refs[0]
+    assert "train" in refs[1]
+    assert "eval" in refs[2] or "evaluate" in refs[2]
+    assert result["padded_tool_refs"] == []
+    assert len(result["data_flow"]) == 2
+
+    spec = yaml.safe_load(result["yaml"])
+    config = spec["config"]
+    states = list(spec["states"].values())
+    for index, link in enumerate(result["data_flow"]):
+        output_key = link["output_config"]
+        input_key = link["input_config"]
+        assert states[index]["outputs"][0]["uri"] == f"{{{{config.{output_key}}}}}"
+        assert states[index + 1]["inputs"][0]["uri"] == f"{{{{config.{output_key}}}}}"
+        if input_key != output_key:
+            assert config[input_key] == f"{{{{config.{output_key}}}}}"
+
+    referenced_config = {
+        key
+        for ref in refs
+        for token in argv_for_tool(ref)
+        for key in re.findall(r"\{\{\s*config\.([a-zA-Z0-9_.-]+)\s*\}\}", str(token))
+    }
+    assert referenced_config <= set(config), "every live argv config token must resolve"
+
+
+def test_author_workflow_returns_no_yaml_when_validation_fails(mocker) -> None:
+    from npa.cli import agent_workflow
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    mocker.patch.object(
+        agent_workflow,
+        "validate_workflow_yaml_text",
+        return_value={"ok": False, "error": "invalid authored workflow"},
+    )
+    result = agent_workflow.author_workflow_from_goal(
+        "write me a 2 step npa yaml that uses cosmos",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    assert result["runnable"] is False
+    assert result["yaml"] == ""
 
 
 def test_author_workflow_flags_padded_placeholder_states() -> None:
