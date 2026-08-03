@@ -835,7 +835,12 @@ def _lerobot_profile_train_container_command(
     if num_workers < 0:
         raise ValueError(f"--num-workers must be >= 0 for profile-train, got {num_workers}")
 
-    script_b64 = base64.b64encode(gzip.compress(script_path.read_bytes())).decode("ascii")
+    # mtime=0: gzip stamps the current time into its header, so the same script
+    # produced a different payload from one second to the next -- which made the
+    # rendered command unstable and its test flaky.
+    script_b64 = base64.b64encode(
+        gzip.compress(script_path.read_bytes(), mtime=0)
+    ).decode("ascii")
     compile_arg = " --compile" if compile_model else ""
     command = f"""
 set -euo pipefail
