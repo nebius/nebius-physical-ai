@@ -18,6 +18,7 @@ def submit(
     submit_timeout: int = 1800,
     require_controller_up: bool = False,
     image: str = "",
+    skip_preflight: bool = False,
     output_format: str = "text",
 ) -> None:
     """Submit a SkyPilot workflow YAML (e.g. a Token Factory + GPU combo).
@@ -26,6 +27,10 @@ def submit(
     ``KEY=VALUE`` substitutions and ``secret_env`` are environment-variable names
     (e.g. ``NEBIUS_TOKEN_FACTORY_KEY``, ``AWS_ACCESS_KEY_ID``) forwarded to SkyPilot as
     secrets. Use this to launch the ``tokenfactory-*`` combos.
+
+    ``skip_preflight`` mirrors the CLI's ``--skip-preflight``: it bypasses the
+    prerequisite checks (SkyPilot CLI, npa source, placeholder bucket). Without it a
+    Python caller had no way to submit a spec the CLI would let through.
 
     ``image`` mirrors the CLI's ``--image``: an image reference for every stage, or ``"none"``
     to clear the specs' workbench image pins and run on SkyPilot's default image. Without it a
@@ -48,6 +53,7 @@ def submit(
         submit_timeout=submit_timeout,
         require_controller_up=require_controller_up,
         image=image,
+        skip_preflight=skip_preflight,
         output_format=OutputFormat(output_format),
     )
 
