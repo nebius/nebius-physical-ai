@@ -76,7 +76,11 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert "sha256=29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3" in overrides
     assert "files.pythonhosted.org" in overrides
     assert overrides.count("#sha256=") == 5
-    assert "--no-deps" in text
+    assert re.search(
+        r"uv pip install --python \.venv/bin/python --no-deps --require-hashes\s+\\\s+"
+        r"--requirement /tmp/cosmos2-security-overrides\.txt",
+        text,
+    )
     assert 'version("nltk") == "3.10.0"' in text
     assert 'version("defusedxml") == "0.7.1"' in text
     assert 'version("pip") == "26.2"' in text

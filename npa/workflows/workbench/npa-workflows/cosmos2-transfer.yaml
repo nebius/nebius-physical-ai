@@ -26,6 +26,8 @@ config:
   bucket: example-bucket
   prefix: "cosmos2-transfer/{{run.id}}"
 
+  # Mandatory: this prefix must contain a supported input video. A missing,
+  # empty, or video-free prefix fails CLI validation before inference starts.
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/"
   # Optional Config-Gen manifest. The transfer input itself is always required and

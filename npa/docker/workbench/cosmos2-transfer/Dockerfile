@@ -78,7 +78,7 @@ RUN set -eux; \
     printf '%s\n' "${COSMOS_PYTHON_VERSION}" > .python-version; \
     uv sync --locked --no-dev --no-editable --extra=cu128 \
       --python "${COSMOS_PYTHON_VERSION}"; \
-    uv pip install --python .venv/bin/python --no-deps \
+    uv pip install --python .venv/bin/python --no-deps --require-hashes \
       --requirement /tmp/cosmos2-security-overrides.txt; \
     .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "83.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
     .venv/bin/python -m pip --version; \
@@ -180,6 +180,8 @@ COPY --chmod=755 src/npa/workbench/cosmos/fixture.py \
 COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
     /usr/share/doc/npa-cosmos2-transfer/REDISTRIBUTION.md
 
+# Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
+# commands invoke python3; /usr/bin/python3 remains available to system tooling.
 RUN set -eux; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu; \

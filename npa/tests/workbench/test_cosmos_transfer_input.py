@@ -11,7 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from typer.testing import CliRunner
+
+from npa.cli.main import app
+from npa.cli.workbench import cosmos2
 from npa.workbench.cosmos import transfer as tx
+
+runner = CliRunner()
 
 
 def _fake_env(monkeypatch, repo: Path):
@@ -235,9 +241,47 @@ def test_materialize_input_clip_local_path(tmp_path: Path) -> None:
     assert _materialize_input_clip(str(tmp_path / "missing.mp4")) == ""
 
 
-def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
-    from npa.cli.workbench import cosmos2
+def test_transfer_cli_rejects_conditioning_without_input_video(monkeypatch) -> None:
+    input_uri = "s3://test-bucket/run/input/"
+    materialized: list[str] = []
+    inference_called = False
 
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+
+    def fake_materialize(src: str) -> str:
+        materialized.append(src)
+        return ""
+
+    def fail_if_inferred(**_kwargs) -> dict:
+        nonlocal inference_called
+        inference_called = True
+        raise AssertionError("inference must not run without an input video")
+
+    monkeypatch.setattr(cosmos2, "_materialize_input_clip", fake_materialize)
+    monkeypatch.setattr(tx, "run_cosmos_transfer", fail_if_inferred)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            input_uri,
+            "--output-uri",
+            "s3://test-bucket/run/augmented/",
+            "--condition-on-input",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "input conditioning was requested but no video was found" in result.output
+    assert materialized == [input_uri]
+    assert inference_called is False
+
+
+def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
     assert cosmos2._detect_gpu_count() == 4
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
@@ -246,8 +290,6 @@ def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
 
 
 def test_variant_parallelism_env_override_and_cap(monkeypatch) -> None:
-    from npa.cli.workbench import cosmos2
-
     monkeypatch.setenv("NPA_COSMOS_VARIANT_PARALLELISM", "4")
     # Capped at the number of variants so we never spawn idle workers.
     assert cosmos2._variant_parallelism(2) == 2
