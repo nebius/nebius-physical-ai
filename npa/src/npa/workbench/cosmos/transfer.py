@@ -280,20 +280,25 @@ def run_cosmos_transfer(
         for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
         if "control" not in Path(f).name
     ]
-    big = sorted(
-        (f for f in videos if os.path.getsize(f) > 100_000),
+    # Upstream already ran its generated-video guardrail before writing this
+    # file. Do not reuse the container golden-eval's 100 KiB heuristic here:
+    # the deterministic four-frame smoke produces a valid ~9 KiB video (live
+    # job 371). S3 publication below still fails closed unless PyAV can decode
+    # at least one exact frame, which is the artifact contract consumers need.
+    produced = sorted(
+        (f for f in videos if os.path.getsize(f) > 0),
         key=os.path.getsize,
         reverse=True,
     )
-    if not big:
+    if not produced:
         raise RuntimeError(f"cosmos-transfer2.5 produced no output video in {out_abs}")
     control_videos = [
         f for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
         if "control" in Path(f).name
     ]
     return {
-        "video_path": big[0],
-        "video_bytes": os.path.getsize(big[0]),
+        "video_path": produced[0],
+        "video_bytes": os.path.getsize(produced[0]),
         "control_path": control_videos[0] if control_videos else "",
         "out_dir": str(out_abs),
         "spec": spec,
