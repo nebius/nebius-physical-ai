@@ -20,6 +20,41 @@ tool — every stage is an existing workbench tool or a real `run.shell` step.
 
 ---
 
+## Run PAIDF with a coding agent
+
+First [configure and authenticate the Nebius CLI](https://docs.nebius.com/cli/configure)
+for the target project. Create a [Token Factory project API
+key](https://docs.tokenfactory.nebius.com/quickstart), a [Hugging Face read
+token](https://huggingface.co/docs/hub/en/security-tokens), and an [NGC Personal
+API Key](https://docs.nvidia.com/ngc/latest/ngc-user-guide.html#generating-ngc-api-keys)
+with NGC Catalog access. Save each value alone in a file outside this repository
+and run `chmod 600 <file>`; give the agent paths, never secret values.
+
+Copy this prompt into your coding agent from the repository root:
+
+```text
+Use README.md and its linked PAIDF runbook to complete this task. Do not change
+repository files.
+
+The Nebius CLI is already authenticated. Configure NPA, deploy and verify the NPA
+agent, provision one CPU node and one on-demand RTX PRO 6000 GPU node (use
+preemptible only if needed), then run npa/workflows/physical-ai-data-factory.yaml
+end to end with seeded input and one augmentation.
+
+Tenant: <tenant-id>
+Project: <project-id>
+Region: <region>
+Token Factory key file: </absolute/path/token-factory-key>
+Hugging Face token file: </absolute/path/hf-token>
+NGC API key file: </absolute/path/ngc-api-key>
+
+Never print secrets or copy them into the repository, logs, or shell history.
+Use NPA commands, continue autonomously, and report blockers and usability gaps
+without fixing code. Report the agent URL, PAIDF run ID, manifest URI, and all
+stage results. Leave resources running and show the NPA-only cleanup commands;
+do not clean up until I ask.
+```
+
 ## Quick start (copy-paste)
 
 This is the complete clean-machine path to an input-conditioned demo run. It uses the

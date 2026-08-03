@@ -156,6 +156,8 @@ failed run at a time. `provision-if-absent` writes the cluster kubeconfig to
 `kubectl` in your shell needs `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig`
 (the command prints the line). Worked example end to end:
 [Physical AI Data Factory runbook](docs/workbench/guides/physical-ai-data-factory-deploy.md).
+For the shortest agent-driven setup, [copy the exact PAIDF agent
+prompt](docs/workbench/guides/physical-ai-data-factory-deploy.md#run-paidf-with-a-coding-agent).
 
 ---
 
