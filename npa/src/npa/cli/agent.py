@@ -243,17 +243,6 @@ def _embedded_agent_recordings_source() -> str:
     return raw
 
 
-def _embedded_agent_sim2real_loop_source() -> str:
-    """Return agent_sim2real_loop.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_sim2real_loop.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
 def _shipped_agent_backend_module_source(name: str) -> str:
     """Return the FULL source of a shipped agent_backend module.
 
@@ -268,7 +257,7 @@ def _shipped_agent_backend_module_source(name: str) -> str:
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_ACTIONS_SHIP = "__NPA_AGENT_ACTIONS_SHIP__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
-_AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
+_AGENT_SIM2REAL_LOOP_SHIP = "__NPA_AGENT_SIM2REAL_LOOP_SHIP__"
 _AGENT_SEMANTIC_ROUTER_SHIP = "__NPA_AGENT_SEMANTIC_ROUTER_SHIP__"
 # Phase G: shipped (uploaded + imported) rather than embedded.
 _AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
@@ -1801,7 +1790,9 @@ def _bootstrap_agent_stack(
     agent_chat_source = _embedded_agent_chat_source()
     agent_actions_ship_source = _shipped_agent_backend_module_source("actions")
     agent_recordings_source = _embedded_agent_recordings_source()
-    agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
+    agent_sim2real_loop_ship_source = _shipped_agent_backend_module_source(
+        "sim2real_loop"
+    )
     agent_semantic_router_ship_source = _shipped_agent_backend_module_source(
         "semantic_router"
     )
@@ -1949,6 +1940,9 @@ cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/actions.py >/dev/null
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/semantic_router.py >/dev/null
 {_AGENT_SEMANTIC_ROUTER_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/sim2real_loop.py >/dev/null
+{_AGENT_SIM2REAL_LOOP_SHIP}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
 {_AGENT_RETRIEVAL_SHIP}
@@ -4185,7 +4179,11 @@ from agent_backend.actions import (
 
 {_AGENT_RECORDINGS_EMBED}
 
-{_AGENT_SIM2REAL_LOOP_EMBED}
+from agent_backend.sim2real_loop import (
+    drive_sim2real_loop,
+    gate_with_config_threshold,
+    resolve_drive_config,
+)
 
 from agent_backend.semantic_router import classify_intent_semantic
 
@@ -8646,7 +8644,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
         .replace(_AGENT_ACTIONS_SHIP, agent_actions_ship_source)
         .replace(_AGENT_RECORDINGS_EMBED, agent_recordings_source)
-        .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
+        .replace(_AGENT_SIM2REAL_LOOP_SHIP, agent_sim2real_loop_ship_source)
         .replace(_AGENT_SEMANTIC_ROUTER_SHIP, agent_semantic_router_ship_source)
         .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
         .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)

@@ -85,8 +85,9 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     assert "def recording_has_run_entities" in body
     assert "def _served_recording_is_run_specific" in body
     assert '@app.post("/agent/act")' in body
-    # Phase C: sim2real drive orchestration embedded + route wired.
-    assert "def drive_sim2real_loop" in body
+    # Phase C/G: Sim2Real drive orchestration shipped + route wired.
+    assert "from agent_backend.sim2real_loop import (" in body
+    assert "def drive_sim2real_loop" not in body
     assert '@app.post("/agent/sim2real/drive")' in body
     # Phase D/G: semantic router shipped + wired into the /chat fallthrough.
     assert "from agent_backend.semantic_router import classify_intent_semantic" in body
@@ -236,6 +237,7 @@ def _capture_setup_script(monkeypatch) -> str:
     [
         ("actions", "def run_action_loop"),
         ("semantic_router", "def classify_intent_semantic"),
+        ("sim2real_loop", "def drive_sim2real_loop"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
     ],
@@ -289,6 +291,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "memory",
         "actions",
         "semantic_router",
+        "sim2real_loop",
         "retrieval",
         "trace",
         "foxglove",
@@ -351,6 +354,7 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
         "memory",
         "actions",
         "semantic_router",
+        "sim2real_loop",
         "retrieval",
         "trace",
         "foxglove",
