@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
@@ -105,6 +107,13 @@ def test_selected_submit_cases_spec_filter(monkeypatch) -> None:
         "vlm-eval-single.yaml",
         "token-factory-caption.yaml",
     }
+
+
+def test_selected_submit_cases_explicit_empty_filter_fails(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "cpu,gpu,multi")
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", "typo.yaml")
+    with pytest.raises(ValueError, match="selected no npa\\.workflow cases"):
+        selected_submit_cases()
 
 
 def test_submit_live_matrix_has_cpu_gpu_and_multi() -> None:

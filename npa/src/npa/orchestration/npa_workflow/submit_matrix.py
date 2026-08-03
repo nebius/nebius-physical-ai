@@ -554,15 +554,26 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
 def selected_submit_cases() -> list[SubmitLiveCase]:
     """Filter SUBMIT_LIVE_MATRIX by env tier / spec allowlists."""
 
-    tiers_raw = os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "cpu,gpu,multi")
+    tiers_env = "NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS"
+    specs_env = "NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS"
+    tiers_raw = os.environ.get(tiers_env, "cpu,gpu,multi")
     tiers = {t.strip().lower() for t in tiers_raw.split(",") if t.strip()}
-    specs_raw = os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", "")
+    specs_raw = os.environ.get(specs_env, "")
     specs = {s.strip() for s in specs_raw.split(",") if s.strip()}
-    return [
+    cases = [
         case
         for case in SUBMIT_LIVE_MATRIX
         if case.tier in tiers and (not specs or case.spec in specs)
     ]
+    if not cases and (tiers_env in os.environ or specs_raw.strip()):
+        known_specs = ", ".join(sorted({case.spec for case in SUBMIT_LIVE_MATRIX}))
+        known_tiers = ", ".join(sorted({case.tier for case in SUBMIT_LIVE_MATRIX}))
+        raise ValueError(
+            "live submit filters selected no npa.workflow cases: "
+            f"{tiers_env}={tiers_raw!r}, {specs_env}={specs_raw!r}. "
+            f"Known tiers: {known_tiers}. Known specs: {known_specs}."
+        )
+    return cases
 
 
 def gpu_submit_cases(

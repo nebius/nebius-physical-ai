@@ -145,8 +145,8 @@ is present, rather than discovering it after the pod is scheduled. Pass
 SkyPilot's Kubernetes bootstrap replaces the image entrypoint with its own shell
 and installs an SSH runtime as the pod user, so the image ships `sudo` and
 `openssh-server` for it. Without them a workbench image cannot host a SkyPilot
-k8s task (it dies with `sudo: command not found`) — that is what
-`NPA_E2E_CLEAR_WORKBENCH_IMAGES` works around for the images that still lack them.
+k8s task (it dies with `sudo: command not found`). Do not clear the workflow image
+pin as a workaround for Cosmos 3 submits; fix the image bootstrap contract instead.
 
 ### Declarative npa.workflow
 

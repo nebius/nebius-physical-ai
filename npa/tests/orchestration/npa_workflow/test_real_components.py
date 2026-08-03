@@ -47,6 +47,16 @@ def _states() -> dict:
     return spec["states"]
 
 
+def _spec() -> dict:
+    return yaml.safe_load(BLUEPRINT.read_text(encoding="utf-8"))
+
+
+def _memory_gi(value: object) -> int:
+    match = re.fullmatch(r"(\d+)Gi", str(value))
+    assert match is not None, f"expected Gi memory value, got {value!r}"
+    return int(match.group(1))
+
+
 def test_blueprint_uses_no_stub_toolrefs() -> None:
     for name, state in _states().items():
         tool_ref = state.get("toolRef")
@@ -120,6 +130,14 @@ def test_quality_gate_reads_the_evaluator_report() -> None:
     outputs = [output["uri"] for output in states["evaluate"]["outputs"]]
     assert any(uri.endswith(RESULT_FILENAME) for uri in outputs), (
         f"evaluate must publish {RESULT_FILENAME}, which grade_gate reads"
+    )
+
+
+def test_gpu_resource_has_headroom_for_multi_variant_fanout() -> None:
+    gpu = _spec()["resources"]["gpu"]
+    assert int(gpu["cpus"]) >= 16, "4-way Cosmos fan-out needs CPU headroom"
+    assert _memory_gi(gpu["memory"]) >= 128, (
+        "4-way Cosmos fan-out OOMs with the old 16Gi profile"
     )
 
 

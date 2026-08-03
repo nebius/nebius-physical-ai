@@ -50,6 +50,7 @@ from .npa_workflow_live_helpers import (
     parse_runtime_json,
     seed_live_workflow_inputs,
     seed_trigger_inbox_later,
+    selected_submit_cases,
     write_runtime_evidence,
 )
 
@@ -594,7 +595,7 @@ def test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget(
     assert full_states[-1] == "escalate"
 
 
-@pytest.mark.parametrize("case", SUBMIT_LIVE_MATRIX, ids=lambda c: c.spec)
+@pytest.mark.parametrize("case", selected_submit_cases(), ids=lambda c: c.spec)
 def test_npa_workflow_submit_plan_only_matrix_no_leak(
     case: SubmitLiveCase,
     tmp_path: Path,
@@ -602,7 +603,7 @@ def test_npa_workflow_submit_plan_only_matrix_no_leak(
     e2e_registry: str,
     forbidden_markers: list[str],
 ) -> None:
-    """Always-safe preflight: every twin in the matrix must render cleanly."""
+    """Always-safe preflight: every selected matrix twin must render cleanly."""
 
     if os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT") != "1":
         pytest.skip("NPA_E2E_NPA_WORKFLOW_SUBMIT not set")

@@ -104,8 +104,8 @@ npa workbench workflow submit <spec> --plan-only \
 
 Check the rendered output for:
 
-- `image_id: docker:<registry>/npa-cosmos3:<tag>` — if it is missing, see the
-  `NPA_E2E_CLEAR_WORKBENCH_IMAGES` note below.
+- `image_id: docker:<registry>/npa-cosmos3:<tag>` — if it is missing, inspect the
+  render/registry inputs before submitting.
 - `secret_env_hints: HF_TOKEN`.
 
 ## Submit
@@ -125,9 +125,9 @@ anything else.
 1. **Missing `--secret-env HF_TOKEN`.** The plan only *hints* the secret. The
    image bakes no weights, so the stage fails fast with "Cosmos 3 weights are
    not baked into this image". Always pass it explicitly.
-2. **`NPA_E2E_CLEAR_WORKBENCH_IMAGES=1` in the environment.** It strips the
-   workbench image pin and the stage then runs on a generic SkyPilot image with
-   no cosmos-framework. Unset it (or set `0`) for Cosmos 3 runs.
+2. **Cleared workbench image pins.** If a submit is rendered with `--image none`,
+   the stage runs on a generic SkyPilot image with no cosmos-framework. Use the
+   pinned `npa-cosmos3` image for Cosmos 3 runs.
 3. **Registry mismatch.** Submit refuses when the task image's registry differs
    from `SKYPILOT_DOCKER_SERVER`. Point the Docker credentials at the same
    registry the image was pushed to.
