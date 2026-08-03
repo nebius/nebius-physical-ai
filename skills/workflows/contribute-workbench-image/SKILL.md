@@ -14,6 +14,7 @@ make the irreversible public-release decision.
 
 Read these before changing an image:
 
+- `docs/workbench/contributing-a-containerized-solution.md`
 - `docs/workbench/container-packaging.md`
 - `skills/atomic/solution-licensing/SKILL.md`
 - `skills/atomic/build-and-push-image/SKILL.md`

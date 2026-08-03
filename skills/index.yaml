@@ -401,6 +401,8 @@ skills:
     path: skills/workflows/contribute-workbench-image/SKILL.md
     smoke:
       - type: file_exists
+        path: docs/workbench/contributing-a-containerized-solution.md
+      - type: file_exists
         path: docs/workbench/container-packaging.md
       - type: file_exists
         path: npa/docker/workbench/packaging-contract.yaml
