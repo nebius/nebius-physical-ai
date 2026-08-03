@@ -14,6 +14,11 @@ from npa.workflows.cosmos_split import (
     build_cosmos2_transfer_manifest,
     write_manifest,
 )
+from npa.workbench.cosmos.transfer import (
+    TRANSFER_MANIFEST_FILENAME,
+    TRANSFER_MANIFEST_SCHEMA,
+    transfer_manifest_uri_for,
+)
 
 app = typer.Typer(
     name="cosmos2",
@@ -22,8 +27,8 @@ app = typer.Typer(
 )
 
 
-#: What a cosmos2 transfer stage publishes beside its clip; specs declare this path.
-MANIFEST_FILENAME = "manifest.json"
+#: Compatibility alias; the workbench implementation owns the canonical name.
+MANIFEST_FILENAME = TRANSFER_MANIFEST_FILENAME
 
 
 def _publish_manifest(client: Any, payload: dict, output_uri: str) -> str:
@@ -31,11 +36,28 @@ def _publish_manifest(client: Any, payload: dict, output_uri: str) -> str:
 
     import tempfile as _tempfile
 
-    prefix = output_uri if output_uri.endswith("/") else output_uri + "/"
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos2-") as tmp:
         local = Path(tmp) / MANIFEST_FILENAME
         local.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        return client.upload_file(str(local), prefix + MANIFEST_FILENAME)
+        return client.upload_file(str(local), transfer_manifest_uri_for(output_uri))
+
+
+def _publish_output_manifest(payload: dict, output_uri: str) -> str:
+    """Publish a canonical transfer manifest for an S3 or local output prefix."""
+
+    manifest_uri = transfer_manifest_uri_for(output_uri)
+    if output_uri.strip().startswith("s3://"):
+        from npa.clients.storage import StorageClient
+
+        return _publish_manifest(StorageClient.from_environment(), payload, output_uri)
+
+    local_output = output_uri.removeprefix("local://").removeprefix("file://")
+    manifest_path = Path(local_output) / MANIFEST_FILENAME
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return manifest_uri
 
 
 def _all_augmentations(configs_uri: str) -> list[dict]:
@@ -126,7 +148,6 @@ def _materialize_input_clip(src: str) -> str:
         return ""
     if not s.startswith("s3://"):
         return s if Path(s).is_file() else ""
-
     from npa.clients.storage import StorageClient
 
     client = StorageClient.from_environment()
@@ -212,7 +233,7 @@ def transfer_cmd(
     control_weight: float = typer.Option(1.0, "--control-weight", help="Control weight for input-conditioning."),
     guidance: float = typer.Option(3.0, "--guidance", help="Classifier-free guidance for input-conditioning."),
 ) -> None:
-    """Build the Cosmos2 transfer stage manifest, then produce real output.
+    """Build a transfer manifest; pass --execute for real vendor output.
 
     Mode is chosen by runtime availability, not just the flag: if the
     Cosmos-Transfer2.5 runtime is present (or ``--execute`` is passed) the real
@@ -252,16 +273,16 @@ def transfer_cmd(
         # and the augment CONDITIONS on the run's real input clip (edge control
         # computed on-the-fly — a genuine augmentation of that footage),
         # and the result is published in the per-clip layout
-        # that data_factory curate / build_run_rrd / provenance consume. Opt-in via
-        # Generic callers opt in via --input-video, --condition-on-input, or
+        # that data_factory curate / build_run_rrd / provenance consume. Generic
+        # callers opt in via --input-video, --condition-on-input, or
         # NPA_COSMOS_CONDITION_ON_INPUT=1.
         #
-        # Otherwise (generic `transfer` for sim2real / cosmos-gate / fanout): keep the
-        # flat single-video publish + sim2real-engine field convention unchanged.
+        # Otherwise (generic `transfer` for sim2real / cosmos-gate / fanout), publish
+        # the generated video, flat extracted frames, and durable manifest together.
         condition_requested = bool(
             input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT")
         )
-        data_factory_mode = bool(configs_uri) or condition_requested
+        data_factory_mode = bool(configs_uri)
         local_input = ""
         if condition_requested:
             local_input = _materialize_conditioning_input(input_video or input_uri)
@@ -349,7 +370,7 @@ def transfer_cmd(
             )
             payload["status"] = "executed"
             payload["output_kind"] = "video"
-            payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+            payload["mode"] = "cosmos_transfer2.5_gpu"
             payload["augmented_video_uri"] = manifest["augmented_video_uri"]
             payload["augmented_videos"] = manifest["augmented_videos"]
             payload["frame_count"] = manifest["frame_count"]
@@ -391,24 +412,26 @@ def transfer_cmd(
                 payload["control"] = transfer.get("control", control)
             if output_uri.strip().startswith("s3://"):
                 # Generic single-video publish + sim2real-engine field convention.
-                from npa.clients.storage import StorageClient
+                # Frame objects are deliberately flat under output_uri because envgen
+                # constructs exactly <augment_uri>/frame-NNNNN.png references.
+                from npa.workbench.cosmos.transfer import publish_transfer_to_s3
 
-                client = StorageClient.from_environment()
-                output_video = client.upload_file(transfer["video_path"], output_uri)
-                payload["mode"] = "cosmos_transfer2.5"
-                payload["output_video"] = output_video
-                payload["augmented_video_uri"] = output_video
-                payload["augmented_frames_uri"] = output_uri
-                # Publish the manifest beside the video. Echoing it to stdout leaves the
-                # provenance — prompt, control spec, guidance, whether the run was conditioned
-                # on an input clip — inside a pod that is about to disappear. For a synthetic
-                # data stage that provenance IS the product, and a spec needs something durable
-                # to declare as its output (live job 287 published a 3.9 MB augmented clip and
-                # nothing that said how it was made). The data-factory path already does this
-                # via write_run_manifest; the single-inference path now matches it.
-                payload["manifest_uri"] = _publish_manifest(client, payload, output_uri)
+                manifest = publish_transfer_to_s3(
+                    transfer,
+                    output_uri,
+                    run_id=run_id,
+                    variables=variables,
+                    frames_output_uri=output_uri,
+                    require_frames=True,
+                )
+                payload["mode"] = "cosmos_transfer2.5_gpu"
+                payload["output_video"] = manifest["augmented_video_uri"]
+                payload["augmented_video_uri"] = manifest["augmented_video_uri"]
+                payload["augmented_frames_uri"] = manifest["augmented_frames_uri"]
+                payload["frame_count"] = manifest["frame_count"]
+                payload["manifest_uri"] = transfer_manifest_uri_for(output_uri)
             else:
-                payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+                payload["mode"] = "cosmos_transfer2.5_gpu"
                 payload["augmented_video_uri"] = transfer["video_path"]
                 payload["augmented_frames_uri"] = output_uri
     else:
@@ -419,7 +442,12 @@ def transfer_cmd(
         payload["mode"] = "reference_augment"
         payload["output_kind"] = "frames"
         payload["augmented_frames_uri"] = augment["augmented_frames_uri"]
+        payload["frames"] = augment["frames"]
         payload["frame_count"] = augment["frame_count"]
+        payload["index_uri"] = augment["index_uri"]
+        payload["schema"] = TRANSFER_MANIFEST_SCHEMA
+        payload["manifest_uri"] = transfer_manifest_uri_for(output_uri)
+        _publish_output_manifest(payload, output_uri)
 
     if output_json is not None:
         payload = write_manifest(payload, output_json)

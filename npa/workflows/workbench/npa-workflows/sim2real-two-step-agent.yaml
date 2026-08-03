@@ -22,7 +22,8 @@ config:
   shard_count: "1"
   train_fraction: "0.8"
   envgen_seed: "42"
-  augmented_frames_uri: ""
+  # Envgen resolves this transfer manifest and cycles over its exact frames[].uri list.
+  augmented_frames_uri: "{{config.augment_uri}}manifest.json"
 
 resources:
   gpu:
@@ -33,19 +34,25 @@ initial: augment
 
 states:
   augment:
-    description: Cosmos Transfer augment of LeRobot trigger data.
-    toolRef: workbench.cosmos2.transfer
+    description: Real Cosmos Transfer augmentation conditioned on the seeded input video.
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.sim2real.trigger_dataset.v1
     outputs:
       - uri: "{{config.augment_uri}}manifest.json"
-        schema: npa.sim2real.augment.v1
+        schema: npa.cosmos2.transfer.v1
     next: envgen
 
   envgen:
-    description: Generate raw env shard catalog on object storage.
+    description: Generate raw envs using only frame URIs declared by transfer.
     needs: [augment]
     toolRef: workbench.sim2real_envgen.raw_shard
     resources: gpu
+    inputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.cosmos2.transfer.v1
     outputs:
       - uri: "{{config.raw_envs_uri}}raw-shard-00-summary.json"
         schema: npa.sim2real.raw_env_shard_summary.v1

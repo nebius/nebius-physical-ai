@@ -11,7 +11,7 @@ Match diagram/step language (left) to a cataloged tool (right).
 
 | If the box/step says… | Use `toolRef` | Typical config keys |
 | --- | --- | --- |
-| "Cosmos Transfer", "augment", "synthetic variants", "lighting/texture perturbation" | `workbench.cosmos2.transfer` | `trigger_uri` → `augment_uri` |
+| "Cosmos Transfer", "augment", "synthetic variants", "lighting/texture perturbation" | `workbench.cosmos2.transfer_conditioned_execute` | video-bearing `trigger_uri` → `augment_uri` + `augmented_frames_uri: "{{config.augment_uri}}manifest.json"` |
 | "Cosmos reason", "scene reasoning", "Token Factory", "plan" | `workbench.token_factory.reason` | `scene_uri` → `plan_uri` |
 | "Isaac Lab envgen", "raw environments", "generate 1K/8K envs", "scenes+physics" | `workbench.sim2real_envgen.raw_shard` | `raw_envs_uri`, `env_count` |
 | "LeRobot training image generates actions", "policy rollouts", "action-conditioned envs" | `workbench.sim2real.policy_rollouts` | `rollouts_uri` |
@@ -37,6 +37,11 @@ Match diagram/step language (left) to a cataloged tool (right).
 
 No match? Add a `ToolEntry` in `catalog.py` (argv template with `{{config.*}}`
 tokens), or use `run.shell` for genuinely one-off glue.
+
+When Cosmos Transfer feeds envgen, declare `{{config.augment_uri}}manifest.json`
+with schema `npa.cosmos2.transfer.v1` as both the transfer output and an envgen
+input. Set `config.augmented_frames_uri` to that exact object; a blank value or
+prefix discards the vendor output instead of binding envgen to `frames[].uri`.
 
 ## Control-flow patterns
 
@@ -100,7 +105,7 @@ The provided write-up + diagram map to `examples/sim2real-vlm-rl-from-diagram.ya
 | Step (write-up) | Diagram box | State | `toolRef` |
 | --- | --- | --- | --- |
 | 1 Trigger (LeRobot data in S3) | DB → Curate/Review → LeRobot Data | *(trigger_uri artifact)* | — |
-| 3 Augment good data (Cosmos Transfer 2.5) | Cosmos Transfer box | `augment` | `workbench.cosmos2.transfer` |
+| 3 Augment good data (Cosmos Transfer 2.5) | Cosmos Transfer box | `augment` | `workbench.cosmos2.transfer_conditioned_execute` |
 | 4 Load sim assets into Isaac | *(feeds envgen)* | *(assets_uri input on `envgen`)* | — |
 | 5 Raw env generation (Isaac Lab) | Isaac Lab Envgen box | `envgen` | `workbench.sim2real_envgen.raw_shard` |
 | 6 80/20 split | split diamond | *(split manifest output of `envgen`; `train_fraction` config)* | — |

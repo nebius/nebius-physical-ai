@@ -47,14 +47,14 @@ states:
   augment-scene:
     description: Cosmos Transfer augment driven by the scene plan.
     needs: [reason-scene]
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.token_factory.scene.v1
     outputs:
       - uri: "{{config.augment_uri}}manifest.json"
-        schema: npa.sim2real.augment.v1
+        schema: npa.cosmos2.transfer.v1
     next: refine
 
   refine:

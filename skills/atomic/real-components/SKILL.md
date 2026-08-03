@@ -27,8 +27,8 @@ For each `toolRef`, inspect its argv in
 - `argv[0] == "echo"` → **stub** (e.g. `workbench.fiftyone.launch_app`,
   `workbench.sim2real.finalize`).
 - a Python one-liner that writes `"status": "contract_ready"` or a fixed
-  `write_decision` → **stub / demo** (e.g. `workbench.cosmos2.transfer`
-  manifest mode, `workbench.sim2real.write_decision`).
+  `write_decision` → **stub / demo** (e.g.
+  `workbench.sim2real.write_decision`).
 - invokes a real CLI (`npa workbench <tool> ...` with real flags) or a real
   module function → **real**.
 
@@ -36,7 +36,6 @@ Known stub toolRefs (do NOT advertise as real output):
 
 | Stub | Real replacement |
 | --- | --- |
-| `workbench.cosmos2.transfer` (manifest only) | `workbench.cosmos2.transfer_execute` (`--execute`; real GPU model + uploads video/frames to S3) |
 | `workbench.fiftyone.launch_app` (echo) | real `npa workbench fiftyone load-dataset`, or a real `run.shell` curation function |
 | `workbench.sim2real.finalize` / `write_decision` (echo/demo) | real `run.shell` module fns (e.g. `npa.workflows.data_factory_stages.finalize` / `grade_gate`) |
 
@@ -44,6 +43,15 @@ Known stub toolRefs (do NOT advertise as real output):
 command or import a real, tested module (e.g.
 `npa.workflows.data_factory_stages`, `npa.workflows.data_factory_viz`). Put the
 logic in a tested module, not inline.
+
+`workbench.cosmos2.transfer_execute` is the real Config-Gen-aware execution
+toolRef used by the Data Factory and the standalone procedural-input smoke.
+`workbench.cosmos2.transfer_conditioned_execute` is the real input-conditioned
+execution toolRef for workflows that do not carry a Config-Gen manifest. Both
+include `--execute` and `--condition-on-input`, so a missing runtime or input
+video fails closed. The direct `workbench.cosmos2.transfer` / `npa workbench
+cosmos2 transfer` surface retains reference/local augmentation behavior and must
+not be used by an advertised real Cosmos stage.
 
 ## Name the real project, or run it
 

@@ -7,7 +7,6 @@ import re
 import sys
 from pathlib import Path
 
-
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 BOX_LINE_RE = re.compile(r"^[╭╰├┤┬┴┼─╮╯│\s]+$")
 ASCII_TRANSLATION = str.maketrans(
@@ -23,6 +22,8 @@ ASCII_TRANSLATION = str.maketrans(
         "…": "...",
     }
 )
+TABLE_CONTINUATION_INDENT = "    "
+SECTION_NAMES = frozenset({"Options", "Commands", "Arguments"})
 
 
 def main() -> int:
@@ -96,6 +97,14 @@ def _clean_help(raw: str) -> list[str]:
     cleaned: list[str] = []
     for line in raw.splitlines():
         line = ANSI_RE.sub("", line).rstrip()
+        table_continuation = False
+        if "│" in line:
+            body = line.split("│", 1)[1].rsplit("│", 1)[0]
+            leading = len(body) - len(body.lstrip())
+            # Rich continuation rows leave the option/command columns blank and
+            # begin at the description column. Preserve that fact after the box
+            # drawing characters and whitespace are normalized away.
+            table_continuation = bool(body.strip()) and leading >= 4
         if any(char in line for char in "╭╰╮╯─"):
             section = _section_name(line)
             if section:
@@ -111,7 +120,10 @@ def _clean_help(raw: str) -> list[str]:
             if cleaned and cleaned[-1]:
                 cleaned.append("")
             continue
-        cleaned.append(re.sub(r"\s{2,}", "  ", line))
+        normalized = re.sub(r"\s{2,}", "  ", line)
+        if table_continuation:
+            normalized = TABLE_CONTINUATION_INDENT + normalized
+        cleaned.append(normalized)
     while cleaned and not cleaned[-1]:
         cleaned.pop()
     return cleaned
@@ -126,39 +138,78 @@ def _section_name(line: str) -> str:
 
 def _extract_options(lines: list[str]) -> list[tuple[str, str]]:
     options: list[tuple[str, str]] = []
+    in_options = False
+    current: tuple[str, str] | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current is not None:
+            options.append(current)
+            current = None
+
     for line in lines:
         stripped = line.strip()
-        if not stripped.startswith("-"):
+        if stripped in SECTION_NAMES:
+            if in_options:
+                flush()
+            in_options = stripped == "Options"
+            continue
+        if not in_options or not stripped:
             continue
         parts = re.split(r"\s{2,}", stripped, maxsplit=1)
-        option = parts[0].replace("`", "")
-        description = parts[1].replace("|", "\\|") if len(parts) > 1 else ""
-        options.append((option, description))
+        continuation = line.startswith(TABLE_CONTINUATION_INDENT)
+        option_start = (
+            not continuation
+            and stripped.startswith("-")
+            and (len(parts) > 1 or re.fullmatch(r"--?\S+", stripped) is not None)
+        )
+        if option_start:
+            flush()
+            current = (
+                parts[0].replace("`", ""),
+                parts[1] if len(parts) > 1 else "",
+            )
+        elif current is not None:
+            current = (current[0], " ".join(filter(None, (current[1], stripped))))
+    flush()
+    options = [(key, value.replace("|", "\\|")) for key, value in options]
     return _dedupe(options)
 
 
 def _extract_commands(lines: list[str]) -> list[tuple[str, str]]:
     commands: list[tuple[str, str]] = []
-    ignored = {
-        "Usage:",
-        "Options",
-        "Commands",
-        "Arguments",
-        "Nebius",
-        "No",
-        "Regenerate",
-    }
+    in_commands = False
+    current: tuple[str, str] | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current is not None:
+            commands.append(current)
+            current = None
+
     for line in lines:
         stripped = line.strip()
-        if not stripped or stripped.startswith("-"):
+        if stripped in SECTION_NAMES:
+            if in_commands:
+                flush()
+            in_commands = stripped == "Commands"
+            continue
+        if not in_commands or not stripped:
             continue
         parts = re.split(r"\s{2,}", stripped, maxsplit=1)
-        if len(parts) < 2:
-            continue
-        command = parts[0]
-        if command in ignored or not re.match(r"^[a-z][a-z0-9-]*$", command):
-            continue
-        commands.append((command, parts[1].replace("|", "\\|")))
+        continuation = line.startswith(TABLE_CONTINUATION_INDENT)
+        command_start = (
+            not continuation
+            and len(parts) == 2
+            and re.fullmatch(r"[a-z][a-z0-9-]*", parts[0]) is not None
+        )
+        if command_start:
+            flush()
+            current = (parts[0], parts[1])
+        elif current is not None:
+            current = (current[0], " ".join(filter(None, (current[1], stripped))))
+    flush()
+    commands = [(key, value.replace("|", "\\|")) for key, value in commands]
     return _dedupe(commands)
 
 

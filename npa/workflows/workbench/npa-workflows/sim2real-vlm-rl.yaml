@@ -30,7 +30,8 @@ config:
   shard_count: "1"
   train_fraction: "0.8"
   envgen_seed: "42"
-  augmented_frames_uri: ""
+  # Envgen resolves this transfer manifest and cycles over its exact frames[].uri list.
+  augmented_frames_uri: "{{config.augment_uri}}manifest.json"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/"
   heldout_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json"
@@ -50,11 +51,14 @@ initial: augment
 states:
   augment:
     description: Cosmos Transfer augment of LeRobot trigger data.
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.lerobot.dataset.v1
     outputs:
       - uri: "{{config.augment_uri}}manifest.json"
-        schema: npa.sim2real.augment.v1
+        schema: npa.cosmos2.transfer.v1
     next: envgen
 
   envgen:
@@ -62,6 +66,9 @@ states:
     needs: [augment]
     toolRef: workbench.sim2real_envgen.raw_shard
     resources: gpu
+    inputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.cosmos2.transfer.v1
     outputs:
       - uri: "{{config.raw_envs_uri}}raw-shard-00-summary.json"
         schema: npa.sim2real.raw_env_shard_summary.v1

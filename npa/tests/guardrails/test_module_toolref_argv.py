@@ -1,15 +1,13 @@
-"""Guardrail: a `python -m <module>` toolRef argv must parse against the module's own CLI.
+"""Guardrail: a `python -m <module>` toolRef argv must parse against its own CLI.
 
 The catalog-wide flag audit (`test_tool_catalog_argv.py`) understands Typer commands invoked
 as ``npa …``, and now also the ``npa …`` calls inside a ``bash -c`` script. It cannot check a
 toolRef that runs a module directly — and one of those was broken:
 
-    "workbench.sim2real_envgen.raw_shard": python -m npa.workflows.sim2real_envgen raw-shard
-        --output-uri … --env-count …
-
-``--run-id`` is ``required=True`` on that module's parser, so every stage using this toolRef
-could only die with *"the following arguments are required: --run-id"*. Three specs reference
-it. None had live coverage, so nothing caught it.
+Historically ``workbench.sim2real_envgen.raw_shard`` invoked its module directly
+and omitted required ``--run-id``. It now routes through the public Typer command,
+so the catalog-wide CLI audit covers it; this file retains the general direct-module
+guard for the remaining entries.
 
 This test asks the module's real ``argparse`` parser, which is the only source of truth for a
 module CLI: placeholders are replaced with dummy values and the remainder is parsed. A missing
@@ -145,21 +143,22 @@ def test_module_tool_ref_argv_parses(tool_ref: str, argv: tuple[str, ...]) -> No
         pytest.fail(f"{tool_ref} argv does not parse against {module_name}: exit {exc.code}")
 
 
-def test_raw_shard_passes_every_option_the_shard_fan_out_needs() -> None:
-    """Pin the fix: the flags the retired sim2real-envgen-split.yaml drove."""
+def test_raw_shard_routes_through_the_public_cli_with_fan_out_options() -> None:
+    """The catalog and documented public command must be the same surface."""
 
     argv = tuple(str(part) for part in TOOL_CATALOG["workbench.sim2real_envgen.raw_shard"].argv_template)
 
+    assert argv[:4] == ("npa", "workbench", "sim2real-envgen", "raw-shard")
     assert {
         "--run-id",
         "--output-uri",
         "--env-count",
         "--shard-index",
         "--shard-count",
-        "--train-fraction",
         "--seed",
         "--augmented-frames-uri",
     } <= set(argv), argv
+    assert "--train-fraction" not in argv, "raw shard generation does not split the dataset"
 
 
 def test_the_guardrail_would_have_caught_the_missing_run_id() -> None:
