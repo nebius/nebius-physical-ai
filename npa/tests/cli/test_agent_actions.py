@@ -308,6 +308,52 @@ def test_allowlist_contains_readonly_insights_tools():
         assert not A.requires_confirmation(name)
 
 
+def test_loop_uses_readonly_run_memory_to_explain_regression():
+    assert A.is_allowed("memory_explain_regression")
+    assert not A.requires_confirmation("memory_explain_regression")
+
+    def _explain(args):
+        assert args == {"baseline_run": "run-a", "candidate_run": "run-b"}
+        return {
+            "ok": True,
+            "baseline_run": "run-a",
+            "candidate_run": "run-b",
+            "verdict": "regression",
+            "metric_evidence": [
+                {
+                    "field": "metrics.success_rate",
+                    "baseline": 0.85,
+                    "candidate": 0.55,
+                    "delta": -0.3,
+                }
+            ],
+        }
+
+    planner = _scripted_planner(
+        [
+            {
+                "tool": "memory_explain_regression",
+                "args": {"baseline_run": "run-a", "candidate_run": "run-b"},
+            },
+            {
+                "final": (
+                    "Stored metrics.success_rate was 0.85 for run-a and 0.55 for "
+                    "run-b; observed delta was -0.3."
+                )
+            },
+        ]
+    )
+    result = A.run_action_loop(
+        "why did run-b regress vs run-a",
+        tools={"memory_explain_regression": _explain},
+        model_call=planner,
+    )
+
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == ["memory_explain_regression"]
+    assert "-0.3" in result["reply"]
+
+
 def test_loop_uses_insights_query_to_answer_gpu_question():
     captured = {"args": None}
 

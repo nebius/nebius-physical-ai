@@ -98,6 +98,58 @@ def test_explain_regression_is_grounded_text():
     assert "delta_success_rate" in text
 
 
+def test_explain_regression_uses_stored_metrics_and_config_changes():
+    mem = M.RunMemory(M.InMemoryStore())
+    mem.record_run(
+        "run-a",
+        {
+            "metrics": {"success_rate": 0.85, "loss": 0.2, "reward": 0.7},
+            "config": {"learning_rate": 0.001, "batch_size": 32},
+        },
+        source="insights",
+    )
+    mem.record_run(
+        "run-b",
+        {
+            "metrics": {"success_rate": 0.55, "loss": 0.4, "reward": 0.3},
+            "config": {"learning_rate": 0.01, "batch_size": 32},
+        },
+        source="insights",
+    )
+
+    result = mem.explain_regression_data("run-b", "run-a")
+
+    assert result["ok"] is True
+    assert result["verdict"] == "regression"
+    evidence = {item["field"]: item for item in result["metric_evidence"]}
+    assert evidence["metrics.success_rate"] == {
+        "field": "metrics.success_rate",
+        "baseline": 0.85,
+        "candidate": 0.55,
+        "delta": -0.3,
+        "direction": "higher_is_better",
+        "assessment": "regressed",
+    }
+    assert evidence["metrics.loss"]["assessment"] == "regressed"
+    assert evidence["metrics.reward"]["assessment"] == "regressed"
+    assert result["config_changes"] == [
+        {"field": "config.learning_rate", "baseline": 0.001, "candidate": 0.01}
+    ]
+    assert result["sources"] == {"baseline": "insights", "candidate": "insights"}
+    assert "correlation only" in result["explanation"]
+
+
+def test_explain_regression_empty_memory_degrades_gracefully():
+    mem = M.RunMemory(M.InMemoryStore())
+    result = mem.explain_regression_data("run-b", "run-a")
+
+    assert result["ok"] is False
+    assert "run-a" in result["error"] and "run-b" in result["error"]
+    text = mem.explain_regression("run-b", "run-a")
+    assert "cannot compare" in text.lower()
+    assert "success_rate" not in text
+
+
 def test_run_id_path_traversal_is_contained(tmp_path):
     base = tmp_path / "memory"
     store = M.JsonFileStore(str(base))

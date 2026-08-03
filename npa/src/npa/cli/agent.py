@@ -6214,6 +6214,17 @@ def _agent_act_tools():
         )
         return response.model_dump(mode="json")
 
+    def _tool_memory_explain_regression(args):
+        baseline_run = str(
+            args.get("baseline_run") or args.get("baseline") or args.get("run_a") or ""
+        ).strip()
+        candidate_run = str(
+            args.get("candidate_run") or args.get("candidate") or args.get("run_b") or ""
+        ).strip()
+        if not baseline_run or not candidate_run:
+            return {{"error": "baseline_run and candidate_run are required"}}
+        return _agent_run_memory().explain_regression_data(candidate_run, baseline_run)
+
     def _tool_workflow_author(args):
         goal = str(args.get("goal") or args.get("description") or args.get("prompt") or "").strip()
         if not goal:
@@ -6261,6 +6272,7 @@ def _agent_act_tools():
         "insights_compare": _tool_insights_compare,
         "insights_lineage": _tool_insights_lineage,
         "insights_dashboard": _tool_insights_dashboard,
+        "memory_explain_regression": _tool_memory_explain_regression,
         "workflow_author": _tool_workflow_author,
         "sim2real_submit": _tool_submit,
     }}
@@ -6406,7 +6418,22 @@ def agent_sim2real_drive(payload: dict):
             mode = "policy_collapse"
         else:
             mode = "low_success"
-        return {{"failure_mode": mode, "signals": signals, "notes": "; ".join(signals.get("notes", []))}}
+        diagnosis = {{
+            "failure_mode": mode,
+            "signals": signals,
+            "notes": "; ".join(signals.get("notes", [])),
+        }}
+        baseline_run = str(cfg.get("baseline_run_id") or cfg.get("baseline_run") or "").strip()
+        current_run = str(
+            (run_status or {{}}).get("run_id") if isinstance(run_status, dict) else ""
+        ).strip()
+        if baseline_run and current_run:
+            memory_evidence = _agent_run_memory().explain_regression_data(
+                current_run, baseline_run
+            )
+            if memory_evidence.get("ok"):
+                diagnosis["run_memory"] = memory_evidence
+        return diagnosis
 
     # Honor the operator-configured threshold when the run report omits one.
     _gate = gate_with_config_threshold(_sim2real_gate_metrics, cfg.get("threshold"))
@@ -6486,6 +6513,10 @@ def agent_memory_run(run_id: str):
 @app.get("/agent/memory/compare")
 def agent_memory_compare(run_a: str, run_b: str):
     return _agent_run_memory().compare_runs(run_a, run_b)
+
+@app.get("/agent/memory/explain")
+def agent_memory_explain(baseline_run: str, candidate_run: str):
+    return _agent_run_memory().explain_regression_data(candidate_run, baseline_run)
 
 # ── Blueprint Phase H: retrieval / grounding ─────────────────────────────────
 # LanceDB-backed vector store + Token Factory embeddings + provider-agnostic

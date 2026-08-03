@@ -163,6 +163,15 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             params=("workflow", "group_by", "latest_run"),
         ),
         ToolSpec(
+            "memory_explain_regression",
+            read_only=True,
+            summary=(
+                "Explain why a candidate run regressed against a baseline using only "
+                "the two records already stored in run memory."
+            ),
+            params=("baseline_run", "candidate_run"),
+        ),
+        ToolSpec(
             "workflow_author",
             read_only=True,
             summary=(

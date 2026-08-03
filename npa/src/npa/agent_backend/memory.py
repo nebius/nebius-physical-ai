@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 MEMORY_KEY_PREFIX = "runs/"
 INDEX_KEY = "index.json"
@@ -118,6 +118,85 @@ def _fallback_compare(run_a: Any, run_b: Any) -> dict[str, Any]:
     }
 
 
+_LOWER_IS_BETTER = (
+    "loss",
+    "error",
+    "collision",
+    "corruption",
+    "cost",
+    "duration",
+    "latency",
+    "steps",
+    "tokens",
+)
+_HIGHER_IS_BETTER = (
+    "success",
+    "reward",
+    "accuracy",
+    "throughput",
+    "score",
+    "precision",
+    "recall",
+)
+
+
+def _flatten_numeric(value: Any, prefix: str = "") -> dict[str, float | int]:
+    """Flatten only observed numeric fields; booleans are not measurements."""
+    flattened: dict[str, float | int] = {}
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            flattened.update(_flatten_numeric(item, path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            flattened.update(_flatten_numeric(item, path))
+    elif isinstance(value, (int, float)) and not isinstance(value, bool) and prefix:
+        flattened[prefix] = value
+    return flattened
+
+
+def _flatten_scalars(value: Any, prefix: str = "") -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            flattened.update(_flatten_scalars(item, path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            flattened.update(_flatten_scalars(item, path))
+    elif prefix and (value is None or isinstance(value, (str, int, float, bool))):
+        flattened[prefix] = value
+    return flattened
+
+
+def _metric_direction(field: str) -> str:
+    normalized = str(field or "").lower()
+    if any(marker in normalized for marker in _LOWER_IS_BETTER):
+        return "lower_is_better"
+    if any(marker in normalized for marker in _HIGHER_IS_BETTER):
+        return "higher_is_better"
+    return "observed_change"
+
+
+def _metric_assessment(delta: float, direction: str) -> str:
+    if delta == 0:
+        return "unchanged"
+    if direction == "higher_is_better":
+        return "regressed" if delta < 0 else "improved"
+    if direction == "lower_is_better":
+        return "regressed" if delta > 0 else "improved"
+    return "changed"
+
+
+def _display_value(value: Any) -> str:
+    try:
+        return json.dumps(value, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
 class RunMemory:
     """Persistent, grounded run/experiment memory over an injected store."""
 
@@ -206,23 +285,128 @@ class RunMemory:
         comparison["run_b"] = str(run_b)
         return comparison
 
+    def explain_regression_data(self, run_b: str, baseline: str) -> dict[str, Any]:
+        """Return planner-ready regression evidence from two stored records.
+
+        Metric direction is inferred only from the stored field name. Config
+        changes are reported as coincident evidence, never asserted as causes.
+        """
+        comparison = self.compare_runs(baseline, run_b)
+        if not comparison.get("ok"):
+            return comparison
+        baseline_record = self.get_run(baseline) or {}
+        candidate_record = self.get_run(run_b) or {}
+
+        baseline_metrics = {
+            key: value
+            for key, value in _flatten_numeric(baseline_record).items()
+            if not key.startswith(("config.", "parameters.", "resources."))
+        }
+        candidate_metrics = {
+            key: value
+            for key, value in _flatten_numeric(candidate_record).items()
+            if not key.startswith(("config.", "parameters.", "resources."))
+        }
+        metric_evidence: list[dict[str, Any]] = []
+        for field in sorted(set(baseline_metrics) & set(candidate_metrics)):
+            baseline_value = baseline_metrics[field]
+            candidate_value = candidate_metrics[field]
+            delta = round(float(candidate_value) - float(baseline_value), 12)
+            if delta == 0:
+                continue
+            direction = _metric_direction(field)
+            metric_evidence.append(
+                {
+                    "field": field,
+                    "baseline": baseline_value,
+                    "candidate": candidate_value,
+                    "delta": delta,
+                    "direction": direction,
+                    "assessment": _metric_assessment(delta, direction),
+                }
+            )
+        metric_evidence.sort(
+            key=lambda item: (item["assessment"] != "regressed", item["field"])
+        )
+
+        config_changes: list[dict[str, Any]] = []
+        for section in ("config", "parameters", "resources"):
+            baseline_values = _flatten_scalars(baseline_record.get(section), section)
+            candidate_values = _flatten_scalars(candidate_record.get(section), section)
+            for field in sorted(set(baseline_values) & set(candidate_values)):
+                if baseline_values[field] == candidate_values[field]:
+                    continue
+                config_changes.append(
+                    {
+                        "field": field,
+                        "baseline": baseline_values[field],
+                        "candidate": candidate_values[field],
+                    }
+                )
+
+        if any(item["assessment"] == "regressed" for item in metric_evidence):
+            verdict = "regression"
+        elif comparison.get("regressed"):
+            verdict = "regression"
+        elif any(item["assessment"] == "improved" for item in metric_evidence):
+            verdict = "improvement"
+        else:
+            verdict = str(comparison.get("verdict") or "no_change")
+
+        lines = [
+            f"**{run_b} vs {baseline}** (grounded on stored run metadata):",
+            f"- **verdict**: `{verdict}`",
+        ]
+        delta_success_rate = comparison.get("delta_success_rate")
+        if delta_success_rate is not None:
+            lines.append(
+                f"- **delta_success_rate**: `{delta_success_rate}` (run_b − baseline)"
+            )
+        for evidence in metric_evidence:
+            lines.append(
+                "- **{field}**: baseline `{baseline}`, candidate `{candidate}`, "
+                "delta `{delta}` — {assessment} ({direction}).".format(
+                    field=evidence["field"],
+                    baseline=_display_value(evidence["baseline"]),
+                    candidate=_display_value(evidence["candidate"]),
+                    delta=evidence["delta"],
+                    assessment=evidence["assessment"],
+                    direction=evidence["direction"],
+                )
+            )
+        if not metric_evidence:
+            lines.append("- No changed numeric field is shared by both stored records.")
+        for change in config_changes:
+            lines.append(
+                "- Coincident stored config change **{field}**: `{baseline}` → "
+                "`{candidate}` (correlation only).".format(
+                    field=change["field"],
+                    baseline=_display_value(change["baseline"]),
+                    candidate=_display_value(change["candidate"]),
+                )
+            )
+
+        return {
+            "ok": True,
+            "baseline_run": str(baseline),
+            "candidate_run": str(run_b),
+            "verdict": verdict,
+            "delta_success_rate": delta_success_rate,
+            "metric_evidence": metric_evidence,
+            "config_changes": config_changes,
+            "sources": {
+                "baseline": baseline_record.get("source"),
+                "candidate": candidate_record.get("source"),
+            },
+            "explanation": "\n".join(lines),
+        }
+
     def explain_regression(self, run_b: str, baseline: str) -> str:
         """Grounded explanation of run_b vs a baseline (stored metadata only)."""
-        result = self.compare_runs(baseline, run_b)
+        result = self.explain_regression_data(run_b, baseline)
         if not result.get("ok"):
             return (
                 f"**Cannot compare** — {result.get('error', 'missing run metadata')}. "
                 "Record both runs first via run memory."
             )
-        delta = result.get("delta_success_rate")
-        lines = [
-            f"**{run_b} vs {baseline}** (grounded on stored run metadata):",
-            f"- **verdict**: `{result.get('verdict')}`",
-        ]
-        if delta is not None:
-            lines.append(f"- **delta_success_rate**: `{delta}` (run_b − baseline)")
-        for note in result.get("notes", []):
-            lines.append(f"- {note}")
-        if result.get("regressed"):
-            lines.append("- This is a **regression** — inspect config/diagnosis deltas between the runs.")
-        return "\n".join(lines)
+        return str(result.get("explanation") or "")
