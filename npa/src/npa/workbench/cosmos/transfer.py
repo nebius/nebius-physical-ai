@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_REPO = "/opt/cosmos/cosmos-transfer2.5"
-# Proven, self-contained control example bundled in the transfer repo. Produces a
-# real transferred video; used when the workflow does not supply its own spec.
-DEFAULT_SPEC = "assets/robot_example/depth/robot_depth_spec.json"
+# No upstream media is bundled in the redistributable image. Callers must supply
+# either an input clip (the preferred path) or an explicit operator-owned spec.
+DEFAULT_SPEC = ""
 
 # Control modalities Cosmos Transfer 2.5 computes ON-THE-FLY from the input
 # ``video_path`` (Canny edge / bilateral blur), so conditioning on an arbitrary
@@ -109,33 +109,37 @@ def _venv_has_torch(py: Path) -> bool:
 def cosmos_transfer_available() -> bool:
     """True when the real Cosmos-Transfer2.5 runtime is present and runnable.
 
-    Either the inference venv already has torch+flash-attn, or the repo + uv are
-    available so :func:`ensure_env` can build the venv on demand.
+    The redistributable image bakes the locked inference venv. Runtime dependency
+    self-healing would make the executed dependency set differ from the audited
+    image, so a missing venv is unavailable rather than a cue to download packages.
     """
 
     repo = cosmos_transfer_repo()
     if not (repo / "examples" / "inference.py").is_file():
         return False
-    if _venv_has_torch(_venv_python(repo)):
-        return True
-    return (repo / "pyproject.toml").is_file() and shutil.which("uv") is not None
+    return _venv_has_torch(_venv_python(repo))
 
 
 def ensure_env(repo: Path) -> Path:
-    """Return the inference venv python, building it (py3.10 + cu128) if absent."""
+    """Return the audited inference venv; never mutate or download at run time."""
 
     py = _venv_python(repo)
     if _venv_has_torch(py):
         return py
-    # The image pins .python-version=3.13, but the flash-attn wheel is cp310-only.
-    (repo / ".python-version").write_text("3.10\n", encoding="utf-8")
-    subprocess.run(["uv", "python", "install", "3.10"], cwd=repo, check=True)
-    subprocess.run(
-        ["uv", "sync", "--extra=cu128", "--python", "3.10"], cwd=repo, check=True
+    raise RuntimeError(
+        "cosmos-transfer2.5 audited inference venv is missing or unusable; "
+        "rebuild the pinned npa-cosmos2-transfer image"
     )
-    if not _venv_has_torch(py):
-        raise RuntimeError("cosmos-transfer2.5 inference env build did not yield torch+flash_attn")
-    return py
+
+
+def _require_runtime_hf_token() -> None:
+    """Refuse gated-model inference before any anonymous/partial download starts."""
+
+    if not os.environ.get("HF_TOKEN", "").strip():
+        raise RuntimeError(
+            "HF_TOKEN is required at run time for gated Cosmos Transfer weights; "
+            "no model download was attempted"
+        )
 
 
 def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:
@@ -182,8 +186,8 @@ def run_cosmos_transfer(
 ) -> dict[str, Any]:
     """Run a real Cosmos-Transfer2.5 inference; return the generated video + metadata.
 
-    ``spec`` is a controlnet_spec path relative to the transfer repo (defaults to
-    the env override ``COSMOS_TRANSFER_SPEC`` or the bundled depth example).
+    ``spec`` is a controlnet spec path relative to the transfer repo (or the
+    ``COSMOS_TRANSFER_SPEC`` environment override). No upstream fixture is baked.
     ``prompt`` (or ``COSMOS_TRANSFER_PROMPT``), when set, overrides the spec's text
     prompt so the sampled appearance actually conditions the augmentation.
 
@@ -191,11 +195,11 @@ def run_cosmos_transfer(
     controlnet spec is built with ``video_path`` = the input and an ``edge``/``vis``
     control computed on-the-fly, so the output is a real augmentation of the
     caller's footage (new appearance from ``prompt``, same structure/motion).
-    When ``input_video`` is absent, behavior is unchanged (bundled DEFAULT_SPEC or
-    the caller-supplied ``spec``), preserving the golden eval.
+    When ``input_video`` is absent, the caller must provide an operator-owned spec.
     """
 
     repo = cosmos_transfer_repo()
+    _require_runtime_hf_token()
     py = ensure_env(repo)
     tag = str(variant_tag or run_id or "input")
     conditioned_control = ""
@@ -211,6 +215,11 @@ def run_cosmos_transfer(
         )
     else:
         spec = spec or os.environ.get("COSMOS_TRANSFER_SPEC", DEFAULT_SPEC)
+        if not spec:
+            raise ValueError(
+                "Cosmos Transfer inference requires input_video or an explicit "
+                "COSMOS_TRANSFER_SPEC; no upstream media is bundled"
+            )
         prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
         if prompt:
             spec = _spec_with_prompt(repo, spec, prompt, tag=tag)
@@ -225,7 +234,7 @@ def run_cosmos_transfer(
     if cuda_visible_devices is not None and str(cuda_visible_devices).strip() != "":
         env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices).strip()
     # Only the specs WE synthesized this call are ephemeral; never delete a
-    # bundled/example or caller-supplied spec. Per-variant tags keep siblings
+    # caller-supplied spec. Per-variant tags keep siblings
     # from clobbering each other, so removing exactly our file is fan-out safe.
     # Capture its content first so callers can still inspect the effective spec
     # after the file is gone (nothing depends on the ephemeral file persisting).

@@ -110,35 +110,57 @@ def _variant_parallelism(num_variants: int) -> int:
 
 
 def _materialize_input_clip(src: str) -> str:
-    """Resolve a local path or ``s3://`` URI to a local video file to condition on.
+    """Resolve a local path or ``s3://`` URI to a local conditioning video.
 
-    For an ``s3://`` prefix, downloads it and returns the first video found. Returns
-    "" when nothing usable is present (caller then falls back to the default,
-    bundled-example behavior). Best-effort: never raises on a missing input.
+    Returns an empty string only when the source was successfully inspected and no
+    supported video exists. Storage setup, listing, authentication, and download
+    failures propagate so the CLI can report them separately from an empty prefix.
     """
     import glob as _glob
+    import shutil
     import tempfile
+    from urllib.parse import urlsplit
 
     s = str(src or "").strip()
     if not s:
         return ""
     if not s.startswith("s3://"):
         return s if Path(s).is_file() else ""
-    try:
-        from npa.clients.storage import StorageClient
 
-        client = StorageClient.from_environment()
-        tmp = tempfile.mkdtemp(prefix="npa-cosmos-input-")
-        if s.lower().endswith(_VIDEO_EXTS):
-            return client.download_path(s, str(Path(tmp) / Path(s).name))
+    from npa.clients.storage import StorageClient
+
+    client = StorageClient.from_environment()
+    tmp = tempfile.mkdtemp(prefix="npa-cosmos-input-")
+    keep_tmp = False
+    try:
+        source_path = urlsplit(s).path
+        if source_path.lower().endswith(_VIDEO_EXTS):
+            downloaded = client.download_path(s, str(Path(tmp) / Path(source_path).name))
+            keep_tmp = True
+            return downloaded
         client.download_directory(s, tmp)
         vids = sorted(
             f for f in _glob.glob(str(Path(tmp) / "**" / "*"), recursive=True)
             if f.lower().endswith(_VIDEO_EXTS) and Path(f).is_file()
         )
-        return vids[0] if vids else ""
-    except Exception:  # noqa: BLE001 - input conditioning is opt-in; fall back cleanly
+        if vids:
+            keep_tmp = True
+            return vids[0]
         return ""
+    finally:
+        if not keep_tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _materialize_conditioning_input(src: str) -> str:
+    """Adapt storage failures to a sanitized, actionable CLI error."""
+    try:
+        return _materialize_input_clip(src)
+    except Exception as exc:
+        raise typer.BadParameter(
+            "could not inspect or download the configured conditioning input; "
+            "verify the object-storage endpoint, credentials, permissions, and availability"
+        ) from exc
 
 
 @app.command("transfer")
@@ -179,8 +201,8 @@ def transfer_cmd(
     condition_on_input: bool = typer.Option(
         False,
         "--condition-on-input",
-        help="Condition on the first video under --input-uri (opt-in). Also enabled by "
-        "NPA_COSMOS_CONDITION_ON_INPUT=1. Default off preserves the bundled-example path.",
+        help="Condition on the first video under --input-uri. Also enabled by "
+        "NPA_COSMOS_CONDITION_ON_INPUT=1.",
     ),
     control: str = typer.Option(
         "edge",
@@ -225,13 +247,14 @@ def transfer_cmd(
     if execute or runtime_available:
         # Real Cosmos-Transfer2.5 world-transfer model.
         #
-        # Data Factory context (paidf `transfer_execute` passes --configs-uri, or the
-        # caller opts into input-conditioning): the sampled appearance combo drives
-        # the prompt, the augment optionally CONDITIONS on the run's real input clip
-        # (edge control computed on-the-fly — a genuine augmentation of that footage,
-        # not the bundled example), and the result is published in the per-clip layout
+        # Data Factory context (`transfer_execute` passes --configs-uri and always
+        # enables input conditioning): the sampled appearance combo drives the prompt,
+        # and the augment CONDITIONS on the run's real input clip (edge control
+        # computed on-the-fly — a genuine augmentation of that footage),
+        # and the result is published in the per-clip layout
         # that data_factory curate / build_run_rrd / provenance consume. Opt-in via
-        # --input-video, --condition-on-input, or NPA_COSMOS_CONDITION_ON_INPUT=1.
+        # Generic callers opt in via --input-video, --condition-on-input, or
+        # NPA_COSMOS_CONDITION_ON_INPUT=1.
         #
         # Otherwise (generic `transfer` for sim2real / cosmos-gate / fanout): keep the
         # flat single-video publish + sim2real-engine field convention unchanged.
@@ -241,7 +264,12 @@ def transfer_cmd(
         data_factory_mode = bool(configs_uri) or condition_requested
         local_input = ""
         if condition_requested:
-            local_input = _materialize_input_clip(input_video or input_uri)
+            local_input = _materialize_conditioning_input(input_video or input_uri)
+            if not local_input:
+                raise typer.BadParameter(
+                    "input conditioning was requested, but no supported video "
+                    f"({', '.join(_VIDEO_EXTS)}) was found at the configured input"
+                )
         # Env fallbacks let a submit tune conditioning without changing the toolRef argv.
         control = (os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control)
         _cw = os.environ.get("NPA_COSMOS_CONTROL_WEIGHT", "").strip()

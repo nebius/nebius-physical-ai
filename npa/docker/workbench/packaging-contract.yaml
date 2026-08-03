@@ -164,6 +164,19 @@ images:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
     redistribution: public
+  cosmos2-transfer:
+    dockerfile: cosmos2-transfer/Dockerfile
+    tier: job
+    notes: >-
+      Complete source build at immutable commit
+      67d56b7d550a3911024a32dc23ae0bae5258e633 on digest-pinned public
+      CUDA build/runtime bases. Git LFS smudging is disabled; upstream assets, example media,
+      checkpoints, caches, and Git metadata are removed and build-guarded. Gated
+      NVIDIA Open Model License weights are fetched only at runtime with the
+      operator's HF_TOKEN into a mounted cache. The derived whole-container
+      distribution conditions and full artifact evidence are recorded in
+      cosmos2-transfer/REDISTRIBUTION.md; built-byte scans are a release gate.
+    redistribution: public
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job

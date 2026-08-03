@@ -26,18 +26,33 @@ config:
   bucket: example-bucket
   prefix: "cosmos2-transfer/{{run.id}}"
 
+  # Mandatory: this prefix must contain a supported input video. A missing,
+  # empty, or video-free prefix fails CLI validation before inference starts.
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/"
-  # Optional Config-Gen manifest. Empty means the bundled-example path: the model still runs for
-  # real, it just is not conditioned on a sampled appearance combo.
+  # Optional Config-Gen manifest. The transfer input itself is always required and
+  # is converted into an on-the-fly edge control; no upstream media is bundled.
   configs_uri: ""
 
 resources:
   transfer-gpu:
     cloud: kubernetes
+    # The pinned 2B path requires about 65.4 GiB. RTX PRO 6000 provides 96 GiB;
+    # the CUDA 12.8 / sm_120 FlashAttention kernel path is a live release gate.
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 64Gi
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: cosmos2-model-cache
+                  mountPath: /opt/cosmos/model-cache
+          volumes:
+            - name: cosmos2-model-cache
+              emptyDir: {}
 
 initial: transfer
 

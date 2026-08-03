@@ -1,137 +1,220 @@
-# Capability wrapper for npa-cosmos2-transfer.
-#
-# Golden eval in this repo means "does this container actually do its job" — a
-# real capability test, not a CUDA probe. So this wrapper bakes the REAL
-# Cosmos-Transfer2.5 inference environment (Python 3.10 + torch cu128 +
-# flash-attn + all deps via `uv sync`) on top of the upstream transfer runtime,
-# and ships a golden-eval script that runs an actual video-to-video transfer on a
-# bundled robot control example and asserts a generated video is produced.
-#
-# The upstream 2.5.x image ships the cosmos-transfer2.5 sources but does not bake
-# a flash-attn-compatible venv, and pins .python-version=3.13 while the flash-attn
-# wheel is cp310-only — both are corrected here.
-ARG BASE_IMAGE=npa-cosmos2-transfer:2.5.0
-FROM ${BASE_IMAGE}
+# syntax=docker/dockerfile:1.7
 
-USER root
-WORKDIR /opt/cosmos/cosmos-transfer2.5
-
-# UV_PYTHON_INSTALL_DIR keeps the interpreter out of /root. Built as root, uv
-# otherwise puts it in /root/.local/share/uv/python and the venv's bin/python is a
-# symlink into that tree; /root is 0700, so the image's own final USER ubuntu got
-# `Permission denied` (exit 126) for every inference call and the venv was unusable
-# as shipped.
-ENV UV_LINK_MODE=copy \
-    UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python \
-    UV_LEGACY_PYTHON_DIR=/root/.local/share/uv/python
-
-# Build the real inference env. `uv sync --extra=cu128` resolves torch cu128 +
-# flash-attn (cp310) + the full transfer2.5 dependency set from the upstream lock.
+# Redistributable Cosmos Transfer 2.5 capability image.
 #
-# Two paths, because BASE_IMAGE may be either the upstream runtime or an
-# already-built transfer image (the upstream 2.5.0 base is not always available to
-# rebuild from):
-#
-#   fresh base      -> uv installs the interpreter into UV_PYTHON_INSTALL_DIR and
-#                      syncs the venv against it.
-#   built artifact  -> the venv already holds the right packages but its bin/python
-#                      symlinks into /root, so relocate the interpreter and repoint
-#                      the venv at it. Re-running `uv sync` here would re-download
-#                      the whole cu128 torch set for no benefit.
-#
-# Either way the layer ends with the interpreter outside /root, which is what makes
-# the venv usable by the non-root user this image runs as.
-RUN set -eux; \
-    resolved="$(readlink -f .venv/bin/python 2>/dev/null || true)"; \
-    case "$resolved" in \
-      "${UV_LEGACY_PYTHON_DIR}"/*) relocate=1 ;; \
-      *) relocate=0 ;; \
-    esac; \
-    if [ "$relocate" = 1 ]; then \
-      old_root="${resolved%/bin/*}"; \
-      new_root="${UV_PYTHON_INSTALL_DIR}/$(basename "$old_root")"; \
-      mkdir -p "${UV_PYTHON_INSTALL_DIR}"; \
-      cp -a "${UV_LEGACY_PYTHON_DIR}/." "${UV_PYTHON_INSTALL_DIR}/"; \
-      # uv's tree contains an absolute version symlink (cpython-3.10-... ->
-      # cpython-3.10.20-...), and `cp -a` copies such links verbatim — so the copy
-      # still points back into the legacy tree and resolving through it lands in
-      # /root again. Repoint every absolute link that targets the old location.
-      find "${UV_PYTHON_INSTALL_DIR}" -type l | while read -r link; do \
-        target="$(readlink "$link")"; \
-        case "$target" in \
-          "${UV_LEGACY_PYTHON_DIR}"/*) \
-            ln -sfn "${UV_PYTHON_INSTALL_DIR}/${target#"${UV_LEGACY_PYTHON_DIR}/"}" "$link" ;; \
-        esac; \
-      done; \
-      for link in .venv/bin/python .venv/bin/python3 .venv/bin/python3.10; do \
-        [ -L "$link" ] || continue; \
-        target="$(readlink "$link")"; \
-        case "$target" in \
-          "${UV_LEGACY_PYTHON_DIR}"/*) ln -sfn "${new_root}/bin/$(basename "$target")" "$link" ;; \
-        esac; \
-      done; \
-      # Rewrite by directory prefix, not by the resolved path: pyvenv.cfg records the
-      # interpreter through uv's version symlink (cpython-3.10-...) while readlink -f
-      # resolves to the real directory (cpython-3.10.20-...). Matching only the
-      # resolved form leaves `home =` pointing into the legacy tree, and Python takes
-      # sys._home from it — which surfaces much later as a PermissionError from
-      # distutils.sysconfig rather than from the venv itself. `cp -a` copied both the
-      # real directory and the symlink, so a prefix swap is correct for either form.
-      sed -i "s|${UV_LEGACY_PYTHON_DIR}|${UV_PYTHON_INSTALL_DIR}|g" .venv/pyvenv.cfg; \
-      rm -rf "${UV_LEGACY_PYTHON_DIR}"; \
-    else \
-      uv python install 3.10; \
-      echo "3.10" > .python-version; \
-      uv sync --extra=cu128 --python 3.10; \
-    fi; \
-    case "$(readlink -f .venv/bin/python)" in \
-      "${UV_LEGACY_PYTHON_DIR}"/*) echo "interpreter still under ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1 ;; \
-    esac; \
-    grep -q "${UV_LEGACY_PYTHON_DIR}" .venv/pyvenv.cfg \
-      && { echo "pyvenv.cfg still points at ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1; } || true; \
-    if [ -d "${UV_PYTHON_INSTALL_DIR}" ] \
-       && find "${UV_PYTHON_INSTALL_DIR}" -type l -lname "${UV_LEGACY_PYTHON_DIR}/*" | grep -q .; then \
-      echo "relocated tree still links back into ${UV_LEGACY_PYTHON_DIR}" >&2; exit 1; \
-    fi
+# This build intentionally starts from NVIDIA's public CUDA container, not from a
+# privately assembled npa-cosmos2-transfer parent. The source and every Python
+# dependency are immutable inputs: the source checkout is a full commit SHA and
+# `uv sync --locked` consumes the upstream hash-bearing lockfile. No credential is
+# accepted or needed during the build. Gated model weights are fetched only at run
+# time into HF_HOME after the operator supplies HF_TOKEN and accepts the NVIDIA Open
+# Model License.
+ARG CUDA_BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:3986465b3dd3b4d602c07061f2cff417e0bfb24810129408d4eb12e111015a6c
+ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04@sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.8.12@sha256:e1d7fa999ae39871fc2fd6c9c572d970cc877a239d2a16238a204c23772d1c0e
+ARG UBUNTU_SNAPSHOT=20260801T053000Z
 
-COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
-COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh /opt/cosmos2-transfer/entrypoint.sh
+FROM ${UV_IMAGE} AS uv-bin
 
-# openssh-server, rsync, and sudo are what SkyPilot's Kubernetes provisioner shells
-# out to per pod (`$(prefix_cmd) apt install openssh-server rsync -y`, then
-# `service ssh restart`, with prefix_cmd = sudo for a non-root user). Without them
-# the setup script fails and the container exits before SkyPilot can exec into it.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      netcat-openbsd openssh-server procps rsync sudo \
+FROM ${CUDA_BASE_IMAGE} AS build
+
+ARG COSMOS_TRANSFER_REVISION=67d56b7d550a3911024a32dc23ae0bae5258e633
+ARG COSMOS_PYTHON_VERSION=3.10.18
+ARG UBUNTU_SNAPSHOT
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    GIT_LFS_SKIP_SMUDGE=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
+    UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python
+
+COPY --from=uv-bin /uv /usr/local/bin/uv
+
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+      /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
+      'Suites: noble noble-updates noble-backports noble-security' \
+      'Components: main restricted universe multiverse' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
-RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
-    && chmod 0440 /etc/sudoers.d/ubuntu \
-    && chown -R ubuntu:ubuntu \
-      /opt/cosmos2-transfer \
-      /opt/cosmos/cosmos-transfer2.5/.venv \
-      "${UV_PYTHON_INSTALL_DIR}"
+WORKDIR /opt/cosmos/cosmos-transfer2.5
 
-# The venv must be usable by the non-root user the image actually runs as.
-#
-# `import torch` alone is too weak a check: it never reads sys._home, so a
-# pyvenv.cfg still pointing into /root passes here and then fails deep in an
-# inference run (megatron -> torch.utils.cpp_extension -> setuptools ->
-# distutils.sysconfig -> PermissionError). Exercising distutils.sysconfig is what
-# actually proves the relocation is complete.
-RUN su ubuntu -s /bin/bash -c \
-      '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "\
-import sys, torch, flash_attn; \
-from distutils.sysconfig import customize_compiler, get_config_var; \
-home = sys._home or \"\"; \
-assert \"/root\" not in home, home; \
-get_config_var(\"prefix\"); \
-print(\"venv usable as ubuntu:\", torch.__version__, \"home=\", home)"'
+# Both fetch and checkout explicitly disable LFS smudging. Fetching the immutable
+# SHA directly avoids depending on a moving branch or tag. The entire Git database,
+# all upstream assets (including LFS pointers), examples other than the real
+# inference entrypoint, docs, tests, and caches are removed before this RUN is
+# committed, so they never appear in an image layer.
+RUN set -eux; \
+    git init; \
+    git remote add origin https://github.com/nvidia-cosmos/cosmos-transfer2.5.git; \
+    GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.smudge= -c filter.lfs.required=false \
+      fetch --depth=1 --filter=blob:none origin "${COSMOS_TRANSFER_REVISION}"; \
+    GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.smudge= -c filter.lfs.required=false \
+      checkout --detach FETCH_HEAD; \
+    test "$(git rev-parse HEAD)" = "${COSMOS_TRANSFER_REVISION}"; \
+    grep -q 'filter=lfs' .gitattributes; \
+    rm -rf .git assets .github docker docs scripts tests; \
+    find examples -mindepth 1 -maxdepth 1 ! -name inference.py -exec rm -rf -- {} +; \
+    test -f examples/inference.py; \
+    test ! -e assets; \
+    test ! -e .git
 
+COPY --chmod=755 docker/workbench/cosmos2-transfer/assert_no_forbidden_payload.sh \
+    /usr/local/bin/assert-no-forbidden-cosmos2-payload
+COPY docker/workbench/cosmos2-transfer/security-overrides.txt \
+    /tmp/cosmos2-security-overrides.txt
+
+# Python itself and the complete cu128 inference environment are exact-version or
+# lockfile pinned. `--no-editable` makes the venv independent of removed source-only
+# material while retaining the Apache source tree used for provenance and debugging.
+RUN set -eux; \
+    uv python install "${COSMOS_PYTHON_VERSION}"; \
+    printf '%s\n' "${COSMOS_PYTHON_VERSION}" > .python-version; \
+    uv sync --locked --no-dev --no-editable --extra=cu128 \
+      --python "${COSMOS_PYTHON_VERSION}"; \
+    uv pip install --python .venv/bin/python --no-deps --require-hashes \
+      --requirement /tmp/cosmos2-security-overrides.txt; \
+    .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "83.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
+    .venv/bin/python -m pip --version; \
+    rm -rf .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
+    rm -rf .venv/lib/python3.10/site-packages/skimage/data \
+      .venv/lib/python3.10/site-packages/wandb/bin; \
+    cp .venv/lib/python3.10/site-packages/numpy/_core/tests/_natype.py \
+      /tmp/numpy-_natype.py; \
+    find .venv/lib/python3.10/site-packages/numpy \
+      .venv/lib/python3.10/site-packages/scipy \
+      -type d -name tests -prune -exec rm -rf -- {} +; \
+    install -D -m 0644 /tmp/numpy-_natype.py \
+      .venv/lib/python3.10/site-packages/numpy/_core/tests/_natype.py; \
+    rm -f /tmp/numpy-_natype.py; \
+    test ! -e .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
+    test ! -e .venv/lib/python3.10/site-packages/skimage/data; \
+    test ! -e .venv/lib/python3.10/site-packages/wandb/bin; \
+    test "$(readlink -f .venv/bin/python)" = \
+      "$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
+    ! grep -q '/root' .venv/pyvenv.cfg; \
+    .venv/bin/python -c 'import importlib.metadata, flash_attn, scipy.linalg, torch, wandb; from transformers import SiglipModel; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert wandb.run is None; print(torch.__version__)'; \
+    base_site="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/lib/python3.10/site-packages' -type d -print -quit)"; \
+    base_python="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
+    test -n "${base_site}"; \
+    test -n "${base_python}"; \
+    rm -rf "${base_site}"/pip "${base_site}"/pip-*.dist-info \
+      "${base_site}"/setuptools "${base_site}"/setuptools-*.dist-info \
+      "${base_site}"/_distutils_hack "${base_site}"/distutils-precedence.pth; \
+    "${base_python}" -c 'import importlib.util; assert importlib.util.find_spec("pip") is None; assert importlib.util.find_spec("setuptools") is None'; \
+    assert-no-forbidden-cosmos2-payload /opt/cosmos/cosmos-transfer2.5
+
+FROM ${CUDA_RUNTIME_IMAGE} AS runtime
+
+ARG COSMOS_TRANSFER_REVISION=67d56b7d550a3911024a32dc23ae0bae5258e633
+ARG UBUNTU_SNAPSHOT
+
+LABEL org.opencontainers.image.title="NPA Cosmos Transfer 2.5" \
+      org.opencontainers.image.description="Cosmos Transfer 2.5 source runtime; model weights are operator-fetched at run time" \
+      org.opencontainers.image.source="https://github.com/nvidia-cosmos/cosmos-transfer2.5" \
+      org.opencontainers.image.revision="${COSMOS_TRANSFER_REVISION}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Deep-Learning-Container"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HF_HOME=/opt/cosmos/model-cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/opt/cosmos/model-cache/huggingface/hub \
+    NLTK_DATA=/opt/cosmos/model-cache \
+    TORCH_HOME=/opt/cosmos/model-cache/torch \
+    XDG_CACHE_HOME=/opt/cosmos/model-cache/xdg \
+    TOKENIZERS_PARALLELISM=false \
+    UV_PYTHON_INSTALL_DIR=/opt/cosmos/uv-python
+
+# Upstream deliberately invokes `uvx hf ...` to download gated model files at
+# run time. Ship the two binaries from the same digest-pinned, dual-licensed uv
+# image used by the build; no package or model download occurs here.
+COPY --from=uv-bin /uv /usr/local/bin/uv
+COPY --from=uv-bin /uvx /usr/local/bin/uvx
+
+# ffmpeg creates and validates the repository-authored procedural fixture. SSH,
+# rsync, sudo, procps, and netcat are the runtime prerequisites of SkyPilot's
+# Kubernetes bootstrap for a non-root container.
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+      /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
+      'Suites: noble noble-updates noble-backports noble-security' \
+      'Components: main restricted universe multiverse' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates ffmpeg netcat-openbsd openssh-server procps rsync sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_* \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
+    && mkdir -p /run/sshd
+
+# Transformer Engine loads the unversioned CUDA runtime name directly. NVIDIA's
+# runtime image ships the versioned redistributable library but, unlike the devel
+# image, not its unversioned linker symlink. Supply that compatibility name from
+# the same digest-pinned runtime bits and keep the containing directory explicit.
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda-12.8/targets/x86_64-linux/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+RUN set -eux; \
+    cudart_dir=/usr/local/cuda-12.8/targets/x86_64-linux/lib; \
+    test -e "${cudart_dir}/libcudart.so.12"; \
+    ln -sfn libcudart.so.12 "${cudart_dir}/libcudart.so"; \
+    ldconfig
+
+COPY --from=build --chown=1000:1000 /opt/cosmos /opt/cosmos
+COPY --from=build /usr/local/bin/assert-no-forbidden-cosmos2-payload \
+    /usr/local/bin/assert-no-forbidden-cosmos2-payload
+COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh \
+    /opt/cosmos2-transfer/smoke_functional.sh
+COPY --chmod=755 docker/workbench/cosmos2-transfer/entrypoint.sh \
+    /opt/cosmos2-transfer/entrypoint.sh
+COPY --chmod=755 src/npa/workbench/cosmos/fixture.py \
+    /opt/cosmos2-transfer/generate_fixture.py
+COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
+    /usr/share/doc/npa-cosmos2-transfer/REDISTRIBUTION.md
+
+# Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
+# commands invoke python3; /usr/bin/python3 remains available to system tooling.
+RUN set -eux; \
+    id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
+    printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu; \
+    chmod 0440 /etc/sudoers.d/ubuntu; \
+    printf '%s\n' '#!/bin/sh' \
+      'exec /opt/cosmos/cosmos-transfer2.5/.venv/bin/python "$@"' \
+      > /usr/local/bin/python3; \
+    chmod 0755 /usr/local/bin/python3; \
+    ln -sfn python3 /usr/local/bin/python; \
+    mkdir -p /opt/cosmos2-transfer \
+      /opt/cosmos/model-cache/huggingface \
+      /opt/cosmos/model-cache/torch \
+      /opt/cosmos/model-cache/xdg \
+      /opt/cosmos-data/hf_cache; \
+    chown -R ubuntu:ubuntu /opt/cosmos/model-cache /opt/cosmos2-transfer /opt/cosmos-data; \
+    assert-no-forbidden-cosmos2-payload /opt/cosmos/cosmos-transfer2.5; \
+    su ubuntu -s /bin/bash -c \
+      '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "import sys, torch, flash_attn; from distutils.sysconfig import get_config_var; assert \"/root\" not in (sys._home or \"\"); get_config_var(\"prefix\")"'; \
+    su ubuntu -s /bin/bash -c \
+      '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "import os; from pathlib import Path; from nltk.pathsec import _get_allowed_roots; assert Path(os.environ[\"NLTK_DATA\"]).resolve() in _get_allowed_roots()"'; \
+    su ubuntu -s /bin/bash -c \
+      '/opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c "import ctypes; ctypes.CDLL(\"libcudart.so\")"'; \
+    su ubuntu -s /bin/bash -c \
+      'test "$(command -v python3)" = /usr/local/bin/python3 && python3 -c "import cosmos_transfer2" && python3 -m pip --version'; \
+    su ubuntu -s /bin/bash -c \
+      'test "$(command -v uvx)" = /usr/local/bin/uvx && uvx --version'; \
+    su ubuntu -s /bin/bash -c \
+      'test -w /opt/cosmos/model-cache/huggingface && test -x /opt/cosmos/cosmos-transfer2.5/.venv/bin/python'
+
+VOLUME ["/opt/cosmos/model-cache"]
+WORKDIR /opt/cosmos/cosmos-transfer2.5
 USER ubuntu
 
-# The inherited `ENTRYPOINT ["/bin/bash"]` swallowed the args Kubernetes passes, so
-# SkyPilot's keep-alive command exited 126 and every GPU stage pinned to this image
-# failed to provision. This entrypoint execs its arguments instead.
+# An orchestrator-supplied argv must execute verbatim; this is the SkyPilot setup
+# behavior fixed by PR #231.
 ENTRYPOINT ["/opt/cosmos2-transfer/entrypoint.sh"]

@@ -458,6 +458,10 @@ direct service-to-service file coupling.
 
 ## Related docs
 
+- Cosmos Transfer 2.5 has an artifact-by-artifact redistribution record at
+  `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`; its `public`
+  classification is valid only after the registry-image audits named there pass.
+
 - `docs/security/container-golden-evals.md` — usefulness + safety contract
 - `docs/security/image-reproducibility.md` — digests and tag families
 - `docs/architecture/oss-onboarding-ladder.md` — OSS → marketplace promotion

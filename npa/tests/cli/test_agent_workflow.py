@@ -115,6 +115,7 @@ def test_create_workflow_apis() -> None:
 
 def test_generate_data_factory_yaml_validates_and_plans() -> None:
     yaml_text = generate_data_factory_yaml()
+    generated = yaml.safe_load(yaml_text)
     result = validate_workflow_yaml_text(yaml_text)
     assert result["ok"] is True
     assert result["name"] == "physical-ai-data-factory"
@@ -136,6 +137,8 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
     assert "workbench.cosmos2.transfer_execute" in tool_refs
     assert "workbench.token_factory.caption" in tool_refs
+    assert generated["config"]["trigger_uri"] == generated["config"]["input_uri"]
+    assert "supported video" in generated["states"]["augment"]["description"].lower()
 
 
 def test_extract_data_factory_params_fanout_gpus_subject() -> None:

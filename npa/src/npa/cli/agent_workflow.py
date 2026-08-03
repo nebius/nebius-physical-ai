@@ -1201,6 +1201,8 @@ def _data_factory_spec() -> dict[str, Any]:
                 "images_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
                 "configs_uri": "s3://{{config.bucket}}/{{config.prefix}}/configs/",
                 "captions_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_original/",
+                # Mandatory: managed Cosmos Transfer fails closed unless this
+                # prefix contains a supported input video.
                 "trigger_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
                 "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
@@ -1293,7 +1295,8 @@ def _data_factory_spec() -> dict[str, Any]:
                             "Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE GPU "
                             "inference per sampled combo (config.n_augmentations) and fans them "
                             "across the pod's GPUs (config.variant_parallelism), so N combos -> "
-                            "N scenario variants amplifying config.augment_subject. Member of the "
+                            "N input-conditioned scenario variants amplifying config.augment_subject. "
+                            "A supported video under config.trigger_uri is mandatory. Member of the "
                             "grade refinement loop, so loop_back genuinely re-renders."
                         ),
                         "needs": ["annotate-original"],

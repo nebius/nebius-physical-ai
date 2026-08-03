@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from npa.deploy.images import CONTAINER_IMAGE_NAMES
+
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
 WORKBENCH_DOCKER = ROOT / "npa" / "docker" / "workbench"
@@ -131,6 +133,27 @@ def test_packaging_contract_file_exists() -> None:
     assert "job" in contract["tiers"]
     assert "interactive" in contract["tiers"]
     assert contract["images"]
+
+
+def test_first_class_pinned_dockerfiles_are_covered_by_contract() -> None:
+    """A pin plus an in-tree same-name Dockerfile may not bypass legal review.
+
+    Derived aliases such as ``envgen`` intentionally map to a differently named
+    Dockerfile and are covered through their parent contract entry. A first-class
+    ``workbench/<tool>/Dockerfile`` has no such excuse: adding its pin must add a
+    packaging classification in the same change.
+    """
+
+    contract_images = set(_load_contract()["images"])
+    first_class = {
+        tool
+        for tool in CONTAINER_IMAGE_NAMES
+        if (WORKBENCH_DOCKER / tool / "Dockerfile").is_file()
+    }
+    assert first_class <= contract_images, (
+        "pinned first-class Dockerfiles missing from packaging-contract.yaml: "
+        f"{sorted(first_class - contract_images)}"
+    )
 
 
 @pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))

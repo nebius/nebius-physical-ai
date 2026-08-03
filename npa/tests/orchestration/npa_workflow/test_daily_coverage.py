@@ -118,7 +118,12 @@ def test_declared_case_budget_survives_the_daily_runner_cap(monkeypatch) -> None
     whichever day the rotation reached it.
     """
     import importlib
+    from pathlib import Path
 
+    # The documented full-suite invocation runs from the repository root and
+    # points pytest at ``npa/tests``. In that layout the tests package's parent
+    # is not necessarily on sys.path, so make the package import deterministic.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
     mod = importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
     monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS", "2400")
 

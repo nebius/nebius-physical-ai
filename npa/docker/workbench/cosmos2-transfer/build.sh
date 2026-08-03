@@ -1,51 +1,101 @@
 #!/usr/bin/env bash
-# Build (and optionally push) the golden-eval wrapper for npa-cosmos2-transfer.
+# Build the complete Cosmos Transfer 2.5 image from its immutable public sources.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
-BASE_IMAGE="${COSMOS2_TRANSFER_BASE_IMAGE:-${REGISTRY}/npa-cosmos2-transfer:2.5.0}"
+NPA_PYTHON="${NPA_ROOT}/.venv/bin/python"
+
+REGISTRY="${REGISTRY:-}"
 PUSH=0
 TAG=""
+CUDA_BASE_IMAGE=""
+SOURCE_REVISION=""
+PYTHON_VERSION=""
 
 usage() {
-  sed -n '2,6p' "$0"
+  echo "Usage: $0 [--registry HOST/PATH] [--tag TAG] [--push]" >&2
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --registry) REGISTRY="${2:?}"; shift 2 ;;
-    --base-image) BASE_IMAGE="${2:?}"; shift 2 ;;
     --tag) TAG="${2:?}"; shift 2 ;;
+    --base-image) CUDA_BASE_IMAGE="${2:?}"; shift 2 ;;
+    --source-revision) SOURCE_REVISION="${2:?}"; shift 2 ;;
+    --python-version) PYTHON_VERSION="${2:?}"; shift 2 ;;
     --push) PUSH=1; shift ;;
     -h | --help) usage; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; exit 2 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
 done
 
+[[ -x "${NPA_PYTHON}" ]] || {
+  echo "ERROR: ${NPA_PYTHON} is required; create npa/.venv first" >&2
+  exit 1
+}
+
 if [[ -z "${TAG}" ]]; then
-  TAG="$("${NPA_ROOT}/.venv/bin/python" - <<'PY'
+  TAG="$(cd "${NPA_ROOT}" && "${NPA_PYTHON}" - <<'PY'
 from npa.deploy.images import supported_tool_version
+
 print(supported_tool_version("cosmos2-transfer"))
 PY
 )"
 fi
 
-LOCAL_REF="npa-cosmos2-transfer:${TAG}"
-REMOTE_REF="${REGISTRY}/npa-cosmos2-transfer:${TAG}"
+if [[ "${PUSH}" == "1" && -z "${REGISTRY}" ]]; then
+  REGISTRY="$(cd "${NPA_ROOT}" && "${NPA_PYTHON}" - <<'PY'
+from npa.clients.config import resolve_container_registry
 
-echo "=== build cosmos2-transfer wrapper ${LOCAL_REF} (base=${BASE_IMAGE}) ==="
-docker build --platform linux/amd64 \
-  -f "${SCRIPT_DIR}/Dockerfile" \
-  --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-  -t "${LOCAL_REF}" \
-  -t "${REMOTE_REF}" \
-  "${NPA_ROOT}"
-
-if [[ "${PUSH}" == "1" ]]; then
-  echo "=== push ${REMOTE_REF} ==="
-  docker push "${REMOTE_REF}"
+print(resolve_container_registry())
+PY
+)"
 fi
 
-echo "Done: ${REMOTE_REF} push=${PUSH}"
+LOCAL_REF="npa-cosmos2-transfer:${TAG}"
+if [[ "${PUSH}" == "1" ]]; then
+  [[ -n "${REGISTRY}" ]] || { echo "ERROR: no source registry is configured" >&2; exit 1; }
+  IMAGE_REF="${REGISTRY%/}/npa-cosmos2-transfer:${TAG}"
+else
+  IMAGE_REF="${LOCAL_REF}"
+fi
+
+run_component="${NPA_RUN_ID:-cosmos2-transfer-$$}"
+run_component="$(printf '%s' "${run_component}" | tr -c '[:alnum:]_.-' '-')"
+BUILDX_BUILDER="${NPA_BUILDX_BUILDER:-npa-${run_component}}"
+CREATED_BUILDER=0
+cleanup_builder() {
+  if [[ "${CREATED_BUILDER}" == "1" ]]; then
+    docker buildx rm "${BUILDX_BUILDER}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_builder EXIT
+
+if ! docker buildx inspect "${BUILDX_BUILDER}" >/dev/null 2>&1; then
+  docker buildx create --name "${BUILDX_BUILDER}" \
+    --driver docker-container --bootstrap >/dev/null
+  CREATED_BUILDER=1
+fi
+
+BUILD_ARGS=(
+  --builder "${BUILDX_BUILDER}"
+  --platform linux/amd64
+  --file "${SCRIPT_DIR}/Dockerfile"
+  --tag "${IMAGE_REF}"
+)
+[[ -z "${CUDA_BASE_IMAGE}" ]] || BUILD_ARGS+=(--build-arg "CUDA_BASE_IMAGE=${CUDA_BASE_IMAGE}")
+[[ -z "${SOURCE_REVISION}" ]] || BUILD_ARGS+=(--build-arg "COSMOS_TRANSFER_REVISION=${SOURCE_REVISION}")
+[[ -z "${PYTHON_VERSION}" ]] || BUILD_ARGS+=(--build-arg "COSMOS_PYTHON_VERSION=${PYTHON_VERSION}")
+
+if [[ "${PUSH}" == "1" ]]; then
+  BUILD_ARGS+=(--push --provenance=mode=max --sbom=true)
+else
+  BUILD_ARGS+=(--load --provenance=false)
+fi
+
+echo "Building ${LOCAL_REF} from the checked-in immutable inputs (build credentials: none)"
+env -u HF_TOKEN -u NGC_API_KEY -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN \
+  docker buildx build "${BUILD_ARGS[@]}" "${NPA_ROOT}"
+
+echo "Built: ${IMAGE_REF}"

@@ -12,6 +12,7 @@ Optional filters:
   NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS=3600
   NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS=30
   NPA_E2E_NPA_WORKFLOW_SUBMIT_CANCEL_ON_TIMEOUT=1
+  NPA_E2E_SKYPILOT_CONFIG_PATH=/tmp/run/skypilot-config.yaml
   NPA_REGISTRY / --registry via NPA_E2E_REGISTRY
   NEBIUS_TOKEN_FACTORY_KEY for cpu-tier Token Factory twins
 
@@ -131,6 +132,18 @@ def _case_max_wait(case: SubmitLiveCase) -> int:
     return case.max_wait_seconds or _max_wait()
 
 
+def _skypilot_config_args() -> list[str]:
+    """Use an operator-owned SkyPilot config for live-only pod settings."""
+
+    value = os.environ.get("NPA_E2E_SKYPILOT_CONFIG_PATH", "").strip()
+    if not value:
+        return []
+    path = Path(value)
+    if not path.is_file():
+        pytest.fail(f"NPA_E2E_SKYPILOT_CONFIG_PATH does not exist: {path}")
+    return ["--config-path", str(path)]
+
+
 def _poll_seconds() -> int:
     return int(os.environ.get("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", "30"))
 
@@ -236,6 +249,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         "json",
     ]
     plan_args.extend(_image_args(case, e2e_registry))
+    plan_args.extend(_skypilot_config_args())
     assume = assume_decision_for(case.spec)
     if assume:
         plan_args.extend(["--assume-decision", assume])
@@ -269,6 +283,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
     # declares `image_tool`, whose stages need the vendor image's own libraries.
     submit_args.extend(_image_args(case, e2e_registry))
     submit_args.extend(_secret_env_args(case))
+    submit_args.extend(_skypilot_config_args())
 
     if (
         os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}
@@ -417,6 +432,7 @@ def _runtime_submit_args(
     elif os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
         args.extend(["--image", "none"])
     args.extend(_secret_env_args(case))
+    args.extend(_skypilot_config_args())
     return args
 
 

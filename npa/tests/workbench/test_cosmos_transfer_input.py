@@ -1,8 +1,8 @@
 """Unit tests for optional input-conditioning in the Cosmos Transfer 2.5 runner.
 
 These cover the code path that makes the augment a REAL augmentation of the
-caller's input clip (edge control computed on-the-fly from ``video_path``) while
-leaving the default bundled-example behavior — and the golden eval — unchanged.
+caller's input clip (edge control computed on-the-fly from ``video_path``). No
+upstream fixture is used.
 No GPU / cosmos runtime is touched; the inference subprocess is mocked.
 """
 
@@ -11,12 +11,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from typer.testing import CliRunner
+
+from npa.cli.main import app
+from npa.cli.workbench import cosmos2
 from npa.workbench.cosmos import transfer as tx
+
+runner = CliRunner()
 
 
 def _fake_env(monkeypatch, repo: Path):
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda r: Path("/usr/bin/python3"))
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
 
     def fake_run(cmd, *args, **kwargs):
         cwd = Path(kwargs["cwd"])
@@ -71,8 +79,8 @@ def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) ->
     assert res["input_video"] == str(clip)
     assert res["control"] == "edge"
     assert Path(res["video_path"]).exists()
-    # A conditioned spec was written that points at the input clip, not DEFAULT_SPEC.
-    assert res["spec"] != tx.DEFAULT_SPEC
+    # A conditioned spec was written that points at the input clip.
+    assert res["spec"]
     # The synthesized controlnet spec is ephemeral (removed after inference to
     # avoid accumulating in the repo dir); its content is returned for inspection.
     assert not (repo / res["spec"]).exists()
@@ -82,17 +90,36 @@ def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) ->
     assert spec["prompt"] == "foggy morning"
 
 
-def test_run_cosmos_transfer_default_uses_bundled_spec(tmp_path: Path, monkeypatch) -> None:
+def test_run_cosmos_transfer_requires_input_or_explicit_spec(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "repo"
     (repo / "examples").mkdir(parents=True)
     _fake_env(monkeypatch, repo)
     monkeypatch.delenv("COSMOS_TRANSFER_SPEC", raising=False)
     monkeypatch.delenv("COSMOS_TRANSFER_PROMPT", raising=False)
 
-    res = tx.run_cosmos_transfer(run_id="r2")
-    assert res["input_conditioned"] is False
-    assert res["spec"] == tx.DEFAULT_SPEC
+    with pytest.raises(ValueError, match="no upstream media is bundled"):
+        tx.run_cosmos_transfer(run_id="r2")
     assert not list(repo.glob("_npa_input_spec_*.json"))
+
+
+def test_run_cosmos_transfer_refuses_missing_token_before_env_or_download(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    called = False
+
+    def fail_if_called(_repo: Path) -> Path:
+        nonlocal called
+        called = True
+        raise AssertionError("environment/download path must not run")
+
+    monkeypatch.setattr(tx, "ensure_env", fail_if_called)
+    with pytest.raises(RuntimeError, match="no model download was attempted"):
+        tx.run_cosmos_transfer(input_video=str(tmp_path / "missing.mp4"))
+    assert called is False
 
 
 def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatch) -> None:
@@ -211,9 +238,154 @@ def test_materialize_input_clip_local_path(tmp_path: Path) -> None:
     assert _materialize_input_clip(str(tmp_path / "missing.mp4")) == ""
 
 
-def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
-    from npa.cli.workbench import cosmos2
+def test_materialize_input_clip_empty_s3_prefix_is_no_video(monkeypatch) -> None:
+    from npa.clients.storage import StorageClient
 
+    materialized_dirs: list[Path] = []
+
+    class EmptyPrefixStorage:
+        def download_directory(self, _src: str, local_dir: str) -> str:
+            materialized_dirs.append(Path(local_dir))
+            assert materialized_dirs[-1].is_dir()
+            return local_dir
+
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: EmptyPrefixStorage())
+
+    assert cosmos2._materialize_input_clip("s3://test-bucket/empty/") == ""
+    assert materialized_dirs and not materialized_dirs[0].exists()
+
+
+@pytest.mark.parametrize("stage", ["authentication", "listing", "download"])
+def test_materialize_input_clip_propagates_storage_failures(
+    monkeypatch, stage: str
+) -> None:
+    from npa.clients.storage import StorageClient
+
+    failure = PermissionError(f"{stage} failed: credential=must-not-surface")
+
+    class FailingStorage:
+        def download_directory(self, _src: str, _local_dir: str) -> str:
+            raise failure
+
+        def download_path(self, _src: str, _local_path: str) -> str:
+            raise failure
+
+    def from_environment():
+        if stage == "authentication":
+            raise failure
+        return FailingStorage()
+
+    monkeypatch.setattr(StorageClient, "from_environment", from_environment)
+    source = "s3://test-bucket/input.mp4" if stage == "download" else "s3://test-bucket/input/"
+
+    with pytest.raises(PermissionError) as caught:
+        cosmos2._materialize_input_clip(source)
+    assert caught.value is failure
+
+
+def test_cli_materialization_error_is_sanitized_and_preserves_cause(monkeypatch) -> None:
+    secret = "do-not-print-this-token"
+    failure = PermissionError(f"access denied: token={secret}")
+    source = f"s3://test-bucket/input/?token={secret}"
+
+    def fail_materialize(_src: str) -> str:
+        raise failure
+
+    monkeypatch.setattr(cosmos2, "_materialize_input_clip", fail_materialize)
+
+    with pytest.raises(cosmos2.typer.BadParameter) as caught:
+        cosmos2._materialize_conditioning_input(source)
+    assert isinstance(caught.value, cosmos2.typer.BadParameter)
+    assert caught.value.__cause__ is failure
+    message = str(caught.value)
+    assert "could not inspect or download" in message
+    assert "credentials" in message
+    assert secret not in message
+
+
+def test_transfer_cli_rejects_conditioning_without_input_video(monkeypatch) -> None:
+    input_uri = "s3://test-bucket/run/input/"
+    materialized: list[str] = []
+    inference_called = False
+
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+
+    def fake_materialize(src: str) -> str:
+        materialized.append(src)
+        return ""
+
+    def fail_if_inferred(**_kwargs) -> dict:
+        nonlocal inference_called
+        inference_called = True
+        raise AssertionError("inference must not run without an input video")
+
+    monkeypatch.setattr(cosmos2, "_materialize_input_clip", fake_materialize)
+    monkeypatch.setattr(tx, "run_cosmos_transfer", fail_if_inferred)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            input_uri,
+            "--output-uri",
+            "s3://test-bucket/run/augmented/",
+            "--condition-on-input",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "no supported video" in result.output
+    assert input_uri not in result.output
+    assert materialized == [input_uri]
+    assert inference_called is False
+
+
+def test_transfer_cli_reports_storage_failure_without_secret(monkeypatch) -> None:
+    secret = "do-not-print-this-token"
+    input_uri = f"s3://test-bucket/run/input/?token={secret}"
+    failure = PermissionError(f"access denied: credential={secret}")
+    inference_called = False
+
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+
+    def fail_materialize(_src: str) -> str:
+        raise failure
+
+    def fail_if_inferred(**_kwargs) -> dict:
+        nonlocal inference_called
+        inference_called = True
+        raise AssertionError("inference must not run after an input-storage failure")
+
+    monkeypatch.setattr(cosmos2, "_materialize_input_clip", fail_materialize)
+    monkeypatch.setattr(tx, "run_cosmos_transfer", fail_if_inferred)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            input_uri,
+            "--output-uri",
+            "s3://test-bucket/run/augmented/",
+            "--condition-on-input",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "could not inspect or download" in result.output
+    assert "no supported video" not in result.output
+    assert secret not in result.output
+    assert inference_called is False
+
+
+def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
     assert cosmos2._detect_gpu_count() == 4
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
@@ -222,8 +394,6 @@ def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
 
 
 def test_variant_parallelism_env_override_and_cap(monkeypatch) -> None:
-    from npa.cli.workbench import cosmos2
-
     monkeypatch.setenv("NPA_COSMOS_VARIANT_PARALLELISM", "4")
     # Capped at the number of variants so we never spawn idle workers.
     assert cosmos2._variant_parallelism(2) == 2

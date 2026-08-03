@@ -17,4 +17,13 @@ set -euo pipefail
 if [ "$#" -eq 0 ]; then
   exec /bin/bash
 fi
+
+# Direct inference must fail before Hugging Face can start a partial or anonymous
+# gated-model download. Check only presence; never print the credential.
+for arg in "$@"; do
+  if [[ "${arg}" == *"examples/inference.py"* ]] && [[ -z "${HF_TOKEN:-}" ]]; then
+    echo "ERROR: HF_TOKEN is required at run time for gated Cosmos Transfer weights; no download was attempted." >&2
+    exit 78
+  fi
+done
 exec "$@"

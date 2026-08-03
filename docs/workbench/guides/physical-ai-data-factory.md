@@ -66,9 +66,19 @@ where NPA substitutes its own endpoint.
 > `variables` (which drives that clip's Rerun label). So a config with N
 > augmentations produces **N scenario variants**, recorded via `variant_count` /
 > `multiply_mode` in the augment manifest, curation, and finalize reports.
-> Optionally condition each variant on the run's real input clip
-> (`NPA_COSMOS_CONDITION_ON_INPUT=1`) so the geometry/motion is preserved while
-> only the appearance changes (edge control computed on-the-fly).
+> The managed transfer conditions every variant on a supported video under the
+> run's `config.trigger_uri` (`input/`), preserving geometry/motion while changing
+> appearance (edge control is computed on-the-fly).
+
+### Migration: a real input video is required
+
+`workbench.cosmos2.transfer_execute` now fails closed unless its configured
+`trigger_uri` contains a readable `.mp4`, `.mov`, `.webm`, `.mkv`, or `.avi`.
+An empty/video-free prefix reports that no supported video exists; storage setup,
+authentication, listing, and download failures report a separate access error.
+The bundled upstream sample is no longer a fallback because it was removed for
+redistribution reasons. Upload the source video beneath the run's `input/` prefix
+before submitting either first-class managed workflow.
 
 ## Runtime placement
 

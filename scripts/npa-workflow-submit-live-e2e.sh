@@ -49,6 +49,20 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${NPA_LIVE_E2E_REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
 cd "$REPO_ROOT"
 
+# Operator-provided values are authoritative. The optional files below provide
+# machine defaults, but historically overwrote an isolated clone's Python path,
+# spec selector, image digest, and registry credentials after the caller had
+# exported them. Preserve every relevant value that was already in the process
+# environment, without printing secret-bearing values.
+declare -A _npa_explicit_env_values=()
+while IFS= read -r _npa_env_name; do
+  case "$_npa_env_name" in
+    NPA_*|SKYPILOT_DOCKER_*|HF_TOKEN|NGC_API_KEY|NEBIUS_TOKEN_FACTORY_KEY|AWS_*)
+      _npa_explicit_env_values["$_npa_env_name"]="${!_npa_env_name}"
+      ;;
+  esac
+done < <(compgen -e)
+
 if [[ -f /home/ubuntu/bin/npa-cloud-env.sh ]]; then
   # shellcheck source=/dev/null
   source /home/ubuntu/bin/npa-cloud-env.sh
@@ -59,6 +73,11 @@ if [[ -f "${HOME}/.npa/live-e2e.env" ]]; then
   . "${HOME}/.npa/live-e2e.env"
   set +a
 fi
+for _npa_env_name in "${!_npa_explicit_env_values[@]}"; do
+  printf -v "$_npa_env_name" '%s' "${_npa_explicit_env_values[$_npa_env_name]}"
+  export "$_npa_env_name"
+done
+unset _npa_env_name _npa_explicit_env_values
 
 PY="${NPA_LIVE_E2E_PYTHON_BIN:-${REPO_ROOT}/npa/.venv/bin/python}"
 NPA="${REPO_ROOT}/npa/.venv/bin/npa"

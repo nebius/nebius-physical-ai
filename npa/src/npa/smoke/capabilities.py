@@ -52,7 +52,7 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     ],
     "cosmos2-transfer": [
         "cosmos-transfer2.5 inference env (torch cu128 + flash-attn)",
-        "real video-to-video world transfer on a bundled robot control example",
+        "real video-to-video world transfer on a runtime-generated procedural control video",
         "generated output video produced (capability, not a CUDA probe)",
     ],
     "cosmos3": [
