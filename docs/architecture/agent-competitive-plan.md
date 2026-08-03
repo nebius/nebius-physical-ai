@@ -229,12 +229,13 @@ agent_backend.memory import RunMemory, JsonFileStore, InMemoryStore` instead of
 inlining the class. A dedicated test compiles the shipped module and asserts
 `backend.py` no longer inlines it.
 
-**Mechanism for the remaining modules (actions, sim2real_loop, semantic_router):**
-each follows the same pilot pattern — `git mv` into `agent_backend/`, add a
-`cli/agent_*.py` shim, swap the embed placeholder for a ship heredoc +
-`from agent_backend.<mod> import …`, and add a shipped-module compile check.
-This is preferable to `import *` because the module keeps its own globals (no
-backend-namespace symbol collisions such as the shared `STOP_ERROR`).
+**Implemented:** `actions`, `sim2real_loop`, and `semantic_router` now follow the
+same pilot pattern: their logic lives under `agent_backend/`, each historical
+`cli/agent_*.py` path is a thin re-export shim, and the bootstrap ships each full
+module through a dedicated heredoc before importing only the names `backend.py`
+uses. Per-module compile checks and a real rendered-backend import check defend
+the package boundary. Keeping module globals isolated avoids backend-namespace
+collisions such as the shared `STOP_ERROR` constant.
 
 **Rollback:** re-embedding a shipped module is mechanical — restore its
 `_embedded_*` reader + `_AGENT_*_EMBED` placeholder and drop the ship heredoc.
