@@ -5133,7 +5133,7 @@ def run_cosmos2_transfer_component_from_s3(
     real = _run_real_cosmos_transfer(client, input_uri, augment_prefix, frames_root, run_id)
     if real is not None:
         manifest["status"] = "executed"
-        manifest["mode"] = "cosmos_transfer2.5"
+        manifest["mode"] = "cosmos_transfer2.5_gpu"
         manifest["augmented_frames_uri"] = frames_root
         manifest["augmented_video_uri"] = real["augmented_video_uri"]
         manifest["frame_count"] = real["frame_count"]
@@ -5241,7 +5241,7 @@ def _run_real_cosmos_transfer(
         "frame_count": len(index),
         "frames": index,
         "augmented_video_uri": augmented_video_uri,
-        "mode": "cosmos_transfer2.5",
+        "mode": "cosmos_transfer2.5_gpu",
     }
     index_local = Path("/tmp/augmented-frames-index.json")
     index_local.write_text(

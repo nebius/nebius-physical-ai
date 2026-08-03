@@ -5,9 +5,8 @@
 ```text
 Usage: npa workbench nurec [OPTIONS] COMMAND [ARGS]...
 
-NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction ->
-renderable USDZ -> novel-view renders. Requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the
-render path at H100/H200.
+NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. Requires an RT-core GPU (L40S or RTX PRO 6000
+Blackwell); never route the render path at H100/H200.
 
 Options
 --help  Show this message and exit.

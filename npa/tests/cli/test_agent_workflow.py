@@ -57,6 +57,18 @@ def test_generate_sim2real_two_step_yaml_validates() -> None:
     assert set(result["states"]) == {"augment", "envgen"}
 
 
+def test_generated_two_step_matches_the_checked_in_agent_example() -> None:
+    generated = yaml.safe_load(generate_sim2real_two_step_yaml())
+    checked_in = yaml.safe_load(EXAMPLE_YAML.read_text(encoding="utf-8"))
+    # Agent generation still labels drafts beta; the checked-in executable uses
+    # the stable spelling. Their actual workflow contract must otherwise match.
+    generated["apiVersion"] = checked_in["apiVersion"]
+    generated["metadata"]["description"] = generated["metadata"]["description"].strip()
+    checked_in["metadata"]["description"] = checked_in["metadata"]["description"].strip()
+
+    assert generated == checked_in
+
+
 def test_example_yaml_file_validate_spec_cli() -> None:
     if not EXAMPLE_YAML.is_file():
         EXAMPLE_YAML.write_text(generate_sim2real_two_step_yaml(), encoding="utf-8")
@@ -71,9 +83,20 @@ def test_plan_two_step_workflow_has_two_steps() -> None:
     plan = plan_workflow_yaml_text(yaml_text, run_id="unit-demo")
     assert plan["ok"] is True
     assert len(plan["steps"]) == 2
-    tool_refs = [step.get("tool_ref") for step in plan["steps"]]
-    assert "workbench.cosmos2.transfer" in tool_refs
-    assert "workbench.sim2real_envgen.raw_shard" in tool_refs
+    steps = {step["state"]: step for step in plan["steps"]}
+    assert (
+        steps["augment"]["tool_ref"]
+        == "workbench.cosmos2.transfer_conditioned_execute"
+    )
+    assert "--execute" in steps["augment"]["argv"]
+    assert "--condition-on-input" in steps["augment"]["argv"]
+    assert steps["envgen"]["tool_ref"] == "workbench.sim2real_envgen.raw_shard"
+    manifest_uri = "s3://example-bucket/sim2real/unit-demo/augment/manifest.json"
+    envgen_argv = steps["envgen"]["argv"]
+    assert envgen_argv[envgen_argv.index("--augmented-frames-uri") + 1] == manifest_uri
+    assert steps["envgen"]["inputs"] == [
+        {"uri": manifest_uri, "schema": "npa.cosmos2.transfer.v1"}
+    ]
 
 
 def test_generate_sim2real_loop_gate_yaml_validates() -> None:
@@ -82,6 +105,55 @@ def test_generate_sim2real_loop_gate_yaml_validates() -> None:
     assert result["ok"] is True
     assert result["name"] == "sim2real-loop-gate-agent"
     assert {"augment", "refine", "vlm-critique", "quality-gate", "publish"}.issubset(set(result["states"]))
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "state"),
+    [
+        (generate_sim2real_loop_gate_yaml(), "augment"),
+        (generate_vlm_rl_loop_yaml(), "augment"),
+        (generate_token_factory_gate_yaml(), "augment-scene"),
+        (generate_data_factory_yaml(), "augment"),
+    ],
+)
+def test_generated_cosmos_transfer_outputs_use_canonical_manifest_schema(
+    yaml_text: str, state: str
+) -> None:
+    spec = yaml.safe_load(yaml_text)
+
+    assert spec["states"][state]["outputs"][0]["schema"] == (
+        "npa.cosmos2.transfer.v1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "state"),
+    [
+        (generate_sim2real_loop_gate_yaml(), "augment"),
+        (generate_vlm_rl_loop_yaml(), "augment"),
+        (generate_token_factory_gate_yaml(), "augment-scene"),
+    ],
+)
+def test_generated_input_cosmos_stages_fail_closed_without_their_clip(
+    yaml_text: str, state: str
+) -> None:
+    spec = yaml.safe_load(yaml_text)
+
+    input_uris = {
+        artifact["uri"] for artifact in spec["states"][state]["inputs"]
+    }
+    assert "{{config.trigger_uri}}" in input_uris
+    assert spec["states"][state]["toolRef"] == (
+        "workbench.cosmos2.transfer_conditioned_execute"
+    )
+
+
+def test_generated_data_factory_consumer_uses_canonical_manifest_schema() -> None:
+    spec = yaml.safe_load(generate_data_factory_yaml())
+
+    assert spec["states"]["attribute-verify"]["inputs"][0]["schema"] == (
+        "npa.cosmos2.transfer.v1"
+    )
 
 
 def test_plan_loop_gate_workflow_respects_assume_decision() -> None:
@@ -408,9 +480,16 @@ def test_generate_vlm_rl_loop_yaml_plan_has_multiple_steps() -> None:
     plan = plan_workflow_yaml_text(yaml_text, run_id="vlm-rl-test", assume_decision="promote_checkpoint")
     assert plan["ok"] is True, f"vlm-rl plan failed: {plan.get('error')}"
     assert len(plan["steps"]) >= 3
+    steps = {step["state"]: step for step in plan["steps"]}
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
-    assert "workbench.cosmos2.transfer" in tool_refs
+    assert "workbench.cosmos2.transfer_conditioned_execute" in tool_refs
     assert "workbench.sim2real_envgen.raw_shard" in tool_refs
+    manifest_uri = "s3://example-bucket/sim2real/vlm-rl-test/augment/manifest.json"
+    envgen_argv = steps["envgen"]["argv"]
+    assert envgen_argv[envgen_argv.index("--augmented-frames-uri") + 1] == manifest_uri
+    assert steps["envgen"]["inputs"] == [
+        {"uri": manifest_uri, "schema": "npa.cosmos2.transfer.v1"}
+    ]
 
 
 def test_generate_vlm_rl_loop_yaml_contains_loop_and_gate() -> None:
@@ -439,7 +518,7 @@ def test_generate_token_factory_gate_yaml_plan() -> None:
     assert plan["ok"] is True, f"token-factory plan failed: {plan.get('error')}"
     assert len(plan["steps"]) >= 2
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
-    assert "workbench.cosmos2.transfer" in tool_refs
+    assert "workbench.cosmos2.transfer_conditioned_execute" in tool_refs
 
 
 def test_generate_token_factory_gate_yaml_contains_vlm_gate() -> None:

@@ -16,8 +16,8 @@ remove  Remove an NPA GPU node-group profile and clean up its local cache.
 status  Show NPA GPU node-group target state from Nebius and the local cache.
 list  List GPU node-group profiles attached to NPA Workbench cluster targets.
 
-`npa cluster` manages NPA Workbench cluster targets and profiles. For raw MK8s administration (edit, update, upgrade,
-operation inspection, version listing, compatibility matrix), use `nebius mk8s` directly.
+`npa cluster` manages NPA Workbench cluster targets and profiles. For raw MK8s administration (edit, update, upgrade, operation inspection, version listing, compatibility matrix), use `nebius mk8s`
+directly.
 ```
 
 ## Options
@@ -34,7 +34,7 @@ operation inspection, version listing, compatibility matrix), use `nebius mk8s` 
 | `add-cpu` | Attach a CPU node-group profile to an NPA Workbench cluster target. |
 | `remove` | Remove an NPA GPU node-group profile and clean up its local cache. |
 | `status` | Show NPA GPU node-group target state from Nebius and the local cache. |
-| `list` | List GPU node-group profiles attached to NPA Workbench cluster targets. |
+| `list` | List GPU node-group profiles attached to NPA Workbench cluster targets. `npa cluster` manages NPA Workbench cluster targets and profiles. For raw MK8s administration (edit, update, upgrade, operation inspection, version listing, compatibility matrix), use `nebius mk8s` directly. |
 
 ## Examples
 

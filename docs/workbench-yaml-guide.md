@@ -1,395 +1,313 @@
-# Nebius Physical AI Workbench — YAML Pipeline Guide
+# Nebius Physical AI Workbench — Pipeline Authoring Guide
 
 > Living document. Updated as new pipeline patterns are introduced.
-> Last updated: 2026-05-20
+> Last updated: 2026-08-03
 
 ## Overview
 
-A Workbench pipeline is a SkyPilot multi-document YAML file. Each document defines
-one task: the compute it needs, the environment it runs in, and the command it
-executes. Tasks call workbench tool HTTP endpoints via `curl`. SkyPilot
-orchestrates dependencies and schedules tasks on the Nebius MK8s cluster.
+Repository Workbench pipelines are authored as **`npa.workflow/v0.0.1` specs**. A
+spec is one YAML document that declares configuration, named resource profiles,
+states, transitions, and artifact contracts. The workflow engine plans that
+document and renders SkyPilot tasks for execution on Nebius.
 
-The reference pipeline is `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
+SkyPilot remains the execution engine, not the repository authoring surface. The
+old shipped multi-document SkyPilot workflow catalog is retired and guarded from
+returning. `npa workbench workflow submit` still accepts customer-provided raw
+SkyPilot YAML, and a few tool-specific single-task examples or resource profiles
+remain in guarded locations, but new repository pipelines belong under:
 
-## Pipeline Structure
-
-The BDD100K reference file starts with a workflow document:
-
-```yaml
-name: bdd100k-pipeline
-execution: serial
+```text
+npa/workflows/workbench/npa-workflows/
 ```
 
-Each subsequent `---` document is one SkyPilot task. The fields used by the
-current pipeline are:
+The concise language reference is
+[`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md). This guide
+uses
+[`bdd100k-pipeline.yaml`](../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+as the longer service-backed example.
 
-- `name`: unique task name, for example `bdd100k-ingest`.
-- `resources`: Kubernetes scheduling and container settings.
-- `envs`: environment variables injected into the task shell.
-- `setup`: package bootstrap, currently used to ensure `curl` and `jq` exist.
-- `run`: the shell command for the task.
+## Spec Structure
 
-Minimal single-task shape:
+A minimal spec has an API version, kind, strict metadata, at least one state, and
+an initial state when the graph has more than one possible entry:
 
 ```yaml
----
-name: example-workbench-task
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: example-pipeline
+  description: One tool stage followed by a terminal report.
+
+config:
+  bucket: example-bucket
+  prefix: "example/{{run.id}}"
+  vlm_backend: stub
+  rollouts_uri: "s3://{{config.bucket}}/inputs/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+
 resources:
-  cloud: kubernetes
-  cpus: 4
-  memory: 16
-  image_id: "docker:<registry>/<image>:<tag>"
-envs:
-  LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
-run: |
-  set -euo pipefail
-  curl -fsS "${LANCEDB_ENDPOINT}/health"
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: score
+
+states:
+  score:
+    toolRef: workbench.vlm_eval.run
+    resources: cpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+    outputs:
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+        schema: npa.workbench.vlm_eval.report.v1
+    terminal: true
 ```
 
-SkyPilot 0.12.2 does not expand same-block environment variables inside
-`image_id`. Keep committed YAMLs on explicit placeholders such as:
+`metadata` rejects unknown fields. Keep historical lineage in `EVIDENCE.md`, not
+in ad hoc metadata keys.
+
+### Configuration and tokens
+
+`config:` is the contract between the spec and its states. Values can refer to:
+
+| Token | Meaning |
+| --- | --- |
+| `{{config.key}}` | Another configuration value |
+| `{{run.id}}` | Run ID supplied by the CLI or SDK |
+| `{{run.prefix}}` | Workflow/run prefix derived by the engine |
+| `{{state.NAME.uri}}` | Primary output URI of an earlier state |
+
+Tokens are deliberately limited; this is not Jinja and there is no `eval`.
+Missing config keys fail validation.
+
+Keep runtime knobs first in `config:`, then group the run-scoped `*_uri` values.
+Cross-stage data always moves through object-storage URIs because stages do not
+share a filesystem.
+
+### States and toolRefs
+
+Most states name a `toolRef` from
+`npa/src/npa/orchestration/npa_workflow/catalog.py`. Its `argv_template` is the
+command the engine resolves and runs. This keeps option names and required flags
+auditable against the real CLI.
+
+Use `run.argv` or `run.shell` only when there is no cataloged capability. Put
+substantial logic in a tested package module and keep the state command small.
+
+| Field | Purpose |
+| --- | --- |
+| `next` | Linear edge |
+| `sequence` | Ordered child states, optionally inside a loop |
+| `parallel` | Concurrent leaf states; the group’s `next` state is the barrier |
+| `maxConcurrency` | Batch size for a `parallel` group |
+| `params` | Per-state config overlay, useful for sweep members |
+| `trigger` | Wait for objects at an input URI before submitting the state |
+| `loop` | Bounded repetition, optionally ending on a decision predicate |
+| `transitions` | Data-dependent branch selected from the decision artifact |
+| `needs` | Validated acyclic ordering hint |
+| `inputs` / `outputs` | Artifact URIs and optional schema labels |
+| `terminal: true` | Successful leaf completion |
+
+The closed decision predicates are `promote_checkpoint` and `loop_back`. A state
+that writes `config.decision_uri` sets `writesDecision: true`.
+
+### Serial groups and parallel fan-out
+
+`sequence:` is ordered. The BDD100K reference groups three training states and
+three evaluation states this way:
 
 ```yaml
-# Replace <your-registry-id> with your Nebius container registry ID.
-# Replace <image-tag> with the current tool image tag.
-image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/<image>:<image-tag>"
+train-models:
+  needs: [curate-views]
+  sequence: [train-rider, train-nighttime, train-distant]
+  next: evaluate-models
 ```
 
-Use `npa workbench lancedb system-info` or the corresponding workbench tool's
-`system-info` command to find the current image tag for live submissions.
+For actual concurrency, use `parallel:` and submit with `--runtime`:
 
-The BDD100K pipeline currently runs serially because the checked-in comment notes
-that SkyPilot `0.12.2` supports serial pipelines and all-parallel job groups, but
-not the mixed dependency graph needed to train and evaluate the three views in
-parallel after shared upstream stages.
+```yaml
+sweep:
+  parallel: [train-small, train-medium, train-large]
+  maxConcurrency: 2
+  next: rank
+```
 
-## Resources
+The runtime renderer emits a SkyPilot JobGroup for each parallel batch and waits
+for every member before submitting the barrier state. Parallel members are leaf
+states; multi-step branches remain explicit serial groups.
 
-All committed BDD100K tasks use:
+### Multi-node stages
+
+Put `num_nodes` on a named resource profile:
 
 ```yaml
 resources:
-  cloud: kubernetes
+  gang:
+    cloud: kubernetes
+    accelerators: H100:1
+    num_nodes: 2
 ```
 
-CPU-only stages:
+The renderer emits the node count at the SkyPilot task level. SkyPilot
+gang-schedules identical pods and supplies `SKYPILOT_NODE_RANK` and
+`SKYPILOT_NODE_IPS`. See `multi-node-probe.yaml` for the smallest reference.
 
-- Stage 1, `bdd100k-ingest`: imports source or synthetic rows into LanceDB.
-- Stage 2, `bdd100k-backfill-cpu`: computes `has_person`, `has_rider`,
-  `person_bbox_area_pct`, `dhash`, and `is_duplicate`.
-- Stage 4, `bdd100k-create-mvs`: creates the three materialized views.
+## BDD100K Reference
 
-GPU stages:
+The BDD100K spec has thirteen states: eleven working states and two ordered group
+states.
 
-- Stage 3, `bdd100k-backfill-clip`: uses `accelerators: H100:1` for CLIP image
-  embeddings.
-- Stage 5, `bdd100k-train-*`: uses `accelerators: H100:1` for Faster R-CNN
-  training.
-- Stage 6, `bdd100k-eval-*`: uses `accelerators: H100:1` for checkpoint
-  evaluation.
+| Stage | States | Resource profile |
+| --- | --- | --- |
+| Ingest | `ingest` | `cpu` |
+| CPU backfill | `backfill-cpu` | `cpu` |
+| CLIP backfill | `backfill-clip` | `gpu-embed` |
+| Materialized views | `curate-views` | `cpu` |
+| Detector training | `train-models` → three `train-*` states | `gpu-train` |
+| Detector evaluation | `evaluate-models` → three `eval-*` states | `gpu-eval` |
+| Review | `review` | `cpu` |
 
-The detection-training deploy path uses the H100 Kubernetes node selector value
-`gpu-h100-sxm`. The pipeline YAML itself requests GPUs with SkyPilot's
-`accelerators: H100:1` field.
+The named profiles keep the repeated CPU/GPU shapes in one place. A stage says
+what profile it needs; SkyPilot decides how to schedule that profile.
 
-## Environment Variables (`envs`)
+### Label-map configuration
 
-The `envs` block is the task contract between the rendered pipeline and the
-shell in `run`. Values are referenced as shell variables with `${VAR}` and are
-passed into JSON request bodies with `jq`.
-
-Common run-scoped variables in the BDD100K pipeline:
-
-- `NPA_PIPELINE_RUN_ID`: logical run ID.
-- `S3_BUCKET`: artifact bucket.
-- `S3_PREFIX`: per-run prefix under the bucket.
-- `PIPELINE_ROOT_URI`: full `s3://` root for this run.
-- `LANCE_URI`: per-run LanceDB URI.
-- `LANCEDB_ENDPOINT`: LanceDB service URL.
-- `DETECTION_TRAINING_ENDPOINT`: detection-training service URL.
-
-Example JSON payload pattern:
-
-```bash
-payload=$(jq -n \
-  --arg table "${LANCE_TABLE}" \
-  --arg lance_uri "${LANCE_URI}" \
-  --argjson batch_size "${CPU_BACKFILL_BATCH_SIZE}" \
-  '{table: $table, lance_uri: $lance_uri, batch_size: $batch_size}')
-```
-
-Use `--arg` for strings and `--argjson` for values that should remain JSON
-numbers, objects, arrays, booleans, or null.
-
-### Label Map Injection (BDD100K Pattern)
-
-Workbench tools that operate on labeled data can accept a `label_map` parameter
-to translate string category names to integer IDs. The map is injected as a JSON
-environment variable in the pipeline YAML and passed in the `curl` POST body.
-
-Why this pattern:
-
-- Training tools are dataset-agnostic; they do not hardcode any category schema.
-- Dataset-specific configuration belongs in the pipeline YAML, not in the tool.
-- Any dataset can be supported by injecting its own label map.
-
-The committed BDD100K pipeline keeps the synthetic map active because the
-checked-in mock and synthetic workflows emit those names:
+Detection training is dataset-agnostic, so the category map belongs in the spec:
 
 ```yaml
-envs:
-  # Synthetic BDD100K data - category names match the synthetic data generator.
-  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
-  # Real BDD100K data - uncomment the line below and comment the line above.
-  # BDD100K_LABEL_MAP: '{"pedestrian":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motorcycle":6,"bicycle":7,"traffic light":8,"traffic sign":9}'
+config:
+  detection_label_map: >-
+    {"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}
 ```
 
-Use the synthetic map for runs that import generated rows with
-`BDD100K_SYNTHETIC_ROWS` or the runner's `--synthetic` flag. Use the real map for
-runs that import BDD100K label files from `BDD100K_SOURCE_URI`.
+All three training and all three evaluation toolRefs read the same key. This is
+important for BDD100K because `train` is a vehicle category; evaluation without
+the map tries to interpret that label as an integer. For real BDD100K labels,
+change the single map to use `pedestrian`, `motorcycle`, and `bicycle` in place
+of `person`, `motor`, and `bike`.
 
-The category IDs stay stable between the two maps, but three category names
-differ:
+`num_classes` is inferred as `len(label_map) + 1` for the background class. Only
+set it explicitly when deliberately overriding that inference.
 
-| ID | Synthetic category | Real BDD100K category |
-|---:|---|---|
-| 0 | `person` | `pedestrian` |
-| 6 | `motor` | `motorcycle` |
-| 7 | `bike` | `bicycle` |
+### Service endpoints
 
-To switch a production run to real BDD100K labels, update each training task's
-`envs` block by commenting the synthetic `BDD100K_LABEL_MAP` line and
-uncommenting the real BDD100K line. SkyPilot `0.12.2` does not support
-self-referencing interpolation inside `envs`, so the pipeline uses explicit
-comment blocks instead of deriving one map variable from another.
-
-In the `run` block:
-
-```bash
-payload=$(jq -n \
-  --arg view "${VIEW_NAME}" \
-  --arg lance_uri "${LANCE_URI}" \
-  --arg output_uri "${TRAIN_OUTPUT_URI}" \
-  --argjson label_map "${BDD100K_LABEL_MAP}" \
-  --argjson epochs "${TRAIN_EPOCHS}" \
-  --argjson batch_size "${TRAIN_BATCH_SIZE}" \
-  --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-  '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
-```
-
-`num_classes` is auto-inferred from `len(label_map) + 1`; the extra class is the
-background class. Do not pass `num_classes` manually unless overriding the
-inferred value.
-
-Extending to other datasets: replace `BDD100K_LABEL_MAP` with that dataset's
-category-to-integer mapping. The detection-training tool accepts any
-`label_map`; it is not BDD100K-specific.
-
-## Service Endpoints
-
-The pipeline uses cluster-internal Kubernetes DNS:
+Service-backed stages use Kubernetes DNS:
 
 ```text
 http://<service-name>.workbench.svc.cluster.local:<port>
 ```
 
-Services used by the BDD100K reference pipeline:
+| Tool | Service | Port |
+| --- | --- | ---: |
+| LanceDB | `npa-lancedb` | `8686` |
+| Detection training | `npa-detection-training` | `8790` |
 
-| Tool | Service | Port | Endpoints Used |
-|---|---|---:|---|
-| LanceDB | `npa-lancedb` | `8686` | `GET /health`, `POST /import-bdd100k`, `POST /backfill`, `POST /create-mv` |
-| Detection training | `npa-detection-training` | `8790` | `GET /health`, `POST /train`, `GET /status`, `GET /runs`, `POST /eval` |
+Deploy those services before a live BDD100K submit. ToolRef commands call the
+real CLIs, which in turn call the services; specs do not embed `curl`/`jq`
+request construction.
 
-The `/train` request schema accepts:
+### Artifact paths
 
-- `view`: Lance materialized view name.
-- `lance_uri`: LanceDB URI.
-- `output_uri`: checkpoint and metrics output URI.
-- `label_map`: optional string-label-to-integer mapping.
-- `num_classes`: optional manual class count override.
-- `epochs`, `batch_size`, `learning_rate`: training hyperparameters.
-- `validation_filter_sql`: optional validation filter, currently not used by the
-  committed BDD100K pipeline.
-
-## S3 Artifact Paths
-
-The runner renders per-run paths before submission. The convention is:
+The spec derives every run-scoped URI from `bucket`, `prefix`, and `{{run.id}}`.
+For example:
 
 ```text
-s3://<bucket>/bdd100k-pipeline/<run-id>/
+s3://<bucket>/bdd100k-pipeline/<run-id>/lancedb/
+s3://<bucket>/bdd100k-pipeline/<run-id>/training/<view>
+s3://<bucket>/bdd100k-pipeline/<run-id>/eval/<view>/metrics.json
 ```
 
-With `NPA_S3_BUCKET=your-bucket-name` and a run ID of `example-run`:
+An `outputs:` entry is a promise to downstream consumers. Declare the path the
+tool actually writes; when a tool exposes a `*_result_uri_for()` helper, use it
+as the source of truth and extend `test_spec_declared_outputs.py` for new
+toolRefs.
 
-```text
-s3://${NPA_S3_BUCKET}/bdd100k-pipeline/example-run/
-```
+## Validate, Plan, and Submit
 
-Derived paths:
-
-- LanceDB: `${PIPELINE_ROOT_URI}/lancedb/`
-- Training: `${PIPELINE_ROOT_URI}/training/${VIEW_SLUG}`
-- Evaluation: `${PIPELINE_ROOT_URI}/eval/${VIEW_SLUG}`
-
-`npa/scripts/run_bdd100k_pipeline.py` renders these values into each task's
-`envs` block. Cleanup is controlled by the runner's `--cleanup` flag, which calls
-the SkyPilot cleanup path for the run after terminal workflow status.
-
-## Durable Workflow State
-
-For long-running SkyPilot workflows, prefer the generic durable monitor instead
-of adding ad hoc log upload code to each YAML:
+Run these from the repository root:
 
 ```bash
-npa workbench workflow submit <workflow.yaml> \
-  --durable-s3 \
-  --workflow-s3-uri "s3://<bucket>/workflows/<run-id>/" \
-  --infra "k8s/<context>"
+npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
+npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id preview --json
+npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id preview --plan-only
+npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id <run-id>
 ```
 
-The submit command injects an S3 MOUNT-mode `file_mount` into every task and
-wraps each `run` block with redacted stdout/stderr teeing plus
-`manifest.json`, `logs/<stage>/status.json`, and `artifacts/<stage>/` state.
-The user-facing monitor is:
+For a dynamic branch, add `--assume-decision promote_checkpoint` while planning.
+For real parallel fan-out, triggers, or early exit based on an S3 decision
+artifact, submit with `--runtime`. `--plan-only` never launches infrastructure.
+
+The engine renders each planned state as a SkyPilot task. Setup is selected from
+the toolRef, not copied into every spec: package extras, vendor interpreters,
+source staging, image routing, and required run preambles are renderer concerns.
+
+## Durable State
+
+The spec runtime can persist `npa-workflow/manifest.json`, `status.json`, and the
+runtime wave ledger under the run prefix. Use the generic workflow status/logs
+and artifact commands instead of adding per-spec log upload code:
 
 ```bash
-npa workbench workflow status "s3://<bucket>/workflows/<run-id>/"
-npa workbench workflow logs "s3://<bucket>/workflows/<run-id>/" --stage <stage>
-npa workbench workflow artifacts "s3://<bucket>/workflows/<run-id>/"
+npa/.venv/bin/npa workbench workflow status "s3://<bucket>/<prefix>/"
+npa/.venv/bin/npa workbench workflow logs "s3://<bucket>/<prefix>/" --stage <state>
+npa/.venv/bin/npa workbench workflow artifacts "s3://<bucket>/<prefix>/"
 ```
 
-Keep committed raw SkyPilot YAMLs focused on task logic. Do not use SkyPilot
-`logs.store` or CloudWatch for the Workbench durable monitor path; the cluster
-pod writes the S3 state through the mounted run prefix.
+## Isaac Lab: Spec Versus Resource Profile
 
-## Standard Pipeline Stages (BDD100K Reference)
-
-The BDD100K pipeline is the canonical reference implementation:
-
-1. `bdd100k-ingest`: imports BDD100K source data or synthetic rows into LanceDB.
-2. `bdd100k-backfill-cpu`: computes CPU UDF columns needed by later filters.
-3. `bdd100k-backfill-clip`: computes CLIP embeddings with the GPU UDF path.
-4. `bdd100k-create-mvs`: creates `bdd100k_rider_train`,
-   `bdd100k_nighttime_person_train`, and `bdd100k_distant_person_train`.
-5. `bdd100k-train-rider`, `bdd100k-train-nighttime`, `bdd100k-train-distant`:
-   train Faster R-CNN models from the three views.
-6. `bdd100k-eval-rider`, `bdd100k-eval-nighttime`, `bdd100k-eval-distant`:
-   evaluate the latest completed training run for each view.
-
-Related docs:
-
-- `docs/workbench/getting-started.md`
-- `docs/demos/bdd100k-lancedb-demo.md`
-- `docs/workbench/cookbooks/bdd100k-pipeline.md`
-- `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`
-
-## Isaac Lab RL Training
-
-Isaac Lab RL jobs are batch training workloads, not persistent service calls.
-Use the committed SkyPilot consumers:
-
-- `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml` for one RSL-RL training
-  job, submitted by `npa/scripts/run_isaac_lab_rl.py` (which renders per-run values).
-- `npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml` for a parallel
-  sweep. This is an **`npa.workflow` spec**, not a SkyPilot task YAML: it replaced the
-  raw `execution: parallel` template, which is now retired. Submit it through the
-  engine with `--runtime` so the four variants launch as a SkyPilot JobGroup and the
-  ranking stage acts as a barrier.
-
-Single run:
+The parallel sweep is an authored workflow spec:
 
 ```bash
-export NPA_S3_BUCKET=your-bucket-name
-python npa/scripts/run_isaac_lab_rl.py \
-  --yaml npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml \
-  --task Isaac-Cartpole-v0 \
-  --iterations 10 \
-  --run-id isaac-cartpole-smoke
-```
-
-The training command uses the Isaac Lab RSL-RL entry point:
-
-```bash
-/isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/train.py \
-  --task "${ISAAC_LAB_TASK}" \
-  --num_envs "${ISAAC_LAB_NUM_ENVS}" \
-  --max_iterations "${ISAAC_LAB_ITERATIONS}" \
-  --headless \
-  --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}" \
-  --run_name "${ISAAC_LAB_RUN_NAME}" \
-  agent.save_interval=1
-```
-
-Parameter sweep (through the engine, **not** the single-job runner):
-
-```bash
-npa workbench workflow submit \
+npa/.venv/bin/npa workbench workflow submit \
   npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml \
-  --run-id isaac-cartpole-sweep --runtime \
-  --var max_concurrency=2 \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
-
-# offline preview of the wave shape (which batches, which barrier):
-npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml --run-id demo --waves
+  --run-id isaac-cartpole-sweep --runtime
 ```
 
-The spec's `parallel:` group renders as a SkyPilot JobGroup (`execution: parallel`),
-which is the 0.12.2 pattern for independent parallel tasks; `maxConcurrency` splits a
-group larger than the bound into batches submitted in order. Each variant writes
-under:
+The single-job files under `npa/src/npa/workflows/byof/profiles/` are guarded
+BYOF resource profiles consumed by their runners, not a workflow catalog. They
+remain valid inputs for those tool-specific paths, but should not be copied as
+the starting point for a new pipeline.
 
-```text
-s3://<bucket>/isaac-lab-rl/<run-id>/<variant>/
-```
+Isaac Sim workloads require RT-core GPUs. Prefer L40S or RTX PRO 6000; H100 and
+H200 do not provide the RT cores used by rendering/simulation.
 
-Isaac Lab requires RT-core GPUs for simulation. The YAMLs request:
+## Adding a Pipeline
 
-```yaml
-resources:
-  cloud: kubernetes
-  accelerators: L40S:1
-```
+1. Start from the closest spec under
+   `npa/workflows/workbench/npa-workflows/`.
+2. Reuse an existing toolRef. If the needed capability is missing, add it to the
+   workbench tool and catalog rather than embedding a second implementation.
+3. Put runtime values and S3 URIs in `config:`; never depend on a repository path
+   existing inside a task pod.
+4. Declare only artifacts the implementation writes, with the implementation’s
+   real schema.
+5. Validate and plan the spec, including both assumed decisions when it branches.
+6. Register it in `SUBMIT_LIVE_MATRIX`; use `plan_only=True` only for a stub,
+   placeholder/reference component, or a separately covered onboarding flow.
+   Do not use an arbitrary execution gap to avoid a live case: fix the gap or
+   fail closed and exercise the real path. A reference implementation must not
+   count as real GPU coverage. Add dynamic specs to `DYNAMIC_SPECS`, and seed
+   inputs only for cases that actually execute.
+7. Run focused offline tests, then the plan-only live-matrix preflight. Report a
+   genuine environment blocker explicitly if a live launch is unavailable.
 
-Use L40S first. RTX Pro 6000 is the fallback when exposed in the Kubernetes GPU
-catalog. Do not run Isaac Lab on H100 or H200 for these jobs; those accelerators
-do not provide the RT cores required by Isaac Sim rendering/simulation paths.
+Do not add a raw workflow template under `npa/src/npa/workflows/skypilot/`; that
+catalog is retired and its absence is guardrail-enforced.
 
-Custom Isaac Lab forks can be layered by overriding the image in the YAML:
+## Related Documentation
 
-```yaml
-resources:
-  image_id: "docker:cr.eu-north1.nebius.cloud/<registry>/flexion-isaac-lab:<tag>"
-```
-
-The replacement image must keep the Isaac Lab source tree at
-`/workspace/isaaclab` or provide the same
-`scripts/reinforcement_learning/rsl_rl/train.py` entry point. The runner also
-accepts `--image cr.../custom-isaac-lab:<tag>` to rewrite `image_id` in the
-rendered workflow.
-
-## Adding a New Pipeline
-
-Use the Isaac Lab and BDD100K YAMLs as the current reference patterns.
-
-Current minimum pattern:
-
-- Start from a multi-document SkyPilot YAML file.
-- Add a workflow document with `name` and `execution`.
-- Add one task document per stage.
-- Use `resources.cloud: kubernetes`.
-- Put per-run paths and service URLs in `envs`.
-- Build HTTP request bodies with `jq` in `run`.
-- Validate tool health with `/health` before making state-changing requests.
-- Add a mock-endpoint or render-only validation path before live submission.
-
-New workbench tool endpoints should be documented here only after the endpoint is
-present in committed source.
+- [`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md)
+- [`docs/workbench/npa-workflow-tool-catalog.md`](workbench/npa-workflow-tool-catalog.md)
+- [`docs/workbench/cookbooks/bdd100k-pipeline.md`](workbench/cookbooks/bdd100k-pipeline.md)
+- [`npa/workflows/workbench/npa-workflows/README.md`](../npa/workflows/workbench/npa-workflows/README.md)
 
 ## Changelog
 
-| Date | Change | Run |
-|---|---|---|
-| 2026-05-20 | Added Isaac Lab RSL-RL single-job and parallel sweep SkyPilot YAML patterns. | W9-isaac-lab-e2e-fix |
-| 2026-05-16 | Initial guide. Label map injection pattern (BDD100K). | W9-label-schema-fix |
+| Date | Change |
+| --- | --- |
+| 2026-08-03 | Rewritten around the `npa.workflow/v0.0.1` authoring surface; SkyPilot is documented as the execution engine. |
+| 2026-05-20 | Added Isaac Lab RSL-RL single-job and parallel sweep patterns. |
+| 2026-05-16 | Initial guide and BDD100K label-map pattern. |

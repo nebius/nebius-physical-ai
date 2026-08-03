@@ -264,7 +264,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         sdk_module="npa.sdk.workbench.cosmos2",
         sdk_attr="transfer",
         spec_path=SPECS / "cosmos-synth-fanout-curation.yaml",
-        tool_ref="workbench.cosmos2.transfer",
+        tool_ref="workbench.cosmos2.transfer_conditioned_execute",
         spec_gap=("assets_uri", "scene_spec_uri", "image"),
         params=(
             _p("input_uri", "input_uri", "--input-uri"),
@@ -337,7 +337,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="run_once",
         spec_path=SPECS / "sim2real-vlm-rl.yaml",
-        tool_ref="workbench.cosmos2.transfer",
+        tool_ref="workbench.cosmos2.transfer_conditioned_execute",
         spec_gap=(
             "s3_endpoint",
             "s3_bucket",
@@ -403,7 +403,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         sdk_module="npa.sdk.workbench.trigger",
         sdk_attr="watch",
         spec_path=SPECS / "sim2real-vlm-rl.yaml",
-        tool_ref="workbench.cosmos2.transfer",
+        tool_ref="workbench.cosmos2.transfer_conditioned_execute",
         spec_gap=(
             "s3_endpoint",
             "s3_bucket",
@@ -522,6 +522,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "nurec",
         "scenario-gen",
         "sim2real",
+        # Internal typed stage helper used by npa.workflow toolRefs. It delegates
+        # to npa.workflows.sim2real_envgen rather than exposing a service SDK;
+        # CLI/toolRef coherence and manifest behavior are covered separately.
+        "sim2real-envgen",
         "token-factory",
         "workflow",
     }
