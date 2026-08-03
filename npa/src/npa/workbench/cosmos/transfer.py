@@ -234,7 +234,7 @@ def run_cosmos_transfer(
     if cuda_visible_devices is not None and str(cuda_visible_devices).strip() != "":
         env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices).strip()
     # Only the specs WE synthesized this call are ephemeral; never delete a
-    # bundled/example or caller-supplied spec. Per-variant tags keep siblings
+    # caller-supplied spec. Per-variant tags keep siblings
     # from clobbering each other, so removing exactly our file is fan-out safe.
     # Capture its content first so callers can still inspect the effective spec
     # after the file is gone (nothing depends on the ephemeral file persisting).

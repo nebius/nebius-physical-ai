@@ -79,13 +79,19 @@ def test_blueprint_run_shell_stages_are_real() -> None:
 
 
 def test_augment_runs_real_cosmos_transfer() -> None:
+    spec = _spec()
     states = _states()
     assert states["augment"].get("toolRef") == "workbench.cosmos2.transfer_execute", (
         "augment must run the real Cosmos Transfer 2.5 execute path"
     )
     argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
     assert "--execute" in argv, "transfer_execute must pass --execute to run the real model"
+    assert "--condition-on-input" in argv
     assert "--input-uri" in argv and "--output-uri" in argv
+    assert spec["config"]["trigger_uri"] == spec["config"]["input_uri"]
+    description = states["augment"]["description"].lower()
+    assert "supported video" in description
+    assert "no bundled upstream media" in description
 
 
 def test_evaluate_runs_the_real_cosmos_evaluator() -> None:

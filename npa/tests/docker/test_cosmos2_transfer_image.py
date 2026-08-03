@@ -257,6 +257,8 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
             / "cosmos2-transfer.yaml"
         ).read_text(encoding="utf-8")
     )
+    assert workflow["states"]["transfer"]["toolRef"] == "workbench.cosmos2.transfer_execute"
+    assert workflow["config"]["trigger_uri"].endswith("/input/")
     assert workflow["resources"]["transfer-gpu"]["accelerators"] == "RTXPRO6000:1"
     pod_spec = workflow["resources"]["transfer-gpu"]["kubernetes"]["pod_config"]["spec"]
     assert pod_spec["volumes"] == [{"name": "cosmos2-model-cache", "emptyDir": {}}]

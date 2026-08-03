@@ -319,9 +319,10 @@ npa workbench workflow submit "$SPEC" \
 If your cluster advertises a different product name for the same GPU (e.g.
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION`), pass that exact name:
 `NPA_WORKFLOW_GPU_ACCELERATOR=<name>:N`. Variant parallelism is auto-detected from
-the GPU count; override with `NPA_COSMOS_VARIANT_PARALLELISM`. Condition each
-variant on the run's real input clip (preserve geometry/motion, change only
-appearance) with `NPA_COSMOS_CONDITION_ON_INPUT=1`.
+the GPU count; override with `NPA_COSMOS_VARIANT_PARALLELISM`. Every managed
+variant is conditioned on a supported video already uploaded beneath the run's
+`input/` prefix (preserve geometry/motion, change only appearance); missing or
+inaccessible input fails closed before inference.
 
 ---
 

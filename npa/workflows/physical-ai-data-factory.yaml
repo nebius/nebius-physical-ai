@@ -79,6 +79,8 @@ config:
   max_tokens: "512"
 
   # --- S3 artifact layout: input / intermediate / output under one run prefix ---
+  # Mandatory managed-transfer input: input_uri/trigger_uri must contain at least
+  # one .mp4, .mov, .webm, .mkv, or .avi. Missing video fails before inference.
   input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   images_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   configs_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/"
@@ -171,12 +173,10 @@ states:
       variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
       Appearance-only: lighting, background, cloth_color, surface -- never scene
       geometry.
-      By DEFAULT each variant re-renders the bundled Cosmos example under the
-      sampled prompt (appearance study, no source clip required). To augment the
-      run's OWN uploaded input/ footage instead -- preserving its geometry/motion
-      while only the appearance changes -- submit with
-      NPA_COSMOS_CONDITION_ON_INPUT=1 (or add --condition-on-input to the toolRef);
-      the edge/vis control is then computed on-the-fly from the input clip.
+      Every managed variant conditions on a supported video under trigger_uri
+      (the run's input/ prefix), preserving its geometry/motion while changing its
+      appearance. Missing or inaccessible input fails closed before inference.
+      No bundled upstream media is available as a fallback.
       This is a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.

@@ -103,8 +103,12 @@ obligations. The authoritative dual-license text is Apache Arrow's tagged
 ## Functional release gates
 
 Four superseded private candidates were rejected by the real GPU/workflow gates rather
-than waived: the first revealed that Transformers imports NumPy's small BSD
-`_natype.py` helper through SciPy; the second reached the prompt guardrail and
+than waived: the first revealed that the SigLIP/scientific-Python import path reaches
+`numpy.testing`, whose pinned NumPy 2.2.6
+`numpy/testing/_private/utils.py` unconditionally imports `pd_NA` from
+`numpy/_core/tests/_natype.py`. Test-tree pruning therefore retains that one small
+BSD-licensed source helper, and the Docker build's SigLIP/SciPy import is the checked
+runtime assertion for it. The second candidate reached the prompt guardrail and
 showed that NLTK PathSec needed the dedicated mounted model-cache root; the
 third passed both guardrails and reached the first diffusion step, where
 Transformer Engine exposed the CUDA runtime image's missing unversioned
@@ -129,6 +133,18 @@ steps in 341.127 seconds. The output was a decodable 1280x720 MP4 with 93 frames
 `b85870845a816dda3d62bd906f8bc58250b1b0d1a90c90054865c30ac1491eb7`.
 The mounted cache held 17,436 files / 36,448,258,402 bytes; no model or token
 entered the image.
+
+Three deliberately conservative packaging details remain coupled to this pinned
+dependency closure. The forbidden-payload guard treats every unreviewed `.pth` as
+checkpoint-like and permits only the two known venv startup hooks; adding another
+`.pth` requires an explicit artifact, runtime, and license review plus a narrow path
+allowlist update. It must not be accepted by inspecting file contents. The global
+`/usr/local/bin/python3` venv shim is also intentional: SkyPilot and
+orchestrator-supplied commands invoke `python3`, while `/usr/bin/python3` remains for
+system tooling. Finally, `smoke_functional.sh` safely captures fixture JSON from
+stdout because the generator emits exactly one JSON object after success and its
+ffmpeg subprocess uses `-hide_banner -loglevel error`, which keeps diagnostics on
+stderr; a failed generator terminates the shell before JSON parsing.
 
 Managed workflow job 363 (`npa-wf-gpu-cosmos2-transfer-ca6a03fa`) then used
 that same child digest through the repository's live submit path. The actual
