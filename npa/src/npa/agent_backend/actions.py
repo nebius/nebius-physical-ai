@@ -90,8 +90,11 @@ def _build_allowlist() -> dict[str, ToolSpec]:
         ToolSpec(
             "artifacts_runs",
             read_only=True,
-            summary="Discover S3-backed run prefixes.",
-            params=("prefix", "limit"),
+            summary=(
+                "Discover S3-backed run prefixes. When a run id is known, pass it "
+                "as q so discovery searches all runs before applying limit."
+            ),
+            params=("prefix", "limit", "q"),
         ),
         ToolSpec(
             "artifacts_run",
@@ -121,8 +124,9 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             "insights_query",
             read_only=True,
             summary=(
-                "Query recorded run metrics by facet. Call with NO args first to list "
-                "all records and discover run_ids/metric_names. For GPU counts set "
+                "Query recorded run metrics by facet. When the operator provides a run_id, "
+                "query that run_id without metric_name to retrieve all of its metrics. Only "
+                "call with NO args when a run must be discovered. For GPU counts set "
                 "metric_name='gpus' with threshold_metric='gpus', threshold_op='ge', "
                 "threshold_value=N; filter an accelerator type with accelerator='RTXPRO6000'."
             ),
@@ -137,6 +141,7 @@ def _build_allowlist() -> dict[str, ToolSpec]:
                 "threshold_op",
                 "threshold_value",
                 "limit",
+                "input_uri",
             ),
         ),
         ToolSpec(
@@ -224,6 +229,46 @@ def confirmation_ok(confirm_token: str, session_token: str) -> bool:
     token = str(confirm_token or "").strip()
     expected = str(session_token or "").strip()
     return bool(token) and bool(expected) and token == expected
+
+
+def normalize_action_args(
+    tool: str,
+    args: Mapping[str, Any] | None,
+    allowlist: Mapping[str, ToolSpec] | None = None,
+) -> dict[str, Any]:
+    """Return only non-empty arguments declared by the tool's allowlist spec.
+
+    The planner is untrusted input. Unknown keys must not change an action digest
+    or make a repeated action look novel when the executor silently ignores them.
+    Keeping normalization here also makes the digest, trace, and executed action
+    describe the same operation.
+    """
+    resolved = allowlist if allowlist is not None else TOOL_ALLOWLIST
+    spec = resolved.get(str(tool or ""))
+    if spec is None or not isinstance(args, Mapping):
+        return {}
+    normalized: dict[str, Any] = {}
+    for key in spec.params:
+        if key not in args:
+            continue
+        value = args[key]
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        normalized[key] = value
+    return normalized
+
+
+def requested_tools_from_goal(
+    goal: str, allowlist: Mapping[str, ToolSpec] | None = None
+) -> list[str]:
+    """Find tool names explicitly requested by the operator, in catalog order."""
+    resolved = allowlist if allowlist is not None else TOOL_ALLOWLIST
+    text = str(goal or "").lower()
+    return [
+        name
+        for name in resolved
+        if re.search(rf"(?<![a-z0-9_]){re.escape(name.lower())}(?![a-z0-9_])", text)
+    ]
 
 
 def action_digest(action: Any) -> str:
@@ -375,6 +420,8 @@ def _planner_messages(
     observations: Sequence[dict[str, Any]],
     *,
     live_context: str = "",
+    required_tools: Sequence[str] = (),
+    completed_tools: Sequence[str] = (),
 ) -> list[dict[str, str]]:
     """Assemble the small structured prompt used to pick the next tool."""
     catalog_lines = []
@@ -401,10 +448,28 @@ def _planner_messages(
         "from. Never sum, average, recompute, or estimate a value the tools "
         "already returned, and never fill a gap with a plausible-looking value: "
         "if an observation does not contain the answer, say so.\n\n"
+        "Argument grounding: when the operator gives an explicit value for a tool "
+        "parameter (especially run_id, base_run, or candidate_run), copy that exact "
+        "value into the tool arguments; do not substitute a session-context value.\n\n"
         "Tool catalog:\n" + "\n".join(catalog_lines)
     )
     if live_context:
-        system += "\n\n" + live_context
+        system += (
+            "\n\nThe live session context is a convenience snapshot, not an "
+            "exhaustive view of object-storage runs or Insights records. Use the "
+            "requested discovery tools when the goal asks for those records.\n\n"
+            + live_context
+        )
+    pending_tools = [name for name in required_tools if name not in completed_tools]
+    if required_tools:
+        completed = ", ".join(completed_tools) or "none"
+        pending = ", ".join(pending_tools) or "none"
+        system += (
+            "\n\nOperator tool contract: the goal explicitly names tools. Call every "
+            f"named tool once with useful arguments before finishing. Completed: {completed}. "
+            f"Still required: {pending}. Do not repeat a successfully completed tool; "
+            "finish as soon as all named tools have useful observations."
+        )
     if any(obs.get("replan_required") for obs in observations):
         system += (
             "\n\nReplanning is required because the previous tool call failed or "
@@ -615,6 +680,7 @@ def run_action_loop(
     confirm_token: str = "",
     session_token: str = "",
     confirm_digest: str = "",
+    confirmed_action: Mapping[str, Any] | None = None,
     tier: str = "cheap",
     max_steps: int = DEFAULT_MAX_STEPS,
     allowlist: Mapping[str, ToolSpec] | None = None,
@@ -653,6 +719,10 @@ def run_action_loop(
     needs_confirmation = False
     proposed_action: dict[str, Any] | None = None
     failed_actions: dict[str, str] = {}
+    successful_actions: set[str] = set()
+    required_tools = requested_tools_from_goal(goal, resolved_allow)
+    completed_tools: list[str] = []
+    confirmation_consumed = False
     replans = 0
 
     hard_cap = max(1, int(max_steps))
@@ -672,9 +742,75 @@ def run_action_loop(
             "tier": tier,
         }
 
+    # A confirming request executes the exact previously proposed action, not a
+    # fresh model plan. Re-planning after confirmation lets the model substitute
+    # a different first tool (or never reach the approved action), while one token
+    # must authorize exactly one digest-bound attempt.
+    if isinstance(confirmed_action, Mapping):
+        confirmed_tool = str(confirmed_action.get("tool") or "").strip()
+        confirmed_args = normalize_action_args(
+            confirmed_tool,
+            confirmed_action.get("args")
+            if isinstance(confirmed_action.get("args"), Mapping)
+            else {},
+            resolved_allow,
+        )
+        normalized_confirmed = {"tool": confirmed_tool, "args": confirmed_args}
+        confirmed_digest = action_digest(normalized_confirmed)
+        approved = bool(
+            confirmation_ok(confirm_token, session_token)
+            and confirm_digest
+            and confirm_digest == confirmed_digest
+            and requires_confirmation(confirmed_tool, resolved_allow)
+        )
+        executor = tools.get(confirmed_tool)
+        if approved and executor is not None:
+            raised = False
+            try:
+                observation = executor(confirmed_args)
+            except Exception as exc:  # noqa: BLE001 - preserve tool failure in trace
+                raised = True
+                observation = {"error": str(exc)}
+            replan_reason = _replan_reason(observation, raised=raised)
+            status = "error" if replan_reason else "ok"
+            observed = _observe(observation)
+            return {
+                "ok": not replan_reason,
+                "goal": goal_text,
+                "reply": (
+                    f"Confirmed action `{confirmed_tool}` executed exactly once."
+                    if not replan_reason
+                    else f"Confirmed action `{confirmed_tool}` failed during its single attempt."
+                ),
+                "steps": [
+                    {
+                        "step": 1,
+                        "phase": "call",
+                        "tool": confirmed_tool,
+                        "args": confirmed_args,
+                        "status": status,
+                        "thought": "execute the exact digest-bound confirmed action",
+                        "observation": observed,
+                        **({"replan_reason": replan_reason} if replan_reason else {}),
+                    }
+                ],
+                "tools_used": [confirmed_tool],
+                "stopped_reason": STOP_ERROR if replan_reason else STOP_DONE,
+                "needs_confirmation": False,
+                "proposed_action": None,
+                "tokens": 0,
+                "tier": tier,
+                "replans": 0,
+            }
+
     for step_index in range(hard_cap):
         messages = _planner_messages(
-            goal_text, resolved_allow, observations, live_context=live_context
+            goal_text,
+            resolved_allow,
+            observations,
+            live_context=live_context,
+            required_tools=required_tools,
+            completed_tools=completed_tools,
         )
         try:
             data = model_call(messages, tier=tier)
@@ -723,6 +859,30 @@ def run_action_loop(
             break
 
         if plan.get("final") is not None and not plan.get("tool"):
+            pending_tools = [name for name in required_tools if name not in completed_tools]
+            if pending_tools:
+                observation = {
+                    "error": "explicitly requested tools remain: " + ", ".join(pending_tools)
+                }
+                steps.append(
+                    {
+                        "step": step_index + 1,
+                        "phase": "replan",
+                        "status": "rejected",
+                        "thought": str(plan.get("thought") or ""),
+                        "observation": observation,
+                        "replan_reason": "required_tools_remaining",
+                    }
+                )
+                observations.append(
+                    {
+                        "rejected": observation["error"],
+                        "replan_required": True,
+                        "replan_reason": "required_tools_remaining",
+                    }
+                )
+                replans += 1
+                continue
             reply = str(plan.get("final") or "").strip()
             steps.append(
                 {
@@ -736,7 +896,12 @@ def run_action_loop(
             break
 
         tool = str(plan.get("tool") or "").strip()
-        args = plan.get("args") if isinstance(plan.get("args"), dict) else {}
+        raw_args = plan.get("args") if isinstance(plan.get("args"), dict) else {}
+        args = normalize_action_args(tool, raw_args, resolved_allow)
+        if tool == "workflow_author":
+            # Preserve every operator-requested semantic stage. A lossy planner
+            # paraphrase must not silently drop curation/training/evaluation steps.
+            args["goal"] = goal_text
         thought = str(plan.get("thought") or "")
         planned_action = {"tool": tool, "args": args}
         planned_digest = action_digest(planned_action)
@@ -747,6 +912,39 @@ def run_action_loop(
                 "error": (
                     "replan repeated the same failed tool and arguments; change "
                     "arguments, choose another tool, or ask a clarifying sub-goal"
+                )
+            }
+            steps.append(
+                {
+                    "step": step_index + 1,
+                    "phase": "replan",
+                    "tool": tool,
+                    "args": args,
+                    "status": "rejected",
+                    "thought": thought,
+                    "observation": observation,
+                    "replan_reason": reason,
+                }
+            )
+            observations.append(
+                {
+                    "tool": tool,
+                    "rejected": observation["error"],
+                    "replan_required": True,
+                    "replan_reason": reason,
+                }
+            )
+            replans += 1
+            continue
+
+        if planned_digest in successful_actions or (
+            tool in completed_tools and tool in required_tools
+        ):
+            reason = "already_completed"
+            observation = {
+                "error": (
+                    "this tool action already completed successfully; use the remaining "
+                    "requested tool or finish from existing observations"
                 )
             }
             steps.append(
@@ -800,7 +998,7 @@ def run_action_loop(
         if requires_confirmation(tool, resolved_allow):
             proposed = {"tool": tool, "args": args}
             digest = action_digest(proposed)
-            token_ok = confirmation_ok(confirm_token, session_token)
+            token_ok = confirmation_ok(confirm_token, session_token) and not confirmation_consumed
             # The token is bound to a specific action digest; a token issued for
             # one action can never authorize a different (or repeated) one.
             digest_ok = (not confirm_digest) or confirm_digest == digest
@@ -826,6 +1024,10 @@ def run_action_loop(
                     "for this exact action to execute."
                 )
                 break
+            # One matching token authorizes one attempt inside this loop. Consume
+            # it before invoking the executor so errors and planner repeats cannot
+            # turn one confirmation into multiple state changes.
+            confirmation_consumed = True
 
         executor = tools.get(tool)
         if executor is None:
@@ -884,6 +1086,10 @@ def run_action_loop(
                 {"replan_required": True, "replan_reason": replan_reason}
             )
             replans += 1
+        else:
+            successful_actions.add(planned_digest)
+            if tool in required_tools and tool not in completed_tools:
+                completed_tools.append(tool)
         observations.append(observation_entry)
     else:
         stopped_reason = STOP_MAX_STEPS

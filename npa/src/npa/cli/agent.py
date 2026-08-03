@@ -1536,6 +1536,7 @@ def _stage_agent_npa_source(ssh: SSHClient) -> None:
                     f"sudo mkdir -p {shlex.quote(AGENT_SOURCE_ROOT)}",
                     f"sudo tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(AGENT_SOURCE_ROOT)}",
                     f"sudo chown -R root:root {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo chmod -R a+rX {shlex.quote(AGENT_SOURCE_ROOT)}",
                     f"rm -f {shlex.quote(remote_archive)}",
                 ]
             )
@@ -3280,15 +3281,7 @@ def _list_chat_sessions(state: dict) -> list[dict]:
     _save_state(state)
     rows = []
     for session in sessions.values():
-        history = session.get("chat_history") if isinstance(session, dict) else []
-        rows.append({{
-            "id": str(session.get("id") or ""),
-            "title": str(session.get("title") or "New chat"),
-            "created_at": str(session.get("created_at") or ""),
-            "updated_at": str(session.get("updated_at") or ""),
-            "message_count": len(history) if isinstance(history, list) else 0,
-            "memory_uri": str(session.get("memory_uri") or ""),
-        }})
+        rows.append(public_chat_session_payload(session))
     return sorted(rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
 
@@ -5231,7 +5224,7 @@ def _maybe_toolground_chat_reply(
         # (e.g. "npa yaml that uses cosmos"): compose from the LIVE catalog and
         # self-validate/plan — no hardcoded template. Fall back to the template
         # catalog for generic/simple requests or if composition is not runnable.
-        if intent == "create_workflow":
+        if intent == "create_workflow" and goal_requests_catalog_composition(user_text):
             from npa.cli.agent_workflow import author_workflow_from_goal
 
             authored = author_workflow_from_goal(user_text, tool_refs=frozenset(TOOL_REFS))
@@ -5551,12 +5544,7 @@ def chat(payload: dict):
             "apis_used": origin_apis,
             "skills_used": ["agent-visual-feedback"],
             "session_id": session["id"],
-            "session": {{
-                "id": session["id"],
-                "title": session["title"],
-                "memory_uri": session.get("memory_uri", ""),
-                "message_count": len(session.get("chat_history", [])),
-            }},
+            "session": public_chat_session_payload(session),
         }}
     # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
     if (not visual_turn) and re.search(
@@ -5595,12 +5583,7 @@ def chat(payload: dict):
             "apis_used": ["workflows/sim2real/submit"],
             "submit": submit,
             "session_id": session["id"],
-            "session": {{
-                "id": session["id"],
-                "title": session["title"],
-                "memory_uri": session.get("memory_uri", ""),
-                "message_count": len(session.get("chat_history", [])),
-            }},
+            "session": public_chat_session_payload(session),
         }}
     # Metadata-only Describe-this: grounded reply (never invent pixels). Vision
     # turns with an attached frame fall through to Token Factory.
@@ -5628,12 +5611,7 @@ def chat(payload: dict):
             "apis_used": ["sim-viz/status"],
             "skills_used": ["agent-visual-feedback"],
             "session_id": session["id"],
-            "session": {{
-                "id": session["id"],
-                "title": session["title"],
-                "memory_uri": session.get("memory_uri", ""),
-                "message_count": len(session.get("chat_history", [])),
-            }},
+            "session": public_chat_session_payload(session),
         }}
     # Never short-circuit framed Describe-this / vision turns through intent tools.
     tool_result = None if visual_turn else _agent_chat_with_tools(raw_messages=history, model=model)
@@ -5654,12 +5632,7 @@ def chat(payload: dict):
         state = _load_state()
         session = _save_chat_session(state, session, active=True)
         tool_result["session_id"] = session["id"]
-        tool_result["session"] = {{
-            "id": session["id"],
-            "title": session["title"],
-            "memory_uri": session.get("memory_uri", ""),
-            "message_count": len(session.get("chat_history", [])),
-        }}
+        tool_result["session"] = public_chat_session_payload(session)
         _save_state(state)
         return tool_result
     live_ctx = format_live_context_block(_load_state())
@@ -5745,12 +5718,7 @@ def chat(payload: dict):
                 "semantic_mode": sem_mode,
                 "apis_used": ["agent/act"],
                 "session_id": session["id"],
-                "session": {{
-                    "id": session["id"],
-                    "title": session["title"],
-                    "memory_uri": session.get("memory_uri", ""),
-                    "message_count": len(session.get("chat_history", [])),
-                }},
+                "session": public_chat_session_payload(session),
             }}
             if action_result.get("confirm_token"):
                 response["confirm_token"] = action_result["confirm_token"]
@@ -5781,12 +5749,7 @@ def chat(payload: dict):
                 "apis_used": [],
                 "apis_suggested": apis_for_intent(mapped) if mapped else [],
                 "session_id": session["id"],
-                "session": {{
-                    "id": session["id"],
-                    "title": session["title"],
-                    "memory_uri": session.get("memory_uri", ""),
-                    "message_count": len(session.get("chat_history", [])),
-                }},
+                "session": public_chat_session_payload(session),
             }}
     # Retrieval grounded-first fallthrough (Blueprint Phase H): after the regex
     # AND semantic routers miss, answer from the indexed docs/skills corpus with
@@ -5819,12 +5782,7 @@ def chat(payload: dict):
                 "citations": retrieved.get("citations") or [],
                 "apis_used": ["agent/retrieval/search"],
                 "session_id": session["id"],
-                "session": {{
-                    "id": session["id"],
-                    "title": session["title"],
-                    "memory_uri": session.get("memory_uri", ""),
-                    "message_count": len(session.get("chat_history", [])),
-                }},
+                "session": public_chat_session_payload(session),
             }}
     # Cost-tier routing: vision when an image is attached; otherwise escalate
     # Describe-this metadata-only turns to reasoning (not cheap caption fluff).
@@ -5932,12 +5890,7 @@ def chat(payload: dict):
         "input_budget_ok": budget_ok,
         "visual_kind": visual_kind if visual_turn else "",
         "session_id": session["id"],
-        "session": {{
-            "id": session["id"],
-            "title": session["title"],
-            "memory_uri": session.get("memory_uri", ""),
-            "message_count": len(session.get("chat_history", [])),
-        }},
+        "session": public_chat_session_payload(session),
         "skills_used": skill_names,
     }}
 
@@ -6004,7 +5957,13 @@ def _agent_act_tools():
             limit = int(limit)
         except (TypeError, ValueError):
             limit = 10
-        return _act_response_to_dict(artifacts_runs(prefix=str(args.get("prefix") or ""), limit=limit))
+        return _act_response_to_dict(
+            artifacts_runs(
+                prefix=str(args.get("prefix") or ""),
+                limit=limit,
+                q=str(args.get("q") or ""),
+            )
+        )
 
     def _tool_artifacts_run(args):
         run_id = str(args.get("run_id") or "").strip()
@@ -6231,9 +6190,9 @@ def agent_act(payload: dict):
     # Only consume (and clear) the pending gate when the operator actually
     # presents a token — an unrelated turn must not burn a pending confirmation.
     if confirm_token:
-        session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+        session_token, confirm_digest, pending = _consume_agent_confirm_token()
     else:
-        session_token, confirm_digest = "", ""
+        session_token, confirm_digest, pending = "", "", None
     try:
         max_steps = int(body.get("max_steps"))
     except (TypeError, ValueError):
@@ -6255,6 +6214,7 @@ def agent_act(payload: dict):
         confirm_token=confirm_token,
         session_token=session_token,
         confirm_digest=confirm_digest,
+        confirmed_action=pending,
         tier=tier,
         max_steps=max_steps,
         live_context=live_ctx,

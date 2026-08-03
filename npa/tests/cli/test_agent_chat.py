@@ -84,6 +84,36 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
 
 
+def test_public_chat_session_payload_never_exposes_memory_locator() -> None:
+    from npa.cli.agent_chat import public_chat_session_payload
+
+    payload = public_chat_session_payload(
+        {
+            "id": "session-a",
+            "title": "Run analysis",
+            "chat_history": [{"role": "user", "content": "hello"}],
+            "memory_uri": "s3://private-bucket/private-tenant/session-a.json",
+        }
+    )
+
+    assert payload["memory_persisted"] is True
+    assert payload["message_count"] == 1
+    assert "memory_uri" not in payload
+    assert "private-bucket" not in json.dumps(payload)
+
+
+def test_catalog_composition_requires_semantic_or_tool_specific_goal() -> None:
+    from npa.cli.agent_chat import goal_requests_catalog_composition
+
+    assert not goal_requests_catalog_composition("create 2-step sim2real workflow")
+    assert not goal_requests_catalog_composition("generate an example simple workflow YAML")
+    assert goal_requests_catalog_composition("write YAML using the cosmos tool")
+    assert goal_requests_catalog_composition("curate a dataset -> train -> evaluate")
+    assert goal_requests_catalog_composition(
+        "compose workbench.dataset.curate and workbench.rl.policy_train"
+    )
+
+
 def test_match_complex_non_stock_artifact_queries() -> None:
     assert (
         match_chat_intent(

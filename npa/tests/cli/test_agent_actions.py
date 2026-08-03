@@ -134,6 +134,60 @@ def test_confirmation_gate_executes_with_matching_token():
     assert "sim2real_submit" in result["tools_used"]
 
 
+def test_matching_confirmation_authorizes_only_one_attempt_per_loop():
+    submitted = {"count": 0}
+
+    def _submit(args):
+        submitted["count"] += 1
+        return {"run_id": args.get("run_id"), "submit_mode": "agent-local"}
+
+    planner = _scripted_planner(
+        [{"tool": "sim2real_submit", "args": {"run_id": "only-once"}}]
+    )
+    digest = A.action_digest(
+        {"tool": "sim2real_submit", "args": {"run_id": "only-once"}}
+    )
+    result = A.run_action_loop(
+        "Use sim2real_submit exactly once for only-once.",
+        tools={"sim2real_submit": _submit},
+        model_call=planner,
+        confirm_token="tok",
+        session_token="tok",
+        confirm_digest=digest,
+        max_steps=6,
+    )
+
+    assert submitted["count"] == 1
+    assert result["stopped_reason"] == A.STOP_MAX_STEPS
+    assert all(step.get("phase") != "call" for step in result["steps"][1:])
+
+
+def test_confirmed_pending_action_executes_directly_without_replanning():
+    submitted = []
+    action = {"tool": "sim2real_submit", "args": {"run_id": "bound-run"}}
+
+    def _planner_must_not_run(*_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("a confirmed action must not be replanned")
+
+    result = A.run_action_loop(
+        "Use sim2real_submit once for bound-run.",
+        tools={
+            "sim2real_submit": lambda args: submitted.append(args)
+            or {"run_id": args["run_id"], "submit_mode": "agent-local"}
+        },
+        model_call=_planner_must_not_run,
+        confirm_token="token",
+        session_token="token",
+        confirm_digest=A.action_digest(action),
+        confirmed_action={**action, "digest": A.action_digest(action)},
+    )
+
+    assert submitted == [{"run_id": "bound-run"}]
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == ["sim2real_submit"]
+    assert len(result["steps"]) == 1
+
+
 def test_confirmation_gate_rejects_mismatched_token():
     assert not A.confirmation_ok("a", "b")
     assert not A.confirmation_ok("", "b")
@@ -184,7 +238,8 @@ def test_confirm_token_bound_to_action_digest():
 
 
 def test_max_steps_guard_stops_loop():
-    # Planner keeps calling a read-only tool forever; guard must stop it.
+    # Planner keeps calling a read-only tool forever; the first call succeeds and
+    # repeats are rejected until the hard guard stops the loop.
     planner = _scripted_planner([{ "tool": "health", "args": {}}])
     tools = {"health": lambda args: {"ok": True}}
     result = A.run_action_loop(
@@ -192,7 +247,63 @@ def test_max_steps_guard_stops_loop():
     )
     assert result["stopped_reason"] == A.STOP_MAX_STEPS
     call_steps = [s for s in result["steps"] if s.get("phase") == "call"]
-    assert len(call_steps) == 3
+    assert len(call_steps) == 1
+    assert [s.get("replan_reason") for s in result["steps"][1:]] == [
+        "already_completed",
+        "already_completed",
+    ]
+
+
+def test_explicitly_requested_tools_must_run_before_final_answer():
+    planner = _scripted_planner(
+        [
+            {"final": "too early"},
+            {"tool": "insights_query", "args": {}},
+            {"final": "still too early"},
+            {"tool": "artifacts_run", "args": {"run_id": "run-a"}},
+            {"final": "Both requested observations are complete for run-a."},
+        ]
+    )
+    result = A.run_action_loop(
+        "Call insights_query and artifacts_run for run-a, then answer.",
+        tools={
+            "insights_query": lambda args: {"count": 1, "records": [{"run_id": "run-a"}]},
+            "artifacts_run": lambda args: {"run_id": args["run_id"], "artifacts": ["report"]},
+        },
+        model_call=planner,
+    )
+
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == ["insights_query", "artifacts_run"]
+    assert [
+        step.get("replan_reason")
+        for step in result["steps"]
+        if step.get("phase") == "replan"
+    ] == ["required_tools_remaining", "required_tools_remaining"]
+
+
+def test_action_args_are_allowlisted_before_digest_and_execution():
+    captured = []
+    planner = _scripted_planner(
+        [
+            {
+                "tool": "artifacts_runs",
+                "args": {"q": "run-a", "limit": 50, "invented": "digest-evasion"},
+            },
+            {"final": "found run-a"},
+        ]
+    )
+    result = A.run_action_loop(
+        "Use artifacts_runs for run-a.",
+        tools={"artifacts_runs": lambda args: captured.append(args) or {"runs": ["run-a"]}},
+        model_call=planner,
+    )
+
+    assert captured == [{"limit": 50, "q": "run-a"}]
+    assert result["steps"][0]["args"] == captured[0]
+    assert A.normalize_action_args(
+        "artifacts_runs", {"q": "run-a", "unknown": True}
+    ) == {"q": "run-a"}
 
 
 def test_planner_non_json_output_stops_gracefully():
@@ -512,10 +623,10 @@ def test_loop_authors_workflow_with_repair_then_pass():
 
     planner = _scripted_planner(
         [
-            {"tool": "workflow_author", "args": {"goal": "2 step cosmos"}},
+            {"tool": "workflow_author", "args": {"goal": "2 step cosmos", "steps": 2}},
             {
                 "tool": "workflow_author",
-                "args": {"goal": "2 step cosmos with validated tool refs"},
+                "args": {"goal": "2 step cosmos with validated tool refs", "steps": 3},
             },
             {"final": "Here is your workflow:\n```yaml\napiVersion: npa.workflow/v0.0.1\n```"},
         ]
@@ -527,6 +638,31 @@ def test_loop_authors_workflow_with_repair_then_pass():
     )
     assert calls["n"] == 2
     assert "workflow_author" in result["tools_used"]
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_workflow_author_receives_the_complete_operator_goal() -> None:
+    captured = []
+    operator_goal = (
+        "Use workflow_author for three stages: curate a dataset, train a policy, "
+        "then evaluate the policy."
+    )
+    planner = _scripted_planner(
+        [
+            {"tool": "workflow_author", "args": {"goal": "train then evaluate"}},
+            {"final": "authored all three stages"},
+        ]
+    )
+    result = A.run_action_loop(
+        operator_goal,
+        tools={
+            "workflow_author": lambda args: captured.append(args)
+            or {"ok": True, "runnable": True, "states": ["curate", "train", "evaluate"]}
+        },
+        model_call=planner,
+    )
+
+    assert captured[0]["goal"] == operator_goal
     assert result["stopped_reason"] == A.STOP_DONE
 
 
