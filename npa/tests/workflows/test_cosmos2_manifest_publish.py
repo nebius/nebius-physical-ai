@@ -31,7 +31,7 @@ def test_manifest_lands_next_to_the_clip() -> None:
         "schema": "npa.cosmos2.transfer.v1",
         "status": "executed",
         "prompt": "a rainy warehouse",
-        "control_spec": "assets/robot_example/depth/robot_depth_spec.json",
+        "control_spec": "_npa_input_spec_test.json",
     }
 
     uri = cosmos2._publish_manifest(client, payload, "s3://bucket/run/augmented")

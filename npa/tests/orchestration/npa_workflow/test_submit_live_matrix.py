@@ -116,6 +116,24 @@ def test_selected_submit_cases_explicit_empty_filter_fails(monkeypatch) -> None:
         selected_submit_cases()
 
 
+def test_live_submit_wrapper_preserves_explicit_operator_environment() -> None:
+    script = (
+        Path(__file__).resolve().parents[4]
+        / "scripts"
+        / "npa-workflow-submit-live-e2e.sh"
+    ).read_text(encoding="utf-8")
+    snapshot = script.index("declare -A _npa_explicit_env_values=()")
+    cloud_defaults = script.index("source /home/ubuntu/bin/npa-cloud-env.sh")
+    user_defaults = script.index('. "${HOME}/.npa/live-e2e.env"')
+    restore = script.index('for _npa_env_name in "${!_npa_explicit_env_values[@]}"')
+    python_select = script.index('PY="${NPA_LIVE_E2E_PYTHON_BIN:')
+
+    assert snapshot < cloud_defaults < user_defaults < restore < python_select
+    assert "NPA_*|SKYPILOT_DOCKER_*" in script
+    assert 'printf -v "$_npa_env_name"' in script
+    assert 'export "$_npa_env_name"' in script
+
+
 def test_submit_live_matrix_has_cpu_gpu_and_multi() -> None:
     tiers = {case.tier for case in SUBMIT_LIVE_MATRIX}
     assert tiers == {"cpu", "gpu", "multi"}

@@ -188,6 +188,26 @@ def seed_live_workflow_inputs(
             )
         return
 
+    if spec_name == "cosmos2-transfer.yaml":
+        # This is repository-authored procedural media, not an NVIDIA/upstream
+        # sample. The real transfer_execute path downloads it and generates its
+        # edge control on the fly inside the exact image under test.
+        import tempfile
+        from pathlib import Path
+
+        from npa.workbench.cosmos.fixture import generate_fixture
+
+        with tempfile.TemporaryDirectory(prefix="npa-cosmos2-fixture-") as tmp:
+            fixture = generate_fixture(Path(tmp), num_steps=4)
+            video = Path(str(fixture["video_path"]))
+            client.put_object(
+                Bucket=bucket,
+                Key=f"{marker}/input/{video.name}",
+                Body=video.read_bytes(),
+                ContentType="video/mp4",
+            )
+        return
+
     if spec_name in {"sonic-export.yaml", "sonic-export-eval.yaml"}:
         # `npa workbench sonic export` needs a loadable torch policy checkpoint. We do
         # not vendor NVIDIA's gated nvidia/GEAR-SONIC weights, so the operator stages a

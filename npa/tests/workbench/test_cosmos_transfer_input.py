@@ -1,8 +1,8 @@
 """Unit tests for optional input-conditioning in the Cosmos Transfer 2.5 runner.
 
 These cover the code path that makes the augment a REAL augmentation of the
-caller's input clip (edge control computed on-the-fly from ``video_path``) while
-leaving the default bundled-example behavior — and the golden eval — unchanged.
+caller's input clip (edge control computed on-the-fly from ``video_path``). No
+upstream fixture is used.
 No GPU / cosmos runtime is touched; the inference subprocess is mocked.
 """
 
@@ -17,6 +17,7 @@ from npa.workbench.cosmos import transfer as tx
 def _fake_env(monkeypatch, repo: Path):
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda r: Path("/usr/bin/python3"))
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
 
     def fake_run(cmd, *args, **kwargs):
         cwd = Path(kwargs["cwd"])
@@ -71,8 +72,8 @@ def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) ->
     assert res["input_video"] == str(clip)
     assert res["control"] == "edge"
     assert Path(res["video_path"]).exists()
-    # A conditioned spec was written that points at the input clip, not DEFAULT_SPEC.
-    assert res["spec"] != tx.DEFAULT_SPEC
+    # A conditioned spec was written that points at the input clip.
+    assert res["spec"]
     # The synthesized controlnet spec is ephemeral (removed after inference to
     # avoid accumulating in the repo dir); its content is returned for inspection.
     assert not (repo / res["spec"]).exists()
@@ -82,17 +83,40 @@ def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) ->
     assert spec["prompt"] == "foggy morning"
 
 
-def test_run_cosmos_transfer_default_uses_bundled_spec(tmp_path: Path, monkeypatch) -> None:
+def test_run_cosmos_transfer_requires_input_or_explicit_spec(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "repo"
     (repo / "examples").mkdir(parents=True)
     _fake_env(monkeypatch, repo)
     monkeypatch.delenv("COSMOS_TRANSFER_SPEC", raising=False)
     monkeypatch.delenv("COSMOS_TRANSFER_PROMPT", raising=False)
 
-    res = tx.run_cosmos_transfer(run_id="r2")
-    assert res["input_conditioned"] is False
-    assert res["spec"] == tx.DEFAULT_SPEC
+    import pytest
+
+    with pytest.raises(ValueError, match="no upstream media is bundled"):
+        tx.run_cosmos_transfer(run_id="r2")
     assert not list(repo.glob("_npa_input_spec_*.json"))
+
+
+def test_run_cosmos_transfer_refuses_missing_token_before_env_or_download(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    called = False
+
+    def fail_if_called(_repo: Path) -> Path:
+        nonlocal called
+        called = True
+        raise AssertionError("environment/download path must not run")
+
+    monkeypatch.setattr(tx, "ensure_env", fail_if_called)
+    import pytest
+
+    with pytest.raises(RuntimeError, match="no model download was attempted"):
+        tx.run_cosmos_transfer(input_video=str(tmp_path / "missing.mp4"))
+    assert called is False
 
 
 def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatch) -> None:

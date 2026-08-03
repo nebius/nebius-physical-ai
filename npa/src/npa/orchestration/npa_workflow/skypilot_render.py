@@ -1227,9 +1227,8 @@ def build_skypilot_task_doc(
     if image:
         envs["NPA_TASK_IMAGE"] = image.removeprefix("docker:")
     envs.update(isaac_eula_envs(str(scheduler_task.get("tool_ref") or "")))
-    # Opt-in passthrough: when set at submit, propagate Cosmos input-conditioning
-    # knobs to stage pods so the augment conditions on the run's real input clip
-    # (edge control) instead of the bundled example. Unset by default → no change.
+    # Optional tuning passthrough. The first-class transfer_execute toolRef always
+    # conditions on the workflow input; these variables can tune that real path.
     import os as _os_cond
 
     for _cond_var in (

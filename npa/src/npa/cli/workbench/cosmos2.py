@@ -110,11 +110,10 @@ def _variant_parallelism(num_variants: int) -> int:
 
 
 def _materialize_input_clip(src: str) -> str:
-    """Resolve a local path or ``s3://`` URI to a local video file to condition on.
+    """Resolve a local path or ``s3://`` URI to a local conditioning video.
 
-    For an ``s3://`` prefix, downloads it and returns the first video found. Returns
-    "" when nothing usable is present (caller then falls back to the default,
-    bundled-example behavior). Best-effort: never raises on a missing input.
+    Returns an empty string when no usable clip exists; an executing caller that
+    requested conditioning treats that as a hard error.
     """
     import glob as _glob
     import tempfile
@@ -179,8 +178,8 @@ def transfer_cmd(
     condition_on_input: bool = typer.Option(
         False,
         "--condition-on-input",
-        help="Condition on the first video under --input-uri (opt-in). Also enabled by "
-        "NPA_COSMOS_CONDITION_ON_INPUT=1. Default off preserves the bundled-example path.",
+        help="Condition on the first video under --input-uri. Also enabled by "
+        "NPA_COSMOS_CONDITION_ON_INPUT=1.",
     ),
     control: str = typer.Option(
         "edge",
@@ -228,8 +227,8 @@ def transfer_cmd(
         # Data Factory context (paidf `transfer_execute` passes --configs-uri, or the
         # caller opts into input-conditioning): the sampled appearance combo drives
         # the prompt, the augment optionally CONDITIONS on the run's real input clip
-        # (edge control computed on-the-fly — a genuine augmentation of that footage,
-        # not the bundled example), and the result is published in the per-clip layout
+        # (edge control computed on-the-fly — a genuine augmentation of that footage),
+        # and the result is published in the per-clip layout
         # that data_factory curate / build_run_rrd / provenance consume. Opt-in via
         # --input-video, --condition-on-input, or NPA_COSMOS_CONDITION_ON_INPUT=1.
         #
@@ -242,6 +241,11 @@ def transfer_cmd(
         local_input = ""
         if condition_requested:
             local_input = _materialize_input_clip(input_video or input_uri)
+            if not local_input:
+                raise typer.BadParameter(
+                    "input conditioning was requested but no video was found under "
+                    f"{input_video or input_uri!r}"
+                )
         # Env fallbacks let a submit tune conditioning without changing the toolRef argv.
         control = (os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control)
         _cw = os.environ.get("NPA_COSMOS_CONTROL_WEIGHT", "").strip()

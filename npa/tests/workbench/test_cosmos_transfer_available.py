@@ -38,8 +38,7 @@ def test_cosmos_transfer_available_false_on_permission_error(
     def _raise_perm(_py: Path) -> bool:
         raise PermissionError(13, "Permission denied")
 
-    # If _venv_has_torch itself raised, cosmos_transfer_available would crash;
-    # with the fix it returns False and falls through to the uv-availability check.
+    # A missing/broken audited venv is unavailable; runtime package self-healing
+    # is deliberately disabled for reproducibility.
     monkeypatch.setattr(transfer, "_venv_has_torch", lambda _py: False)
-    monkeypatch.setattr(transfer.shutil, "which", lambda _name: None)
     assert transfer.cosmos_transfer_available() is False
