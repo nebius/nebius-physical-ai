@@ -26,11 +26,6 @@ metadata:
   description: >
     Sim2Real raw environment generation sharded across concurrent workers, then an
     80/20 train/held-out split over the combined catalog.
-  # Two templates, one spec: the split template produced the train slice and the actions
-  # template consumed it, but nothing in the raw surface connected them.
-  skypilotTwins:
-    - npa/src/npa/workflows/skypilot/sim2real-envgen-split.yaml
-    - npa/src/npa/workflows/skypilot/sim2real-actions.yaml
 
 config:
   bucket: example-bucket

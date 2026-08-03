@@ -32,8 +32,8 @@ This list is machine-checked against the retiring catalog by
 `npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so a raw template
 cannot quietly appear there.
 
-No raw SkyPilot templates remain in `npa/src/npa/workflows/skypilot/`. Author
-workflow examples as `npa.workflow/v0.0.1` specs under
+No raw SkyPilot templates remain in the retired catalog. Author workflow examples
+as `npa.workflow/v0.0.1` specs under
 `npa/workflows/workbench/npa-workflows/`.
 
 ## Retired Templates

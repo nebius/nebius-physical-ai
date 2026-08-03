@@ -20,7 +20,6 @@ metadata:
   description: >
     Hosted reasoner plans from scene images, a Nebius GPU rolls out a policy, and a
     hosted VLM judges the rollout against the plan.
-  skypilotTwin: npa/src/npa/workflows/skypilot/tokenfactory-scene-to-rollout-judge.yaml
 
 config:
   bucket: example-bucket

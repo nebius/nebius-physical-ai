@@ -3337,3 +3337,42 @@ Relocation guardrails added:
 * `npa/tests/guardrails/test_nurec_examples.py` pins the one-file set, asserts one SkyPilot task
   per file, requires substitution placeholders to remain, and forbids the file from returning to
   `npa/src/npa/workflows/skypilot/`.
+
+## R55. The raw SkyPilot workflow catalog directory is gone
+
+The structural end state is now enforced in code:
+
+* `npa/src/npa/workflows/skypilot/` does not exist.
+* `npa/tests/guardrails/test_skypilot_catalog_retirement.py` is inverted from a shrinking
+  allowlist to an absence guard: the retired directory must not exist, and `npa.workflow` specs
+  must not carry `metadata.skypilotTwin` or `metadata.skypilotTwins`.
+* The `npa.workflow/v0.0.1` JSON schema now makes `metadata` strict, and the lightweight schema
+  validator enforces `additionalProperties: false`, so retired twin metadata fails validation
+  instead of being silently ignored.
+* Raw SkyPilot submit-wrapper coverage now uses `npa/tests/fixtures/skypilot/` or guarded
+  tool-specific examples (`burst`, BYOF profiles, NuRec single-pod), not a shipped workflow
+  catalog.
+
+Focused verification for the structural change:
+
+```text
+252 passed, 1 skipped
+```
+
+Command:
+
+```bash
+PYTHONPATH=$PWD/src .venv/bin/python -m pytest \
+  tests/guardrails/test_skypilot_catalog_retirement.py \
+  tests/guardrails/test_skypilot_readme.py \
+  tests/guardrails/test_shown_workflow_catalog.py \
+  tests/guardrails/test_nurec_examples.py \
+  tests/guardrails/test_byof_profiles.py \
+  tests/guardrails/test_burst_examples.py \
+  tests/guardrails/test_workflow_image_check.py \
+  tests/guardrails/test_isaac_eula_plumbing.py \
+  tests/guardrails/test_skills_index.py \
+  tests/orchestration/npa_workflow/test_skypilot_render.py \
+  tests/orchestration/npa_workflow/test_real_components.py \
+  tests/smoke/test_all_workflow_yamls.py -q
+```

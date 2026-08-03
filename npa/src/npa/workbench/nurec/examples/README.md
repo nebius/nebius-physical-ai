@@ -25,7 +25,7 @@ behavior #234 validated and documented.
   `npa/workflows/workbench/npa-workflows/` as an `npa.workflow/v0.0.1` spec.
 - **Keep `${VAR}` placeholders.** Concrete registry ids, bucket names, run ids,
   access keys, and tokens must never be committed here.
-- This file must never move back under `npa/src/npa/workflows/skypilot/`.
+- This file must never move back under the retired raw SkyPilot workflow catalog.
 - `npa/tests/guardrails/test_nurec_examples.py` pins these rules.
 
 ## Submitting

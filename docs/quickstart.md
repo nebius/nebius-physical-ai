@@ -398,9 +398,9 @@ result = generate_text(
 print(result.generations[0].completion)
 ```
 
-**SkyPilot:** the checked-in, parameterizable templates run the same tools on the
-cluster — see `npa/src/npa/workflows/skypilot/` (for example
-`token-factory-generate.yaml`) and [the workflows guide](workbench-yaml-guide.md).
+**Workflow specs:** the checked-in `npa.workflow/v0.0.1` specs run the same tools on the
+cluster through SkyPilot — see `npa/workflows/workbench/npa-workflows/` (for example
+`tokenfactory-train-triage.yaml`) and [the workflows guide](workbench-yaml-guide.md).
 
 ## 6. Developing and testing npa
 
@@ -470,12 +470,12 @@ This same serverless job is available three coherent ways:
   `npa.serverless_common` env helpers (the `npa.sdk.workbench.cosmos` namespace
   itself currently exposes `check`/`fetch`). See the worked SDK example in
   [docs/sdk/cosmos-serverless.md](sdk/cosmos-serverless.md).
-- **Raw `sky` (GPU-cluster alternative):** the checked-in, parameterizable
-  SkyPilot YAMLs under `npa/src/npa/workflows/skypilot/` (for example
-  `cosmos3-text-to-image-inference.yaml`) run Cosmos on a GPU *cluster* with
-  plain `sky launch`, using `--env`/`--gpu-type` overrides and a BYO `image_id`.
-  This is a different runtime from Serverless AI Jobs (it provisions a cluster
-  and needs network access to the Cosmos framework source + gated weights).
+- **GPU-cluster alternative:** the `npa.workflow/v0.0.1` specs under
+  `npa/workflows/workbench/npa-workflows/` (for example
+  `cosmos3-text-to-image.yaml`) run Cosmos on a GPU cluster through
+  `npa workbench workflow submit`. This is a different runtime from Serverless
+  AI Jobs (it provisions a cluster and needs network access to the Cosmos
+  framework source + gated weights).
 
 Because this launches a real, potentially long GPU job, run it from a durable
 launcher (your job queue / SkyPilot-managed job) rather than an interactive

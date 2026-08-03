@@ -18,10 +18,10 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[5]
 # `workbench.byof.repo` toolRef passes one of these through
 # `--yaml {{config.resource_profile_yaml}}`.
 #
-# They live beside this runner rather than in the retiring SkyPilot catalog
-# (npa/src/npa/workflows/skypilot/) so that catalog can go away without breaking BYOF
-# live runs. Resolved package-relative so a repo checkout and an installed wheel behave
-# the same. See profiles/README.md.
+# They live beside this runner rather than in the retired raw SkyPilot workflow
+# catalog so BYOF live runs keep their pod-shape profiles without reopening a
+# workflow authoring surface. Resolved package-relative so a repo checkout and an
+# installed wheel behave the same. See profiles/README.md.
 BYOF_PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
 DEFAULT_TRAIN_YAML = BYOF_PROFILES_DIR / "isaac-lab-rl-train.yaml"
 RTXPRO_TRAIN_YAML = BYOF_PROFILES_DIR / "isaac-lab-rl-train-rtxpro.yaml"

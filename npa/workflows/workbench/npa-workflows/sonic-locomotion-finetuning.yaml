@@ -4,7 +4,6 @@ kind: Workflow
 metadata:
   name: sonic-locomotion-finetuning
   description: Retarget motion, train SONIC, then score with MJLab.
-  skypilotTwin: npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml
 
 config:
   bucket: example-bucket

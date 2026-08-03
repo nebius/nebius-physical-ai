@@ -19,7 +19,6 @@ metadata:
   description: >
     Generate an image from a text prompt with the Cosmos3 framework on a GPU, verify it is a
     real image, and publish it with a manifest.
-  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml
 
 config:
   bucket: example-bucket

@@ -337,13 +337,11 @@ call a tool endpoint, and write the next S3 URI. The BDD100K pipeline in
 ## Workflow YAML Conventions
 The supported, customer-facing workflow catalog is the declarative
 `npa.workflow` spec set under `npa/workflows/workbench/npa-workflows/`; author
-new customer-facing workflows there. Raw SkyPilot task templates are internal
-runtime resources under `npa/src/npa/workflows/skypilot/` (they must not be
-re-added to the shown `npa/workflows/workbench/` catalog — a guardrail enforces
-this). Add or edit a raw SkyPilot template only when a runner needs a
-SkyPilot-only capability the `npa.workflow` engine cannot express (parallel
-sweeps, burst, the trigger watch-loop, the legacy H100 sim-to-real pipeline).
-Do not add Argo workflows.
+new customer-facing workflows there. Do not add raw SkyPilot task templates to
+the package as a workflow catalog; the old catalog path is guardrail-retired.
+Raw SkyPilot YAML is still accepted by the submit wrapper for customer-owned
+files, test fixtures, and guarded tool-specific examples such as burst or NuRec
+single-pod execution. Do not add Argo workflows.
 
 References:
 
@@ -356,19 +354,16 @@ References:
 
 Current YAML rules:
 
-- Use a multi-document SkyPilot YAML.
-- Start with a workflow document containing `name` and `execution`.
-- Add one task document per stage.
-- Use `resources.cloud: kubernetes`.
-- Use explicit `image_id` placeholders in committed YAML.
-- Put per-run paths, service URLs, and domain schema values in `envs`.
-- Build JSON request bodies with `jq` in `run`.
-- Check `/health` before state-changing HTTP requests.
-- Add a render-only, mock-endpoint, or snapshot validation path.
-
-SkyPilot 0.12.2 does not support self-referencing interpolation inside the same
-`envs` block. The BDD100K label-map block in `docs/workbench-yaml-guide.md` and
-`npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml` is the current pattern.
+- Use `apiVersion: npa.workflow/v0.0.1` and `kind: Workflow`.
+- Put per-run paths, service URLs, and domain schema values in `config`.
+- Add one named state per stage, preferably with a `toolRef`.
+- Use `resources.<profile>` blocks and point states at profiles by name.
+- Express dependencies with `initial`, `needs`, `next`, `parallel`, and
+  `transitions`; the renderer emits the SkyPilot task documents.
+- Keep customer-specific bucket, registry, project, and credential values out of
+  committed YAML.
+- Add `validate-spec`, `plan-spec`, render-only, mock-endpoint, or snapshot
+  validation coverage before live submission.
 
 Training workflows must run headless. Isaac Lab shows the required `--headless`
 flag in `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`.

@@ -21,7 +21,6 @@ metadata:
   description: >
     Standalone Cosmos-Transfer2.5 augmentation: run the real model on a GPU and publish the
     augmented video and frames.
-  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos2-transfer.yaml
 
 config:
   bucket: example-bucket

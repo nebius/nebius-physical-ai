@@ -9,8 +9,8 @@ placeholder is unresolved, and injects a Nebius registry login when the submitte
 IAM token. That is a different capability from the workflow surface — there is no plan, no
 stage graph, no decision artifact, and nothing for a `toolRef` to describe.
 
-These files live here rather than in `npa/src/npa/workflows/skypilot/` so that the retiring
-SkyPilot **workflow catalog** can go away without breaking the burst path. The same reasoning
+These files live here rather than in the retired raw SkyPilot workflow catalog so that burst
+can keep its single-task path without reopening a workflow authoring surface. The same reasoning
 relocated the BYOF resource profiles to `npa/src/npa/workflows/byof/profiles/` (see
 `DESIGN.md` §R10).
 

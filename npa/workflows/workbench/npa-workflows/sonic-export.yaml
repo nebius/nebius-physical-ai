@@ -4,7 +4,6 @@ kind: Workflow
 metadata:
   name: sonic-export
   description: Train a SONIC locomotion policy, then export it to ONNX.
-  skypilotTwin: npa/src/npa/workflows/skypilot/sonic-export.yaml
 
 config:
   bucket: example-bucket

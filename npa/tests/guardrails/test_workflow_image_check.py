@@ -28,14 +28,11 @@ def test_workflow_image_extraction_finds_skypilot_images() -> None:
     assert any("npa-sonic" in image for image in images)
 
 
-def test_every_remaining_catalog_template_still_yields_an_image() -> None:
-    """Whatever survives in the catalog must still be readable by the image check."""
+def test_retired_catalog_does_not_reappear_for_image_check() -> None:
+    """Use fixtures for image extraction; do not revive the retired catalog."""
 
     workflow_dir = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
-    templates = sorted(workflow_dir.glob("*.yaml"))
-    if not templates:  # the end state this retirement is heading for
-        return
-    assert image_refs_for_workflows(templates)
+    assert not workflow_dir.exists()
 
 
 def test_registry_placeholder_resolution_is_local_check_ready() -> None:
