@@ -153,7 +153,7 @@ automatically; the table tells you which.
 
 - **Skill:** `skills/workflows/neural-reconstruction/SKILL.md` — recipe selection,
   the pose-edge derivation, container quirks, capability routing, limitations.
-- **Single-pod variant:** `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml`
+- **Single-pod variant:** `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml`
   runs all six stages in one pod sharing `/tmp`, so it needs no S3 handoff. The
   declarative spec above gives every stage its own pod, which is why the NCore
   sequence and USDZ travel through S3.

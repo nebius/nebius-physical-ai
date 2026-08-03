@@ -7,7 +7,6 @@ metadata:
     Generate a Physical AI image with the Cosmos 3 omni model in the npa-cosmos3
     container. The image ships the framework but no weights, so the run needs an
     HF_TOKEN secret to fetch the checkpoint at runtime.
-  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos3-generate.yaml
 
 config:
   bucket: example-bucket

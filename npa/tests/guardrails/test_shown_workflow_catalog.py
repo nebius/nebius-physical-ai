@@ -1,10 +1,9 @@
 """Guardrail: the shown workbench workflow catalog is npa.workflow-only.
 
-SkyPilot stays the execution engine, but the raw SkyPilot task templates were
-moved out of the shown catalog (``npa/workflows/workbench/``) into internal
-package resources (``npa/src/npa/workflows/skypilot/``). This guardrail keeps
-the catalog from regressing: no re-created ``skypilot/`` catalog directory and
-every shown spec must be a declarative ``npa.workflow`` spec.
+SkyPilot stays the execution engine, but the raw SkyPilot workflow catalog is
+retired. This guardrail keeps the shown catalog from regressing: no re-created
+``skypilot/`` catalog directory and every shown spec must be a declarative
+``npa.workflow`` spec.
 """
 
 from __future__ import annotations
@@ -23,9 +22,9 @@ def test_skypilot_catalog_dir_is_not_reintroduced() -> None:
     forbidden = WORKBENCH / "skypilot"
     assert not forbidden.exists(), (
         "The raw SkyPilot task catalog must not live in the shown workbench "
-        "catalog. Internal SkyPilot task templates belong under "
-        "npa/src/npa/workflows/skypilot/; author npa.workflow specs in "
-        "npa/workflows/workbench/npa-workflows/ instead."
+        "catalog. Author npa.workflow specs in npa/workflows/workbench/"
+        "npa-workflows/ instead; raw SkyPilot YAML belongs only in guarded "
+        "tool-specific examples or test fixtures."
     )
 
 

@@ -26,7 +26,6 @@ metadata:
   description: >
     Headless Isaac Lab Franka rollout renders RGB frames on a GPU, then a hosted Cosmos3
     reasoner turns them into a step-by-step manipulation plan.
-  skypilotTwin: npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml
 
 config:
   bucket: example-bucket

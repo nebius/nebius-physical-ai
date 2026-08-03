@@ -1,7 +1,6 @@
 """Guardrail: BYOF profiles stay *resource profiles*, not workflow templates.
 
-They were moved out of the retiring SkyPilot catalog
-(``npa/src/npa/workflows/skypilot/``) because they are reached *through* the
+They were moved out of the retiring raw SkyPilot workflow catalog because they are reached *through* the
 ``npa.workflow`` surface — ``byof.yaml``'s ``workbench.byof.repo`` toolRef passes one
 through ``--yaml {{config.resource_profile_yaml}}``. This keeps them from quietly
 becoming a second workflow catalog in a new location.

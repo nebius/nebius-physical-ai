@@ -24,7 +24,7 @@
 #   finalize    reports/final.json aggregate
 #
 # Submit (the wrapper substitutes ${...} placeholders; SkyPilot 0.12.2 does not):
-#   npa workbench workflow submit npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml \
+#   npa workbench workflow submit npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml \
 #     --run-id neural-reconstruction-<scene>-<yyyymmdd>t<hhmmss>z \
 #     --var NPA_NUREC_IMAGE=nvcr.io/nvidia/nre/nre-ga:26.04 \
 #     --var NPA_NUREC_RUN_ID=<run-id> \

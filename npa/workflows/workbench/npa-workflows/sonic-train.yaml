@@ -4,7 +4,6 @@ kind: Workflow
 metadata:
   name: sonic-train
   description: Train or smoke-validate a SONIC locomotion policy.
-  skypilotTwin: npa/workflows/workbench/npa-workflows/sonic-train.yaml
 
 config:
   bucket: example-bucket

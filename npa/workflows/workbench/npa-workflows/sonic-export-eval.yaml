@@ -4,7 +4,6 @@ kind: Workflow
 metadata:
   name: sonic-export-eval
   description: Train a SONIC policy, export it to ONNX, then evaluate the export.
-  skypilotTwin: npa/src/npa/workflows/skypilot/sonic-export-eval.yaml
 
 config:
   bucket: example-bucket

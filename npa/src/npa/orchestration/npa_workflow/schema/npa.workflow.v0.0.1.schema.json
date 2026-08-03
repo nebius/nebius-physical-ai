@@ -13,8 +13,11 @@
       "type": "object",
       "properties": {
         "name": { "type": "string" },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "namespace": { "type": "string" },
+        "labels": { "type": "object" }
       },
+      "additionalProperties": false,
       "required": ["name"]
     },
     "config": { "type": "object" },

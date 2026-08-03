@@ -389,10 +389,9 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
-      # The raw SkyPilot task is not an npa.workflow spec, so it is smoked as one.
-      - type: workflow_yaml
+      - type: npa_workflow_yaml
         paths:
-          - npa/src/npa/workflows/skypilot/cosmos3-generate.yaml
+          - npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
       - type: cli_help
         args: ["workbench", "cosmos3", "generate", "--help"]
         contains: "guardrails"
@@ -401,7 +400,7 @@ skills:
     when_to_use: "Write, validate, or submit an npa.workflow/v0.0.1 YAML that runs Cosmos 3 generation (the declarative spec, not the SkyPilot template)."
     path: skills/workflows/cosmos3-npa-workflow/SKILL.md
     smoke:
-      - type: workflow_yaml
+      - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
       - type: file_exists
@@ -554,7 +553,7 @@ skills:
         contains: "config-name"
       - type: workflow_yaml
         paths:
-          - npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml
+          - npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml

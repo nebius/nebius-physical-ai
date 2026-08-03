@@ -60,10 +60,10 @@ selected through `NPA_COSMOS3_*_TOKEN_ENV`.
    npa/.venv/bin/python - <<'PY'
    import yaml
    from pathlib import Path
-   p = Path("npa/src/npa/workflows/skypilot/cosmos3-text-to-image-inference.yaml")
+   p = Path("npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml")
    doc = yaml.safe_load(p.read_text())
-   print(doc["name"])
-   print(doc["envs"]["NPA_COSMOS3_NO_GUARDRAILS"] == "")
+   print(doc["metadata"]["name"])
+   print(doc["states"][doc["initial"]]["toolRef"])
    PY
    ```
 

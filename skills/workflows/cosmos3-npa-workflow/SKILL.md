@@ -12,21 +12,15 @@ Use this skill when the user wants a **Cosmos 3 workflow** they can submit with
 it. For the raw SkyPilot template, or for guardrail/prompt semantics, use
 `skills/workflows/cosmos3-inference/SKILL.md` instead.
 
-## npa.workflow YAML Is Not SkyPilot YAML
+## npa.workflow YAML Is The Supported Surface
 
-Two different files run Cosmos 3 generation. Do not mix them up, and do not
-answer a request for one with the other.
+The supported Cosmos 3 generation workflow is
+`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml`. The raw SkyPilot
+template was retired after the spec twin reached a terminal live success in the
+submit matrix, so do not recreate a SkyPilot task template for this path.
 
-| | npa.workflow spec (this skill) | SkyPilot template |
-| --- | --- | --- |
-| Path | `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` | `npa/src/npa/workflows/skypilot/cosmos3-generate.yaml` |
-| First line | `apiVersion: npa.workflow/v0.0.1` | `name: cosmos3-generate` |
-| Shape | `config` / `resources` / `states` with a `toolRef` | `resources` / `envs` / `run` shell script |
-| Submitted with | `npa workbench workflow submit` | `sky launch` |
-| Image | resolved automatically from the toolRef | `image_id` must be rendered by the submitter |
-
-The npa.workflow spec is the preferred surface: it resolves the container image,
-carries run-scoped S3 output URIs, and records declared outputs.
+The npa.workflow spec resolves the container image, carries run-scoped S3 output
+URIs, and records declared outputs.
 
 ## Reference Spec
 
@@ -39,7 +33,6 @@ kind: Workflow
 
 metadata:
   name: cosmos3-generate
-  skypilotTwin: npa/src/npa/workflows/skypilot/cosmos3-generate.yaml
 
 config:
   bucket: example-bucket

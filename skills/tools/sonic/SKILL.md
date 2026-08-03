@@ -38,8 +38,9 @@ workflow composition with retargeting or MJLab.
   `sonic-export-eval.yaml`, `sonic-locomotion-finetuning.yaml`). Submit them with
   `npa workbench workflow submit`. `sonic export` / `sonic eval` accept `s3://`
   checkpoints, ONNX policies and outputs, so no staging glue is needed.
-  Only `sonic-train-standalone.yaml` and `sonic-locomotion-finetuning.yaml` still
-  have a raw SkyPilot template under `npa/src/npa/workflows/skypilot/`.
+  Raw SkyPilot coverage for the submit wrapper lives in
+  `npa/tests/fixtures/skypilot/`; shipped SONIC workflow authoring stays on the
+  `npa.workflow` specs.
 
 ## Routing And Validation
 

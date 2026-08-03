@@ -3,7 +3,7 @@
 Cosmos 3 is NVIDIA's omni model: one checkpoint that both reasons and generates.
 This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a
-SkyPilot workflow that all share one implementation.
+declarative `npa.workflow` spec that all share one implementation.
 
 | Piece | Path |
 | --- | --- |
@@ -11,7 +11,7 @@ SkyPilot workflow that all share one implementation.
 | Runner (single source of truth) | `npa/src/npa/workbench/cosmos/generate.py` |
 | CLI | `npa workbench cosmos3 generate` |
 | SDK | `npa.sdk.workbench.cosmos3.generate(...)` |
-| Workflow | `npa/src/npa/workflows/skypilot/cosmos3-generate.yaml` |
+| Workflow | `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` |
 | `npa.workflow` toolRef | `workbench.cosmos3.generate` |
 | Golden eval | `npa.smoke.test_cosmos3_generate_functional` (`gpu-gated`) |
 
@@ -117,38 +117,7 @@ result = cosmos3.generate(
 print(result["output_kind"], result["artifact_uri"])
 ```
 
-### SkyPilot
-
-The checked-in YAML is a **template**, like the other `cosmos3-*` workflows:
-SkyPilot does not expand `${...}` inside `resources.image_id`, so render that one
-variable before launching. Everything under `envs:` can still be set with
-`--env`.
-
-```bash
-export NPA_COSMOS3_IMAGE=<your-registry>/npa-cosmos3:1.2.2-cu130
-# Restrict envsubst to the image var so the run: script's own bash parameter
-# expansions (${VAR:+--flag}) survive.
-envsubst '${NPA_COSMOS3_IMAGE}' \
-  < npa/src/npa/workflows/skypilot/cosmos3-generate.yaml > /tmp/cosmos3-generate.yaml
-
-sky launch -y --infra kubernetes/<context> -c cosmos3-generate \
-  --env NPA_COSMOS3_PROMPT="a robot arm sorting colored blocks" \
-  --env NPA_COSMOS3_OUTPUT_URI=s3://<bucket>/cosmos3/<run-id>/ \
-  --env HF_TOKEN --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
-  /tmp/cosmos3-generate.yaml
-```
-
-The YAML requests `H100:1` and fails fast with an explicit message if no HF token
-is present, rather than discovering it after the pod is scheduled. Pass
-`--gpus <type>:1` to run on a different accelerator.
-
-SkyPilot's Kubernetes bootstrap replaces the image entrypoint with its own shell
-and installs an SSH runtime as the pod user, so the image ships `sudo` and
-`openssh-server` for it. Without them a workbench image cannot host a SkyPilot
-k8s task (it dies with `sudo: command not found`). Do not clear the workflow image
-pin as a workaround for Cosmos 3 submits; fix the image bootstrap contract instead.
-
-### Declarative npa.workflow
+### Workflow
 
 `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` runs the same stage
 through the `workbench.cosmos3.generate` toolRef, which resolves to the
@@ -157,7 +126,7 @@ through the `workbench.cosmos3.generate` toolRef, which resolves to the
 ```bash
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml \
   --infra k8s/<context> --registry <your-registry> \
-  --var bucket=<bucket> --runtime \
+  --var bucket=<bucket> \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -165,6 +134,17 @@ npa workbench workflow submit npa/workflows/workbench/npa-workflows/cosmos3-gene
 it the stage fails fast on the credential preflight. The submit path also refuses
 to run when the task image's registry does not match the Docker credentials in
 `SKYPILOT_DOCKER_SERVER`.
+
+The older raw SkyPilot template for this path was retired after this spec reached
+a terminal live success through the submit matrix. Keep new workflow authoring on
+the `npa.workflow/v0.0.1` surface.
+
+SkyPilot still launches the rendered task under the hood. Its Kubernetes
+bootstrap replaces the image entrypoint with its own shell and installs an SSH
+runtime as the pod user, so the image ships `sudo` and `openssh-server` for it.
+Without them a workbench image cannot host a SkyPilot k8s task (it dies with
+`sudo: command not found`). Do not clear the workflow image pin as a workaround
+for Cosmos 3 submits; fix the image bootstrap contract instead.
 
 ## View the result in the NPA agent
 
@@ -193,14 +173,13 @@ The Runs & Artifacts panel also finds the run by name (`cosmos3-`), and
 ## Validated on real GPUs
 
 Verified on `npa-rtxpro-mk8s` (NVIDIA RTX PRO 6000 Blackwell Server Edition,
-sm_120) with `nvidia/Cosmos3-Nano`, in all three entry paths. Each produced a
-non-blank 960×960 JPEG in S3 with `guardrails: true` and `weights_baked: false`:
+sm_120) with `nvidia/Cosmos3-Nano`. The workflow path produced a non-blank
+960x960 JPEG in S3 with `guardrails: true` and `weights_baked: false`:
 
 | Path | Result |
 | --- | --- |
 | Direct Kubernetes Job (image args) | generated + published |
-| `cosmos3-generate.yaml` via `sky launch` | job SUCCEEDED, generated + published |
-| `cosmos3-generate` npa.workflow via `workflow submit --runtime` | wave succeeded, 4m10s total (3m26s in-job) |
+| `cosmos3-generate` npa.workflow via `workflow submit` | job 338 SUCCEEDED; `generated/generate.json` plus `generated/vision.jpg` |
 
 Notes from those runs: the cu130 wheel set works on sm_120 (no NATTEN/flash-attn
 kernel gap surfaced for text2image); the guardrail model, `Cosmos3-Nano`, and the
@@ -219,4 +198,4 @@ before generation starts.
 
 For access checks before a run (`gh`/HF/NGC reachability) see
 `npa workbench cosmos check`. For the un-baked, clone-at-job-time text-to-image
-smoke, see `cosmos3-text-to-image-inference.yaml`.
+smoke, use `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml`.

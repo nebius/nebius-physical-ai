@@ -24,7 +24,6 @@ metadata:
   description: >
     LeRobot policy rollout on a Nebius GPU, then a hosted VLM judges the rendered
     episodes with no GPU on the scoring side.
-  skypilotTwin: npa/src/npa/workflows/skypilot/tokenfactory-rollout-judge.yaml
 
 config:
   bucket: example-bucket

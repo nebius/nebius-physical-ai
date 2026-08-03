@@ -196,6 +196,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "cosmos3-generate.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3",
+        notes=(
+            "Runs the real Cosmos 3 omni-model generate path in the npa-cosmos3 image. "
+            "The image contains the framework but no weights, so HF_TOKEN is required "
+            "for the runtime checkpoint and guardrail downloads."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos2-transfer.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),

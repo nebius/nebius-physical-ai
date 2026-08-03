@@ -188,7 +188,7 @@ Launch with both credential sets as secrets:
 
 ```bash
 sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
-  --secret AWS_SECRET_ACCESS_KEY npa/src/npa/workflows/skypilot/<your>.yaml
+  --secret AWS_SECRET_ACCESS_KEY ./workflows/<your-sky-task>.yaml
 ```
 
 Worked examples: `npa-workflows/tokenfactory-rollout-judge-combo.yaml` (GPU rollout → VLM judge) and

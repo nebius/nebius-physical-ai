@@ -33,16 +33,13 @@ Authoring skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with
   older examples.
 
-### SkyPilot task templates (internal)
+### Raw SkyPilot YAML
 
-The raw SkyPilot task YAMLs that the `npa.workflow` engine and the
-`npa/scripts/run_*.py` wrappers render and launch live under
-`npa/src/npa/workflows/skypilot/` as internal, package-owned runtime resources.
-They are not the shown catalog and should not be authored by customers; the
-supported entry point is always an `npa.workflow` spec above. Their per-file
-reference notes (S3 I/O, GPU targets, HF/NGC rights, raw `sky launch` caveats)
-are documented in
-[`npa/src/npa/workflows/skypilot/README.md`](../../src/npa/workflows/skypilot/README.md).
+The retired raw SkyPilot workflow catalog is gone. The `npa.workflow` engine
+still renders specs to SkyPilot at submit time, and `npa workbench workflow
+submit` still accepts customer-owned raw SkyPilot YAML, but shipped raw YAMLs
+must live only in guarded, tool-specific homes such as burst examples, BYOF
+resource profiles, or the NuRec single-pod example.
 
 ## Sim-To-Real
 

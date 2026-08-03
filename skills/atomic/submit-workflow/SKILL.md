@@ -29,11 +29,11 @@ SkyPilot submission behavior.
 - CLI: `npa workbench workflow --help` and tool-specific `workflow` commands.
 - SDK: use shared workflow submission helpers rather than shelling out from
   application logic.
-- YAML: prefer `npa.workflow/v0.0.1` specs under
-  `npa/workflows/workbench/npa-workflows/` for authoring. `npa workbench
-  workflow submit` accepts those specs (plans → renders → SkyPilot) and still
-  accepts raw SkyPilot YAML under `npa/src/npa/workflows/skypilot/` for
-  operator/runtime and SkyPilot-only exceptions (parallel, burst, runbook).
+- YAML: author shipped workflows as `npa.workflow/v0.0.1` specs under
+  `npa/workflows/workbench/npa-workflows/`. `npa workbench workflow submit`
+  accepts those specs (plans, renders, then launches SkyPilot) and still accepts
+  raw SkyPilot YAML supplied by an operator or by guarded single-task example
+  directories.
 
 ## Live submit prerequisites (real cluster)
 

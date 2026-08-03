@@ -3265,3 +3265,114 @@ Two lessons worth keeping, both cheap:
   not quietly stop checking anything. This PR's tally test is the same shape.
 * **A rule belongs where the decision is made.** Scanning documents for a marker works until the
   documents move; deriving the set from the code that routes the work does not.
+
+## R53. `cosmos3-generate.yaml` retired after its spec twin ran live
+
+The raw template added by #235 is gone. Its twin
+`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` now has a live-submit-matrix case
+(`tier="gpu"`, `image_tool="cosmos3"`) and reached terminal success through the same harness used
+for the rest of this retirement work:
+
+```bash
+PYTHONPATH=$PWD/src \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=gpu \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=cosmos3-generate.yaml \
+.venv/bin/python -m pytest \
+  tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal \
+  -q -s --tb=short
+```
+
+**Succeeded:** job **338**, run id `npa-wf-gpu-cosmos3-generate-601c8f51`, terminal
+`SUCCEEDED` (`1 passed in 335.39s`). The run used the existing live environment and the
+operator's credentials; registry, bucket, and token values are not committed here.
+
+Artifacts under the run prefix:
+
+| Key | What it contained |
+| --- | --- |
+| `generated/generate.json` | `status="executed"`, `output_kind="image"`, `output_bytes=260189`, `guardrails=true`, `hf_auth="configured"`, `weights_baked=false` |
+| `generated/vision.jpg` | 260,189 byte generated JPEG, 960x960, RGB extrema `(0,255)` on all channels (not blank/flat) |
+| `npa-workflow/manifest.json`, `npa-workflow/status.json` | workflow submit bookkeeping |
+
+The failures before success were the useful part:
+
+* No job id: the first two attempts failed before submit because the task image resolved in the
+  us-central1 mirror while `SKYPILOT_DOCKER_SERVER` authenticated to eu-north1. One retry with
+  `${NPA_REGISTRY}` did not help because this environment's `NPA_REGISTRY` also points at the
+  mirror.
+* Job **337**, run id `npa-wf-gpu-cosmos3-generate-478ccec0`: after forcing the primary
+  eu-north1 registry, SkyPilot repeatedly hit `ErrImagePull` / `403 Forbidden` pulling
+  `npa-cosmos3:1.2.2-cu130` from that registry and the job was cancelled. The next run used the
+  mirror registry with `SKYPILOT_DOCKER_SERVER` aligned to the same host.
+
+Preflight that stayed green before the live run:
+
+* Renderer/smoke: `152 passed in 27.52s`
+* Plan-only submit matrix: `42 passed in 8.99s`
+
+## R54. `nurec-reconstruct.yaml` relocated after the #234 author decision
+
+The raw NuRec/NRE task was **not deleted**. It moved from the retiring catalog to:
+
+```text
+npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml
+```
+
+Decision provenance: PR #234 was authored by `timothy-le7` and explicitly shipped both forms:
+
+* a single-pod SkyPilot task, live run `neural-reconstruction-struktur28-20260731t051728z`,
+  terminal success with a renderable USDZ, novel views, `reports/sim2real.rrd`, and real
+  metrics (`PSNR 31.24 / SSIM 0.832 / LPIPS 0.268`);
+* the declarative `npa.workflow` twin, live runs `nurec-npa-20260731t184541z`,
+  `nurec-npa-20260801t171139z`, and `nurec-npa-20260801t220210z`, all end-to-end successful.
+
+The same PR records the behavioral distinction: the declarative spec runs each state in its own
+pod and must hand the NCore sequence and reconstruction through S3, while the single-pod task
+shares `/tmp`. That is a separate execution mode, not an unverified duplicate.
+
+Relocation guardrails added:
+
+* `npa/src/npa/workbench/nurec/examples/README.md` documents that this is a single-pod example,
+  not a workflow authoring catalog.
+* `npa/tests/guardrails/test_nurec_examples.py` pins the one-file set, asserts one SkyPilot task
+  per file, requires substitution placeholders to remain, and forbids the file from returning to
+  `npa/src/npa/workflows/skypilot/`.
+
+## R55. The raw SkyPilot workflow catalog directory is gone
+
+The structural end state is now enforced in code:
+
+* `npa/src/npa/workflows/skypilot/` does not exist.
+* `npa/tests/guardrails/test_skypilot_catalog_retirement.py` is inverted from a shrinking
+  allowlist to an absence guard: the retired directory must not exist, and `npa.workflow` specs
+  must not carry `metadata.skypilotTwin` or `metadata.skypilotTwins`.
+* The `npa.workflow/v0.0.1` JSON schema now makes `metadata` strict, and the lightweight schema
+  validator enforces `additionalProperties: false`, so retired twin metadata fails validation
+  instead of being silently ignored.
+* Raw SkyPilot submit-wrapper coverage now uses `npa/tests/fixtures/skypilot/` or guarded
+  tool-specific examples (`burst`, BYOF profiles, NuRec single-pod), not a shipped workflow
+  catalog.
+
+Focused verification for the structural change:
+
+```text
+252 passed, 1 skipped
+```
+
+Command:
+
+```bash
+PYTHONPATH=$PWD/src .venv/bin/python -m pytest \
+  tests/guardrails/test_skypilot_catalog_retirement.py \
+  tests/guardrails/test_skypilot_readme.py \
+  tests/guardrails/test_shown_workflow_catalog.py \
+  tests/guardrails/test_nurec_examples.py \
+  tests/guardrails/test_byof_profiles.py \
+  tests/guardrails/test_burst_examples.py \
+  tests/guardrails/test_workflow_image_check.py \
+  tests/guardrails/test_isaac_eula_plumbing.py \
+  tests/guardrails/test_skills_index.py \
+  tests/orchestration/npa_workflow/test_skypilot_render.py \
+  tests/orchestration/npa_workflow/test_real_components.py \
+  tests/smoke/test_all_workflow_yamls.py -q
+```

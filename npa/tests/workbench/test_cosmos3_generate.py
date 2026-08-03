@@ -22,9 +22,9 @@ from npa.workbench.cosmos.generate import (
     run_cosmos3_generate,
 )
 
-WORKFLOW_YAML = (
+SPEC_YAML = (
     Path(__file__).resolve().parents[2]
-    / "src/npa/workflows/skypilot/cosmos3-generate.yaml"
+    / "workflows/workbench/npa-workflows/cosmos3-generate.yaml"
 )
 
 
@@ -322,17 +322,16 @@ def test_run_generate_fails_when_no_artifact_is_produced(tmp_path: Path) -> None
         )
 
 
-def test_generate_workflow_yaml_runs_the_real_cli_with_guardrails_on() -> None:
-    doc = yaml.safe_load(WORKFLOW_YAML.read_text(encoding="utf-8"))
+def test_generate_spec_runs_the_real_toolref() -> None:
+    doc = yaml.safe_load(SPEC_YAML.read_text(encoding="utf-8"))
 
-    assert doc["name"] == "cosmos3-generate"
-    # image_id must stay a variable so operators point at their own registry.
-    assert doc["resources"]["image_id"] == "docker:${NPA_COSMOS3_IMAGE}"
-    assert doc["envs"]["NPA_COSMOS3_NO_GUARDRAILS"] == ""
-    run = doc["run"]
-    assert "npa workbench cosmos3 generate" in run
-    assert "--no-guardrails}" in run  # expanded only when the env is set
-    assert "HF_TOKEN" in run
+    assert doc["apiVersion"] == "npa.workflow/v0.0.1"
+    assert doc["metadata"]["name"] == "cosmos3-generate"
+    state = doc["states"]["generate"]
+    assert state["toolRef"] == "workbench.cosmos3.generate"
+    assert state["resources"] == "gpu"
+    assert state["terminal"] is True
+    assert doc["config"]["output_uri"].endswith("/generated/")
 
 
 def test_video_mode_prefers_the_clip_over_a_larger_poster_frame(tmp_path: Path) -> None:

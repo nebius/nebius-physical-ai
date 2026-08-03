@@ -37,7 +37,7 @@ Load this skill when the user wants to:
 - turn a real sensor capture (photographs, multi-camera clips) into a renderable
   3D Gaussian scene and render **novel views** from it;
 - run, modify, or debug `npa workbench nurec` or
-  `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml`;
+  `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml`;
 - work out why an NCore sequence fails to load in NRE;
 - choose the GPU for a reconstruction or rendering job;
 - make a reconstruction run show up in the NPA agent's Rerun panel.
@@ -98,7 +98,7 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 | NCore rig-pose derivation | `npa/src/npa/workbench/nurec/ncore_rig.py` |
 | CLI | `npa/src/npa/cli/nurec/__init__.py` |
 | SDK | `npa.sdk.workbench.nurec` (`check`, `fetch`, `reconstruct`, `render`, `visualize`, `finalize`, `status`); the framework-free API is re-exported from `npa.workbench.nurec` |
-| SkyPilot workflow | `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml` |
+| SkyPilot workflow | `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml` |
 | Declarative twin | `npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml` |
 | Rerun recording | `npa.workflows.data_factory_viz.build_run_rrd` |
 
@@ -339,7 +339,7 @@ npa workbench nurec check --require-gpu --output json
 # 2. Submit the real GPU workflow. The wrapper substitutes ${...}; SkyPilot 0.12.2
 #    does not interpolate them itself.
 RUN_ID="neural-reconstruction-struktur28-$(date -u +%Y%m%dt%H%M%S)z"
-npa workbench workflow submit npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml \
+npa workbench workflow submit npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml \
   --run-id "$RUN_ID" \
   --infra k8s/<rt-core-context> \
   --var NPA_NUREC_IMAGE=nvcr.io/nvidia/nre/nre-ga:26.04 \

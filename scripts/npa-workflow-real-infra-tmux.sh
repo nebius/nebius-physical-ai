@@ -158,19 +158,17 @@ print('scheduler tasks', len(r['scheduler']['tasks']))
     FAILED=1
   fi
 
-  echo "--- [6/6] BDD100K + skypilot parse ---"
+  echo "--- [6/6] BDD100K + retired SkyPilot catalog absence ---"
   if ! "${PY}" -m pytest npa/tests/workflows/test_bdd100k_pipeline.py -q --timeout=120; then
     FAILED=1
   fi
   if ! "${PY}" - <<'PY'; then
 from pathlib import Path
-import yaml
 
 root = Path("npa/src/npa/workflows/skypilot")
-for path in sorted(root.glob("*.yaml")):
-    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d is not None]
-    assert docs and docs[0].get("name"), path.name
-print(f"skypilot parse OK ({len(list(root.glob('*.yaml')))} files)")
+if root.exists():
+    raise SystemExit(f"retired SkyPilot catalog came back: {root}")
+print("retired SkyPilot catalog absent")
 PY
     FAILED=1
   fi

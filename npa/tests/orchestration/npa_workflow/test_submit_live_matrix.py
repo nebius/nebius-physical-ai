@@ -135,6 +135,19 @@ def test_physical_ai_data_factory_registered_for_live_infra() -> None:
     assert helpers.assume_decision_for(spec) == "promote_checkpoint"
 
 
+def test_cosmos3_generate_registered_for_live_infra() -> None:
+    """The Cosmos 3 generate twin is the live proof for retiring its raw template."""
+
+    case = next((c for c in SUBMIT_LIVE_MATRIX if c.spec == "cosmos3-generate.yaml"), None)
+
+    assert case is not None, "cosmos3-generate.yaml missing from SUBMIT_LIVE_MATRIX"
+    assert case.tier == "gpu"
+    assert case.image_tool == "cosmos3"
+    assert {"HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} <= set(case.secret_envs)
+    assert not case.plan_only
+    assert not case.runtime
+
+
 # --------------------------------------------------------------- runtime cases
 
 

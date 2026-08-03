@@ -6,10 +6,10 @@ description: Use when working on NPA reference SkyPilot YAMLs, runner scripts, c
 # Workbench Reference Workflows
 
 > The supported, customer-facing catalog is the `npa.workflow` spec set under
-> `npa/workflows/workbench/npa-workflows/`. The raw SkyPilot task YAMLs below are
-> internal runtime templates relocated to `npa/src/npa/workflows/skypilot/`; they
-> back the `run_*.py` wrappers and SkyPilot-only capabilities, and must not be
-> re-added to the shown `npa/workflows/workbench/` catalog (guardrail-enforced).
+> `npa/workflows/workbench/npa-workflows/`. The old raw SkyPilot task catalog has
+> no remaining templates. Raw SkyPilot YAMLs may still exist only as guarded
+> tool-specific examples or resource profiles, not as workflow authoring
+> surfaces.
 
 ## When To Use
 
@@ -18,8 +18,8 @@ artifact contracts, and customer-adaptable pipeline implementations.
 
 ## Procedure
 
-1. Start from the checked-in SkyPilot YAML under
-   `npa/src/npa/workflows/skypilot/`.
+1. Start from the checked-in `npa.workflow` spec under
+   `npa/workflows/workbench/npa-workflows/`.
 2. Keep the runner thin. Python runners should materialize config, call the
    workflow submission helper, and report artifacts; they should not duplicate
    YAML orchestration logic.
@@ -28,16 +28,13 @@ artifact contracts, and customer-adaptable pipeline implementations.
 
 ## Current Reference YAMLs
 
-This list is machine-checked against the directory by
-`npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so it cannot drift as
-templates retire.
+This list is machine-checked against the retiring catalog by
+`npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so a raw template
+cannot quietly appear there.
 
-  materialized views, training, and evaluation.
-- `cosmos3-generate.yaml`: single-task Cosmos 3 omni-model generation in the
-  `npa-cosmos3` image. Its npa.workflow twin of the same name is the declarative form.
-- `nurec-reconstruct.yaml`: single-pod NuRec/NRE neural reconstruction. Its
-  npa.workflow twin of the same name runs each state in its own pod and hands
-  artifacts over through S3.
+No raw SkyPilot templates remain in the retired catalog. Author workflow examples
+as `npa.workflow/v0.0.1` specs under
+`npa/workflows/workbench/npa-workflows/`.
 
 ## Retired Templates
 
@@ -91,6 +88,14 @@ These raw templates were retired once their `npa.workflow` spec had a live run
   `npa-workflows/cosmos-fetch.yaml` is the two CLI commands the template wrapped in ~60 lines
   of setup bash; the renderer installs `huggingface_hub[cli]`, which was the only load-bearing
   line of that preamble.
+- `cosmos3-generate.yaml` — Cosmos 3 omni-model generation in the `npa-cosmos3`
+  image. Its twin `npa-workflows/cosmos3-generate.yaml` ran through the live
+  submit matrix and produced `generated/generate.json` plus a non-flat 960x960
+  `generated/vision.jpg`.
+- `nurec-reconstruct.yaml` — **relocated**, not retired: #234 deliberately
+  shipped and live-verified a single-pod NuRec/NRE SkyPilot task in addition to
+  the multi-pod `npa.workflow` spec. It now lives at
+  `npa/src/npa/workbench/nurec/examples/` with its own README and guardrail.
 - `sim2real-envgen-split.yaml` — raw env generation + 80/20 split. Its twin
   `npa-workflows/sim2real-envgen-shards.yaml` declares the shard fan-out as a `parallel:`
   group instead of relying on a Kubernetes Job completion index, and runs on CPU.
@@ -109,8 +114,9 @@ These raw templates were retired once their `npa.workflow` spec had a live run
   *resource profiles* (a pod shape), not workflows, and now live beside their
   runner at `npa/src/npa/workflows/byof/profiles/`.
 
-The remaining templates are pinned in
-`npa/tests/guardrails/test_skypilot_catalog_retirement.py`; do not add new ones.
+The retired catalog is pinned empty in
+`npa/tests/guardrails/test_skypilot_catalog_retirement.py`; do not add new raw
+workflow templates.
 
 ## Three-Tier Contract
 

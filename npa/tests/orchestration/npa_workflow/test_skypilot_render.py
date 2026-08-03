@@ -29,7 +29,7 @@ from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-SKYPILOT_SPECS = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
+SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
 
 
@@ -40,7 +40,7 @@ def test_is_npa_workflow_spec_true_for_golden() -> None:
 
 
 def test_is_npa_workflow_spec_false_for_skypilot() -> None:
-    path = SKYPILOT_SPECS / "vlm-eval.yaml"
+    path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     assert not is_npa_workflow_spec(path)
     assert detect_submit_format(path) == "skypilot"
 

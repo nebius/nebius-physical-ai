@@ -64,7 +64,7 @@ kind: Workflow
 # NCore sequence and the trained USDZ travel through S3 (`fetch
 # --publish-sequence` then `reconstruct --ncore-uri`; `reconstruct --output-uri`
 # then `render --artifact-uri`). The single-pod SkyPilot task at
-# npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml shares /tmp instead and so
+# npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml shares /tmp instead and so
 # needs none of that.
 #
 # The `resources.gpu.kubernetes.pod_config` below is lifted onto each GPU task as a

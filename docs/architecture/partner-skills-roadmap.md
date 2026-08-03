@@ -26,9 +26,10 @@ Until a partner capability has that footing, it stays here as a blueprint.
 
 ## Architecture Constraints (must hold for every onboarded skill)
 
-- **SkyPilot is the sole orchestrator.** Every multi-stage job is a SkyPilot YAML
-  under `npa/src/npa/workflows/skypilot/`, submitted via
-  `npa workbench workflow submit`. Do not add a second orchestrator.
+- **SkyPilot is the sole runtime orchestrator.** Every multi-stage job is authored as an
+  `npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/` and submitted via
+  `npa workbench workflow submit`, which renders to SkyPilot. Do not add a second orchestrator
+  or a raw-template workflow catalog.
 - **Nebius substrate.** Managed Kubernetes (`npa-workbench-eu-north1`,
   `eu-north1`), S3 on `storage.eu-north1.nebius.cloud`, vLLM/serverless serving,
   GPU routing per `nebius-infra`.
@@ -56,7 +57,7 @@ router to upstream" precedent.
 
 | Skill | Capability | Upstream | License | Lands when |
 | --- | --- | --- | --- | --- |
-| `neural-reconstruction` | **LANDED.** NuRec/NRE: NCore V4 capture → 3DGUT Gaussian training → renderable USDZ → rig-offset novel views → Rerun recording. Ships `npa/src/npa/workbench/nurec/`, `npa workbench nurec`, `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml`, and `skills/workflows/neural-reconstruction/SKILL.md`. gRPC sensor sim (`serve-grpc`) and `nre-tools` aux data are not wired in yet. | `physical-ai-neural-reconstruction` → https://github.com/NVIDIA/nurec-skills (+ https://github.com/NVIDIA/ncore) | Apache-2.0 | ✅ Validated on a real Nebius RTX PRO 6000 Blackwell run |
+| `neural-reconstruction` | **LANDED.** NuRec/NRE: NCore V4 capture → 3DGUT Gaussian training → renderable USDZ → rig-offset novel views → Rerun recording. Ships `npa/src/npa/workbench/nurec/`, `npa workbench nurec`, `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml`, and `skills/workflows/neural-reconstruction/SKILL.md`. gRPC sensor sim (`serve-grpc`) and `nre-tools` aux data are not wired in yet. | `physical-ai-neural-reconstruction` → https://github.com/NVIDIA/nurec-skills (+ https://github.com/NVIDIA/ncore) | Apache-2.0 | ✅ Validated on a real Nebius RTX PRO 6000 Blackwell run |
 | `cad-to-simready` | CAD/source-asset → SimReady USD via Omniverse Content Agents (convert, material/physics assignment, conformance, validation, packaging) | `omniverse-cad-to-simready` → https://github.com/nvidia-omniverse/content-agents | Apache-2.0 | Content Agents can be deployed on Nebius and a validated conversion path exists |
 
 ### Tier B — useful but peripheral USD tooling (defer)
@@ -135,7 +136,7 @@ stack:
 
 | Concern | NPA implementation |
 | --- | --- |
-| Multi-stage orchestration | SkyPilot YAML under `npa/src/npa/workflows/skypilot/`, submitted via `npa workbench workflow submit`; status/logs via `npa workbench workflow status/logs` |
+| Multi-stage orchestration | `npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/`, submitted via `npa workbench workflow submit`; status/logs via `npa workbench workflow status/logs` |
 | GPU scheduling | SkyPilot `--gpus` + Nebius GPU routing (`nebius-infra`); RT-core paths (Isaac-render pose defects) on L40S / RTX PRO 6000 |
 | Inference endpoints | NPA vLLM/serverless serving on Nebius (OpenAI-compatible); `vlm-eval` for VLM scoring/labeling |
 | Video augmentation worker | NPA `cosmos` tool (`npa workbench cosmos`) |
@@ -150,7 +151,7 @@ Before a skill in this roadmap moves into `.agents/skills/` and `.claude/skills/
    YAML, runner, or workbench tool), or — for pure routers — a validated upstream
    fetch + run path on a Nebius GPU.
    *Met by `neural-reconstruction`:
-   `npa/src/npa/workflows/skypilot/nurec-reconstruct.yaml` plus its declarative
+   `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml` plus its declarative
    twin, validated on a real RTX PRO 6000 Blackwell run.*
 2. A test mirrors `test_cosmos3_agent_skills_are_discoverable_and_well_formed`:
    asserts frontmatter (`name`, `description`), a "Source And Attribution"

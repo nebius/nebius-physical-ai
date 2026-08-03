@@ -22,10 +22,10 @@ means editing the spec; picking a *pod shape* means picking a profile here.
 
 ## Why they are here and not in the SkyPilot catalog
 
-`npa/src/npa/workflows/skypilot/` is being retired so that `npa.workflow` specs are the
+The raw SkyPilot workflow catalog is retired so that `npa.workflow` specs are the
 only workflow authoring surface (see the repo-root `DESIGN.md`, "Retiring the raw
 SkyPilot task catalog"). These profiles are reached *through* that surface, so they moved
-out of the catalog rather than being deleted with it — the same move
+out of the catalog rather than being deleted with it - the same move
 `byof-solution-smoke-rtxpro-gpu.yaml` and `skypilot-kubernetes-rtxpro.yaml` already made.
 
 Selection lives in `npa/src/npa/workflows/byof/live.py::resolve_byof_resource_yaml`

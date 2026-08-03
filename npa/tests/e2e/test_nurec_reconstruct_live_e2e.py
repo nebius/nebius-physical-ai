@@ -28,7 +28,16 @@ import pytest
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "nurec-reconstruct.yaml"
+WORKFLOW = (
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workbench"
+    / "nurec"
+    / "examples"
+    / "nurec-reconstruct.yaml"
+)
 SPEC = (
     ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "nurec-reconstruct.yaml"
 )
@@ -317,4 +326,3 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
     data = local_rrd.read_bytes()
     assert recording_has_run_entities(data) is True
     assert is_stock_demo_recording(data) is False
-
