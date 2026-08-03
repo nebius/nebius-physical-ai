@@ -36,6 +36,7 @@ from npa.clients.network import (
     remove_ingress_for_instance,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.agent_backend.shipping import render_shipped_backend_install
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -243,29 +244,9 @@ def _embedded_agent_recordings_source() -> str:
     return raw
 
 
-def _shipped_agent_backend_module_source(name: str) -> str:
-    """Return the FULL source of a shipped agent_backend module.
-
-    Unlike the embed readers, shipped modules are uploaded to the VM as their own
-    importable files (Phase G), so the source is returned verbatim — docstring and
-    ``from __future__`` line intact — not inlined into the backend f-string.
-    """
-    path = Path(__file__).resolve().parents[1] / "agent_backend" / f"{name}.py"
-    return path.read_text(encoding="utf-8")
-
-
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
-_AGENT_ACTIONS_SHIP = "__NPA_AGENT_ACTIONS_SHIP__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
-_AGENT_SIM2REAL_LOOP_SHIP = "__NPA_AGENT_SIM2REAL_LOOP_SHIP__"
-_AGENT_SEMANTIC_ROUTER_SHIP = "__NPA_AGENT_SEMANTIC_ROUTER_SHIP__"
-# Phase G: shipped (uploaded + imported) rather than embedded.
-_AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
-# Blueprint Phases H/I: also shipped as importable files.
-_AGENT_RETRIEVAL_SHIP = "__NPA_AGENT_RETRIEVAL_SHIP__"
-_AGENT_TRACE_SHIP = "__NPA_AGENT_TRACE_SHIP__"
-_AGENT_FOXGLOVE_SHIP = "__NPA_AGENT_FOXGLOVE_SHIP__"
-_AGENT_FOXGLOVE_ROUTES_SHIP = "__NPA_AGENT_FOXGLOVE_ROUTES_SHIP__"
+_AGENT_BACKEND_SHIP = "__NPA_AGENT_BACKEND_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1788,19 +1769,8 @@ def _bootstrap_agent_stack(
     )
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
-    agent_actions_ship_source = _shipped_agent_backend_module_source("actions")
     agent_recordings_source = _embedded_agent_recordings_source()
-    agent_sim2real_loop_ship_source = _shipped_agent_backend_module_source(
-        "sim2real_loop"
-    )
-    agent_semantic_router_ship_source = _shipped_agent_backend_module_source(
-        "semantic_router"
-    )
-    agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
-    agent_retrieval_ship_source = _shipped_agent_backend_module_source("retrieval")
-    agent_trace_ship_source = _shipped_agent_backend_module_source("trace")
-    agent_foxglove_ship_source = _shipped_agent_backend_module_source("foxglove")
-    agent_foxglove_routes_ship_source = _shipped_agent_backend_module_source("foxglove_routes")
+    agent_backend_ship_script = render_shipped_backend_install()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -1930,32 +1900,7 @@ else
 fi
 sudo cp {AGENT_SOURCE_ROOT}/npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js /opt/npa-agent/foxglove/app/npa-foxglove-host.js
 sudo chmod -R a+rX /opt/npa-agent/foxglove
-sudo mkdir -p /opt/npa-agent/agent_backend
-printf '' | sudo tee /opt/npa-agent/agent_backend/__init__.py >/dev/null
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
-{_AGENT_MEMORY_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/actions.py >/dev/null
-{_AGENT_ACTIONS_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/semantic_router.py >/dev/null
-{_AGENT_SEMANTIC_ROUTER_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/sim2real_loop.py >/dev/null
-{_AGENT_SIM2REAL_LOOP_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
-{_AGENT_RETRIEVAL_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/trace.py >/dev/null
-{_AGENT_TRACE_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove.py >/dev/null
-{_AGENT_FOXGLOVE_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove_routes.py >/dev/null
-{_AGENT_FOXGLOVE_ROUTES_SHIP}
-PY
+{_AGENT_BACKEND_SHIP}
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
 import os
@@ -8642,15 +8587,8 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
-        .replace(_AGENT_ACTIONS_SHIP, agent_actions_ship_source)
         .replace(_AGENT_RECORDINGS_EMBED, agent_recordings_source)
-        .replace(_AGENT_SIM2REAL_LOOP_SHIP, agent_sim2real_loop_ship_source)
-        .replace(_AGENT_SEMANTIC_ROUTER_SHIP, agent_semantic_router_ship_source)
-        .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
-        .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)
-        .replace(_AGENT_TRACE_SHIP, agent_trace_ship_source)
-        .replace(_AGENT_FOXGLOVE_SHIP, agent_foxglove_ship_source)
-        .replace(_AGENT_FOXGLOVE_ROUTES_SHIP, agent_foxglove_routes_ship_source)
+        .replace(_AGENT_BACKEND_SHIP, agent_backend_ship_script)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)

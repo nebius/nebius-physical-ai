@@ -34,6 +34,7 @@ Optional repository **variables** (not secrets) forwarded to the run:
 | `NPA_REGISTRY_ID` | Nebius registry id, passed through for image resolution/inspection |
 | `NPA_DAILY_E2E_SHARDS` | Days to spread the S3 e2e suite over (default 7) |
 | `NPA_DAILY_ENABLE_GPU` | Set to `1` to have `e2e-daily` also run one rotating real-GPU workflow submit |
+| `NPA_DAILY_AGENT_GPU_E2E` | Set to `1` with `gpu-daily` to run the agent-confirmed self-hosted VLM proof instead of the rotating case; requires a deployed agent record |
 
 The dev VM must already have `git`, `python3`, and `make`, plus a reachable git
 remote and valid `~/.npa` credentials. The runner script uses a dedicated CI

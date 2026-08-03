@@ -7,6 +7,8 @@ required workflow-reachable image is exercised by at least one >= 4-step
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from npa.orchestration.npa_workflow import daily_coverage as dc
 
 
@@ -119,6 +121,9 @@ def test_declared_case_budget_survives_the_daily_runner_cap(monkeypatch) -> None
     """
     import importlib
 
+    # Keep this import valid whether pytest is launched from the repository
+    # root or from ``npa/`` (the daily runner uses the latter).
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
     mod = importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
     monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS", "2400")
 
@@ -135,3 +140,11 @@ def test_declared_case_budget_survives_the_daily_runner_cap(monkeypatch) -> None
     plain = next((c for c in SUBMIT_LIVE_MATRIX if not c.max_wait_seconds), None)
     if plain is not None:
         assert mod._case_max_wait(plain) == 2400
+
+
+def test_daily_runner_wires_agent_confirmed_gpu_proof() -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    script = (repo_root / "scripts" / "dev-vm-daily-tests.sh").read_text(encoding="utf-8")
+    assert "NPA_DAILY_AGENT_GPU_E2E" in script
+    assert "test_agent_gpu_workflow_live_e2e.py::" in script
+    assert 'NPA_AGENT_GPU_LIVE="${NPA_DAILY_AGENT_GPU_E2E:-0}"' in script
