@@ -7,8 +7,13 @@ Usage: npa cleanup [OPTIONS]
 
 Report (or with --yes remove) local NPA/SkyPilot residue left after teardown.
 
+Local only. Cloud resources (agent VM, cluster, bucket, IAM) are removed by
+the commands in the printed runbook -- `--yes` never deletes anything in the
+cloud, which the report says explicitly so it is not mistaken for a teardown.
+
 Options
---yes  -y  Remove the local caches (otherwise just report).
+--yes  -y  Remove the local caches (otherwise just report). Local only: this never
+deletes cloud resources -- see the printed runbook for those.
 --include-sky  --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs
 run).
 [default: include-sky]
@@ -22,7 +27,7 @@ run).
 
 | Option | Description |
 | --- | --- |
-| `--yes` | -y  Remove the local caches (otherwise just report). |
+| `--yes` | -y  Remove the local caches (otherwise just report). Local only: this never |
 | `--include-sky` | --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs |
 | `--project` | <str>  Scope the empty per-alias state-dir report to this alias. |
 | `--skip-jobs` | Do not query the SkyPilot managed-job queue. |
