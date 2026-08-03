@@ -32,9 +32,6 @@ This list is machine-checked against the directory by
 `npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so it cannot drift as
 templates retire.
 
-  materialized views, training, and evaluation.
-- `cosmos3-generate.yaml`: single-task Cosmos 3 omni-model generation in the
-  `npa-cosmos3` image. Its npa.workflow twin of the same name is the declarative form.
 - `nurec-reconstruct.yaml`: single-pod NuRec/NRE neural reconstruction. Its
   npa.workflow twin of the same name runs each state in its own pod and hands
   artifacts over through S3.
@@ -91,6 +88,10 @@ These raw templates were retired once their `npa.workflow` spec had a live run
   `npa-workflows/cosmos-fetch.yaml` is the two CLI commands the template wrapped in ~60 lines
   of setup bash; the renderer installs `huggingface_hub[cli]`, which was the only load-bearing
   line of that preamble.
+- `cosmos3-generate.yaml` — Cosmos 3 omni-model generation in the `npa-cosmos3`
+  image. Its twin `npa-workflows/cosmos3-generate.yaml` ran through the live
+  submit matrix and produced `generated/generate.json` plus a non-flat 960x960
+  `generated/vision.jpg`.
 - `sim2real-envgen-split.yaml` — raw env generation + 80/20 split. Its twin
   `npa-workflows/sim2real-envgen-shards.yaml` declares the shard fan-out as a `parallel:`
   group instead of relying on a Kubernetes Job completion index, and runs on CPU.

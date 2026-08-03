@@ -29,11 +29,6 @@ REMAINING: dict[str, str] = {
     # --- no npa.workflow twin authored yet ---
     # --- twin exists but is NOT live-verified yet ---
     # --- arrived AFTER this sweep, via #234 ---
-    "cosmos3-generate.yaml": (
-        "added by #235, also while this retirement was in flight, and also caught here on "
-        "merge. Its npa.workflow twin is npa-workflows/cosmos3-generate.yaml; retiring the raw "
-        "one needs a live run of that twin, which belongs with #235. See EVIDENCE.md \u00a7R49"
-    ),
     "nurec-reconstruct.yaml": (
         "added by #234 while this retirement was in flight, and caught here on merge rather "
         "than in review, which is what this guardrail is for. It is NOT simply a twinned "
@@ -144,6 +139,12 @@ REMAINING: dict[str, str] = {
     #   npa-wf-multi-bdd100k-pipeline-763b2bdf: all ELEVEN stages SUCCEEDED against both
     #   in-cluster services — LanceDB and detection-training — with three real GPU training
     #   runs and three evals. See EVIDENCE.md \u00a7R46.
+    #
+    # cosmos3-generate.yaml  job 338
+    #   npa-wf-gpu-cosmos3-generate-601c8f51 SUCCEEDED through the live submit matrix. The
+    #   npa.workflow twin produced generated/generate.json plus a non-flat 960x960
+    #   generated/vision.jpg, with guardrails true, hf_auth configured, and weights_baked
+    #   false. See EVIDENCE.md \u00a7R53.
     #
     # Phase 2c: RELOCATED (not deleted) to npa/src/npa/workflows/byof/profiles/ —
     # they are BYOF resource profiles reached through byof.yaml's toolRef, not

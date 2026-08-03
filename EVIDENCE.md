@@ -3265,3 +3265,47 @@ Two lessons worth keeping, both cheap:
   not quietly stop checking anything. This PR's tally test is the same shape.
 * **A rule belongs where the decision is made.** Scanning documents for a marker works until the
   documents move; deriving the set from the code that routes the work does not.
+
+## R53. `cosmos3-generate.yaml` retired after its spec twin ran live
+
+The raw template added by #235 is gone. Its twin
+`npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` now has a live-submit-matrix case
+(`tier="gpu"`, `image_tool="cosmos3"`) and reached terminal success through the same harness used
+for the rest of this retirement work:
+
+```bash
+PYTHONPATH=$PWD/src \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=gpu \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=cosmos3-generate.yaml \
+.venv/bin/python -m pytest \
+  tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal \
+  -q -s --tb=short
+```
+
+**Succeeded:** job **338**, run id `npa-wf-gpu-cosmos3-generate-601c8f51`, terminal
+`SUCCEEDED` (`1 passed in 335.39s`). The run used the existing live environment and the
+operator's credentials; registry, bucket, and token values are not committed here.
+
+Artifacts under the run prefix:
+
+| Key | What it contained |
+| --- | --- |
+| `generated/generate.json` | `status="executed"`, `output_kind="image"`, `output_bytes=260189`, `guardrails=true`, `hf_auth="configured"`, `weights_baked=false` |
+| `generated/vision.jpg` | 260,189 byte generated JPEG, 960x960, RGB extrema `(0,255)` on all channels (not blank/flat) |
+| `npa-workflow/manifest.json`, `npa-workflow/status.json` | workflow submit bookkeeping |
+
+The failures before success were the useful part:
+
+* No job id: the first two attempts failed before submit because the task image resolved in the
+  us-central1 mirror while `SKYPILOT_DOCKER_SERVER` authenticated to eu-north1. One retry with
+  `${NPA_REGISTRY}` did not help because this environment's `NPA_REGISTRY` also points at the
+  mirror.
+* Job **337**, run id `npa-wf-gpu-cosmos3-generate-478ccec0`: after forcing the primary
+  eu-north1 registry, SkyPilot repeatedly hit `ErrImagePull` / `403 Forbidden` pulling
+  `npa-cosmos3:1.2.2-cu130` from that registry and the job was cancelled. The next run used the
+  mirror registry with `SKYPILOT_DOCKER_SERVER` aligned to the same host.
+
+Preflight that stayed green before the live run:
+
+* Renderer/smoke: `152 passed in 27.52s`
+* Plan-only submit matrix: `42 passed in 8.99s`

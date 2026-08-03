@@ -30,7 +30,7 @@ one-off text-to-image smoke.
 ### Containerized generate (preferred)
 
 ```text
-npa/src/npa/workflows/skypilot/cosmos3-generate.yaml
+npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml
 npa workbench cosmos3 generate
 npa.sdk.workbench.cosmos3.generate(...)
 workbench.cosmos3.generate            # npa.workflow toolRef
@@ -50,7 +50,7 @@ their `NGC_API_KEY`; `require_model_access` refuses to start without them. Use
 `--dry-run` to inspect the resolved input sample and inference argv from a CPU
 host.
 
-### Raw text-to-image smoke
+### Clone-at-job-time text-to-image smoke
 
 ```text
 npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml
@@ -73,9 +73,9 @@ Guardrails are on by default in both paths.
 the operator asks for it, and the resulting manifest records `guardrails`
 explicitly so a run's posture is auditable.
 
-In both workflow YAMLs, `NPA_COSMOS3_NO_GUARDRAILS` defaults to an empty string,
-and the command expands `--no-guardrails` only when that variable is set. Only
-set it when the user explicitly requests an opt-out:
+For the clone-at-job-time smoke workflow, `NPA_COSMOS3_NO_GUARDRAILS` defaults to
+an empty string, and the command expands `--no-guardrails` only when that
+variable is set. Only set it when the user explicitly requests an opt-out:
 
 ```yaml
 NPA_COSMOS3_NO_GUARDRAILS: "1"
@@ -92,7 +92,8 @@ Before launch, confirm credentials and access:
 npa/.venv/bin/npa workbench cosmos check --output json
 ```
 
-Review or override these environment fields in the SkyPilot YAML:
+For the text-to-image smoke, review or override these environment fields in the
+workflow config:
 
 - `NPA_COSMOS3_SOURCE_REPO`
 - `NPA_COSMOS3_MODEL_ID`
