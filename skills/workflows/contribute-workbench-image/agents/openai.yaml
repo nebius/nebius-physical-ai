@@ -1,4 +1,0 @@
-interface:
-  display_name: "Contribute Workbench Image"
-  short_description: "Safely contribute and release NPA container images"
-  default_prompt: "Use $contribute-workbench-image to prepare an NPA image contribution and guide its trusted build and GHCR publication."

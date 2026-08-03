@@ -142,18 +142,25 @@ redistribution is permitted.
 Do not infer current coverage from the number of GHCR package pages. A package
 may be public while the repository's newly pinned tag is absent.
 
+Set `NPA_PUBLIC_REGISTRY` to the intended public target before either check.
+The explicit `--target` arguments below avoid silently validating a different
+configured registry.
+
 Check every pinned source tag with the configured read credential:
 
 ```bash
+: "${NPA_PUBLIC_REGISTRY:?set NPA_PUBLIC_REGISTRY to the intended public registry}"
 unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN
 npa/scripts/nebius_registry_docker_login.sh
-npa/.venv/bin/python -m npa.deploy.publish_public --preflight
+npa/.venv/bin/python -m npa.deploy.publish_public \
+  --target "$NPA_PUBLIC_REGISTRY" --preflight
 ```
 
 Check every exact target tag through the anonymous path:
 
 ```bash
-npa/.venv/bin/python -m npa.deploy.publish_public --verify-public
+npa/.venv/bin/python -m npa.deploy.publish_public \
+  --target "$NPA_PUBLIC_REGISTRY" --verify-public
 ```
 
 Interpret the results precisely:
