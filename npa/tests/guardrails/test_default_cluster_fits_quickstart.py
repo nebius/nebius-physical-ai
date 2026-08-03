@@ -103,3 +103,47 @@ def test_gpu_profiles_fit_the_default_gpu_preset() -> None:
 )
 def test_preset_parsing(preset: str, expected: tuple[float, float]) -> None:
     assert _preset_capacity(preset) == expected
+
+
+#: What the SkyPilot managed-jobs controller parks on the CPU pool for the whole
+#: run. It is a long-lived pod, not a stage, so every CPU stage has to fit
+#: *alongside* it -- the sizing nobody had budgeted for.
+JOBS_CONTROLLER_CPUS = 4.0
+JOBS_CONTROLLER_MEMORY_GIB = 16.0
+
+
+def test_the_cpu_node_fits_the_jobs_controller_and_a_stage_together() -> None:
+    """One CPU node must hold the controller and a CPU stage at the same time.
+
+    With only the controller budgeted, a run whose GPU nodes went away left
+    `generate-configs` unschedulable on the one remaining CPU node -- reported
+    only as an opaque PENDING.
+    """
+
+    vcpu, memory_gib = _preset_capacity(_terraform_default("cpu_nodes_preset"))
+    spec = yaml.safe_load(QUICKSTART_SPEC.read_text(encoding="utf-8"))
+
+    cpu_profiles = [
+        profile
+        for profile in (spec.get("resources") or {}).values()
+        if isinstance(profile, dict) and not profile.get("accelerators")
+    ]
+    assert cpu_profiles, "the quickstart declares no CPU-only resource profile"
+
+    for profile in cpu_profiles:
+        needed_cpus = float(profile.get("cpus", 0) or 0) + JOBS_CONTROLLER_CPUS
+        needed_memory = _memory_gib(profile.get("memory", "0Gi")) + JOBS_CONTROLLER_MEMORY_GIB
+        assert needed_cpus <= vcpu - CPU_RESERVE, (
+            f"controller ({JOBS_CONTROLLER_CPUS} CPU) + stage ({profile.get('cpus')}) "
+            f"exceeds the default CPU node ({vcpu} vCPU)"
+        )
+        assert needed_memory <= memory_gib - MEMORY_RESERVE_GIB, (
+            f"controller ({JOBS_CONTROLLER_MEMORY_GIB}Gi) + stage ({profile.get('memory')}) "
+            f"exceeds the default CPU node ({memory_gib}Gi)"
+        )
+
+
+def test_npa_and_terraform_agree_on_the_default_cpu_preset() -> None:
+    from npa.cluster.config import DEFAULT_CPU_NODE_GROUP_PRESET
+
+    assert _terraform_default("cpu_nodes_preset") == DEFAULT_CPU_NODE_GROUP_PRESET

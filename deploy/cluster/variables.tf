@@ -61,9 +61,9 @@ variable "cpu_nodes_platform" {
 }
 
 variable "cpu_nodes_preset" {
-  description = "CPU-only node preset. Must leave room for the CPU stages of the shipped workflows after kubelet/system reserve: the Physical AI Data Factory asks for cpus=4 / memory=16Gi, which a 4vcpu-16gb node (about 3.9 CPU / 15Gi allocatable) can never schedule. Matches npa's own DEFAULT_CPU_NODE_GROUP_PRESET."
+  description = "CPU-only node preset. Must fit the SkyPilot managed-jobs controller AND one CPU stage at the same time: the controller parks ~4 vCPU / 16Gi on the CPU pool for the life of the run, and the Physical AI Data Factory asks for cpus=4 / memory=16Gi on top of that. An 8vcpu-32gb node holds the controller but then cannot schedule the stage, which reads as an opaque PENDING once GPU nodes are gone."
   type        = string
-  default     = "8vcpu-32gb"
+  default     = "16vcpu-64gb"
 }
 
 variable "gpu_nodes_count" {

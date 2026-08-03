@@ -55,6 +55,14 @@ _UNSCHEDULABLE_REMEDY = (
     "SkyPilot places all GPUs of one task on a single node."
 )
 
+_NODES_LOST_REMEDY = (
+    "the nodes this job needs are gone, not busy. Preemptible GPU nodes are reclaimed "
+    "without warning and their kubelets go NotReady, which SkyPilot reports only as a "
+    "job that never leaves PENDING. Wait for the node group to reprovision, or rerun on "
+    "on-demand capacity (`npa cluster up --on-demand`). CPU-only stages should not depend "
+    "on a preemptible GPU pool."
+)
+
 
 @dataclass(frozen=True)
 class PodBlocker:
@@ -81,13 +89,16 @@ class JobBlockerReport:
     job_id: str = ""
     cluster_name: str = ""
     blockers: list[PodBlocker] = field(default_factory=list)
+    unready_nodes: list[str] = field(default_factory=list)
     error: str = ""
 
     @property
     def blocked(self) -> bool:
-        return bool(self.blockers)
+        return bool(self.blockers or self.unready_nodes)
 
     def remedy(self) -> str:
+        if self.unready_nodes and not self.blockers:
+            return _NODES_LOST_REMEDY
         for blocker in self.blockers:
             explanation = _TERMINAL_INTENT_REASONS.get(blocker.reason)
             if explanation:
@@ -99,6 +110,12 @@ class JobBlockerReport:
     def render(self) -> str:
         if self.error:
             return f"blockers: unavailable ({self.error})"
+        if self.unready_nodes and not self.blockers:
+            return (
+                f"blockers: {len(self.unready_nodes)} node(s) not Ready: "
+                + ", ".join(self.unready_nodes)
+                + f"\n  Suggested action: {_NODES_LOST_REMEDY}"
+            )
         if not self.blockers:
             return "blockers: none found"
         lines = [f"blockers ({len(self.blockers)}):"]
@@ -183,7 +200,56 @@ def inspect_job_blockers(
             )
             return report
     report.blockers = _blockers_from_pods(items)
+    if not report.blockers:
+        # A pod pending because its node vanished has no waiting reason of its own;
+        # the cause is on the node, which is why this looked like a silent PENDING.
+        report.unready_nodes = _unready_nodes(
+            context=context, timeout=timeout, runner=execute
+        )
     return report
+
+
+def _unready_nodes(
+    *, context: str, timeout: int, runner: Runner
+) -> list[str]:
+    """Return nodes whose kubelet is not Ready (reclaimed/preempted instances)."""
+
+    cmd = ["kubectl", "get", "nodes", "-o", "json"]
+    if context.strip():
+        cmd[1:1] = ["--context", context.strip()]
+    try:
+        result = runner(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return []
+    unready: list[str] = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(_as_dict(item.get("metadata")).get("name") or "")
+        conditions = _as_dict(item.get("status")).get("conditions") or []
+        if not isinstance(conditions, list):
+            continue
+        for condition in conditions:
+            if not isinstance(condition, dict):
+                continue
+            if str(condition.get("type")) == "Ready" and str(condition.get("status")) != "True":
+                reason = str(condition.get("reason") or "NotReady")
+                unready.append(f"{name} ({reason})")
+                break
+    return sorted(unready)
 
 
 def _as_dict(value: object) -> dict[str, Any]:

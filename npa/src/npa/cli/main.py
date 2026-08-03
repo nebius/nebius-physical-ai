@@ -1642,9 +1642,11 @@ def _configure_impl(
         typer.echo(_configured_env_lines())
         return
     if show:
-        typer.echo(_SETUP_GUIDANCE)
-        typer.echo("")
+        # What is actually saved first: leading with the blank template made an
+        # operator read `hf_REPLACE_ME` and conclude nothing was configured.
         typer.echo(_configured_summary())
+        typer.echo("")
+        typer.echo(_SETUP_GUIDANCE)
         return
     # Token flags that were persisted above must not be re-prompted (an empty
     # piped Enter would otherwise wipe them); skip those in the interactive flow.

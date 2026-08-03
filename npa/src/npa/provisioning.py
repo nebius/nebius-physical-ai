@@ -47,6 +47,7 @@ def provision_if_absent(
     timeout: int = 120,
     gpu_nodes: int = -1,
     cpu_nodes: int = -1,
+    preemptible: bool | None = None,
 ) -> ProvisionIfAbsentResult:
     """Ensure configured S3 and Kubernetes exist, without teardown or mutation."""
     alias, environment, storage, registry = _resolve_project_runtime(project)
@@ -77,9 +78,12 @@ def provision_if_absent(
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
     elif dry_run:
         shape = ", ".join(
-            f"{name}={count}"
-            for name, count in (("gpu_nodes", gpu_nodes), ("cpu_nodes", cpu_nodes))
-            if count >= 0
+            [
+                f"{name}={count}"
+                for name, count in (("gpu_nodes", gpu_nodes), ("cpu_nodes", cpu_nodes))
+                if count >= 0
+            ]
+            + ([f"preemptible={str(bool(preemptible)).lower()}"] if preemptible is not None else [])
         )
         actions.append(
             f"k8s:dry-run terraform apply {terraform_dir or 'deploy/cluster'}"
@@ -104,6 +108,7 @@ def provision_if_absent(
                 capacity_block_group="",
                 gpu_nodes=gpu_nodes,
                 cpu_nodes=cpu_nodes,
+                preemptible=preemptible,
                 validation_timeout=60,
                 timeout=timeout,
             )

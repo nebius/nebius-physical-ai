@@ -345,7 +345,10 @@ def _option_names(command_path: list[str]) -> set[str]:
         command = command.commands[name]  # type: ignore[attr-defined]
     names: set[str] = set()
     for param in command.params:
+        # Click keeps the negative half of a `--x/--no-x` flag in secondary_opts,
+        # so opts alone silently misses every off-switch.
         names.update(getattr(param, "opts", ()))
+        names.update(getattr(param, "secondary_opts", ()))
     return names
 
 
@@ -599,3 +602,74 @@ def test_a_missing_bucket_has_no_state_and_is_not_overdue(
 
     assert storage_cli._scheduled_deletion_state("p", "b") == ""
     assert storage_cli._purge_is_overdue("p", "b") is False
+
+
+def test_provisioning_exposes_preemptible_like_cluster_up() -> None:
+    # Getting two GPUs required TF_VAR_gpu_nodes_preemptible=true, which neither
+    # the README path nor provision-if-absent exposed.
+    for path in (["cluster", "up"], ["provision-if-absent"]):
+        names = _option_names(path)
+        assert "--preemptible" in names, path
+        assert "--on-demand" in names, path
+
+
+def test_preemptible_reaches_terraform_as_a_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa import provisioning
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **kwargs: seen.update(kwargs),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda project: (
+            "demo",
+            type("E", (), {"project_id": "p", "tenant_id": "t"})(),
+            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            "cr.example.invalid/reg",
+        ),
+    )
+    monkeypatch.setattr(
+        provisioning, "_runtime_env", lambda *a, **k: __import__("contextlib").nullcontext()
+    )
+
+    provisioning.provision_if_absent(skip_s3=True, preemptible=True)
+
+    assert seen["preemptible"] is True
+
+
+def test_dry_run_reports_the_preemptible_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa import provisioning
+
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *a, **k: False)
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda project: (
+            "demo",
+            type("E", (), {"project_id": "p", "tenant_id": "t"})(),
+            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            "cr.example.invalid/reg",
+        ),
+    )
+
+    result = provisioning.provision_if_absent(skip_s3=True, dry_run=True, preemptible=True)
+
+    assert any("preemptible=true" in action for action in result.actions)
+
+
+def test_configure_show_leads_with_what_is_saved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Leading with the blank template made an operator read `hf_REPLACE_ME` and
+    # conclude nothing had been configured.
+    monkeypatch.setattr("npa.clients.config.CONFIG_PATH", tmp_path / "config.yaml")
+
+    result = runner.invoke(app, ["configure", "--show"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.index("Current configuration") < result.output.index("Credential setup")

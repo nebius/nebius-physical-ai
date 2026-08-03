@@ -22,7 +22,10 @@ def _option_names(command_path: list[str]) -> set[str]:
         command = command.commands[name]  # type: ignore[attr-defined]
     names: set[str] = set()
     for param in command.params:
+        # Click keeps the negative half of a `--x/--no-x` flag in secondary_opts,
+        # so opts alone silently misses every off-switch.
         names.update(getattr(param, "opts", ()))
+        names.update(getattr(param, "secondary_opts", ()))
     return names
 
 

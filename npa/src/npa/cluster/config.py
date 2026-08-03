@@ -14,7 +14,9 @@ SUPPORTED_REGIONS = {DEFAULT_REGION, "us-central1"}
 DEFAULT_K8S_VERSION = "1.33"
 DEFAULT_NODE_PLATFORM = "cpu-e2"
 DEFAULT_NODE_PRESET = "2vcpu-8gb"
-DEFAULT_CPU_NODE_GROUP_PRESET = "8vcpu-32gb"
+# Sized to hold the SkyPilot jobs controller (~4 vCPU / 16Gi, parked for the
+# whole run) plus one CPU stage of the shipped workflows.
+DEFAULT_CPU_NODE_GROUP_PRESET = "16vcpu-64gb"
 DEFAULT_NODE_COUNT = 1
 DEFAULT_BOOT_DISK_TYPE = "network_ssd"
 DEFAULT_BOOT_DISK_SIZE_GIB = 128

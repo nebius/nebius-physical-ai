@@ -23,6 +23,9 @@ configured value.
 --cpu-nodes  <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the
 configured value.
 [default: -1]
+--preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster
+up`. Often the only way to get several GPUs; a reclaim stops
+them mid-run.
 --dry-run  Resolve settings and print intended actions only.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
 --output-format  <text|json>  Output format. [default: text]
@@ -44,6 +47,7 @@ configured value.
 | `--sky-smoke` | --skip-sky-smoke  Run a SkyPilot GPU smoke task. [default: skip-sky-smoke] |
 | `--gpu-nodes` | <int>  Number of GPU nodes, matching `npa cluster up`. -1 keeps the |
 | `--cpu-nodes` | <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the |
+| `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |
 | `--output-format` | <text\|json>  Output format. [default: text] |

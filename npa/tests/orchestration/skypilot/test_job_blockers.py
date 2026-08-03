@@ -35,14 +35,29 @@ def _waiting_pod(name: str, reason: str, message: str = "") -> dict:
 
 
 def _runner(stdout: str, *, returncode: int = 0, stderr: str = ""):
+    """A kubectl stub that records every call.
+
+    An empty pod list now triggers a second `kubectl get nodes` (to tell "no pods
+    yet" from "the nodes are gone"), so tests must assert on the call they mean.
+    """
+
     seen: dict[str, list[str]] = {}
+    calls: list[list[str]] = []
 
     def run(cmd, **kwargs):  # noqa: ANN001 - test stub
+        calls.append(list(cmd))
         seen["cmd"] = list(cmd)
+        if "nodes" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"items": []}', stderr="")
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
 
     run.seen = seen  # type: ignore[attr-defined]
+    run.calls = calls  # type: ignore[attr-defined]
     return run
+
+
+def _pod_call(runner) -> list[str]:  # noqa: ANN001 - test helper
+    return next(cmd for cmd in runner.calls if "pods" in cmd)
 
 
 def test_image_pull_backoff_is_reported_with_the_pull_permission_remedy() -> None:
@@ -70,7 +85,7 @@ def test_the_pods_are_found_by_skypilots_own_cluster_label() -> None:
 
     inspect_job_blockers(cluster_name="sky-abc", context="npa-cluster", runner=runner)
 
-    cmd = runner.seen["cmd"]  # type: ignore[attr-defined]
+    cmd = _pod_call(runner)
     assert f"{CLUSTER_LABEL}=sky-abc" in cmd
     assert "--context" in cmd and "npa-cluster" in cmd
 
@@ -199,7 +214,7 @@ def test_pods_are_found_by_job_id_when_the_queue_reports_no_cluster() -> None:
 
     assert [blocker.pod for blocker in report.blockers] == ["train-333-64ce57a0-head"]
     # A bare label selector, filtered client-side by the job id component.
-    assert f"{CLUSTER_LABEL}" in runner.seen["cmd"]  # type: ignore[attr-defined]
+    assert f"{CLUSTER_LABEL}" in _pod_call(runner)
 
 
 def test_a_job_id_must_match_a_whole_label_component() -> None:
@@ -225,7 +240,7 @@ def test_the_lookup_is_not_limited_to_the_context_default_namespace() -> None:
 
     inspect_job_blockers(job_id="333", runner=runner)
 
-    assert "--all-namespaces" in runner.seen["cmd"]  # type: ignore[attr-defined]
+    assert "--all-namespaces" in _pod_call(runner)
 
 
 def test_an_explicit_namespace_is_honored() -> None:
@@ -233,6 +248,71 @@ def test_an_explicit_namespace_is_honored() -> None:
 
     inspect_job_blockers(cluster_name="sky-abc", namespace="sky", runner=runner)
 
-    cmd = runner.seen["cmd"]  # type: ignore[attr-defined]
+    cmd = _pod_call(runner)
     assert "-n" in cmd and "sky" in cmd
     assert "--all-namespaces" not in cmd
+
+
+# --- the nodes went away, which is not the same as "still starting" -----------
+
+
+def _node(name: str, ready: str, reason: str = "") -> dict:
+    return {
+        "metadata": {"name": name},
+        "status": {"conditions": [{"type": "Ready", "status": ready, "reason": reason}]},
+    }
+
+
+def _pods_then_nodes(nodes: dict):
+    def run(cmd, **kwargs):  # noqa: ANN001 - test stub
+        if "nodes" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(nodes), stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=_pods(), stderr="")
+
+    return run
+
+
+def test_a_pending_job_whose_nodes_were_reclaimed_says_so() -> None:
+    """Preempted GPU nodes leave no pod-level reason at all.
+
+    Both RTX6000 instances were reclaimed mid-run; the job sat PENDING and
+    `sky jobs queue` reported nothing an operator could act on.
+    """
+
+    runner = _pods_then_nodes(
+        {
+            "items": [
+                _node("gpu-0", "Unknown", "NodeStatusUnknown"),
+                _node("gpu-1", "Unknown", "NodeStatusUnknown"),
+                _node("cpu-0", "True"),
+            ]
+        }
+    )
+
+    report = inspect_job_blockers(job_id="1", cluster_name="sky-abc", runner=runner)
+
+    assert report.blocked is True
+    assert report.unready_nodes == ["gpu-0 (NodeStatusUnknown)", "gpu-1 (NodeStatusUnknown)"]
+    assert "reclaimed without warning" in report.remedy()
+    assert "--on-demand" in report.remedy()
+    rendered = report.render()
+    assert "2 node(s) not Ready" in rendered
+
+
+def test_healthy_nodes_and_no_blocked_pods_stays_quiet() -> None:
+    runner = _pods_then_nodes({"items": [_node("cpu-0", "True"), _node("gpu-0", "True")]})
+
+    report = inspect_job_blockers(job_id="1", cluster_name="sky-abc", runner=runner)
+
+    assert report.blocked is False
+    assert report.render() == "blockers: none found"
+
+
+def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:
+    # A pod that cannot pull is a better answer than "a node is down elsewhere".
+    runner = _runner(_pods(_waiting_pod("worker-0", "ImagePullBackOff")))
+
+    report = inspect_job_blockers(job_id="1", cluster_name="sky-abc", runner=runner)
+
+    assert report.unready_nodes == []
+    assert "retries this forever" in report.remedy()

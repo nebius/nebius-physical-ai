@@ -1568,6 +1568,16 @@ def _stalled_job_blockers(
                     "remedy": report.remedy(),
                 }
             )
+        # A job whose nodes were reclaimed has no pod-level reason at all.
+        for node in report.unready_nodes:
+            reported.append(
+                {
+                    "pod": node,
+                    "reason": "NodeNotReady",
+                    "message": "the node this job needs is not Ready",
+                    "remedy": report.remedy(),
+                }
+            )
     return reported
 
 

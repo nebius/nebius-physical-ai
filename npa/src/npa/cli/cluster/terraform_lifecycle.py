@@ -85,6 +85,15 @@ def up_cmd(
         "--cpu-nodes",
         help="Number of CPU nodes (overrides tfvars/TF_VAR_cpu_nodes_count). -1 keeps the configured value.",
     ),
+    preemptible: bool | None = typer.Option(
+        None,
+        "--preemptible/--on-demand",
+        help=(
+            "Run the GPU node group as preemptible. Preemptible capacity is often the "
+            "only way to get several GPUs, but a reclaim stops the nodes mid-run -- keep "
+            "CPU stages on the CPU pool. Unset keeps tfvars/TF_VAR_gpu_nodes_preemptible."
+        ),
+    ),
     project: str = typer.Option(
         "",
         "--project",
@@ -114,6 +123,8 @@ def up_cmd(
     # TF_VAR_*. -1 means "leave the configured value alone".
     _apply_node_count_override(tfvars, "gpu_nodes_count", gpu_nodes)
     _apply_node_count_override(tfvars, "cpu_nodes_count", cpu_nodes)
+    if preemptible is not None:
+        tfvars["gpu_nodes_preemptible"] = bool(preemptible)
     _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
@@ -133,6 +144,11 @@ def up_cmd(
         *_capacity_block_group_var_args(capacity_block_group),
         *_node_count_var_args(tfvars, "gpu_nodes_count", gpu_nodes),
         *_node_count_var_args(tfvars, "cpu_nodes_count", cpu_nodes),
+        *(
+            ["-var", f"gpu_nodes_preemptible={str(bool(preemptible)).lower()}"]
+            if preemptible is not None
+            else []
+        ),
         *_ssh_public_key_var_args(tfvars, env),
     ]
     # Terraform prints only `Still creating...` while a node group retries, so a

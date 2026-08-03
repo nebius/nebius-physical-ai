@@ -43,6 +43,14 @@ def provision_if_absent_cmd(
         "--cpu-nodes",
         help="Number of CPU nodes, matching `npa cluster up`. -1 keeps the configured value.",
     ),
+    preemptible: bool | None = typer.Option(
+        None,
+        "--preemptible/--on-demand",
+        help=(
+            "Run the GPU node group as preemptible, matching `npa cluster up`. Often the "
+            "only way to get several GPUs; a reclaim stops them mid-run."
+        ),
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Resolve settings and print intended actions only."),
     timeout: int = typer.Option(120, "--timeout", help="Terraform apply timeout in minutes."),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
@@ -62,6 +70,7 @@ def provision_if_absent_cmd(
         timeout=timeout,
         gpu_nodes=gpu_nodes,
         cpu_nodes=cpu_nodes,
+        preemptible=preemptible,
     )
     payload = result.to_dict()
     if output_format == OutputFormat.json:
