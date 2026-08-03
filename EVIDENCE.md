@@ -3400,17 +3400,21 @@ code, docs, tests, and skills so renamed or removed specs cannot leave a danglin
 Two failures during live validation improved the runnable smoke instead of being papered over:
 
 * Job **370** reached the GPU image and showed that the built image does not contain the
-  upstream Git-LFS example assets. When no explicit input is supplied, the wrapper now creates a
-  deterministic tiny H.264 edge-control input inside the container. Explicit operator inputs
-  remain authoritative.
+  upstream Git-LFS example assets. Main's subsequent #252 image fix supplies a legally clean,
+  repository-authored procedural input through the live harness instead. After rebasing, this
+  extraction dropped its superseded in-wrapper fallback and retained explicit input as the
+  authoritative production contract.
 * Job **371** completed all 35 diffusion steps and passed the model's generated-video guardrail,
   then the wrapper rejected its valid 8,932-byte video because of an arbitrary 100 KiB cutoff.
   The cutoff is gone; publication still fails closed unless PyAV extracts at least one exact
   frame from a non-empty video.
 
-Both final runs used the exact durable checkout at commit
-`d1439a1c2d1ca557923e77ddb8337503b4c0b3f2`, a freshly restaged source overlay at
-`npa-workflow-e2e/npa-src/codex-d1439a1c/npa`, and an **RTX PRO 6000 Blackwell Server Edition**.
+After #252 merged, both final runs used executable source commit
+`2ffbee656930f9b91a9ad660be886ae38ceff899` from this durable checkout, rebased on
+`5ce5882126f16457d8fb7922f93c888a326d71bb`. Each run received a newly staged overlay
+(`npa-workflow-e2e/npa-src/codex-2ffbee65/npa` and
+`npa-workflow-e2e/npa-src/codex-2ffbee65-chain/npa`) and the qualified image digest recorded by
+#252, on an **RTX PRO 6000 Blackwell Server Edition**. The later commit only updates this evidence.
 Registry and artifact-bucket identifiers are deliberately redacted.
 
 ### Generic Cosmos2 transfer
@@ -3424,11 +3428,11 @@ NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=cosmos2-transfer.yaml \
   -q -s --tb=short
 ```
 
-**Succeeded:** job **372**, run id `npa-wf-gpu-cosmos2-transfer-8c2cf005`, terminal
-`SUCCEEDED` (`1 passed in 1174.17s`). The real model completed all 35 diffusion steps. Independent
+**Succeeded:** job **375**, run id `npa-wf-gpu-cosmos2-transfer-b7818c52`, terminal
+`SUCCEEDED` (`1 passed in 963.38s`). The real model completed all 35 diffusion steps. Independent
 artifact inspection found `schema=npa.cosmos2.transfer.v1`, `status=executed`,
-`mode=cosmos_transfer2.5_gpu`, four distinct existing frame objects, and an 8,903-byte generated
-video. The canonical manifest was 2,121 bytes.
+`mode=cosmos_transfer2.5_gpu`, `input_conditioned=true`, eight distinct existing frame objects,
+and a 5,709,281-byte generated video. The canonical manifest was 2,867 bytes.
 
 ### Conditioned Cosmos2 transfer into envgen
 
@@ -3441,10 +3445,11 @@ NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=sim2real-two-step.yaml \
   -q -s --tb=short
 ```
 
-**Succeeded:** job group **373**, run id `npa-wf-multi-sim2real-two-step-c34ed3a5`, terminal
-`SUCCEEDED` (`1 passed in 1145.54s`). `augment` consumed the seeded input video, completed all 35
+**Succeeded:** job group **377**, run id `npa-wf-multi-sim2real-two-step-b9d5e9dc`, terminal
+`SUCCEEDED` (`1 passed in 1181.79s`). `augment` consumed the seeded input video, completed all 35
 diffusion steps, and published the canonical manifest with `input_conditioned=true`,
-`control=edge`, and four exact frame URIs. `envgen` then consumed those URIs and published
+`control=edge`, four exact existing frame URIs, and a valid 9,039-byte video. `envgen` then
+consumed those URIs and published
 `npa.sim2real.raw_env_shard_summary.v1`: 1,000 rows across the declared shard, all with schema
 `npa.sim2real.raw_env.v1`; the distinct `augmented_frame_uri` values matched the four manifest
 frames exactly.
@@ -3455,7 +3460,7 @@ contains a conspicuous `DEFECT` comment documenting that a real fix needs a per-
 configuration token. It validates (five states) and plans (four steps), but is not represented as
 an executable live case until that configuration surface exists.
 
-Successful SkyPilot jobs cleaned up their managed resources automatically. The diagnostic pod
-used to inspect the cached image was deleted, cancelled recovery jobs left no pods, no
-`npa-detection-training` resource was created, and the persistent `npa-lancedb` deployment was
-left untouched as required by the rotation contract.
+Successful SkyPilot jobs cleaned up their managed resources automatically; no pod for job 375 or
+377 remained after its pytest node completed. The earlier diagnostic pod was deleted, cancelled
+recovery jobs left no pods, no `npa-detection-training` resource was created, and the persistent
+`npa-lancedb` deployment was left untouched as required by the rotation contract.
