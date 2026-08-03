@@ -454,24 +454,20 @@ def test_an_unavailable_capacity_api_does_not_advertise_the_dead_command(
     assert "see what is available with" not in message
 
 
-def test_the_runbook_keeps_cleanup_before_the_skypilot_uninstall(npa_home: Path) -> None:
-    """Order matters: cleanup reads the managed-job queue through SkyPilot.
-
-    Uninstalling SkyPilot first turns that safety check into "SkyPilot is not
-    installed", so a job still holding the controller goes unnoticed.
-    """
+def test_the_runbook_does_not_run_skypilot_uninstall_after_cleanup(npa_home: Path) -> None:
+    """Cleanup already removes the isolated venv, so a later uninstall is dead."""
 
     result = runner.invoke(app, ["cleanup", "--skip-jobs"])
 
-    order = result.output.index("npa cleanup --yes")
-    assert order < result.output.index("npa skypilot uninstall")
+    assert "npa cleanup --full --yes" in result.output
+    assert "npa skypilot uninstall" not in result.output
 
 
 def test_the_report_says_it_does_not_touch_the_cloud(npa_home: Path) -> None:
     # `--yes` only clears local caches; the runbook made it look like teardown.
     result = runner.invoke(app, ["cleanup", "--skip-jobs"])
 
-    assert "does NOT run these" in result.output
+    assert "cleanup never implies the preceding cloud steps" in result.output
 
 
 def test_an_empty_managed_job_queue_is_not_presented_as_a_failure(npa_home: Path) -> None:

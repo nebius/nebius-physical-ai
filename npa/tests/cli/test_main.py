@@ -1017,6 +1017,10 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
             "nebius_secret_key": "provisioned-secret",
             "s3_bucket": bucket_name,
             "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+            "service_account_id": "serviceaccount-storage",
+            "service_account_name": "lerobot-training",
+            "service_account_project_id": project_id,
+            "service_account_managed_by": "npa",
         }
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
@@ -1065,6 +1069,12 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     assert creds["storage"]["aws_secret_access_key"] == "provisioned-secret"
     assert creds["storage"]["endpoint_url"] == "https://storage.eu-north1.nebius.cloud"
     assert creds["storage"]["bucket"] == "s3://my-bucket/"
+    assert creds["nebius"] == {
+        "service_account_id": "serviceaccount-storage",
+        "service_account_name": "lerobot-training",
+        "service_account_project_id": "project-12345",
+        "service_account_managed_by": "npa",
+    }
 
     cfg = yaml.safe_load(config_path.read_text())
     project = cfg["projects"]["eu-north1"]

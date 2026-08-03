@@ -592,6 +592,12 @@ def _is_not_found(message: str) -> bool:
     return "notfound" in lowered or "not found" in lowered or "resourcenotfound" in lowered
 
 
+def is_not_found(message: str) -> bool:
+    """Public predicate for idempotent teardown of already-absent resources."""
+
+    return _is_not_found(message)
+
+
 def _is_already_exists(message: str) -> bool:
     lowered = message.lower()
     return "alreadyexists" in lowered or "already exists" in lowered
@@ -693,8 +699,15 @@ def ensure_service_account(
     name: str = DEFAULT_SERVICE_ACCOUNT_NAME,
     *,
     description: str = "Service account for LeRobot training on Nebius",
+    on_created: Callable[[str], None] | None = None,
 ) -> str:
-    """Get or create a service account, return its ID."""
+    """Get or create a service account, return its ID.
+
+    ``on_created`` is called only after this invocation successfully creates the
+    account. Teardown uses that event to persist a narrow ownership record; an
+    account found by name, recovered from an IAM error, or loaded from existing
+    credentials is deliberately never claimed as NPA-owned.
+    """
     # Try to find existing.
     try:
         data = _run_json([
@@ -739,6 +752,8 @@ def ensure_service_account(
     sa_id = data.get("metadata", {}).get("id", "")
     if not sa_id:
         raise NebiusError("Service account creation did not return an ID")
+    if on_created:
+        on_created(sa_id)
     return sa_id
 
 
@@ -1043,11 +1058,36 @@ def bootstrap_environment(
     iam_token = get_iam_token()
 
     _status("Setting up service account...")
+    created_service_account_id = ""
+
+    def _record_created_service_account(account_id: str) -> None:
+        nonlocal created_service_account_id
+        created_service_account_id = account_id
+
     sa_id = ensure_service_account(
         project_id,
         name=service_account_name,
         description=service_account_description,
+        on_created=_record_created_service_account,
     )
+
+    def _with_storage_account_ownership(payload: dict[str, str]) -> dict[str, str]:
+        if (
+            created_service_account_id == sa_id
+            and service_account_name == DEFAULT_SERVICE_ACCOUNT_NAME
+        ):
+            # This provenance is intentionally emitted only for the storage
+            # account created in this call. Agent IAM has its own shared-account
+            # teardown, and reused/user-managed accounts must never acquire it.
+            payload = dict(payload)
+            payload.update(
+                {
+                    "service_account_name": service_account_name,
+                    "service_account_project_id": project_id,
+                    "service_account_managed_by": "npa",
+                }
+            )
+        return payload
 
     _status("Configuring service account permissions...")
     try:
@@ -1091,7 +1131,7 @@ def bootstrap_environment(
         if fallback is None:
             raise
         _status("Reusing saved object-storage credentials (bucket provisioning skipped).")
-        return fallback
+        return _with_storage_account_ownership(fallback)
 
     _status("Setting up access key for S3...")
     try:
@@ -1114,11 +1154,11 @@ def bootstrap_environment(
         if fallback is None:
             raise
         _status("Reusing saved object-storage credentials (access-key provisioning skipped).")
-        return fallback
+        return _with_storage_account_ownership(fallback)
 
     s3_endpoint = f"https://storage.{region}.nebius.cloud"
 
-    return {
+    result = {
         "iam_token": iam_token,
         "service_account_id": sa_id,
         "nebius_api_key": aws_access_key,
@@ -1128,6 +1168,7 @@ def bootstrap_environment(
         "nebius_project_id": project_id,
         "nebius_region": region,
     }
+    return _with_storage_account_ownership(result)
 
 
 def resolve_service_account_id(
@@ -1173,7 +1214,9 @@ def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
     return str(sa_id).strip() or None
 
 
-def list_access_keys_for_service_account(project_id: str, sa_id: str) -> list[dict[str, str]]:
+def list_access_keys_for_service_account(
+    project_id: str, sa_id: str, *, strict: bool = False
+) -> list[dict[str, str]]:
     """Return ``[{"id", "name", "state"}]`` for every access key owned by *sa_id*.
 
     Teardown needs the full list (not just the active one `ensure_access_key`
@@ -1184,6 +1227,8 @@ def list_access_keys_for_service_account(project_id: str, sa_id: str) -> list[di
     try:
         data = _run_json(["iam", "v2", "access-key", "list", "--parent-id", project_id])
     except NebiusError:
+        if strict:
+            raise
         return []
     keys: list[dict[str, str]] = []
     for item in data.get("items", []):

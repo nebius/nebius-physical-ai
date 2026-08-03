@@ -103,3 +103,143 @@ def test_cleanup_is_quiet_when_nothing_is_left() -> None:
 
     assert result.exit_code == 0, result.output
     assert "No local NPA/SkyPilot residue" in result.output
+
+
+def test_cleanup_full_reports_credentials_without_removing_them() -> None:
+    from npa.clients import credentials as credentials_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {
+                    "HF_TOKEN": "hf_remove",
+                    "NEBIUS_TOKEN_FACTORY_KEY": "tf_remove",
+                },
+                "ngc": {"api_key": "nvapi_remove"},
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["cleanup", "--full", "--skip-jobs"])
+
+    assert result.exit_code == 0, result.output
+    assert "Hugging Face token" in result.output
+    assert "Token Factory key" in result.output
+    assert "NGC credentials" in result.output
+    assert "--full --yes" in result.output
+    saved = yaml.safe_load(credentials_module.CREDENTIALS_PATH.read_text())
+    assert saved["tokens"]["HF_TOKEN"] == "hf_remove"
+
+
+def test_cleanup_full_yes_removes_known_tokens_but_preserves_unrelated_credentials() -> None:
+    from npa.clients import credentials as credentials_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {
+                    "HF_TOKEN": "hf_remove",
+                    "NEBIUS_TOKEN_FACTORY_KEY": "tf_remove",
+                    "CUSTOM_VENDOR_TOKEN": "keep",
+                },
+                "ngc": {"api_key": "nvapi_remove", "org": "remove", "extra": "keep"},
+                "huggingface": {"token": "hf_alias_remove", "cache": "keep"},
+                "token_factory": {"api_key": "tf_alias_remove", "endpoint": "keep"},
+                "ssh": {"host": "example.invalid", "key_path": "/keys/id"},
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(credentials_module.CREDENTIALS_PATH.read_text())
+    assert saved["tokens"] == {"CUSTOM_VENDOR_TOKEN": "keep"}
+    assert saved["ngc"] == {"extra": "keep"}
+    assert saved["huggingface"] == {"cache": "keep"}
+    assert saved["token_factory"] == {"endpoint": "keep"}
+    assert saved["ssh"]["host"] == "example.invalid"
+    assert "Removed locally stored Hugging Face token" in result.output
+
+
+def test_cleanup_full_yes_removes_only_empty_npa_owned_tree() -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    npa_dir = Path.home() / ".npa"
+    (npa_dir / "clusters").mkdir(parents=True)
+    config_module.CONFIG_PATH.write_text("projects: {}\n")
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump({"tokens": {"HF_TOKEN": "hf_remove"}})
+    )
+
+    result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
+
+    assert result.exit_code == 0, result.output
+    assert not config_module.CONFIG_PATH.exists()
+    assert not credentials_module.CREDENTIALS_PATH.exists()
+    assert not npa_dir.exists()
+    assert "Removed empty NPA home" in result.output
+
+
+def test_cleanup_full_preserves_nonempty_config_and_cluster_data() -> None:
+    from npa.clients import config as config_module
+
+    npa_dir = Path.home() / ".npa"
+    cluster_file = npa_dir / "clusters" / "keep" / "kubeconfig"
+    cluster_file.parent.mkdir(parents=True)
+    cluster_file.write_text("apiVersion: v1\n")
+    config_module.CONFIG_PATH.write_text(yaml.safe_dump({"custom": {"keep": True}}))
+
+    result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
+
+    assert result.exit_code == 0, result.output
+    assert cluster_file.exists()
+    assert yaml.safe_load(config_module.CONFIG_PATH.read_text()) == {"custom": {"keep": True}}
+    assert npa_dir.exists()
+
+
+def test_cleanup_full_is_idempotent() -> None:
+    first = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
+    second = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert "No local NPA/SkyPilot residue" in second.output
+
+
+def test_cleanup_runbook_is_complete_without_dead_skypilot_uninstall() -> None:
+    result = runner.invoke(app, ["cleanup", "--skip-jobs"])
+
+    assert result.exit_code == 0, result.output
+    assert "npa storage service-account delete --project <alias> --yes" in result.output
+    assert "npa cleanup --full --yes" in result.output
+    assert "npa skypilot uninstall" not in result.output
+
+
+def test_cleanup_never_suggests_invalid_nebius_yes_flag() -> None:
+    result = runner.invoke(app, ["cleanup", "--skip-jobs"])
+
+    assert result.exit_code == 0, result.output
+    assert "nebius iam service-account delete --id <id> --yes" not in result.output
+    assert "nebius iam service-account delete --id <id>" in result.output
+
+
+def test_cleanup_full_reports_a_credential_removal_failure(monkeypatch) -> None:
+    from npa.cli import cleanup as cleanup_cli
+    from npa.clients import credentials as credentials_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump({"tokens": {"HF_TOKEN": "hf_keep_on_failure"}})
+    )
+    monkeypatch.setattr(cleanup_cli, "_clear_full_credentials", lambda: [])
+
+    result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
+
+    assert result.exit_code == 1
+    assert "could not be removed" in result.output
+    assert "full local cleanup was incomplete" in result.output
+    assert credentials_module.CREDENTIALS_PATH.exists()

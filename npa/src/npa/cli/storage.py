@@ -9,6 +9,8 @@ appears to empty still holds non-current versions, and the API answers
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import typer
 
 app = typer.Typer(
@@ -20,7 +22,21 @@ app = typer.Typer(
 bucket_app = typer.Typer(name="bucket", help="Object-storage buckets.", no_args_is_help=True)
 app.add_typer(bucket_app, name="bucket")
 
+service_account_app = typer.Typer(
+    name="service-account",
+    help="NPA-owned object-storage service accounts.",
+    no_args_is_help=True,
+)
+app.add_typer(service_account_app, name="service-account")
+
 DEFAULT_PURGE_TTL = "1m"
+
+
+@dataclass(frozen=True)
+class _OwnedStorageServiceAccount:
+    account_id: str
+    name: str
+    project_id: str
 
 
 @bucket_app.command("list")
@@ -78,6 +94,237 @@ def list_buckets_cmd(
         typer.echo(f"{row['name'].ljust(width)}  {row['id']}{marker}")
     typer.echo("")
     typer.echo("Delete one with `npa storage bucket delete --name <bucket>`.")
+
+
+def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | None, str]:
+    """Read the persisted ownership proof for NPA-created storage IAM.
+
+    A legacy ``nebius.service_account_id`` is not enough: configure has always
+    accepted user-managed accounts, and deleting one based on its familiar name
+    would silently destroy an unrelated identity. Only the provenance written
+    at the successful create call is authoritative.
+    """
+
+    import yaml
+
+    from npa.clients.credentials import CREDENTIALS_PATH
+    from npa.clients.nebius import DEFAULT_SERVICE_ACCOUNT_NAME
+
+    if not CREDENTIALS_PATH.exists():
+        return None, "No NPA-owned storage service account is recorded."
+    try:
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None, "No readable NPA-owned storage service-account record was found."
+    nebius = data.get("nebius") if isinstance(data, dict) else None
+    if not isinstance(nebius, dict):
+        return None, "No NPA-owned storage service account is recorded."
+
+    account_id = str(nebius.get("service_account_id", "") or "").strip()
+    managed_by = str(nebius.get("service_account_managed_by", "") or "").strip()
+    name = str(nebius.get("service_account_name", "") or "").strip()
+    project_id = str(nebius.get("service_account_project_id", "") or "").strip()
+    if managed_by != "npa":
+        suffix = (
+            f" The saved ID {account_id} is not proof of ownership and was left untouched."
+            if account_id
+            else ""
+        )
+        return None, f"No NPA-owned storage service account is recorded.{suffix}"
+    if not account_id or name != DEFAULT_SERVICE_ACCOUNT_NAME or not project_id:
+        return None, (
+            "The storage service-account ownership record is incomplete; refusing to "
+            "delete any IAM identity."
+        )
+    return _OwnedStorageServiceAccount(account_id, name, project_id), ""
+
+
+def _remove_storage_service_account_record(account_id: str) -> bool:
+    """Remove a deleted account's saved ownership record; report success."""
+
+    import yaml
+
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    if not CREDENTIALS_PATH.exists():
+        return True
+    try:
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    nebius = data.get("nebius")
+    if not isinstance(nebius, dict):
+        return False
+    if str(nebius.get("service_account_id", "") or "").strip() != account_id:
+        return False
+    for key in (
+        "service_account_id",
+        "service_account_name",
+        "service_account_project_id",
+        "service_account_managed_by",
+    ):
+        nebius.pop(key, None)
+    if nebius:
+        data["nebius"] = nebius
+    else:
+        data.pop("nebius", None)
+    if not data:
+        try:
+            CREDENTIALS_PATH.unlink()
+        except OSError:
+            return False
+        return True
+    try:
+        CREDENTIALS_PATH.write_text(
+            yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        CREDENTIALS_PATH.chmod(0o600)
+    except OSError:
+        return False
+    return True
+
+
+@service_account_app.command("delete")
+def delete_service_account_cmd(
+    project: str = typer.Option("", "--project", help="NPA project alias owning the account."),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project id owning the account."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the exact NPA-owned IAM resources without deleting them."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Delete the storage service account only when NPA recorded creating it.
+
+    Run this after deleting the configured bucket. Reused, legacy, incomplete,
+    mismatched, and user-managed identities are always left untouched.
+    """
+
+    import sys
+
+    from npa.clients.config import ConfigError, resolve_environment
+    from npa.clients.credentials import load_credentials
+    from npa.clients.nebius import (
+        NebiusError,
+        delete_access_key,
+        delete_service_account,
+        is_not_found,
+        list_access_keys_for_service_account,
+    )
+
+    record, note = _storage_service_account_record()
+    if record is None:
+        typer.echo(note)
+        return
+
+    resolved_project = project_id.strip()
+    if not resolved_project:
+        try:
+            saved = resolve_environment(project or None)
+        except ConfigError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        resolved_project = str(getattr(saved, "project_id", "") or "").strip()
+    if not resolved_project:
+        resolved_project = record.project_id
+    if resolved_project != record.project_id:
+        typer.echo(
+            f"Recorded NPA-owned service account {record.account_id} belongs to "
+            f"{record.project_id}, which does not match project {resolved_project}; "
+            "nothing was deleted."
+        )
+        return
+
+    try:
+        credentials = load_credentials(environ={})
+    except Exception:  # noqa: BLE001 - IAM teardown can still use the ownership record
+        credentials = None
+    configured_bucket = str(getattr(credentials, "s3_bucket", "") or "").strip()
+    if configured_bucket:
+        raise typer.BadParameter(
+            f"Object storage {configured_bucket} is still configured. Run `npa storage "
+            "bucket delete --project <alias> --yes --wait` first so this account is "
+            "not deleted while its bucket may still need it."
+        )
+
+    try:
+        keys = list_access_keys_for_service_account(
+            record.project_id, record.account_id, strict=True
+        )
+    except NebiusError as exc:
+        raise typer.BadParameter(
+            f"Could not inspect access keys for NPA-owned service account "
+            f"{record.account_id}; nothing was deleted: {exc}"
+        ) from exc
+    key_ids = [str((key or {}).get("id", "") or "").strip() for key in keys]
+    key_ids = [key_id for key_id in key_ids if key_id]
+    if dry_run:
+        for key_id in key_ids:
+            typer.echo(f"Would delete access key {key_id}.")
+        typer.echo(
+            f"Would delete NPA-owned service account {record.name} "
+            f"({record.account_id}) in {record.project_id}."
+        )
+        return
+
+    if not yes:
+        prompt = (
+            f"Delete NPA-owned service account {record.name} ({record.account_id}) "
+            f"and {len(key_ids)} access key(s)?"
+        )
+        if not sys.stdin.isatty():
+            typer.echo(f"{prompt} Re-run with --yes, or use --dry-run to inspect the plan.")
+            raise typer.Exit(code=1)
+        if not typer.confirm(prompt, default=False):
+            typer.echo("Aborted.")
+            raise typer.Exit(code=1)
+
+    failed = False
+    for key_id in key_ids:
+        try:
+            delete_access_key(key_id)
+        except NebiusError as exc:
+            failed = True
+            typer.echo(f"Warning: could not delete access key {key_id}: {exc}", err=True)
+        else:
+            typer.echo(f"Deleted access key {key_id}.")
+    try:
+        delete_service_account(record.account_id)
+    except NebiusError as exc:
+        if is_not_found(str(exc)):
+            typer.echo(
+                f"NPA-owned service account {record.name} ({record.account_id}) "
+                "is already absent."
+            )
+            if not _remove_storage_service_account_record(record.account_id):
+                failed = True
+                typer.echo(
+                    "Warning: the stale local service-account ownership record could "
+                    "not be removed; retry after fixing its file permissions.",
+                    err=True,
+                )
+        else:
+            failed = True
+            typer.echo(
+                f"Warning: could not delete NPA-owned service account {record.account_id}: {exc}",
+                err=True,
+            )
+    else:
+        typer.echo(
+            f"Deleted NPA-owned service account {record.name} ({record.account_id})."
+        )
+        if not _remove_storage_service_account_record(record.account_id):
+            failed = True
+            typer.echo(
+                "Warning: the service account is gone, but its local ownership record "
+                "could not be removed; retry after fixing its file permissions.",
+                err=True,
+            )
+    if failed:
+        raise typer.Exit(code=1)
 
 
 @bucket_app.command("delete")
@@ -380,12 +627,15 @@ def _prune_storage_credentials(bucket_name: str) -> None:
         else:
             data.pop(section_key, None)
 
-    # The storage principal's service account id lives beside the keys it owns;
-    # once its bucket + key are gone it points at a deleted/foreign identity.
+    # Keep a verifiable NPA ownership record until the explicit IAM teardown
+    # runs. A legacy/user-managed ID has no such provenance and retains the old
+    # behavior of being detached from the deleted bucket's credentials.
     nebius = data.get("nebius")
     if isinstance(nebius, dict) and nebius.get("service_account_id") not in (None, ""):
-        nebius.pop("service_account_id", None)
-        removed.append("service_account_id")
+        owned = str(nebius.get("service_account_managed_by", "") or "") == "npa"
+        if not owned:
+            nebius.pop("service_account_id", None)
+            removed.append("service_account_id")
         if nebius:
             data["nebius"] = nebius
         else:

@@ -6,12 +6,12 @@ few large, secret-free local caches survive with no single command to see or
 remove them: the isolated SkyPilot venv (~500 MB), the Terraform provider cache,
 SkyPilot's own `~/.sky` state (~100 MB), and empty per-alias state directories.
 
-`npa cleanup` lists them (with sizes); `--yes` removes them. It never touches
-credentials (your HF / Token Factory / NGC tokens) or config project stanzas —
-use `npa configure --forget-project` for a project — and it cannot delete cloud
-IAM: pre-existing service accounts (e.g. a storage principal) are reported with
-the raw `nebius iam …` command, not removed, since deleting a shared SA can break
-other work.
+`npa cleanup` lists them (with sizes); `--yes` removes them. Existing `--yes`
+semantics stay local and secret-free. The explicitly broader `--full --yes`
+scope also removes the locally saved HF / Token Factory / NGC credentials and
+prunes an empty NPA-owned config/tree after project teardown. Cloud IAM remains
+a separate, ownership-checked storage command so a shared identity is never
+silently removed.
 """
 
 from __future__ import annotations
@@ -73,6 +73,233 @@ def _empty_alias_dirs(npa_dir: Path, project: str) -> list[Path]:
     return found
 
 
+_FULL_TOKEN_KEYS = (
+    "HF_TOKEN",
+    "NEBIUS_TOKEN_FACTORY_KEY",
+    "NGC_API_KEY",
+    "NGC_ORG",
+    "NGC_TEAM",
+)
+_SERVICE_CREDENTIAL_FIELDS = {
+    "huggingface": ("token", "hf_token", "api_key", "key", "HF_TOKEN"),
+    "token_factory": (
+        "api_key",
+        "apikey",
+        "key",
+        "token",
+        "NEBIUS_TOKEN_FACTORY_KEY",
+    ),
+    "ngc": (
+        "api_key",
+        "apikey",
+        "key",
+        "token",
+        "org",
+        "organization",
+        "team",
+        "NGC_API_KEY",
+        "NGC_ORG",
+        "NGC_TEAM",
+    ),
+}
+
+
+def _full_credential_labels() -> list[str]:
+    """Return the full-cleanup credential groups present on disk."""
+
+    import yaml
+
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    try:
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
+    labels: list[str] = []
+    if data.get("HF_TOKEN") or tokens.get("HF_TOKEN") or _section_has_any(
+        data, "huggingface"
+    ):
+        labels.append("Hugging Face token")
+    if (
+        data.get("NEBIUS_TOKEN_FACTORY_KEY")
+        or tokens.get("NEBIUS_TOKEN_FACTORY_KEY")
+        or _section_has_any(data, "token_factory")
+    ):
+        labels.append("Token Factory key")
+    if any(data.get(key) or tokens.get(key) for key in ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")):
+        labels.append("NGC credentials")
+    elif _section_has_any(data, "ngc"):
+        labels.append("NGC credentials")
+    return labels
+
+
+def _section_has_any(data: dict, section_name: str) -> bool:
+    section = data.get(section_name)
+    if not isinstance(section, dict):
+        return False
+    return any(section.get(key) not in (None, "") for key in _SERVICE_CREDENTIAL_FIELDS[section_name])
+
+
+def _clear_full_credentials() -> list[str]:
+    """Remove only known shared-service credentials, preserving other data."""
+
+    import yaml
+
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    labels = _full_credential_labels()
+    if not labels:
+        return []
+    try:
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    for key in _FULL_TOKEN_KEYS:
+        data.pop(key, None)
+    tokens = data.get("tokens")
+    if isinstance(tokens, dict):
+        for key in _FULL_TOKEN_KEYS:
+            tokens.pop(key, None)
+        if tokens:
+            data["tokens"] = tokens
+        else:
+            data.pop("tokens", None)
+    for section_name, fields in _SERVICE_CREDENTIAL_FIELDS.items():
+        section = data.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for key in fields:
+            section.pop(key, None)
+        if section:
+            data[section_name] = section
+        else:
+            data.pop(section_name, None)
+
+    if not data:
+        try:
+            CREDENTIALS_PATH.unlink()
+        except OSError:
+            return []
+        return labels
+    try:
+        CREDENTIALS_PATH.write_text(
+            yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        CREDENTIALS_PATH.chmod(0o600)
+    except OSError:
+        return []
+    return labels
+
+
+def _yaml_file_is_empty(path: Path) -> bool:
+    import yaml
+
+    if not path.is_file():
+        return False
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False
+    return _structure_is_empty(data)
+
+
+def _structure_is_empty(value: object) -> bool:
+    """Whether YAML data contains no meaningful scalar user state."""
+
+    if value is None or value == "":
+        return True
+    if isinstance(value, dict):
+        return all(_structure_is_empty(item) for item in value.values())
+    if isinstance(value, list):
+        return all(_structure_is_empty(item) for item in value)
+    return False
+
+
+def _full_empty_state(npa_dir: Path) -> list[Path]:
+    """Return empty, known NPA-owned state that full cleanup can prune."""
+
+    from npa.clients.config import CONFIG_PATH
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    found: list[Path] = []
+    for path in (CONFIG_PATH, CREDENTIALS_PATH):
+        if _yaml_file_is_empty(path):
+            found.append(path)
+    for base_name in ("agents", "workbenches", "clusters"):
+        base = npa_dir / base_name
+        if not base.is_dir():
+            continue
+        for path in sorted(
+            (item for item in base.rglob("*") if item.is_dir()),
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            try:
+                if not any(path.iterdir()):
+                    found.append(path)
+            except OSError:
+                continue
+        try:
+            if not any(base.iterdir()):
+                found.append(base)
+        except OSError:
+            continue
+    try:
+        if npa_dir.is_dir() and not any(npa_dir.iterdir()):
+            found.append(npa_dir)
+    except OSError:
+        pass
+    return list(dict.fromkeys(found))
+
+
+def _prune_full_empty_state(npa_dir: Path) -> list[tuple[str, Path]]:
+    """Prune only empty config/known dirs, then ~/.npa if truly empty."""
+
+    from npa.clients.config import CONFIG_PATH
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    removed: list[tuple[str, Path]] = []
+    for label, path in (("config file", CONFIG_PATH), ("credentials file", CREDENTIALS_PATH)):
+        if not _yaml_file_is_empty(path):
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        removed.append((f"empty {label}", path))
+    for base_name in ("agents", "workbenches", "clusters"):
+        base = npa_dir / base_name
+        if not base.is_dir():
+            continue
+        directories = sorted(
+            [base, *(item for item in base.rglob("*") if item.is_dir())],
+            key=lambda item: len(item.parts),
+            reverse=True,
+        )
+        for path in directories:
+            try:
+                if any(path.iterdir()):
+                    continue
+                path.rmdir()
+            except OSError:
+                continue
+            removed.append(("empty state dir", path))
+    try:
+        if npa_dir.is_dir() and not any(npa_dir.iterdir()):
+            npa_dir.rmdir()
+            removed.append(("empty NPA home", npa_dir))
+    except OSError:
+        pass
+    return removed
+
+
 def _collect_residue(*, include_sky: bool) -> list[_Residue]:
     home = Path.home()
     npa_dir = home / ".npa"
@@ -99,11 +326,12 @@ TEARDOWN_RUNBOOK = (
     "npa agent destroy --project <alias> --name <name> --yes",
     "npa cluster down --force",
     "npa storage bucket delete --project <alias> --yes --wait",
+    "npa storage service-account delete --project <alias> --yes "
+    "(only when configure recorded that NPA created it)",
     "npa configure --forget-project <alias>",
-    # `npa cleanup` reads the managed-job queue through SkyPilot, so removing
-    # SkyPilot first silently drops that safety check.
-    "npa cleanup --yes            (local caches; keep this before the uninstall)",
-    "npa skypilot uninstall --yes (last: cleanup needs it to see managed jobs)",
+    # Cleanup checks managed jobs before removing the isolated SkyPilot venv;
+    # running `skypilot uninstall` afterwards would only be a dead no-op.
+    "npa cleanup --full --yes     (known shared tokens + caches + empty local state)",
 )
 
 
@@ -144,7 +372,9 @@ def _report_managed_jobs(sky_bin: str) -> None:
 
 def _print_runbook() -> None:
     typer.echo("")
-    typer.echo("Full teardown order (npa cleanup does NOT run these; they touch cloud resources):")
+    typer.echo(
+        "Full teardown order (printed only; cleanup never implies the preceding cloud steps):"
+    )
     for index, step in enumerate(TEARDOWN_RUNBOOK, start=1):
         typer.echo(f"  {index}. {step}")
 
@@ -164,6 +394,13 @@ def _iam_note() -> str:
             data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
             sa_id = str(((data or {}).get("nebius") or {}).get("service_account_id", "") or "").strip()
             if sa_id:
+                nebius = (data or {}).get("nebius") or {}
+                if str(nebius.get("service_account_managed_by", "") or "") == "npa":
+                    return (
+                        f"Cloud IAM (not removed here): NPA recorded creating storage "
+                        f"principal {sa_id}. After deleting its bucket, remove it safely with "
+                        "`npa storage service-account delete --project <alias> --yes`."
+                    )
                 return (
                     f"Cloud IAM (not removed): the storage principal {sa_id} and any "
                     "pre-existing service accounts remain — deleting a shared SA can "
@@ -190,6 +427,15 @@ def cleanup_cmd(
         "--include-sky/--keep-sky",
         help="Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs run).",
     ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help=(
+            "Broaden --yes to also remove locally saved HF, Token Factory, and NGC "
+            "credentials, then prune empty config/known ~/.npa state. Non-empty and "
+            "unrelated data is preserved."
+        ),
+    ),
     project: str = typer.Option(
         "", "--project", help="Scope the empty per-alias state-dir report to this alias."
     ),
@@ -207,8 +453,9 @@ def cleanup_cmd(
     """Report (or with --yes remove) local NPA/SkyPilot residue left after teardown.
 
     Local only. Cloud resources (agent VM, cluster, bucket, IAM) are removed by
-    the commands in the printed runbook -- `--yes` never deletes anything in the
-    cloud, which the report says explicitly so it is not mistaken for a teardown.
+    the commands in the printed runbook. Existing `--yes` keeps credentials and
+    config; add `--full` to remove known shared-service credentials and empty
+    NPA-owned local state. Neither scope deletes anything in the cloud.
     """
     import shutil
 
@@ -217,29 +464,41 @@ def cleanup_cmd(
     npa_dir = Path.home() / ".npa"
     residue = _collect_residue(include_sky=include_sky)
     empty_dirs = _empty_alias_dirs(npa_dir, project)
+    credential_labels = _full_credential_labels() if full else []
+    full_empty_state = _full_empty_state(npa_dir) if full else []
 
     if not skip_jobs:
         _report_managed_jobs(sky_bin)
 
     total = sum(item.size for item in residue)
-    if not residue and not empty_dirs:
+    if not residue and not empty_dirs and not credential_labels and not full_empty_state:
         typer.echo("No local NPA/SkyPilot residue to clean up.")
         typer.echo(_iam_note())
         if not yes:
             _print_runbook()
         return
 
-    typer.echo("Local residue after teardown (secret-free; your tokens/config are untouched):")
+    scope = (
+        "full local scope; known shared credentials are included"
+        if full
+        else "secret-free; your tokens/config are untouched"
+    )
+    typer.echo(f"Local residue after teardown ({scope}):")
     for item in residue:
         typer.echo(f"  {item.label:<26} {_human(item.size):>8}  {item.path}")
     for empty in empty_dirs:
         typer.echo(f"  {'empty state dir':<26} {'-':>8}  {empty}")
+    for label in credential_labels:
+        typer.echo(f"  {label:<26} {'saved':>8}")
+    for path in full_empty_state:
+        typer.echo(f"  {'empty local state':<26} {'-':>8}  {path}")
     if residue:
         typer.echo(f"  {'total':<26} {_human(total):>8}")
 
     if not yes:
         typer.echo("")
-        typer.echo("Re-run with --yes to remove them (or --keep-sky to leave ~/.sky).")
+        rerun = "--full --yes" if full else "--yes"
+        typer.echo(f"Re-run with {rerun} to remove them (or --keep-sky to leave ~/.sky).")
         typer.echo(_iam_note())
         _print_runbook()
         return
@@ -258,14 +517,50 @@ def cleanup_cmd(
             typer.echo(f"Removed empty state dir: {empty}")
         except OSError:
             pass
-    # Drop the now-empty agents/ and workbenches/ base dirs too.
-    for base_name in ("agents", "workbenches"):
+    # Drop the now-empty agents/ and workbenches/ base dirs too in the narrow
+    # scope. Full cleanup handles these plus clusters/ and ~/.npa below.
+    for base_name in (() if full else ("agents", "workbenches")):
         base = npa_dir / base_name
         try:
             if base.is_dir() and not any(base.iterdir()):
                 base.rmdir()
         except OSError:
             pass
+    cleanup_failed = False
+    cleared_credentials: list[str] = []
+    pruned_state: list[tuple[str, Path]] = []
+    if full:
+        cleared_credentials = _clear_full_credentials()
+        if cleared_credentials:
+            typer.echo(
+                "Removed locally stored " + ", ".join(cleared_credentials) + "."
+            )
+        if credential_labels and set(cleared_credentials) != set(credential_labels):
+            cleanup_failed = True
+            typer.echo(
+                "Warning: one or more requested shared credentials could not be removed; "
+                "the credentials file was preserved for a safe retry.",
+                err=True,
+            )
+        pruned_state = _prune_full_empty_state(npa_dir)
+        for label, path in pruned_state:
+            if label == "empty NPA home":
+                typer.echo(f"Removed empty NPA home: {path}")
+            else:
+                typer.echo(f"Removed {label}: {path}")
     typer.echo("")
-    typer.echo(f"Freed ~{_human(total)} of local caches. Tokens and project config were kept.")
+    if full and not cleanup_failed:
+        typer.echo(
+            f"Freed ~{_human(total)} of local caches. Known shared credentials and "
+            "empty NPA-owned state were removed; non-empty/unrelated data was kept."
+        )
+    elif full:
+        typer.echo(
+            f"Freed ~{_human(total)} of local caches, but full local cleanup was incomplete. "
+            "Non-empty/unrelated data was kept; fix the warning above and retry."
+        )
+    else:
+        typer.echo(f"Freed ~{_human(total)} of local caches. Tokens and project config were kept.")
     typer.echo(_iam_note())
+    if cleanup_failed:
+        raise typer.Exit(code=1)

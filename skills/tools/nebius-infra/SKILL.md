@@ -41,6 +41,26 @@ workflow environment variables.
    checked. Use `--sky-smoke` only when live GPU validation is explicitly
    requested.
 
+## Full Teardown
+
+Run project-scoped cloud deletion before forgetting the project, then use the
+explicit full local scope:
+
+```bash
+npa storage bucket delete --project <alias> --yes --wait
+npa storage service-account delete --project <alias> --dry-run
+npa storage service-account delete --project <alias> --yes
+npa configure --forget-project <alias>
+npa cleanup --full --yes
+```
+
+The storage service-account command is ownership-gated: it only deletes the
+exact `lerobot-training` identity whose successful create call NPA recorded for
+that project. A familiar name or legacy saved ID is not proof of ownership.
+Plain `npa cleanup --yes` keeps credentials; `--full --yes` additionally removes
+the locally saved Hugging Face, Token Factory, and NGC entries and prunes only
+empty NPA-owned local state. It does not delete cloud resources.
+
 ## Three-Tier Contract
 
 - CLI: `npa configure` writes runtime config and credentials; `npa

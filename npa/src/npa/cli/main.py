@@ -512,6 +512,14 @@ def _provision_object_storage(
     sa_id = creds.get("service_account_id", "").strip()
     if sa_id:
         payload["service_account_id"] = sa_id
+    for key in (
+        "service_account_name",
+        "service_account_project_id",
+        "service_account_managed_by",
+    ):
+        value = str(creds.get(key, "") or "").strip()
+        if value:
+            payload[key] = value
     return payload
 
 
@@ -1201,6 +1209,16 @@ def _run_interactive_configure(
         ask, existing_credentials, skip=preset_tokens or set()
     )
 
+    service_account_keys = {
+        key: str(storage.get(key, "") or "").strip()
+        for key in (
+            "service_account_id",
+            "service_account_name",
+            "service_account_project_id",
+            "service_account_managed_by",
+        )
+        if str(storage.get(key, "") or "").strip()
+    }
     credentials_payload: dict[str, object] = {
         "tokens": {
             "HF_TOKEN": hf_token,
@@ -1210,12 +1228,11 @@ def _run_interactive_configure(
         "storage": {
             key: value
             for key, value in storage.items()
-            if key != "service_account_id" and value
+            if not key.startswith("service_account_") and value
         },
     }
-    sa_id = str(storage.get("service_account_id", "") or "").strip()
-    if sa_id:
-        credentials_payload["nebius"] = {"service_account_id": sa_id}
+    if service_account_keys:
+        credentials_payload["nebius"] = service_account_keys
 
     credentials_path = write_credentials_file(credentials_payload)
 

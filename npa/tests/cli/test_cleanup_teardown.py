@@ -154,6 +154,59 @@ def test_bucket_delete_keeps_credentials_for_another_bucket(monkeypatch, tmp_pat
     assert yaml.safe_load(creds_path.read_text())["storage"]["access_key_id"] == "AKKEEP"
 
 
+def test_bucket_delete_keeps_npa_ownership_proof_for_explicit_iam_teardown(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    creds_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "s3://npa-bucket-owned/",
+                    "aws_access_key_id": "AK",
+                    "aws_secret_access_key": "SK",
+                },
+                "nebius": {
+                    "service_account_id": "serviceaccount-storage",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "npa",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_bucket_by_name",
+        lambda project_id, name: {"metadata": {"id": "bucket-owned", "name": name}},
+    )
+    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+
+    result = runner.invoke(
+        app,
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            "npa-bucket-owned",
+            "--project-id",
+            "project-a",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(creds_path.read_text())
+    assert "storage" not in saved
+    assert saved["nebius"]["service_account_managed_by"] == "npa"
+    assert saved["nebius"]["service_account_id"] == "serviceaccount-storage"
+
+
 def test_bucket_delete_clears_terraform_state_for_that_bucket(monkeypatch, tmp_path: Path) -> None:
     """The Terraform remote-state S3 keys for a deleted bucket are secrets too.
 

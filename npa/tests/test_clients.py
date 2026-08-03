@@ -466,7 +466,11 @@ def test_nebius_service_account_reuses_existing(mocker) -> None:
         return_value={"metadata": {"id": "sa-id"}},
     )
 
-    assert nebius.ensure_service_account("project", name="svc") == "sa-id"
+    created: list[str] = []
+    assert nebius.ensure_service_account(
+        "project", name="svc", on_created=created.append
+    ) == "sa-id"
+    assert created == []
     run_json.assert_called_once()
 
 
@@ -499,6 +503,46 @@ def test_nebius_service_account_creates_when_not_found_despite_saved(mocker) -> 
 
     assert nebius.ensure_service_account("project", name="npa-agent") == "serviceaccount-new"
     assert run_json.call_count == 2
+
+
+def test_nebius_service_account_reports_ownership_only_when_created(mocker) -> None:
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json",
+        side_effect=[
+            nebius.NebiusError("NotFound: 'lerobot-training' not found"),
+            {"metadata": {"id": "serviceaccount-created"}},
+        ],
+    )
+    created: list[str] = []
+
+    account_id = nebius.ensure_service_account(
+        "project", on_created=created.append
+    )
+
+    assert account_id == "serviceaccount-created"
+    assert created == ["serviceaccount-created"]
+    assert run_json.call_count == 2
+
+
+def test_nebius_bootstrap_returns_verifiable_storage_account_ownership(mocker) -> None:
+    mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
+
+    def create_account(project_id, name="lerobot-training", *, description="", on_created=None):
+        if on_created:
+            on_created("serviceaccount-created")
+        return "serviceaccount-created"
+
+    mocker.patch("npa.clients.nebius.ensure_service_account", side_effect=create_account)
+    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    mocker.patch("npa.clients.nebius.ensure_bucket")
+    mocker.patch("npa.clients.nebius.ensure_access_key", return_value=("key", "secret"))
+
+    result = nebius.bootstrap_environment("project", "tenant", "eu-north1")
+
+    assert result["service_account_id"] == "serviceaccount-created"
+    assert result["service_account_name"] == "lerobot-training"
+    assert result["service_account_project_id"] == "project"
+    assert result["service_account_managed_by"] == "npa"
 
 
 def test_nebius_saved_storage_credentials_prefers_configured_bucket(mocker) -> None:
