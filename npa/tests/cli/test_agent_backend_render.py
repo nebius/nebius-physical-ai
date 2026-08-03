@@ -88,8 +88,9 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     # Phase C: sim2real drive orchestration embedded + route wired.
     assert "def drive_sim2real_loop" in body
     assert '@app.post("/agent/sim2real/drive")' in body
-    # Phase D: semantic router embedded + wired into the /chat fallthrough.
-    assert "def classify_intent_semantic" in body
+    # Phase D/G: semantic router shipped + wired into the /chat fallthrough.
+    assert "from agent_backend.semantic_router import classify_intent_semantic" in body
+    assert "def classify_intent_semantic" not in body
     assert "def _semantic_route" in body
     # Phase F: quantitative signals embedded + memory routes wired.
     assert "def extract_quantitative_signals" in body
@@ -234,6 +235,7 @@ def _capture_setup_script(monkeypatch) -> str:
     ("module", "marker"),
     [
         ("actions", "def run_action_loop"),
+        ("semantic_router", "def classify_intent_semantic"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
     ],
@@ -286,6 +288,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     for name in (
         "memory",
         "actions",
+        "semantic_router",
         "retrieval",
         "trace",
         "foxglove",
@@ -347,6 +350,7 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
     for name in (
         "memory",
         "actions",
+        "semantic_router",
         "retrieval",
         "trace",
         "foxglove",

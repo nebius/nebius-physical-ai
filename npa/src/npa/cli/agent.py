@@ -254,17 +254,6 @@ def _embedded_agent_sim2real_loop_source() -> str:
     return raw
 
 
-def _embedded_agent_semantic_router_source() -> str:
-    """Return agent_semantic_router.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_semantic_router.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
 def _shipped_agent_backend_module_source(name: str) -> str:
     """Return the FULL source of a shipped agent_backend module.
 
@@ -280,7 +269,7 @@ _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_ACTIONS_SHIP = "__NPA_AGENT_ACTIONS_SHIP__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
-_AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
+_AGENT_SEMANTIC_ROUTER_SHIP = "__NPA_AGENT_SEMANTIC_ROUTER_SHIP__"
 # Phase G: shipped (uploaded + imported) rather than embedded.
 _AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
 # Blueprint Phases H/I: also shipped as importable files.
@@ -1813,7 +1802,9 @@ def _bootstrap_agent_stack(
     agent_actions_ship_source = _shipped_agent_backend_module_source("actions")
     agent_recordings_source = _embedded_agent_recordings_source()
     agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
-    agent_semantic_router_source = _embedded_agent_semantic_router_source()
+    agent_semantic_router_ship_source = _shipped_agent_backend_module_source(
+        "semantic_router"
+    )
     agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
     agent_retrieval_ship_source = _shipped_agent_backend_module_source("retrieval")
     agent_trace_ship_source = _shipped_agent_backend_module_source("trace")
@@ -1955,6 +1946,9 @@ cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/actions.py >/dev/null
 {_AGENT_ACTIONS_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/semantic_router.py >/dev/null
+{_AGENT_SEMANTIC_ROUTER_SHIP}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
 {_AGENT_RETRIEVAL_SHIP}
@@ -4193,7 +4187,7 @@ from agent_backend.actions import (
 
 {_AGENT_SIM2REAL_LOOP_EMBED}
 
-{_AGENT_SEMANTIC_ROUTER_EMBED}
+from agent_backend.semantic_router import classify_intent_semantic
 
 # Phase G: run memory is a SHIPPED module (uploaded to /opt/npa-agent/agent_backend
 # and imported here) rather than string-substituted into this f-string.
@@ -8653,7 +8647,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_ACTIONS_SHIP, agent_actions_ship_source)
         .replace(_AGENT_RECORDINGS_EMBED, agent_recordings_source)
         .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
-        .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
+        .replace(_AGENT_SEMANTIC_ROUTER_SHIP, agent_semantic_router_ship_source)
         .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
         .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)
         .replace(_AGENT_TRACE_SHIP, agent_trace_ship_source)
