@@ -320,12 +320,33 @@ def build_and_push_command(image: str) -> str:
     tool = tool_for_image_name(image_name)
     if not tool:
         return ""
+    dockerfile = _workbench_dockerfile(tool)
+    if not dockerfile:
+        # Not every tool builds from npa/docker/workbench/<tool>/Dockerfile
+        # (sim2real tools in particular live elsewhere). Printing a command whose
+        # -f path does not exist is worse than printing none.
+        return ""
     registry = ref.rsplit("/", 1)[0]
     tag = supported_tool_version(tool)
     return (
-        f"docker buildx build --push -f npa/docker/workbench/{tool}/Dockerfile "
+        f"docker buildx build --push -f {dockerfile} "
         f"-t {registry}/{image_name}:{tag} npa"
     )
+
+
+def _workbench_dockerfile(tool: str) -> str:
+    """Return the repo-relative Dockerfile for ``tool``, or "" if there is none.
+
+    Resolved against the checkout when one is reachable; an installed npa has no
+    docker/ tree, and there the conventional path is still the right advice.
+    """
+
+    relative = f"npa/docker/workbench/{tool}/Dockerfile"
+    package_root = Path(__file__).resolve().parents[2]
+    repo_root = package_root.parent.parent
+    if not (repo_root / "npa" / "docker").is_dir():
+        return relative
+    return relative if (repo_root / relative).is_file() else ""
 
 
 def registry_from_id(registry_id: str) -> str:

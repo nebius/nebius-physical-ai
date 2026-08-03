@@ -332,3 +332,43 @@ def test_a_missing_workbench_image_carries_its_build_command(
     assert "docker buildx build" in check.remedy
     assert f"npa-cosmos-curate:{supported_tool_version('cosmos-curate')}" in check.remedy
     assert "docker login" in check.remedy
+
+
+def test_submit_checks_the_project_registry_not_the_first_party_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`npa configure` saves a project registry; the image pins must use it.
+
+    Without this, preflight checked one registry while the run pulled from
+    another, and the build command it printed named the wrong destination.
+    """
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry",
+        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+    )
+
+    assert (
+        workflow_cli._resolve_submit_registry("", "test-rtx")
+        == "cr.us-central1.nebius.cloud/u00proj"
+    )
+
+
+def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry",
+        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+    )
+
+    assert workflow_cli._resolve_submit_registry("cr.explicit/x", "p") == "cr.explicit/x"
+
+
+def test_an_unreadable_config_falls_back_to_the_render_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(project=None):  # noqa: ANN001 - test stub
+        raise RuntimeError("no config")
+
+    monkeypatch.setattr("npa.clients.config.resolve_container_registry", explode)
+
+    assert workflow_cli._resolve_submit_registry("", "p") == ""

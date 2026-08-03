@@ -334,12 +334,47 @@ def _missing_image_remedy(reference: ImageReference) -> str:
         command = build_and_push_command(reference.raw)
     except Exception:  # noqa: BLE001 - the remedy must never be the thing that fails
         command = ""
+    copy_hint = _server_side_copy_hint(reference)
     if not command:
-        return f"{base}; build and push it, or pin a tag that exists"
+        return f"{base}; build and push it, or pin a tag that exists.{copy_hint}"
     return (
-        f"{base}. This is an NPA workbench image, so build and push it after "
+        f"{base}. This is an NPA workbench image. Authenticate with "
         f"`printf '%s' \"$(nebius iam get-access-token)\" | docker login "
-        f"{reference.registry} -u iam --password-stdin`:\n    {command}"
+        f"{reference.registry} -u iam --password-stdin`, then either copy it "
+        f"server-side (preferred) or build it:{copy_hint}\n    {command}"
+    )
+
+
+def _server_side_copy_hint(reference: ImageReference) -> str:
+    """Suggest a registry-to-registry copy before a local rebuild.
+
+    These images run to tens of GB. Building or `docker pull`+`push` moves every
+    layer through the local machine, where a long transfer gets killed; `crane
+    copy` moves them registry-to-registry and never materializes them locally. If
+    the tag exists anywhere already, copying is both faster and far more likely to
+    finish.
+    """
+
+    try:
+        from npa.deploy.images import backup_container_registry, primary_container_registry
+    except Exception:  # noqa: BLE001 - the hint must never be what fails
+        return ""
+    target = f"{reference.registry}/{reference.repository}:{reference.reference}"
+    sources = []
+    for candidate in (primary_container_registry(), backup_container_registry()):
+        source_registry = str(candidate or "").rstrip("/")
+        if not source_registry:
+            continue
+        repository = reference.repository.rsplit("/", 1)[-1]
+        source = f"{source_registry}/{repository}:{reference.reference}"
+        if source != target and source not in sources:
+            sources.append(source)
+    if not sources:
+        return ""
+    lines = "".join(f"\n    crane copy {source} {target}" for source in sources)
+    return (
+        "\n  If the tag already exists in another registry, copy it server-side "
+        "instead of moving tens of GB through this machine:" + lines
     )
 
 

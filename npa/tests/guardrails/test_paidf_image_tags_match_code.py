@@ -117,3 +117,47 @@ def test_the_readme_path_names_the_image_step() -> None:
     assert "preflight-images" in whole_path
     # A 2x1-GPU fleet needed `--gpu-nodes 2`, which the copy-paste path lacked.
     assert "--gpu-nodes" in whole_path
+
+
+def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> None:
+    """Not every tool builds from npa/docker/workbench/<tool>/Dockerfile.
+
+    Printing a `-f` path that does not exist sends an operator to a command that
+    cannot work; no command is better than a wrong one.
+    """
+
+    for tool in ("envgen", "reference-policy"):
+        image = CONTAINER_IMAGE_NAMES[tool]
+        assert not (REPO_ROOT / "npa" / "docker" / "workbench" / tool / "Dockerfile").is_file()
+        assert build_and_push_command(f"cr.example/p/{image}:t") == ""
+
+
+def test_a_missing_image_offers_a_server_side_copy_before_a_rebuild() -> None:
+    # These images run to tens of GB; a 25 GB push through the local machine was
+    # killed, while a registry-side retag succeeded.
+    from npa.orchestration.skypilot.registry_preflight import (
+        _missing_image_remedy,
+        parse_image_reference,
+    )
+
+    remedy = _missing_image_remedy(
+        parse_image_reference("cr.us-central1.nebius.cloud/u00proj/npa-cosmos-curate:0.1.2")
+    )
+
+    assert "crane copy" in remedy
+    assert "server-side" in remedy
+    # The copy is offered ahead of the local build.
+    assert remedy.index("crane copy") < remedy.index("docker buildx build")
+
+
+def test_the_copy_hint_never_suggests_copying_a_ref_onto_itself() -> None:
+    from npa.deploy.images import primary_container_registry
+    from npa.orchestration.skypilot.registry_preflight import (
+        _missing_image_remedy,
+        parse_image_reference,
+    )
+
+    same = f"{primary_container_registry()}/npa-cosmos-curate:0.1.2"
+    remedy = _missing_image_remedy(parse_image_reference(same))
+
+    assert f"crane copy {same} {same}" not in remedy

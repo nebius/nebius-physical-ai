@@ -489,7 +489,7 @@ def submit_cmd(
         _preflight_submit_images(
             yaml_path,
             options=SkypilotRenderOptions(
-                registry=registry,
+                registry=_resolve_submit_registry(registry, project),
                 image_overrides=image_overrides,
                 gpu_target=gpu_target,
                 image_variant=image_variant,
@@ -543,7 +543,7 @@ def submit_cmd(
             )
             return
         npa_render_options = SkypilotRenderOptions(
-            registry=registry,
+            registry=_resolve_submit_registry(registry, project),
             image_overrides=image_overrides,
             aws_endpoint_url=s3_endpoint
             or os.environ.get("AWS_ENDPOINT_URL")
@@ -903,6 +903,27 @@ def _is_nebius_registry_image(image: str) -> bool:
     value = str(image or "").removeprefix("docker:").strip()
     host = value.split("/", 1)[0] if "/" in value else ""
     return host.startswith("cr.") and host.endswith(".nebius.cloud")
+
+
+def _resolve_submit_registry(registry: str, project: str) -> str:
+    """Return the registry a submit should pull from.
+
+    An explicit --registry wins. Otherwise use the registry `npa configure` saved
+    for the project: the image pins otherwise resolved against the first-party
+    default even when the operator had selected (or been given) a project
+    registry, so preflight checked one registry while the run pulled from another
+    and the printed build command targeted the wrong place.
+    """
+
+    explicit = str(registry or "").strip()
+    if explicit:
+        return explicit
+    try:
+        from npa.clients.config import resolve_container_registry
+
+        return str(resolve_container_registry(project or None) or "").strip()
+    except Exception:  # noqa: BLE001 - fall back to the render's own default
+        return ""
 
 
 def _preflight_submit_images(
@@ -2516,6 +2537,12 @@ def run_spec_cmd(
 def preflight_images_cmd(
     yaml_path: Path = typer.Argument(help="npa.workflow spec path."),
     registry: str = typer.Option("", "--registry", help="Container registry override."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help="Project alias whose configured registry to check. Defaults to the configured project.",
+    ),
     image: str = typer.Option("", "--image", help="Pin every step to this image."),
     assume_decision: str = typer.Option(
         "", "--assume-decision", help="Branch assumption for planning."
@@ -2546,13 +2573,16 @@ def preflight_images_cmd(
     image_overrides: dict[str, str] = {}
     if image.strip():
         image_overrides["*"] = image.strip()
+    resolved_registry = _resolve_submit_registry(registry, project)
     options = SkypilotRenderOptions(
-        registry=registry,
+        registry=resolved_registry,
         image_overrides=image_overrides,
         gpu_target=gpu_target,
         image_variant=image_variant,
         materialize_registry_secrets=False,
     )
+    if resolved_registry:
+        typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     images = plan_images(spec, plan.steps, run_id=run_id, options=options)
