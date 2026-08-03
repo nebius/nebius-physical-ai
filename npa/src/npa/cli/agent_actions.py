@@ -397,6 +397,14 @@ def _planner_messages(
     )
     if live_context:
         system += "\n\n" + live_context
+    if any(obs.get("replan_required") for obs in observations):
+        system += (
+            "\n\nReplanning is required because the previous tool call failed or "
+            "returned no usable observation. Choose a changed strategy: adjust "
+            "the tool arguments, call a different tool, or finish by asking for a "
+            "specific clarifying sub-goal. Do not repeat the same tool with the "
+            "same arguments."
+        )
     lines = [f"Operator goal: {goal}"]
     if observations:
         lines.append("\nObservations so far:")
@@ -557,6 +565,40 @@ def _observe(observation: Any, *, limit: int = 4000) -> Any:
     return {"truncated": True, "preview": text[:limit]}
 
 
+def _replan_reason(observation: Any, *, raised: bool = False) -> str:
+    """Classify tool output that cannot advance the current plan.
+
+    Empty result sets are observations rather than fabricated successes: the next
+    planner step may broaden the query, try another tool, or truthfully finish by
+    asking for a narrower sub-goal. Numeric zero and ``False`` remain valid scalar
+    observations; only structurally empty containers and explicit empty-store
+    shapes trigger replanning.
+    """
+    if raised:
+        return "tool_error"
+    if observation is None:
+        return "empty_observation"
+    if isinstance(observation, str) and not observation.strip():
+        return "empty_observation"
+    if isinstance(observation, Mapping):
+        if observation.get("error"):
+            return "tool_error"
+        if observation.get("ok") is False:
+            return "tool_error"
+        if not observation:
+            return "empty_observation"
+        if observation.get("count") == 0 or observation.get("total_records") == 0:
+            return "empty_observation"
+        for field in ("records", "runs", "items", "artifacts"):
+            values = observation.get(field)
+            if field in observation and isinstance(values, Sequence) and not values:
+                return "empty_observation"
+        return ""
+    if isinstance(observation, Sequence) and not observation:
+        return "empty_observation"
+    return ""
+
+
 def run_action_loop(
     goal: str,
     *,
@@ -602,6 +644,8 @@ def run_action_loop(
     stopped_reason = STOP_MAX_STEPS
     needs_confirmation = False
     proposed_action: dict[str, Any] | None = None
+    failed_actions: dict[str, str] = {}
+    replans = 0
 
     hard_cap = max(1, int(max_steps))
     plan_retry_used = False
@@ -686,6 +730,39 @@ def run_action_loop(
         tool = str(plan.get("tool") or "").strip()
         args = plan.get("args") if isinstance(plan.get("args"), dict) else {}
         thought = str(plan.get("thought") or "")
+        planned_action = {"tool": tool, "args": args}
+        planned_digest = action_digest(planned_action)
+
+        if planned_digest in failed_actions:
+            reason = "unchanged_strategy"
+            observation = {
+                "error": (
+                    "replan repeated the same failed tool and arguments; change "
+                    "arguments, choose another tool, or ask a clarifying sub-goal"
+                )
+            }
+            steps.append(
+                {
+                    "step": step_index + 1,
+                    "phase": "replan",
+                    "tool": tool,
+                    "args": args,
+                    "status": "rejected",
+                    "thought": thought,
+                    "observation": observation,
+                    "replan_reason": reason,
+                }
+            )
+            observations.append(
+                {
+                    "tool": tool,
+                    "rejected": observation["error"],
+                    "replan_required": True,
+                    "replan_reason": reason,
+                }
+            )
+            replans += 1
+            continue
 
         if not is_allowed(tool, resolved_allow):
             observation = {"error": f"tool '{tool}' is not in the allowlist"}
@@ -700,7 +777,16 @@ def run_action_loop(
                     "observation": observation,
                 }
             )
-            observations.append({"tool": tool, "rejected": observation["error"]})
+            failed_actions[planned_digest] = "tool_not_allowed"
+            observations.append(
+                {
+                    "tool": tool,
+                    "rejected": observation["error"],
+                    "replan_required": True,
+                    "replan_reason": "tool_not_allowed",
+                }
+            )
+            replans += 1
             continue
 
         if requires_confirmation(tool, resolved_allow):
@@ -747,16 +833,28 @@ def run_action_loop(
                     "observation": observation,
                 }
             )
-            observations.append({"tool": tool, "error": observation["error"]})
+            failed_actions[planned_digest] = "executor_unavailable"
+            observations.append(
+                {
+                    "tool": tool,
+                    "error": observation["error"],
+                    "replan_required": True,
+                    "replan_reason": "executor_unavailable",
+                }
+            )
+            replans += 1
             continue
 
+        raised = False
         try:
             result = executor(args)
-            status = "ok"
             observation = result
         except Exception as exc:  # noqa: BLE001 - tool errors are observations
-            status = "error"
+            raised = True
             observation = {"error": str(exc)}
+        replan_reason = _replan_reason(observation, raised=raised)
+        status = "error" if replan_reason == "tool_error" else "empty" if replan_reason else "ok"
+        observed = _observe(observation)
         steps.append(
             {
                 "step": step_index + 1,
@@ -765,12 +863,20 @@ def run_action_loop(
                 "args": args,
                 "status": status,
                 "thought": thought,
-                "observation": _observe(observation),
+                "observation": observed,
+                **({"replan_reason": replan_reason} if replan_reason else {}),
             }
         )
         if tool not in tools_used:
             tools_used.append(tool)
-        observations.append({"tool": tool, "result": _observe(observation)})
+        observation_entry = {"tool": tool, "result": observed}
+        if replan_reason:
+            failed_actions[planned_digest] = replan_reason
+            observation_entry.update(
+                {"replan_required": True, "replan_reason": replan_reason}
+            )
+            replans += 1
+        observations.append(observation_entry)
     else:
         stopped_reason = STOP_MAX_STEPS
         if not reply:
@@ -794,6 +900,7 @@ def run_action_loop(
         "proposed_action": proposed_action,
         "tokens": total_tokens,
         "tier": tier,
+        "replans": replans,
     }
 
 
@@ -895,4 +1002,5 @@ def run_chat_action_loop(
         "needs_confirmation": bool(result.get("needs_confirmation")),
         "proposed_action": result.get("proposed_action"),
         "usage": {"total_tokens": int(result.get("tokens") or 0)},
+        "replans": int(result.get("replans") or 0),
     }

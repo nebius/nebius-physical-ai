@@ -210,21 +210,88 @@ def test_empty_goal_short_circuits():
     assert result["tokens"] == 0
 
 
-def test_tool_error_is_recorded_as_observation_and_loop_continues():
-    def _flaky(args):
-        raise RuntimeError("transient boom")
+def test_tool_error_replans_with_changed_arguments_and_recovers():
+    calls = []
+    planner_prompts = []
 
-    planner = _scripted_planner(
+    def _flaky(args):
+        calls.append(args)
+        if not args.get("prefix"):
+            raise RuntimeError("transient boom")
+        return {"count": 1, "runs": ["run-recovered"]}
+
+    decisions = iter(
         [
             {"tool": "artifacts_runs", "args": {}},
-            {"final": "handled the tool error"},
+            {"tool": "artifacts_runs", "args": {"prefix": "runs/"}},
+            {"final": "Recovered run: `run-recovered`."},
         ]
     )
+
+    def planner(messages, *, tier="cheap"):
+        planner_prompts.append(messages)
+        return _completion(next(decisions))
+
     tools = {"artifacts_runs": _flaky}
     result = A.run_action_loop("list runs", tools=tools, model_call=planner)
     call_step = result["steps"][0]
     assert call_step["status"] == "error"
     assert "boom" in json.dumps(call_step["observation"])
+    assert calls == [{}, {"prefix": "runs/"}]
+    assert "changed strategy" in planner_prompts[1][0]["content"]
+    assert result["replans"] == 1
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_replan_rejects_exact_failed_action_repeat():
+    calls = {"n": 0}
+
+    def _broken(args):
+        calls["n"] += 1
+        return {"ok": False, "error": "bad prefix"}
+
+    planner = _scripted_planner(
+        [
+            {"tool": "artifacts_runs", "args": {"prefix": "bad"}},
+            {"tool": "artifacts_runs", "args": {"prefix": "bad"}},
+            {"final": "Which artifact prefix should I search?"},
+        ]
+    )
+    result = A.run_action_loop(
+        "find the run", tools={"artifacts_runs": _broken}, model_call=planner
+    )
+
+    assert calls["n"] == 1
+    rejected = [step for step in result["steps"] if step.get("phase") == "replan"]
+    assert rejected[0]["replan_reason"] == "unchanged_strategy"
+    assert result["replans"] == 2
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_empty_observation_replans_with_an_alternate_tool():
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {"workflow": "missing"}},
+            {"tool": "insights_dashboard", "args": {"group_by": "workflow"}},
+            {"final": "No runs matched `missing`; the dashboard has 3 records."},
+        ]
+    )
+    result = A.run_action_loop(
+        "find runs or summarize what is available",
+        tools={
+            "insights_query": lambda args: {"count": 0, "records": []},
+            "insights_dashboard": lambda args: {
+                "total_records": 3,
+                "runs": ["run-a"],
+            },
+        },
+        model_call=planner,
+    )
+
+    assert result["steps"][0]["status"] == "empty"
+    assert result["steps"][0]["replan_reason"] == "empty_observation"
+    assert result["tools_used"] == ["insights_query", "insights_dashboard"]
+    assert result["replans"] == 1
     assert result["stopped_reason"] == A.STOP_DONE
 
 
@@ -298,6 +365,67 @@ def test_loop_uses_insights_compare_to_answer_regression_question():
     assert "collision_rate" in result["reply"]
 
 
+def test_loop_composes_discover_compare_and_dashboard_in_one_goal():
+    def _query(args):
+        assert args == {}
+        return {
+            "count": 2,
+            "records": [
+                {"run_id": "run-a", "metric_name": "loss", "value": 0.2},
+                {"run_id": "run-b", "metric_name": "loss", "value": 0.4},
+            ],
+        }
+
+    def _compare(args):
+        assert args == {
+            "base_run": "run-a",
+            "candidate_run": "run-b",
+            "metric_names": ["loss"],
+        }
+        return {"base_run": "run-a", "candidate_run": "run-b", "regressed": ["loss"]}
+
+    def _dashboard(args):
+        assert args == {"group_by": "metric_name", "latest_run": True}
+        return {"total_records": 2, "runs": ["run-a", "run-b"], "groups": {"loss": 2}}
+
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {}},
+            {
+                "tool": "insights_compare",
+                "args": {
+                    "base_run": "run-a",
+                    "candidate_run": "run-b",
+                    "metric_names": ["loss"],
+                },
+            },
+            {
+                "tool": "insights_dashboard",
+                "args": {"group_by": "metric_name", "latest_run": True},
+            },
+            {"final": "`run-b` regressed on `loss`; dashboard total_records is 2."},
+        ]
+    )
+    result = A.run_action_loop(
+        "discover two runs, compare loss, and summarize the dashboard",
+        tools={
+            "insights_query": _query,
+            "insights_compare": _compare,
+            "insights_dashboard": _dashboard,
+        },
+        model_call=planner,
+    )
+
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == [
+        "insights_query",
+        "insights_compare",
+        "insights_dashboard",
+    ]
+    assert result["replans"] == 0
+    assert "run-b" in result["reply"]
+
+
 def test_run_chat_action_loop_shapes_readonly_result():
     planner = _scripted_planner(
         [
@@ -339,7 +467,10 @@ def test_loop_authors_workflow_with_repair_then_pass():
     planner = _scripted_planner(
         [
             {"tool": "workflow_author", "args": {"goal": "2 step cosmos"}},
-            {"tool": "workflow_author", "args": {"goal": "2 step cosmos"}},
+            {
+                "tool": "workflow_author",
+                "args": {"goal": "2 step cosmos with validated tool refs"},
+            },
             {"final": "Here is your workflow:\n```yaml\napiVersion: npa.workflow/v0.0.1\n```"},
         ]
     )
