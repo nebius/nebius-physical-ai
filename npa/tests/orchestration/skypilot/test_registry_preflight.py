@@ -134,13 +134,14 @@ def test_rejected_credentials_are_reported_as_unauthorized() -> None:
     assert "profile" in check.remedy
 
 
-def test_a_challenge_without_credentials_says_so() -> None:
+def test_a_challenge_without_credentials_tries_an_anonymous_token_first() -> None:
+    # Previously this reported no_credentials outright, which is wrong for any
+    # registry that grants anonymous pulls -- the public mirror among them.
     registry = FakeRegistry(manifest_status=200)
 
     check = check_image_pull(IMAGE, fetcher=registry)
 
-    assert check.status == "no_credentials"
-    assert "SKYPILOT_DOCKER_PASSWORD" in check.remedy
+    assert check.ok is True
 
 
 def test_a_network_failure_is_not_mistaken_for_a_permission_failure() -> None:
@@ -197,3 +198,57 @@ def test_credentials_default_to_the_iam_user_and_do_not_mint_when_asked_not_to(
     monkeypatch.delenv("NPA_REGISTRY_PASSWORD", raising=False)
 
     assert resolve_registry_credentials(mint=False) == ("iam", "")
+
+
+# --- public registries issue anonymous pull tokens ----------------------------
+
+
+class AnonymousRegistry:
+    """A public registry: the token endpoint serves callers with no credentials."""
+
+    def __init__(self) -> None:
+        self.token_auth_headers: dict[str, str] | None = None
+
+    def __call__(self, url: str, headers: dict[str, str], timeout: int):
+        if "/v2/token" in url or "/token" in url:
+            self.token_auth_headers = dict(headers)
+            return 200, {}, json.dumps({"token": "anon"}).encode()
+        if "Authorization" not in headers:
+            return 401, {"www-authenticate": 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'}, b""
+        return 200, {}, b"{}"
+
+
+def test_a_public_image_is_pullable_without_credentials() -> None:
+    # "No credentials" is not "cannot pull": GHCR/Docker Hub hand a pull token to
+    # an anonymous caller, and the public mirror is exactly how a consumer avoids
+    # building multi-GB images at all.
+    registry = AnonymousRegistry()
+
+    check = check_image_pull(
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2", fetcher=registry
+    )
+
+    assert check.ok is True
+    assert check.status == "ok"
+    # The anonymous exchange carries no Authorization header.
+    assert registry.token_auth_headers == {}
+
+
+def test_credentials_are_still_sent_when_present() -> None:
+    registry = AnonymousRegistry()
+
+    check_image_pull(IMAGE, username="iam", password="tok", fetcher=registry)
+
+    assert "Authorization" in (registry.token_auth_headers or {})
+
+
+def test_a_private_registry_that_refuses_an_anonymous_token_still_says_so() -> None:
+    def refuses(url: str, headers: dict[str, str], timeout: int):
+        if "/v2/token/" in url:
+            return 401, {}, _error_body("UNAUTHORIZED", "authentication required")
+        return 401, dict(CHALLENGE), b""
+
+    check = check_image_pull(IMAGE, fetcher=refuses)
+
+    assert check.status == "no_credentials"
+    assert "SKYPILOT_DOCKER_PASSWORD" in check.remedy

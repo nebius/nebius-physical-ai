@@ -161,3 +161,17 @@ def test_the_copy_hint_never_suggests_copying_a_ref_onto_itself() -> None:
     remedy = _missing_image_remedy(parse_image_reference(same))
 
     assert f"crane copy {same} {same}" not in remedy
+
+
+def test_the_readme_offers_the_public_mirror_before_building() -> None:
+    """Building three multi-GB images is avoidable: the mirror already has them."""
+
+    from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    whole_path = readme.split("### The whole path, in order", 1)[1].split("\n### ", 1)[0]
+
+    assert DEFAULT_PUBLIC_CONTAINER_REGISTRY in whole_path
+    assert whole_path.index(DEFAULT_PUBLIC_CONTAINER_REGISTRY) < whole_path.index(
+        "needs them built and pushed"
+    )

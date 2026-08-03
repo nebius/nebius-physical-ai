@@ -128,6 +128,17 @@ npa workbench workflow stage-src --bucket <b>  # npa source for image-less steps
 npa workbench workflow submit <spec.yaml> --var bucket=<b> --infra k8s/<context> ...
 ```
 
+**Easiest option: pull the OSS images from the public mirror instead of building them.**
+Every workbench image is published to `ghcr.io/nebius/nebius-physical-ai` and is
+anonymously pullable, so pointing at it skips image building entirely:
+
+```bash
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+```
+
+Use your own registry when you need private or locally modified images; then the
+note below applies.
+
 **A workflow's container images are not shipped into your registry.** `npa configure`
 selects (or creates) a project registry; it does not mirror workbench images into
 it, so a spec that pins them (the Physical AI Data Factory pins three Cosmos

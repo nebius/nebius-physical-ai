@@ -210,25 +210,16 @@ def check_image_pull(
                 detail="registry requires authentication but sent no Bearer realm",
                 remedy="verify the registry host is a Docker Registry v2 endpoint",
             )
-        if not password:
-            return ImagePullCheck(
-                image=reference.raw,
-                status="no_credentials",
-                http_status=status,
-                detail="registry requires authentication and no credentials were supplied",
-                remedy=(
-                    "export SKYPILOT_DOCKER_PASSWORD (or make `nebius iam get-access-token` "
-                    "work) so submit can mint a pull token"
-                ),
-            )
         query = {"service": challenge.get("service", reference.registry), "scope": reference.pull_scope}
         token_url = f"{realm}?{urllib.parse.urlencode(query)}"
+        # A public registry (GHCR, Docker Hub) issues a pull token to an anonymous
+        # caller, so "no credentials" is not the same as "cannot pull". Ask the
+        # token endpoint before concluding anything.
+        token_headers = (
+            {"Authorization": _basic_auth(username or "iam", password)} if password else {}
+        )
         try:
-            token_status, _, token_body = fetch(
-                token_url,
-                {"Authorization": _basic_auth(username or "iam", password)},
-                timeout,
-            )
+            token_status, _, token_body = fetch(token_url, token_headers, timeout)
         except OSError as exc:
             return ImagePullCheck(
                 image=reference.raw,
@@ -237,6 +228,17 @@ def check_image_pull(
                 remedy=f"check network access to {realm} from this host",
             )
         if token_status >= 400:
+            if not password:
+                return ImagePullCheck(
+                    image=reference.raw,
+                    status="no_credentials",
+                    http_status=token_status,
+                    detail="registry requires authentication and no credentials were supplied",
+                    remedy=(
+                        "export SKYPILOT_DOCKER_PASSWORD (or make `nebius iam get-access-token` "
+                        "work) so submit can mint a pull token"
+                    ),
+                )
             return ImagePullCheck(
                 image=reference.raw,
                 status="unauthorized",
