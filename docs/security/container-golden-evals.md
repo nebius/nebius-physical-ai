@@ -105,7 +105,7 @@ flowchart TB
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
 | `isaac-lab` | `2.3.2.post1` | container-smoke | version; runtime; manipulation env; step | required | gpu-gated |
-| `cosmos` | `1.0.9` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
+| `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-golden-eval-smoke-*` | container-smoke | venv torch; CUDA; GPU matmul probe | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
