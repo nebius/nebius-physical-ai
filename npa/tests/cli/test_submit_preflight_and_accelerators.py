@@ -188,12 +188,8 @@ def test_workflow_gpus_resolves_a_spec(
 
 def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) -> None:
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.registry_preflight.check_image_pulls",
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         lambda images, **kwargs: checks,
-    )
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
-        lambda **kwargs: ("iam", "token"),
     )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.skypilot_render.plan_images",
@@ -228,11 +224,9 @@ def test_a_forbidden_nebius_image_blocks_submit(
     assert excinfo.type.__name__ == "Exit"
 
 
-def test_a_third_party_registry_failure_only_warns(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, capsys: pytest.CaptureFixture[str]
+def test_a_third_party_registry_failure_blocks_submit(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
 ) -> None:
-    # nvcr.io and friends carry their own in-pod credentials; this run's Nebius
-    # token says nothing about them, so they must not block submit.
     _stub_pull(
         monkeypatch,
         [
@@ -245,11 +239,11 @@ def test_a_third_party_registry_failure_only_warns(
         ],
     )
 
-    workflow_cli._preflight_submit_images(
-        spec_path, options=object(), assume_decision="", enabled=True
-    )
-
-    assert "warning" in capsys.readouterr().err
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._preflight_submit_images(
+            spec_path, options=object(), assume_decision="", enabled=True
+        )
+    assert excinfo.type.__name__ == "Exit"
 
 
 def test_pullable_images_pass(
@@ -361,6 +355,19 @@ def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
     assert workflow_cli._resolve_submit_registry("cr.explicit/x", "p") == "cr.explicit/x"
+
+
+def test_npa_registry_env_wins_over_project_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry",
+        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+    )
+
+    assert (
+        workflow_cli._resolve_submit_registry("", "test-rtx")
+        == "ghcr.io/nebius/nebius-physical-ai"
+    )
 
 
 def test_an_unreadable_config_falls_back_to_the_render_default(

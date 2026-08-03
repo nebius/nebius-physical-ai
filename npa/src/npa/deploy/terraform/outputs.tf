@@ -54,13 +54,35 @@ output "nebius_region" {
   value       = var.nebius_region
 }
 
+output "platform" {
+  description = "Compute platform (CPU or GPU)"
+  value       = var.gpu_platform
+}
+
+output "preset" {
+  description = "Compute preset (CPU or GPU)"
+  value       = var.gpu_preset
+}
+
+output "cpu_platform" {
+  description = "CPU platform for CPU-only instances; null for GPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? var.gpu_platform : null
+}
+
+output "cpu_preset" {
+  description = "CPU preset for CPU-only instances; null for GPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? var.gpu_preset : null
+}
+
+# Compatibility aliases for existing state/readers. These names predate the
+# CPU-only agent VM and may contain CPU values; new callers use platform/preset.
 output "gpu_platform" {
-  description = "GPU platform"
+  description = "DEPRECATED compatibility alias for platform; may identify a CPU platform"
   value       = var.gpu_platform
 }
 
 output "gpu_preset" {
-  description = "GPU preset"
+  description = "DEPRECATED compatibility alias for preset; may identify a CPU preset"
   value       = var.gpu_preset
 }
 

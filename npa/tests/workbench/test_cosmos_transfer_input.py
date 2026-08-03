@@ -255,6 +255,66 @@ def test_materialize_input_clip_empty_s3_prefix_is_no_video(monkeypatch) -> None
     assert materialized_dirs and not materialized_dirs[0].exists()
 
 
+def test_materialize_paidf_frames_as_conditioning_clip(tmp_path: Path, monkeypatch) -> None:
+    from npa.clients.storage import StorageClient
+
+    materialized_dirs: list[Path] = []
+    ffmpeg_commands: list[list[str]] = []
+
+    class FramePrefixStorage:
+        def download_directory(self, _src: str, local_dir: str) -> str:
+            root = Path(local_dir)
+            materialized_dirs.append(root)
+            (root / "frame_0000.png").write_bytes(b"png")
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / "frame_0001.jpg").write_bytes(b"jpg")
+            (root / "ignore.txt").write_text("not an image", encoding="utf-8")
+            return local_dir
+
+    def fake_ffmpeg(command: list[str], *, check: bool) -> None:
+        assert check is True
+        ffmpeg_commands.append(command)
+        Path(command[-1]).write_bytes(b"mp4")
+
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: FramePrefixStorage())
+    # The helper imports subprocess locally, so patch the shared module object.
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", fake_ffmpeg)
+    clip = cosmos2._materialize_input_clip(
+        "s3://test-bucket/seeded/", allow_frame_sequence=True
+    )
+
+    assert clip.endswith("npa-paidf-conditioning.mp4")
+    assert Path(clip).read_bytes() == b"mp4"
+    assert materialized_dirs[0].exists()  # retained for inference
+    assert ffmpeg_commands and ffmpeg_commands[0][0] == "ffmpeg"
+    assert ffmpeg_commands[0][ffmpeg_commands[0].index("-frames:v") + 1] == "93"
+    concat = Path(ffmpeg_commands[0][ffmpeg_commands[0].index("-i") + 1]).read_text()
+    assert "frame-00000.png" in concat
+    assert "frame-00001.jpg" in concat
+    assert "ignore.txt" not in concat
+
+
+def test_materialize_standalone_does_not_convert_frame_prefix(monkeypatch) -> None:
+    from npa.clients.storage import StorageClient
+
+    materialized_dirs: list[Path] = []
+
+    class FramePrefixStorage:
+        def download_directory(self, _src: str, local_dir: str) -> str:
+            root = Path(local_dir)
+            materialized_dirs.append(root)
+            (root / "frame.png").write_bytes(b"png")
+            return local_dir
+
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: FramePrefixStorage())
+
+    assert cosmos2._materialize_input_clip("s3://test-bucket/seeded/") == ""
+    assert materialized_dirs and not materialized_dirs[0].exists()
+
+
 @pytest.mark.parametrize("stage", ["authentication", "listing", "download"])
 def test_materialize_input_clip_propagates_storage_failures(
     monkeypatch, stage: str

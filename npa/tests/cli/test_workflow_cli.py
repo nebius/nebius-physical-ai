@@ -121,13 +121,14 @@ def test_workflow_run_dispatches(mocker) -> None:
     assert run_mock.call_args.kwargs["action_space"] == "joint"
 
 
-def test_workbench_workflow_submit_dispatches_skypilot(mocker, tmp_path) -> None:
+def test_workbench_workflow_submit_dispatches_skypilot(mocker, monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\n", encoding="utf-8")
     submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow",
         return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
     )
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
 
     result = runner.invoke(
         app,
@@ -152,6 +153,106 @@ def test_workbench_workflow_submit_dispatches_skypilot(mocker, tmp_path) -> None
     assert submit_mock.call_args.args == (yaml_path, "run-1")
     assert submit_mock.call_args.kwargs["timeout"] == 30
     assert submit_mock.call_args.kwargs["secret_envs"] == ["AWS_ACCESS_KEY_ID"]
+
+
+def test_submit_missing_secret_fails_before_remote_setup(mocker, monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    submit_mock = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        lambda **kwargs: SimpleNamespace(
+            endpoint_url="https://storage.example",
+            secret_values={},
+            missing=("HF_TOKEN",),
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--project",
+            "test-rtx",
+            "--secret-env",
+            "HF_TOKEN",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "HF_TOKEN" in result.output
+    assert "test-rtx" in result.output
+    submit_mock.assert_not_called()
+
+
+def test_submit_injects_configured_secret_without_printing_it(
+    mocker, monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    secret = "configured-secret-value"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        lambda **kwargs: SimpleNamespace(
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            secret_values={"HF_TOKEN": secret},
+            missing=(),
+        ),
+    )
+    submit_mock = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--project",
+            "test-rtx",
+            "--secret-env",
+            "HF_TOKEN",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert secret not in result.output
+    assert submit_mock.call_args.kwargs["extra_env"] == {"HF_TOKEN": secret}
+
+
+def test_stage_src_uses_resolved_project_storage_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_stage(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return "s3://bucket/npa-src/npa/"
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.src_staging.stage_npa_source", fake_stage
+    )
+    from npa.cli.workbench import workflow as workflow_cli
+
+    uri = workflow_cli._stage_npa_src_for_submit(
+        {"bucket": "bucket"},
+        s3_endpoint="https://storage.example",
+        credential_values={
+            "AWS_ACCESS_KEY_ID": "configured-access",
+            "AWS_SECRET_ACCESS_KEY": "configured-secret",
+        },
+    )
+
+    assert uri == "s3://bucket/npa-src/npa/"
+    assert captured["endpoint_url"] == "https://storage.example"
+    assert captured["aws_access_key_id"] == "configured-access"
+    assert captured["aws_secret_access_key"] == "configured-secret"
 
 
 def test_workbench_workflow_submit_instruments_durable_s3(monkeypatch, mocker, tmp_path) -> None:
@@ -589,6 +690,68 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     assert "training complete" in logs_result.output
     assert artifacts_result.exit_code == 0
     assert "s3://bucket/run-1/artifacts/train/model.bin" in artifacts_result.output
+
+
+def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+
+    def fail_legacy_probe(*args, **kwargs):
+        raise AssertionError("an exact durable manifest must not probe legacy sim2real S3")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists", fail_legacy_probe
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *args, **kwargs: WorkflowResult(
+            status="FAILED", job_id="4", returncode=0
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        lambda *args, **kwargs: [
+            {"task_id": 0, "task_name": "annotate", "status": "SUCCEEDED"},
+            {"task_id": 1, "task_name": "augment", "status": "FAILED"},
+        ],
+    )
+    manifest = {
+        "schema_version": "npa.workflow.run.v1",
+        "workflow": "physical-ai-data-factory",
+        "run_id": "paidf-1",
+        "api_version": "npa.workflow/v0.0.1",
+        "run_prefix_uri": "s3://bucket/paidf-1",
+        "status": "submitted",
+        "sky_job_id": "4",
+        "steps": [
+            {"state": "annotate", "status": "submitted", "resources_profile": {}},
+            {
+                "state": "augment",
+                "status": "submitted",
+                "resources_profile": {
+                    "accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+                },
+            },
+        ],
+    }
+    key = "paidf-1/npa-workflow/manifest.json"
+    fake_s3.put_object(Bucket="bucket", Key=key, Body=json.dumps(manifest).encode())
+    uri = f"s3://bucket/{key}"
+
+    result = runner.invoke(
+        app, ["workbench", "workflow", "status", uri, "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "FAILED"
+    assert payload["manifest_uri"] == uri
+    assert payload["stages"]["annotate"]["state"] == "SUCCEEDED"
+    assert payload["stages"]["augment"]["state"] == "FAILED"
+    assert payload["stages"]["augment"]["requested_accelerators"].startswith("RTXPRO-")
+    persisted = json.loads(fake_s3.objects[("bucket", key)])
+    assert persisted["status"] == "FAILED"
+    assert persisted["steps"][0]["status"] == "SUCCEEDED"
 
 
 def test_workflow_logs_maps_distillation_error(mocker) -> None:

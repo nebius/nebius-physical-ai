@@ -185,12 +185,12 @@ quickstart (`configure` → `provision-if-absent` → `skypilot bootstrap` →
 > `s3://<bucket>/physical-ai-data-factory/<run-id>/input/`. The first stage,
 > `annotate-original`, captions image frames and **fails fast on an empty `input/`**
 > (`No images found …/input/`), so the later augment → grade → curate → visualize →
-> finalize stages never run. This holds **even for the default stock-Cosmos
-> augment**: the augment *video* is the bundled Cosmos example, but captioning
-> still needs real image files — a `.mp4` alone is not enough. Add an optional
-> `video_0.mp4` (720p–1080p H.264/H.265, 5–15 s) for the Rerun viz and the
-> `NPA_COSMOS_CONDITION_ON_INPUT=1` path. Copy-paste `aws s3 cp` staging plus
-> `ffmpeg` extract/synthesize one-liners are in the
+> finalize stages never run. A `.mp4` alone is not enough for captioning. Cosmos
+> uses a staged `video_0.mp4` directly when present; for frame-only PAIDF input,
+> the GPU runner assembles those same frames into a temporary conditioning clip.
+> With no dataset, `--var seed_default_input=true` creates eight frames for both
+> stages. Copy-paste `aws s3 cp` staging plus `ffmpeg` extract/synthesize
+> one-liners are in the
 > [deploy runbook](physical-ai-data-factory-deploy.md) ("Stage input first").
 
 ## S3 artifact layout (agent-viewable)

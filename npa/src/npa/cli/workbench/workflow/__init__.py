@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import os
 import re
@@ -72,8 +73,9 @@ def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
     fresh token here keeps a pinned-image submit from failing for a reason that has
     nothing to do with the workflow.
 
-    Best-effort: a cluster that pulls public images, or an operator without
-    ``kubectl`` reach, must not be blocked by this.
+    A private-image submit is blocked if this refresh fails: preflight and the
+    credentials Kubernetes actually uses must agree, rather than accepting a job
+    that is guaranteed to sit in ``ImagePullBackOff``.
     """
 
     try:
@@ -84,20 +86,28 @@ def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
     if not hosts:
         return
 
+    from npa.orchestration.skypilot.registry_preflight import resolve_registry_credentials
     from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
     joined = ", ".join(hosts)
     # One call with every host: the secret holds a single dockerconfigjson and each
     # apply replaces it, so refreshing host by host would leave only the last one.
     try:
-        ensure_nebius_registry_pull_secret(registry_servers=hosts)
-    except Exception as exc:  # noqa: BLE001 - never block a submit on this
-        console.print(
-            f"[yellow]Warning:[/yellow] could not refresh the Kubernetes pull secret "
-            f"for {joined} ({exc}); a private-image pull may fail with 401"
+        username, password = resolve_registry_credentials(hosts[0], mint=True)
+        if not password:
+            raise RuntimeError("no registry credential could be resolved")
+        ensure_nebius_registry_pull_secret(
+            registry_servers=hosts,
+            username=username,
+            token=password,
         )
-    else:
-        console.print(f"Refreshed the Kubernetes pull secret for {joined}")
+    except Exception as exc:
+        raise RuntimeError(
+            "could not install the Kubernetes imagePullSecret for "
+            f"{joined}: {exc}. Fix kubectl access/registry credentials before submit; "
+            "otherwise every private-image task will fail with ImagePullBackOff."
+        ) from exc
+    console.print(f"Refreshed the Kubernetes pull secret for {joined}")
 
 
 @app.command("submit")
@@ -400,6 +410,23 @@ def submit_cmd(
     substitutions = _parse_submit_vars(var)
     materializer = _resolve_materializer(tool, yaml_path)
     resolved_run_id = run_id or _default_submit_run_id(yaml_path)
+    from npa.orchestration.npa_workflow.submit_credentials import resolve_submit_credentials
+
+    submit_credentials = resolve_submit_credentials(
+        project=project,
+        explicit_endpoint=s3_endpoint,
+        requested=secret_env,
+    )
+    s3_endpoint = submit_credentials.endpoint_url
+    extra_env: dict[str, str] = dict(submit_credentials.secret_values)
+    if submit_credentials.missing and not plan_only:
+        _fail(
+            "--secret-env requested values that are not present in the process "
+            "environment or supported NPA credentials for project "
+            f"{project or '<default>'}: {', '.join(submit_credentials.missing)}. "
+            "Set them explicitly or store them with `npa configure`."
+        )
+        return
 
     from npa.workflows.sim2real.k8s_submit import (
         is_sim2real_runbook,
@@ -457,6 +484,7 @@ def submit_cmd(
                 spec_config,
                 s3_bucket=s3_bucket,
                 s3_endpoint=s3_endpoint,
+                credential_values=extra_env,
             )
             os.environ["NPA_SRC_S3_URI"] = staged_uri
         if not skip_preflight:
@@ -569,6 +597,7 @@ def submit_cmd(
                 config_overrides=substitutions,
                 render_options=npa_render_options,
                 secret_envs=secret_env,
+                secret_env_values=extra_env,
                 controller_backend=controller_backend.value,
                 infra=infra,
                 isolated_config_dir=isolated_config_dir,
@@ -629,15 +658,15 @@ def submit_cmd(
         substitutions = {}
         yaml_path = prepared_npa.skypilot_yaml_path
         if prepared_npa.secret_env_hints:
-            missing = [
+            missing_secret_hints = [
                 name
                 for name in prepared_npa.secret_env_hints
                 if name not in secret_env
             ]
-            if missing:
+            if missing_secret_hints:
                 typer.echo(
                     "Hint: consider --secret-env "
-                    + " --secret-env ".join(missing),
+                    + " --secret-env ".join(missing_secret_hints),
                     err=True,
                 )
 
@@ -645,7 +674,6 @@ def submit_cmd(
     submitted_yaml_context: tempfile.TemporaryDirectory[str] | None = None
     workflow_state = None
     instrumented = None
-    extra_env: dict[str, str] = {}
     if substitutions or materializer or durable_s3:
         submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
         submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
@@ -756,12 +784,26 @@ def submit_cmd(
             # local `run-spec --persist-state` path used to write it, so a run that
             # actually reached the cluster left no `npa.workflow.run.v1` record and
             # was invisible to every manifest consumer (e.g. the insights GPU metric).
-            run_prefix_uri = _persist_npa_run_manifest(prepared_npa, run_id=resolved_run_id)
+            run_prefix_uri = _persist_npa_run_manifest(
+                prepared_npa,
+                run_id=resolved_run_id,
+                job_id=str(getattr(result, "job_id", "") or ""),
+                s3_endpoint=s3_endpoint,
+                credential_values=extra_env,
+                accelerator_overrides=npa_render_options.gpu_accelerator_overrides,
+                accelerator_override=os.environ.get(
+                    "NPA_WORKFLOW_GPU_ACCELERATOR", ""
+                ).strip(),
+            )
             # ``result`` is union-typed across submit paths; only the workflow
             # result carries log_paths, so probe for it instead of assuming.
             log_paths = getattr(result, "log_paths", None)
             if run_prefix_uri and isinstance(log_paths, dict):
                 log_paths.setdefault("npa_workflow_run_prefix_uri", run_prefix_uri)
+                log_paths.setdefault(
+                    "npa_workflow_manifest_uri",
+                    f"{run_prefix_uri.rstrip('/')}/npa-workflow/manifest.json",
+                )
     except OSError as exc:
         _fail(f"SkyPilot workflow submission failed: {exc}")
         return
@@ -783,9 +825,21 @@ def submit_cmd(
         typer.echo(f"job_id: {result.job_id}")
     if workflow_state is not None:
         typer.echo(f"run_prefix_uri: {workflow_state.uri}")
+    log_paths = getattr(result, "log_paths", {})
+    if isinstance(log_paths, dict) and log_paths.get("npa_workflow_manifest_uri"):
+        typer.echo(f"manifest_uri: {log_paths['npa_workflow_manifest_uri']}")
 
 
-def _persist_npa_run_manifest(prepared, *, run_id: str) -> str:
+def _persist_npa_run_manifest(
+    prepared,
+    *,
+    run_id: str,
+    job_id: str = "",
+    s3_endpoint: str = "",
+    credential_values: dict[str, str] | None = None,
+    accelerator_overrides: Mapping[str, str] | None = None,
+    accelerator_override: str = "",
+) -> str:
     """Write the `npa.workflow.run.v1` manifest for a submitted run (best effort).
 
     A failed manifest write must never turn an accepted submit into a reported
@@ -803,6 +857,14 @@ def _persist_npa_run_manifest(prepared, *, run_id: str) -> str:
             workflow=prepared.spec.name,
             api_version=prepared.spec.api_version,
             steps=prepared.plan.steps,
+            sky_job_id=job_id,
+            endpoint_url=s3_endpoint,
+            aws_access_key_id=(credential_values or {}).get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=(credential_values or {}).get(
+                "AWS_SECRET_ACCESS_KEY", ""
+            ),
+            accelerator_overrides=accelerator_overrides,
+            accelerator_override=accelerator_override,
         )
     except Exception as exc:  # noqa: BLE001 - never fail an accepted submit
         typer.echo(f"warning: could not persist the npa.workflow run manifest: {exc}", err=True)
@@ -817,6 +879,7 @@ def _run_npa_workflow_runtime(
     config_overrides: dict[str, str],
     render_options,
     secret_envs: list[str],
+    secret_env_values: dict[str, str],
     controller_backend: str,
     infra: str,
     isolated_config_dir: Path | None,
@@ -851,25 +914,40 @@ def _run_npa_workflow_runtime(
         retries=max(0, retries),
         cancel_on_timeout=cancel_on_timeout,
         max_concurrency=max(0, max_concurrency),
-        secret_envs=secret_env_names(secret_envs),
+        secret_envs=secret_env_names(secret_envs, values=secret_env_values),
+        secret_env_values=secret_env_values,
         submit_timeout=submit_timeout,
         infra=infra,
         controller_backend=controller_backend,
         isolated_config_dir=isolated_config_dir,
         resume=resume,
     )
+    runtime_env = dict(secret_env_values)
+    endpoint = str(getattr(render_options, "aws_endpoint_url", "") or "").strip()
+    if endpoint:
+        runtime_env.setdefault("AWS_ENDPOINT_URL", endpoint)
+        runtime_env.setdefault("NEBIUS_S3_ENDPOINT", endpoint)
+    previous_env = {name: os.environ.get(name) for name in runtime_env}
     try:
-        report = run_workflow_runtime(
-            spec,
-            run_id=run_id,
-            render_options=render_options,
-            options=options,
-            assume_decision=assume_decision,
-            logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
-        )
-    except NpaWorkflowError as exc:
-        _fail(str(exc))
-        return
+        os.environ.update(runtime_env)
+        try:
+            report = run_workflow_runtime(
+                spec,
+                run_id=run_id,
+                render_options=render_options,
+                options=options,
+                assume_decision=assume_decision,
+                logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
+            )
+        except NpaWorkflowError as exc:
+            _fail(str(exc))
+            return
+    finally:
+        for name, previous in previous_env.items():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
 
     payload = report.to_dict()
     if output_format == OutputFormat.json:
@@ -918,6 +996,9 @@ def _resolve_submit_registry(registry: str, project: str) -> str:
     explicit = str(registry or "").strip()
     if explicit:
         return explicit
+    configured_env = str(os.environ.get("NPA_REGISTRY") or "").strip()
+    if configured_env:
+        return configured_env
     try:
         from npa.clients.config import resolve_container_registry
 
@@ -947,10 +1028,7 @@ def _preflight_submit_images(
     from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import plan_images
-    from npa.orchestration.skypilot.registry_preflight import (
-        check_image_pulls,
-        resolve_registry_credentials,
-    )
+    from npa.orchestration.skypilot.registry_preflight import check_image_pulls_with_credentials
 
     try:
         spec = load_spec(yaml_path)
@@ -963,21 +1041,12 @@ def _preflight_submit_images(
     if not images:
         return
 
-    try:
-        username, password = resolve_registry_credentials(mint=True)
-    except RuntimeError as exc:
-        typer.echo(f"image-preflight: skipped (no registry credentials: {exc})", err=True)
-        return
-
-    checks = check_image_pulls(images, username=username, password=password)
+    checks = check_image_pulls_with_credentials(images, mint=True)
     blocking = []
     for check in checks:
         if check.ok:
             continue
-        if _is_nebius_registry_image(check.image):
-            blocking.append(check)
-        else:
-            typer.echo(f"image-preflight: warning: {check.render()}", err=True)
+        blocking.append(check)
     if blocking:
         detail = "\n".join(check.render() for check in blocking)
         _fail(
@@ -1135,6 +1204,7 @@ def _stage_npa_src_for_submit(
     *,
     s3_bucket: str = "",
     s3_endpoint: str = "",
+    credential_values: dict[str, str] | None = None,
 ) -> str:
     """Upload the local npa package and return the resulting NPA_SRC_S3_URI."""
     from npa.orchestration.npa_workflow.src_staging import SrcStagingError, stage_npa_source
@@ -1150,6 +1220,10 @@ def _stage_npa_src_for_submit(
         return stage_npa_source(
             bucket=bucket,
             endpoint_url=s3_endpoint,
+            aws_access_key_id=(credential_values or {}).get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=(credential_values or {}).get(
+                "AWS_SECRET_ACCESS_KEY", ""
+            ),
             on_status=lambda message: typer.echo(f"  {message}", err=True),
         )
     except SrcStagingError as exc:
@@ -1397,6 +1471,8 @@ def _resolve_monitor_state(
     from npa.orchestration.skypilot.workflow_state import resolve_workflow_s3_config
 
     exact_uri = workflow_s3_uri or (run_id if run_id.startswith("s3://") else "")
+    if exact_uri.rstrip("/").endswith("/manifest.json"):
+        exact_uri = exact_uri.rstrip("/").removesuffix("/manifest.json")
     resolved_run_id = _display_run_id(run_id)
     return resolve_workflow_s3_config(
         run_id=resolved_run_id,
@@ -1462,7 +1538,12 @@ def _display_run_id(run_id: str) -> str:
     from npa.orchestration.skypilot.workflow_state import parse_s3_uri
 
     _bucket, prefix = parse_s3_uri(run_id)
-    return prefix.rstrip("/").rsplit("/", 1)[-1] or run_id
+    parts = prefix.rstrip("/").split("/")
+    if parts and parts[-1] == "manifest.json":
+        parts.pop()
+    if parts and parts[-1] == "npa-workflow":
+        parts.pop()
+    return parts[-1] if parts else run_id
 
 
 def _resolve_sky_bin(sky_bin: str = "") -> str:
@@ -1483,8 +1564,8 @@ def _durable_workflow_status(
     s3_endpoint: str = "",
     sky_bin: str = "",
 ) -> dict[str, object]:
-    from npa.orchestration.skypilot.workflow import workflow_status
-    from npa.orchestration.skypilot.workflow_state import read_manifest, read_stage_status
+    from npa.orchestration.skypilot.workflow import workflow_status, workflow_task_statuses
+    from npa.orchestration.skypilot.workflow_state import put_json, read_manifest, read_stage_status
 
     state = _resolve_monitor_state(
         run_id,
@@ -1495,6 +1576,83 @@ def _durable_workflow_status(
         s3_endpoint=s3_endpoint,
     )
     manifest = read_manifest(state)
+    if manifest.get("schema_version") == "npa.workflow.run.v1":
+        from npa.orchestration.npa_workflow.run_state import (
+            RunManifest,
+            reconcile_submitted_manifest,
+        )
+
+        run_manifest = RunManifest.from_dict(manifest)
+        live_status = ""
+        task_rows: list[dict[str, object]] = []
+        diagnostics: list[str] = []
+        if run_manifest.sky_job_id:
+            try:
+                live = workflow_status(
+                    run_manifest.sky_job_id, sky_bin=_resolve_sky_bin(sky_bin)
+                )
+                if live.error:
+                    diagnostics.append(
+                        "SkyPilot controller status is unavailable; showing the last "
+                        f"persisted manifest state ({live.error})."
+                    )
+                else:
+                    live_status = live.status
+                task_rows = workflow_task_statuses(
+                    run_manifest.sky_job_id, sky_bin=_resolve_sky_bin(sky_bin)
+                )
+            except Exception as exc:  # noqa: BLE001 - persisted status remains useful
+                diagnostics.append(
+                    "SkyPilot controller status is unavailable; showing the last "
+                    f"persisted manifest state. Diagnostic: {exc}"
+                )
+        reconcile_submitted_manifest(
+            run_manifest, live_status=live_status, task_rows=task_rows
+        )
+        if live_status or task_rows:
+            try:
+                put_json(state, "manifest.json", payload=run_manifest.to_dict())
+            except Exception as exc:  # noqa: BLE001 - status remains readable
+                diagnostics.append(
+                    f"Could not persist reconciled status to object storage: {exc}"
+                )
+        run_stages: dict[str, dict[str, object]] = {}
+        for index, step in enumerate(run_manifest.steps):
+            name = str(step.get("state") or f"step-{index}")
+            iteration = step.get("iteration")
+            key = f"{name}#{iteration}" if iteration is not None else name
+            if key in run_stages:
+                key = f"{key}@{index}"
+            profile = step.get("resources_profile") or {}
+            accelerator = (
+                str(profile.get("accelerators") or "")
+                if isinstance(profile, dict)
+                else ""
+            )
+            run_stages[key] = {
+                "state": str(step.get("status") or "SUBMITTED").upper(),
+                "workflow_state": name,
+                "requested_accelerators": accelerator,
+                "resources_profile": profile,
+            }
+        run_payload: dict[str, object] = {
+            "run_id": run_manifest.run_id or _display_run_id(run_id),
+            "workflow_name": run_manifest.workflow,
+            "status": str(run_manifest.status or "SUBMITTED").upper(),
+            "live_status": live_status,
+            "sky_job_id": run_manifest.sky_job_id,
+            "run_prefix_uri": run_manifest.run_prefix_uri or state.uri.removesuffix("/npa-workflow"),
+            "manifest_uri": f"{state.uri.rstrip('/')}/manifest.json",
+            "stages": run_stages,
+        }
+        if diagnostics:
+            run_payload["diagnostics"] = diagnostics
+        blockers = _stalled_job_blockers(
+            run_manifest.sky_job_id, live_status, sky_bin=sky_bin
+        )
+        if blockers:
+            run_payload["blockers"] = blockers
+        return run_payload
     stages: dict[str, dict[str, object]] = {}
     for stage, info in (manifest.get("stages", {}) or {}).items():
         stage_info = dict(info) if isinstance(info, dict) else {"name": str(stage)}
@@ -1614,6 +1772,10 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
         typer.echo(f"pod_reason: {result.get('pod_reason')}")
     if result.get("sky_job_id"):
         typer.echo(f"sky_job_id: {result.get('sky_job_id')}")
+    diagnostics = result.get("diagnostics")
+    if isinstance(diagnostics, list):
+        for diagnostic in diagnostics:
+            typer.echo(f"diagnostic: {diagnostic}")
     blockers = result.get("blockers")
     if isinstance(blockers, list) and blockers:
         # A managed job whose pod cannot start never becomes FAILED, so say why
@@ -1643,7 +1805,9 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
         for stage, info in stages.items():
             state = info.get("state", "UNKNOWN") if isinstance(info, dict) else "UNKNOWN"
             tier = info.get("tier", "") if isinstance(info, dict) else ""
-            suffix = f" ({tier})" if tier else ""
+            accelerator = info.get("requested_accelerators", "") if isinstance(info, dict) else ""
+            suffix_parts = [part for part in (tier, f"requested={accelerator}" if accelerator else "") if part]
+            suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
             typer.echo(f"{stage}: {state}{suffix}")
     siblings = result.get("sibling_jobs")
     if isinstance(siblings, list) and siblings:
@@ -1809,8 +1973,13 @@ def status_cmd(
         status_is_terminal,
     )
 
+    # An exact S3 URI is already an unambiguous durable-workflow locator. Do not
+    # probe the legacy sim2real prefix first: that probe builds a separate S3
+    # client from ambient env vars and can fail before the selected project's
+    # configured credentials ever reach the durable reader.
+    exact_durable_uri = bool(run_id.startswith("s3://") or workflow_s3_uri)
     prefix = workflow_s3_prefix or "sim2real-b"
-    if sim2real_run_exists(
+    if not exact_durable_uri and sim2real_run_exists(
         resolved_run_id,
         s3_bucket=s3_bucket,
         s3_prefix=prefix,
@@ -1952,6 +2121,48 @@ def logs_cmd(
             )
 
             manifest = read_manifest(state)
+            if manifest.get("schema_version") == "npa.workflow.run.v1":
+                steps = [
+                    item for item in (manifest.get("steps") or []) if isinstance(item, dict)
+                ]
+                available = [str(item.get("state") or "") for item in steps]
+                if not selected_stage:
+                    selected_stage = next(
+                        (
+                            str(item.get("state") or "")
+                            for item in steps
+                            if str(item.get("status") or "").upper().startswith("FAILED")
+                        ),
+                        available[0] if available else "",
+                    )
+                if selected_stage not in available:
+                    raise RuntimeError(
+                        f"stage {selected_stage!r} is not in the run manifest; "
+                        f"available stages: {', '.join(available) or '<none>'}"
+                    )
+                job_id = str(manifest.get("sky_job_id") or "")
+                if not job_id:
+                    raise RuntimeError(
+                        "the run manifest has no SkyPilot job id, so live logs cannot "
+                        "be queried; re-submit with the current NPA CLI"
+                    )
+                live = tail_live_job_logs(
+                    sky_bin=_resolve_sky_bin(sky_bin),
+                    job_id=job_id,
+                    stage=selected_stage,
+                    follow=follow,
+                    timeout=86400 if follow else 300,
+                )
+                if live.stdout:
+                    typer.echo(live.stdout, nl=False)
+                if live.stderr:
+                    typer.echo(live.stderr, err=True, nl=False)
+                if live.returncode != 0:
+                    raise RuntimeError(
+                        "SkyPilot logs are unavailable from the controller. Verify "
+                        f"`npa skypilot status`, then retry; manifest: {state.uri}/manifest.json"
+                    )
+                return
             selected_stage = _resolve_stage_name(manifest, selected_stage)
             job_id = str(manifest.get("sky_job_id") or "")
             if follow and job_id:
@@ -2574,10 +2785,7 @@ def preflight_images_cmd(
         SkypilotRenderOptions,
         plan_images,
     )
-    from npa.orchestration.skypilot.registry_preflight import (
-        check_image_pulls,
-        resolve_registry_credentials,
-    )
+    from npa.orchestration.skypilot.registry_preflight import check_image_pulls_with_credentials
 
     spec = _load_npa_workflow(yaml_path)
     image_overrides: dict[str, str] = {}
@@ -2600,16 +2808,7 @@ def preflight_images_cmd(
         typer.echo("images: none pinned by this spec")
         return
 
-    try:
-        username, password = resolve_registry_credentials(mint=True)
-    except RuntimeError as exc:
-        typer.echo(
-            f"registry credentials unavailable ({exc}); checking anonymously",
-            err=True,
-        )
-        username, password = "iam", ""
-
-    checks = check_image_pulls(images, username=username, password=password)
+    checks = check_image_pulls_with_credentials(images, mint=True)
     if json_output:
         typer.echo(
             json.dumps(

@@ -484,6 +484,9 @@ def test_submit_fails_clearly_when_provisioning_left_no_context(
             }
         ],
     )
+    # Registry pull semantics are covered independently; this test reaches the
+    # post-provision context diagnostic.
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     launched = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
 
     result = runner.invoke(
@@ -523,6 +526,9 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
         "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
         return_value=[],
     )
+    # Registry pull semantics are covered independently; this test reaches the
+    # deploy-if-absent delegation path.
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     mocker.patch(
         "npa.orchestration.npa_workflow.submit.prepare_npa_workflow_for_submit",
         side_effect=RuntimeError("stop after deployIfAbsent"),

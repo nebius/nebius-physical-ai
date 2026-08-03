@@ -117,7 +117,8 @@ def _full_credential_labels() -> list[str]:
         return []
     if not isinstance(data, dict):
         return []
-    tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
+    raw_tokens = data.get("tokens")
+    tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
     labels: list[str] = []
     if data.get("HF_TOKEN") or tokens.get("HF_TOKEN") or _section_has_any(
         data, "huggingface"

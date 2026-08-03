@@ -42,9 +42,9 @@ healthy `sky check kubernetes`:
 
 - **Secrets via `--secret-env`** (never in the YAML): `NEBIUS_TOKEN_FACTORY_KEY`
   for Token Factory stages, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` for S3,
-  `HF_TOKEN` / `NGC_API_KEY` for gated model pulls. `load_credentials` does NOT
-  export AWS creds — read them from `~/.npa/credentials.yaml` (`storage.*`) and
-  export before submit.
+  `HF_TOKEN` / `NGC_API_KEY` for gated model pulls. Submit resolves each requested
+  name from the explicit process environment first, then the selected project's
+  configured NPA credentials; it fails locally if the value is unavailable.
 - **`NPA_SRC_S3_URI` (or `--image`)** for CPU tool steps and `run.shell` states —
   they have no heavy workbench image and install npa from that source tarball,
   else render fails with "planned step has no workbench image and NPA_SRC_S3_URI

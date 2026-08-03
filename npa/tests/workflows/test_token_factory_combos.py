@@ -522,6 +522,10 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
 
     # Rendering a spec needs somewhere for a stage to get npa from; the submit itself is mocked.
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    # Declared --secret-env values must resolve locally before any controller
+    # setup; this test exercises delegation, so provide non-secret fixtures.
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "test-token-factory-key")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     fake = types.SimpleNamespace(status="SUBMITTED", job_id="job-1")
     submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow", return_value=fake

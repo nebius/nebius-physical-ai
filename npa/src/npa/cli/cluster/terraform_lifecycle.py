@@ -1404,7 +1404,7 @@ def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict
     # FTUE / PAIDF shape (enable_filestore = false), the platform block-storage
     # StorageClass stays the default, so only enforce the filesystem CSI SC when
     # the shared filesystem was opted into.
-    if _shared_filesystem_requested(tfvars, os.environ) and default_sc != "csi-mounted-fs-path-sc":
+    if _shared_filesystem_requested(tfvars, dict(os.environ)) and default_sc != "csi-mounted-fs-path-sc":
         raise typer.BadParameter(f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}")
     return {
         "ready_nodes": ready_nodes,

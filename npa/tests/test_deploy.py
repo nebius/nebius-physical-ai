@@ -102,7 +102,6 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     groot_branch = template.split(groot_base_marker, 1)[1].split("%{ else ~}", 1)[0]
     container_and_lerobot = template.split(container_marker, 1)[1]
     container_branch, lerobot_branch = container_and_lerobot.split("%{ else ~}", 1)
-
     assert "/etc/npa-fiftyone/env" in fiftyone_branches
     assert "/opt/fiftyone/venv" in fiftyone_branches
     assert "npa-fiftyone-app.service" in fiftyone_branches
@@ -128,6 +127,19 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     assert "$DEPLOY_ROOT/checkpoints" in container_branch
     assert "Installing LeRobot ${lerobot_version}" not in container_branch
     assert "lerobot[pusht,libero]" not in container_branch
+
+
+def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> None:
+    outputs = (PACKAGE_ROOT / "src/npa/deploy/terraform/outputs.tf").read_text()
+
+    assert 'output "platform"' in outputs
+    assert 'output "preset"' in outputs
+    assert 'output "cpu_platform"' in outputs
+    assert 'output "cpu_preset"' in outputs
+    assert "CPU-only instances" in outputs
+    assert 'output "gpu_platform"' in outputs
+    assert 'output "gpu_preset"' in outputs
+    assert "DEPRECATED compatibility alias" in outputs
 
 
 def test_cloud_init_mounts_cosmos_data_disk() -> None:

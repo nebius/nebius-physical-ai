@@ -149,12 +149,12 @@ def _seed_default_input_frames(
     """Seed a small set of synthetic, captionable PNG frames into ``input_uri``.
 
     Lets the blueprint run end-to-end with **no uploaded dataset**: the caption
-    stage needs real image files (a ``.mp4`` alone is not enough) while the augment
-    stage renders the bundled Cosmos control example. These frames are synthetic
-    placeholders (a varying block + gripper bar), not real footage — they exist so
-    a first run completes without staging data. Skips seeding when the prefix
-    already holds images so a real staged dataset is never clobbered. Returns the
-    number of frames written (0 when skipped / no ``input_uri``).
+    stage needs real image files (a ``.mp4`` alone is not enough), and the PAIDF
+    Cosmos runner assembles the same frames into its temporary conditioning clip.
+    These frames are repository-authored synthetic placeholders (a varying block +
+    gripper bar), not copied footage. Skips seeding when the prefix already holds
+    images so a real staged dataset is never clobbered. Returns the number of
+    frames written (0 when skipped / no ``input_uri``).
     """
     if not input_uri:
         return 0

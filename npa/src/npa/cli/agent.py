@@ -8687,6 +8687,9 @@ def deploy_cmd(
     )
 
     tf_outputs: dict[str, Any] = {}
+    typer.echo(
+        "  Phase 1/4: applying agent VM infrastructure (Terraform streams its own progress)."
+    )
     try:
         tf_outputs = _apply_agent_terraform(
             project=project,
@@ -8705,6 +8708,8 @@ def deploy_cmd(
             # streamed above), so it is the final thing the operator sees.
             _fail(hint)
         _fail(f"Terraform deploy failed: {exc}")
+
+    typer.echo("  Phase 2/4: Terraform complete; resolving the new VM endpoint.")
 
     public_ip = str(tf_outputs.get("vm_ip", ""))
     instance_id = str(tf_outputs.get("instance_id", ""))
@@ -8742,6 +8747,12 @@ def deploy_cmd(
         "region": env_region,
         "service_account_id": str(creds.get("service_account_id", "")),
     }
+    typer.echo(
+        "  Phase 3/4: installing the agent services over SSH; package and image setup "
+        "can be quiet for several minutes. If it remains quiet, open another shell and "
+        f"run `ssh -i {ssh_key_path} {ssh_user}@{public_ip} "
+        "sudo journalctl -u cloud-final -u npa-agent-backend -n 100`."
+    )
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -8780,6 +8791,10 @@ def deploy_cmd(
         except ProvisionerError as cleanup_exc:
             typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"VM bootstrap failed: {exc}")
+
+    typer.echo(
+        "  Phase 4/4 probe: remote installer completed; checking ingress and service health."
+    )
 
     ingress_ports: list[int] = [agent_port, rerun_port]
     if public_https:

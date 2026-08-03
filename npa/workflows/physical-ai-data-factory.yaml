@@ -58,22 +58,20 @@ kind: Workflow
 #   REQUIRED: 8-16 PNG/JPEG frames (.png/.jpg/.jpeg). Only the first
 #             config.max_images (default 8) are captioned. A .mp4 ALONE IS NOT
 #             ENOUGH -- workbench.token_factory.caption needs image files.
-#   OPTIONAL: video_0.mp4 (720p-1080p, 5-15 s) for the Rerun viz and for the
-#             condition-on-input augment path.
+#   OPTIONAL: video_0.mp4 (720p-1080p, 5-15 s). When present, Cosmos Transfer
+#             conditions directly on it; otherwise PAIDF assembles the staged
+#             frames into a temporary conditioning clip inside the GPU runner.
 #   NO DATASET? Set config.seed_default_input: "true" (or
 #             --var seed_default_input=true) and the generate-configs stage seeds
 #             input/ with a few default synthetic frames automatically, so the run
-#             completes end-to-end without uploading anything (augment still uses
-#             the bundled Cosmos example). It never overwrites real staged frames.
+#             completes end-to-end without uploading anything. Those frames feed
+#             both captioning and the temporary conditioning clip. It never
+#             overwrites real staged frames.
 #
-# Two augment paths -- BOTH still require the input frames above for captioning:
-#   * Stock-Cosmos (default): augment re-renders the bundled, self-contained
-#     Cosmos control example under each sampled appearance prompt (an appearance
-#     study on stock material; no source clip required). Best for a first
-#     end-to-end demo.
-#   * Condition-on-input: submit with NPA_COSMOS_CONDITION_ON_INPUT=1 and a clip
-#     under input/ to transfer the sampled appearance onto YOUR real footage
-#     (geometry/motion preserved; edge/vis control computed on-the-fly).
+# Every augment is input-conditioned: a staged video is preferred; a frame-only
+# PAIDF prefix is encoded as a short temporary clip. Edge/vis control is computed
+# on-the-fly, so geometry/motion comes from the run input. No upstream example
+# media is packaged or used as fallback.
 #
 # Copy-paste staging (aws s3 cp) + extract-from-mp4 / synthesize-frames one-liners:
 #   docs/workbench/guides/physical-ai-data-factory-deploy.md  ("Stage input first")
@@ -95,9 +93,9 @@ config:
 
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
   # Set "true" to run with NO uploaded dataset: generate-configs seeds input/ with
-  # a few default synthetic frames so the mandatory caption stage has images while
-  # the augment stage renders the bundled Cosmos control example. It never
-  # clobbers real frames already staged under input/. Submit override:
+  # a few default synthetic frames for captioning; the GPU runner also assembles
+  # them into a short temporary conditioning clip. It never clobbers real frames
+  # already staged under input/. Submit override:
   #   --var seed_default_input=true
   seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
@@ -120,9 +118,10 @@ config:
   max_tokens: "512"
 
   # --- S3 artifact layout: input / intermediate / output under one run prefix ---
-  # input_uri / images_uri must contain PNG/JPEG frames for captioning and a
-  # supported video (.mp4/.mov/.webm/.mkv/.avi) for the managed transfer path.
-  # Missing inputs fail before their respective caption/inference work starts.
+  # input_uri / images_uri must contain PNG/JPEG frames for captioning. The
+  # managed transfer path prefers a supported video when present, otherwise it
+  # assembles those frames into a temporary conditioning clip. Missing inputs
+  # fail before their respective caption/inference work starts.
   input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   images_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   configs_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/"
@@ -211,7 +210,8 @@ states:
       REQUIRES image frames (.png/.jpg) staged under input/ BEFORE submit -- it
       fails fast with "No images found in .../input/" on an empty prefix (see the
       PREREQUISITE block at the top of this file). This runs even when the augment
-      stage uses the stock-Cosmos default, so frames are always mandatory.
+      stage assembles a conditioning clip from them when no video is staged, so
+      frames are always mandatory.
     needs: [generate-configs]
     toolRef: workbench.token_factory.caption
     resources: cpu
@@ -230,10 +230,12 @@ states:
       variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
       Appearance-only: lighting, background, cloth_color, surface -- never scene
       geometry.
-      Every managed variant conditions on a supported video under trigger_uri
-      (the run's input/ prefix), preserving its geometry/motion while changing its
-      appearance. Missing or inaccessible input fails closed before inference.
-      No bundled upstream media is available as a fallback.
+      Every managed variant conditions on trigger_uri (the run's input/ prefix),
+      preserving its geometry/motion while changing its appearance. A supported video
+      staged there is used directly; otherwise PAIDF assembles the PNG/JPEG inputs into
+      a temporary 93-frame clip inside the GPU runner. Missing or inaccessible
+      input fails closed before inference. No bundled upstream media is available
+      as a fallback.
       This is a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.

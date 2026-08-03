@@ -1419,11 +1419,11 @@ def _inject_nebius_registry_docker_secrets(
             )
     from npa.orchestration.skypilot.registry_preflight import resolve_registry_credentials
 
-    username, password = resolve_registry_credentials(mint=False)
+    username, password = resolve_registry_credentials(server, mint=False)
     if materialize:
         if not password:
             try:
-                username, password = resolve_registry_credentials(mint=True)
+                username, password = resolve_registry_credentials(server, mint=True)
             except Exception as exc:  # noqa: BLE001
                 raise NpaWorkflowRenderError(
                     "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "
@@ -1438,6 +1438,20 @@ def _inject_nebius_registry_docker_secrets(
     secrets.setdefault("SKYPILOT_DOCKER_SERVER", server)
     secrets.setdefault("SKYPILOT_DOCKER_USERNAME", username)
     secrets.setdefault("SKYPILOT_DOCKER_PASSWORD", password)
+    if cloud in {"kubernetes", "k8s"}:
+        config = doc.setdefault("config", {})
+        if not isinstance(config, dict):
+            raise NpaWorkflowRenderError("SkyPilot task config must be a mapping")
+        kubernetes = config.setdefault("kubernetes", {})
+        if not isinstance(kubernetes, dict):
+            raise NpaWorkflowRenderError("SkyPilot kubernetes config must be a mapping")
+        pod_config = kubernetes.setdefault("pod_config", {})
+        spec = pod_config.setdefault("spec", {})
+        pull_secrets = spec.setdefault("imagePullSecrets", [])
+        if not isinstance(pull_secrets, list):
+            raise NpaWorkflowRenderError("pod imagePullSecrets must be a list")
+        if {"name": "npa-nebius-registry"} not in pull_secrets:
+            pull_secrets.append({"name": "npa-nebius-registry"})
 
 
 def render_skypilot_yaml(

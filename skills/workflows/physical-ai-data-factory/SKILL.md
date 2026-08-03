@@ -88,17 +88,19 @@ planned before it is returned (chat only emits runnable specs). `generate_data_f
 is the direct entry point; `generate_workflow_draft(intent="create_data_factory_workflow", user_text=...)`
 is the chat path.
 
-**Input conditioning (real augmentation of the caller's clip).** The managed
-`workbench.cosmos2.transfer_execute` path always conditions on the caller's real
-footage. Its `config.trigger_uri` must contain at least one supported video (`.mp4`,
-`.mov`, `.webm`, `.mkv`, or `.avi`); an empty, inaccessible, or video-free input
-fails closed before inference. Bundled upstream media was removed for
-redistribution reasons and is not a fallback. The augment downloads the first clip
-under `--input-uri` (the run's `input/`), builds a controlnet spec with `video_path`
-= that clip and an **`edge`** (or `vis`) control computed on-the-fly, and the sampled
-appearance prompt drives the new look — so the output preserves the input's
-structure/motion with a new appearance. Generic direct CLI callers can opt into the
-same behavior with `--condition-on-input` or `--input-video <path|s3://>`. `edge`/
+**Input conditioning (real augmentation of the caller's input).** The managed
+`workbench.cosmos2.transfer_execute` path always conditions on the PAIDF run's
+input. Its `config.trigger_uri` must contain captionable PNG/JPEG frames and may
+also contain a supported video (`.mp4`, `.mov`, `.webm`, `.mkv`, or `.avi`). The
+augment uses the first video when present; for a PAIDF frame-only prefix it
+assembles those frames into a temporary 1280x720, 93-frame clip inside the GPU
+runner. An empty, inaccessible, or image/video-free input fails closed before
+inference. Bundled upstream media was removed for redistribution reasons and is
+not a fallback. The runner builds a controlnet spec with `video_path` = that clip
+and an **`edge`** (or `vis`) control computed on-the-fly, and the sampled appearance
+prompt drives the new look — so the output preserves the input's structure/motion
+with a new appearance. Generic direct CLI callers remain strict: they opt in with
+`--condition-on-input` or `--input-video <path|s3://>` and must supply a video. `edge`/
 `vis` need no precomputed control asset; `depth`/`seg` would need one, so input-only
 conditioning falls back to `edge`. Conditioned runs record `mode:
 cosmos_transfer2.5_gpu` + `input_conditioned: true` + `conditioned_input` in the
@@ -238,11 +240,19 @@ npa workbench workflow stage-src --bucket <bucket>   # or submit --stage-src
 
 # Render/submit on GPUs:
 npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
-  --assume-decision promote_checkpoint --var bucket=<bucket> --stage-src \
+  --assume-decision promote_checkpoint --var bucket=<bucket> \
+  --var seed_default_input=true --var n_augmentations=1 --stage-src \
   --infra k8s/<context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
 ```
+
+The secret names above are resolved from the environment first and then the
+selected project's configured NPA credentials; operators do not re-export values
+already stored by `npa configure`. Omit `seed_default_input=true` after staging
+real PNG/JPEG frames under the run's `input/` prefix.
+The one-variant override keeps the first real run decisive; omit it for the
+spec's default two-variant multiply or raise it with the requested GPU count.
 
 `submit` runs a prerequisite check first and reports **every** missing item at
 once (SkyPilot CLI, npa source for image-less steps, placeholder bucket) with
@@ -257,16 +267,15 @@ the command that fixes each. `--plan-only` skips the runtime-only checks;
   augment → curate → visualize never run (only `configs/manifest.json` is
   written). Upload 8–16 PNG/JPEG frames (only the first `config.max_images`,
   default 8, are captioned) to
-  `s3://<bucket>/physical-ai-data-factory/<run-id>/input/` — this is required even
-  for the default **stock-Cosmos** augment (the augment video is the bundled
-  Cosmos example, but captioning still needs real image files; a `.mp4` alone is
-  not enough).   For appearance transfer onto the caller's OWN footage, also stage a
-  clip and submit with `NPA_COSMOS_CONDITION_ON_INPUT=1`. To run with **no
-  uploaded dataset at all**, submit `--var seed_default_input=true`
+  `s3://<bucket>/physical-ai-data-factory/<run-id>/input/`. A `.mp4` alone is not
+  enough for captioning. When a video is present Cosmos conditions on it; for a
+  frame-only prefix PAIDF assembles the frames into an ephemeral clip before real
+  inference. To run with **no uploaded dataset at all**, submit
+  `--var seed_default_input=true`
   (config field `seed_default_input`): `generate-configs` then seeds `input/`
   with a few default synthetic frames when it is empty (never overwriting real
-  staged frames), so the caption stage has images while augment uses stock
-  Cosmos. Copy-paste staging +
+  staged frames), so the same inputs drive captioning and real conditioned Cosmos
+  augmentation. Copy-paste staging +
   `ffmpeg` extract/synthesize one-liners:
   `docs/workbench/guides/physical-ai-data-factory-deploy.md` ("Stage input
   first"). Consequently the Voxel51 tab and the full `reports/sim2real.rrd` Rerun

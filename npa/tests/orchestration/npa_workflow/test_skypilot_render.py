@@ -223,6 +223,26 @@ def test_render_ok_when_registry_matches_credentials(monkeypatch: pytest.MonkeyP
     assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
 
 
+def test_kubernetes_private_image_references_the_refreshed_pull_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="demo")
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+
+    assert task["config"]["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
+        {"name": "npa-nebius-registry"}
+    ]
+
+
 def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.vlm_eval.run") == "cosmos"
     assert tool_image_key("workbench.token_factory.caption") is None
@@ -474,6 +494,7 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
             # Rendering test: the real SkyPilot CLI / npa-source prerequisites
             # are mocked out, so skip the submit preflight.
             "--skip-preflight",
+            "--no-preflight-images",
         ],
     )
     assert result.exit_code == 0, result.output

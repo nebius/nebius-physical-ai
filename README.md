@@ -201,6 +201,13 @@ the UI/backend/nginx layer without touching infra. Operator docs:
 [skills/tools/npa-agent/SKILL.md](skills/tools/npa-agent/SKILL.md) ·
 teardown/reproduce loop: [skills/workflows/agent-fresh-operate/SKILL.md](skills/workflows/agent-fresh-operate/SKILL.md).
 
+Setup prints four bounded phases around Terraform, SSH installation, and the
+final probe; the SSH phase can be quiet for several minutes and prints a
+`journalctl` diagnostic to run from another shell. Terraform's current outputs
+are `platform` / `preset` (and `cpu_platform` / `cpu_preset` for the CPU-only
+agent). The old `gpu_platform` / `gpu_preset` outputs remain deprecated aliases
+for existing state and may contain CPU values.
+
 ---
 
 ## Before you burn GPU-hours — preflight

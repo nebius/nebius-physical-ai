@@ -22,6 +22,7 @@ class RunManifest:
     api_version: str
     run_prefix_uri: str = ""
     status: str = "planned"
+    sky_job_id: str = ""
     steps: list[dict[str, Any]] = field(default_factory=list)
     updated_at: str = field(default_factory=utc_now)
     schema_version: str = RUN_SCHEMA_VERSION
@@ -34,6 +35,7 @@ class RunManifest:
             "api_version": self.api_version,
             "run_prefix_uri": self.run_prefix_uri,
             "status": self.status,
+            "sky_job_id": self.sky_job_id,
             "updated_at": self.updated_at,
             "steps": list(self.steps),
         }
@@ -46,6 +48,7 @@ class RunManifest:
             api_version=str(payload.get("api_version") or ""),
             run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
             status=str(payload.get("status") or "planned"),
+            sky_job_id=str(payload.get("sky_job_id") or ""),
             steps=[dict(item) for item in payload.get("steps") or [] if isinstance(item, dict)],
             updated_at=str(payload.get("updated_at") or utc_now()),
             schema_version=str(payload.get("schema_version") or RUN_SCHEMA_VERSION),
@@ -170,11 +173,17 @@ class RunStateStore:
         prefix: str,
         reader: Any | None = None,
         writer: Any | None = None,
+        endpoint_url: str = "",
+        aws_access_key_id: str = "",
+        aws_secret_access_key: str = "",
     ) -> None:
         self.bucket = bucket
         self.prefix = prefix.rstrip("/")
         self._reader = reader
         self._writer = writer
+        self._endpoint_url = endpoint_url
+        self._aws_access_key_id = aws_access_key_id
+        self._aws_secret_access_key = aws_secret_access_key
 
     @property
     def run_prefix_uri(self) -> str:
@@ -238,7 +247,11 @@ class RunStateStore:
             return str(self._reader(self.bucket, key))
         from npa.clients.storage import StorageClient
 
-        client = StorageClient.from_environment()
+        client = StorageClient.from_environment(
+            endpoint_url=self._endpoint_url,
+            aws_access_key_id=self._aws_access_key_id,
+            aws_secret_access_key=self._aws_secret_access_key,
+        )
         try:
             response = client._s3.get_object(Bucket=self.bucket, Key=key)
         except Exception as exc:
@@ -252,7 +265,11 @@ class RunStateStore:
             return
         from npa.clients.storage import StorageClient
 
-        client = StorageClient.from_environment()
+        client = StorageClient.from_environment(
+            endpoint_url=self._endpoint_url,
+            aws_access_key_id=self._aws_access_key_id,
+            aws_secret_access_key=self._aws_secret_access_key,
+        )
         client._s3.put_object(
             Bucket=self.bucket,
             Key=key,
@@ -263,8 +280,87 @@ class RunStateStore:
 
 SUBMITTED_STATUS = "submitted"
 
+_TASK_STATUS_MAP = {
+    "SUCCEEDED": "SUCCEEDED",
+    "FAILED": "FAILED",
+    "FAILED_SETUP": "FAILED_SETUP",
+    "CANCELLED": "CANCELLED",
+    "RUNNING": "RUNNING",
+    "STARTING": "STARTING",
+    "PENDING": "PENDING",
+}
 
-def plan_step_records(steps: Sequence[Any]) -> list[dict[str, Any]]:
+
+def reconcile_submitted_manifest(
+    manifest: RunManifest,
+    *,
+    live_status: str = "",
+    task_rows: Sequence[Mapping[str, Any]] = (),
+) -> RunManifest:
+    """Merge SkyPilot outcomes into a submitted manifest without losing lineage."""
+
+    rows_by_id = {
+        int(row["task_id"]): row
+        for row in task_rows
+        if str(row.get("task_id", "")).isdigit()
+    }
+    reconciled: list[dict[str, Any]] = []
+    for index, original in enumerate(manifest.steps):
+        step = dict(original)
+        row = rows_by_id.get(index)
+        if row is not None:
+            sky_status = str(row.get("status") or "").upper()
+            if sky_status:
+                step["status"] = _TASK_STATUS_MAP.get(sky_status, sky_status)
+                step["sky_status"] = sky_status
+            for field in ("task_id", "task_name", "submitted_at", "start_at", "end_at"):
+                if row.get(field) not in (None, ""):
+                    step[field] = row[field]
+        reconciled.append(step)
+
+    live = str(live_status or "").upper()
+    if live == "SUCCEEDED":
+        # The managed pipeline cannot report overall success until every task has
+        # completed. Preserve richer task-row fields where available, but do not
+        # leave individual stages permanently "submitted" merely because a queue
+        # detail query was temporarily unavailable after terminal success.
+        for step in reconciled:
+            step["status"] = "SUCCEEDED"
+    elif (live.startswith("FAILED") or live == "CANCELLED") and not any(
+        str(step.get("status") or "").upper().startswith("FAILED")
+        or str(step.get("status") or "").upper() == "CANCELLED"
+        for step in reconciled
+    ):
+        first_incomplete = next(
+            (
+                step
+                for step in reconciled
+                if str(step.get("status") or "").upper() != "SUCCEEDED"
+            ),
+            None,
+        )
+        if first_incomplete is not None:
+            first_incomplete["status"] = live
+    if live:
+        manifest.status = live
+    elif reconciled:
+        statuses = [str(step.get("status") or "").upper() for step in reconciled]
+        if any(status.startswith("FAILED") or status == "CANCELLED" for status in statuses):
+            manifest.status = "FAILED"
+        elif all(status == "SUCCEEDED" for status in statuses):
+            manifest.status = "SUCCEEDED"
+        elif any(status in {"RUNNING", "STARTING"} for status in statuses):
+            manifest.status = "RUNNING"
+    manifest.steps = reconciled
+    return manifest
+
+
+def plan_step_records(
+    steps: Sequence[Any],
+    *,
+    accelerator_overrides: Mapping[str, str] | None = None,
+    accelerator_override: str = "",
+) -> list[dict[str, Any]]:
     """Build manifest step records for a *submitted* (not locally executed) run.
 
     Mirrors the interpreter's local-execution records so one manifest schema covers
@@ -273,14 +369,22 @@ def plan_step_records(steps: Sequence[Any]) -> list[dict[str, Any]]:
     run's GPU count from ``resources_profile.accelerators``, so a manifest without it
     describes a run that looks CPU-only no matter how many accelerators it requested.
     """
+    overrides = dict(accelerator_overrides or {})
     records: list[dict[str, Any]] = []
     for step in steps:
+        resources_profile = dict(getattr(step, "resources_profile", {}) or {})
+        requested = str(resources_profile.get("accelerators") or "").strip()
+        if requested:
+            if accelerator_override:
+                resources_profile["accelerators"] = accelerator_override
+            elif requested in overrides:
+                resources_profile["accelerators"] = overrides[requested]
         record: dict[str, Any] = {
             "state": getattr(step, "state", ""),
             "iteration": getattr(step, "iteration", None),
             "status": SUBMITTED_STATUS,
             "resources": getattr(step, "resources", "") or "",
-            "resources_profile": dict(getattr(step, "resources_profile", {}) or {}),
+            "resources_profile": resources_profile,
         }
         for optional in ("tool_ref", "group", "loop_label"):
             value = getattr(step, optional, "")
@@ -298,6 +402,12 @@ def persist_submitted_manifest(
     api_version: str = "",
     steps: Sequence[Any] = (),
     status: str = SUBMITTED_STATUS,
+    sky_job_id: str = "",
+    endpoint_url: str = "",
+    aws_access_key_id: str = "",
+    aws_secret_access_key: str = "",
+    accelerator_overrides: Mapping[str, str] | None = None,
+    accelerator_override: str = "",
 ) -> str:
     """Write the run manifest for a cluster-submitted run; return the run prefix URI.
 
@@ -306,7 +416,13 @@ def persist_submitted_manifest(
     that was already accepted must not be reported as failed, but a silently missing
     manifest would leave the run invisible to every manifest consumer.
     """
-    store = store_for_config(config, run_id=run_id)
+    store = store_for_config(
+        config,
+        run_id=run_id,
+        endpoint_url=endpoint_url,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+    )
     if store is None:
         return ""
     manifest = RunManifest(
@@ -314,15 +430,33 @@ def persist_submitted_manifest(
         run_id=run_id,
         api_version=api_version,
         status=status,
+        sky_job_id=sky_job_id,
     )
-    manifest.steps = plan_step_records(steps)
+    manifest.steps = plan_step_records(
+        steps,
+        accelerator_overrides=accelerator_overrides,
+        accelerator_override=accelerator_override,
+    )
     store.write_manifest(manifest)
     return store.run_prefix_uri
 
 
-def store_for_config(config: Mapping[str, Any], *, run_id: str) -> RunStateStore | None:
+def store_for_config(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    endpoint_url: str = "",
+    aws_access_key_id: str = "",
+    aws_secret_access_key: str = "",
+) -> RunStateStore | None:
     bucket = str(config.get("bucket") or "").strip()
     prefix = str(config.get("prefix") or run_id).strip()
     if not bucket:
         return None
-    return RunStateStore(bucket=bucket, prefix=prefix)
+    return RunStateStore(
+        bucket=bucket,
+        prefix=prefix,
+        endpoint_url=endpoint_url,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+    )

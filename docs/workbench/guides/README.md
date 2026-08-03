@@ -99,9 +99,9 @@ tools.
 | [physical-ai-data-factory.md](physical-ai-data-factory.md) | Conceptual guide — blueprint→stage mapping, S3 layout, viewing results |
 
 > **Fastest start:** the deploy runbook's [Quick start](physical-ai-data-factory-deploy.md#quick-start-copy-paste)
-> stages captionable frames (an `ffmpeg` one-liner — no dataset needed) and
-> submits a stock-Cosmos run in a single block. Frames are mandatory even for the
-> stock-Cosmos augment.
+> seeds captionable frames (no dataset needed) and submits an input-conditioned
+> Cosmos run in a single block. The GPU runner turns those same frames into a
+> temporary clip; no upstream example media is packaged or required.
 
 ## Sim-to-real (14-stage production loop)
 

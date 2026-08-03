@@ -110,6 +110,7 @@ class RuntimeOptions:
     cancel_on_timeout: bool = True
     max_concurrency: int = 0  # 0 = honour each group's own maxConcurrency
     secret_envs: tuple[str, ...] = ()
+    secret_env_values: Mapping[str, str] = field(default_factory=dict, repr=False)
     submit_timeout: int = 1800
     infra: str = ""
     controller_backend: str = "kubernetes"
@@ -728,6 +729,7 @@ class SkyPilotWaveExecutor:
             controller_backend=self.options.controller_backend,
             infra=self.options.infra,
             secret_envs=list(self.options.secret_envs),
+            extra_env=self.options.secret_env_values,
             timeout=self.options.submit_timeout,
         )
 
@@ -1180,12 +1182,14 @@ def plan_preview(spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = "
     return build_plan(spec, run_id=run_id, assume_decision=assume_decision)
 
 
-def secret_env_names(extra: Sequence[str] = ()) -> tuple[str, ...]:
+def secret_env_names(
+    extra: Sequence[str] = (), *, values: Mapping[str, str] | None = None
+) -> tuple[str, ...]:
     """Environment variable names worth forwarding to every wave."""
 
     names: list[str] = []
     for name in [*extra, "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]:
-        if name and name not in names and os.environ.get(name):
+        if name and name not in names and (os.environ.get(name) or (values or {}).get(name)):
             names.append(name)
     return tuple(names)
 

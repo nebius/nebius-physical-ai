@@ -63,6 +63,88 @@ def _first_augmentation(configs_uri: str) -> dict:
 
 
 _VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv", ".avi")
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg")
+
+
+def _frames_to_conditioning_clip(frames: list[Path], output_dir: Path) -> str:
+    """Encode PAIDF input frames as the short clip Cosmos Transfer consumes.
+
+    The PAIDF first-run path intentionally seeds still frames because the
+    preceding caption stage consumes images.  Cosmos Transfer consumes video,
+    so its runner assembles those same frames into an ephemeral conditioning
+    clip.  The clip matches the qualified procedural fixture's dimensions,
+    frame rate, and frame count without copying or packaging any source media.
+    """
+    import shutil
+    import subprocess
+
+    if not frames:
+        return ""
+
+    sequence_dir = output_dir / "conditioning-frames"
+    sequence_dir.mkdir(parents=True, exist_ok=True)
+    sequence: list[Path] = []
+    for index, frame in enumerate(frames):
+        suffix = frame.suffix.lower()
+        if suffix not in _IMAGE_EXTS:
+            continue
+        normalized = sequence_dir / f"frame-{index:05d}{suffix}"
+        shutil.copyfile(frame, normalized)
+        sequence.append(normalized)
+    if not sequence:
+        return ""
+
+    # Concat accepts mixed PNG/JPEG inputs.  All list entries are paths authored
+    # above (not object-key text), and duplicating the final frame makes its
+    # duration effective under the concat demuxer.
+    concat_file = output_dir / "conditioning-frames.ffconcat"
+    lines = ["ffconcat version 1.0"]
+    for frame in sequence:
+        lines.extend((f"file '{frame}'", "duration 0.5"))
+    lines.append(f"file '{sequence[-1]}'")
+    concat_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    output = output_dir / "npa-paidf-conditioning.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_file),
+            "-vf",
+            (
+                "fps=16,tpad=stop_mode=clone:stop_duration=8,"
+                "scale=1280:720:force_original_aspect_ratio=decrease,"
+                "pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
+            ),
+            "-frames:v",
+            "93",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ],
+        check=True,
+    )
+    if not output.is_file() or output.stat().st_size <= 0:
+        raise RuntimeError("FFmpeg did not produce a PAIDF conditioning clip")
+    typer.echo(
+        "PAIDF conditioning: encoded "
+        f"{len(sequence)} input frame(s) as a 1280x720, 93-frame clip",
+        err=True,
+    )
+    return str(output)
 
 
 def _env_truthy(name: str) -> bool:
@@ -109,12 +191,14 @@ def _variant_parallelism(num_variants: int) -> int:
     return max(1, min(requested, max(1, int(num_variants))))
 
 
-def _materialize_input_clip(src: str) -> str:
+def _materialize_input_clip(src: str, *, allow_frame_sequence: bool = False) -> str:
     """Resolve a local path or ``s3://`` URI to a local conditioning video.
 
     Returns an empty string only when the source was successfully inspected and no
-    supported video exists. Storage setup, listing, authentication, and download
-    failures propagate so the CLI can report them separately from an empty prefix.
+    supported input exists. In the PAIDF path only, ``allow_frame_sequence`` turns
+    the captionable input frames into a temporary video. Storage setup, listing,
+    authentication, download, and encoding failures propagate so the CLI can
+    report them separately from an empty prefix.
     """
     import glob as _glob
     import shutil
@@ -146,15 +230,29 @@ def _materialize_input_clip(src: str) -> str:
         if vids:
             keep_tmp = True
             return vids[0]
+        if allow_frame_sequence:
+            frames = sorted(
+                Path(f)
+                for f in _glob.glob(str(Path(tmp) / "**" / "*"), recursive=True)
+                if f.lower().endswith(_IMAGE_EXTS) and Path(f).is_file()
+            )
+            clip = _frames_to_conditioning_clip(frames, Path(tmp))
+            if clip:
+                keep_tmp = True
+                return clip
         return ""
     finally:
         if not keep_tmp:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _materialize_conditioning_input(src: str) -> str:
+def _materialize_conditioning_input(
+    src: str, *, allow_frame_sequence: bool = False
+) -> str:
     """Adapt storage failures to a sanitized, actionable CLI error."""
     try:
+        if allow_frame_sequence:
+            return _materialize_input_clip(src, allow_frame_sequence=True)
         return _materialize_input_clip(src)
     except Exception as exc:
         raise typer.BadParameter(
@@ -264,10 +362,21 @@ def transfer_cmd(
         data_factory_mode = bool(configs_uri) or condition_requested
         local_input = ""
         if condition_requested:
-            local_input = _materialize_conditioning_input(input_video or input_uri)
+            local_input = _materialize_conditioning_input(
+                input_video or input_uri,
+                # PAIDF Config-Gen produces/captions image frames. If its input
+                # prefix has no video, condition Cosmos on a temporary clip made
+                # from those frames. Generic/standalone transfer remains strict.
+                allow_frame_sequence=bool(configs_uri),
+            )
             if not local_input:
+                expected = (
+                    "supported video or PAIDF PNG/JPEG input frames"
+                    if configs_uri
+                    else "supported video"
+                )
                 raise typer.BadParameter(
-                    "input conditioning was requested, but no supported video "
+                    f"input conditioning was requested, but no {expected} "
                     f"({', '.join(_VIDEO_EXTS)}) was found at the configured input"
                 )
         # Env fallbacks let a submit tune conditioning without changing the toolRef argv.

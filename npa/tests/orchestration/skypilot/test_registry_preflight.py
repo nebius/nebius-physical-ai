@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
 
 import pytest
 
@@ -8,6 +9,7 @@ from npa.orchestration.skypilot.registry_preflight import (
     RegistryPreflightError,
     check_image_pull,
     check_image_pulls,
+    check_image_pulls_with_credentials,
     parse_image_reference,
     resolve_registry_credentials,
 )
@@ -144,6 +146,35 @@ def test_a_challenge_without_credentials_tries_an_anonymous_token_first() -> Non
     assert check.ok is True
 
 
+def test_token_challenge_preserves_existing_realm_query_parameters() -> None:
+    calls: list[str] = []
+
+    def registry(url: str, headers: dict[str, str], timeout: int):
+        calls.append(url)
+        if "/token" in url:
+            return 200, {}, json.dumps({"token": "anon"}).encode()
+        if "Authorization" not in headers:
+            return 401, {
+                "www-authenticate": (
+                    'Bearer realm="https://ghcr.io/token?client_id=npa",service="ghcr.io"'
+                )
+            }, b""
+        return 200, {}, b"{}"
+
+    check = check_image_pull(
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2",
+        fetcher=registry,
+    )
+
+    assert check.ok
+    token_query = urllib.parse.parse_qs(urllib.parse.urlsplit(calls[1]).query)
+    assert token_query["client_id"] == ["npa"]
+    assert token_query["service"] == ["ghcr.io"]
+    assert token_query["scope"] == [
+        "repository:nebius/nebius-physical-ai/npa-cosmos-curate:pull"
+    ]
+
+
 def test_a_network_failure_is_not_mistaken_for_a_permission_failure() -> None:
     def broken(url: str, headers: dict[str, str], timeout: int):
         raise OSError("Name or service not known")
@@ -240,6 +271,50 @@ def test_credentials_are_still_sent_when_present() -> None:
     check_image_pull(IMAGE, username="iam", password="tok", fetcher=registry)
 
     assert "Authorization" in (registry.token_auth_headers or {})
+
+
+def test_public_registry_never_receives_foreign_nebius_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", REGISTRY)
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "nebius-iam-token")
+    registry = AnonymousRegistry()
+
+    checks = check_image_pulls_with_credentials(
+        ["ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"],
+        fetcher=registry,
+    )
+
+    assert checks[0].ok
+    assert registry.token_auth_headers == {}
+
+
+def test_matching_private_registry_uses_configured_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", REGISTRY)
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "svc")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    registry = FakeRegistry(manifest_status=200)
+
+    checks = check_image_pulls_with_credentials([IMAGE], fetcher=registry)
+
+    assert checks[0].ok
+    assert registry.calls[1][1]["Authorization"].startswith("Basic ")
+
+
+def test_npa_registry_itself_scopes_private_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", f"{REGISTRY}/project-repository")
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "svc")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+    registry = FakeRegistry(manifest_status=200)
+
+    checks = check_image_pulls_with_credentials([IMAGE], fetcher=registry)
+
+    assert checks[0].ok
+    assert registry.calls[1][1]["Authorization"].startswith("Basic ")
 
 
 def test_a_private_registry_that_refuses_an_anonymous_token_still_says_so() -> None:

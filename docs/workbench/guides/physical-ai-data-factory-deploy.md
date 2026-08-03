@@ -22,62 +22,99 @@ tool — every stage is an existing workbench tool or a real `run.shell` step.
 
 ## Quick start (copy-paste)
 
-From a clone with `npa` installed (§1) and `npa configure` run (§2), this is the
-**complete** ordered path to a stock-Cosmos demo run. Every command is needed —
-skipping one is what makes a first submit fail. The run needs **no dataset**:
-`seed_default_input=true` seeds its own frames for the mandatory caption stage.
+This is the complete clean-machine path to an input-conditioned demo run. It uses the
+exact shipped spec, the public GHCR mirror unless your configured project names a
+different registry, and the endpoint and secrets already stored by `npa
+configure`. No stored secret is printed or manually exported. The first run
+needs no dataset: `seed_default_input=true` seeds eight captionable frames, and
+the GPU runner assembles those frames into the short clip that conditions Cosmos.
 
 ```bash
-set -o pipefail   # `npa ... | tee run.log` otherwise reports 0 for a failed submit
+set -o pipefail
+git clone https://github.com/nebius/nebius-physical-ai.git
+cd nebius-physical-ai
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e npa
 
-# Fill BUCKET / PROJECT / KUBE_CONTEXT from ~/.npa instead of hand-substituting
-# them (`npa configure --show --env` prints NPA_* assignments and no secrets;
-# `npa configure --show` prints the same values in a readable block).
-eval "$(npa configure --show --env)"
-BUCKET="$NPA_BUCKET"
+# Interactive once per machine/project. This stores project, bucket, endpoint,
+# S3 keys, Token Factory key, and optional HF/NGC tokens under ~/.npa/.
+npa configure
+eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
+
+SPEC=npa/workflows/physical-ai-data-factory.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
-KUBE_CONTEXT="${NPA_KUBE_CONTEXT:-npa-cluster}"   # set after the cluster exists
-RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
+BUCKET="$NPA_BUCKET"
+REGISTRY="${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
+RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
 
-# 1. Credentials the stages need, and a GPU cluster + bucket if absent.
-#    The spec declares `deployIfAbsent` on its GPU profile, so step 5 provisions
-#    the cluster itself when the context is missing; run this first to see (and
-#    approve) the cost before submitting, or pass `--no-deploy-if-absent` there.
 npa workbench health preflight
-npa provision-if-absent --project "$PROJECT"          # --dry-run first to preview
-
-# 2. SkyPilot is the orchestrator. bootstrap saves skypilot.sky_bin into
-#    ~/.npa/config.yaml, so new shells resolve it with no exports.
+npa provision-if-absent --project "$PROJECT"
 npa skypilot bootstrap
-npa skypilot verify --cluster <your-cluster-name>     # sanity-check the kubeconfig
 
-# 3. The three Cosmos images this spec pins are NOT in a registry you just
-#    created. This reports each as ok / not_found / forbidden and prints the
-#    build command for anything missing (see section 4). Submit runs the same
-#    check before provisioning, so a missing image costs no GPU time.
-npa workbench workflow preflight-images npa/workflows/physical-ai-data-factory.yaml
+# Reload the kube context written by provision-if-absent, discover its actual
+# accelerator spelling, and validate/plan with the real bucket.
+eval "$(npa configure --show --env)"
+KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
+npa workbench workflow gpus --context "$KUBE_CONTEXT" --spec "$SPEC"
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint \
+  --var bucket="$BUCKET" --var seed_default_input=true \
+  --var n_augmentations=1 --json
 
-# 4. Publish the npa package for the image-less (Token Factory / run.shell)
-#    steps. `submit --stage-src` below does this inline; run it standalone to
-#    reuse one copy across submits.
-npa workbench workflow stage-src --bucket "$BUCKET"
-export NPA_SRC_S3_URI="s3://$BUCKET/npa-src/npa/"
+# With GHCR this uses the Registry v2 anonymous token flow. With a configured
+# private registry it uses the matching configured credentials and submit also
+# refreshes the Kubernetes imagePullSecret before launch.
+npa workbench workflow preflight-images "$SPEC" \
+  --project "$PROJECT" --registry "$REGISTRY"
 
-# 5. Secrets must be exported for --secret-env to forward them. HF_TOKEN is not
-#    optional: the curator fetches its weights with it at run time.
-export NEBIUS_TOKEN_FACTORY_KEY=<your-token-factory-key>
-export AWS_ACCESS_KEY_ID=<...> AWS_SECRET_ACCESS_KEY=<...>
-export HF_TOKEN=<your-hugging-face-token>
-
-# 6. Submit. (`set -o pipefail` above: piping to `tee` otherwise reports success
-#    for a submit that printed `Error:` and exited 1.)
-npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
-  --run-id "$RUN_ID" --var bucket="$BUCKET" --var seed_default_input=true \
+# --stage-src publishes npa for image-less stages. Each --secret-env NAME is
+# resolved from the current environment first, then the selected project's NPA
+# credentials; a missing value fails here before controller setup.
+npa workbench workflow submit "$SPEC" \
+  --project "$PROJECT" --registry "$REGISTRY" \
+  --run-id "$RUN_ID" --stage-src \
+  --var bucket="$BUCKET" --var seed_default_input=true \
+  --var n_augmentations=1 \
   --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
-  --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env HF_TOKEN \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
+
+MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
+npa workbench workflow status "$MANIFEST_URI" --project "$PROJECT" --watch
+npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage augment
 ```
+
+The configured S3 endpoint is selected automatically; `--s3-endpoint` is only an
+explicit override. `NPA_REGISTRY` has the same precedence in `preflight-images`
+and submit: an explicit `--registry` wins, then `NPA_REGISTRY`, then the selected
+project's registry. Set `REGISTRY=ghcr.io/nebius/nebius-physical-ai` explicitly
+to choose the public anonymous mirror even when the project has a private one.
+The quick start requests one real augmentation variant for a decisive first run;
+omit `--var n_augmentations=1` to use the spec's default two-variant multiply, or
+raise it together with the requested GPU count for a larger batch.
+
+Typical warm-stage times are tens of seconds for config generation, 1–3 minutes
+for each Token Factory caption pass, 10–25 minutes for one Cosmos Transfer
+augmentation, and 1–5 minutes for evaluation/curation/finalization. First image
+pulls, checkpoint downloads, node scheduling, and jobs-controller startup can add
+several quiet minutes. The commands do not impose a workflow deadline; during a
+quiet period use `npa skypilot status`, the status command above (which shows the
+requested accelerator), and `npa workbench workflow logs "$MANIFEST_URI"
+--stage augment --follow` in another terminal.
+
+SkyPilot may temporarily render not-yet-submitted downstream DAG rows with the
+first task's CPU summary. The rendered augment task and NPA manifest/status retain
+the exact submit-time accelerator (for example
+`RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`); use those until the augment row starts.
+
+For a first run with nothing staged, keep `--var seed_default_input=true` or the
+mandatory caption stage has no frames. For real data, upload PNG/JPEG frames to
+`s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input/` and omit that variable;
+the workflow uses those frames and never seeds over them.
 
 Not sure what is still missing? `submit` checks first and prints everything at
 once:
@@ -92,8 +129,8 @@ Error: Cannot submit physical-ai-data-factory.yaml: missing prerequisites:
       fix: pass --var bucket=<your-bucket>
 ```
 
-Add `--plan-only` to render the SkyPilot YAML without launching, or
-`--skip-preflight` to bypass the checks.
+Add `--plan-only` to render the SkyPilot YAML without launching. Do not bypass
+preflight on a first run: it is what keeps registry/auth/config failures local.
 
 Prefer to caption **real** frames? Stage them first (needs `ffmpeg` and the S3
 keys / `AWS_ENDPOINT_URL` from §2), then submit **without** the flag:
@@ -113,12 +150,11 @@ npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Either way the augment stage renders the bundled Cosmos example; the frames (real
-or seeded) satisfy the mandatory caption stage. `seed_default_input=true` never
-overwrites frames already staged under `input/`. To transfer appearance onto
-**your** footage instead of stock material, stage a real `video_0.mp4` and add
-`NPA_COSMOS_CONDITION_ON_INPUT=1` (see §5). Everything below is the full
-explanation.
+Either way the frames satisfy the mandatory caption stage and condition real
+Cosmos inference: a staged video is used directly when present, otherwise the GPU
+runner assembles the frames into a temporary clip. `seed_default_input=true`
+never overwrites frames already staged under `input/`. Everything below is the
+full explanation.
 
 ### If submit fails
 
@@ -205,7 +241,8 @@ to print it. The service-shaped aliases `token_factory: {api_key: ...}` and
 `huggingface: {token: ...}` are also accepted, but `tokens:` is canonical and
 wins when both are present.
 
-You can also point the CLI at these via environment variables when scripting:
+Explicit environment variables are optional overrides when scripting. They take
+precedence over configured values, but are not required for the quick start:
 
 ```bash
 export AWS_ACCESS_KEY_ID=<...>
@@ -343,26 +380,28 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 
 ---
 
-## 4. Build and push the Cosmos images (required — a fresh registry has none)
+## 4. Choose the public mirror or build into a private registry
 
 Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`,
 `evaluate` needs `npa-cosmos-evaluator`, and `curate` needs `npa-cosmos-curate`.
 
-**None of them exist in a registry you just created.** `npa configure` selects
-(or creates) a project registry; it does not mirror these images into it, so a
-first run against a new project must build and push all three. `npa-cosmos2-transfer`
-is published in some long-lived NPA registries, which is why the earlier
-per-project registry can appear to have it — check rather than assume:
+The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable.
+A new private project registry starts empty: `npa configure` selects or creates
+it, but does not mirror images into it. Pick one path and preflight the same
+registry submit will use:
 
 ```bash
-npa workbench workflow preflight-images npa/workflows/physical-ai-data-factory.yaml
+REGISTRY=ghcr.io/nebius/nebius-physical-ai    # or the configured NPA_REGISTRY
+npa workbench workflow preflight-images npa/workflows/physical-ai-data-factory.yaml \
+  --project "$PROJECT" --registry "$REGISTRY"
 ```
 
 That reports each image as `ok` / `not_found` / `forbidden` and prints the exact
 build command for anything missing. `npa workbench workflow submit` runs the same
 check before it provisions anything, so a missing image costs no GPU time.
 
-Build and push what it reports missing (tags below track
+For the public mirror, `ok` needs no login or build. For a private registry,
+build and push what preflight reports missing (tags below track
 `npa/src/npa/deploy/images.py`, which is what submit pulls):
 
 ```bash
@@ -422,10 +461,10 @@ No images found in s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>
 ```
 
 …and the later augment → grade → curate → visualize → finalize stages never run
-(only `configs/manifest.json` is written). This is true **even for the default
-stock-Cosmos augment** (which re-renders a bundled Cosmos control example): the
-augment *video* is stock, but captioning still needs real image files — **a
-`.mp4` alone is not enough** for `workbench.token_factory.caption`.
+(only `configs/manifest.json` is written). Captioning needs real image files — **a
+`.mp4` alone is not enough** for `workbench.token_factory.caption`. The augment
+stage prefers a staged video but can assemble the caption frames into a temporary
+conditioning clip.
 
 > **Don't want to stage anything?** Submit with `--var seed_default_input=true`
 > and the `generate-configs` stage auto-seeds `input/` with a few default
@@ -450,15 +489,15 @@ INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
 aws s3 cp ./frames/ "$INPUT/" --recursive --exclude '*' --include '*.png'
 ```
 
-**Optional — a source clip** for the Rerun viz and the condition-on-input augment
-path:
+**Optional — a source clip.** Cosmos conditions on it directly when present;
+otherwise PAIDF encodes the staged frames as a short temporary clip:
 
 ```bash
 aws s3 cp ./video_0.mp4 "$INPUT/video_0.mp4"   # 720p–1080p H.264/H.265, 5–15 s
 ```
 
-No dataset yet? Two hermetic ways to produce captionable frames for a
-stock-Cosmos-style demo end-to-end (needs `ffmpeg`), then upload them:
+No dataset yet? Two hermetic ways to produce captionable conditioning frames for
+an end-to-end demo (needs `ffmpeg`), then upload them:
 
 ```bash
 # (a) Extract frames from any short clip you have:
@@ -470,11 +509,10 @@ ffmpeg -f lavfi -i testsrc=size=1280x720:rate=1 -frames:v 12 frame_%04d.png
 aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
 ```
 
-Either way annotate-original gets real image files so the run proceeds while the
-default augment still renders the bundled Cosmos stock example. To make augment
-transform **your** footage instead (geometry/motion preserved, appearance
-changed), stage a real `video_0.mp4` and submit with
-`NPA_COSMOS_CONDITION_ON_INPUT=1` (see §5).
+Either way annotate-original gets real image files and Cosmos Transfer conditions
+on them after the GPU runner assembles a temporary clip. To preserve the exact
+motion of **your** footage, stage `video_0.mp4` alongside its caption frames;
+managed PAIDF augmentation automatically selects it.
 
 Confirm the frames landed before you submit:
 
@@ -488,10 +526,10 @@ Submit with the **same** `RUN_ID` (dynamic gate → pass `--assume-decision`):
 
 ```bash
 npa workbench workflow submit "$SPEC" \
+  --project "$PROJECT" \
   --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
   --stage-src \
-  --var prefix="checkpoints/physical-ai-data-factory/<run-id>" \
   --registry "$REGISTRY" \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
@@ -554,9 +592,10 @@ If your cluster advertises a different product name for the same GPU (e.g.
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION`), pass that exact name:
 `NPA_WORKFLOW_GPU_ACCELERATOR=<name>:N`. Variant parallelism is auto-detected from
 the GPU count; override with `NPA_COSMOS_VARIANT_PARALLELISM`. Every managed
-variant is conditioned on a supported video already uploaded beneath the run's
-`input/` prefix (preserve geometry/motion, change only appearance); missing or
-inaccessible input fails closed before inference.
+variant is conditioned on the run's `input/` prefix: a supported video is used
+directly, or the required PNG/JPEG frames are assembled into a temporary clip
+(preserve input geometry/motion, change only appearance). Missing or inaccessible
+input fails closed before inference.
 
 ---
 

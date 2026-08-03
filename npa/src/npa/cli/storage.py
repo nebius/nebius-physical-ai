@@ -10,6 +10,7 @@ appears to empty still holds non-current versions, and the API answers
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TypedDict
 
 import typer
 
@@ -37,6 +38,12 @@ class _OwnedStorageServiceAccount:
     account_id: str
     name: str
     project_id: str
+
+
+class _BucketRow(TypedDict):
+    name: str
+    id: str
+    configured: bool
 
 
 @bucket_app.command("list")
@@ -72,7 +79,7 @@ def list_buckets_cmd(
     except Exception:  # noqa: BLE001 - listing works without readable credentials
         configured = ""
 
-    rows = [
+    rows: list[_BucketRow] = [
         {
             "name": str((item.get("metadata") or {}).get("name", "") or ""),
             "id": str((item.get("metadata") or {}).get("id", "") or ""),

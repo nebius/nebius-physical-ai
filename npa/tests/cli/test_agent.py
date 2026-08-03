@@ -445,6 +445,18 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     assert any(event == "apply" for event, _payload in events)
 
 
+def test_deploy_feedback_names_bounded_phases_and_quiet_period() -> None:
+    import inspect
+
+    from npa.cli.agent import deploy_cmd
+
+    source = inspect.getsource(deploy_cmd)
+    for phase in ("Phase 1/4", "Phase 2/4", "Phase 3/4", "Phase 4/4 probe"):
+        assert phase in source
+    assert "quiet for several minutes" in source
+    assert "journalctl -u cloud-final -u npa-agent-backend" in source
+
+
 def test_bootstrap_enables_public_https_nginx() -> None:
 
     source = _agent_source()

@@ -1451,7 +1451,8 @@ def _configured_env_lines() -> str:
 
     Lets a runbook stop asking the operator to hand-substitute the alias, bucket
     and kube context: ``eval "$(npa configure --show --env)"``. Secrets are not
-    included — those stay in credentials.yaml and are exported deliberately.
+    included; workflow submit resolves requested ``--secret-env`` names directly
+    from credentials.yaml without printing them.
     """
     from npa.clients.config import default_project_name, list_projects
     from npa.clients.credentials import load_credentials

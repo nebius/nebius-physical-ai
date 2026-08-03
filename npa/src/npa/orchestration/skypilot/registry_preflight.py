@@ -210,8 +210,17 @@ def check_image_pull(
                 detail="registry requires authentication but sent no Bearer realm",
                 remedy="verify the registry host is a Docker Registry v2 endpoint",
             )
-        query = {"service": challenge.get("service", reference.registry), "scope": reference.pull_scope}
-        token_url = f"{realm}?{urllib.parse.urlencode(query)}"
+        parsed_realm = urllib.parse.urlsplit(realm)
+        query = dict(urllib.parse.parse_qsl(parsed_realm.query, keep_blank_values=True))
+        query.update(
+            {
+                "service": challenge.get("service", reference.registry),
+                "scope": reference.pull_scope,
+            }
+        )
+        token_url = urllib.parse.urlunsplit(
+            parsed_realm._replace(query=urllib.parse.urlencode(query))
+        )
         # A public registry (GHCR, Docker Hub) issues a pull token to an anonymous
         # caller, so "no credentials" is not the same as "cannot pull". Ask the
         # token endpoint before concluding anything.
@@ -380,7 +389,19 @@ def _server_side_copy_hint(reference: ImageReference) -> str:
     )
 
 
-def resolve_registry_credentials(*, mint: bool = True) -> tuple[str, str]:
+def _registry_host(value: str) -> str:
+    cleaned = str(value or "").strip().removeprefix("docker:")
+    cleaned = cleaned.removeprefix("https://").removeprefix("http://")
+    return cleaned.split("/", 1)[0].rstrip("/")
+
+
+def _is_nebius_registry(host: str) -> bool:
+    return host.startswith("cr.") and host.endswith(".nebius.cloud")
+
+
+def resolve_registry_credentials(
+    registry: str = "", *, mint: bool = True
+) -> tuple[str, str]:
     """Return the (username, password) a submit injects for Nebius registry pulls.
 
     Preflight is only meaningful if it uses the very credentials the run will use,
@@ -389,6 +410,13 @@ def resolve_registry_credentials(*, mint: bool = True) -> tuple[str, str]:
 
     import os
 
+    target = _registry_host(registry)
+    configured_server = _registry_host(
+        os.environ.get("SKYPILOT_DOCKER_SERVER")
+        or os.environ.get("NPA_REGISTRY_SERVER")
+        or os.environ.get("NPA_REGISTRY")
+        or ""
+    )
     username = (
         os.environ.get("SKYPILOT_DOCKER_USERNAME")
         or os.environ.get("NPA_REGISTRY_USERNAME")
@@ -399,7 +427,15 @@ def resolve_registry_credentials(*, mint: bool = True) -> tuple[str, str]:
         or os.environ.get("NPA_REGISTRY_PASSWORD")
         or ""
     )
-    if not password and mint:
+    # Never send a Nebius IAM token to GHCR (or any unrelated token realm). A
+    # public GHCR image then gets the anonymous scoped token Kubernetes gets;
+    # a private foreign registry opts in by naming its server (or NPA_REGISTRY).
+    if target and not _is_nebius_registry(target):
+        if not configured_server or configured_server != target:
+            return username, ""
+    if target and configured_server and configured_server != target:
+        return username, ""
+    if not password and mint and (not target or _is_nebius_registry(target)):
         from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
 
         password = mint_nebius_registry_token()
@@ -431,3 +467,44 @@ def check_image_pulls(
         )
         for image in seen
     ]
+
+
+def check_image_pulls_with_credentials(
+    images: list[str],
+    *,
+    mint: bool = True,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    fetcher: Fetcher | None = None,
+) -> list[ImagePullCheck]:
+    """Check images with credentials scoped to each image's registry host."""
+
+    seen: list[str] = []
+    for image in images:
+        value = str(image or "").strip()
+        if value and value not in seen:
+            seen.append(value)
+    checks: list[ImagePullCheck] = []
+    for image in seen:
+        try:
+            host = parse_image_reference(image).registry
+            username, password = resolve_registry_credentials(host, mint=mint)
+        except (RegistryPreflightError, RuntimeError) as exc:
+            checks.append(
+                ImagePullCheck(
+                    image=image,
+                    status="no_credentials",
+                    detail=str(exc),
+                    remedy="configure credentials for this registry and retry",
+                )
+            )
+            continue
+        checks.append(
+            check_image_pull(
+                image,
+                username=username,
+                password=password,
+                timeout=timeout,
+                fetcher=fetcher,
+            )
+        )
+    return checks

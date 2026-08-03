@@ -8,6 +8,7 @@ that the **default** submit path is untouched by the new flags.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -149,6 +150,64 @@ def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     )
     assert result.exit_code == 0, result.output
     assert fake_runtime["options"].resume is True
+
+
+def test_runtime_uses_configured_secrets_for_local_ledger_without_leaking_env(
+    mocker, monkeypatch, satisfied_preflight
+) -> None:
+    secret = "configured-runtime-secret"
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        lambda **kwargs: type(
+            "Context",
+            (),
+            {
+                "endpoint_url": "https://storage.us-central1.nebius.cloud",
+                "secret_values": {"AWS_SECRET_ACCESS_KEY": secret},
+                "missing": (),
+            },
+        )(),
+    )
+    observed: dict[str, str] = {}
+
+    def fake_run(spec, **kwargs):  # noqa: ANN001
+        observed["secret"] = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        observed["endpoint"] = os.environ.get("AWS_ENDPOINT_URL", "")
+        return RuntimeReport(
+            workflow=spec.name,
+            run_id=str(kwargs["run_id"]),
+            status="succeeded",
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime",
+        side_effect=fake_run,
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-configured-creds",
+            "--runtime",
+            "--var",
+            "bucket=rt-bucket",
+            "--secret-env",
+            "AWS_SECRET_ACCESS_KEY",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed == {
+        "secret": secret,
+        "endpoint": "https://storage.us-central1.nebius.cloud",
+    }
+    assert "AWS_SECRET_ACCESS_KEY" not in os.environ
+    assert secret not in result.output
 
 
 def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> None:
