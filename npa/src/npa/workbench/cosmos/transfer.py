@@ -282,9 +282,9 @@ def run_cosmos_transfer(
     ]
     # Upstream already ran its generated-video guardrail before writing this
     # file. Do not reuse the container golden-eval's 100 KiB heuristic here:
-    # the deterministic four-frame smoke produces a valid ~9 KiB video (live
-    # job 371). S3 publication below still fails closed unless PyAV can decode
-    # at least one exact frame, which is the artifact contract consumers need.
+    # a short valid transfer can produce a ~9 KiB video (live job 371). S3
+    # publication below still fails closed unless PyAV can decode at least one
+    # exact frame, which is the artifact contract consumers need.
     produced = sorted(
         (f for f in videos if os.path.getsize(f) > 0),
         key=os.path.getsize,
