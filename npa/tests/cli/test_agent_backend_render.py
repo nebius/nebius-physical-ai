@@ -78,9 +78,9 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
 
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     body = _render_backend_body(monkeypatch)
-    # Phase B: agent_actions is embedded and the /agent/act route is wired.
-    assert "def run_action_loop" in body
-    assert "TOOL_ALLOWLIST" in body
+    # Phase B/G: actions are shipped/imported and the /agent/act route is wired.
+    assert "from agent_backend.actions import (" in body
+    assert "def run_action_loop" not in body
     # Recording identity guard embedded + used to gate rerun_ready (no stock demo).
     assert "def recording_has_run_entities" in body
     assert "def _served_recording_is_run_specific" in body
@@ -115,12 +115,12 @@ def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     assert "def _record_agent_trace" in body
     # Grounded-first is preserved: /chat still exists and is separate.
     assert '@app.post("/chat")' in body
-    # Insights backbone wiring: read-only tools embedded in the allowlist +
+    # Insights backbone wiring: read-only tools shipped in the allowlist +
     # executors, and the /chat action branch drives the loop (no boilerplate).
     assert '"insights_query": _tool_insights_query' in body
     assert '"insights_compare": _tool_insights_compare' in body
     assert "def _agent_insights_settings" in body
-    assert "def run_chat_action_loop" in body
+    assert "run_chat_action_loop," in body
     assert "run_chat_action_loop(" in body
     assert "Use `POST /api/agent/act` with a JSON body carrying your goal" not in body
 
@@ -233,6 +233,7 @@ def _capture_setup_script(monkeypatch) -> str:
 @pytest.mark.parametrize(
     ("module", "marker"),
     [
+        ("actions", "def run_action_loop"),
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
     ],
@@ -282,7 +283,14 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in ("memory", "retrieval", "trace", "foxglove", "foxglove_routes"):
+    for name in (
+        "memory",
+        "actions",
+        "retrieval",
+        "trace",
+        "foxglove",
+        "foxglove_routes",
+    ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )
@@ -336,7 +344,14 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
     package = tmp_path / "agent_backend"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    for name in ("memory", "retrieval", "trace", "foxglove", "foxglove_routes"):
+    for name in (
+        "memory",
+        "actions",
+        "retrieval",
+        "trace",
+        "foxglove",
+        "foxglove_routes",
+    ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
         )

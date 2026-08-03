@@ -232,17 +232,6 @@ def _embedded_agent_chat_source() -> str:
     return raw
 
 
-def _embedded_agent_actions_source() -> str:
-    """Return agent_actions.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_actions.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
 def _embedded_agent_recordings_source() -> str:
     """Return agent_recordings.py source embedded into the remote agent backend."""
     import re
@@ -288,7 +277,7 @@ def _shipped_agent_backend_module_source(name: str) -> str:
 
 
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
-_AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
+_AGENT_ACTIONS_SHIP = "__NPA_AGENT_ACTIONS_SHIP__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
 _AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
@@ -1821,7 +1810,7 @@ def _bootstrap_agent_stack(
     )
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
-    agent_actions_source = _embedded_agent_actions_source()
+    agent_actions_ship_source = _shipped_agent_backend_module_source("actions")
     agent_recordings_source = _embedded_agent_recordings_source()
     agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
     agent_semantic_router_source = _embedded_agent_semantic_router_source()
@@ -1963,6 +1952,9 @@ sudo mkdir -p /opt/npa-agent/agent_backend
 printf '' | sudo tee /opt/npa-agent/agent_backend/__init__.py >/dev/null
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
 {_AGENT_MEMORY_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/actions.py >/dev/null
+{_AGENT_ACTIONS_SHIP}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
 {_AGENT_RETRIEVAL_SHIP}
@@ -4180,9 +4172,22 @@ def _chat_with_resilience(
 
 {_AGENT_PROVENANCE_EMBED}
 
+import sys as _npa_sys
+if "/opt/npa-agent" not in _npa_sys.path:
+    _npa_sys.path.insert(0, "/opt/npa-agent")
+
 {_AGENT_CHAT_EMBED}
 
-{_AGENT_ACTIONS_EMBED}
+from agent_backend.actions import (
+    DEFAULT_MAX_STEPS,
+    action_digest,
+    allowlist_specs,
+    confirmation_ok,
+    normalize_group_by,
+    normalize_threshold_op,
+    run_action_loop,
+    run_chat_action_loop,
+)
 
 {_AGENT_RECORDINGS_EMBED}
 
@@ -4192,9 +4197,6 @@ def _chat_with_resilience(
 
 # Phase G: run memory is a SHIPPED module (uploaded to /opt/npa-agent/agent_backend
 # and imported here) rather than string-substituted into this f-string.
-import sys as _npa_sys
-if "/opt/npa-agent" not in _npa_sys.path:
-    _npa_sys.path.insert(0, "/opt/npa-agent")
 from agent_backend.memory import RunMemory, JsonFileStore
 # Blueprint Phases H/I: retrieval + observability are also shipped modules.
 from agent_backend import retrieval as _retrieval
@@ -8648,7 +8650,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
-        .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
+        .replace(_AGENT_ACTIONS_SHIP, agent_actions_ship_source)
         .replace(_AGENT_RECORDINGS_EMBED, agent_recordings_source)
         .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
         .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
