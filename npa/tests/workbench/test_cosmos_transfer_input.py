@@ -129,6 +129,7 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
 
     def fake_run(cmd, *_args, **kwargs):
         out = cmd[cmd.index("-o") + 1]
