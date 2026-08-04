@@ -5248,21 +5248,23 @@ def _run_real_cosmos_transfer(
             )
         return None
 
+    fixture: dict[str, Any] | None = None
     try:
         # The canonical LeRobot trigger can be state/action-only and therefore
         # contain no redistributable input media. Generate the same legally clean,
         # multi-step procedural control clip used by the image's real GPU golden
-        # evaluation, then run the actual Transfer2.5 model over it.
-        fixture = generate_fixture(
-            Path("/tmp/npa-sim2real-transfer-fixture"),
-            num_steps=4,
-        )
+        # evaluation only when the operator did not supply a control spec, then
+        # run the actual Transfer2.5 model over it.
+        transfer_spec = os.environ.get("NPA_SIM2REAL_TRANSFER_SPEC") or ""
+        if not transfer_spec:
+            fixture = generate_fixture(
+                Path("/tmp/npa-sim2real-transfer-fixture"),
+                num_steps=4,
+            )
+            transfer_spec = str(fixture["spec_path"])
         transfer = run_cosmos_transfer(
             run_id=run_id or "augment",
-            spec=(
-                os.environ.get("NPA_SIM2REAL_TRANSFER_SPEC")
-                or fixture["spec_path"]
-            ),
+            spec=transfer_spec,
         )
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(
@@ -5348,13 +5350,15 @@ def _run_real_cosmos_transfer(
             sort_keys=True,
         )
     )
-    return {
+    result = {
         "augmented_video_uri": augmented_video_uri,
         "frame_count": len(index),
         "video_bytes": transfer["video_bytes"],
         "spec": transfer["spec"],
-        "fixture_provenance": fixture["provenance"],
     }
+    if fixture is not None:
+        result["fixture_provenance"] = fixture["provenance"]
+    return result
 
 
 def run_policy_actions_component_from_s3(

@@ -824,6 +824,7 @@ def test_sim2real_engine_real_manifest_uses_gpu_mode(
 def test_sim2real_engine_real_frame_index_uses_gpu_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from npa.workbench.cosmos import fixture as cosmos_fixture
     from npa.workflows.sim2real import engine
 
     video = tmp_path / "output.mp4"
@@ -838,6 +839,14 @@ def test_sim2real_engine_real_frame_index_uses_gpu_mode(
             return uri
 
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setenv("NPA_SIM2REAL_TRANSFER_SPEC", "unit-test-spec.json")
+    monkeypatch.setattr(
+        cosmos_fixture,
+        "generate_fixture",
+        lambda *_args, **_kwargs: pytest.fail(
+            "an explicit transfer spec must bypass procedural fixture generation"
+        ),
+    )
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
@@ -881,6 +890,7 @@ def test_sim2real_engine_frame_extraction_failure_uses_descriptor_fallback(
             return uri
 
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setenv("NPA_SIM2REAL_TRANSFER_SPEC", "unit-test-spec.json")
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
@@ -917,6 +927,7 @@ def test_sim2real_engine_does_not_swallow_unrelated_extraction_errors(
     video = tmp_path / "output.mp4"
     video.write_bytes(b"video")
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setenv("NPA_SIM2REAL_TRANSFER_SPEC", "unit-test-spec.json")
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
