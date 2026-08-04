@@ -7,10 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+from npa.orchestration.npa_workflow.blueprints import (
+    iter_npa_workflow_specs,
+    resolve_npa_workflow_spec,
+)
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
+    gpu_submit_cases,
     one_shot_submit_cases,
     runtime_submit_cases,
     selected_submit_cases,
@@ -54,6 +58,173 @@ def test_submit_live_matrix_specs_exist() -> None:
         if resolve_npa_workflow_spec(case.spec) is None
     ]
     assert not missing, f"matrix references missing specs: {missing}"
+
+
+def test_every_shipped_catalog_spec_has_one_live_matrix_case() -> None:
+    """A shipped spec without a matrix case is unobserved, not passing."""
+
+    shipped = {path.name for path in iter_npa_workflow_specs()}
+    registered = [case.spec for case in SUBMIT_LIVE_MATRIX]
+
+    assert shipped, "expected a non-empty workflow catalog"
+    assert not (shipped - set(registered)), (
+        "shipped specs missing from SUBMIT_LIVE_MATRIX: "
+        f"{sorted(shipped - set(registered))}"
+    )
+    assert not (set(registered) - shipped), (
+        "SUBMIT_LIVE_MATRIX references specs outside the shipped catalog: "
+        f"{sorted(set(registered) - shipped)}"
+    )
+    duplicates = sorted(name for name in set(registered) if registered.count(name) > 1)
+    assert not duplicates, f"duplicate SUBMIT_LIVE_MATRIX cases: {duplicates}"
+
+
+def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
+    plan_only = {
+        "adversarial-scenario-hardening.yaml",
+        "av-night-scene-hardening.yaml",
+        "byof-droid-policy-learning.yaml",
+        "byof-maniskill.yaml",
+        "byof-mujoco-playground.yaml",
+        "byof-open-dreamer.yaml",
+        "byof-openpi.yaml",
+        "byof-robocasa.yaml",
+        "cosmos-synth-fanout-curation.yaml",
+        "hardening-with-insights.yaml",
+        "sim2real-gpu-cross-region-agent.yaml",
+    }
+
+    for name in plan_only:
+        case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == name)
+        assert case.plan_only, f"{name} must retain its reviewed plan-only classification"
+
+
+def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
+    incomplete = {
+        "adversarial-scenario-hardening.yaml",
+        "hardening-with-insights.yaml",
+    }
+    real_conditioned = {
+        "sim2real-two-step-agent.yaml",
+        "sim2real-two-step.yaml",
+    }
+    gpu_specs = {case.spec for case in gpu_submit_cases()}
+
+    assert incomplete.isdisjoint(gpu_specs)
+    assert real_conditioned <= gpu_specs
+
+
+def test_reviewed_matrix_notes_disclose_the_execution_contracts() -> None:
+    expected_fragments = {
+        "adversarial-scenario-hardening.yaml": ("VM config", "does not consume", "/tmp"),
+        "hardening-with-insights.yaml": ("VM config", "ignores evaluation", "/tmp"),
+        "sim2real-two-step.yaml": (
+            "dedicated toolRef",
+            "seeded MP4",
+            "frames list",
+        ),
+        "sim2real-two-step-agent.yaml": (
+            "conditioned execute",
+            "seeded MP4",
+            "manifest",
+        ),
+    }
+
+    for name, fragments in expected_fragments.items():
+        case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == name)
+        assert all(fragment in case.notes for fragment in fragments), case.notes
+
+
+def test_standalone_cosmos_case_exercises_conditioned_real_toolref() -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+
+    path = resolve_npa_workflow_spec("cosmos2-transfer.yaml")
+    assert path is not None
+    spec = load_spec(path)
+    assert spec.states["transfer"].tool_ref == "workbench.cosmos2.transfer_execute"
+
+    plan = build_plan(spec, run_id="generic-transfer-check")
+    transfer = next(step for step in plan.steps if step.state == "transfer")
+
+    assert "--execute" in transfer.argv
+    assert "--condition-on-input" in transfer.argv
+
+
+@pytest.mark.parametrize(
+    "name", ["sim2real-two-step.yaml", "sim2real-two-step-agent.yaml"]
+)
+def test_two_step_real_augment_flows_into_envgen(name: str) -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+
+    path = resolve_npa_workflow_spec(name)
+    assert path is not None
+    spec = load_spec(path)
+    assert (
+        spec.states["augment"].tool_ref
+        == "workbench.cosmos2.transfer_conditioned_execute"
+    )
+    assert len(spec.states["envgen"].inputs) == 1
+    assert spec.states["envgen"].inputs[0].uri == "{{config.augment_manifest_uri}}"
+    assert spec.states["envgen"].inputs[0].schema == "npa.cosmos2.transfer.v1"
+
+    plan = build_plan(spec, run_id="data-flow-check")
+    augment = next(step for step in plan.steps if step.state == "augment")
+    envgen = next(step for step in plan.steps if step.state == "envgen")
+    augment_uri = augment.argv[augment.argv.index("--output-uri") + 1]
+    consumed_uri = envgen.argv[envgen.argv.index("--augmented-frames-uri") + 1]
+
+    assert "--execute" in augment.argv
+    assert "--condition-on-input" in augment.argv
+    assert consumed_uri == f"{augment_uri.rstrip('/')}/manifest.json"
+    assert envgen.inputs == [
+        {"uri": consumed_uri, "schema": "npa.cosmos2.transfer.v1"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_key"),
+    [
+        (
+            "sim2real-two-step.yaml",
+            "sim2real-triggers/seed-run/lerobot-pusht/input.mp4",
+        ),
+        (
+            "sim2real-two-step-agent.yaml",
+            "sim2real-triggers/seed-run/lerobot-pusht/input.mp4",
+        ),
+        (
+            "tokenfactory-cosmos-gate.yaml",
+            "npa-workflow-e2e/seed-run/tokenfactory-cosmos-gate/scene/input.mp4",
+        ),
+    ],
+)
+def test_real_cosmos_cases_seed_an_actual_input_video(
+    monkeypatch, name: str, expected_key: str
+) -> None:
+    helpers = _load_live_helpers()
+    writes: list[dict[str, object]] = []
+
+    class _S3:
+        def put_object(self, **kwargs) -> None:
+            writes.append(kwargs)
+
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: _S3(),
+    )
+
+    helpers.seed_live_workflow_inputs(
+        spec_name=name,
+        bucket="unit-bucket",
+        run_id="seed-run",
+    )
+
+    videos = [item for item in writes if item.get("ContentType") == "video/mp4"]
+    assert len(videos) == 1
+    assert videos[0]["Key"] == expected_key
+    body = bytes(videos[0]["Body"])
+    assert len(body) > 1_000
+    assert body[4:8] == b"ftyp"
 
 
 def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:

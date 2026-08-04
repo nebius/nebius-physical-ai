@@ -114,7 +114,9 @@ Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
    (`npa/src/npa/orchestration/npa_workflow/submit_matrix.py`); if it has a
    dynamic gate/loop, also add it to `DYNAMIC_SPECS` in
    `npa/tests/e2e/npa_workflow_live_helpers.py`. Use `plan_only=True` for
-   stub/GPU-wasteful stages. Don't stop at smoke.
+   stubs, placeholder/reference components, or a separately covered onboarding
+   flow. An arbitrary execution gap is not a plan-only exemption: fix it or
+   make the real path fail closed and exercise it. Don't stop at smoke.
 
 ## Reference Examples
 

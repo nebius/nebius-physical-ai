@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
+
 
 Kubectl = Callable[..., Any]
 
@@ -40,6 +42,73 @@ class CandidatePlan:
     products: tuple[str, ...]
     discovered_products: tuple[str, ...]
     skipped: tuple[dict[str, str], ...]
+
+
+def gpu_fallback_report_contract(
+    config: Sim2RealLoopConfig, components: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Return the public fail-closed placement contract and component evidence."""
+
+    configured = list(
+        dict.fromkeys(
+            [config.k8s_gpu_product, *getattr(config, "k8s_gpu_candidates", ())]
+        )
+    )
+    evidence: list[dict[str, Any]] = []
+    for component in components:
+        artifacts = dict(component.get("artifacts") or {})
+        if not artifacts.get("gpu_request"):
+            continue
+        evidence.append(
+            {
+                "component": component.get("name", ""),
+                "candidate_order": artifacts.get("gpu_candidate_order", []),
+                "attempts": artifacts.get("gpu_attempts", []),
+                "selected_product": artifacts.get("selected_gpu_product", ""),
+                "selected_node": artifacts.get("selected_gpu_node", ""),
+                "allocated_gpu": artifacts.get("allocated_gpu", {}),
+                "job_name": artifacts.get("job_name", ""),
+                "image_digests": artifacts.get("image_digests", []),
+                "status": component.get("tier", ""),
+                "duration_s": artifacts.get("duration_s", ""),
+                "artifact": next(
+                    (
+                        artifacts[key]
+                        for key in (
+                            "remote",
+                            "report",
+                            "checkpoint",
+                            "prefix",
+                            "raw_envs",
+                        )
+                        if artifacts.get(key)
+                    ),
+                    "",
+                ),
+            }
+        )
+    return {
+        "configured_order": configured,
+        "discovery_source": (
+            "actual nvidia.com/gpu.product node labels plus ordered configuration"
+        ),
+        "retry_evidence": (
+            "only Kubernetes Unschedulable GPU capacity/product selector evidence"
+        ),
+        "never_retry": [
+            "runtime",
+            "image_pull",
+            "credential",
+            "checkpoint_or_weight",
+            "container_exit",
+            "application_failure",
+        ],
+        "isaac_compatible_families": ["RTX PRO 6000", "L40S"],
+        "isaac_excluded_families": ["H100", "H200", "B200", "B300"],
+        "preserves_real_tier": True,
+        "exhaustion": "blocking failure with exact scheduler evidence",
+        "component_provenance": evidence,
+    }
 
 
 _FAMILY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (

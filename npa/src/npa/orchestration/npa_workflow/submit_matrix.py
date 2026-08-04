@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SubmitLiveCase:
-    """One npa.workflow twin to submit live through SkyPilot."""
+    """One npa.workflow case to render or submit through SkyPilot."""
 
     spec: str
     tier: str  # cpu | gpu | multi
@@ -212,9 +212,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         image_tool="cosmos2-transfer",
         notes=(
-            "The REAL Cosmos-Transfer2.5 model, not a manifest: --execute makes a missing "
-            "transfer runtime a hard error rather than a silent fall back. Replaces a template "
-            "that held a GPU to print `\"status\": \"contract_ready\"`."
+            "The REAL Cosmos-Transfer2.5 model, not a manifest: transfer_execute "
+            "conditions on a repository-authored procedural MP4, and --execute makes a "
+            "missing runtime a hard error rather than a silent fallback. Replaces a "
+            "template that held a GPU to print `\"status\": \"contract_ready\"`."
         ),
     ),
     SubmitLiveCase(
@@ -518,7 +519,54 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "--assume-decision (see DYNAMIC_SPECS in the live helpers)."
         ),
     ),
-    # --- Plan-only / stub twins (do not burn GPUs on stubs) ---
+    # --- Phase 4.1 coverage backfill: executable conditioned Cosmos paths ---
+    SubmitLiveCase(
+        "sim2real-two-step.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        image_tool="cosmos2-transfer",
+        notes=(
+            "Real conditioned Cosmos-Transfer2.5 path is wired: the dedicated toolRef "
+            "fails closed without the vendor runtime or seeded MP4, and envgen resolves "
+            "the durable manifest's exact non-empty frames list."
+        ),
+    ),
+    SubmitLiveCase(
+        "sim2real-two-step-agent.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        image_tool="cosmos2-transfer",
+        notes=(
+            "Agent-authored sibling on the dedicated conditioned execute path: the seeded "
+            "MP4 drives generation and envgen cycles only over frame URIs in the durable "
+            "npa.cosmos2.transfer.v1 manifest."
+        ),
+    ),
+    # --- Plan-only: incomplete hardening blueprints ---
+    SubmitLiveCase(
+        "adversarial-scenario-hardening.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        notes=(
+            "Plan-only: Isaac Lab train/eval default to a VM config absent on a fresh "
+            "worker, the decision stage does not consume the evaluation report, and "
+            "publish writes only a local /tmp file instead of release_uri."
+        ),
+    ),
+    SubmitLiveCase(
+        "hardening-with-insights.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        notes=(
+            "Plan-only: the inherited Isaac Lab train/eval needs a VM config missing on "
+            "fresh workers, its decision ignores evaluation, and publish writes only "
+            "under /tmp rather than release_uri; later insights stages do not repair "
+            "those gaps."
+        ),
+    ),
+    # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
     SubmitLiveCase(
         "physical-ai-data-factory.yaml",
         "multi",
@@ -552,6 +600,74 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         plan_only=True,
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
+    ),
+    SubmitLiveCase(
+        "byof-maniskill.yaml",
+        "multi",
+        plan_only=True,
+        notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-mujoco-playground.yaml",
+        "multi",
+        plan_only=True,
+        notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-robocasa.yaml",
+        "multi",
+        plan_only=True,
+        notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-openpi.yaml",
+        "multi",
+        plan_only=True,
+        notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-droid-policy-learning.yaml",
+        "multi",
+        plan_only=True,
+        notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-open-dreamer.yaml",
+        "multi",
+        plan_only=True,
+        notes=(
+            "BYOF onboarding flow; the real multi-GPU path is covered by "
+            "test_byof_open_dreamer_live_e2e.py."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos-synth-fanout-curation.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        plan_only=True,
+        notes=(
+            "workbench.fiftyone.launch_app is a stub, and both synthetic shard states "
+            "currently target the same transfer manifest object; keep plan-only until "
+            "both gaps close."
+        ),
+    ),
+    SubmitLiveCase(
+        "sim2real-gpu-cross-region-agent.yaml",
+        "multi",
+        plan_only=True,
+        notes=(
+            "Three of five toolRefs are stubs: policy_rollouts, heldout_eval, and "
+            "finalize."
+        ),
+    ),
+    SubmitLiveCase(
+        "av-night-scene-hardening.yaml",
+        "multi",
+        plan_only=True,
+        notes=(
+            "The terminal workbench.fiftyone.launch_app state is a stub; retain a full "
+            "render preflight until the review toolRef becomes executable."
+        ),
     ),
     SubmitLiveCase(
         "rl-policy-training-sim-success.yaml",
@@ -592,7 +708,7 @@ def gpu_submit_cases(
 ) -> list[SubmitLiveCase]:
     """Real-GPU-launching twins, sorted by spec for a deterministic rotation.
 
-    Excludes ``plan_only`` stub twins (they never launch a GPU) and
+    Excludes ``plan_only`` cases (they never launch a GPU) and
     ``rotation_skip`` twins (they cannot pass as a standalone submit today — see
     each ``skip_reason``), unless asked, so the daily rotation only ever picks a
     case that actually exercises a GPU and can succeed on its own.

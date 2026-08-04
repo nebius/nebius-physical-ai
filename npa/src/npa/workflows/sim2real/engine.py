@@ -86,6 +86,7 @@ from npa.workflows.sim2real.models import (
 from npa.workflows.sim2real.gpu_fallback import (
     GpuCapacityExhausted,
     GpuJobFailure,
+    gpu_fallback_report_contract,
     run_gpu_job_with_fallback,
     workload_kind,
 )
@@ -227,71 +228,6 @@ def emit_active_progress_rerun(
             local_dir / "reports" / "sim2real-progress.json", progress
         )
         return progress
-
-
-def gpu_fallback_report_contract(
-    config: Sim2RealLoopConfig, components: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Return the public fail-closed placement contract and component evidence."""
-
-    configured = list(
-        dict.fromkeys(
-            [config.k8s_gpu_product, *getattr(config, "k8s_gpu_candidates", ())]
-        )
-    )
-    evidence: list[dict[str, Any]] = []
-    for component in components:
-        artifacts = dict(component.get("artifacts") or {})
-        if not artifacts.get("gpu_request"):
-            continue
-        evidence.append(
-            {
-                "component": component.get("name", ""),
-                "candidate_order": artifacts.get("gpu_candidate_order", []),
-                "attempts": artifacts.get("gpu_attempts", []),
-                "selected_product": artifacts.get("selected_gpu_product", ""),
-                "selected_node": artifacts.get("selected_gpu_node", ""),
-                "allocated_gpu": artifacts.get("allocated_gpu", {}),
-                "job_name": artifacts.get("job_name", ""),
-                "image_digests": artifacts.get("image_digests", []),
-                "status": component.get("tier", ""),
-                "duration_s": artifacts.get("duration_s", ""),
-                "artifact": next(
-                    (
-                        artifacts[key]
-                        for key in (
-                            "remote",
-                            "report",
-                            "checkpoint",
-                            "prefix",
-                            "raw_envs",
-                        )
-                        if artifacts.get(key)
-                    ),
-                    "",
-                ),
-            }
-        )
-    return {
-        "configured_order": configured,
-        "discovery_source": "actual nvidia.com/gpu.product node labels plus ordered configuration",
-        "retry_evidence": (
-            "only Kubernetes Unschedulable GPU capacity/product selector evidence"
-        ),
-        "never_retry": [
-            "runtime",
-            "image_pull",
-            "credential",
-            "checkpoint_or_weight",
-            "container_exit",
-            "application_failure",
-        ],
-        "isaac_compatible_families": ["RTX PRO 6000", "L40S"],
-        "isaac_excluded_families": ["H100", "H200", "B200", "B300"],
-        "preserves_real_tier": True,
-        "exhaustion": "blocking failure with exact scheduler evidence",
-        "component_provenance": evidence,
-    }
 
 
 def _write_workflow_state(
@@ -5244,7 +5180,9 @@ def _run_real_cosmos_transfer(
     """Run real Cosmos-Transfer2.5 and publish the generated video + frames.
 
     Returns augment metadata, or ``None`` to signal the caller to fall back to the
-    descriptor manifest (transfer runtime absent, disabled, or inference failed).
+    descriptor manifest (transfer runtime absent, disabled, inference failed, or
+    the generated video cannot provide the frame contract). Unrelated programming
+    errors still propagate.
     """
 
     require_real = (
@@ -5259,11 +5197,12 @@ def _run_real_cosmos_transfer(
     try:
         from npa.workbench.cosmos.fixture import generate_fixture
         from npa.workbench.cosmos.transfer import (
+            FrameExtractionError,
             cosmos_transfer_available,
             extract_frames,
             run_cosmos_transfer,
         )
-    except Exception as exc:  # noqa: BLE001 - optional in CPU/unit environments
+    except ImportError as exc:
         if require_real:
             raise Sim2RealLoopError(
                 f"real Cosmos-Transfer2.5 modules are unavailable: {exc}"
@@ -5292,7 +5231,7 @@ def _run_real_cosmos_transfer(
                 or fixture["spec_path"]
             ),
         )
-    except Exception as exc:  # noqa: BLE001 - seam callers may use a descriptor fallback
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(
             json.dumps(
                 {
@@ -5312,24 +5251,50 @@ def _run_real_cosmos_transfer(
     from npa.workflows.sim2real_stages import resolve_augment_frame_count
 
     augmented_video_uri = f"{augment_prefix}video/augmented.mp4"
-    client.upload_file(transfer["video_path"], augmented_video_uri)
-
-    frames = extract_frames(
-        transfer["video_path"],
-        Path("/tmp/npa-augment-frames"),
-        max_frames=resolve_augment_frame_count(),
-    )
     index: list[dict[str, str]] = []
-    for i, frame_path in enumerate(frames):
-        frame_key = f"frame-{i:05d}.png"
-        client.upload_file(str(frame_path), f"{frames_root}{frame_key}")
-        index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_root}{frame_key}"})
+    with tempfile.TemporaryDirectory(prefix="npa-augment-frames-") as frame_tmp:
+        try:
+            frames = extract_frames(
+                transfer["video_path"],
+                Path(frame_tmp),
+                max_frames=resolve_augment_frame_count(),
+            )
+        except FrameExtractionError as exc:
+            print(
+                json.dumps(
+                    {
+                        "component": "cosmos2_transfer",
+                        "event": "frame_extraction_failed_fallback",
+                        "error": str(exc)[:400],
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return None
+        if not frames:
+            print(
+                json.dumps(
+                    {
+                        "component": "cosmos2_transfer",
+                        "event": "zero_frames_fallback",
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return None
+        client.upload_file(transfer["video_path"], augmented_video_uri)
+        for i, frame_path in enumerate(frames):
+            frame_key = f"frame-{i:05d}.png"
+            client.upload_file(str(frame_path), f"{frames_root}{frame_key}")
+            index.append(
+                {"frame_id": f"frame-{i:05d}", "uri": f"{frames_root}{frame_key}"}
+            )
     index_payload = {
         "schema": "npa.sim2real.augmented_frames.v1",
         "frame_count": len(index),
         "frames": index,
         "augmented_video_uri": augmented_video_uri,
-        "mode": "cosmos_transfer2.5",
+        "mode": "cosmos_transfer2.5_gpu",
     }
     index_local = Path("/tmp/augmented-frames-index.json")
     index_local.write_text(
@@ -5352,7 +5317,7 @@ def _run_real_cosmos_transfer(
     )
     return {
         "augmented_video_uri": augmented_video_uri,
-        "frame_count": len(index) or resolve_augment_frame_count(),
+        "frame_count": len(index),
         "video_bytes": transfer["video_bytes"],
         "spec": transfer["spec"],
         "fixture_provenance": fixture["provenance"],

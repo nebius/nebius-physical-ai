@@ -33,11 +33,29 @@ DEFAULT_SPEC = ""
 # control file, so they are not used for self-contained input-only conditioning.
 INPUT_AUTO_CONTROLS = ("edge", "vis")
 DEFAULT_INPUT_CONTROL = "edge"
+# Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
+# the then-reference-only tool wrote ``index.json`` with a different schema.
+# Keep these two artifact contracts named and distinct: the real publisher now
+# writes the canonical transfer manifest, while reference augmentation retains
+# its frame index. ``test_spec_declared_outputs`` binds workflow declarations to
+# the appropriate helper so this cannot regress into another false success.
+TRANSFER_MANIFEST_FILENAME = "manifest.json"
+TRANSFER_MANIFEST_SCHEMA = "npa.cosmos2.transfer.v1"
+TRANSFER_MANIFEST_MODE = "cosmos_transfer2.5_gpu"
+TRANSFER_MANIFEST_STATUS = "executed"
+AUGMENTED_FRAMES_INDEX = "index.json"
+AUGMENTED_FRAMES_SCHEMA = "npa.sim2real.augmented_frames.v1"
+REFERENCE_AUGMENT_MODE = "reference_augment"
+REFERENCE_AUGMENT_STATUS = "executed_reference"
 # Neutral photoreal prompt used when the caller conditions on an input clip but
 # supplies no appearance prompt of its own.
 _DEFAULT_INPUT_PROMPT = (
     "photorealistic, natural lighting, high detail, sharp focus, realistic textures"
 )
+
+
+class FrameExtractionError(RuntimeError):
+    """Raised when the frame-extraction subprocess cannot decode a video."""
 
 
 def _spec_for_input_video(
@@ -266,20 +284,25 @@ def run_cosmos_transfer(
         for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
         if "control" not in Path(f).name
     ]
-    big = sorted(
-        (f for f in videos if os.path.getsize(f) > 100_000),
+    # Upstream already ran its generated-video guardrail before writing this
+    # file. Do not reuse the container golden-eval's 100 KiB heuristic here:
+    # a short valid transfer can produce a ~9 KiB video (live job 371). S3
+    # publication below still fails closed unless PyAV can decode at least one
+    # exact frame, which is the artifact contract consumers need.
+    produced = sorted(
+        (f for f in videos if os.path.getsize(f) > 0),
         key=os.path.getsize,
         reverse=True,
     )
-    if not big:
+    if not produced:
         raise RuntimeError(f"cosmos-transfer2.5 produced no output video in {out_abs}")
     control_videos = [
         f for f in glob.glob(str(out_abs / "**" / "*.mp4"), recursive=True)
         if "control" in Path(f).name
     ]
     return {
-        "video_path": big[0],
-        "video_bytes": os.path.getsize(big[0]),
+        "video_path": produced[0],
+        "video_bytes": os.path.getsize(produced[0]),
         "control_path": control_videos[0] if control_videos else "",
         "out_dir": str(out_abs),
         "spec": spec,
@@ -294,8 +317,9 @@ def run_cosmos_transfer(
 def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> list[Path]:
     """Extract up to ``max_frames`` evenly-spaced PNG frames from ``video_path``.
 
-    Runs in the transfer venv (which ships PyAV); best-effort — returns [] on any
-    failure so callers can still publish the video + manifest.
+    Runs in the transfer venv (which ships PyAV). A successful decode with no
+    video frames returns ``[]``; subprocess and PyAV failures retain their stderr
+    and original exception as :class:`FrameExtractionError`.
     """
 
     repo = cosmos_transfer_repo()
@@ -320,8 +344,16 @@ def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> l
             capture_output=True,
             text=True,
         )
-    except Exception:  # noqa: BLE001 - frame extraction is best-effort
-        return []
+    except subprocess.CalledProcessError as exc:
+        detail = str(exc.stderr or exc.stdout or exc).strip()
+        raise FrameExtractionError(
+            f"frame extraction failed for {video_path!r} with exit code "
+            f"{exc.returncode}: {detail}"
+        ) from exc
+    except OSError as exc:
+        raise FrameExtractionError(
+            f"could not start frame extraction for {video_path!r}: {exc}"
+        ) from exc
     return sorted(dest_dir.glob("frame-*.png"))
 
 
@@ -333,6 +365,8 @@ def publish_transfer_clip(
     clip_name: str = "",
     variables: dict[str, Any] | None = None,
     max_frames: int = 8,
+    frames_output_uri: str = "",
+    require_frames: bool = False,
     storage_client: Any = None,
 ) -> dict[str, Any]:
     """Publish ONE real Cosmos-Transfer2.5 result as a per-clip dir under
@@ -342,7 +376,7 @@ def publish_transfer_clip(
     Writes:
 
         <clip>/augmented_video.mp4
-        <clip>/frame-00000.png ...
+        <clip>/frame-00000.png ... (or ``frames_output_uri/frame-*.png``)
         <clip>/metadata.json      (variables + mode, for the Rerun label)
 
     This is the unit of "multiply": the caller runs one inference per sampled
@@ -358,8 +392,10 @@ def publish_transfer_clip(
     base = output_uri if output_uri.endswith("/") else output_uri + "/"
     clip = clip_name or (f"aug-{run_id}" if run_id else "aug0")
     clip_base = f"{base}{clip}/"
+    frames_base = (
+        frames_output_uri.rstrip("/") + "/" if frames_output_uri else clip_base
+    )
     video_uri = f"{clip_base}augmented_video.mp4"
-    client.upload_file(transfer["video_path"], video_uri)
 
     import json as _json
     import tempfile as _tempfile
@@ -376,14 +412,23 @@ def publish_transfer_clip(
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
         frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
+        if require_frames and not frames:
+            raise RuntimeError(
+                "Cosmos Transfer completed but no frames could be extracted from "
+                f"{transfer['video_path']!r}; refusing to publish a manifest whose "
+                "augmented_frames_uri has no frame-NNNNN.png objects."
+            )
+        # Validate the required frame contract before publishing any object. A
+        # zero-frame decode must not leave a plausible video-only success behind.
+        client.upload_file(transfer["video_path"], video_uri)
         for i, frame_path in enumerate(frames):
             key = f"frame-{i:05d}.png"
-            client.upload_file(str(frame_path), f"{clip_base}{key}")
-            frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{clip_base}{key}"})
+            client.upload_file(str(frame_path), f"{frames_base}{key}")
+            frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_base}{key}"})
 
         clip_meta = {
-            "schema": "npa.cosmos2.transfer.v1",
-            "mode": "cosmos_transfer2.5_gpu",
+            "schema": TRANSFER_MANIFEST_SCHEMA,
+            "mode": TRANSFER_MANIFEST_MODE,
             "clip": clip,
             "variables": variables or {},
             "prompt": str((variables or {}).get("prompt") or ""),
@@ -402,6 +447,7 @@ def publish_transfer_clip(
         "augmented_video_uri": video_uri,
         "frame_count": len(frame_index),
         "frames": frame_index,
+        "frames_uri": frames_base,
         "control_spec": transfer.get("spec", ""),
         "video_bytes": int(transfer.get("video_bytes", 0) or 0),
         "input_conditioned": input_conditioned,
@@ -435,13 +481,12 @@ def write_run_manifest(
     import tempfile as _tempfile
 
     client = storage_client or StorageClient.from_environment()
-    base = output_uri if output_uri.endswith("/") else output_uri + "/"
     first = clips[0] if clips else {}
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {
-        "schema": "npa.cosmos2.transfer.v1",
-        "mode": "cosmos_transfer2.5_gpu",
-        "status": "executed",
+        "schema": TRANSFER_MANIFEST_SCHEMA,
+        "mode": TRANSFER_MANIFEST_MODE,
+        "status": TRANSFER_MANIFEST_STATUS,
         "run_id": run_id,
         "clips": [c.get("clip", "") for c in clips],
         "variant_count": len(clips),
@@ -453,6 +498,7 @@ def write_run_manifest(
         "augmented_videos": [c.get("augmented_video_uri", "") for c in clips],
         "frame_count": sum(int(c.get("frame_count", 0) or 0) for c in clips),
         "frames": frames,
+        "augmented_frames_uri": first.get("frames_uri", ""),
         "control_spec": first.get("control_spec", ""),
         "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
         "input_conditioned": bool(first.get("input_conditioned")),
@@ -470,9 +516,9 @@ def write_run_manifest(
         ],
     }
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-man-") as tmp:
-        mp = Path(tmp) / "manifest.json"
+        mp = Path(tmp) / TRANSFER_MANIFEST_FILENAME
         mp.write_text(_json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        client.upload_file(str(mp), f"{base}manifest.json")
+        client.upload_file(str(mp), transfer_manifest_uri_for(output_uri))
     return manifest
 
 
@@ -484,6 +530,8 @@ def publish_transfer_to_s3(
     variables: dict[str, Any] | None = None,
     clip_name: str = "",
     max_frames: int = 8,
+    frames_output_uri: str = "",
+    require_frames: bool = False,
     storage_client: Any = None,
 ) -> dict[str, Any]:
     """Upload a single real Cosmos-Transfer2.5 result to S3 in the per-clip layout
@@ -500,6 +548,8 @@ def publish_transfer_to_s3(
         clip_name=clip_name,
         variables=variables,
         max_frames=max_frames,
+        frames_output_uri=frames_output_uri,
+        require_frames=require_frames,
         storage_client=storage_client,
     )
     return write_run_manifest([clip], output_uri, run_id=run_id, storage_client=storage_client)
@@ -507,6 +557,18 @@ def publish_transfer_to_s3(
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".ppm", ".webp"}
 _PERTURBATIONS = ("lighting", "contrast", "color", "blur")
+
+
+def transfer_manifest_uri_for(output_uri: str) -> str:
+    """Return the durable manifest URI written by a real transfer publish."""
+
+    return output_uri.rstrip("/") + "/" + TRANSFER_MANIFEST_FILENAME
+
+
+def augmented_frames_index_uri_for(output_uri: str) -> str:
+    """Return the index URI written by reference augmentation."""
+
+    return output_uri.rstrip("/") + "/" + AUGMENTED_FRAMES_INDEX
 
 
 def _apply_perturbation(image: Any, perturbation: str, *, seed: int) -> Any:
@@ -578,6 +640,7 @@ def reference_augment_frames(
             storage = StorageClient.from_environment()
 
         if _is_s3(input_uri):
+            assert storage is not None
             storage.download_directory(input_uri, str(src_dir))
         else:
             local_src = Path(input_uri.replace("local://", "").replace("file://", ""))
@@ -598,6 +661,16 @@ def reference_augment_frames(
                 "expected at least one .png/.jpg frame to augment."
             )
 
+        if _is_s3(output_uri):
+            frames_uri = output_uri
+            dest_dir = None
+        else:
+            dest_dir = Path(output_uri.replace("local://", "").replace("file://", ""))
+            # Preserve an explicit local scheme in every returned frame URI so
+            # ``frames[].uri`` and ``index_uri`` use the same address space.
+            # Plain filesystem inputs remain plain paths for compatibility.
+            frames_uri = output_uri.rstrip("/")
+
         index: list[dict[str, Any]] = []
         frame_no = 0
         for src in sources:
@@ -612,43 +685,56 @@ def reference_augment_frames(
                         "frame_id": f"frame-{frame_no:05d}",
                         "perturbation": perturbation,
                         "source": src.name,
+                        "uri": f"{frames_uri.rstrip('/')}/{name}",
                         "variant": variant,
                     }
                 )
                 frame_no += 1
 
-        (out_dir / "index.json").write_text(
+        (out_dir / AUGMENTED_FRAMES_INDEX).write_text(
             json.dumps(
                 {
-                    "schema": "npa.sim2real.augmented_frames.v1",
+                    "schema": AUGMENTED_FRAMES_SCHEMA,
                     "run_id": run_id,
                     "frame_count": frame_no,
                     "frames": index,
                 },
                 indent=2,
                 sort_keys=True,
-            ),
+            )
+            + "\n",
             encoding="utf-8",
         )
 
         if _is_s3(output_uri):
+            assert storage is not None
             storage.upload_directory(str(out_dir), output_uri)
-            frames_uri = output_uri
         else:
-            dest_dir = Path(output_uri.replace("local://", "").replace("file://", ""))
+            assert dest_dir is not None
             dest_dir.mkdir(parents=True, exist_ok=True)
             for item in out_dir.iterdir():
                 shutil.copy2(item, dest_dir / item.name)
-            frames_uri = str(dest_dir)
 
     return {
         "augmented_frames_uri": frames_uri,
+        "frames": index,
+        "index_uri": augmented_frames_index_uri_for(output_uri),
         "frame_count": frame_no,
         "source_frame_count": len(sources),
     }
 
 
 __all__ = [
+    "AUGMENTED_FRAMES_INDEX",
+    "AUGMENTED_FRAMES_SCHEMA",
+    "FrameExtractionError",
+    "REFERENCE_AUGMENT_MODE",
+    "REFERENCE_AUGMENT_STATUS",
+    "TRANSFER_MANIFEST_FILENAME",
+    "TRANSFER_MANIFEST_MODE",
+    "TRANSFER_MANIFEST_SCHEMA",
+    "TRANSFER_MANIFEST_STATUS",
+    "augmented_frames_index_uri_for",
     "cosmos_transfer_available",
     "cosmos_transfer_repo",
     "ensure_env",
@@ -657,5 +743,6 @@ __all__ = [
     "publish_transfer_to_s3",
     "reference_augment_frames",
     "run_cosmos_transfer",
+    "transfer_manifest_uri_for",
     "write_run_manifest",
 ]

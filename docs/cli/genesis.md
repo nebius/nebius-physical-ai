@@ -8,8 +8,7 @@ Usage: npa workbench genesis [OPTIONS] COMMAND [ARGS]...
 Genesis simulation: teacher training, demo generation, evaluation.
 
 Options
---project  -p  <str>  Project alias from ~/.npa/config.yaml. When set, the command runs on the workbench VM via
-SSH instead of locally.
+--project  -p  <str>  Project alias from ~/.npa/config.yaml. When set, the command runs on the workbench VM via SSH instead of locally.
 --name  -n  <str>  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
@@ -30,7 +29,7 @@ system-info  Collect and display system hardware information from the Genesis VM
 
 | Option | Description |
 | --- | --- |
-| `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. When set, the command runs on the workbench VM via |
+| `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. When set, the command runs on the workbench VM via SSH instead of locally. |
 | `--name` | -n  <str>  Workbench instance name within the project. |
 | `--help` | Show this message and exit. |
 
