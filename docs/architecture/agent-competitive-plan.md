@@ -195,6 +195,13 @@ disabled, chat falls through to the existing cheap-LLM path exactly as today.
 
 Rollback: test-only; delete the directory.
 
+Empty read-only observations are intentionally context-sensitive. A standalone
+query that finds zero matching runs now terminates immediately with the honest
+answer "no runs found" and remains a valid query; discovery that is required by
+a later compare/dashboard step still triggers changed-strategy replanning.
+Errors and exact repeats retain the bounded rejection behavior. This is an
+intentional action-loop behavior change, not a byte-for-byte migration claim.
+
 ## Phase F — quantitative viewer eval + cross-run memory
 
 - `agent_visual_feedback.py` (extend): `extract_quantitative_signals(metrics)`
@@ -215,9 +222,11 @@ route, removable without touching existing paths.
 Introduce an importable package `npa/src/npa/agent_backend/` that is *shipped* to
 the VM (its files uploaded next to `backend.py`, imported via `sys.path`) instead
 of string-substituted. Migrate the new B–F modules there incrementally, keeping
-the embed mechanism working for everything not yet migrated. Behavior stays
-byte-for-byte; the rendered-backend compile check and the full agent suite stay
-green at every commit; migration proceeds in small reversible commits.
+the embed mechanism working for everything not yet migrated. Public import and
+deployment contracts stay stable; intentional behavior changes are documented
+and tested rather than described as byte-for-byte preservation. The
+rendered-backend compile check and the full agent suite stay green at every
+commit; migration proceeds in small reversible commits.
 
 **Implemented (pilot):** `agent_memory` is the first module migrated. Its logic
 lives in `npa/src/npa/agent_backend/memory.py`; `npa/src/npa/cli/agent_memory.py`

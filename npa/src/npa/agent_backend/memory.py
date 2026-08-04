@@ -118,26 +118,44 @@ def _fallback_compare(run_a: Any, run_b: Any) -> dict[str, Any]:
     }
 
 
-_LOWER_IS_BETTER = (
-    "loss",
-    "error",
-    "collision",
-    "corruption",
-    "cost",
-    "duration",
-    "latency",
-    "steps",
-    "tokens",
+_OUTCOME_HIGHER = frozenset(
+    {"accuracy", "f1", "precision", "recall", "reward", "return", "score", "success_rate"}
 )
-_HIGHER_IS_BETTER = (
-    "success",
-    "reward",
-    "accuracy",
-    "throughput",
-    "score",
-    "precision",
-    "recall",
+_OUTCOME_LOWER = frozenset(
+    {
+        "collision_rate",
+        "corruption_rate",
+        "error_rate",
+        "failed_check_count",
+        "failure_rate",
+        "loss",
+    }
 )
+_EFFICIENCY_LOWER = frozenset(
+    {
+        "cost_usd",
+        "duration",
+        "duration_s",
+        "duration_seconds",
+        "elapsed_s",
+        "latency",
+        "latency_ms",
+        "latency_s",
+        "mean_steps_to_success",
+        "total_cost_usd",
+        "wall_clock_s",
+    }
+)
+_EFFICIENCY_HIGHER = frozenset({"throughput"})
+_COUNTER_TOKENS = frozenset(
+    {"epoch", "epochs", "sample", "samples", "step", "steps", "timestamp", "tokens"}
+)
+_METRIC_ALIASES = {
+    "created_at": "timestamp",
+    "time": "timestamp",
+    "timestamp": "timestamp",
+    "updated_at": "timestamp",
+}
 
 
 def _flatten_numeric(value: Any, prefix: str = "") -> dict[str, float | int]:
@@ -171,23 +189,83 @@ def _flatten_scalars(value: Any, prefix: str = "") -> dict[str, Any]:
     return flattened
 
 
+def _normalized_metric_name(field: str) -> str:
+    leaf = re.split(r"[.\[\]]", str(field or ""))[-1]
+    normalized = re.sub(r"[^a-z0-9]+", "_", leaf.lower()).strip("_")
+    return _METRIC_ALIASES.get(normalized, normalized)
+
+
+def _metric_taxonomy(field: str) -> tuple[str, str]:
+    """Return ``(category, direction)`` from an explicit normalized taxonomy."""
+    name = _normalized_metric_name(field)
+    if name in _OUTCOME_HIGHER or name.endswith(
+        ("_accuracy", "_precision", "_recall", "_reward", "_return", "_score", "_success_rate")
+    ):
+        return "outcome", "higher_is_better"
+    if name in _OUTCOME_LOWER or name.endswith(("_loss", "_error_rate", "_failure_rate")):
+        return "outcome", "lower_is_better"
+    if name in _EFFICIENCY_HIGHER or name.endswith(
+        ("_throughput", "_per_second", "_per_sec", "_per_s")
+    ):
+        return "efficiency", "higher_is_better"
+    if name in _EFFICIENCY_LOWER or name.endswith(
+        ("_cost_usd", "_duration", "_duration_s", "_duration_seconds", "_latency", "_latency_ms")
+    ):
+        return "efficiency", "lower_is_better"
+    if name in _METRIC_ALIASES.values() or any(
+        token in _COUNTER_TOKENS for token in name.split("_")
+    ):
+        return "counter", "neutral"
+    return "context", "observed_change"
+
+
 def _metric_direction(field: str) -> str:
-    normalized = str(field or "").lower()
-    if any(marker in normalized for marker in _LOWER_IS_BETTER):
-        return "lower_is_better"
-    if any(marker in normalized for marker in _HIGHER_IS_BETTER):
-        return "higher_is_better"
-    return "observed_change"
+    return _metric_taxonomy(field)[1]
 
 
-def _metric_assessment(delta: float, direction: str) -> str:
+def _metric_assessment(delta: float, direction: str, category: str = "outcome") -> str:
     if delta == 0:
         return "unchanged"
+    if category == "counter":
+        return "neutral"
+    if category == "context":
+        return "changed"
+    if category == "efficiency":
+        improved = (delta > 0) == (direction == "higher_is_better")
+        return "more_efficient" if improved else "less_efficient"
     if direction == "higher_is_better":
         return "regressed" if delta < 0 else "improved"
     if direction == "lower_is_better":
         return "regressed" if delta > 0 else "improved"
     return "changed"
+
+
+def _metric_field_preference(field: str) -> tuple[int, str]:
+    normalized = str(field or "").lower()
+    if normalized.startswith("metrics."):
+        return 0, normalized
+    if normalized.startswith(("evaluation.", "eval.", "success_summary.")):
+        return 1, normalized
+    if "." not in normalized:
+        return 2, normalized
+    if normalized.startswith(("metadata.", "context.")):
+        return 4, normalized
+    return 3, normalized
+
+
+def _normalized_numeric_metrics(record: Mapping[str, Any]) -> dict[str, tuple[str, float | int]]:
+    """Deduplicate aliases while preferring authoritative metric containers."""
+    selected: dict[str, tuple[str, float | int]] = {}
+    for field, value in _flatten_numeric(record).items():
+        if field.startswith(("config.", "parameters.", "resources.")):
+            continue
+        identity = _normalized_metric_name(field)
+        current = selected.get(identity)
+        if current is None or _metric_field_preference(field) < _metric_field_preference(
+            current[0]
+        ):
+            selected[identity] = (field, value)
+    return selected
 
 
 def _display_value(value: Any) -> str:
@@ -297,36 +375,38 @@ class RunMemory:
         baseline_record = self.get_run(baseline) or {}
         candidate_record = self.get_run(run_b) or {}
 
-        baseline_metrics = {
-            key: value
-            for key, value in _flatten_numeric(baseline_record).items()
-            if not key.startswith(("config.", "parameters.", "resources."))
-        }
-        candidate_metrics = {
-            key: value
-            for key, value in _flatten_numeric(candidate_record).items()
-            if not key.startswith(("config.", "parameters.", "resources."))
-        }
+        baseline_metrics = _normalized_numeric_metrics(baseline_record)
+        candidate_metrics = _normalized_numeric_metrics(candidate_record)
         metric_evidence: list[dict[str, Any]] = []
-        for field in sorted(set(baseline_metrics) & set(candidate_metrics)):
-            baseline_value = baseline_metrics[field]
-            candidate_value = candidate_metrics[field]
+        for identity in sorted(set(baseline_metrics) & set(candidate_metrics)):
+            baseline_field, baseline_value = baseline_metrics[identity]
+            candidate_field, candidate_value = candidate_metrics[identity]
             delta = round(float(candidate_value) - float(baseline_value), 12)
             if delta == 0:
                 continue
-            direction = _metric_direction(field)
+            field = min(
+                (baseline_field, candidate_field),
+                key=_metric_field_preference,
+            )
+            category, direction = _metric_taxonomy(field)
             metric_evidence.append(
                 {
                     "field": field,
+                    "metric": identity,
                     "baseline": baseline_value,
                     "candidate": candidate_value,
                     "delta": delta,
+                    "category": category,
                     "direction": direction,
-                    "assessment": _metric_assessment(delta, direction),
+                    "assessment": _metric_assessment(delta, direction, category),
                 }
             )
         metric_evidence.sort(
-            key=lambda item: (item["assessment"] != "regressed", item["field"])
+            key=lambda item: (
+                item["category"] != "outcome",
+                item["assessment"] != "regressed",
+                item["field"],
+            )
         )
 
         config_changes: list[dict[str, Any]] = []
@@ -344,14 +424,20 @@ class RunMemory:
                     }
                 )
 
-        if any(item["assessment"] == "regressed" for item in metric_evidence):
+        if any(
+            item["category"] == "outcome" and item["assessment"] == "regressed"
+            for item in metric_evidence
+        ):
             verdict = "regression"
-        elif comparison.get("regressed"):
-            verdict = "regression"
-        elif any(item["assessment"] == "improved" for item in metric_evidence):
+        elif any(
+            item["category"] == "outcome" and item["assessment"] == "improved"
+            for item in metric_evidence
+        ):
             verdict = "improvement"
+        elif metric_evidence:
+            verdict = "no_quality_change"
         else:
-            verdict = str(comparison.get("verdict") or "no_change")
+            verdict = "no_change"
 
         lines = [
             f"**{run_b} vs {baseline}** (grounded on stored run metadata):",
@@ -365,12 +451,13 @@ class RunMemory:
         for evidence in metric_evidence:
             lines.append(
                 "- **{field}**: baseline `{baseline}`, candidate `{candidate}`, "
-                "delta `{delta}` — {assessment} ({direction}).".format(
+                "delta `{delta}` — {assessment} ({category}; {direction}).".format(
                     field=evidence["field"],
                     baseline=_display_value(evidence["baseline"]),
                     candidate=_display_value(evidence["candidate"]),
                     delta=evidence["delta"],
                     assessment=evidence["assessment"],
+                    category=evidence["category"],
                     direction=evidence["direction"],
                 )
             )

@@ -137,6 +137,10 @@ def _build_allowlist() -> dict[str, ToolSpec]:
                 "stage",
                 "metric_name",
                 "accelerator",
+                "metric_kind",
+                "currency",
+                "cost_basis",
+                "score_name",
                 "threshold_metric",
                 "threshold_op",
                 "threshold_value",
@@ -672,6 +676,67 @@ def _replan_reason(observation: Any, *, raised: bool = False) -> str:
     return ""
 
 
+_TERMINAL_EMPTY_TOOLS = frozenset(
+    {"artifacts_runs", "artifacts_run", "insights_query", "insights_lineage"}
+)
+_EMPTY_DOWNSTREAM_RE = re.compile(
+    r"\b(?:compare|comparison|dashboard|lineage|then|next|after(?:wards)?|"
+    r"recover|retry|broaden|alternate|alternative)\b|"
+    r"\b(?:or|and)\s+(?:summari[sz]e|show|find|try)\b",
+    re.IGNORECASE,
+)
+_EMPTY_LOOKUP_GOAL_RE = re.compile(
+    r"\b(?:which|what|list|find|show|query|search|match|matching|runs?|records?|"
+    r"artifacts?|metrics?|lineage)\b",
+    re.IGNORECASE,
+)
+
+
+def _empty_result_is_terminal(
+    goal: str,
+    tool: str,
+    *,
+    required_tools: Sequence[str] = (),
+    completed_tools: Sequence[str] = (),
+) -> bool:
+    """Whether an empty read is itself the honest answer to this goal.
+
+    Discovery that feeds a later comparison/dashboard remains an intermediate
+    failure and must trigger a changed strategy. A standalone lookup is already
+    complete when it truthfully finds zero matches, so it must not spend another
+    planner step or blacklist the correct query merely for returning no rows.
+    """
+    if tool not in _TERMINAL_EMPTY_TOOLS:
+        return False
+    pending_other_tools = [
+        name
+        for name in required_tools
+        if name != tool and name not in completed_tools
+    ]
+    if pending_other_tools:
+        return False
+    goal_text = str(goal or "")
+    return bool(_EMPTY_LOOKUP_GOAL_RE.search(goal_text)) and not _EMPTY_DOWNSTREAM_RE.search(
+        goal_text
+    )
+
+
+def _terminal_empty_reply(tool: str, observation: Any) -> str:
+    """Return a concise, deterministic answer for a terminal empty lookup."""
+    if isinstance(observation, Mapping):
+        if observation.get("count") == 0 or "records" in observation or "runs" in observation:
+            return "No runs found (0 matching records in the store)."
+        if observation.get("total_records") == 0:
+            return "No runs found (the store contains 0 records)."
+        if "artifacts" in observation:
+            return "No artifacts found for the requested run."
+        if "items" in observation:
+            return "No matching items found."
+    if tool == "artifacts_run":
+        return "No artifacts found for the requested run."
+    return "No matching results found."
+
+
 def run_action_loop(
     goal: str,
     *,
@@ -1063,7 +1128,16 @@ def run_action_loop(
             raised = True
             observation = {"error": str(exc)}
         replan_reason = _replan_reason(observation, raised=raised)
-        status = "error" if replan_reason == "tool_error" else "empty" if replan_reason else "ok"
+        empty_result = replan_reason == "empty_observation"
+        terminal_empty = empty_result and _empty_result_is_terminal(
+            goal_text,
+            tool,
+            required_tools=required_tools,
+            completed_tools=completed_tools,
+        )
+        if terminal_empty:
+            replan_reason = ""
+        status = "error" if replan_reason == "tool_error" else "empty" if empty_result else "ok"
         observed = _observe(observation)
         steps.append(
             {
@@ -1074,6 +1148,7 @@ def run_action_loop(
                 "status": status,
                 "thought": thought,
                 "observation": observed,
+                **({"terminal_observation": True} if terminal_empty else {}),
                 **({"replan_reason": replan_reason} if replan_reason else {}),
             }
         )
@@ -1091,6 +1166,10 @@ def run_action_loop(
             if tool in required_tools and tool not in completed_tools:
                 completed_tools.append(tool)
         observations.append(observation_entry)
+        if terminal_empty:
+            reply = _terminal_empty_reply(tool, observation)
+            stopped_reason = STOP_DONE
+            break
     else:
         stopped_reason = STOP_MAX_STEPS
         if not reply:
@@ -1149,7 +1228,17 @@ _THRESHOLD_OP_ALIASES: dict[str, str] = {
     "equals": "eq",
 }
 
-_DASHBOARD_GROUP_BY = ("metric_name", "tool", "stage", "workflow")
+_DASHBOARD_GROUP_BY = (
+    "metric_name",
+    "tool",
+    "stage",
+    "workflow",
+    "metric_kind",
+    "step",
+    "currency",
+    "cost_basis",
+    "score_name",
+)
 
 
 def normalize_threshold_op(op: str) -> str:

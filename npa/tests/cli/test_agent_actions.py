@@ -406,6 +406,70 @@ def test_empty_observation_replans_with_an_alternate_tool():
     assert result["stopped_reason"] == A.STOP_DONE
 
 
+def test_standalone_empty_query_is_an_honest_terminal_observation():
+    planner_calls = {"n": 0}
+
+    def planner(messages, *, tier="cheap"):
+        planner_calls["n"] += 1
+        if planner_calls["n"] > 1:  # pragma: no cover - terminal empty must stop
+            raise AssertionError("terminal empty result spent another planner step")
+        return _completion(
+            {"tool": "insights_query", "args": {"workflow": "missing"}}
+        )
+
+    result = A.run_action_loop(
+        "Which runs match workflow missing?",
+        tools={"insights_query": lambda args: {"count": 0, "records": []}},
+        model_call=planner,
+    )
+
+    assert result["ok"] is True
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["reply"] == "No runs found (0 matching records in the store)."
+    assert result["replans"] == 0
+    assert result["steps"] == [
+        {
+            "step": 1,
+            "phase": "call",
+            "tool": "insights_query",
+            "args": {"workflow": "missing"},
+            "status": "empty",
+            "thought": "",
+            "observation": {"count": 0, "records": []},
+            "terminal_observation": True,
+        }
+    ]
+
+
+def test_intermediate_empty_query_recovers_with_changed_arguments():
+    calls = []
+
+    def query(args):
+        calls.append(args)
+        if not args.get("workflow"):
+            return {"count": 0, "records": []}
+        return {"count": 1, "records": [{"run_id": "run-a"}]}
+
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {}},
+            {"tool": "insights_query", "args": {"workflow": "wf"}},
+            {"final": "Found `run-a`; it is ready to compare."},
+        ]
+    )
+    result = A.run_action_loop(
+        "Discover a run, then compare it later.",
+        tools={"insights_query": query},
+        model_call=planner,
+    )
+
+    assert calls == [{}, {"workflow": "wf"}]
+    assert result["steps"][0]["replan_reason"] == "empty_observation"
+    assert result["steps"][1]["status"] == "ok"
+    assert result["replans"] == 1
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
 def test_extract_json_object_handles_fenced_and_embedded():
     assert A._extract_json_object('```json\n{"a": 1}\n```') == {"a": 1}
     assert A._extract_json_object('prefix {"tool": "x"} suffix') == {"tool": "x"}
@@ -683,7 +747,7 @@ def test_loop_insights_empty_store_reports_no_fabrication():
     assert result["tools_used"] == ["insights_query"]
     blob = json.dumps(result["steps"])
     assert "candidate-4gpu" not in blob and "hardened-4gpu" not in blob
-    assert "no matching runs" in result["reply"].lower()
+    assert "no runs found" in result["reply"].lower()
 
 
 def test_normalize_threshold_op_accepts_common_aliases():
@@ -811,7 +875,7 @@ def test_planner_retries_once_on_unparseable_reply():
 
 
 def test_unparseable_plan_reports_empty_store_as_no_runs_found():
-    """An empty result set must be answered truthfully, never as a bare failure."""
+    """A terminal empty result must not spend a retry on unusable planner prose."""
     calls = {"n": 0}
 
     def _call(messages, *, tier="cheap"):
@@ -822,11 +886,11 @@ def test_unparseable_plan_reports_empty_store_as_no_runs_found():
 
     tools = {"insights_query": lambda args: {"backend": "jsonl", "count": 0, "records": []}}
     result = A.run_action_loop("which runs used 4 gpus", tools=tools, model_call=_call)
-    assert result["stopped_reason"] == A.STOP_NO_PLAN
-    assert "no runs found" in result["reply"]
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert "no runs found" in result["reply"].lower()
     assert "insights_query" in result["tools_used"]
-    # The corrective re-ask is bounded to one extra call for the whole loop.
-    assert [s.get("retried") for s in result["steps"] if s.get("phase") == "plan"] == [True]
+    assert calls["n"] == 1
+    assert not [s for s in result["steps"] if s.get("phase") == "plan"]
 
 
 def test_summarize_observations_reports_only_what_tools_returned():
