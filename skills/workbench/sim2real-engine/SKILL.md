@@ -21,6 +21,7 @@ K8s jobs (`s2r-*`).
 | `npa/src/npa/workflows/sim2real/monitor.py` | `_STAGE_SPECS` S3 marker rules for live status |
 | `npa/src/npa/workflows/sim2real/runner.py` | `Sim2RealWorkflow` orchestration CLI entry |
 | `npa/src/npa/workflows/sim2real_assets.py` | Stage 2 assets consumption |
+| `npa/src/npa/workflows/sim2real/gpu_fallback.py` | Cluster product discovery, compatibility filtering, scheduler-only retry, provenance |
 
 ## Stage Map
 
@@ -60,6 +61,18 @@ Stages 4–6 share one component name in monitor: `stage_04_06_env_gen_split_tok
 - K8s sibling job names embed only the first 22 characters of `run_id`.
 - Registry-qualified images gate K8s execution; placeholders fall back to local
   reference paths (SEAM tier in component records).
+- Real-tier direct-Kubernetes components use the shared capacity fallback
+  helper. It may retry only `Unschedulable` GPU capacity/product evidence and
+  must fail closed for any runtime/image/credential/application failure. Isaac
+  candidates are limited to L40S and RTX PRO 6000 variants.
+- ComponentRecords and the final report carry candidate order, every scheduling
+  attempt/reason, selected product/node, allocated GPU resource/count, exact Job,
+  immutable runtime digest, and duration. Stage 12 remains the designed `SEAM`.
+- Stage 14 is operational evidence, not a placeholder: active progress writes
+  `reports/sim2real-progress.rrd`; final emission loads all persisted outer
+  evidence and exposes reward/loss/success metrics, real rollout cameras with
+  synchronized actions, Cosmos evidence, and a byte-verified deployable policy
+  SHA/size/S3 access command. The viewer links the `.pt`; it does not execute it.
 - `npa/workflows/workbench/sim2real/runbook.yaml` passes explicit trainer, VLM,
   and evaluator image fallbacks on the CLI, so those values override the Python
   defaults. Keep them synchronized with `[tool.npa.supported-tools]`; the

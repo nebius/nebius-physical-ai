@@ -123,6 +123,7 @@ def _build_run_tree(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         )
     inner_evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "outer_iteration": 1,
         "reward_trend": [0.2, 0.45],
         "iterations": [
             {
@@ -130,6 +131,10 @@ def _build_run_tree(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
                 "actions_dir": str(actions_dir),
                 "vlm_eval_dir": str(eval_dir),
                 "signal_dir": str(signal_dir),
+                "mean_reward": 0.2,
+                "update": {"loss_before": 1.0, "loss_after": 0.7},
+                "policy_delta_vs_control": 0.1,
+                "next_rollout_quality": 0.55,
             }
         ],
     }
@@ -213,6 +218,9 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
     assert "signal/reward" in entities
     assert "signal/advantage" in entities
     assert "signal/reward_trend" in entities
+    assert "training/loss_before" in entities
+    assert "training/loss_after" in entities
+    assert "progress/inner_loop/iteration" in entities
     # Action trajectories per rollout step.
     assert any("/actions/dim_00" in e for e in entities)
     assert any(e.endswith("/actions/l2_norm") for e in entities)
@@ -238,6 +246,61 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
     assert counts["/summary/stage_progress"] == 1
     assert counts["/summary/policy_access"] == 1
     assert counts["/progress/stage_12/tier_works"] == 1
+
+
+def test_progress_only_recording_is_allowed_with_stage_proof(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+
+    result = emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence={},
+        heldout_report=None,
+        stage_components=[
+            {
+                "name": "stage_01_trigger",
+                "tier": "WORKS",
+                "evidence": "started",
+                "artifacts": {"duration_s": 0.1},
+            }
+        ],
+        output_rrd=tmp_path / "reports" / "sim2real-progress.rrd",
+        allow_progress_only=True,
+    )
+
+    assert result.status == "written"
+    assert result.rollout_count == 0
+    assert result.entity_counts["/progress/stage_01/tier_works"] == 1
+
+
+def test_recording_loads_metrics_and_rollouts_from_every_outer_iteration(
+    monkeypatch, tmp_path: Path
+) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    for outer in (1, 2):
+        payload = dict(inner_evidence)
+        payload["outer_iteration"] = outer
+        payload["iterations"] = [dict(inner_evidence["iterations"][0])]
+        evidence_path = tmp_path / "inner_loop" / f"outer-{outer:02d}" / "evidence.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+    result = emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=tmp_path / "reports" / "sim2real.rrd",
+    )
+
+    entities = [entity for entity, _kind in fake.logged]
+    assert result.rollout_count == 4
+    assert any(entity.startswith("rollouts/outer_01/") for entity in entities)
+    assert any(entity.startswith("rollouts/outer_02/") for entity in entities)
+    assert result.entity_counts["/training/loss_after"] == 2
 
 
 def test_emit_raises_when_rerun_unavailable(monkeypatch, tmp_path: Path) -> None:

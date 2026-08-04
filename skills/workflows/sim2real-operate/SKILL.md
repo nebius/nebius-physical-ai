@@ -46,7 +46,11 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
    or `npa workbench sim2real status <run-id> --watch`.
 7. **View results:** `run.sh sync <run-id>` (Rerun), or read
    `reports/sim2real-report.json` (`.outer_loop.latest_decision`,
-   `.inner_loop.reward_trend`, `.upload.status`).
+   `.inner_loop.reward_trend`, `.policy_access`, `.upload.status`). The canonical
+   `reports/sim2real.rrd` includes the 14-stage timeline, every persisted
+   outer/inner pass, reward/loss/success metrics, rollout cameras/actions, and
+   checkpoint access instructions. `reports/sim2real-progress.rrd` is refreshed
+   while enough stage records exist.
 
 ## Gotchas
 
@@ -60,12 +64,20 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
   `npa-nebius-registry` before apply; if a sibling Job still fails to pull,
   re-run the refresh. The refresh is per-registry-server, so it also covers the
   envgen image even though that image is set from `NPA_REGISTRY` at runtime.
-- **GPU product is pinned** via `nodeSelector` /
-  `NPA_SIM2REAL_K8S_GPU_PRODUCT` (default
-  `NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition`). Wrong product → Pods stay
-  Pending.
-- **Isaac Lab needs RT-core GPUs** (L40S / RTX PRO). Genesis is the fallback
-  backend (`NPA_SIM2REAL_SIM_BACKEND`).
+- **GPU placement is ordered and capacity-aware.** Set the preferred product
+  with `NPA_SIM2REAL_K8S_GPU_PRODUCT` and optional ordered products with
+  `NPA_SIM2REAL_K8S_GPU_CANDIDATES`; actual node labels are normalized and
+  compatible discovered products are appended. A Job changes product only for
+  concrete GPU capacity/selector evidence. Image pulls, credentials, model
+  weights, container exits, and application failures fail on the selected
+  product without retry.
+- **Isaac Lab needs RT-core GPUs** (L40S / RTX PRO). H100/H200 are always
+  filtered for Isaac. Selecting Genesis is an explicit backend choice
+  (`NPA_SIM2REAL_SIM_BACKEND`), never an automatic failure fallback in the real
+  tier.
+- Every retry preserves registry-qualified real-tier images and Kubernetes
+  execution. Candidate exhaustion is reported with exact scheduler evidence;
+  it never falls back to SEAM/reference/in-process behavior.
 - Keep `runbook.yaml`'s `envs:` literals and the `run:` block `${VAR:-default}`
   fallbacks in agreement — a cleared env var must not silently change behavior.
 

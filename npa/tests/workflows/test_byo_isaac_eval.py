@@ -69,6 +69,7 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_EVAL_TAG", "outer-02")
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
 
     rows = ev.run_isaac_eval_job(
         "myrun",

@@ -26,6 +26,7 @@ without a GPU.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -1003,26 +1004,43 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         robot_usd_uri=robot_usd_uri,
         task_config=task_config,
     )
-    start = time.time()
-    _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
-    apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)
-    if apply.returncode != 0:
-        raise SystemExit(f"byo_isaac_trainer: kubectl apply failed: {apply.stderr}")
-    print(f"byo_isaac_trainer: applied {job_name}; waiting up to {timeout_s}s", flush=True)
-    wait = _kubectl(
-        ["wait", f"job/{job_name}", "-n", namespace,
-         "--for=condition=complete", f"--timeout={timeout_s}s"],
-        timeout=timeout_s + 60,
-    )
-    status = "success" if wait.returncode == 0 else "failed"
-    if status != "success":
-        logs = _kubectl(["logs", f"job/{job_name}", "-n", namespace, "--tail=80"], timeout=120)
-        raise SystemExit(
-            f"byo_isaac_trainer: Isaac training job {job_name} did not complete: "
-            f"{wait.stderr}\n--- logs ---\n{logs.stdout}"
+    from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
+
+    def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
+        candidate = copy.deepcopy(manifest)
+        candidate.setdefault("metadata", {})["name"] = candidate_job_name
+        pod_spec = (
+            candidate.setdefault("spec", {})
+            .setdefault("template", {})
+            .setdefault("spec", {})
         )
+        pod_spec["nodeSelector"] = {
+            "nvidia.com/gpu.product": product
+        }
+        return candidate
+
+    def kubectl(args: list[str], **kwargs: Any):
+        timeout = int(kwargs.pop("timeout_s", 300))
+        return _kubectl(args, timeout=timeout, **kwargs)
+
+    start = time.time()
+    provenance = run_gpu_job_with_fallback(
+        kubectl=kubectl,
+        manifest_factory=manifest_factory,
+        base_job_name=job_name,
+        namespace=namespace,
+        image=image,
+        preferred_product=gpu_product,
+        explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
+        workload="isaac",
+        gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+        gpu_count=1,
+        timeout_s=timeout_s,
+    )
+    job_name = str(provenance["job_name"])
+    status = "success"
     checkpoint_uri = s3_output + "model_latest.pt"
-    return build_update_result(
+    result = build_update_result(
         stats=stats,
         initial_reward_head=float(_env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0),
         iterations=iterations,
@@ -1031,6 +1049,13 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         duration_ms=(time.time() - start) * 1000.0,
         reward_overrides=reward_overrides,
     )
+    result["component_invocation"] = {
+        "mode": "kubernetes_job",
+        "job_name": job_name,
+        "image": image,
+        "gpu_provenance": provenance,
+    }
+    return result
 
 
 def main() -> int:

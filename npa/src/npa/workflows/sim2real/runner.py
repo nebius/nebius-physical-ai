@@ -32,9 +32,15 @@ class Sim2RealWorkflow:
         return self._local_dir
 
     def run_preamble(self) -> WorkflowState:
-        from npa.workflows.sim2real.engine import run_preamble
+        from npa.workflows.sim2real.engine import emit_active_progress_rerun, run_preamble
 
         payload = run_preamble(self.config)
+        payload["progress_rerun"] = emit_active_progress_rerun(
+            self.config, self._local_dir, payload
+        )
+        from npa.workflows.sim2real.engine import _write_workflow_state
+
+        _write_workflow_state(self._local_dir, payload, config=self.config)
         return WorkflowState.from_payload(self._local_dir, payload)
 
     def run_outer_iteration(
@@ -79,6 +85,16 @@ class Sim2RealWorkflow:
         from npa.workflows.sim2real.engine import sync_workflow_state_to_s3
 
         sync_workflow_state_to_s3(self.config, self._local_dir)
+        from npa.workflows.sim2real.engine import emit_active_progress_rerun
+
+        progress = emit_active_progress_rerun(
+            self.config, self._local_dir, state.to_payload()
+        )
+        payload = state.to_payload()
+        payload["progress_rerun"] = progress
+        from npa.workflows.sim2real.engine import _write_workflow_state
+
+        _write_workflow_state(self._local_dir, payload, config=self.config)
         return state
 
     def run_finalize(self, *, upload: bool | None = None) -> dict[str, Any]:

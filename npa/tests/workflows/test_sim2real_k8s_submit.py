@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -113,7 +115,7 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
     _patch_operator(monkeypatch, tmp_path)
     staged: list[dict[str, object]] = []
     refreshed: list[tuple[str, ...]] = []
-    applied: list[Path] = []
+    applied: list[dict[str, object]] = []
     monkeypatch.setattr(
         k8s_submit,
         "_stage_orchestrator_source",
@@ -124,11 +126,47 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
         "ensure_registry_pull_secret_for_images",
         lambda *images, **_kwargs: refreshed.append(tuple(images)),
     )
-    monkeypatch.setattr(
-        k8s_submit,
-        "_apply_manifest",
-        lambda path, **_kwargs: applied.append(path),
-    )
+    def fake_kubectl(args, **kwargs):
+        if args[:2] == ["get", "nodes"]:
+            stdout = json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {
+                                "labels": {
+                                    "nvidia.com/gpu.product": (
+                                        "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+                                    )
+                                }
+                            }
+                        }
+                    ]
+                }
+            )
+        elif args[:2] == ["apply", "-f"]:
+            applied.append(json.loads(kwargs["stdin"]))
+            stdout = "job.batch/sim2real-unit-submit created"
+        elif args[:2] == ["get", "pods"]:
+            stdout = json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {"name": "sim2real-unit-submit-pod"},
+                            "spec": {"nodeName": "rtx-node"},
+                            "status": {
+                                "containerStatuses": [
+                                    {"imageID": "registry.unit.test/team/orchestrator@sha256:abc"}
+                                ]
+                            },
+                        }
+                    ]
+                }
+            )
+        else:
+            stdout = ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(k8s_submit, "_direct_kubectl", fake_kubectl)
 
     result = k8s_submit.submit_sim2real_staged_job(
         run_id="unit-submit",
@@ -144,7 +182,9 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
     assert len(staged) == 1
     assert len(refreshed) == 1
     assert len(refreshed[0]) >= len(k8s_submit._REQUIRED_REAL_IMAGE_ENVS)
-    assert applied == [Path(result.manifest_path)]
+    assert len(applied) == 1
+    assert applied[0]["metadata"]["name"] == result.job_name
+    assert Path(result.manifest_path).name == f"{result.job_name}.yaml"
 
 
 def test_unqualified_real_component_override_is_rejected(

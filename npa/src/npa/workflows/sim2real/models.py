@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from npa.deploy.images import container_image_for_tool, registry_from_env
 
@@ -51,7 +52,7 @@ class ComponentRecord:
     name: str
     tier: str
     evidence: str
-    artifacts: dict[str, str] = field(default_factory=dict)
+    artifacts: dict[str, Any] = field(default_factory=dict)
     next_action: str = "CONTINUE"
 
 
@@ -127,6 +128,7 @@ class Sim2RealLoopConfig:
     k8s_env_secret_names: str = "hf-ngc-tokens,npa-storage-credentials"
     k8s_gpu_resource: str = "nvidia.com/gpu"
     k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    k8s_gpu_candidates: tuple[str, ...] = ()
     k8s_kubeconfig: str = ""
     k8s_context: str = ""
     k8s_job_timeout_s: int = 7200

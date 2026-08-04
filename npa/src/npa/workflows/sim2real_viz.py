@@ -164,6 +164,7 @@ def emit_sim2real_rerun(
     run_metadata: dict[str, Any] | None = None,
     output_rrd: Path | None = None,
     write_mp4: bool = False,
+    allow_progress_only: bool = False,
 ) -> Sim2RealVizResult:
     """Write ``reports/sim2real.rrd`` for a completed run's artifacts."""
 
@@ -198,8 +199,9 @@ def emit_sim2real_rerun(
     if not has_heldout_cameras:
         _log_scene_overview(rr, recording, inner_evidence, counts)
 
-    iterations = inner_evidence.get("iterations") or []
-    for record in iterations:
+    iteration_records = _all_inner_iteration_records(local_dir, inner_evidence)
+    multiple_outer_iterations = len({outer for outer, _record in iteration_records}) > 1
+    for outer_iteration, record in iteration_records:
         iteration = int(record.get("iteration", len(mp4_paths) + 1))
         actions_dir = _maybe_path(record.get("actions_dir"))
         eval_dir = _maybe_path(record.get("vlm_eval_dir"))
@@ -209,7 +211,13 @@ def emit_sim2real_rerun(
             if has_heldout_cameras and is_reference_stub_rollout(rollout_dir, frames):
                 continue
             rollout_id = rollout_dir.name
-            iter_root = f"rollouts/iter_{iteration:02d}/{rollout_id}"
+            if multiple_outer_iterations:
+                iter_root = (
+                    f"rollouts/outer_{outer_iteration:02d}/"
+                    f"iter_{iteration:02d}/{rollout_id}"
+                )
+            else:
+                iter_root = f"rollouts/iter_{iteration:02d}/{rollout_id}"
             evaluation = _read_json(eval_dir / f"{rollout_id}.json") if eval_dir else {}
             signal = _read_json(signal_dir / f"{rollout_id}.json") if signal_dir else {}
             manifest = _read_json(rollout_dir / "manifest.json")
@@ -232,7 +240,13 @@ def emit_sim2real_rerun(
                 if mp4_path is not None:
                     mp4_paths.append(str(mp4_path))
 
-    _log_reward_trend(rr, recording, inner_evidence.get("reward_trend") or [], counts)
+    _log_training_iteration_metrics(
+        rr,
+        recording,
+        iteration_records=iteration_records,
+        outer_history=outer_history or [],
+        counts=counts,
+    )
     synthetic_frame_count = _log_synthetic_data(rr, recording, local_dir, counts)
     heldout_frame_count, heldout_seconds = _log_heldout_cameras(
         rr,
@@ -280,7 +294,13 @@ def emit_sim2real_rerun(
 
     if not output_rrd.exists() or output_rrd.stat().st_size == 0:
         raise Sim2RealVizError(f"Rerun recording was not written: {output_rrd}")
-    if frame_count == 0 and rollout_count == 0 and heldout_env_count == 0 and heldout_frame_count == 0:
+    if (
+        frame_count == 0
+        and rollout_count == 0
+        and heldout_env_count == 0
+        and heldout_frame_count == 0
+        and not (allow_progress_only and stage_components)
+    ):
         raise Sim2RealVizError(
             "Sim2Real Rerun recording has no real rollout frames, held-out cameras, or held-out scores; "
             f"synthetic descriptor previews logged={synthetic_frame_count}"
@@ -371,11 +391,95 @@ def _log_rollout(
     return seconds
 
 
-def _log_reward_trend(rr: Any, recording: Any, reward_trend: list[Any], counts: dict[str, int]) -> None:
-    for index, value in enumerate(reward_trend):
-        _set_time(rr, recording, float(index))
-        rr.log("signal/reward_trend", _scalar(rr, float(value)), recording=recording)
-        _bump(counts, "signal/reward_trend")
+def _all_inner_iteration_records(
+    local_dir: Path, inner_evidence: dict[str, Any]
+) -> list[tuple[int, dict[str, Any]]]:
+    """Load every persisted outer/inner evidence record in chronological order."""
+
+    records: list[tuple[int, dict[str, Any]]] = []
+    seen: set[tuple[int, int, str]] = set()
+    for path in sorted((Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")):
+        payload = _read_json(path)
+        outer = int(payload.get("outer_iteration") or path.parent.name.rsplit("-", 1)[-1])
+        reward_trend = list(payload.get("reward_trend") or [])
+        for record_index, record in enumerate(payload.get("iterations") or []):
+            if not isinstance(record, dict):
+                continue
+            record = dict(record)
+            if record.get("mean_reward") is None and record_index < len(reward_trend):
+                record["mean_reward"] = reward_trend[record_index]
+            key = (outer, int(record.get("iteration") or 0), str(record.get("actions_dir") or ""))
+            if key not in seen:
+                records.append((outer, record))
+                seen.add(key)
+    fallback_outer = int(inner_evidence.get("outer_iteration") or 1)
+    reward_trend = list(inner_evidence.get("reward_trend") or [])
+    for record_index, record in enumerate(inner_evidence.get("iterations") or []):
+        if not isinstance(record, dict):
+            continue
+        record = dict(record)
+        if record.get("mean_reward") is None and record_index < len(reward_trend):
+            record["mean_reward"] = reward_trend[record_index]
+        key = (
+            fallback_outer,
+            int(record.get("iteration") or 0),
+            str(record.get("actions_dir") or ""),
+        )
+        if key not in seen:
+            records.append((fallback_outer, record))
+            seen.add(key)
+    return sorted(records, key=lambda item: (item[0], int(item[1].get("iteration") or 0)))
+
+
+def _log_training_iteration_metrics(
+    rr: Any,
+    recording: Any,
+    *,
+    iteration_records: list[tuple[int, dict[str, Any]]],
+    outer_history: list[dict[str, Any]],
+    counts: dict[str, int],
+) -> None:
+    """Expose reward, PPO loss, quality, and held-out success across the loop."""
+
+    for timeline_index, (outer, record) in enumerate(iteration_records):
+        _set_time(rr, recording, float(timeline_index))
+        iteration = int(record.get("iteration") or timeline_index + 1)
+        metrics = {
+            "progress/inner_loop/outer_iteration": outer,
+            "progress/inner_loop/iteration": iteration,
+            "training/reward": record.get("mean_reward"),
+            "training/loss_before": (record.get("update") or {}).get("loss_before"),
+            "training/loss_after": (record.get("update") or {}).get("loss_after"),
+            "training/policy_delta_vs_control": record.get("policy_delta_vs_control"),
+            "evaluation/rollout_quality": record.get("next_rollout_quality"),
+        }
+        for entity, value in metrics.items():
+            if value is None:
+                continue
+            rr.log(entity, _scalar(rr, float(value)), recording=recording)
+            _bump(counts, entity)
+        # Compatibility entity used by existing dashboards and MCAP consumers.
+        if record.get("mean_reward") is not None:
+            rr.log(
+                "signal/reward_trend",
+                _scalar(rr, float(record["mean_reward"])),
+                recording=recording,
+            )
+            _bump(counts, "signal/reward_trend")
+
+    for index, entry in enumerate(outer_history):
+        decision_value = entry.get("decision")
+        decision = decision_value if isinstance(decision_value, dict) else {}
+        success_rate = decision.get("success_rate", entry.get("success_rate"))
+        if success_rate is None:
+            continue
+        _set_time(rr, recording, float(len(iteration_records) + index))
+        rr.log(
+            "evaluation/heldout_success_rate",
+            _scalar(rr, float(success_rate)),
+            recording=recording,
+        )
+        _bump(counts, "evaluation/heldout_success_rate")
 
 
 def _log_vlm_critique_panel(
@@ -486,6 +590,11 @@ def _log_stage_progress(
         gpu_product = (
             str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
         )
+        selected_product = artifacts.get("selected_gpu_product") or gpu_product
+        selected_node = artifacts.get("selected_gpu_node") or ""
+        candidate_order = artifacts.get("gpu_candidate_order") or []
+        attempts = artifacts.get("gpu_attempts") or []
+        image_digests = artifacts.get("image_digests") or []
         execution = str(artifacts.get("execution") or "")
         node_product = str(artifacts.get("node_product") or "")
         if stage == 14:
@@ -493,7 +602,7 @@ def _log_stage_progress(
             node_product = node_product or str(
                 run_metadata.get("orchestrator_node_product") or ""
             )
-        gpu_proof = gpu_product or (
+        gpu_proof = str(selected_product) or (
             f"none; orchestrator node={node_product}" if node_product else "none (record/seam)"
         )
         artifact = _component_artifact_uri(artifacts)
@@ -511,6 +620,12 @@ def _log_stage_progress(
             f"- Tier: `{tier}`\n"
             f"- Job: `{job_name}`\n"
             f"- GPU: `{gpu_proof}`\n"
+            f"- GPU node: `{selected_node or 'none'}`\n"
+            f"- GPU candidates: `{json.dumps(candidate_order)}`\n"
+            f"- GPU attempts: `{json.dumps(attempts)}`\n"
+            f"- Immutable image digest(s): `{json.dumps(image_digests)}`\n"
+            f"- Status: `{tier}`\n"
+            f"- Duration: `{artifacts.get('duration_s', 'not recorded')}`\n"
             f"- Execution: `{execution or 'record/seam'}`\n"
             f"- Artifact: `{artifact or 'none'}`\n\n"
             f"{str(component.get('evidence') or '')}"
@@ -523,7 +638,8 @@ def _log_stage_progress(
         _bump(counts, evidence_entity)
 
     for index, entry in enumerate(outer_history, start=1):
-        decision = dict(entry.get("decision") or {})
+        decision_value = entry.get("decision")
+        decision = decision_value if isinstance(decision_value, dict) else {}
         _set_time(rr, recording, float(14 + index - 1))
         entity = "progress/outer_loop/iteration"
         rr.log(entity, _scalar(rr, float(index)), recording=recording)
@@ -531,7 +647,7 @@ def _log_stage_progress(
         decision_entity = "progress/outer_loop/decision"
         body = (
             f"## Outer iteration {index}\n\n"
-            f"- Decision: `{decision.get('decision', 'unknown')}`\n"
+            f"- Decision: `{decision.get('decision', decision_value or 'unknown')}`\n"
             f"- Success rate: `{decision.get('success_rate', 'n/a')}`\n"
             f"- Checkpoint: `{entry.get('checkpoint_uri', '')}`\n"
             f"- Resumed from: `{entry.get('resumed_from', '') or 'initial policy'}`"
@@ -555,8 +671,8 @@ def _stage_progress_markdown(
     rows = [
         "# 14-stage execution proof",
         "",
-        "| Stage | Tier | Kubernetes Job | GPU | Artifact |",
-        "|---:|---|---|---|---|",
+        "| Stage | Tier | Kubernetes Job | GPU / node | Digest | Duration | Artifact |",
+        "|---:|---|---|---|---|---|---|",
     ]
     for stage, name in _CANONICAL_STAGE_COMPONENTS.items():
         component = by_name.get(name, {})
@@ -565,6 +681,9 @@ def _stage_progress_markdown(
         gpu_product = (
             str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
         )
+        selected_product = artifacts.get("selected_gpu_product") or gpu_product
+        selected_node = artifacts.get("selected_gpu_node") or "none"
+        image_digests = artifacts.get("image_digests") or []
         node_product = str(artifacts.get("node_product") or "")
         job_name = str(artifacts.get("job_name") or "record-only")
         if stage == 14:
@@ -572,7 +691,7 @@ def _stage_progress_markdown(
             node_product = node_product or str(
                 run_metadata.get("orchestrator_node_product") or ""
             )
-        gpu_proof = gpu_product or (
+        gpu_proof = str(selected_product) or (
             f"none; orchestrator node={node_product}" if node_product else "none (record/seam)"
         )
         rows.append(
@@ -582,7 +701,9 @@ def _stage_progress_markdown(
                     f"{stage} `{name}`",
                     f"`{component.get('tier', 'UNKNOWN')}`",
                     f"`{job_name}`",
-                    f"`{gpu_proof}`",
+                    f"`{gpu_proof}` / `{selected_node}`",
+                    f"`{', '.join(str(item) for item in image_digests) or 'n/a'}`",
+                    f"`{artifacts.get('duration_s', 'n/a')}`",
                     f"`{_component_artifact_uri(artifacts) or 'none'}`",
                 ]
             )
@@ -604,10 +725,17 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
             "",
             f"- Run: `{run_metadata.get('run_id', '')}`",
             f"- Policy checkpoint: `{run_metadata.get('policy_checkpoint', '')}`",
+            f"- Checkpoint identity: `{run_metadata.get('policy_checkpoint_identity', '')}`",
+            f"- SHA-256: `{run_metadata.get('policy_checkpoint_sha256', '')}`",
+            f"- Size (bytes): `{run_metadata.get('policy_checkpoint_size_bytes', '')}`",
+            f"- Deployable: `{run_metadata.get('policy_deployable', False)}`",
             f"- Candidate record: `{run_metadata.get('candidate_s3_uri', '')}`",
             f"- Rerun recording: `{run_metadata.get('rrd_s3_uri', '')}`",
             f"- Artifact root: `{run_metadata.get('artifact_root', '')}`",
             f"- Viewer command: `{run_metadata.get('viewer_command', '')}`",
+            f"- Authenticated checkpoint download: `{run_metadata.get('policy_download_command', '')}`",
+            f"- UI action: {run_metadata.get('policy_ui_action', '')}",
+            "- The Rerun viewer inspects behavior and links the checkpoint; it does not execute the policy.",
         ]
     )
 

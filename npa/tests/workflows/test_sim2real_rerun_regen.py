@@ -8,6 +8,7 @@ import pytest
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
+    _ensure_policy_access_metadata,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
     sync_heldout_renders,
@@ -183,6 +184,41 @@ def test_regen_mcap_failure_never_breaks_the_rrd_regen(
     assert result.mcap_status == "skipped"
     assert result.local_mcap_path == ""
     assert result.mcap_upload_uri == ""
+
+
+def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
+    tmp_path: Path,
+) -> None:
+    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_checkpoint_uri": checkpoint_uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            assert uri == checkpoint_uri
+            Path(destination).write_bytes(b"real-policy-bytes")
+
+    access = _ensure_policy_access_metadata(
+        _config(), tmp_path, storage=FakeStorage(), report={}
+    )
+
+    assert access["deployable_policy"] is True
+    assert access["identity"] == "model_latest.pt"
+    assert len(access["sha256"]) == 64
+    assert access["size_bytes"] == len(b"real-policy-bytes")
+    assert checkpoint_uri in access["authenticated_download_command"]
+    assert "$AWS_ENDPOINT_URL" in access["authenticated_download_command"]
+    assert access["viewer_executes_policy"] is False
+    assert "secret" not in json.dumps(access).lower()
 
 
 def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> None:

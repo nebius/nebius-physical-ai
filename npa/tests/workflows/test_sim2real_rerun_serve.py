@@ -322,6 +322,28 @@ def test_fetch_rrd_sync_token_uses_head_object_etag() -> None:
     assert token == "etag-from-s3"
 
 
+def test_rrd_probe_uses_ranged_get_without_head(mocker) -> None:
+    from npa.workflows.rerun_serve import verify_rrd_exists_on_s3
+
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        s3_bucket="demo-bucket",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    client = mocker.patch("boto3.client").return_value
+
+    verify_rrd_exists_on_s3(config)
+
+    client.get_object.assert_called_once_with(
+        Bucket="demo-bucket",
+        Key="sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd",
+        Range="bytes=0-0",
+    )
+    client.head_object.assert_not_called()
+    client.get_object.return_value["Body"].close.assert_called_once_with()
+
+
 def test_redact_manifest_hides_secret_values(mocker) -> None:
     mocker.patch(
         "npa.workflows.rerun_serve.resolve_project_storage",

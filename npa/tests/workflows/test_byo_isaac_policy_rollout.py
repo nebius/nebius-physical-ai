@@ -140,6 +140,7 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
     monkeypatch.setattr(pr, "materialize_rollout_dirs", lambda *a, **k: [])
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
 
     pr.run_isaac_rollout_job(
         tmp_path / "actions" / "train" / "outer-02" / "iter-01",

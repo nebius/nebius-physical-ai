@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import shlex
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -137,6 +141,8 @@ def sync_regen_inputs(
         inner_evidence_rel: local_dir / inner_evidence_rel,
         "eval/heldout/report.json": local_dir / "eval/heldout/report.json",
         "reports/sim2real-report.json": local_dir / "reports/sim2real-report.json",
+        "checkpoints/candidate/candidate.json": local_dir
+        / "checkpoints/candidate/candidate.json",
         "outer_loop/decision.json": local_dir / "outer_loop/decision.json",
         "outer_loop/loopback.json": local_dir / "outer_loop/loopback.json",
         "tokens/manifest.json": local_dir / "tokens/manifest.json",
@@ -154,6 +160,23 @@ def sync_regen_inputs(
     for rel, dest in singles.items():
         dest.parent.mkdir(parents=True, exist_ok=True)
         _download_if_exists(storage, f"{prefix}{rel}", dest)
+
+    # The viewer plots improvement across every outer/inner pass, not only the
+    # latest evidence object selected for backward compatibility above.
+    for outer_prefix in _list_common_prefixes(
+        storage, f"{prefix.rstrip('/')}/inner_loop/"
+    ):
+        outer_name = Path(outer_prefix.rstrip("/")).name
+        if not outer_name.startswith("outer-"):
+            continue
+        destination = local_dir / "inner_loop" / outer_name / "evidence.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        bucket, _run_key = _parse_s3(prefix)
+        _download_if_exists(
+            storage,
+            f"s3://{bucket}/{outer_prefix.rstrip('/')}/evidence.json",
+            destination,
+        )
 
     for rel in ("actions", "vlm_eval", "training_signal", "augment", "envs/raw"):
         try:
@@ -372,6 +395,16 @@ def publish_regen_outputs(
     visual_index_path = local_dir / "reports" / "sim2real-visual-index.json"
     if visual_index_path.is_file():
         storage.upload_file(str(visual_index_path), f"{prefix}reports/sim2real-visual-index.json")
+    final_report_path = local_dir / "reports" / "sim2real-report.json"
+    if final_report_path.is_file():
+        storage.upload_file(
+            str(final_report_path), f"{prefix}reports/sim2real-report.json"
+        )
+    candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+    if candidate_path.is_file():
+        storage.upload_file(
+            str(candidate_path), f"{prefix}checkpoints/candidate/candidate.json"
+        )
     upload_uri = storage.upload_file(str(rrd_path), f"{prefix}reports/sim2real.rrd")
     return upload_uri
 
@@ -424,12 +457,84 @@ def regen_sim2real_rrd(
 
     inner_evidence = json.loads(inner_path.read_text(encoding="utf-8"))
     heldout_report = json.loads(heldout_path.read_text(encoding="utf-8"))
+    report_path = work_dir / "reports" / "sim2real-report.json"
+    report = (
+        json.loads(report_path.read_text(encoding="utf-8"))
+        if report_path.is_file()
+        else {}
+    )
+    policy_access = _ensure_policy_access_metadata(
+        config, work_dir, storage=storage, report=report
+    )
+    outer_history = list((report.get("outer_loop") or {}).get("history") or [])
+    viewer_command = (
+        "npa workbench sim2real rerun serve "
+        f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
+        f"--s3-prefix {config.s3_prefix}"
+    )
+    rerun_started = time.monotonic()
     result = emit_sim2real_rerun(
         local_dir=work_dir,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
+        stage_components=list(report.get("components") or []),
+        outer_history=outer_history,
+        run_metadata={
+            "run_id": config.run_id,
+            "artifact_root": run_prefix_uri(config),
+            "rrd_s3_uri": f"{run_prefix_uri(config)}reports/sim2real.rrd",
+            "candidate_s3_uri": (
+                f"{run_prefix_uri(config)}checkpoints/candidate/candidate.json"
+            ),
+            "policy_checkpoint": policy_access.get("checkpoint_uri", ""),
+            "policy_checkpoint_identity": policy_access.get("identity", ""),
+            "policy_checkpoint_sha256": policy_access.get("sha256", ""),
+            "policy_checkpoint_size_bytes": policy_access.get("size_bytes", 0),
+            "policy_download_command": policy_access.get(
+                "authenticated_download_command", ""
+            ),
+            "policy_ui_action": policy_access.get("ui_action", ""),
+            "policy_deployable": policy_access.get("deployable_policy", False),
+            "orchestrator_job_name": config.run_id,
+            "orchestrator_node_product": config.k8s_gpu_product,
+            "viewer_command": viewer_command,
+        },
         output_rrd=output_rrd,
     )
+    rerun_duration_s = round(time.monotonic() - rerun_started, 3)
+    if report:
+        from npa.workflows.sim2real.engine import gpu_fallback_report_contract
+
+        report["policy_access"] = policy_access
+        report["gpu_fallback_contract"] = gpu_fallback_report_contract(
+            config, list(report.get("components") or [])
+        )
+        report["visualization"] = {
+            **result.to_dict(),
+            "rrd_s3_uri": f"{run_prefix_uri(config)}reports/sim2real.rrd",
+            "rrd_size_bytes": output_rrd.stat().st_size,
+            "viewer_command": viewer_command,
+        }
+        for component in report.get("components") or []:
+            if component.get("name") == "stage_14_rerun_viz":
+                component["tier"] = "WORKS"
+                component["evidence"] = (
+                    f"Wrote the complete Rerun recording from every persisted pass: "
+                    f"{result.rollout_count} real policy rollout(s), "
+                    f"{result.frame_count} synchronized policy camera frame(s), and "
+                    f"{result.heldout_frame_count} held-out frame(s)."
+                )
+                component.setdefault("artifacts", {}).update(
+                    {
+                        "rrd": f"{run_prefix_uri(config)}reports/sim2real.rrd",
+                        "rrd_local": str(output_rrd),
+                        "rrd_size_bytes": output_rrd.stat().st_size,
+                        "duration_s": rerun_duration_s,
+                    }
+                )
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     # The finalize stage emits both viewer recordings from the same inputs, so regen
     # must too: refreshing only the .rrd leaves the run's MCAP frozen at whatever
     # the emitter produced when the run first completed. Best-effort, exactly as in
@@ -453,6 +558,84 @@ def regen_sim2real_rrd(
         mcap_result=mcap_result,
         mcap_upload_uri=mcap_upload_uri,
     )
+
+
+def _ensure_policy_access_metadata(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    *,
+    storage: StorageClient,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve a deployable candidate to bytes and write secret-free access help."""
+
+    candidate_path = Path(local_dir) / "checkpoints" / "candidate" / "candidate.json"
+    candidate = (
+        json.loads(candidate_path.read_text(encoding="utf-8"))
+        if candidate_path.is_file()
+        else {}
+    )
+    checkpoint_uri = str(
+        candidate.get("policy_checkpoint_uri")
+        or ((report.get("outer_loop") or {}).get("latest_decision") or {}).get(
+            "checkpoint_uri"
+        )
+        or ""
+    ).strip()
+    deployable = bool(
+        candidate.get("deployable_policy")
+        and checkpoint_uri.startswith("s3://")
+        and checkpoint_uri.endswith(".pt")
+    )
+    if deployable and (
+        not candidate.get("policy_checkpoint_sha256")
+        or not candidate.get("policy_checkpoint_size_bytes")
+    ):
+        with tempfile.TemporaryDirectory(prefix="npa-policy-regen-") as temporary:
+            local_checkpoint = Path(temporary) / Path(checkpoint_uri).name
+            storage.download_file(checkpoint_uri, str(local_checkpoint))
+            candidate.update(
+                {
+                    "policy_checkpoint_identity": Path(checkpoint_uri).name,
+                    "policy_checkpoint_sha256": hashlib.sha256(
+                        local_checkpoint.read_bytes()
+                    ).hexdigest(),
+                    "policy_checkpoint_size_bytes": local_checkpoint.stat().st_size,
+                }
+            )
+    if deployable:
+        candidate.update(
+            {
+                "policy_download_command": (
+                    "aws s3 cp "
+                    f"{shlex.quote(checkpoint_uri)} ./model.pt "
+                    '--endpoint-url "$AWS_ENDPOINT_URL"'
+                ),
+                "policy_ui_action": (
+                    "Open Artifacts for this run, select the deployable .pt checkpoint, "
+                    "and choose Download. The Rerun viewer links it but does not execute it."
+                ),
+            }
+        )
+        candidate_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate_path.write_text(
+            json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    return {
+        "deployable_policy": deployable,
+        "identity": candidate.get("policy_checkpoint_identity", ""),
+        "sha256": candidate.get("policy_checkpoint_sha256", ""),
+        "size_bytes": candidate.get("policy_checkpoint_size_bytes", 0),
+        "checkpoint_uri": checkpoint_uri if deployable else "",
+        "candidate_manifest_uri": (
+            f"{run_prefix_uri(config)}checkpoints/candidate/candidate.json"
+        ),
+        "authenticated_download_command": candidate.get(
+            "policy_download_command", ""
+        ),
+        "ui_action": candidate.get("policy_ui_action", ""),
+        "viewer_executes_policy": False,
+    }
 
 
 def rerun_heldout_eval_only(

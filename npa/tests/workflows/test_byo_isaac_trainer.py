@@ -411,6 +411,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_TRAINER_TAG", "outer-02-iter-01")
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
     monkeypatch.setenv("NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt")
     monkeypatch.delenv("NPA_BYO_ISAAC_PHYSICS", raising=False)
 

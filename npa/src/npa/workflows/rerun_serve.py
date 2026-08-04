@@ -211,7 +211,8 @@ def verify_rrd_exists_on_s3(
         client_kwargs["endpoint_url"] = config.s3_endpoint
     client = boto3.client("s3", **client_kwargs)
     try:
-        client.head_object(Bucket=bucket, Key=key)
+        response = client.get_object(Bucket=bucket, Key=key, Range="bytes=0-0")
+        response["Body"].close()
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "missing")
         raise RerunServeError(
@@ -527,7 +528,8 @@ def fetch_rrd_sync_token(
         client_kwargs["endpoint_url"] = config.s3_endpoint
     client = boto3.client("s3", **client_kwargs)
     try:
-        response = client.head_object(Bucket=bucket, Key=key)
+        response = client.get_object(Bucket=bucket, Key=key, Range="bytes=0-0")
+        response["Body"].close()
     except ClientError:
         return uri
     etag = str(response.get("ETag") or "").strip('"')

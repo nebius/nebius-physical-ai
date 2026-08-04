@@ -447,8 +447,8 @@ def test_image_vlm_eval_launches_sibling_job_and_parses_output(monkeypatch, tmp_
     assert {"secretRef": {"name": "npa-storage-credentials", "optional": True}} in container["envFrom"]
     assert container["resources"]["requests"]["nvidia.com/gpu"] == 1
     assert (
-        manifest["spec"]["template"]["spec"]["nodeSelector"]["nvidia.com/gpu.compute.major"]
-        == "12"
+        manifest["spec"]["template"]["spec"]["nodeSelector"]["nvidia.com/gpu.product"]
+        == config.k8s_gpu_product
     )
     assert "component-vlm-eval" in container["args"][0]
 

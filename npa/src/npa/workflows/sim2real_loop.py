@@ -226,6 +226,7 @@ class Sim2RealLoopConfig:
     k8s_env_secret_names: str = "hf-ngc-tokens,npa-storage-credentials"
     k8s_gpu_resource: str = "nvidia.com/gpu"
     k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    k8s_gpu_candidates: tuple[str, ...] = ()
     k8s_kubeconfig: str = ""
     k8s_context: str = ""
     k8s_job_timeout_s: int = 7200
@@ -664,6 +665,17 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get("k8s_gpu_product")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
             or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+        ),
+        k8s_gpu_candidates=tuple(
+            item.strip()
+            for item in str(
+                overrides.get("k8s_gpu_candidates")
+                or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES")
+                or ""
+            )
+            .replace(";", ",")
+            .split(",")
+            if item.strip()
         ),
         k8s_kubeconfig=str(
             overrides.get("k8s_kubeconfig")

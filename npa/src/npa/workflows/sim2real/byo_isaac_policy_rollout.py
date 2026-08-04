@@ -33,6 +33,7 @@ this process downloads them into the local rollout dirs.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -46,6 +47,7 @@ ROLLOUT_SCHEMA = "npa.sim2real.action_rollout.v1"
 DEFAULT_TASK_DESCRIPTION = (
     "Move the manipulation object to the target while maintaining stable contact."
 )
+_LAST_GPU_PROVENANCE: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -553,19 +555,41 @@ def run_isaac_rollout_job(
         namespace=namespace, service_account=sa, gpu_product=gpu_product,
         object_usd=object_usd,
     )
-    _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
-    apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)
-    if apply.returncode != 0:
-        raise SystemExit(f"byo_isaac_policy_rollout: kubectl apply failed: {apply.stderr}")
-    print(f"byo_isaac_policy_rollout: applied {job_name} "
-          f"(checkpoint={checkpoint_uri or 'UNTRAINED'}); waiting up to {timeout_s}s", flush=True)
-    wait = _kubectl(["wait", f"job/{job_name}", "-n", namespace,
-                     "--for=condition=complete", f"--timeout={timeout_s}s"], timeout=timeout_s + 60)
-    if wait.returncode != 0:
-        logs = _kubectl(["logs", f"job/{job_name}", "-n", namespace, "--tail=80"], timeout=120)
-        raise SystemExit(
-            f"byo_isaac_policy_rollout: rollout job {job_name} did not complete: "
-            f"{wait.stderr}\n{logs.stdout}")
+    from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
+
+    def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
+        candidate = copy.deepcopy(manifest)
+        candidate.setdefault("metadata", {})["name"] = candidate_job_name
+        pod_spec = (
+            candidate.setdefault("spec", {})
+            .setdefault("template", {})
+            .setdefault("spec", {})
+        )
+        pod_spec["nodeSelector"] = {
+            "nvidia.com/gpu.product": product
+        }
+        return candidate
+
+    def kubectl(args: list[str], **kwargs: Any):
+        timeout = int(kwargs.pop("timeout_s", 300))
+        return _kubectl(args, timeout=timeout, **kwargs)
+
+    provenance = run_gpu_job_with_fallback(
+        kubectl=kubectl,
+        manifest_factory=manifest_factory,
+        base_job_name=job_name,
+        namespace=namespace,
+        image=image,
+        preferred_product=gpu_product,
+        explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
+        workload="isaac",
+        gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+        gpu_count=1,
+        timeout_s=timeout_s,
+    )
+    job_name = str(provenance["job_name"])
+    global _LAST_GPU_PROVENANCE
+    _LAST_GPU_PROVENANCE = provenance
 
     # Pull the rollouts manifest, then materialize local rollout dirs.
     import boto3
@@ -582,6 +606,8 @@ def run_isaac_rollout_job(
 
 
 def main() -> int:
+    global _LAST_GPU_PROVENANCE
+    _LAST_GPU_PROVENANCE = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
         print("byo_isaac_policy_rollout: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
@@ -607,6 +633,10 @@ def main() -> int:
         "source": "byo_isaac_policy_rollout",
         "sim_backend": "isaac",
         "rollout_dirs": rollout_dirs,
+        "component_invocation": {
+            "mode": "kubernetes_job" if _LAST_GPU_PROVENANCE else "dryrun",
+            "gpu_provenance": _LAST_GPU_PROVENANCE,
+        },
     }
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")

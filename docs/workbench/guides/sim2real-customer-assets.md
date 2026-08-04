@@ -252,6 +252,22 @@ cluster-side preflight (kube context, registry secret, gated HF models).
 4. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc.
 5. **Real-world loop** — Deploy promoted checkpoint (BYO), collect new data, upload, trigger again.
 
+### Capacity-aware GPU placement
+
+Direct-Kubernetes runs accept a preferred product in
+`NPA_SIM2REAL_K8S_GPU_PRODUCT` and an ordered surface in
+`NPA_SIM2REAL_K8S_GPU_CANDIDATES`. The engine normalizes those values against
+actual `nvidia.com/gpu.product` node labels, filters them for the component and
+image architecture, and retries only when Kubernetes reports concrete GPU
+capacity or selector evidence. Isaac candidates are limited to L40S and RTX PRO
+6000 variants; H100/H200 are never an Isaac fallback. Image pull, credential,
+checkpoint, container, and application failures do not change GPU products.
+
+The final ComponentRecords expose candidate order, attempts and scheduler
+reasons, selected product/node, allocated resource/count, Job name, runtime
+image digest, status, duration, and artifact links. Exhausting compatible
+candidates blocks the real tier; it never changes to a reference/SEAM backend.
+
 ---
 
 ## Real-world policy deployment (Stage 12 seam)
@@ -265,12 +281,12 @@ Run prefix: `s3://<bucket>/sim2real-b/<run-id>/`
 
 | Path | Format | Contents |
 | --- | --- | --- |
-| `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote record: run id, held-out success rate, threshold; **`deployable_policy: false`** (metadata only) |
+| `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote record. Strict Isaac/RSL-RL runs identify the real `model_*.pt`, SHA-256, size, authenticated download command, and **`deployable_policy: true`**; reference mode remains metadata-only and false. |
 | `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `promote_checkpoint` + local `checkpoint_uri` |
-| `inner_loop/outer-XX/evidence.json` | inner-loop evidence | Reference trainer `policy_output_after` (action bias), not LeRobot weights |
+| `inner_loop/outer-XX/evidence.json` | inner-loop evidence | Reward/loss/quality history and per-iteration checkpoint lineage; reference mode records adapter metadata, while a BYO Isaac trainer records real `.pt` URIs. |
 | `stage_12_external_validation/external_stub.json` | `npa.sim2real.external_stub.v1` | **SEAM** — documents `input_checkpoint`; no robot deploy |
 | `eval/heldout/report.json` | `npa.sim2real.heldout_eval.v1` | Held-out `success_rate`, `threshold`, per-env scores (stage 10) |
-| `reports/sim2real-report.json` | `npa.sim2real.e2e_report.v1` | E2E summary + `rerun_serve.public_url` when auto-serve ran |
+| `reports/sim2real-report.json` | `npa.sim2real.e2e_report.v1` | E2E summary, GPU placement provenance, `policy_access`, recording details, and `rerun_serve.public_url` when auto-serve ran. |
 
 Fetch and inspect (replace bucket/run id):
 
@@ -279,7 +295,7 @@ PREFIX=s3://<bucket>/sim2real-b/<run-id>
 aws s3 cp "${PREFIX}/outer_loop/decision.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
   | jq '{decision, success_rate, threshold, checkpoint_uri}'
 aws s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
-  | jq '{run_id, success_rate, threshold}'
+  | jq '{run_id, deployable_policy, policy_checkpoint_uri, policy_checkpoint_sha256, policy_checkpoint_size_bytes, heldout_success_rate, threshold, policy_download_command}'
 aws s3 cp "${PREFIX}/inner_loop/outer-01/evidence.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
   | jq '{policy_output_after: (.policy_output_after|keys), reward_trend}'
 aws s3 cp "${PREFIX}/stage_12_external_validation/external_stub.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
@@ -287,23 +303,26 @@ aws s3 cp "${PREFIX}/stage_12_external_validation/external_stub.json" - --endpoi
 ```
 
 The reference VLM→RL loop updates a lightweight policy representation inside the
-orchestrator. It does **not** emit a LeRobot `pretrained_model/` checkpoint tree
-suitable for `npa workbench lerobot serve` without a BYO trainer or export step.
+orchestrator and remains metadata-only. The strict real Isaac path invokes the
+BYO RSL-RL trainer and promotes its real PyTorch checkpoint. Rerun visualizes
+policy behavior and provides artifact access; it does not execute that checkpoint.
 
 ### What the customer deploys
 
 | Deployable today | Status | Notes |
 | --- | --- | --- |
-| Promote metadata JSON on S3 | **WORKS** | Audit / handoff record; `deployable_policy: false` in `candidate.json` |
-| LeRobot policy checkpoint for robot | **SEAM (BYO)** | Customer maps trainer output or runs `BYO_TRAINER_COMMAND` to write deployable weights |
+| Promote metadata JSON on S3 | **WORKS** | Audit/handoff record; includes byte identity and access instructions when a real `.pt` exists. |
+| Isaac RSL-RL PyTorch checkpoint | **WORKS in strict real tier** | `BYO_TRAINER_COMMAND` produces and Stage 11 verifies the promoted `.pt`; the customer still owns on-robot conversion/integration. |
+| Reference-mode policy checkpoint for robot | **SEAM (BYO)** | Reference mode emits adapter metadata, not deployable robot weights. |
 | `POLICY_IMAGE` container | **WORKS** in sim | Stage 7 rollouts in cluster — not the on-robot runtime |
 | New LeRobot trigger batch | **WORKS** | Stage 13 retrigger → upload dataset → `trigger-pipeline.sh` |
 
 ### Suggested BYO robot flow
 
 1. Wait for `outer_loop/decision.json` with `"decision": "promote_checkpoint"`.
-2. Export or convert your policy to a LeRobot-compatible checkpoint on S3 (BYO
-   trainer hook or offline export from inner-loop evidence).
+2. Download the promoted `.pt` using `policy_download_command`, then export or
+   convert it to the customer's on-robot format when that runtime does not load
+   the Isaac RSL-RL checkpoint directly.
 3. On the robot workstation or edge server:
    `npa workbench lerobot serve --input-path s3://<bucket>/policies/<run-id>/`
    (see [LeRobot skill](../../../skills/tools/lerobot/SKILL.md)).

@@ -17,6 +17,21 @@ from npa.workflows.sim2real.models import (
 from npa.workflows.sim2real.utils import _artifact_root_uri
 
 
+def _placement_artifacts(invocation: dict[str, Any]) -> dict[str, Any]:
+    provenance = dict(invocation.get("gpu_provenance") or {})
+    selected = provenance.get("selected_product") or provenance.get("selected_products") or ""
+    nodes = provenance.get("selected_node") or provenance.get("selected_nodes") or ""
+    return {
+        "gpu_candidate_order": provenance.get("candidate_order", []),
+        "gpu_attempts": provenance.get("attempts", []),
+        "selected_gpu_product": selected,
+        "selected_gpu_node": nodes,
+        "allocated_gpu": provenance.get("allocated_gpu", {}),
+        "image_digests": provenance.get("image_digests", []),
+        "duration_s": provenance.get("duration_s", ""),
+    }
+
+
 def _loop_component_records(
     config: Sim2RealLoopConfig,
     *,
@@ -37,12 +52,15 @@ def _loop_component_records(
         )
     )
     rollout_sources: set[str] = set()
+    rollout_invocations: list[dict[str, Any]] = []
     for manifest_path in action_manifests:
         try:
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         rollout_sources.add(str(payload.get("source") or ""))
+        if payload.get("component_invocation"):
+            rollout_invocations.append(dict(payload["component_invocation"]))
     stage_07_works = bool(
         iterations
         and action_manifests
@@ -107,6 +125,22 @@ def _loop_component_records(
     isaac_eval_job = k8s_job_name(
         "s2r-byo-isaac-eval", config.run_id, f"outer-{outer_iteration:02d}"
     )
+    rollout_placement = _placement_artifacts(
+        rollout_invocations[-1] if rollout_invocations else {}
+    )
+    vlm_invocation = dict(
+        ((iterations[-1].get("sample_vlm_eval") or {}).get("component_invocation") or {})
+        if iterations
+        else {}
+    )
+    vlm_placement = _placement_artifacts(vlm_invocation)
+    trainer_invocation = dict(
+        iterations[-1].get("trainer_component_invocation") or {}
+        if iterations
+        else {}
+    )
+    trainer_placement = _placement_artifacts(trainer_invocation)
+    eval_placement = _placement_artifacts(eval_invocation)
     records = [
         ComponentRecord(
             "stage_07_actions_train",
@@ -126,6 +160,7 @@ def _loop_component_records(
                     "product": config.k8s_gpu_product,
                     "count": 1,
                 },
+                **rollout_placement,
             },
         ),
         ComponentRecord(
@@ -145,6 +180,7 @@ def _loop_component_records(
                     "product": config.k8s_gpu_product,
                     "count": 1,
                 },
+                **vlm_placement,
             },
         ),
         ComponentRecord(
@@ -165,6 +201,7 @@ def _loop_component_records(
                     "product": config.k8s_gpu_product,
                     "count": 1,
                 },
+                **trainer_placement,
             },
         ),
         ComponentRecord(
@@ -184,6 +221,7 @@ def _loop_component_records(
                     "product": config.k8s_gpu_product,
                     "count": 1,
                 },
+                **eval_placement,
             },
         ),
         ComponentRecord(
@@ -194,6 +232,7 @@ def _loop_component_records(
                 "decision": f"{root}/outer_loop/decision.json",
                 "job_name": config.run_id,
                 "execution": "orchestrator_record",
+                "duration_s": decision.get("duration_s", 0.0),
             },
         ),
     ]
@@ -246,6 +285,13 @@ def _expand_envgen_component_records(
             "product": config.k8s_gpu_product,
             "count": 1,
         },
+        "gpu_candidate_order": artifacts.get("gpu_candidate_order", []),
+        "gpu_attempts": artifacts.get("gpu_attempts", []),
+        "selected_gpu_product": artifacts.get("selected_gpu_product", ""),
+        "selected_gpu_node": artifacts.get("selected_gpu_node", ""),
+        "allocated_gpu": artifacts.get("allocated_gpu", {}),
+        "image_digests": artifacts.get("image_digests", []),
+        "duration_s": artifacts.get("duration_s", ""),
     }
     additions = [
         ComponentRecord(

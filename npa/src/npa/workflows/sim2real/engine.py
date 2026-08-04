@@ -56,11 +56,6 @@ from npa.workbench.cosmos.reason import (
     run_cosmos_reason_vlm,
     task_description_from_manifest,
 )
-from npa.workbench.cosmos.reason import (
-    apply_cosmos_reason_kubernetes_env,
-    cosmos_reason_k8s_shell_preamble,
-    vlm_k8s_component,
-)
 from npa.workflows.sim2real.config import artifact_uris, byo_seams
 from npa.workflows.sim2real.component_records import (
     _expand_envgen_component_records,
@@ -87,6 +82,18 @@ from npa.workflows.sim2real.models import (
     ComponentRecord,
     Sim2RealLoopConfig,
     Sim2RealLoopError,
+)
+from npa.workflows.sim2real.gpu_fallback import (
+    GpuCapacityExhausted,
+    GpuJobFailure,
+    run_gpu_job_with_fallback,
+    workload_kind,
+)
+from npa.workflows.sim2real.k8s_components import (
+    _component_job_manifest,
+    _component_job_script as _component_job_script,
+    _indexed_component_job_manifest,
+    _kubernetes_component_env as _kubernetes_component_env,
 )
 from npa.workflows.sim2real.utils import (
     _artifact_root_uri,
@@ -146,6 +153,147 @@ def sync_workflow_state_to_s3(
     return {"status": "uploaded", "uri": uri}
 
 
+def emit_active_progress_rerun(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Refresh a viewable progress recording while the real run is active."""
+
+    components = list(state.get("components") or [])
+    if not config.rerun_enabled or len(components) < 3:
+        return {"status": "not_ready", "stage_count": len(components)}
+    progress_path = local_dir / "reports" / "sim2real-progress.rrd"
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from npa.workflows.sim2real_viz import emit_sim2real_rerun
+
+        result = emit_sim2real_rerun(
+            local_dir=local_dir,
+            inner_evidence=dict(state.get("final_inner") or {}),
+            heldout_report=dict(state.get("final_eval") or {}) or None,
+            stage_components=components,
+            outer_history=list(state.get("outer_history") or []),
+            run_metadata={
+                "run_id": config.run_id,
+                "artifact_root": _artifact_root_uri(config) + "/",
+                "rrd_s3_uri": f"{_artifact_root_uri(config)}/reports/sim2real-progress.rrd",
+                "candidate_s3_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
+                "policy_checkpoint": str(
+                    (state.get("final_decision") or {}).get("checkpoint_uri") or ""
+                ),
+                "orchestrator_job_name": config.run_id,
+                "orchestrator_node_product": config.k8s_gpu_product,
+                "viewer_command": (
+                    "npa workbench sim2real rerun serve "
+                    f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
+                    f"--s3-prefix {config.s3_prefix}"
+                ),
+            },
+            output_rrd=progress_path,
+            write_mp4=False,
+            allow_progress_only=True,
+        )
+        if not progress_path.is_file() or progress_path.stat().st_size <= 0:
+            raise Sim2RealLoopError("active progress Rerun recording is empty")
+        progress: dict[str, Any] = {
+            "status": "written",
+            "local_path": str(progress_path),
+            "size_bytes": progress_path.stat().st_size,
+            "stage_count": len(components),
+            "recording": result.to_dict(),
+            "viewer_command": (
+                "npa workbench sim2real rerun serve "
+                f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
+                f"--s3-prefix {config.s3_prefix}"
+            ),
+        }
+        if config.upload_artifacts and config.s3_bucket:
+            progress["s3_uri"] = _storage_client(config).upload_file(
+                str(progress_path),
+                f"{_artifact_root_uri(config)}/reports/sim2real-progress.rrd",
+            )
+        _write_json_artifact(
+            local_dir / "reports" / "sim2real-progress.json", progress
+        )
+        return progress
+    except Exception as exc:  # noqa: BLE001 - progress must not mask real stages
+        progress = {
+            "status": "blocked",
+            "reason": str(exc),
+            "stage_count": len(components),
+        }
+        _write_json_artifact(
+            local_dir / "reports" / "sim2real-progress.json", progress
+        )
+        return progress
+
+
+def gpu_fallback_report_contract(
+    config: Sim2RealLoopConfig, components: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Return the public fail-closed placement contract and component evidence."""
+
+    configured = list(
+        dict.fromkeys(
+            [config.k8s_gpu_product, *getattr(config, "k8s_gpu_candidates", ())]
+        )
+    )
+    evidence: list[dict[str, Any]] = []
+    for component in components:
+        artifacts = dict(component.get("artifacts") or {})
+        if not artifacts.get("gpu_request"):
+            continue
+        evidence.append(
+            {
+                "component": component.get("name", ""),
+                "candidate_order": artifacts.get("gpu_candidate_order", []),
+                "attempts": artifacts.get("gpu_attempts", []),
+                "selected_product": artifacts.get("selected_gpu_product", ""),
+                "selected_node": artifacts.get("selected_gpu_node", ""),
+                "allocated_gpu": artifacts.get("allocated_gpu", {}),
+                "job_name": artifacts.get("job_name", ""),
+                "image_digests": artifacts.get("image_digests", []),
+                "status": component.get("tier", ""),
+                "duration_s": artifacts.get("duration_s", ""),
+                "artifact": next(
+                    (
+                        artifacts[key]
+                        for key in (
+                            "remote",
+                            "report",
+                            "checkpoint",
+                            "prefix",
+                            "raw_envs",
+                        )
+                        if artifacts.get(key)
+                    ),
+                    "",
+                ),
+            }
+        )
+    return {
+        "configured_order": configured,
+        "discovery_source": "actual nvidia.com/gpu.product node labels plus ordered configuration",
+        "retry_evidence": (
+            "only Kubernetes Unschedulable GPU capacity/product selector evidence"
+        ),
+        "never_retry": [
+            "runtime",
+            "image_pull",
+            "credential",
+            "checkpoint_or_weight",
+            "container_exit",
+            "application_failure",
+        ],
+        "isaac_compatible_families": ["RTX PRO 6000", "L40S"],
+        "isaac_excluded_families": ["H100", "H200", "B200", "B300"],
+        "preserves_real_tier": True,
+        "exhaustion": "blocking failure with exact scheduler evidence",
+        "component_provenance": evidence,
+    }
+
+
 def _write_workflow_state(
     local_dir: Path,
     payload: dict[str, Any],
@@ -185,9 +333,11 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
     components: list[ComponentRecord] = []
     stage_records: list[dict[str, Any]] = []
 
+    stage_started = time.monotonic()
     stage_records.append(
         _write_stage(local_dir, 1, "trigger", _trigger_payload(config))
     )
+    stage_01_duration = round(time.monotonic() - stage_started, 3)
     components.append(
         ComponentRecord(
             "stage_01_trigger",
@@ -197,6 +347,7 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
                 "local": str(local_dir / "stage_01_trigger" / "trigger.json"),
                 "job_name": config.run_id,
                 "execution": "orchestrator_record",
+                "duration_s": stage_01_duration,
             },
         )
     )
@@ -204,24 +355,33 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
     from npa.workflows.sim2real_assets import run_assets_stage
     from npa.workflows.sim2real_stages import run_augment_stage, run_envgen_split_stage
 
+    stage_started = time.monotonic()
     assets_result = run_assets_stage(config, local_dir)
     stage_records.append(assets_result.stage_record)
     assets_component = dict(assets_result.component)
     assets_artifacts = dict(assets_component.get("artifacts") or {})
     assets_artifacts.update(
-        {"job_name": config.run_id, "execution": "orchestrator_materialization"}
+        {
+            "job_name": config.run_id,
+            "execution": "orchestrator_materialization",
+            "duration_s": round(time.monotonic() - stage_started, 3),
+        }
     )
     assets_component["artifacts"] = assets_artifacts
     components.append(ComponentRecord(**assets_component))
     scene_spec_uri = assets_result.scene_spec_uri
     robot_spec_uri = assets_result.robot_spec_uri
 
+    stage_started = time.monotonic()
     augment_result = run_augment_stage(config, local_dir)
     stage_records.append(
         _write_json_artifact(
             local_dir / "augment" / "manifest.json", augment_result["manifest"]
         )
     )
+    augment_artifacts = augment_result["component"].setdefault("artifacts", {})
+    if not augment_artifacts.get("duration_s"):
+        augment_artifacts["duration_s"] = round(time.monotonic() - stage_started, 3)
     components.append(ComponentRecord(**augment_result["component"]))
 
     envgen_result = run_envgen_split_stage(
@@ -422,6 +582,7 @@ def run_finalize(
     ]
     components.extend(asdict(component) for component in loop_components)
 
+    stage_started = time.monotonic()
     stage_records.append(
         _write_stage(
             local_dir,
@@ -450,11 +611,13 @@ def run_finalize(
                     ),
                     "job_name": "external_stub",
                     "execution": "external_byo_gate_not_dispatched",
+                    "duration_s": round(time.monotonic() - stage_started, 3),
                 },
             )
         )
     )
 
+    stage_started = time.monotonic()
     retrigger = {
         "schema": "npa.sim2real.retrigger.v1",
         "stage": 13,
@@ -483,6 +646,7 @@ def run_finalize(
                     "local": str(local_dir / "stage_13_retrigger" / "retrigger.json"),
                     "job_name": config.run_id,
                     "execution": "orchestrator_record",
+                    "duration_s": round(time.monotonic() - stage_started, 3),
                 },
             )
         )
@@ -499,6 +663,7 @@ def run_finalize(
             "node_product": config.k8s_gpu_product,
         },
     )
+    stage_started = time.monotonic()
     viz_component, viz_info = _run_sim2real_viz_stage(
         config,
         local_dir=local_dir,
@@ -507,6 +672,9 @@ def run_finalize(
         stage_components=[*components, asdict(viz_stage_record)],
         outer_history=outer_history,
         final_decision=final_decision,
+    )
+    viz_component.artifacts["duration_s"] = round(
+        time.monotonic() - stage_started, 3
     )
     components.append(asdict(viz_component))
 
@@ -540,6 +708,12 @@ def run_finalize(
         ]
     )
 
+    candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+    candidate_payload = (
+        json.loads(candidate_path.read_text(encoding="utf-8"))
+        if candidate_path.is_file()
+        else {}
+    )
     report = {
         "schema": SCHEMA_E2E_REPORT,
         "run_id": config.run_id,
@@ -550,6 +724,7 @@ def run_finalize(
         "config": _redacted_config(config),
         "byo_seams": byo_seams(config),
         "components": components,
+        "gpu_fallback_contract": gpu_fallback_report_contract(config, components),
         "stage_records": stage_records,
         "inner_loop": final_inner,
         "outer_loop": {
@@ -558,6 +733,19 @@ def run_finalize(
             "latest_decision": final_decision,
         },
         "visualization": viz_info,
+        "policy_access": {
+            "deployable_policy": candidate_payload.get("deployable_policy", False),
+            "identity": candidate_payload.get("policy_checkpoint_identity", ""),
+            "sha256": candidate_payload.get("policy_checkpoint_sha256", ""),
+            "size_bytes": candidate_payload.get("policy_checkpoint_size_bytes", 0),
+            "checkpoint_uri": candidate_payload.get("policy_checkpoint_uri", ""),
+            "candidate_manifest_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
+            "authenticated_download_command": candidate_payload.get(
+                "policy_download_command", ""
+            ),
+            "ui_action": candidate_payload.get("policy_ui_action", ""),
+            "viewer_executes_policy": False,
+        },
         "image_completeness": {
             "required": [
                 config.augment_image,
@@ -700,6 +888,13 @@ def _run_sim2real_viz_stage(
             emit_sim2real_rerun,
         )
 
+        candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+        candidate_payload = (
+            json.loads(candidate_path.read_text(encoding="utf-8"))
+            if candidate_path.is_file()
+            else {}
+        )
+
         result = emit_sim2real_rerun(
             local_dir=local_dir,
             inner_evidence=inner_evidence,
@@ -712,6 +907,20 @@ def _run_sim2real_viz_stage(
                 "rrd_s3_uri": f"{_artifact_root_uri(config)}/reports/sim2real.rrd",
                 "candidate_s3_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
                 "policy_checkpoint": str((final_decision or {}).get("checkpoint_uri") or ""),
+                "policy_checkpoint_identity": candidate_payload.get(
+                    "policy_checkpoint_identity", ""
+                ),
+                "policy_checkpoint_sha256": candidate_payload.get(
+                    "policy_checkpoint_sha256", ""
+                ),
+                "policy_checkpoint_size_bytes": candidate_payload.get(
+                    "policy_checkpoint_size_bytes", ""
+                ),
+                "policy_download_command": candidate_payload.get(
+                    "policy_download_command", ""
+                ),
+                "policy_ui_action": candidate_payload.get("policy_ui_action", ""),
+                "policy_deployable": candidate_payload.get("deployable_policy", False),
                 "orchestrator_job_name": config.run_id,
                 "orchestrator_node_product": config.k8s_gpu_product,
                 "viewer_command": (
@@ -854,6 +1063,7 @@ def run_inner_loop(
 
     iteration_records: list[dict[str, Any]] = []
     reward_trend: list[float] = []
+    loss_trend: list[dict[str, float]] = []
     policy_deltas: list[float] = []
     all_signals: list[dict[str, Any]] = []
     quality = float(initial_quality)
@@ -985,6 +1195,12 @@ def run_inner_loop(
             if str(getattr(update, "checkpoint_path", "") or "").strip():
                 current_checkpoint_uri = update.checkpoint_path.strip()
             trainer_source = "byo_command"
+            trainer_provenance_path = trainer_dir / "byo-trainer-gpu-provenance.json"
+            trainer_component_invocation = (
+                json.loads(trainer_provenance_path.read_text(encoding="utf-8"))
+                if trainer_provenance_path.is_file()
+                else {}
+            )
         else:
             update = run_vlm_signal_training_step(
                 parsed_signals,
@@ -995,6 +1211,7 @@ def run_inner_loop(
                 initial_action_bias=action_bias,
             )
             trainer_source = "reference"
+            trainer_component_invocation = {}
         # The no-signal control always runs the in-process reference trainer so the
         # policy-delta attribution baseline stays honest even when a BYO trainer
         # produces the signal-driven update.
@@ -1021,6 +1238,12 @@ def run_inner_loop(
             6,
         )
         reward_trend.append(mean_reward)
+        loss_trend.append(
+            {
+                "before": round(float(update.loss_before), 8),
+                "after": round(float(update.loss_after), 8),
+            }
+        )
         delta_vs_control = max(0.0, update.policy_delta_l2 - control.policy_delta_l2)
         policy_deltas.append(round(delta_vs_control, 8))
         quality = min(
@@ -1035,6 +1258,7 @@ def run_inner_loop(
                 "signal_batch": str(signal_batch_path),
                 "mean_reward": mean_reward,
                 "trainer_source": trainer_source,
+                "trainer_component_invocation": trainer_component_invocation,
                 "signal_converter_source": signal_converter_source,
                 "update": update.to_dict(),
                 "no_signal_control": control.to_dict(),
@@ -1069,6 +1293,7 @@ def run_inner_loop(
             "byo_command" if config.byo_signal_converter.strip() else "reference"
         ),
         "reward_trend": reward_trend,
+        "loss_trend": loss_trend,
         "signal_diversity": signal_diversity,
         "policy_delta_vs_no_signal_control": policy_deltas,
         "attribution": (
@@ -1215,8 +1440,8 @@ def evaluate_rollout_with_vlm(
         reason2_image = (config.vlm_reason2_image or config.vlm_image).strip()
         reason3_image = (config.vlm_reason3_image or config.vlm_image).strip()
 
-        def _run_reason2() -> dict[str, Any]:
-            evaluation, _ = _evaluate_reason_rollout_k8s(
+        def _run_reason2() -> tuple[dict[str, Any], dict[str, Any]]:
+            return _evaluate_reason_rollout_k8s(
                 rollout_dir,
                 manifest=manifest,
                 manifest_path=manifest_path,
@@ -1227,10 +1452,9 @@ def evaluate_rollout_with_vlm(
                 component="vlm_eval_reason2",
                 output_dir=output_dir,
             )
-            return evaluation
 
-        def _run_reason3() -> dict[str, Any]:
-            evaluation, _ = _evaluate_reason_rollout_k8s(
+        def _run_reason3() -> tuple[dict[str, Any], dict[str, Any]]:
+            return _evaluate_reason_rollout_k8s(
                 rollout_dir,
                 manifest=manifest,
                 manifest_path=manifest_path,
@@ -1241,13 +1465,11 @@ def evaluate_rollout_with_vlm(
                 component="vlm_eval_reason3",
                 output_dir=output_dir,
             )
-            return evaluation
-
         with ThreadPoolExecutor(max_workers=2) as pool:
             reason2_future = pool.submit(_run_reason2)
             reason3_future = pool.submit(_run_reason3)
-            reason2_eval = reason2_future.result()
-            reason3_eval = reason3_future.result()
+            reason2_eval, reason2_invocation = reason2_future.result()
+            reason3_eval, reason3_invocation = reason3_future.result()
         payload = merge_dual_reason_evaluations(
             reason2_eval, reason3_eval, threshold=config.threshold
         )
@@ -1256,6 +1478,65 @@ def evaluate_rollout_with_vlm(
             "mode": "kubernetes_job_dual_reason",
             "reason2_image": reason2_image,
             "reason3_image": reason3_image,
+            "reason2_invocation": _public_invocation(reason2_invocation),
+            "reason3_invocation": _public_invocation(reason3_invocation),
+            "gpu_provenance": {
+                "candidate_order": list(
+                    dict.fromkeys(
+                        list((reason2_invocation.get("gpu_provenance") or {}).get("candidate_order", []))
+                        + list((reason3_invocation.get("gpu_provenance") or {}).get("candidate_order", []))
+                    )
+                ),
+                "attempts": list(
+                    (reason2_invocation.get("gpu_provenance") or {}).get("attempts", [])
+                )
+                + list((reason3_invocation.get("gpu_provenance") or {}).get("attempts", [])),
+                "selected_products": list(
+                    dict.fromkeys(
+                        product
+                        for product in (
+                            (reason2_invocation.get("gpu_provenance") or {}).get("selected_product"),
+                            (reason3_invocation.get("gpu_provenance") or {}).get("selected_product"),
+                        )
+                        if product
+                    )
+                ),
+                "selected_nodes": list(
+                    dict.fromkeys(
+                        node
+                        for node in (
+                            (reason2_invocation.get("gpu_provenance") or {}).get("selected_node"),
+                            (reason3_invocation.get("gpu_provenance") or {}).get("selected_node"),
+                        )
+                        if node
+                    )
+                ),
+                "allocated_gpu": {
+                    "resource": config.k8s_gpu_resource,
+                    "count_per_job": 1,
+                },
+                "image_digests": list(
+                    dict.fromkeys(
+                        list((reason2_invocation.get("gpu_provenance") or {}).get("image_digests", []))
+                        + list((reason3_invocation.get("gpu_provenance") or {}).get("image_digests", []))
+                    )
+                ),
+                "duration_s": round(
+                    float(
+                        (reason2_invocation.get("gpu_provenance") or {}).get(
+                            "duration_s", 0
+                        )
+                        or 0
+                    )
+                    + float(
+                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                            "duration_s", 0
+                        )
+                        or 0
+                    ),
+                    3,
+                ),
+            },
         }
         _write_json_artifact(output_path, payload)
     else:
@@ -1361,6 +1642,11 @@ def _component_env(
             "NPA_SIM2REAL_S3_BUCKET": config.s3_bucket,
             "NPA_SIM2REAL_S3_PREFIX": config.s3_prefix,
             "AWS_ENDPOINT_URL": config.s3_endpoint or env.get("AWS_ENDPOINT_URL", ""),
+            "NPA_SIM2REAL_K8S_GPU_RESOURCE": config.k8s_gpu_resource,
+            "NPA_SIM2REAL_K8S_GPU_PRODUCT": config.k8s_gpu_product,
+            "NPA_SIM2REAL_K8S_GPU_CANDIDATES": ",".join(
+                getattr(config, "k8s_gpu_candidates", ())
+            ),
         }
     )
     env.update(extra)
@@ -1602,7 +1888,17 @@ def _run_policy_rollouts_via_command(
     )
     payload = _read_component_json(output_path, invocation)
     if payload.get("rollout_dirs"):
-        return [Path(item) for item in payload["rollout_dirs"]]
+        rollout_paths = [Path(item) for item in payload["rollout_dirs"]]
+        nested_invocation = dict(payload.get("component_invocation") or {})
+        if nested_invocation:
+            for rollout_path in rollout_paths:
+                manifest_path = rollout_path / "manifest.json"
+                if not manifest_path.is_file():
+                    continue
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["component_invocation"] = nested_invocation
+                _write_json_artifact(manifest_path, manifest)
+        return rollout_paths
     return generate_action_rollouts(
         actions_dir,
         count=config.rollout_count,
@@ -1952,37 +2248,47 @@ def _run_kubernetes_indexed_image_component(
     timeout_s: int,
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
-    job_name = _k8s_job_name(config.run_id, component)
+    base_job_name = _k8s_job_name(config.run_id, component)
     env = _ensure_sibling_source_env(config, env)
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
-    manifest = _indexed_component_job_manifest(
-        image,
-        component=component,
-        env=env,
-        config=config,
-        namespace=namespace,
-        job_name=job_name,
-        completions=completions,
-        parallelism=parallelism,
-        timeout_s=timeout_s,
-    )
-    apply_result = _kubectl(
-        config,
-        ["apply", "-f", "-"],
-        stdin=json.dumps(manifest),
-        timeout_s=120,
-    )
+    def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
+        return _indexed_component_job_manifest(
+            image,
+            component=component,
+            env=env,
+            config=config,
+            namespace=namespace,
+            job_name=job_name,
+            completions=completions,
+            parallelism=parallelism,
+            timeout_s=timeout_s,
+            gpu_product=product,
+        )
+
+    def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _kubectl(config, args, check=False, **kwargs)
+
+    try:
+        gpu_provenance = run_gpu_job_with_fallback(
+            kubectl=kubectl,
+            manifest_factory=manifest_factory,
+            base_job_name=base_job_name,
+            namespace=namespace,
+            image=image,
+            preferred_product=config.k8s_gpu_product,
+            explicit_candidates=config.k8s_gpu_candidates,
+            workload=workload_kind(component, sim_backend=config.sim_backend),
+            gpu_resource=config.k8s_gpu_resource,
+            gpu_count=1,
+            timeout_s=timeout_s,
+        )
+    except (GpuCapacityExhausted, GpuJobFailure) as exc:
+        raise Sim2RealLoopError(str(exc)) from exc
+    job_name = str(gpu_provenance["job_name"])
     job_uid = _log_sibling_job_applied(
         config, namespace=namespace, job_name=job_name, component=component
-    )
-    wait_result = _wait_kubernetes_job(
-        config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
-        required_successes=completions,
     )
     pod_info = _component_pod_info(config, namespace=namespace, job_name=job_name)
     logs_result = _kubectl(
@@ -1998,40 +2304,14 @@ def _run_kubernetes_indexed_image_component(
         timeout_s=300,
         check=False,
     )
-    events_excerpt = ""
-    if wait_result != "complete":
-        events = _kubectl(
-            config,
-            [
-                "get",
-                "events",
-                "-n",
-                namespace,
-                "--field-selector",
-                f"involvedObject.name={job_name}",
-                "-o",
-                "json",
-            ],
-            timeout_s=120,
-            check=False,
-        )
-        events_excerpt = _component_excerpt(events.stdout or events.stderr)
     delete_result = _cleanup_component_job(
         config, namespace=namespace, job_name=job_name
     )
-    if wait_result != "complete":
-        raise Sim2RealLoopError(
-            f"{component} indexed Kubernetes Job {job_name} did not complete: "
-            f"status={wait_result} "
-            f"{_format_pod_exit_diagnostics(pod_info)} "
-            f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
-            f"{events_excerpt}"
-        )
     return {
         "mode": "kubernetes_indexed_job",
         "component": component,
         "image": image,
-        "image_digests": pod_info.get("image_digests", []),
+        "image_digests": gpu_provenance.get("image_digests", []) or pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
         "job_uid": job_uid,
@@ -2040,11 +2320,11 @@ def _run_kubernetes_indexed_image_component(
         "pod": pod_info,
         "gpu_request": {
             "resource": config.k8s_gpu_resource,
-            "product": config.k8s_gpu_product,
+            "product": gpu_provenance["selected_product"],
             "count": 1,
         },
-        "returncode": 0 if wait_result == "complete" else 1,
-        "apply_stdout_excerpt": _component_excerpt(apply_result.stdout),
+        "gpu_provenance": gpu_provenance,
+        "returncode": 0,
         "stdout_excerpt": _component_excerpt(logs_result.stdout),
         "stderr_excerpt": _component_excerpt(logs_result.stderr),
         "cleanup_stdout_excerpt": _component_excerpt(delete_result.stdout),
@@ -2063,34 +2343,45 @@ def _run_kubernetes_image_component(
     timeout_s: int,
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
-    job_name = _k8s_job_name(config.run_id, component)
+    base_job_name = _k8s_job_name(config.run_id, component)
     env = _ensure_sibling_source_env(config, env)
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
-    manifest = _component_job_manifest(
-        image,
-        component=component,
-        env=env,
-        config=config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
-    )
-    apply_result = _kubectl(
-        config,
-        ["apply", "-f", "-"],
-        stdin=json.dumps(manifest),
-        timeout_s=120,
-    )
+    def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
+        return _component_job_manifest(
+            image,
+            component=component,
+            env=env,
+            config=config,
+            namespace=namespace,
+            job_name=job_name,
+            timeout_s=timeout_s,
+            gpu_product=product,
+        )
+
+    def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _kubectl(config, args, check=False, **kwargs)
+
+    try:
+        gpu_provenance = run_gpu_job_with_fallback(
+            kubectl=kubectl,
+            manifest_factory=manifest_factory,
+            base_job_name=base_job_name,
+            namespace=namespace,
+            image=image,
+            preferred_product=config.k8s_gpu_product,
+            explicit_candidates=config.k8s_gpu_candidates,
+            workload=workload_kind(component, sim_backend=config.sim_backend),
+            gpu_resource=config.k8s_gpu_resource,
+            gpu_count=1,
+            timeout_s=timeout_s,
+        )
+    except (GpuCapacityExhausted, GpuJobFailure) as exc:
+        raise Sim2RealLoopError(str(exc)) from exc
+    job_name = str(gpu_provenance["job_name"])
     job_uid = _log_sibling_job_applied(
         config, namespace=namespace, job_name=job_name, component=component
-    )
-    wait_result = _wait_kubernetes_job(
-        config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
     )
     pod_info = _component_pod_info(config, namespace=namespace, job_name=job_name)
     logs_result = _kubectl(
@@ -2106,35 +2397,9 @@ def _run_kubernetes_image_component(
         timeout_s=300,
         check=False,
     )
-    events_excerpt = ""
-    if wait_result != "complete":
-        events = _kubectl(
-            config,
-            [
-                "get",
-                "events",
-                "-n",
-                namespace,
-                "--field-selector",
-                f"involvedObject.name={job_name}",
-                "-o",
-                "json",
-            ],
-            timeout_s=120,
-            check=False,
-        )
-        events_excerpt = _component_excerpt(events.stdout or events.stderr)
     delete_result = _cleanup_component_job(
         config, namespace=namespace, job_name=job_name
     )
-    if wait_result != "complete":
-        raise Sim2RealLoopError(
-            f"{component} Kubernetes Job {job_name} did not complete: "
-            f"status={wait_result} "
-            f"{_format_pod_exit_diagnostics(pod_info)} "
-            f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
-            f"{events_excerpt}"
-        )
     try:
         _download_component_output(config, output_uri, output_json)
     except Sim2RealLoopError as exc:
@@ -2144,315 +2409,27 @@ def _run_kubernetes_image_component(
         "mode": "kubernetes_job",
         "component": component,
         "image": image,
-        "image_digests": pod_info.get("image_digests", []),
+        "image_digests": gpu_provenance.get("image_digests", []) or pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
         "job_uid": job_uid,
         "pod": pod_info,
         "gpu_request": {
             "resource": config.k8s_gpu_resource,
-            "product": config.k8s_gpu_product,
+            "product": gpu_provenance["selected_product"],
             "count": 1,
         },
+        "gpu_provenance": gpu_provenance,
         "service_account": config.k8s_service_account,
         "image_pull_secrets": _split_csv(config.k8s_image_pull_secrets),
         "env_secret_names": _split_csv(config.k8s_env_secret_names),
         "output_uri": output_uri,
-        "returncode": 0 if wait_result == "complete" else 1,
-        "apply_stdout_excerpt": _component_excerpt(apply_result.stdout),
+        "returncode": 0,
         "stdout_excerpt": _component_excerpt(logs_result.stdout),
         "stderr_excerpt": _component_excerpt(logs_result.stderr),
         "cleanup_stdout_excerpt": _component_excerpt(delete_result.stdout),
         "cleanup_stderr_excerpt": _component_excerpt(delete_result.stderr),
     }
-
-
-def _indexed_component_job_manifest(
-    image: str,
-    *,
-    component: str,
-    env: dict[str, str],
-    config: Sim2RealLoopConfig,
-    namespace: str,
-    job_name: str,
-    completions: int,
-    parallelism: int,
-    timeout_s: int,
-) -> dict[str, Any]:
-    manifest = _component_job_manifest(
-        image,
-        component=component,
-        env=env,
-        config=config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
-    )
-    manifest["spec"]["completions"] = completions
-    manifest["spec"]["parallelism"] = parallelism
-    manifest["spec"]["completionMode"] = "Indexed"
-    return manifest
-
-
-def _component_job_manifest(
-    image: str,
-    *,
-    component: str,
-    env: dict[str, str],
-    config: Sim2RealLoopConfig,
-    namespace: str,
-    job_name: str,
-    timeout_s: int,
-) -> dict[str, Any]:
-    env_values = _kubernetes_component_env(env, config)
-    pull_secrets = [
-        {"name": name} for name in _split_csv(config.k8s_image_pull_secrets)
-    ]
-    env_from = [
-        {"secretRef": {"name": name, "optional": True}}
-        for name in _split_csv(config.k8s_env_secret_names)
-    ]
-    template_spec: dict[str, Any] = {
-        "restartPolicy": "Never",
-        "serviceAccountName": config.k8s_service_account,
-        "containers": [
-            {
-                "name": "component",
-                "image": image,
-                "imagePullPolicy": _image_pull_policy(image),
-                "command": ["bash", "-lc"],
-                "args": [_component_job_script(component, sim_backend=config.sim_backend)],
-                "env": [
-                    {"name": key, "value": value}
-                    for key, value in sorted(env_values.items())
-                    if value != ""
-                ],
-                "envFrom": env_from,
-                "resources": {
-                    "requests": {
-                        "cpu": "4",
-                        "memory": "16Gi",
-                        config.k8s_gpu_resource: 1,
-                    },
-                    "limits": {
-                        config.k8s_gpu_resource: 1,
-                    },
-                },
-            }
-        ],
-        "nodeSelector": {
-            "nvidia.com/gpu.compute.major": "12",
-            "nvidia.com/gpu.compute.minor": "0",
-            "nvidia.com/gpu.product": config.k8s_gpu_product,
-        },
-    }
-    if pull_secrets:
-        template_spec["imagePullSecrets"] = pull_secrets
-    return {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": {
-            "name": job_name,
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/name": "sim2real-sibling-component",
-                "app.kubernetes.io/component": component.replace("_", "-"),
-                "sim2real.local/run-id": _label_value(config.run_id),
-            },
-            "annotations": {
-                "sim2real.local/gpu-request": (
-                    "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-                )
-            },
-        },
-        "spec": {
-            "backoffLimit": 0,
-            "activeDeadlineSeconds": timeout_s,
-            "template": {
-                "metadata": {
-                    "labels": {
-                        "app.kubernetes.io/name": "sim2real-sibling-component",
-                        "app.kubernetes.io/component": component.replace("_", "-"),
-                        "sim2real.local/run-id": _label_value(config.run_id),
-                    }
-                },
-                "spec": template_spec,
-            },
-        },
-    }
-
-
-def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACKEND) -> str:
-    if component in {"vlm_eval", "vlm_eval_reason2", "vlm_eval_reason3"}:
-        subcommand = (
-            "component-vlm-eval "
-            "--input-uri \"${NPA_SIM2REAL_ROLLOUT_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--rollout-id \"${NPA_SIM2REAL_ROLLOUT_ID}\" "
-            "--model \"${NPA_SIM2REAL_VLM_MODEL}\" "
-            "--threshold \"${NPA_SIM2REAL_THRESHOLD}\""
-        )
-    elif component == "heldout_eval":
-        subcommand = (
-            "component-heldout-eval "
-            "--heldout-envs-uri \"${NPA_SIM2REAL_HELDOUT_ENVS_URI}\" "
-            "--inner-evidence-uri \"${NPA_SIM2REAL_INNER_EVIDENCE_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--threshold \"${NPA_SIM2REAL_THRESHOLD}\" "
-            "--limit \"${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}\" "
-            "--sim-backend \"${NPA_SIM2REAL_SIM_BACKEND:-isaac}\" "
-            "--isaac-task \"${NPA_SIM2REAL_ISAAC_TASK:-}\" "
-            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
-            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
-            "--cameras-uri \"${NPA_SIM2REAL_CAMERAS_URI:-}\" "
-            "--robot-spec-uri \"${NPA_SIM2REAL_ROBOT_SPEC_URI:-}\" "
-            "--robot-source \"${NPA_SIM2REAL_ROBOT_SOURCE:-}\" "
-            "--robot-preset \"${NPA_SIM2REAL_ROBOT_PRESET:-}\""
-        )
-    elif component == "cosmos2_transfer":
-        subcommand = (
-            "component-cosmos2-transfer "
-            "--input-uri \"${NPA_SIM2REAL_INPUT_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--augmented-frames-uri \"${NPA_SIM2REAL_AUGMENTED_FRAMES_URI}\" "
-            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
-            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
-            "--image \"${NPA_SIM2REAL_AUGMENT_IMAGE:-}\""
-        )
-    elif component == "policy_actions":
-        subcommand = (
-            "component-policy-actions "
-            "--train-envs-uri \"${NPA_SIM2REAL_TRAIN_ENVS_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--policy-image \"${NPA_SIM2REAL_POLICY_IMAGE}\" "
-            "--limit \"${NPA_SIM2REAL_ACTION_LIMIT:-256}\" "
-            "--seed \"${NPA_SIM2REAL_SEED:-42}\" "
-            "--rollout-count \"${NPA_SIM2REAL_ROLLOUT_COUNT:-3}\" "
-            "--steps-per-rollout \"${NPA_SIM2REAL_STEPS_PER_ROLLOUT:-4}\""
-        )
-    elif component == "envgen_raw_shard":
-        subcommand = (
-            "python -m npa.workflows.sim2real_envgen raw-shard "
-            "--run-id \"${NPA_SIM2REAL_RUN_ID}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--env-count \"${NPA_SIM2REAL_ENV_COUNT}\" "
-            "--shard-index \"${JOB_COMPLETION_INDEX:-0}\" "
-            "--shard-count \"${NPA_SIM2REAL_SHARD_COUNT}\" "
-            "--train-fraction \"${NPA_SIM2REAL_TRAIN_FRACTION}\" "
-            "--seed \"${NPA_SIM2REAL_SEED}\" "
-            "--augmented-frames-uri \"${NPA_SIM2REAL_AUGMENTED_FRAMES_URI:-}\" "
-            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
-            "--output-dir /tmp/npa-envgen-shard"
-        )
-    else:
-        raise Sim2RealLoopError(f"unsupported image component: {component}")
-    vlm_preamble = ""
-    if vlm_k8s_component(component):
-        vlm_preamble = cosmos_reason_k8s_shell_preamble()
-    # The Isaac Lab image ships Isaac Sim + isaaclab only under its bundled
-    # interpreter (/isaac-sim/python.sh) and bakes no npa code. Branch npa code
-    # is injected at start either from an S3 source tarball
-    # (NPA_SIM2REAL_SOURCE_TARBALL_URI, using the pod's mounted S3 creds) or via
-    # a git clone (NPA_SOURCE_REPO/NPA_SOURCE_REF when the repo is reachable).
-    # boto3 is installed to a writable target dir for the S3 client.
-    if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
-        heldout_entry_cmd = (
-            '"$PYBIN" -m npa.workflows.sim2real.heldout_entry '
-            '--heldout-envs-uri "${NPA_SIM2REAL_HELDOUT_ENVS_URI}" '
-            '--inner-evidence-uri "${NPA_SIM2REAL_INNER_EVIDENCE_URI}" '
-            '--output-uri "${NPA_SIM2REAL_OUTPUT_URI}" '
-            '--threshold "${NPA_SIM2REAL_THRESHOLD}" '
-            '--limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}" '
-            '--sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}" '
-            '--isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-}" '
-            '--scene-spec-uri "${NPA_SIM2REAL_SCENE_SPEC_URI:-}" '
-            '--assets-uri "${NPA_SIM2REAL_ASSETS_URI:-}" '
-            '--cameras-uri "${NPA_SIM2REAL_CAMERAS_URI:-}" '
-            '--robot-spec-uri "${NPA_SIM2REAL_ROBOT_SPEC_URI:-}" '
-            '--robot-source "${NPA_SIM2REAL_ROBOT_SOURCE:-}" '
-            '--robot-preset "${NPA_SIM2REAL_ROBOT_PRESET:-}"'
-        )
-        return f"""set -euo pipefail
-{vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
-export PYTHONUNBUFFERED=1
-PYBIN=/isaac-sim/python.sh
-if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
-DEPS=/tmp/npa-pydeps
-mkdir -p "$DEPS"
-"$PYBIN" -c "import boto3" 2>/dev/null || "$PYBIN" -m pip install --quiet --target "$DEPS" boto3 botocore
-"$PYBIN" -m pip install --quiet --target "$DEPS" pyyaml httpx typer rich jinja2 joblib numpy pillow 2>/dev/null || true
-export PYTHONPATH="$DEPS:${{PYTHONPATH:-}}"
-if [ -z "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"missing NPA_SIM2REAL_SOURCE_TARBALL_URI"}}' >&2
-  exit 2
-fi
-rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-"$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
-import os, sys, tarfile, urllib.parse, boto3
-u = urllib.parse.urlparse(sys.argv[1])
-ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
-with tarfile.open("/tmp/npa-src.tgz") as tar:
-    tar.extractall("/tmp/npa-source")
-PYB
-export PYTHONPATH="/tmp/npa-source/npa/src:${{DEPS}}:${{PYTHONPATH:-}}"
-if ! "$PYBIN" -c "import npa.workflows.sim2real.heldout_entry" 2>/tmp/npa-bootstrap.err; then
-  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"npa import failed"}}' >&2
-  cat /tmp/npa-bootstrap.err >&2 || true
-  exit 3
-fi
-{heldout_entry_cmd}
-"""
-    exec_cmd = (
-        subcommand
-        if component == "envgen_raw_shard"
-        else f"python -m npa.workflows.sim2real {subcommand}"
-    )
-    return f"""set -euo pipefail
-{vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-  python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
-import os, sys, tarfile, urllib.parse, boto3
-u = urllib.parse.urlparse(sys.argv[1])
-ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
-with tarfile.open("/tmp/npa-src.tgz") as tar:
-    tar.extractall("/tmp/npa-source")
-PYB
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
-  rm -rf /tmp/npa-source
-  git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-fi
-{exec_cmd}
-"""
-
-
-def _kubernetes_component_env(
-    env: dict[str, str], config: Sim2RealLoopConfig
-) -> dict[str, str]:
-    safe: dict[str, str] = {}
-    for key, value in env.items():
-        if (
-            key.startswith("NPA_SIM2REAL")
-            or key.startswith("NPA_COSMOS_")
-            or key in {"HF_HOME", "HF_XET_CACHE", "UV_CACHE_DIR", "XDG_CACHE_HOME"}
-        ):
-            safe[key] = value
-    endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
-        "AWS_ENDPOINT_URL", ""
-    )
-    safe["AWS_ENDPOINT_URL"] = endpoint
-    safe["S3_ENDPOINT_URL"] = endpoint
-    apply_cosmos_reason_kubernetes_env(safe)
-    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
-        value = str(env.get(key) or os.environ.get(key) or "").strip()
-        if value:
-            safe[key] = value
-    safe["NPA_SOURCE_REPO"] = config.source_repo or env.get("NPA_SOURCE_REPO", "")
-    safe["NPA_SOURCE_REF"] = config.source_ref or env.get("NPA_SOURCE_REF", "")
-    return safe
 
 
 def _kubectl(
@@ -2653,10 +2630,6 @@ def _k8s_job_name(run_id: str, component: str) -> str:
     component_part = _safe_slug(component)[:16] or "component"
     suffix = uuid.uuid4().hex[:8]
     return f"s2r-{component_part}-{run_part}-{suffix}"[:63].rstrip("-")
-
-
-def _label_value(value: str) -> str:
-    return (_safe_slug(value)[:63] or "run").rstrip("-")
 
 
 def _safe_slug(value: str) -> str:
@@ -3160,6 +3133,11 @@ def _run_trainer_via_command(
         raise Sim2RealLoopError(
             f"trainer command output is not a valid update result: {exc}"
         ) from exc
+    nested_invocation = dict(payload.get("component_invocation") or {})
+    if nested_invocation:
+        _write_json_artifact(
+            output_dir / "byo-trainer-gpu-provenance.json", nested_invocation
+        )
     _write_json_artifact(output_path, result.to_dict())
     return result
 
@@ -3334,6 +3312,13 @@ def run_heldout_eval(
             config=config,
         )
     payload = _read_component_json(output_path, invocation)
+    nested_invocation = dict(payload.get("component_invocation") or {})
+    if nested_invocation:
+        invocation = {
+            **invocation,
+            **nested_invocation,
+            "command_invocation": _public_invocation(invocation),
+        }
     report = _normalize_heldout_report(
         payload,
         config=config,
@@ -3550,6 +3535,7 @@ def threshold_decision(
 ) -> dict[str, Any]:
     """Apply Stage 11 threshold gate and write promote/loop-back artifacts."""
 
+    stage_started = time.monotonic()
     success_rate = float(heldout_report["success_rate"])
     promoted = success_rate >= config.threshold
     checkpoint_dir = local_dir / "checkpoints" / "candidate"
@@ -3560,6 +3546,35 @@ def threshold_decision(
     real_checkpoint = str(heldout_report.get("policy_checkpoint") or "").strip()
     is_real_policy = real_checkpoint.startswith("s3://") and real_checkpoint.endswith(".pt")
     checkpoint_uri = real_checkpoint if is_real_policy else str(checkpoint_dir)
+    checkpoint_metadata: dict[str, Any] = {}
+    if is_real_policy:
+        with tempfile.TemporaryDirectory(prefix="npa-policy-proof-") as temporary:
+            local_checkpoint = Path(temporary) / Path(real_checkpoint).name
+            try:
+                _storage_client(config).download_file(
+                    real_checkpoint, str(local_checkpoint)
+                )
+                digest = hashlib.sha256(local_checkpoint.read_bytes()).hexdigest()
+                checkpoint_metadata = {
+                    "policy_checkpoint_identity": Path(real_checkpoint).name,
+                    "policy_checkpoint_sha256": digest,
+                    "policy_checkpoint_size_bytes": local_checkpoint.stat().st_size,
+                    "policy_download_command": (
+                        "aws s3 cp "
+                        f"{shlex.quote(real_checkpoint)} ./model.pt "
+                        ' --endpoint-url "$AWS_ENDPOINT_URL"'
+                    ),
+                    "policy_ui_action": (
+                        "Open Artifacts for this run, select the .pt checkpoint, "
+                        "and choose Download; the Rerun viewer links it but does not execute it."
+                    ),
+                }
+            except Exception as exc:
+                if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
+                    raise Sim2RealLoopError(
+                        f"deployable policy checkpoint could not be hashed: {exc}"
+                    ) from exc
+                checkpoint_metadata = {"policy_metadata_error": str(exc)}
     decision = {
         "schema": SCHEMA_THRESHOLD_DECISION,
         "stage": 11,
@@ -3570,6 +3585,7 @@ def threshold_decision(
         "checkpoint_uri": checkpoint_uri,
         "max_outer_iterations": config.outer_iterations,
         "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
+        "duration_s": round(time.monotonic() - stage_started, 3),
     }
     if promoted:
         _write_json_artifact(
@@ -3583,6 +3599,7 @@ def threshold_decision(
                     "isaac_rsl_rl_checkpoint" if is_real_policy else "reference_metadata"
                 ),
                 "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
+                **checkpoint_metadata,
                 "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
                 "heldout_success_rate": round(success_rate, 6),
                 "threshold": config.threshold,
@@ -5552,25 +5569,6 @@ def _signal_diversity_report(signals: list[dict[str, Any]]) -> dict[str, Any]:
         "coherent": coherent,
         "degenerate": not coherent,
     }
-
-
-def _image_pull_policy(image: str) -> str:
-    """Choose the imagePullPolicy for a sibling component image.
-
-    Provenance-sensitive ``-genuine-`` builds are pulled fresh so a stale image
-    cached under the same tag cannot silently masquerade as the genuine build.
-    A digest-pinned reference (``@sha256:``) is already immutable.
-    """
-
-    override = os.environ.get("NPA_SIM2REAL_IMAGE_PULL_POLICY", "").strip()
-    if override:
-        return override
-    if "@sha256:" in image:
-        return "IfNotPresent"
-    tag = image.rsplit(":", 1)[-1] if ":" in image.rsplit("/", 1)[-1] else ""
-    if "genuine" in tag:
-        return "Always"
-    return "IfNotPresent"
 
 
 def _write_ppm(path: Path, *, red: int, green: int, blue: int) -> None:

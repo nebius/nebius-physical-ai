@@ -362,6 +362,15 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
             or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
         ),
+        k8s_gpu_candidates=tuple(
+            item.strip()
+            for item in str(
+                overrides.get("k8s_gpu_candidates")
+                or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES")
+                or ""
+            ).replace(";", ",").split(",")
+            if item.strip()
+        ),
         k8s_kubeconfig=str(
             overrides.get("k8s_kubeconfig")
             or os.environ.get("KUBECONFIG")
@@ -475,6 +484,7 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "k8s_gpu_request": {
             "resource": config.k8s_gpu_resource,
             "product": config.k8s_gpu_product,
+            "candidates": list(config.k8s_gpu_candidates),
             "count": 1,
         },
         "source_ref": config.source_ref,

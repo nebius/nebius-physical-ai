@@ -84,6 +84,25 @@ def k8s_image_ready(image: str) -> bool:
     return bool(ref) and _looks_registry_qualified(ref) and not unresolved_image_placeholders(ref)
 
 
+def _gpu_invocation_artifacts(invocation: dict[str, Any]) -> dict[str, Any]:
+    """Copy the complete public placement proof into a ComponentRecord."""
+
+    provenance = dict(invocation.get("gpu_provenance") or {})
+    return {
+        "job_name": str(invocation.get("job_name") or provenance.get("job_name") or ""),
+        "image": str(invocation.get("image") or provenance.get("image") or ""),
+        "image_digests": invocation.get("image_digests", [])
+        or provenance.get("image_digests", []),
+        "gpu_request": invocation.get("gpu_request", {}),
+        "gpu_candidate_order": provenance.get("candidate_order", []),
+        "gpu_attempts": provenance.get("attempts", []),
+        "selected_gpu_product": str(provenance.get("selected_product") or ""),
+        "selected_gpu_node": str(provenance.get("selected_node") or ""),
+        "allocated_gpu": provenance.get("allocated_gpu", {}),
+        "duration_s": provenance.get("duration_s", ""),
+    }
+
+
 def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
     """Stage 3: run Cosmos Transfer 2.5 (K8s sibling job when bucket set, else local reference)."""
 
@@ -148,10 +167,7 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
                 "remote": f"{artifact_output_uri(config)}/augment/manifest.json"
                 if config.s3_bucket
                 else "",
-                "job_name": str(invocation.get("job_name") or ""),
-                "image": str(invocation.get("image") or ""),
-                "image_digests": invocation.get("image_digests", []),
-                "gpu_request": invocation.get("gpu_request", {}),
+                **_gpu_invocation_artifacts(invocation),
             },
         },
     }
@@ -167,6 +183,7 @@ def run_envgen_split_stage(
 ) -> dict[str, Any]:
     """Stages 4–6: generate raw envs, 80/20 split, token manifest."""
 
+    stage_group_started = time.monotonic()
     env_count = effective_env_count(config)
     train_count = effective_train_count(config)
     heldout_count = effective_heldout_count(config)
@@ -276,12 +293,11 @@ def run_envgen_split_stage(
         )
         envgen_invocation = {}
 
-    stage_04_job_artifacts: dict[str, Any] = {
-        "job_name": str(envgen_invocation.get("job_name") or ""),
-        "image": str(envgen_invocation.get("image") or ""),
-        "image_digests": envgen_invocation.get("image_digests", []),
-        "gpu_request": envgen_invocation.get("gpu_request", {}),
-    }
+    stage_04_job_artifacts = _gpu_invocation_artifacts(envgen_invocation)
+    if not stage_04_job_artifacts.get("duration_s"):
+        stage_04_job_artifacts["duration_s"] = round(
+            time.monotonic() - stage_group_started, 3
+        )
     stage_components = [
         {
             "name": "stage_04_envs_raw",
@@ -308,6 +324,8 @@ def run_envgen_split_stage(
                 "job_name": config.run_id,
                 "execution": "orchestrator_record_from_stage_04_gpu_outputs",
                 "upstream_job_name": str(envgen_invocation.get("job_name") or ""),
+                "duration_s": 0.0,
+                "duration_scope": "record materialized from completed Stage 4 outputs",
             },
         },
         {
@@ -321,6 +339,8 @@ def run_envgen_split_stage(
                 "job_name": config.run_id,
                 "execution": "orchestrator_record_from_stage_04_gpu_outputs",
                 "upstream_job_name": str(envgen_invocation.get("job_name") or ""),
+                "duration_s": 0.0,
+                "duration_scope": "record materialized from completed Stage 4 outputs",
             },
         },
     ]

@@ -242,6 +242,15 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--k8s-gpu-candidates",
+        default=os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""),
+        help=(
+            "Ordered comma-separated GPU product labels or families. The runtime "
+            "normalizes these against actual cluster node labels and retries only "
+            "on concrete Kubernetes GPU scheduling/capacity evidence."
+        ),
+    )
+    parser.add_argument(
         "--k8s-kubeconfig",
         default=os.environ.get("NPA_SIM2REAL_KUBECONFIG", os.environ.get("KUBECONFIG", "")),
     )
@@ -561,6 +570,11 @@ def main(argv: list[str] | None = None) -> int:
         k8s_env_secret_names=args.k8s_env_secret_names,
         k8s_gpu_resource=args.k8s_gpu_resource,
         k8s_gpu_product=args.k8s_gpu_product,
+        k8s_gpu_candidates=tuple(
+            item.strip()
+            for item in args.k8s_gpu_candidates.replace(";", ",").split(",")
+            if item.strip()
+        ),
         k8s_kubeconfig=args.k8s_kubeconfig,
         k8s_context=args.k8s_context,
         k8s_job_timeout_s=args.k8s_job_timeout_s,

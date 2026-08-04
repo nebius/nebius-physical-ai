@@ -22,6 +22,7 @@ report for unit tests / wiring checks.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -38,6 +39,7 @@ DEFAULT_SUCCESS_DIST_M = 0.05
 # renders dir + surface the render manifest into the report (for Rerun viz).
 _RENDERS_LOCAL_DIR = ""
 _RENDER_MANIFEST: dict[str, Any] = {}
+_LAST_GPU_PROVENANCE: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -796,17 +798,41 @@ def run_isaac_eval_job(
         env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
         robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri, task_config=task_config_dict,
     )
-    _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
-    apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)
-    if apply.returncode != 0:
-        raise SystemExit(f"byo_isaac_eval: kubectl apply failed: {apply.stderr}")
-    print(f"byo_isaac_eval: applied {job_name} (seed={seed}, generated_envs={len(gen)}); "
-          f"waiting up to {timeout_s}s", flush=True)
-    wait = _kubectl(["wait", f"job/{job_name}", "-n", namespace,
-                     "--for=condition=complete", f"--timeout={timeout_s}s"], timeout=timeout_s + 60)
-    if wait.returncode != 0:
-        logs = _kubectl(["logs", f"job/{job_name}", "-n", namespace, "--tail=80"], timeout=120)
-        raise SystemExit(f"byo_isaac_eval: eval job {job_name} did not complete: {wait.stderr}\n{logs.stdout}")
+    from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
+
+    def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
+        candidate = copy.deepcopy(manifest)
+        candidate.setdefault("metadata", {})["name"] = candidate_job_name
+        pod_spec = (
+            candidate.setdefault("spec", {})
+            .setdefault("template", {})
+            .setdefault("spec", {})
+        )
+        pod_spec["nodeSelector"] = {
+            "nvidia.com/gpu.product": product
+        }
+        return candidate
+
+    def kubectl(args: list[str], **kwargs: Any):
+        timeout = int(kwargs.pop("timeout_s", 300))
+        return _kubectl(args, timeout=timeout, **kwargs)
+
+    provenance = run_gpu_job_with_fallback(
+        kubectl=kubectl,
+        manifest_factory=manifest_factory,
+        base_job_name=job_name,
+        namespace=namespace,
+        image=image,
+        preferred_product=gpu_product,
+        explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
+        workload="isaac",
+        gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+        gpu_count=1,
+        timeout_s=timeout_s,
+    )
+    job_name = str(provenance["job_name"])
+    global _LAST_GPU_PROVENANCE
+    _LAST_GPU_PROVENANCE = provenance
     out = _download_json(per_env_uri)
     distances = out.get("object_goal_distances", [])
     # Pull the rendered frames of the (custom) object down to the local heldout
@@ -835,6 +861,8 @@ def run_isaac_eval_job(
 
 
 def main() -> int:
+    global _LAST_GPU_PROVENANCE
+    _LAST_GPU_PROVENANCE = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
         print("byo_isaac_eval: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
@@ -881,6 +909,10 @@ def main() -> int:
     )
     report["generated_envs_tested"] = len(generated_envs)
     report["generated_env_ids"] = [e["env_id"] for e in generated_envs]
+    report["component_invocation"] = {
+        "mode": "kubernetes_job" if _LAST_GPU_PROVENANCE else "dryrun",
+        "gpu_provenance": _LAST_GPU_PROVENANCE,
+    }
     if _RENDER_MANIFEST.get("episodes"):
         report["render_manifest"] = _RENDER_MANIFEST
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)

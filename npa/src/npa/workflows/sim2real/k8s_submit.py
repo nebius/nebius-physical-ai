@@ -17,6 +17,7 @@ from npa.workflows.sim2real.monitor import (
     normalize_staged_run_id,
     resolve_kubeconfig,
 )
+from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,38 @@ def _apply_manifest(
         raise RuntimeError(f"sim2real K8s submit failed:\n{output}")
 
 
+def _direct_kubectl(
+    args: list[str],
+    *,
+    kubeconfig: Path,
+    context: str,
+    namespace: str,
+    stdin: str | None = None,
+    timeout_s: int = 300,
+) -> subprocess.CompletedProcess[str]:
+    from npa.clients.nebius_auth import strip_ambient_token_env
+
+    command = [
+        "kubectl",
+        "--kubeconfig",
+        str(kubeconfig),
+        "--context",
+        context,
+        "-n",
+        namespace,
+        *args,
+    ]
+    return subprocess.run(
+        command,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        env=strip_ambient_token_env(os.environ),
+        timeout=timeout_s,
+        check=False,
+    )
+
+
 def submit_sim2real_staged_job(
     *,
     run_id: str = "",
@@ -275,17 +308,67 @@ def submit_sim2real_staged_job(
             kubeconfig=str(kubeconfig),
             k8s_context=context,
         )
-        _apply_manifest(
-            manifest_path,
-            kubeconfig=kubeconfig,
-            context=context,
+        import yaml
+
+        def manifest_factory(product: str, candidate_job_name: str) -> dict[str, object]:
+            candidate_env = dict(image_env)
+            candidate_env["NPA_SIM2REAL_K8S_GPU_PRODUCT"] = product
+            candidate = materialize_k8s_job(
+                default_runbook_path(),
+                run_id=resolved_run_id,
+                image=resolved_orchestrator,
+                env_overrides=candidate_env,
+                namespace=namespace,
+            )
+            payload = yaml.safe_load(candidate.to_yaml())
+            payload["metadata"]["name"] = candidate_job_name
+            return payload
+
+        def kubectl(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return _direct_kubectl(
+                args,
+                kubeconfig=kubeconfig,
+                context=context,
+                namespace=namespace,
+                **kwargs,
+            )
+
+        placement = run_gpu_job_with_fallback(
+            kubectl=kubectl,
+            manifest_factory=manifest_factory,
+            base_job_name=materialized.job_name,
+            namespace=namespace,
+            image=resolved_orchestrator,
+            preferred_product=image_env.get(
+                "NPA_SIM2REAL_K8S_GPU_PRODUCT",
+                "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            ),
+            explicit_candidates=image_env.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""),
+            workload="isaac",
+            gpu_resource=image_env.get("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+            gpu_count=1,
+            timeout_s=60,
+            wait_for_completion=False,
+        )
+        image_env["NPA_SIM2REAL_K8S_GPU_PRODUCT"] = str(placement["selected_product"])
+        materialized = materialize_k8s_job(
+            default_runbook_path(),
+            run_id=resolved_run_id,
+            image=resolved_orchestrator,
+            env_overrides=image_env,
             namespace=namespace,
         )
+        selected_payload = yaml.safe_load(materialized.to_yaml())
+        selected_job_name = str(placement["job_name"])
+        selected_payload["metadata"]["name"] = selected_job_name
+        manifest_path = manifest_root / f"{selected_job_name}.yaml"
+        manifest_path.write_text(yaml.safe_dump(selected_payload, sort_keys=False), encoding="utf-8")
+        manifest_path.chmod(0o600)
 
     prefix_uri = f"s3://{bucket}/{s3_prefix.rstrip('/')}/{resolved_run_id}/"
     return Sim2RealSubmitResult(
         run_id=resolved_run_id,
-        job_name=materialized.job_name,
+        job_name=materialized.job_name if plan_only else selected_job_name,
         k8s_context=context,
         run_prefix_uri=prefix_uri,
         status="planned" if plan_only else "submitted",
