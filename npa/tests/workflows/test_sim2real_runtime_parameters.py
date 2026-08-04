@@ -48,6 +48,7 @@ def test_canonical_yaml_defaults_match_engine_and_real_components() -> None:
     assert envs["BYO_TRAINER_COMMAND"].endswith("byo_isaac_trainer")
     assert envs["BYO_POLICY_COMMAND"].endswith("byo_isaac_policy_rollout")
     assert envs["BYO_EVAL_COMMAND"].endswith("byo_isaac_eval")
+    assert envs["NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS"] == "1"
     _validate_real_runtime_env(
         {
             **envs,
@@ -126,6 +127,7 @@ def test_materialized_job_carries_capture_ppo_and_visualization_knobs() -> None:
         ({"NPA_BYO_ISAAC_SUCCESS_DIST_M": "0"}, "SUCCESS_DIST_M"),
         ({"NPA_SIM2REAL_K8S_JOB_TIMEOUT_S": "-1"}, "JOB_TIMEOUT"),
         ({"BYO_TRAINER_COMMAND": ""}, "BYO_TRAINER_COMMAND"),
+        ({"NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS": "0"}, "REQUIRE_REAL_COMPONENTS"),
         ({"OMNI_KIT_ACCEPT_EULA": ""}, "OMNI_KIT_ACCEPT_EULA"),
     ],
 )

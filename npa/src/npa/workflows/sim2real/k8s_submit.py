@@ -115,6 +115,10 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
             raise ValueError(
                 f"{name} must invoke a real external component in the canonical real tier"
             )
+    if values.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() != "1":
+        raise ValueError(
+            "NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS=1 is mandatory for the canonical real tier"
+        )
     for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
         if values.get(name, "").strip().upper() != "YES":
             raise ValueError(

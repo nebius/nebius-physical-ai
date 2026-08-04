@@ -308,7 +308,9 @@ npa/.venv/bin/npa workbench sim2real rerun serve --run-id "${RUN}" --destroy
 ## Troubleshooting guardrails
 
 - A real-component stage without a registry-qualified image or real command is
-  rejected before submit.
+  rejected before submit. The canonical YAML keeps
+  `NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS=1`, so component provenance and candidate
+  checkpoint byte hashing also fail closed.
 - A supplied candidate checkpoint that cannot be loaded is a hard failure; the
   policy/eval path never substitutes a stock policy.
 - Missing or malformed Cosmos, Isaac, trainer, Rerun, or MCAP evidence must be

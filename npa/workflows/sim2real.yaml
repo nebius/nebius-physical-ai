@@ -161,6 +161,9 @@ envs:
   BYO_POLICY_COMMAND: "python3 -m npa.workflows.sim2real.byo_isaac_policy_rollout"
   BYO_VLM_COMMAND: ""
   BYO_EVAL_COMMAND: "python3 -m npa.workflows.sim2real.byo_isaac_eval"
+  # Fail closed if any advertised real component or deployable checkpoint cannot
+  # prove its registry/Kubernetes/byte-level artifact contract.
+  NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS: "1"
   # Comma-separated real Isaac camera views. The primary stream preserves the
   # established VLM/eval contract; side and overhead are captured in sync and
   # their depth clouds are fused in world coordinates for an orbitable Rerun 3D
