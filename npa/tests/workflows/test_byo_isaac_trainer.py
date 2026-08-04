@@ -382,6 +382,19 @@ def test_sanitize_tag():
     assert byo._sanitize_tag("") == ""
 
 
+def test_k8s_job_name_hashes_truncated_tail_to_avoid_run_collisions():
+    shared = "sim2real-quality-gpu-20260804t172054z-6da8d6e3"
+    first = byo.k8s_job_name("s2r-byo-isaac-roll", f"{shared}-first")
+    second = byo.k8s_job_name("s2r-byo-isaac-roll", f"{shared}-second")
+
+    assert len(first) <= 63
+    assert len(second) <= 63
+    assert first.startswith("s2r-byo-isaac-roll-")
+    assert second.startswith("s2r-byo-isaac-roll-")
+    assert first != second
+    assert first == byo.k8s_job_name("s2r-byo-isaac-roll", f"{shared}-first")
+
+
 def test_artifact_tag_from_output_dir_keeps_outer_iteration(tmp_path):
     output_dir = tmp_path / "actions" / "train" / "outer-02" / "iter-01"
 

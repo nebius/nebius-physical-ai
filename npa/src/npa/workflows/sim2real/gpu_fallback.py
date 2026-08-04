@@ -649,12 +649,15 @@ def run_gpu_job_with_fallback(
                     "-n",
                     namespace,
                     "-o",
-                    "jsonpath={.status.succeeded} {.status.failed}",
+                    "json",
                 ],
                 timeout_s=120,
             )
-            parts = (counters.stdout or "").strip().split()
-            failed = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            try:
+                status = (json.loads(counters.stdout or "{}").get("status") or {})
+                failed = int(status.get("failed") or 0)
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                failed = 0
             if failed:
                 break
             wait_text = str(wait.stderr or wait.stdout or "").lower()

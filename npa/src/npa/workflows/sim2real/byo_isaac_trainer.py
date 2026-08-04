@@ -27,6 +27,7 @@ without a GPU.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -817,8 +818,12 @@ def k8s_job_name(*parts: str, max_length: int = 63) -> str:
         elif not previous_dash:
             cleaned.append("-")
             previous_dash = True
-    name = "".join(cleaned).strip("-")[:max_length].strip("-")
-    return name or "s2r-job"
+    name = "".join(cleaned).strip("-")
+    if len(name) <= max_length:
+        return name or "s2r-job"
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+    prefix = name[: max_length - len(digest) - 1].rstrip("-")
+    return f"{prefix}-{digest}"
 
 
 def artifact_tag(value: str, *, default: str = "") -> str:

@@ -226,10 +226,20 @@ class _Scheduler:
             return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
         if args[:2] == ["get", "events"]:
             return subprocess.CompletedProcess(args, 0, '{"items":[]}', "")
+        if args[:2] == ["get", "job"]:
+            outcome = self.outcomes.get(self.current_product, "success")
+            status = {"failed": 1} if outcome == "runtime_delayed" else {}
+            return subprocess.CompletedProcess(
+                args, 0, json.dumps({"status": status}), ""
+            )
         if args and args[0] == "wait":
             outcome = self.outcomes.get(self.current_product, "success")
             if outcome == "runtime":
                 return subprocess.CompletedProcess(args, 1, "", "ImagePullBackOff")
+            if outcome == "runtime_delayed":
+                return subprocess.CompletedProcess(
+                    args, 1, "", "timed out waiting for the condition"
+                )
             return subprocess.CompletedProcess(args, 0, "complete", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -320,6 +330,30 @@ def test_unrelated_runtime_failure_never_switches_product(
             gpu_count=1,
             timeout_s=10,
         )
+    assert scheduler.applied_products == [RTX]
+
+
+def test_zero_timeout_detects_terminal_job_failure_without_product_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "runtime_delayed", L40S: "success"})
+
+    with pytest.raises(GpuJobFailure, match="refusing to change workload product"):
+        run_gpu_job_with_fallback(
+            kubectl=scheduler,
+            manifest_factory=_manifest,
+            base_job_name="s2r-unbounded-runtime-failure",
+            namespace="default",
+            image="registry/image@sha256:abc123",
+            preferred_product=RTX,
+            explicit_candidates=(L40S,),
+            workload="isaac",
+            gpu_resource="nvidia.com/gpu",
+            gpu_count=1,
+            timeout_s=0,
+        )
+
     assert scheduler.applied_products == [RTX]
 
 
