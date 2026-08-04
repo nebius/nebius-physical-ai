@@ -9,8 +9,19 @@
 set -euo pipefail
 
 NPA_BIN="${NPA_BIN:-npa}"
-export COLUMNS="${COLUMNS:-120}"
+# Execution may use an absolute path from an isolated venv, but generated docs
+# must show the stable public command name rather than leaking that checkout.
+NPA_DISPLAY_BIN="${NPA_DOCS_DISPLAY_BIN:-$(basename "$NPA_BIN")}"
+# Typer/Rich reads COLUMNS when rendering help. Do not inherit a shell or tmux
+# width: the generated Markdown must be identical in CI and an interactive TTY.
+DOCS_COLUMNS="${NPA_DOCS_COLUMNS:-200}"
 export NO_COLOR=1
+
+run_with_docs_width() {
+  # Bash treats COLUMNS specially and can reset an exported value to the TTY's
+  # current width. Put it directly in each child environment instead.
+  env COLUMNS="$DOCS_COLUMNS" NO_COLOR=1 "$@"
+}
 
 CHECK=0
 if [ "${1:-}" = "--check" ]; then
@@ -26,6 +37,9 @@ cleanup() {
   [ -n "$TMP_FILE" ] && rm -f "$TMP_FILE"
   [ -n "$TEMP_DOCS_DIR" ] && rm -rf "$TEMP_DOCS_DIR"
   [ -n "$HELP_CACHE_DIR" ] && rm -rf "$HELP_CACHE_DIR"
+  # An EXIT trap's final command can replace an otherwise successful status.
+  # Keep normal regeneration successful when TEMP_DOCS_DIR is intentionally empty.
+  return 0
 }
 trap cleanup EXIT
 
@@ -46,7 +60,7 @@ help_for() {
   cache="${HELP_CACHE_DIR}/${key}.help"
   if [ ! -f "$cache" ]; then
     local staging="${cache}.$$"
-    "$@" --help > "$staging" 2>&1 || true
+    run_with_docs_width "$@" --help > "$staging" 2>&1 || true
     mv -f "$staging" "$cache"
   fi
   cat "$cache"
@@ -106,6 +120,7 @@ document_command() {
   local output_name="$1"
   shift
   local command_path=("$@")
+  local display_path=("$NPA_DISPLAY_BIN" "${command_path[@]:1}")
   local output="${DOCS_DIR}/${output_name}.md"
   # Pages are keyed by leaf group name. Generation starts from a clean slate, so
   # a pre-existing file here means two distinct subgroups share a leaf name and
@@ -116,7 +131,7 @@ document_command() {
     exit 1
   fi
   help_for "${command_path[@]}" > "$tmp"
-  python3 scripts/_help_to_markdown.py "$tmp" "$output_name" "${command_path[*]}" > "$output"
+  python3 scripts/_help_to_markdown.py "$tmp" "$output_name" "${display_path[*]}" > "$output"
 }
 
 # Document a group and, recursively, every nested subgroup (e.g. the

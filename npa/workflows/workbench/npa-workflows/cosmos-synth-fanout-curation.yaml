@@ -38,6 +38,7 @@ config:
 
   trigger_uri: "s3://{{config.bucket}}/synth-seeds/{{run.id}}/lerobot-pusht/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/manifest.json"
   frames_index_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/index.json"
   # FiftyOne / Voxel51 reads the curated dataset from this prefix.
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/"
@@ -66,25 +67,33 @@ states:
 
   synth-shard-a:
     description: Cosmos Transfer 2.5 synthetic shard A — perturb seed episodes on GPU.
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.lerobot.dataset.v1
     outputs:
-      - uri: "{{config.augment_uri}}shard-a/manifest.json"
-        schema: npa.sim2real.augment.v1
+      # DEFECT, recorded rather than disguised: both shards pass the SAME
+      # {{config.augment_uri}} as --output-uri because the toolRef reads one
+      # config key. Both publish this manifest/frame prefix, so the second
+      # clobbers the first and the apparent fan-out yields one shard of data.
+      # Fixing it requires a per-shard config token; until then this blueprint
+      # stays plan-only. Do not remove this warning as cosmetic cleanup.
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.cosmos2.transfer.v1
 
   synth-shard-b:
     description: Cosmos Transfer 2.5 synthetic shard B — perturb seed episodes on GPU.
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.lerobot.dataset.v1
     outputs:
-      - uri: "{{config.augment_uri}}shard-b/manifest.json"
-        schema: npa.sim2real.augment.v1
+      # Same deliberate warning as synth-shard-a: this second real render
+      # overwrites the canonical manifest/frame prefix at the shared URI.
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.cosmos2.transfer.v1
 
   merge-index:
     description: Merge shard outputs into a single synthetic-frame index for curation.

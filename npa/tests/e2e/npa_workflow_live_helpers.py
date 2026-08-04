@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -23,6 +24,97 @@ from npa.orchestration.npa_workflow.submit_matrix import (
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+# A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
+# testsrc2 source. Keeping the bytes in the test harness makes input seeding
+# independent of an operator host's ffmpeg installation while the live worker
+# still has to decode and condition on a real video.
+_CONDITIONED_COSMOS_MP4_B64 = (
+    "AAAAJGZ0eXBpc29tAAACAGlzb21pc282aXNvMmF2YzFtcDQxAAAC7m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAA"
+    "A+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAIAAAHwdHJhawAAAFx0a2hkAAAAAwAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAABAAAAAQAAAAAABjG1kaWEAAAAg"
+    "bWRoZAAAAAAAAAAAAAAAAAAAQAAAAAAAVcQAAAAAAC1oZGxyAAAAAAAAAAB2aWRlAAAAAAAAAAAAAAAAVmlkZW9I"
+    "YW5kbGVyAAAAATdtaW5mAAAAFHZtaGQAAAABAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJs"
+    "IAAAAAEAAAD3c3RibAAAAKtzdHNkAAAAAAAAAAEAAACbYXZjMQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAABAAEAA"
+    "SAAAAEgAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABj//wAAADVhdmNDAWQACv/hABhn"
+    "ZAAKrNlEJsBEAAADAAQAAAMAIDxIllgBAAZo6+PLIsD9+PgAAAAAEHBhc3AAAAABAAAAAQAAABBzdHRzAAAAAAAA"
+    "AAAAAAAQc3RzYwAAAAAAAAAAAAAAFHN0c3oAAAAAAAAAAAAAAAAAAAAQc3RjbwAAAAAAAAAAAAAAKG12ZXgAAAAg"
+    "dHJleAAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1k"
+    "aXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNTguNzYuMTAwAAAAkG1v"
+    "b2YAAAAQbWZoZAAAAAAAAAABAAAAeHRyYWYAAAAkdGZoZAAAADkAAAABAAAAAAAAAxIAABAAAAAIOAEBAAAAAAAU"
+    "dGZkdAEAAAAAAAAAAAAAAAAAADh0cnVuAAAKBQAAAAQAAACYAgAAAAAACDgAACAAAAADKgAAQAAAAAIAAAAQAAAA"
+    "AaoAABAAAAAPFG1kYXQAAAKtBgX//6ncRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTYzIHIzMDYwIDVkYjZh"
+    "YTYgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDIxIC0gaHR0cDovL3d3dy52aWRl"
+    "b2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9"
+    "MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFu"
+    "Z2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNr"
+    "aXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MiBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJl"
+    "YWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50"
+    "cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBv"
+    "cGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49NCBzY2VuZWN1dD00MCBpbnRyYV9yZWZy"
+    "ZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAg"
+    "cXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAABYNliIQBf9RXbX3adtJ5iaXn8d7k"
+    "cnLNXqoE3wQoAwNN+cd8aslhw1xKwdF73tLnVTjt1U/i9SMqQumY4NXEvGnPVJW4DWYw6aVBtSQbqQPnbMaI+rIB"
+    "WARN6RJuS6eSe8HyCXg5r/yuaCBeBRfXvVL6RfG89BWmuL6np+yZndilR888iRzTaIAJ2ntGABoMqOdTTIvO4fjN"
+    "4C/1BxPGpWvs0JExIXoNFh0BCV7Z66r9oBL/kKNiZzS2WoyTFd62+8dDGp/c1P5j+6EUIyApjzGInyWt29hbW7Y3"
+    "uRUfho2tryc+fIhStj86t8wlMDwkvFzUMKUhCivRwV2vIGpy7nWu846eBkLwNVFvxwc//YfJ1cK8f07VGtFTeIc6"
+    "xANjVAQGCCYrS0GrGathLUsoGt7aTGinRYtjG0hdtF2ITJltIdjgi8g+QUmiaomd5Is9TD1RvrJKDxknMlpHnRgd"
+    "QyvbL+UH8urpaNOLXLnrckZjmzo0pESzhNO0C8vkoi4nTglMHD77XRAZO1qweYLNsPts849JRAscB5X0MSlR+AWS"
+    "kWtrylGGG/Bw+O7jQiKqvJhYgwkr1JCLyhtaaqKDs/UsjU5keaT+FJd1hKfifJPoHwFLTbTP85u+kvAAjR0YbM/l"
+    "lU18VyCtPwTF9OW4a+BaheT30XO8M6Dg1/wNzZI2QMzVkLoSslGojOJmAg72PM2oEiYyr/FHGFreqBA7F/0gFs3J"
+    "J/tq6BgQFWW2sXlwlFglwdWKSU8DhORgkpHZh0s4Arr8mgsDDVhdKFEzOAk/g2w6YOu7r8mPCN4FMe6BaHlJFkwx"
+    "2rxvuF7/RQoLaRciBOaL3TLsTMQ0jLN/pCYHlJ8hYsS3So92S8vmcw7SI1ZgR5Lf80jYRIUKlgV79tPuoCEDE0sL"
+    "jWlxN6U5hyceT/sJzuIOG+xFau9AggV4KmPajAmZgAGlqMth/MI6ntT+vvYX+pB3hM/Y6sr6Jvim4sqG4fcuL4KS"
+    "+haRK1iBdsX+6Z3wLKCzhecWo/WNBjZPfWTasazD0/3sllLBeOl9F/QrrmQc0v8te4FH5JBhbwOIvmEKT47R0ZW+"
+    "AX4eKwEYoeafX+upD/s2ii6ORRcF1Qt36p7pQNThwqY99c8evwyZhw8O0pxo9nLWzsxmFPwCnrOubwyDJx2Fc44N"
+    "usSN8OrsUmCiyCGymbN4M3oibpwymsuCs8CDyxk8CqgiwPnwzx8NAudk6RVcy4kAS7/Vi0h/bFthd9pfPp8xzoEV"
+    "bAIDe0O+"
+    "T44IuSp/"
+    "eq8ivb8H"
+    "SRiRpPQH"
+    "GiYunz/C"
+    "XJ9DwQ6u"
+    "Y/8jki4W"
+    "pXG"
+    "CP5+X"
+    "Bv4xRyAj"
+    "OhPgg9G6"
+    "RHeqvhTn"
+    "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"
+)
 
 
 def resolve_spec_path(name: str) -> Path:
@@ -45,8 +137,10 @@ ALL_GOLDEN_SPECS = sorted(
 
 DYNAMIC_SPECS = frozenset(
     {
+        "adversarial-scenario-hardening.yaml",
         "dataset-of-record-smoke.yaml",
         "dataset-ingest-curate.yaml",
+        "hardening-with-insights.yaml",
         "sim2real-vlm-rl.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
@@ -186,6 +280,22 @@ def seed_live_workflow_inputs(
                 Body=buf.getvalue(),
                 ContentType="image/png",
             )
+        if spec_name == "tokenfactory-cosmos-gate.yaml":
+            # The same scene prefix feeds the conditioned transfer stage. Seed a
+            # real clip as well as the frames consumed by the reasoner.
+            _seed_input_video(
+                client,
+                bucket=bucket,
+                prefix=f"{marker}/scene/",
+            )
+        return
+
+    if spec_name in {"sim2real-two-step.yaml", "sim2real-two-step-agent.yaml"}:
+        _seed_input_video(
+            client,
+            bucket=bucket,
+            prefix=f"sim2real-triggers/{run_id}/lerobot-pusht/",
+        )
         return
 
     if spec_name == "cosmos2-transfer.yaml":
@@ -379,6 +489,23 @@ def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
             Body=buf.getvalue(),
             ContentType="image/png",
         )
+
+
+def _seed_input_video(client, *, bucket: str, prefix: str) -> None:
+    """Upload a small real MP4 for conditioned Cosmos transfer."""
+
+    body = base64.b64decode(_CONDITIONED_COSMOS_MP4_B64, validate=True)
+
+    if len(body) < 12 or body[4:8] != b"ftyp":
+        pytest.fail("conditioned Cosmos seed is not a valid MP4 container")
+    key = f"{prefix.rstrip('/')}/input.mp4"
+    client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=body,
+        ContentType="video/mp4",
+    )
+    print(f"[seed] conditioned Cosmos input video -> s3://{bucket}/{key}")
 
 
 def seed_trigger_inbox_later(

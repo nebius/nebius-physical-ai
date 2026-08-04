@@ -57,6 +57,34 @@ def test_manifest_content_is_the_payload() -> None:
     assert captured == payload
 
 
+def test_local_and_s3_manifest_bytes_are_identical(
+    tmp_path: Path, monkeypatch
+) -> None:
+    payload = {
+        "schema": "npa.cosmos2.transfer.v1",
+        "status": "executed_reference",
+        "mode": "reference_augment",
+    }
+    output = tmp_path / "augment"
+    cosmos2._publish_output_manifest(payload, f"local://{output}")
+    local_bytes = (output / "manifest.json").read_bytes()
+    uploaded: dict[str, bytes] = {}
+
+    class _CaptureStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            uploaded[uri] = Path(local).read_bytes()
+            return uri
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        staticmethod(_CaptureStorage),
+    )
+    cosmos2._publish_output_manifest(payload, "s3://bucket/run/augment")
+
+    assert uploaded["s3://bucket/run/augment/manifest.json"] == local_bytes
+    assert local_bytes.endswith(b"\n")
+
+
 def test_the_spec_declares_the_filename_the_tool_writes() -> None:
     """Guardrail in the same shape as `test_spec_declared_outputs.py`."""
 
@@ -72,5 +100,7 @@ def test_the_spec_declares_the_filename_the_tool_writes() -> None:
     )
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     declared = spec["states"]["transfer"]["outputs"][0]["uri"]
+    manifest_uri = spec["config"]["augment_manifest_uri"]
 
-    assert declared.endswith(cosmos2.MANIFEST_FILENAME)
+    assert declared == "{{config.augment_manifest_uri}}"
+    assert manifest_uri.endswith(cosmos2.MANIFEST_FILENAME)

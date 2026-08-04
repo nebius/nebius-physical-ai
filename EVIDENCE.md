@@ -3376,3 +3376,91 @@ PYTHONPATH=$PWD/src .venv/bin/python -m pytest \
   tests/orchestration/npa_workflow/test_real_components.py \
   tests/smoke/test_all_workflow_yamls.py -q
 ```
+
+## R56. Cosmos2 publishes the contract its workflows declare — and both real GPU paths prove it
+
+Live job 339 exposed a producer/consumer mismatch: five stages declared `manifest.json`, while
+`workbench.cosmos2.transfer` wrote a reference-only `index.json` with a different schema. The
+fix keeps `index.json` as the reference-input contract and publishes the canonical generated
+artifact at `manifest.json` with schema `npa.cosmos2.transfer.v1`. The declared-output guard now
+special-cases this toolRef so a future spec cannot silently repeat the mismatch at any of the
+five historical locations:
+
+* `cosmos-synth-fanout-curation.yaml`: `synth-shard-a`, `synth-shard-b`
+* `cosmos2-transfer.yaml`: `transfer`
+* `sim2real-vlm-rl.yaml`: `augment`
+* `tokenfactory-cosmos-gate.yaml`: `augment-scene`
+
+The extraction also adds the remaining submit-matrix cases from #244/#251 and makes every
+shipped workflow resolve to exactly one case. Cases which need an undeployed service, private
+asset, operator decision, or unsafe shared-output behavior remain explicit plan-only cases; the
+runnable Cosmos2 cases exercise the real component. A separate guard walks workflow pointers in
+code, docs, tests, and skills so renamed or removed specs cannot leave a dangling public entry.
+
+Two failures during live validation improved the runnable smoke instead of being papered over:
+
+* Job **370** reached the GPU image and showed that the built image does not contain the
+  upstream Git-LFS example assets. Main's subsequent #252 image fix supplies a legally clean,
+  repository-authored procedural input through the live harness instead. After rebasing, this
+  extraction dropped its superseded in-wrapper fallback and retained explicit input as the
+  authoritative production contract.
+* Job **371** completed all 35 diffusion steps and passed the model's generated-video guardrail,
+  then the wrapper rejected its valid 8,932-byte video because of an arbitrary 100 KiB cutoff.
+  The cutoff is gone; publication still fails closed unless PyAV extracts at least one exact
+  frame from a non-empty video.
+
+After #252 merged, both final runs used executable source commit
+`2ffbee656930f9b91a9ad660be886ae38ceff899` from this durable checkout, rebased on
+`5ce5882126f16457d8fb7922f93c888a326d71bb`. Each run received a newly staged overlay
+(`npa-workflow-e2e/npa-src/codex-2ffbee65/npa` and
+`npa-workflow-e2e/npa-src/codex-2ffbee65-chain/npa`) and the qualified image digest recorded by
+#252, on an **RTX PRO 6000 Blackwell Server Edition**. The later commit only updates this evidence.
+Registry and artifact-bucket identifiers are deliberately redacted.
+
+### Generic Cosmos2 transfer
+
+```bash
+PYTHONPATH=$PWD/src \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=gpu \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=cosmos2-transfer.yaml \
+.venv/bin/python -m pytest \
+  'tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal[gpu:cosmos2-transfer.yaml]' \
+  -q -s --tb=short
+```
+
+**Succeeded:** job **375**, run id `npa-wf-gpu-cosmos2-transfer-b7818c52`, terminal
+`SUCCEEDED` (`1 passed in 963.38s`). The real model completed all 35 diffusion steps. Independent
+artifact inspection found `schema=npa.cosmos2.transfer.v1`, `status=executed`,
+`mode=cosmos_transfer2.5_gpu`, `input_conditioned=true`, eight distinct existing frame objects,
+and a 5,709,281-byte generated video. The canonical manifest was 2,867 bytes.
+
+### Conditioned Cosmos2 transfer into envgen
+
+```bash
+PYTHONPATH=$PWD/src \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=multi \
+NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=sim2real-two-step.yaml \
+.venv/bin/python -m pytest \
+  'tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal[multi:sim2real-two-step.yaml]' \
+  -q -s --tb=short
+```
+
+**Succeeded:** job group **377**, run id `npa-wf-multi-sim2real-two-step-b9d5e9dc`, terminal
+`SUCCEEDED` (`1 passed in 1181.79s`). `augment` consumed the seeded input video, completed all 35
+diffusion steps, and published the canonical manifest with `input_conditioned=true`,
+`control=edge`, four exact existing frame URIs, and a valid 9,039-byte video. `envgen` then
+consumed those URIs and published
+`npa.sim2real.raw_env_shard_summary.v1`: 1,000 rows across the declared shard, all with schema
+`npa.sim2real.raw_env.v1`; the distinct `augmented_frame_uri` values matched the four manifest
+frames exactly.
+
+The apparent two-way fan-out remains deliberately plan-only. Both shard states still receive the
+same `augment_uri`, so the second overwrites the first and only one shard survives. The workflow
+contains a conspicuous `DEFECT` comment documenting that a real fix needs a per-shard
+configuration token. It validates (five states) and plans (four steps), but is not represented as
+an executable live case until that configuration surface exists.
+
+Successful SkyPilot jobs cleaned up their managed resources automatically; no pod for job 375 or
+377 remained after its pytest node completed. The earlier diagnostic pod was deleted, cancelled
+recovery jobs left no pods, no `npa-detection-training` resource was created, and the persistent
+`npa-lancedb` deployment was left untouched as required by the rotation contract.

@@ -19,8 +19,8 @@ list  List NPA Workbench cluster targets known locally or in the configured proj
 kubeconfig  Write a kubeconfig for a Managed Kubernetes cluster that already exists.
 node-group  Manage GPU node groups attached to NPA Workbench cluster targets.
 
-`npa cluster` manages NPA Workbench cluster targets and profiles. For raw MK8s administration (edit, update, upgrade,
-operation inspection, version listing, compatibility matrix), use `nebius mk8s` directly.
+`npa cluster` manages NPA Workbench cluster targets and profiles. For raw MK8s administration (edit, update, upgrade, operation inspection, version listing, compatibility matrix), use `nebius mk8s`
+directly.
 ```
 
 ## Options
@@ -40,7 +40,7 @@ operation inspection, version listing, compatibility matrix), use `nebius mk8s` 
 | `status` | Show NPA cluster target state from Nebius and the local cache. |
 | `list` | List NPA Workbench cluster targets known locally or in the configured project. |
 | `kubeconfig` | Write a kubeconfig for a Managed Kubernetes cluster that already exists. |
-| `node-group` | Manage GPU node groups attached to NPA Workbench cluster targets. |
+| `node-group` | Manage GPU node groups attached to NPA Workbench cluster targets. `npa cluster` manages NPA Workbench cluster targets and profiles. For raw MK8s administration (edit, update, upgrade, operation inspection, version listing, compatibility matrix), use `nebius mk8s` directly. |
 
 ## Examples
 

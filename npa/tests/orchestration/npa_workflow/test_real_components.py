@@ -33,7 +33,6 @@ NUREC_SKYPILOT = (
 
 # toolRefs that only echo or write a contract/manifest — never advertise as real.
 KNOWN_STUB_TOOLREFS = {
-    "workbench.cosmos2.transfer",  # manifest only; use transfer_execute
     "workbench.fiftyone.launch_app",  # echo hook
     "workbench.sim2real.finalize",  # echo
     "workbench.sim2real.write_decision",  # demo stub
@@ -92,6 +91,15 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     description = states["augment"]["description"].lower()
     assert "supported video" in description
     assert "no bundled upstream media" in description
+
+
+def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:
+    argv = TOOL_CATALOG[
+        "workbench.cosmos2.transfer_conditioned_execute"
+    ].argv_template
+
+    assert "--execute" in argv
+    assert "--condition-on-input" in argv
 
 
 def test_evaluate_runs_the_real_cosmos_evaluator() -> None:

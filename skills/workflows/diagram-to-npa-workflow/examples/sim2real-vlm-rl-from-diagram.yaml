@@ -38,6 +38,7 @@ config:
   trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
   assets_uri: "s3://{{config.bucket}}/sim2real-assets/franka-tabletop/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json"
   raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
   # `npa.workflows.sim2real_envgen` takes the RUN ROOT and derives envs/raw,
   # envs/train, envs/heldout and envs/manifest under it; passing the raw prefix would
@@ -47,7 +48,8 @@ config:
   shard_count: "1"
   train_fraction: "0.8"
   envgen_seed: "42"
-  augmented_frames_uri: ""
+  # Envgen resolves the durable transfer manifest and uses only its exact frames[].uri list.
+  augmented_frames_uri: "{{config.augment_manifest_uri}}"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/"
   heldout_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json"
@@ -67,14 +69,14 @@ initial: augment
 states:
   augment:
     description: Step 3 — Cosmos Transfer 2.5 augments curated good LeRobot data.
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.lerobot.dataset.v1
     outputs:
-      - uri: "{{config.augment_uri}}manifest.json"
-        schema: npa.sim2real.augment.v1
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.cosmos2.transfer.v1
     next: envgen
 
   envgen:
@@ -87,6 +89,8 @@ states:
     inputs:
       - uri: "{{config.assets_uri}}"
         schema: npa.sim2real.assets.v1
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.cosmos2.transfer.v1
     outputs:
       - uri: "{{config.raw_envs_uri}}raw-shard-00-summary.json"
         schema: npa.sim2real.raw_env_shard_summary.v1
@@ -129,7 +133,7 @@ states:
       - uri: "{{config.rollouts_uri}}"
         schema: npa.sim2real.action_rollout.v1
     outputs:
-      - uri: "{{config.scores_uri}}report.json"
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
         schema: npa.workbench.vlm_eval.report.v1
 
   heldout:

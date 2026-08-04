@@ -20,6 +20,7 @@ config:
   # Cosmos transfer reads trigger_uri; same scene prefix as reason-scene output.
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
   decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json"
@@ -47,14 +48,14 @@ states:
   augment-scene:
     description: Cosmos Transfer augment driven by the scene plan.
     needs: [reason-scene]
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.token_factory.scene.v1
     outputs:
-      - uri: "{{config.augment_uri}}manifest.json"
-        schema: npa.sim2real.augment.v1
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.cosmos2.transfer.v1
     next: refine
 
   refine:

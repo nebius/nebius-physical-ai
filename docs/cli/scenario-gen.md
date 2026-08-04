@@ -5,8 +5,7 @@
 ```text
 Usage: npa workbench scenario-gen [OPTIONS] COMMAND [ARGS]...
 
-Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend;
-deterministic default).
+Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
 
 Options
 --help  Show this message and exit.

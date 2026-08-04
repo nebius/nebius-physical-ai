@@ -10,9 +10,6 @@ kind: Workflow
 # turns a missing transfer runtime into a hard error instead of a silent fall back to reference
 # augmentation).
 #
-# It is also the first spec to use `workbench.cosmos2.transfer_execute`. That toolRef has been
-# in the catalog, unused, while five specs used the manifest-only `workbench.cosmos2.transfer`.
-#
 #   npa workbench workflow submit cosmos2-transfer.yaml --run-id <id> \
 #     --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 
@@ -30,6 +27,7 @@ config:
   # empty, or video-free prefix fails CLI validation before inference starts.
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/manifest.json"
   # Optional Config-Gen manifest. The transfer input itself is always required and
   # is converted into an on-the-fly edge control; no upstream media is bundled.
   configs_uri: ""
@@ -61,7 +59,10 @@ states:
     description: Run Cosmos-Transfer2.5 and publish the augmented clip.
     toolRef: workbench.cosmos2.transfer_execute
     resources: transfer-gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.sim2real.trigger_dataset.v1
     outputs:
-      - uri: "{{config.augment_uri}}manifest.json"
+      - uri: "{{config.augment_manifest_uri}}"
         schema: npa.cosmos2.transfer.v1
     terminal: true

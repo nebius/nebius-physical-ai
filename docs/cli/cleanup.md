@@ -13,14 +13,10 @@ config; add `--full` to remove known shared-service credentials and empty
 NPA-owned local state. Neither scope deletes anything in the cloud.
 
 Options
---yes  -y  Remove the local caches (otherwise just report). Local only: this never
-deletes cloud resources -- see the printed runbook for those.
---include-sky  --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs
-run).
-[default: include-sky]
---full  Broaden --yes to also remove locally saved HF, Token Factory, and NGC
-credentials, then prune empty config/known ~/.npa state. Non-empty and
-unrelated data is preserved.
+--yes  -y  Remove the local caches (otherwise just report). Local only: this never deletes cloud resources -- see the printed runbook for those.
+--include-sky  --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs run). [default: include-sky]
+--full  Broaden --yes to also remove locally saved HF, Token Factory, and NGC credentials, then prune empty config/known ~/.npa state. Non-empty and unrelated data
+    is preserved.
 --project  <str>  Scope the empty per-alias state-dir report to this alias.
 --skip-jobs  Do not query the SkyPilot managed-job queue.
 --sky-bin  <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.
@@ -31,9 +27,9 @@ unrelated data is preserved.
 
 | Option | Description |
 | --- | --- |
-| `--yes` | -y  Remove the local caches (otherwise just report). Local only: this never |
-| `--include-sky` | --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs |
-| `--full` | Broaden --yes to also remove locally saved HF, Token Factory, and NGC |
+| `--yes` | -y  Remove the local caches (otherwise just report). Local only: this never deletes cloud resources -- see the printed runbook for those. |
+| `--include-sky` | --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs run). [default: include-sky] |
+| `--full` | Broaden --yes to also remove locally saved HF, Token Factory, and NGC credentials, then prune empty config/known ~/.npa state. Non-empty and unrelated data is preserved. |
 | `--project` | <str>  Scope the empty per-alias state-dir report to this alias. |
 | `--skip-jobs` | Do not query the SkyPilot managed-job queue. |
 | `--sky-bin` | <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution. |
