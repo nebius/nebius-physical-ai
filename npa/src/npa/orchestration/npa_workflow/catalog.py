@@ -1367,6 +1367,31 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
         stub=True,
     ),
+    "workbench.fiftyone.curate_augmented": ToolEntry(
+        name="workbench.fiftyone.curate_augmented",
+        description=(
+            "Run real FiftyOne Brain uniqueness, duplicate detection, and "
+            "visualization over PAIDF augmented variants; fail closed if the "
+            "FiftyOne engine does not complete."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "{{config.augment_uri}}",
+            "--report-uri",
+            "{{config.curation_report_uri}}",
+            "--curator-report-uri",
+            "{{config.curator_report_uri}}",
+            "--dedup-threshold",
+            "{{config.fiftyone_dedup_threshold}}",
+            "--require-fiftyone",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.token_factory.caption": ToolEntry(
         name="workbench.token_factory.caption",
         description="Caption images with Nebius Token Factory (zero-GPU).",

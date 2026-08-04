@@ -2,8 +2,8 @@
 
 A step-by-step, copy-paste runbook that takes you from an empty machine to a
 running **NVIDIA Physical AI Data Factory** blueprint on Nebius + SkyPilot, with
-results viewable in the NPA agent (Main stages, embedded Rerun, Voxel51/FiftyOne
-curation). It complements the conceptual
+results viewable in the NPA agent (Main stages, embedded Rerun, and an explicitly
+provenanced dataset view backed by real FiftyOne Brain curation). It complements the conceptual
 [Physical AI Data Factory guide](physical-ai-data-factory.md) (blueprint mapping,
 stage graph, S3 layout) — read that first if you want the "what/why"; this doc is
 the "how to stand it up".
@@ -119,8 +119,20 @@ npa workbench workflow submit "$SPEC" \
   --secret-env HF_TOKEN
 
 MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
-npa workbench workflow status "$MANIFEST_URI" --project "$PROJECT" --watch
+npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage augment
+
+# Load the final Rerun artifact through the run-relative API contract. This
+# intentionally exercises run_id + key + prefix instead of relying on an exact
+# URI. Never print the sourced auth values.
+AGENT_NAME=agent
+AGENT_PUBLIC_URL="$(npa agent status --project "$PROJECT" --name "$AGENT_NAME" --json \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["public_url"])')"
+source "$HOME/.npa/agents/$PROJECT/$AGENT_NAME/auth.env"
+curl -skS --fail-with-body -u "$AGENT_USER:$AGENT_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  -d "{\"run_id\":\"$RUN_ID\",\"key\":\"reports/sim2real.rrd\",\"prefix\":\"physical-ai-data-factory\"}" \
+  "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
 ```
 
 The configured S3 endpoint is selected automatically; `--s3-endpoint` is only an
@@ -142,9 +154,13 @@ requested accelerator), and `npa workbench workflow logs "$MANIFEST_URI"
 --stage augment --follow` in another terminal.
 
 SkyPilot may temporarily render not-yet-submitted downstream DAG rows with the
-first task's CPU summary. The rendered augment task and NPA manifest/status retain
-the exact submit-time accelerator (for example
-`RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`); use those until the augment row starts.
+first task's CPU summary. Its human-readable queue can also show misleading
+relative ages for newly started downstream tasks because those rows inherit the
+managed job's submission timestamp. NPA does not rewrite SkyPilot's queue clock;
+the durable manifest and stage status timestamps are the authoritative per-stage
+times. The rendered augment task and NPA manifest/status retain the exact
+submit-time accelerator (for example
+`RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`).
 
 For a first run with nothing staged, keep `--var seed_default_input=true` or the
 mandatory caption stage has no frames. For real data, upload PNG/JPEG frames to
@@ -342,7 +358,7 @@ The container registry must be reachable for the workbench images. Point
 ## 3. Deploy the NPA agent
 
 The agent is a public HTTPS workbench VM (basic-auth UI, grounded chat, embedded
-Rerun, artifact browser, Voxel51/FiftyOne curation surface). See the
+Rerun, artifact browser, Dataset & provenance curation surface). See the
 [`npa-agent`](../../../skills/tools/npa-agent/SKILL.md) skill for the full
 operator reference; the
 [`agent-fresh-operate`](../../../skills/workflows/agent-fresh-operate/SKILL.md)
@@ -637,10 +653,11 @@ input fails closed before inference.
 ## 7. Real FiftyOne curation (run in the `npa-fiftyone` image)
 
 The `curate` stage runs **real FiftyOne Brain curation** (uniqueness +
-duplicate/near-dup detection + a PCA visualization) over the augmented set. Real
-curation needs FiftyOne **and** a `mongod`, so it must run inside the
-`npa-fiftyone` image (which now self-hosts `mongod`). On the generic CPU tier it
-falls back to a report-only summary (`curation_engine=report-only`).
+duplicate/near-dup detection + a PCA visualization) over the augmented set. It
+uses the `workbench.fiftyone.curate_augmented` toolRef and therefore runs in the
+`npa-fiftyone` image, which self-hosts `mongod`. The workflow passes
+`--require-fiftyone`: a missing Brain/database runtime fails the stage instead of
+publishing a report-only summary under a FiftyOne label.
 
 Run real curation standalone against a completed run's augmented output:
 
@@ -648,16 +665,19 @@ Run real curation standalone against a completed run's augmented output:
 npa workbench fiftyone curate-augmented \
   --augment-uri s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/cosmos_augmented/ \
   --report-uri  s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/report.json \
+  --curator-report-uri s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/cosmos_curator.json \
+  --require-fiftyone \
   --dedup-threshold 0.10
 ```
 
 This writes an additive `fiftyone` block into `curation/report.json` (schema stays
 `npa.fiftyone.curation.v1`; adds `curation_engine`, `curated_kept/dropped`, and a
-`fiftyone.{brain,selection,visualization,samples}` block) that the agent's
-Voxel51 tab renders. To have this happen automatically on every run, pin the
-`curate` stage to the `npa-fiftyone` image in your submit (see the
-[FiftyOne](../../../skills/tools/fiftyone/SKILL.md) skill and the conceptual
-guide's curation section).
+`fiftyone.{brain,selection,visualization,samples}` block). This happens
+automatically in the shipped PAIDF workflow. Standalone callers may omit
+`--require-fiftyone` to request a clearly labeled report-only fallback, but the
+agent will state that FiftyOne did not run rather than marketing that fallback as
+FiftyOne review. See the [FiftyOne](../../../skills/tools/fiftyone/SKILL.md)
+skill and the conceptual guide's curation section.
 
 ---
 
@@ -674,9 +694,11 @@ sign in, then:
 - **Rerun:** select the run and load it (or click `reports/sim2real.rrd` in the
   artifact browser) to open the embedded Rerun viewer with input + augmented
   frames and captions.
-- **Voxel51 (FiftyOne curation):** uniqueness/kept/near-dupe badges, the source
-  video sample, annotate-original captions on input frames, and the FiftyOne
-  Brain PCA scatter.
+- **Dataset & provenance:** separate Original/input and Synthetic/augmented
+  groups, explicit counts and filters, the input source kind/URI, per-sample
+  provenance, uniqueness/kept/near-dupe badges, and the FiftyOne Brain PCA
+  scatter. If a legacy run contains only report curation, the panel says
+  “FiftyOne did not run” and does not present it as a Voxel51 review.
 
 Useful authenticated JSON endpoints for scripted verification:
 
@@ -686,6 +708,7 @@ GET  /api/artifacts/run/<run-id>?prefix=physical-ai-data-factory
 GET  /api/artifacts/provenance/<run-id>
 GET  /api/fiftyone/dataset/<run-id>
 POST /api/sim-viz/load-run        # {"run_id": "<run-id>"}
+POST /api/sim-viz/load-artifact   # {"run_id":"<run-id>","key":"reports/sim2real.rrd","prefix":"physical-ai-data-factory"}
 ```
 
 ---

@@ -9,14 +9,17 @@ from npa.workflows.artifacts import (
     Artifact,
     ArtifactDiscoveryError,
     artifact_media_type,
+    artifact_data_role,
     build_fiftyone_dataset,
     download_s3_uri,
     find_run_artifacts,
+    infer_run_id_from_artifact_key,
     list_all_runs,
     list_artifacts,
     list_run_categories,
     list_runs,
     render_hint_for_object,
+    resolve_run_artifact,
     select_preferred_artifact,
 )
 
@@ -66,11 +69,18 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
     assert summary["grade_score"] == 0.0
     assert summary["grade_decision"] == "loop_back"
     assert summary["input_count"] == 2
+    assert summary["original_input_count"] == 2
+    assert summary["synthetic_augmented_count"] == 2
     assert set(dataset["fields"]) == {"cloth_color", "lighting"}
 
     aug = [s for s in dataset["samples"] if s["group"] == "augmented"]
     inp = [s for s in dataset["samples"] if s["group"] == "input"]
     assert len(aug) == 2 and len(inp) == 2
+    assert [sample["group"] for sample in dataset["samples"][:2]] == ["input", "input"]
+    assert all(sample["data_role"] == "original_input" for sample in inp)
+    assert all(sample["data_role"] == "synthetic_augmented" for sample in aug)
+    assert dataset["review"]["real_fiftyone"] is False
+    assert "FiftyOne did not run" in dataset["review"]["label"]
     first = aug[0]
     assert first["thumbnail_key"].endswith("frame-00000.png")
     assert first["video_key"].endswith("augmented_video.mp4")
@@ -121,6 +131,8 @@ def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
     assert summary["curated_dropped"] == 1
     assert summary["near_duplicate_count"] == 1
     assert summary["uniqueness"]["mean"] == 0.55
+    assert dataset["review"]["real_fiftyone"] is True
+    assert dataset["review"]["label"] == "Real FiftyOne Brain review"
 
     aug = sorted(
         (s for s in dataset["samples"] if s["group"] == "augmented"), key=lambda s: s["id"]
@@ -749,3 +761,86 @@ def test_build_fiftyone_dataset_emits_bucket_qualified_uris() -> None:
     assert aug["thumbnail_uri"].startswith("s3://lerobot-d87cf691/")
     assert aug["thumbnail_uri"].endswith("frame-00000.png")
     assert aug["video_uri"].endswith("augmented_video.mp4")
+
+
+def test_dataset_exposes_seeded_source_and_derived_conditioning_clip() -> None:
+    run = "paidf-seeded"
+    base = f"physical-ai-data-factory/{run}"
+    keys = [
+        f"{base}/configs/manifest.json",
+        f"{base}/input/frame_0000.png",
+        f"{base}/input/conditioning.mp4",
+        f"{base}/cosmos_augmented/aug-{run}-0/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json",
+        f"{base}/curation/report.json",
+    ]
+    payloads = {
+        f"{base}/configs/manifest.json": {
+            "input_source": {
+                "kind": "npa_seeded_fixture",
+                "uri": f"s3://bucket/{base}/input/",
+                "frame_count": 8,
+                "description": "NPA-generated seeded fixture used as this run's input",
+            }
+        },
+        f"{base}/cosmos_augmented/aug-{run}-0/metadata.json": {
+            "variables": {"lighting": "warm"}
+        },
+        f"{base}/curation/report.json": {"curation_engine": "report-only"},
+    }
+
+    dataset = build_fiftyone_dataset(
+        keys,
+        run_id=run,
+        read_json=lambda key: payloads.get(key),
+        bucket="bucket",
+    )
+
+    assert dataset["source"]["kind"] == "npa_seeded_fixture"
+    assert dataset["samples"][0]["data_role"] == "derived_conditioning"
+    assert dataset["samples"][1]["data_role"] == "original_input"
+    assert dataset["summary"]["conditioning_count"] == 1
+    assert dataset["summary"]["original_input_count"] == 1
+    assert dataset["review"]["label"] == "Artifact summary only — FiftyOne did not run"
+
+
+def test_artifact_roles_and_run_relative_resolution_are_explicit() -> None:
+    run = "paidf-full-id"
+    base = f"physical-ai-data-factory/{run}"
+    original = Artifact(
+        run,
+        f"{base}/input/frame_0000.png",
+        f"s3://bucket/{base}/input/frame_0000.png",
+        10,
+        "",
+        "image",
+        True,
+    )
+    augmented = Artifact(
+        run,
+        f"{base}/cosmos_augmented/aug-0/frame-00000.png",
+        f"s3://bucket/{base}/cosmos_augmented/aug-0/frame-00000.png",
+        10,
+        "",
+        "image",
+        True,
+    )
+    report = Artifact(
+        run,
+        f"{base}/reports/sim2real.rrd",
+        f"s3://bucket/{base}/reports/sim2real.rrd",
+        10,
+        "",
+        "rerun",
+        False,
+    )
+
+    assert original.to_dict()["data_role"] == "original_input"
+    assert augmented.to_dict()["data_role"] == "synthetic_augmented"
+    assert artifact_data_role(report.key, run)["role"] == "pipeline_metadata"
+    assert resolve_run_artifact(
+        [original, augmented, report],
+        run_id=run,
+        requested_key="reports/sim2real.rrd",
+    ) is report
+    assert infer_run_id_from_artifact_key(report.key) == run

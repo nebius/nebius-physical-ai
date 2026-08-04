@@ -261,6 +261,24 @@ def _materialize_conditioning_input(
         ) from exc
 
 
+def _persist_generated_conditioning_clip(local_input: str, input_uri: str) -> str:
+    """Persist PAIDF's frame-derived clip so evaluation uses the exact source.
+
+    User-supplied videos already live below ``input_uri``.  Only the ephemeral
+    clip produced from PNG/JPEG frames needs publishing; without this object the
+    downstream hallucination check cannot compare the conditioned output to its
+    source and would otherwise grade on attributes alone.
+    """
+
+    path = Path(str(local_input or ""))
+    if path.name != "npa-paidf-conditioning.mp4" or not input_uri.startswith("s3://"):
+        return ""
+    from npa.clients.storage import StorageClient
+
+    uri = input_uri.rstrip("/") + "/conditioning.mp4"
+    return StorageClient.from_environment().upload_file(str(path), uri)
+
+
 @app.command("transfer")
 def transfer_cmd(
     input_uri: str = typer.Option(..., "--input-uri", help="Input frames, assets, or rollout URI."),
@@ -405,6 +423,10 @@ def transfer_cmd(
             if not combos:
                 combos = [{}]
 
+            conditioning_clip_uri = _persist_generated_conditioning_clip(
+                local_input, input_uri
+            )
+
             parallelism = _variant_parallelism(len(combos))
 
             def _render_variant(i: int, combo: dict) -> dict:
@@ -412,7 +434,7 @@ def transfer_cmd(
                 # Pin each concurrent variant to a distinct GPU so an N-GPU pod
                 # runs N diffusions at once (sequential when parallelism == 1).
                 device = str(i % parallelism) if parallelism > 1 else None
-                return run_cosmos_transfer(
+                result = run_cosmos_transfer(
                     run_id=variant_run,
                     spec=spec or None,
                     prompt=str(combo.get("prompt") or "") or None,
@@ -423,6 +445,8 @@ def transfer_cmd(
                     cuda_visible_devices=device,
                     variant_tag=variant_run,
                 )
+                result["conditioning_clip_uri"] = conditioning_clip_uri
+                return result
 
             # Fan the GPU-bound diffusions out across the pod's GPUs, then publish
             # sequentially in combo order (publish/S3 upload stays single-threaded).
@@ -469,6 +493,7 @@ def transfer_cmd(
             payload["augmentation_variables"] = combos[0]
             payload["prompt"] = str((combos[0] or {}).get("prompt") or "")
             payload["input_conditioned"] = bool(local_input)
+            payload["conditioning_clip_uri"] = manifest.get("conditioning_clip_uri", "")
             payload["control_spec"] = manifest["control_spec"]
             if local_input:
                 payload["input_video"] = local_input

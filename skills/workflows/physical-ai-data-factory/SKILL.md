@@ -43,7 +43,7 @@ is pure composition of existing toolRefs; only add real tools with tests.
 | Evaluate & Validate | `grade` loop (`evaluate` + `quality-gate`) | `workbench.cosmos_evaluator.evaluate` (real Cosmos Evaluator: hallucination + attribute verification) + `data_factory_stages.grade_gate` | Token Factory + CPU |
 | Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
 | Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` (real Cosmos Curator stages → `clips/` + `metas/v0/`) | CPU |
-| Curation review | `curate` | `data_factory_stages.curate` (real FiftyOne Brain, merges the curator report) | CPU |
+| Curation review | `curate` | `workbench.fiftyone.curate_augmented` (real FiftyOne Brain, fail closed, merges the curator report) | CPU |
 | Visualize | `visualize` | `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU |
 | Finalize | `finalize` | `data_factory_stages.finalize` (real aggregate report) | CPU |
 
@@ -278,7 +278,7 @@ the command that fixes each. `--plan-only` skips the runtime-only checks;
   augmentation. Copy-paste staging +
   `ffmpeg` extract/synthesize one-liners:
   `docs/workbench/guides/physical-ai-data-factory-deploy.md` ("Stage input
-  first"). Consequently the Voxel51 tab and the full `reports/sim2real.rrd` Rerun
+  first"). Consequently the Dataset & provenance tab and the full `reports/sim2real.rrd` Rerun
   recording only appear once the run gets past annotate → augment → curate →
   visualize.
 Run either NVIDIA component on its own, against a run prefix or local files:
@@ -347,20 +347,20 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   plus a run-level `cosmos_augmented/manifest.json`.   `curate` counts clip
   subdirs (not top-level files) and `build_run_rrd` reads each clip's
   `metadata.json` for its Rerun label. Producer and consumers share this shape;
-- **Real FiftyOne curation (Voxel51):** the `curate` stage runs *real* FiftyOne
-  Brain curation over the augmented variants when FiftyOne is importable (i.e. the
-  stage runs in the `npa-fiftyone` image): `data_factory_stages.curate` delegates
-  to `data_factory_curate.run_curation`, which builds a `fiftyone.Dataset`,
+- **Real FiftyOne curation:** the `curate` stage invokes
+  `workbench.fiftyone.curate_augmented` in the `npa-fiftyone` image with
+  `--require-fiftyone`. It builds a `fiftyone.Dataset`,
   computes a GPU-free per-variant embedding (downsampled RGB + color histogram),
   and runs `compute_uniqueness` + `compute_similarity().find_duplicates()` +
   `compute_visualization(method="pca")`. The report gains `curation_engine:
   fiftyone-brain`, per-variant `uniqueness`, near-duplicate clusters, and a
   kept/dropped `selection` (schema stays `npa.fiftyone.curation.v1` — new fields
-  are additive). Outside the image (unit tests, dev-VM worktree python) it
-  degrades to the report-only counts path (`curation_engine: report-only`). Run it
-  standalone with `npa workbench fiftyone curate-augmented --augment-uri ...
-  --report-uri ...`. The agent's Voxel51 tab surfaces uniqueness + kept/dropped
-  per card and curation stats in the summary (`build_fiftyone_dataset`).
+  are additive). If Brain or its database is unavailable, PAIDF fails this stage;
+  it never calls a report-only summary FiftyOne review. Standalone callers may
+  omit `--require-fiftyone` to obtain a clearly labeled report-only fallback.
+  The agent's Dataset & provenance tab surfaces uniqueness + kept/dropped per
+  card, curation stats, original-versus-synthetic grouping, and source metadata
+  (`build_fiftyone_dataset`).
   `test_publish_transfer_layout_interoperates_with_curate_and_viz` guards it. The
   augment stage "multiplies": it runs one inference per sampled combo and emits
   one clip dir per variant (`publish_transfer_clip` per clip + a single

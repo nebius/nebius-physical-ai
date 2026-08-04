@@ -159,6 +159,50 @@ failed run at a time. `provision-if-absent` writes the cluster kubeconfig to
 For the shortest agent-driven setup, [copy the exact PAIDF agent
 prompt](docs/workbench/guides/physical-ai-data-factory-deploy.md#run-paidf-with-a-coding-agent).
 
+For an already configured project and provisioned cluster, this is the complete
+PAIDF submit, monitor, and agent-load path. `status` discovers PAIDF's nested
+durable manifest from the run ID; `logs` below also shows its exact S3 location.
+
+```bash
+eval "$(npa configure --show --env)"
+SPEC=npa/workflows/physical-ai-data-factory.yaml
+PROJECT="$NPA_PROJECT_ALIAS"
+BUCKET="$NPA_BUCKET"
+REGISTRY="${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
+KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
+RUN_ID="$(date -u +paidf-readme-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
+
+npa workbench workflow submit "$SPEC" --project "$PROJECT" \
+  --registry "$REGISTRY" --run-id "$RUN_ID" --stage-src \
+  --var bucket="$BUCKET" --var seed_default_input=true \
+  --var n_augmentations=1 --assume-decision promote_checkpoint \
+  --infra "k8s/$KUBE_CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
+
+MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
+npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
+npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage finalize
+
+# Load the final recording using the run-relative artifact contract. The auth
+# file is sourced, never printed. The default deployed agent name is "agent".
+AGENT_NAME=agent
+AGENT_PUBLIC_URL="$(npa agent status --project "$PROJECT" --name "$AGENT_NAME" --json \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["public_url"])')"
+source "$HOME/.npa/agents/$PROJECT/$AGENT_NAME/auth.env"
+curl -skS --fail-with-body -u "$AGENT_USER:$AGENT_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  -d "{\"run_id\":\"$RUN_ID\",\"key\":\"reports/sim2real.rrd\",\"prefix\":\"physical-ai-data-factory\"}" \
+  "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
+```
+
+The dataset view groups **Original/input** separately from
+**Synthetic/augmented**, shows the source URI/kind and per-item provenance, and
+identifies whether the review came from real FiftyOne Brain. PAIDF requires that
+real curation stage; it fails instead of labeling a report-only summary as
+FiftyOne review.
+
 ---
 
 ## Do more with npa

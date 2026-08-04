@@ -326,6 +326,27 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
 
+    full_run_id = "paidf-readme-20260803t23521785801124z"
+    state = {"active_run_id": full_run_id, "sim_viz_runs": {}}
+    loaded = {
+        "run_id": full_run_id,
+        "rrd_uri": f"s3://bucket/physical-ai-data-factory/{full_run_id}/reports/sim2real.rrd",
+        "artifact_render": "rerun",
+        "rerun_iframe_url": "",
+    }
+    monkeypatch.setattr(module, "_rerun_ready_state", lambda **_kwargs: True)
+    ready = module._sim_viz_load_response(state, loaded, run_id=full_run_id)
+    assert ready["active_run_id"] == full_run_id
+    assert ready["rerun_ready"] is True
+    assert ready["rrd_uri"].endswith("/reports/sim2real.rrd")
+    assert ready["rerun_iframe_url"].startswith("/rerun/")
+
+    monkeypatch.setattr(module, "_rerun_ready_state", lambda **_kwargs: False)
+    unavailable = module._sim_viz_load_response(state, loaded, run_id=full_run_id)
+    assert unavailable["active_run_id"] == full_run_id
+    assert unavailable["rerun_ready"] is False
+    assert unavailable["rerun_iframe_url"] == ""
+
 
 def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
     """The skill loader must resolve real SKILL.md files from skills/index.yaml.

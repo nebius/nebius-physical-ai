@@ -26,7 +26,7 @@ NVIDIA blueprint (OSMO) → NPA stage (toolRef / run):
 | Evaluate & Validate | `grade` loop (`evaluate` + `quality-gate`) | `workbench.cosmos_evaluator.evaluate` + `data_factory_stages.grade_gate` | Token Factory + CPU |
 | Stage 3 Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
 | Stage 4a Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` | CPU |
-| Stage 4b Curation review | `curate` | `data_factory_stages.curate` (FiftyOne Brain) | CPU |
+| Stage 4b Curation review | `curate` | `workbench.fiftyone.curate_augmented` (required FiftyOne Brain) | CPU |
 | Visualize | `visualize` | `data_factory_viz.build_run_rrd` | CPU |
 | Finalize | `finalize` | `data_factory_stages.finalize` | CPU |
 
@@ -70,15 +70,15 @@ where NPA substitutes its own endpoint.
 > run's `config.trigger_uri` (`input/`), preserving geometry/motion while changing
 > appearance (edge control is computed on-the-fly).
 
-### Migration: a real input video is required
+### Input conditioning and its evaluation source
 
-`workbench.cosmos2.transfer_execute` now fails closed unless its configured
-`trigger_uri` contains a readable `.mp4`, `.mov`, `.webm`, `.mkv`, or `.avi`.
-An empty/video-free prefix reports that no supported video exists; storage setup,
-authentication, listing, and download failures report a separate access error.
-The bundled upstream sample is no longer a fallback because it was removed for
-redistribution reasons. Upload the source video beneath the run's `input/` prefix
-before submitting either first-class managed workflow.
+`workbench.cosmos2.transfer_execute` fails closed unless its configured
+`trigger_uri` contains a readable source: either a supported video or PNG/JPEG
+frames. For frame-only/seeded runs PAIDF assembles a real conditioning clip,
+stores it as `input/conditioning.mp4`, and records that URI in the generated
+variant metadata. Cosmos Evaluator uses that same clip for hallucination scoring;
+an input-conditioned variant cannot pass on the attribute score alone when its
+source clip is missing. The bundled upstream sample is never a fallback.
 
 ## Runtime placement
 
@@ -88,16 +88,18 @@ before submitting either first-class managed workflow.
 - **CPU:** config sampling, the evaluator's hallucination check, Cosmos Curator
   curation, FiftyOne review, visualize, finalize.
 
-Each NVIDIA tool has its own workbench image, both CPU-only and both mode-based
-(`engine`, `smoke`, plus the tool's own commands):
+Each curation/evaluation tool has its own CPU-only workbench image:
 
 | Image | Stage | Needs |
 | --- | --- | --- |
 | `npa-cosmos-evaluator` | `evaluate` | `NEBIUS_TOKEN_FACTORY_KEY` (attribute verification only) |
 | `npa-cosmos-curate` | `cosmos-curate` | conda-forge ffmpeg with `libopenh264`, baked in |
+| `npa-fiftyone` | `curate` | bundled `mongod`; real Brain uniqueness/similarity/PCA |
 
 Without the curator image the stage records `engine: unavailable` plus the reason
-and the FiftyOne review still runs. Check what an environment resolves to with:
+and the required FiftyOne review still runs. If FiftyOne Brain is unavailable,
+the `curate` stage fails closed rather than presenting report-only counts as a
+FiftyOne review. Check what an environment resolves to with:
 
 ```bash
 npa workbench cosmos-evaluator engine --output text
@@ -231,18 +233,18 @@ The agent discovers runs from its artifact bucket. If the agent's base prefix is
 GET /api/artifacts/runs?prefix=physical-ai-data-factory
 # list a run's artifacts (render hints: video / image / json / text)
 GET /api/artifacts/run/<run-id>?prefix=physical-ai-data-factory
-# load one artifact into the viewer
-POST /api/sim-viz/load-artifact  {"s3_uri":"s3://<bucket>/.../input/video_0.mp4"}
+# load one artifact into the viewer (exact URI or run-relative key)
+POST /api/sim-viz/load-artifact  {"run_id":"<run-id>","key":"reports/sim2real.rrd","prefix":"physical-ai-data-factory"}
 ```
 
 Input clips render as `video`, extracted frames as `image`, and every stage's
 labels/reports as `json` — so the full input → intermediate → output flow is
 browsable in the agent.
 
-> **Voxel51 and the full Rerun recording only appear once the run gets past
+> **Dataset provenance and the full Rerun recording only appear once the run gets past
 > annotate → augment → curate → visualize.** With an empty `input/` the run stops
 > at `annotate-original` (only `configs/manifest.json` is written), so there is no
-> `cosmos_augmented/`, no `curation/report.json` for the Voxel51 tab, and no
+> `cosmos_augmented/`, no `curation/report.json` for the dataset tab, and no
 > `reports/sim2real.rrd` for the Rerun panel. Stage input frames first (see the
 > callout above) so the pipeline reaches curate/visualize and those panels
 > populate.

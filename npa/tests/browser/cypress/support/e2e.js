@@ -716,6 +716,49 @@ function installAgentApiMocks() {
     // Other runs: no data-factory provenance (keeps the panel honest/empty).
     req.reply(json({ ok: true, run_id: "", components: [], summary: "", origin: {} }));
   }).as("artifactProvenance");
+  cy.intercept("GET", `/api/fiftyone/dataset/${DF_MOCK_RUN_ID}`, json({
+    run_id: DF_MOCK_RUN_ID,
+    source: {
+      kind: "operator_provided",
+      uri: `s3://mock/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/`,
+      description: "Operator-provided original/input data stored for this run",
+    },
+    review: {
+      engine: "fiftyone-brain",
+      real_fiftyone: true,
+      label: "Real FiftyOne Brain review",
+      limitation: "",
+    },
+    summary: {
+      variant_count: 1,
+      original_input_count: 2,
+      synthetic_augmented_count: 1,
+      curation_engine: "fiftyone-brain",
+      curated_kept: 1,
+    },
+    fields: ["lighting"],
+    visualization: [],
+    samples: [
+      {
+        id: "frame_00.png",
+        label: "frame_00.png",
+        group: "input",
+        data_role: "original_input",
+        data_role_label: "Original / input data",
+        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/frame_00.png`,
+      },
+      {
+        id: "aug0",
+        label: "aug0",
+        group: "augmented",
+        data_role: "synthetic_augmented",
+        data_role_label: "Synthetic / augmented output",
+        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/frame-000000.png`,
+        video_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/augmented_video.mp4`,
+        tags: { lighting: "warm" },
+      },
+    ],
+  })).as("dfDataset");
   cy.intercept("POST", "/api/workflows/draft", json({
     ok: true,
     yaml: WORKFLOW_YAML,

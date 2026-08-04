@@ -3409,9 +3409,9 @@ def _wait_for_rerun_web_viewer(*, timeout_s: float = 20.0) -> bool:
     return _wait_rerun_web_viewer_healthy(timeout_s=timeout_s)
 
 
-def _rerun_ready_state(*, rrd_uri: str = "") -> bool:
+def _rerun_ready_state(*, rrd_uri: str = "", allow_default: bool = True) -> bool:
     has_rrd = bool(str(rrd_uri or "").strip())
-    if not has_rrd and RRD_PATH.is_file():
+    if not has_rrd and allow_default and RRD_PATH.is_file():
         has_rrd = True
     if has_rrd and not _rerun_service_active():
         _restart_rerun_serve()
@@ -6634,11 +6634,8 @@ def sim_viz_status(run_id: str = ""):
         payload["run_id"] = str(latest_submit.get("run_id") or "").strip()
     if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
         payload["stage"] = "submitted"
-    # Read-only: do not _record/_save here. Concurrent GET status polls were
-    # racing load-run and wiping artifact_render from sim_viz_runs.
+    # Read-only: do not _record/_save here.
     payload_run = str(payload.get("run_id") or "").strip()
-    # Honest gate: a real run must not report rerun_ready / a run rrd_uri unless
-    # the served recording actually holds run-specific entities (never the demo).
     if payload_run and payload_run != "franka-demo" and not _served_recording_is_run_specific():
         payload["rerun_ready"] = False
         payload["rrd_uri"] = ""
@@ -6668,8 +6665,12 @@ def sim_viz_status(run_id: str = ""):
         payload["rerun_ready"] = False
         payload["rerun_iframe_url"] = ""
     else:
-        payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
-    # Latest-first (rrd_updated_at), not alphabetical — keep UI choosers newest-on-top.
+        payload["rerun_ready"] = _rerun_ready_state(
+            rrd_uri=str(payload.get("rrd_uri") or ""),
+            allow_default=may_use_default_recording,
+        )
+        if not payload["rerun_ready"]:
+            payload["rerun_iframe_url"] = ""
     payload["available_run_ids"] = [
         str(item.get("run_id") or "").strip()
         for item in _sim_viz_runs(state)
@@ -6770,7 +6771,6 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
                 or item.get("submitted_at")
                 or ""
             ).strip(),
-            # Run start (submit time) for the displayed date; see sim_viz_status.
             "started_at": str(item.get("submitted_at") or "").strip(),
             "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
@@ -6785,9 +6785,14 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
         if not payload.get("rerun_iframe_url"):
             payload["rerun_iframe_url"] = ""
     else:
-        payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
-        if not payload.get("rerun_iframe_url"):
+        payload["rerun_ready"] = _rerun_ready_state(
+            rrd_uri=str(payload.get("rrd_uri") or ""),
+            allow_default=str(payload.get("run_id") or "").strip() in {{"", "franka-demo"}},
+        )
+        if payload["rerun_ready"] and not payload.get("rerun_iframe_url"):
             payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"))
+        elif not payload["rerun_ready"]:
+            payload["rerun_iframe_url"] = ""
     return payload
 
 
@@ -7252,29 +7257,44 @@ def sim_viz_load_artifact(payload: dict | None = None):
         s3, settings = _agent_s3_client()
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
-            # Configured agent bucket only — blocks arbitrary-bucket exfil.
             _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
+            run_guess = str(body.get("run_id") or infer_run_id_from_artifact_key(key))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri
         else:
             run_id = validate_run_id(requested_run)
-            key = _safe_artifact_key(requested_key)
-            # Resolve the run's bucket across all accessible buckets so a run in a
-            # non-primary bucket still loads (no copy required).
+            wanted_key = _safe_artifact_key(requested_key)
+            artifacts = []
             bucket = settings["bucket"]
+            if str(body.get("prefix") or "").strip():
+                artifacts = list_artifacts(
+                    bucket,
+                    run_id,
+                    prefix=_artifact_discovery_prefix(settings, str(body.get("prefix") or "")),
+                    s3=s3,
+                )
             try:
-                rb, _arts = find_run_artifacts_across_buckets(
+                rb, discovered = find_run_artifacts_across_buckets(
                     _agent_s3_buckets(s3, settings),
                     base_prefix=settings.get("prefix", ""),
                     run_id=run_id,
                     s3=s3,
                 )
+                if not artifacts:
+                    artifacts = discovered
                 if rb:
                     bucket = rb
             except Exception:
                 pass
-            s3_uri = f"s3://{{bucket}}/{{key}}"
+            selected = resolve_run_artifact(artifacts, run_id=run_id, requested_key=wanted_key)
+            if selected is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"artifact not found for run {{run_id}}: {{wanted_key}}",
+                )
+            key = selected.key
+            s3_uri = selected.s3_uri
+            bucket, _selected_key = parse_s3_uri(s3_uri)
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(s3_uri, local_path, s3=s3)

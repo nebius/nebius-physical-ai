@@ -86,7 +86,10 @@ def test_curate_augmented_invokes_curate_and_emits_summary(mocker) -> None:
 
     assert result.exit_code == 0
     curate.assert_called_once_with(
-        "s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json", dedup_threshold=0.2
+        "s3://b/p/cosmos_augmented/",
+        "s3://b/p/curation/report.json",
+        dedup_threshold=0.2,
+        curator_report_uri="",
     )
     payload = json.loads(result.output)
     assert payload["engine"] == "fiftyone-brain"

@@ -1468,13 +1468,20 @@ def _resolve_monitor_state(
     s3_bucket: str = "",
     s3_endpoint: str = "",
 ):
-    from npa.orchestration.skypilot.workflow_state import resolve_workflow_s3_config
+    from npa.orchestration.skypilot.workflow_state import (
+        WorkflowS3Config,
+        WorkflowStateError,
+        discover_workflow_run_state,
+        is_durable_workflow_manifest,
+        read_manifest,
+        resolve_workflow_s3_config,
+    )
 
     exact_uri = workflow_s3_uri or (run_id if run_id.startswith("s3://") else "")
     if exact_uri.rstrip("/").endswith("/manifest.json"):
         exact_uri = exact_uri.rstrip("/").removesuffix("/manifest.json")
     resolved_run_id = _display_run_id(run_id)
-    return resolve_workflow_s3_config(
+    state = resolve_workflow_s3_config(
         run_id=resolved_run_id,
         project=project or None,
         workflow_s3_uri=exact_uri,
@@ -1482,6 +1489,60 @@ def _resolve_monitor_state(
         s3_bucket=s3_bucket,
         s3_endpoint=s3_endpoint,
     )
+    if exact_uri:
+        return state
+
+    # First retain the cheap/direct layout for legacy durable workflows.  If it
+    # is absent, discover the declarative workflow manifest below the selected
+    # project's bucket/prefix (PAIDF uses
+    # physical-ai-data-factory/<run>/npa-workflow/manifest.json).
+    try:
+        if is_durable_workflow_manifest(read_manifest(state)):
+            return state
+    except WorkflowStateError:
+        # The direct legacy location is optional; discovery below is the normal
+        # declarative-workflow path.
+        pass
+    parent = _resolve_monitor_parent_state(
+        project=project,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+        s3_endpoint=s3_endpoint,
+    )
+    # PAIDF has a stable product-owned layout. Probe it before enumerating the
+    # bucket so a least-privilege identity with GetObject but no ListBucket can
+    # still monitor a run by id.
+    paidf_suffix = f"physical-ai-data-factory/{resolved_run_id}/npa-workflow"
+    candidate_prefixes = []
+    if project and not workflow_s3_uri and not workflow_s3_prefix and not s3_bucket:
+        candidate_prefixes.append(paidf_suffix)
+    if parent.prefix.strip("/"):
+        candidate_prefixes.append(f"{parent.prefix.strip('/')}/{paidf_suffix}")
+    else:
+        candidate_prefixes.append(paidf_suffix)
+    for candidate_prefix in dict.fromkeys(candidate_prefixes):
+        paidf_state = WorkflowS3Config(
+            bucket=parent.bucket,
+            prefix=candidate_prefix,
+            endpoint_url=parent.endpoint_url,
+            aws_access_key_id=parent.aws_access_key_id,
+            aws_secret_access_key=parent.aws_secret_access_key,
+            project=parent.project,
+        )
+        try:
+            paidf_manifest = read_manifest(paidf_state)
+            if (
+                is_durable_workflow_manifest(paidf_manifest)
+                and str(paidf_manifest.get("run_id") or "").strip() == resolved_run_id
+            ):
+                return paidf_state
+        except WorkflowStateError:
+            continue
+    discovered = discover_workflow_run_state(
+        state_parent=parent,
+        run_id=resolved_run_id,
+    )
+    return discovered or state
 
 
 def _resolve_monitor_parent_state(
@@ -2255,6 +2316,20 @@ def list_cmd(
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
         )
+        if project and not workflow_s3_uri and not workflow_s3_prefix and not s3_bucket:
+            # Project checkpoint prefixes scope agent artifacts, but declarative
+            # workflows such as PAIDF intentionally write at a product prefix in
+            # the same bucket. A project-level list therefore scans the bucket
+            # root and relies on durable-manifest validation to exclude all
+            # component and source-staging manifests.
+            parent_state = type(parent_state)(
+                bucket=parent_state.bucket,
+                prefix="",
+                endpoint_url=parent_state.endpoint_url,
+                aws_access_key_id=parent_state.aws_access_key_id,
+                aws_secret_access_key=parent_state.aws_secret_access_key,
+                project=parent_state.project,
+            )
         runs = list_runs(state_parent=parent_state, limit=limit)
     except Exception as exc:
         _fail(str(exc))

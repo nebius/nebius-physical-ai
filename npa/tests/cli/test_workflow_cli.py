@@ -754,6 +754,121 @@ def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(monkeypatc
     assert persisted["steps"][0]["status"] == "SUCCEEDED"
 
 
+def test_status_discovers_paidf_manifest_from_project_and_run_id(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *args, **kwargs: WorkflowResult(status="SUCCEEDED", job_id="1", returncode=0),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        lambda *args, **kwargs: [{"task_id": 0, "task_name": "finalize", "status": "SUCCEEDED"}],
+    )
+    run_id = "paidf-readme-1"
+    key = f"physical-ai-data-factory/{run_id}/npa-workflow/manifest.json"
+    manifest = {
+        "schema_version": "npa.workflow.run.v1",
+        "workflow": "physical-ai-data-factory",
+        "run_id": run_id,
+        "api_version": "npa.workflow/v0.0.1",
+        "run_prefix_uri": f"s3://bucket/physical-ai-data-factory/{run_id}",
+        "status": "submitted",
+        "sky_job_id": "1",
+        "updated_at": "2026-08-04T00:00:00Z",
+        "steps": [{"state": "finalize", "status": "submitted", "resources_profile": {}}],
+    }
+    fake_s3.put_object(Bucket="bucket", Key=key, Body=json.dumps(manifest).encode())
+
+    def forbidden_listing(_name: str):
+        raise AssertionError("known PAIDF layout must not require ListBucket")
+
+    monkeypatch.setattr(fake_s3, "get_paginator", forbidden_listing)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            run_id,
+            "--project",
+            "test-rtx",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["run_id"] == run_id
+    assert payload["status"] == "SUCCEEDED"
+    assert payload["manifest_uri"] == f"s3://bucket/{key}"
+
+
+def test_workflow_list_ignores_component_and_staged_source_manifests(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    run_id = "paidf-1"
+    durable = {
+        "schema_version": "npa.workflow.run.v1",
+        "workflow": "physical-ai-data-factory",
+        "run_id": run_id,
+        "api_version": "npa.workflow/v0.0.1",
+        "steps": [],
+        "updated_at": "2026-08-04T00:00:00Z",
+    }
+    objects = {
+        f"physical-ai-data-factory/{run_id}/npa-workflow/manifest.json": durable,
+        f"physical-ai-data-factory/{run_id}/configs/manifest.json": {
+            "schema": "npa.data_factory.configs.v1",
+            "run_id": "configs",
+        },
+        f"physical-ai-data-factory/{run_id}/cosmos_augmented/manifest.json": {
+            "schema": "npa.cosmos2.transfer.v1",
+            "run_id": run_id,
+        },
+        "npa-src/npa/manifest.json": {"name": "npa", "run_id": "npa"},
+    }
+    for key, payload in objects.items():
+        fake_s3.put_object(Bucket="bucket", Key=key, Body=json.dumps(payload).encode())
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "list",
+            "--project",
+            "test-rtx",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    runs = json.loads(result.output)["runs"]
+    assert [row["run_id"] for row in runs] == [run_id]
+    assert runs[0]["workflow_name"] == "physical-ai-data-factory"
+    assert runs[0]["run_prefix_uri"].endswith(f"/{run_id}/npa-workflow")
+
+
 def test_workflow_logs_maps_distillation_error(mocker) -> None:
     mocker.patch(
         "npa.workflows.distill.get_stage_logs",

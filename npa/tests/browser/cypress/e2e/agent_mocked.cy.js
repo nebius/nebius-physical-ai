@@ -53,6 +53,26 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
 
+  it("separates original and synthetic PAIDF data with real review provenance", () => {
+    cy.get("#tabVoxel").should("contain.text", "Dataset & provenance").click();
+    cy.get("#voxelRunInput").clear().type(DF_MOCK_RUN_ID);
+    cy.get("#voxelLoadRun").click();
+    cy.wait("@dfDataset");
+
+    cy.get("#voxelReview").should("have.class", "is-real").and("contain.text", "Real FiftyOne Brain review");
+    cy.get("#voxelSummary")
+      .should("contain.text", "original/input 2")
+      .and("contain.text", "synthetic/augmented 1")
+      .and("contain.text", "Operator-provided original/input data");
+    cy.get("#voxelGrid .voxel-group").should("have.length", 2).then(($groups) => {
+      expect($groups.eq(0).text()).to.include("Original / input data (1)");
+      expect($groups.eq(1).text()).to.include("Synthetic / augmented data (1)");
+    });
+    cy.get('#voxelGrid .voxel-card[data-role="original_input"]').should("contain.text", "frame_00.png");
+    cy.get('#voxelGrid .voxel-card[data-role="synthetic_augmented"]').should("contain.text", "aug0");
+    cy.get("#panelVoxel").should("not.contain.text", "FiftyOne-style");
+  });
+
   it("keeps Stages generic after drafting a non-Sim2Real workflow YAML", () => {
     cy.get("#workflowYaml").clear().type(GENERIC_WORKFLOW_YAML, { delay: 0 });
     cy.get("#workflowValidate").click();

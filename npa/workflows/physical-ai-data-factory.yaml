@@ -20,7 +20,7 @@ kind: Workflow
 #                                       clips so the amplified set ships labeled)
 #   Stage 4  Curation                -> cosmos-curate      (NVIDIA Cosmos Curator:
 #                                       split / transcode / motion-score / catalog)
-#                                    -> curate             (Voxel51 / FiftyOne review
+#                                    -> curate             (real FiftyOne Brain review
 #                                       over the curated set)
 #            Finalize                 -> finalize          (graded-dataset report)
 #
@@ -110,6 +110,7 @@ config:
   curator_clip_len_s: "3"
   curator_min_clip_len_s: "1"
   curator_motion_filter: score-only
+  fiftyone_dedup_threshold: "0.10"
 
   # --- Models (verified available on Nebius Token Factory) ---
   caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
@@ -138,7 +139,7 @@ config:
   # carryover from the AV/BDD100K curation pipelines; this video blueprint has no
   # LanceDB table, so it simply points at the augmented set (same prefix as
   # augment_uri) -- i.e. "the data to curate". The curate stage itself runs a
-  # real run.shell report over augment_uri (not the fiftyone.launch_app toolRef).
+  # real FiftyOne Brain review over augment_uri.
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   # Cosmos Curator writes its own canonical tree (clips/ metas/v0/ processed_videos/)
   # under curated_clips_uri, and its summary under curator_report_uri; the FiftyOne
@@ -353,25 +354,22 @@ states:
 
   curate:
     description: >
-      Stage 4b - Curation review (Voxel51 / FiftyOne). Run REAL FiftyOne Brain
+      Stage 4b - Curation review. Run REAL FiftyOne Brain
       curation over the augmented + graded scenario variants: build a
       fiftyone.Dataset, compute per-variant uniqueness, detect near-duplicates, and
       record which variants are kept vs dropped, plus clip/frame counts and per-clip
       coverage. The Cosmos Curator summary from the previous stage is merged in, so
       one report carries both the curator's clip catalog and the review decisions.
-      When FiftyOne is available (the curate stage runs in the npa-fiftyone image)
-      the report's curation_engine is "fiftyone-brain"; otherwise it degrades to
-      the report-only counts path so the pipeline never regresses.
+      This toolRef routes the stage into the npa-fiftyone image and requires the
+      report's curation_engine to be "fiftyone-brain". If the real component is
+      unavailable the stage fails closed; it never markets counts-only output as
+      FiftyOne review.
     needs: [cosmos-curate]
+    toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:
       - uri: "{{config.lance_uri}}"
         schema: npa.cosmos2.transfer.v1
-    run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import curate;
-        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}',
-        curator_report_uri='{{config.curator_report_uri}}')"
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1

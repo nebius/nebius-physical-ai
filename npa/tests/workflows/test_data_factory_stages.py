@@ -504,6 +504,9 @@ def test_generate_configs_seeds_default_input_when_flag_set(tmp_path: Path, monk
         seed_default_input="true",
     )
     assert result["seeded_default_input_frames"] == 8
+    assert result["input_source"]["kind"] == "npa_seeded_fixture"
+    assert result["input_source"]["uri"] == calls["input_uri"]
+    assert result["input_source"]["frame_count"] == 8
     assert calls["input_uri"] == "s3://b/physical-ai-data-factory/run-x/input/"
     assert calls["seed"] == "run-x"
 
@@ -521,6 +524,7 @@ def test_generate_configs_no_seed_when_flag_false(tmp_path: Path, monkeypatch) -
         seed_default_input="false",
     )
     assert result["seeded_default_input_frames"] == 0
+    assert result["input_source"]["kind"] == "operator_provided"
 
 
 def test_generate_configs_records_the_seeded_count_in_the_written_manifest(
@@ -544,6 +548,7 @@ def test_generate_configs_records_the_seeded_count_in_the_written_manifest(
 
     written = json.loads(configs.read_text(encoding="utf-8"))
     assert written["seeded_default_input_frames"] == 5
+    assert written["input_source"]["kind"] == "npa_seeded_fixture"
 
 
 def test_generate_configs_fails_when_requested_seeding_fails(tmp_path: Path, monkeypatch) -> None:

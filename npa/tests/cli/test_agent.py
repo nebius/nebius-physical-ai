@@ -1013,7 +1013,8 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '/api/artifacts/stage/' in source
     assert 'id="stageDetail"' in source
     assert "data-stage-label=" in source
-    # Voxel51 / FiftyOne dataset tab.
+    # Artifact-backed dataset/provenance tab. It must not present its own grid as
+    # a Voxel51/FiftyOne imitation, and it must separate source from generated data.
     assert '@app.get("/fiftyone/dataset/{{run_id:path}}")' in source
     assert "build_fiftyone_dataset" in source
     assert 'id="tabVoxel"' in source
@@ -1022,6 +1023,18 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "async function loadVoxelDataset(" in source
     assert "/api/fiftyone/dataset/" in source
     assert 'id="voxelGrid"' in source
+    assert "Dataset &amp; provenance" in source
+    assert "FiftyOne-style" not in source
+    assert "Original / input data" in source
+    assert "Synthetic / augmented data" in source
+    assert "Artifact summary only — FiftyOne did not run" in source
+    assert 'id="voxelReview"' in source
+    assert "data_role_label" in source
+    # Loading by run-relative key resolves a discovered object and exact S3 keys
+    # infer the full run id instead of truncating it to the top-level workflow name.
+    assert "resolve_run_artifact(artifacts, run_id=run_id" in source
+    assert "infer_run_id_from_artifact_key(key)" in source
+    assert "allow_default=may_use_default_recording" in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
     # blank when active. Assert panelRerun is fully closed before panelVoxel opens.

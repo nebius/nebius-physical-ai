@@ -127,7 +127,12 @@ def up_cmd(
         tfvars["gpu_nodes_preemptible"] = bool(preemptible)
     _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
-    _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
+    _run_stream(
+        [terraform_bin, "init", "-lockfile=readonly"],
+        cwd=tf_dir,
+        env=env,
+        timeout=600,
+    )
     _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
     _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
     _preflight_instance_count_quota(tfvars, env)
@@ -253,7 +258,12 @@ def down_cmd(
     # The node-group watcher below shows that the drain is progressing; this names
     # *why* it is slow, which is the part an operator can reason about.
     _report_drain_blockers(kubeconfig)
-    _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
+    _run_stream(
+        [terraform_bin, "init", "-lockfile=readonly"],
+        cwd=tf_dir,
+        env=env,
+        timeout=600,
+    )
     # `Still destroying...` every 10s with no detail made a ~6-minute node-group
     # drain look like a hang. Report node-group state while it happens.
     watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)

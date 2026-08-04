@@ -152,7 +152,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
     )
 
     assert result.exit_code == 0, result.output
-    assert ["terraform", "init"] in stream_calls
+    assert ["terraform", "init", "-lockfile=readonly"] in stream_calls
     # -var beats terraform.tfvars; TF_VAR_* does not, so the flag has to be passed
     # explicitly as well as exported.
     apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
@@ -572,7 +572,7 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     result = runner.invoke(app, ["down", "--terraform-dir", str(tf_dir), "--force"])
 
     assert result.exit_code == 0, result.output
-    assert ["terraform", "init"] in stream_calls
+    assert ["terraform", "init", "-lockfile=readonly"] in stream_calls
     assert _find_call(stream_calls, "terraform", "destroy", "-auto-approve")
 
 

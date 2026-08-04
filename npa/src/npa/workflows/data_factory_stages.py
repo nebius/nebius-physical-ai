@@ -239,6 +239,25 @@ def generate_configs(
                 f"failed: {exc}"
             ) from exc
     manifest["seeded_default_input_frames"] = seeded
+    source_kind = (
+        "npa_seeded_fixture"
+        if seeded
+        else ("stored_run_input" if _is_truthy(seed_default_input) else "operator_provided")
+    )
+    manifest["input_source"] = {
+        "kind": source_kind,
+        "uri": input_uri,
+        "frame_count": seeded,
+        "description": (
+            "NPA-generated seeded fixture used as this run's input"
+            if seeded
+            else (
+                "Pre-existing input data reused from this run's input prefix"
+                if source_kind == "stored_run_input"
+                else "Operator-provided original/input data stored for this run"
+            )
+        ),
+    }
     uri = configs_uri.rstrip("/") + "/manifest.json" if not configs_uri.endswith(".json") else configs_uri
     manifest["written_uri"] = _upload_json(manifest, uri)
     print(json.dumps(manifest))

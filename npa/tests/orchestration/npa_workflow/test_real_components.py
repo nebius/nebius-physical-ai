@@ -125,8 +125,11 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
 
     assert states["cosmos-curate"]["next"] == "curate"
     assert states["curate"]["needs"] == ["cosmos-curate"]
-    # The review stage must actually read the curator's summary, not ignore it.
-    assert "curator_report_uri" in str(states["curate"]["run"]["shell"])
+    assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
+    fiftyone_argv = TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
+    assert fiftyone_argv[:4] == ["npa", "workbench", "fiftyone", "curate-augmented"]
+    assert "--curator-report-uri" in fiftyone_argv
+    assert "--require-fiftyone" in fiftyone_argv
 
 
 def test_quality_gate_reads_the_evaluator_report() -> None:

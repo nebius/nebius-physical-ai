@@ -144,6 +144,7 @@ def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatc
             "spec": "_npa_input_spec_r1.json",
             "input_conditioned": True,
             "input_video": "/tmp/robot_input.mp4",
+            "conditioning_clip_uri": "s3://bkt/run1/input/conditioning.mp4",
             "control": "edge",
         },
         "s3://bkt/run1/cosmos_augmented/",
@@ -154,11 +155,13 @@ def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatc
     assert manifest["mode"] == "cosmos_transfer2.5_gpu"
     assert manifest["input_conditioned"] is True
     assert manifest["conditioned_input"] == "robot_input.mp4"
+    assert manifest["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
     assert manifest["control"] == "edge"
     meta = json.loads(recorded["metadata"])
     assert meta["mode"] == "cosmos_transfer2.5_gpu"
     assert meta["input_conditioned"] is True
     assert meta["conditioned_input"] == "robot_input.mp4"
+    assert meta["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
 
 
 def test_multi_variant_publish_writes_one_clip_per_combo(tmp_path: Path, monkeypatch) -> None:
@@ -295,6 +298,31 @@ def test_materialize_paidf_frames_as_conditioning_clip(tmp_path: Path, monkeypat
     assert "frame-00000.png" in concat
     assert "frame-00001.jpg" in concat
     assert "ignore.txt" not in concat
+
+
+def test_generated_conditioning_clip_is_persisted_for_evaluator(tmp_path: Path, monkeypatch) -> None:
+    from npa.clients.storage import StorageClient
+
+    clip = tmp_path / "npa-paidf-conditioning.mp4"
+    clip.write_bytes(b"conditioning")
+    uploads: list[tuple[str, str]] = []
+
+    class Storage:
+        def upload_file(self, local: str, uri: str) -> str:
+            uploads.append((local, uri))
+            return uri
+
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: Storage())
+
+    uri = cosmos2._persist_generated_conditioning_clip(
+        str(clip), "s3://bucket/physical-ai-data-factory/run/input/"
+    )
+
+    assert uri == "s3://bucket/physical-ai-data-factory/run/input/conditioning.mp4"
+    assert uploads == [(str(clip), uri)]
+    assert cosmos2._persist_generated_conditioning_clip(
+        str(tmp_path / "user-video.mp4"), "s3://bucket/run/input/"
+    ) == ""
 
 
 def test_materialize_standalone_does_not_convert_frame_prefix(monkeypatch) -> None:

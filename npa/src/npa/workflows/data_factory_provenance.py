@@ -19,12 +19,12 @@ from typing import Any, Callable
 # runtime is where the compute actually runs (grounds the "which needs a GPU" story).
 _STAGE_COMPONENTS: list[tuple[str, dict[str, str]]] = [
     ("configs", {"stage": "Config generation", "component": "Appearance-variable sampler", "runtime": "CPU"}),
-    ("input", {"stage": "Source frames", "component": "Uploaded source clips", "runtime": "input"}),
+    ("input", {"stage": "Source frames", "component": "Run input source", "runtime": "input"}),
     ("labeled_original", {"stage": "Annotate originals", "component": "Token Factory VLM", "runtime": "hosted GPU (Token Factory)"}),
     ("cosmos_augmented", {"stage": "Augment", "component": "Cosmos Transfer 2.5", "runtime": "GPU (Nebius K8s)"}),
     ("grade", {"stage": "Attribute verify + quality gate", "component": "Token Factory vlm_eval + CPU gate", "runtime": "hosted GPU (Token Factory) + CPU"}),
     ("labeled_augmented", {"stage": "Pseudo-label augmented", "component": "Token Factory VLM", "runtime": "hosted GPU (Token Factory)"}),
-    ("curation", {"stage": "Curation", "component": "FiftyOne-style curation report", "runtime": "CPU"}),
+    ("curation", {"stage": "Curation", "component": "Dataset curation report", "runtime": "CPU"}),
     ("reports", {"stage": "Visualize + finalize", "component": "Rerun recording + aggregate report", "runtime": "CPU"}),
 ]
 
@@ -117,8 +117,8 @@ def build_run_provenance(
             elif engine == "report-only":
                 entry["engine"] = "report_only"
                 entry["detail"] = (
-                    "counts report (FiftyOne stand-in) — run the curate stage in the "
-                    "npa-fiftyone image for real FiftyOne Brain curation"
+                    "artifact counts only — FiftyOne Brain did not run for this "
+                    "historical or fallback result"
                 )
         components.append(entry)
 
@@ -235,12 +235,22 @@ def build_run_origin(
 
     # Config-driven appearance variables (grounds "generated from config, not an image").
     config_variables: dict[str, Any] | None = None
+    input_source: dict[str, Any] = {}
     cfg_key = _stage_json_key(keys, run_id, "configs", "manifest.json")
     if cfg_key:
         cfg = _read(cfg_key)
         variables = cfg.get("variables")
         if isinstance(variables, dict) and variables:
             config_variables = variables
+        source = cfg.get("input_source")
+        if isinstance(source, dict):
+            input_source = dict(source)
+        elif int(cfg.get("seeded_default_input_frames") or 0) > 0:
+            input_source = {
+                "kind": "npa_seeded_fixture",
+                "frame_count": int(cfg.get("seeded_default_input_frames") or 0),
+                "description": "NPA-generated seeded fixture used as this run's input",
+            }
 
     # Earliest stored visual stage (for the no-original fallback).
     earliest_visual: dict[str, Any] | None = None
@@ -268,6 +278,7 @@ def build_run_origin(
         config_variables=config_variables,
         labeled_from=labeled_from,
         label_model=label_model,
+        input_source=input_source,
     )
     return {
         "run_id": run_id,
@@ -278,6 +289,7 @@ def build_run_origin(
         "config_variables": config_variables,
         "labeled_from": labeled_from,
         "label_model": label_model,
+        "input_source": input_source,
         "summary": summary,
     }
 
@@ -292,6 +304,7 @@ def _origin_summary(
     config_variables: dict[str, Any] | None,
     labeled_from: str,
     label_model: str,
+    input_source: dict[str, Any],
 ) -> str:
     run_tag = f" `{run_id}`" if run_id else ""
     if original_present:
@@ -302,9 +315,19 @@ def _origin_summary(
         if augment:
             model = augment.get("model") or "Cosmos Transfer 2.5"
             aug_bit = f" and then transformed by Cosmos Transfer 2.5 ({model}) in the Augment stage"
+        source_kind = str(input_source.get("kind") or "")
+        if source_kind == "npa_seeded_fixture":
+            source_phrase = "NPA-generated seeded input fixture"
+        elif source_kind == "operator_provided":
+            source_phrase = "operator-provided original/input data"
+        else:
+            source_phrase = "stored original/input data"
+        source_uri = str(input_source.get("uri") or "")
+        uri_bit = f" from `{source_uri}`" if source_uri else ""
         return (
-            f"Original input for run{run_tag}: {n} uploaded source "
+            f"Original/input data for run{run_tag}: {n} {source_phrase} "
             f"{'frame' if n == 1 else 'frames'}/clip(s) — e.g. `{first}`{more}. "
+            f"Source identity{uri_bit or ': recorded in the run config manifest'}. "
             f"These were annotated by the Token Factory VLM (Annotate originals){aug_bit}."
         )
     # No original persisted → describe the earliest stored (augmented) visuals truthfully.
