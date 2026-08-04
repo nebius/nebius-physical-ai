@@ -57,14 +57,16 @@ def test_manifest_is_a_runnable_job() -> None:
     assert manifest["spec"]["backoffLimit"] == 0
 
 
-def test_runbook_resources_map_to_k8s_limits_and_node_selector() -> None:
+def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
     job = _materialize()
     pod = job.manifest["spec"]["template"]["spec"]
     limits = pod["containers"][0]["resources"]["limits"]
-    assert limits["nvidia.com/gpu"] == 1
+    assert "nvidia.com/gpu" not in limits
     assert limits["cpu"] == "16"
     assert limits["memory"] == "64Gi"
-    assert pod["nodeSelector"]["nvidia.com/gpu.product"]
+    assert "nodeSelector" not in pod
+    env = {item["name"]: item["value"] for item in pod["containers"][0]["env"]}
+    assert env["NPA_SIM2REAL_K8S_GPU_PRODUCT"].startswith("NVIDIA-RTX-PRO")
     assert pod["serviceAccountName"]
     assert {entry["name"] for entry in pod["imagePullSecrets"]}
     assert "activeDeadlineSeconds" not in job.manifest["spec"]

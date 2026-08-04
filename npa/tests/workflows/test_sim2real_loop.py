@@ -1278,7 +1278,8 @@ def test_raw_runbook_invokes_staged_flow_and_exposes_byo_envs() -> None:
     task = docs[0]
     assert task["name"] == "sim2real-staged-loop"
     assert task["resources"]["cloud"] == "kubernetes"
-    assert task["resources"]["accelerators"] == "RTX6000:1"
+    assert "accelerators" not in task["resources"]
+    assert task["envs"]["NPA_SIM2REAL_K8S_GPU_PRODUCT"].startswith("NVIDIA-RTX-PRO")
 
     # SkyPilot 0.12.2 does not interpolate ${VAR} inside `envs` or `image_id`.
     # The raw runbook must therefore carry materialized literals and expand env

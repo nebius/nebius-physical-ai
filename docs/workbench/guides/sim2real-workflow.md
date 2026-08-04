@@ -80,6 +80,12 @@ product label in `NPA_SIM2REAL_K8S_GPU_CANDIDATES` in order. Image, credential,
 and runtime failures are not misclassified as capacity and do not trigger a GPU
 fallback.
 
+The direct-Kubernetes driver is control-plane only and does not reserve a GPU.
+Stages that require compute dispatch registry-qualified `s2r-*` sibling Jobs
+with explicit GPU requests and product selectors. Consequently
+`NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS=16` can use all 16 GPUs on a 16-GPU cluster
+instead of losing one device to an idle orchestrator.
+
 ## One-command real-tier launch
 
 This example uses the canonical loop counts, no early exit, uncapped held-out

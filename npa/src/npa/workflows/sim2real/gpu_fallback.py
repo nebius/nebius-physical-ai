@@ -302,6 +302,12 @@ def ordered_compatible_products(
             ordered.append(product)
             seen.add(product)
 
+    def valid_selector_value(product: str) -> bool:
+        return bool(
+            len(product) <= 63
+            and re.fullmatch(r"[A-Za-z0-9](?:[-A-Za-z0-9_.]*[A-Za-z0-9])?", product)
+        )
+
     for requested_product in requested:
         family = normalize_gpu_family(requested_product)
         if not product_is_compatible(
@@ -338,6 +344,17 @@ def ordered_compatible_products(
                 continue
             for match in matches:
                 add(match)
+        elif not valid_selector_value(requested_product):
+            skipped.append(
+                {
+                    "product": requested_product,
+                    "status": "unresolved_alias",
+                    "scheduling_reason": (
+                        "node discovery was unavailable and this alias is not a valid "
+                        "Kubernetes node-label value"
+                    ),
+                }
+            )
         else:
             add(requested_product)
 
@@ -512,13 +529,15 @@ def run_gpu_job_with_fallback(
         }
         attempts.append(attempt)
         if apply.returncode != 0:
+            detail = " ".join(str(apply.stderr or apply.stdout or "").split())[:800]
             attempt.update(
                 status="apply_failed",
-                scheduling_reason=str(apply.stderr or apply.stdout),
+                scheduling_reason=detail,
                 duration_s=round(time.monotonic() - attempt_started, 3),
             )
             raise GpuJobFailure(
-                f"Kubernetes apply failed for {job_name}; refusing GPU product fallback",
+                f"Kubernetes apply failed for {job_name}: {detail or 'no API detail'}; "
+                "refusing GPU product fallback",
                 provenance=provenance,
             )
 

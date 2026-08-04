@@ -75,7 +75,9 @@
 name: sim2real-staged-loop
 resources:
   cloud: kubernetes
-  accelerators: RTX6000:1
+  # The driver is control-plane only. Real GPU work is dispatched to `s2r-*`
+  # sibling Jobs, so reserving a GPU here would reduce usable sibling capacity
+  # and make a 16-GPU cluster able to run only 15 parallel evaluations.
   cpus: 16+
   memory: 64+
   image_id: "docker:example.invalid/npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"

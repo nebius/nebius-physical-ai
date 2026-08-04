@@ -62,6 +62,21 @@ def test_node_inventory_and_explicit_order_resolve_to_actual_labels() -> None:
     assert any(normalize_gpu_family(item["product"]) == "h100" for item in plan.skipped)
 
 
+def test_missing_inventory_never_submits_human_gpu_alias_as_selector() -> None:
+    plan = ordered_compatible_products(
+        preferred=RTX,
+        explicit="RTX PRO 6000,L40S",
+        discovered=(),
+        workload="isaac",
+        image="registry/npa-isaac-lab:2.3.2",
+    )
+    assert plan.products == (RTX, "L40S")
+    assert any(
+        item["product"] == "RTX PRO 6000" and item["status"] == "unresolved_alias"
+        for item in plan.skipped
+    )
+
+
 def test_isaac_excludes_h100_h200_and_datacenter_blackwell() -> None:
     for product in (H100, H200, "NVIDIA-B200", B300):
         assert not product_is_compatible(
