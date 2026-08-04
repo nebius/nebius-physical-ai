@@ -139,6 +139,7 @@ def plan_cmd(
             typer.echo(
                 f"      cluster {c['name']}: cpu={c['cpu_nodes']} ({c['cpu_preset']}) "
                 f"gpu={c['gpu_nodes']} ({c['gpu_platform']} {c['gpu_preset']}) "
+                f"reservation={c['gpu_reservation']} "
                 f"gpu_cluster={c['enable_gpu_cluster']}"
             )
 
@@ -183,9 +184,9 @@ def deploy_cmd(
     preflight: bool = typer.Option(
         True,
         "--preflight/--no-preflight",
-        help="Check the tenant's quota allowances against the fleet's needs before "
-        "applying. Without it a quota wall surfaces as terraform blocking on "
-        "'Still creating...' until the timeout.",
+        help="Validate capacity-block reservations and tenant quota allowances "
+        "against the fleet's needs before applying. Without it a capacity/quota "
+        "wall surfaces as terraform blocking on 'Still creating...' until the timeout.",
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt (non-interactive create)."

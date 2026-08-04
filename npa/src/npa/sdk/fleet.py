@@ -18,7 +18,13 @@ Example::
             ProjectSpec(name="a", clusters=[ClusterSpec(
                 name="cluster",
                 cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="48vcpu-192gb"),
-                gpu_nodes=NodePoolSpec(count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"),
+                gpu_nodes=NodePoolSpec(
+                    count=1,
+                    platform="gpu-rtx6000",
+                    preset="1gpu-24vcpu-218gb",
+                    # Set at runtime to bind this pool STRICTLY to reserved capacity:
+                    capacity_block_group="",
+                ),
             )]),
             ProjectSpec(name="b", clusters=[ClusterSpec(
                 name="cluster",

@@ -74,6 +74,13 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
         lines.append(f"gpu_nodes_platform = {_tfstr(gpu.platform)}")
         if gpu.preset:
             lines.append(f"gpu_nodes_preset = {_tfstr(gpu.preset)}")
+        if gpu.capacity_block_group:
+            # STRICT is deliberate: AUTO may silently fall back to ordinary
+            # on-demand capacity when the named capacity block is exhausted.
+            lines.append(
+                "gpu_nodes_reservation_policy = { policy = \"STRICT\", "
+                f"reservation_ids = [{_tfstr(gpu.capacity_block_group)}] }}"
+            )
         disk = gpu.disk_size_gib if gpu.disk_size_gib > 0 else cluster.gpu_disk_size_gib
         lines.append(f"gpu_disk_size = {_tfstr(str(disk))}")
 

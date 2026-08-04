@@ -134,6 +134,23 @@ def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
         cluster.validate()
 
 
+def test_capacity_block_group_parses_on_gpu_pool_and_rejects_cpu_pool() -> None:
+    data = _base_mapping()
+    data["defaults"]["gpu_nodes"]["capacity_block_group"] = " capacityblockgroup-test "
+    spec = spec_from_mapping(data)
+    assert (
+        spec.projects[0].clusters[0].gpu_nodes.capacity_block_group
+        == "capacityblockgroup-test"
+    )
+
+    cluster = ClusterSpec(
+        name="c",
+        cpu_nodes=NodePoolSpec(count=1, capacity_block_group="capacityblockgroup-test"),
+    )
+    with pytest.raises(FleetSpecError, match="only valid for gpu_nodes"):
+        cluster.validate()
+
+
 def test_cluster_needs_at_least_one_node() -> None:
     cluster = ClusterSpec(name="empty")
     with pytest.raises(FleetSpecError, match="at least one CPU or GPU node"):
@@ -199,6 +216,24 @@ def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
     assert "gpu_nodes_fixed_count_per_group = 2" in tf
 
 
+def test_render_tfvars_capacity_block_is_strict() -> None:
+    cluster = ClusterSpec(
+        name="reserved",
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=False,
+    )
+    tf = render_tfvars(cluster)
+    assert (
+        'gpu_nodes_reservation_policy = { policy = "STRICT", '
+        'reservation_ids = ["capacityblockgroup-test"] }' in tf
+    )
+
+
 def test_patch_provider_domain_region_aware() -> None:
     provider_tf = 'provider "nebius" {\n  domain = "api.eu.nebius.cloud:443"\n}\n'
     us = patch_provider_domain(provider_tf, "us-central1")
@@ -244,6 +279,18 @@ def test_plan_json(tmp_path) -> None:
     names = sorted(p["display_name"] for p in plan["projects"])
     assert names == ["fleet1-test-a", "fleet1-test-b"]
     assert all(p["will_create"] for p in plan["projects"])
+
+
+def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> None:
+    from npa.fleet.lifecycle import plan_fleet
+
+    data = _base_mapping()
+    data["defaults"]["gpu_nodes"]["capacity_block_group"] = (
+        "capacityblockgroup-runtime-only"
+    )
+    plan = plan_fleet(spec_from_mapping(data))
+    assert plan["projects"][0]["clusters"][0]["gpu_reservation"] == "strict"
+    assert "capacityblockgroup-runtime-only" not in json.dumps(plan)
 
 
 def test_load_spec_from_yaml(tmp_path) -> None:
@@ -1040,6 +1087,41 @@ def _allowance(name: str, region: str, limit, unit: str = "count") -> dict:
     }
 
 
+def _capacity_block(
+    *,
+    reservation_id: str = "capacityblockgroup-test",
+    tenant_id: str = "t",
+    region: str = "us-central1",
+    platform: str = "gpu-rtx6000",
+    fabric: str = "",
+    limit: str = "16",
+    usage: str | None = None,
+    usage_percentage: str = "0.00",
+    state: str = "STATE_ACTIVE",
+) -> dict:
+    compute_v1 = {"platform": platform}
+    if fabric:
+        compute_v1["fabric"] = fabric
+    status = {
+        "region": region,
+        "resource_affinity": {"compute_v1": compute_v1},
+        "state": state,
+        "current_limit": limit,
+        "usage_percentage": usage_percentage,
+        "usage_state": (
+            "USAGE_STATE_NOT_USED"
+            if usage_percentage == "0.00"
+            else "USAGE_STATE_USED"
+        ),
+    }
+    if usage is not None:
+        status["usage"] = usage
+    return {
+        "metadata": {"id": reservation_id, "parent_id": tenant_id},
+        "status": status,
+    }
+
+
 def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
     from npa.fleet.quotas import required_quotas
 
@@ -1088,6 +1170,93 @@ def test_required_quotas_counts_gpu_cluster_and_skips_existing_filestore() -> No
     assert needed["compute.gpucluster.count"] == 1
     # Reusing a filesystem consumes no new filesystem quota.
     assert "compute.filesystem.count" not in needed
+
+
+def test_required_quotas_excludes_strictly_reserved_gpu_but_keeps_other_quotas() -> None:
+    from npa.fleet.quotas import required_quotas, required_reservations
+
+    cluster = ClusterSpec(
+        name="c",
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="48vcpu-192gb"),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=False,
+    )
+    needed = required_quotas([cluster])
+    assert "compute.instance.gpu.rtx6000" not in needed
+    assert needed["compute.instance.count"] == 3
+    assert needed["compute.disk.count"] == 3
+    assert needed["compute.instance.non-gpu.vcpu"] == 48
+    reservations = required_reservations([cluster], "us-central1")
+    assert reservations["capacityblockgroup-test"].required_gpus == 16
+
+
+def test_reservation_capacity_parser_and_validation_match_region_platform_fabric() -> None:
+    from npa.fleet.quotas import (
+        ReservationRequirement,
+        find_reservation_shortfalls,
+        parse_capacity_blocks,
+    )
+
+    blocks = parse_capacity_blocks(
+        json.dumps(
+            {
+                "items": [
+                    _capacity_block(
+                        platform="gpu-b200-sxm", fabric="us-central1-b", limit="40"
+                    )
+                ]
+            }
+        )
+    )
+    requirement = ReservationRequirement(
+        reservation_id="capacityblockgroup-test",
+        region="us-central1",
+        platform="gpu-b200-sxm",
+        fabric="us-central1-b",
+        required_gpus=16,
+    )
+    assert find_reservation_shortfalls(
+        {requirement.reservation_id: requirement}, blocks, "t"
+    ) == []
+    wrong_fabric = ReservationRequirement(
+        **{**requirement.__dict__, "fabric": "us-central1-a"}
+    )
+    shortfalls = find_reservation_shortfalls(
+        {wrong_fabric.reservation_id: wrong_fabric}, blocks, "t"
+    )
+    assert "fabric" in shortfalls[0].reason
+
+
+def test_reservation_capacity_parser_treats_live_usage_percentage_as_fraction() -> None:
+    from npa.fleet.quotas import parse_capacity_blocks
+
+    blocks = parse_capacity_blocks(
+        json.dumps(
+            {
+                "items": [
+                    _capacity_block(limit="48", usage_percentage="0.17"),
+                ]
+            }
+        )
+    )
+    # The live API emits 0.17 for about 17%, not 0.17%.
+    assert blocks["capacityblockgroup-test"]["available_gpus"] == 39
+
+    exact = parse_capacity_blocks(
+        json.dumps(
+            {
+                "items": [
+                    _capacity_block(limit="48", usage="8", usage_percentage="0.17"),
+                ]
+            }
+        )
+    )
+    assert exact["capacityblockgroup-test"]["available_gpus"] == 40
 
 
 def test_parse_allowances_filters_region_and_skips_unset_limits() -> None:
@@ -1173,6 +1342,79 @@ def _rtx_cluster_spec() -> FleetSpec:
             )
         ],
     )
+
+
+def _reserved_rtx_cluster_spec() -> FleetSpec:
+    spec = _rtx_cluster_spec()
+    spec.projects[0].clusters[0].gpu_nodes.capacity_block_group = (
+        "capacityblockgroup-test"
+    )
+    return spec
+
+
+def _reserved_preflight_boundary(monkeypatch, tmp_path, capacity_payload: str, *, rc: int = 0):
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    calls: list[list[str]] = []
+
+    def capture(args, **_kwargs):
+        calls.append(args)
+        if "capacity-block-group" in args:
+            return _Cap(capacity_payload, rc)
+        return _Cap(
+            json.dumps(
+                {
+                    "items": [
+                        _allowance(
+                            "compute.instance.gpu.rtx6000", "us-central1", "0"
+                        )
+                    ]
+                }
+            ),
+            0,
+        )
+
+    monkeypatch.setattr(L, "_run_capture", capture)
+    deployed: list[str] = []
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **kw: (
+            deployed.append(kw["cluster"].name),
+            {"project_key": "a", "cluster_name": kw["cluster"].name, "status": "deployed"},
+        )[1],
+    )
+    return L, deployed, calls
+
+
+def test_reserved_preflight_uses_capacity_and_ignores_public_gpu_quota(
+    tmp_path, monkeypatch
+) -> None:
+    payload = json.dumps({"items": [_capacity_block()]})
+    L, deployed, calls = _reserved_preflight_boundary(monkeypatch, tmp_path, payload)
+    messages: list[str] = []
+    L.deploy_fleet(
+        _reserved_rtx_cluster_spec(),
+        work_root=tmp_path,
+        on_status=messages.append,
+    )
+    assert deployed == ["c"]
+    assert any("capacity-block-group" in call for call in calls)
+    assert any("ordinary GPU quota excluded" in message for message in messages)
+
+
+def test_reserved_preflight_fails_closed_when_block_unreadable_or_too_small(
+    tmp_path, monkeypatch
+) -> None:
+    L, deployed, _calls = _reserved_preflight_boundary(monkeypatch, tmp_path, "", rc=1)
+    with pytest.raises(ValueError, match="refusing to bypass STRICT"):
+        L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
+    assert deployed == []
+
+    payload = json.dumps({"items": [_capacity_block(limit="8")]})
+    L, deployed, _calls = _reserved_preflight_boundary(monkeypatch, tmp_path, payload)
+    with pytest.raises(ValueError, match="only 8 reserved GPUs remain"):
+        L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
+    assert deployed == []
 
 
 def test_deploy_preflight_blocks_on_zero_gpu_quota(tmp_path, monkeypatch) -> None:

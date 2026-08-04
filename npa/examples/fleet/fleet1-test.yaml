@@ -31,6 +31,9 @@ defaults:
     count: 1
     platform: gpu-rtx6000
     preset: 1gpu-24vcpu-218gb
+    # Optional runtime-only capacity block group ID. When set, fleet renders a
+    # STRICT reservation policy and will not fall back to on-demand GPU capacity.
+    # capacity_block_group: "<capacity-block-group-id>"
   # Shared filesystem is off by default (each one is a 1 TiB NETWORK_SSD and
   # consumes tenant compute.filesystem quota). Uncomment to attach one + the
   # CSI default StorageClass:

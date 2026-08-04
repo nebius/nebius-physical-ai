@@ -6,14 +6,16 @@ with a ``QuotaFailure`` and mk8s keeps retrying. Terraform sees only
 ``Still creating...`` and blocks until the per-cluster timeout, so a quota wall
 looks like a hang rather than a rejection.
 
-This module derives what a fleet's clusters need, compares it against the
+This module derives what a fleet's clusters need, validates explicitly bound
+GPU capacity block groups, compares the remaining requirements against the
 *tenant's* quota allowances for the target region, and lets the caller fail fast
-with the shortfall. Project allowances only subdivide the tenant allowance, so
-the tenant is the meaningful container to check; raising a tenant allowance is a
-``root-g00root`` operation that a tenant-scoped service account cannot perform,
-which makes an early, explicit error much more useful than a timeout.
+with the shortfall. Reservation-backed GPUs do not consume the ordinary GPU
+quota, but node/disk/GPU-cluster/storage quotas still apply. Project allowances
+only subdivide the tenant allowance, so the tenant is the meaningful container
+to check.
 
-Only read APIs are used (``nebius quotas quota-allowance list``).
+Only read APIs are used (``nebius capacity capacity-block-group list`` and
+``nebius quotas quota-allowance list``).
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from typing import Any, Callable, Iterable
 
 from npa.fleet.spec import ClusterSpec
@@ -68,6 +71,198 @@ class QuotaShortfall:
         )
 
 
+@dataclass(frozen=True)
+class ReservationRequirement:
+    """GPU capacity required from one explicitly bound capacity block group."""
+
+    reservation_id: str
+    region: str
+    platform: str
+    fabric: str
+    required_gpus: int
+
+
+@dataclass(frozen=True)
+class ReservationShortfall:
+    """A reservation validation failure that must block a STRICT deployment."""
+
+    reservation_id: str
+    reason: str
+
+    def describe(self) -> str:
+        return f"{self.reservation_id}: {self.reason}"
+
+
+def required_reservations(
+    clusters: Iterable[ClusterSpec], region: str
+) -> dict[str, ReservationRequirement]:
+    """Aggregate STRICT GPU requirements by explicit capacity block group ID."""
+
+    requirements: dict[str, ReservationRequirement] = {}
+    for cluster in clusters:
+        gpu = cluster.gpu_nodes
+        if not gpu or gpu.count <= 0 or not gpu.capacity_block_group:
+            continue
+        reservation_id = gpu.capacity_block_group
+        required_gpus = gpu.count * _preset_gpus(gpu.preset)
+        fabric = cluster.infiniband_fabric if cluster.resolved_enable_gpu_cluster() else ""
+        previous = requirements.get(reservation_id)
+        if previous is not None:
+            if previous.platform != gpu.platform or previous.fabric != fabric:
+                raise ValueError(
+                    "one capacity_block_group cannot back incompatible GPU pools: "
+                    f"{reservation_id}"
+                )
+            requirements[reservation_id] = ReservationRequirement(
+                reservation_id=reservation_id,
+                region=region,
+                platform=gpu.platform,
+                fabric=fabric,
+                required_gpus=previous.required_gpus + required_gpus,
+            )
+            continue
+        requirements[reservation_id] = ReservationRequirement(
+            reservation_id=reservation_id,
+            region=region,
+            platform=gpu.platform,
+            fabric=fabric,
+            required_gpus=required_gpus,
+        )
+    return requirements
+
+
+def _available_reserved_gpus(status: dict[str, Any]) -> int | None:
+    """Return a conservative free-GPU count from capacity block group status."""
+
+    raw_limit = status.get("current_limit")
+    if raw_limit is None:
+        return None
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return None
+    raw_usage_count = status.get("usage")
+    if raw_usage_count not in (None, ""):
+        try:
+            used_count = int(raw_usage_count)
+        except (TypeError, ValueError):
+            return None
+        if used_count < 0:
+            return None
+        return max(0, limit - used_count)
+    raw_usage = status.get("usage_percentage")
+    if raw_usage in (None, ""):
+        if status.get("usage_state") == "USAGE_STATE_NOT_USED":
+            return limit
+        return None
+    try:
+        # Prefer the exact usage counter above. The live API serializes this
+        # nominally "percentage" fallback as a fraction: 0.17 means roughly
+        # 17% consumed. Accept an older 0..100 representation as well, but treat
+        # 1 as fully consumed to match the authoritative current wire format.
+        used = Decimal(str(raw_usage))
+        if used < 0:
+            return None
+        fraction = used if used <= 1 else used / Decimal(100)
+        remaining = Decimal(limit) * (Decimal(1) - fraction)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return max(0, int(remaining.to_integral_value(rounding=ROUND_FLOOR)))
+
+
+def parse_capacity_blocks(payload: str) -> dict[str, dict[str, Any]]:
+    """Index capacity block group list JSON by ID, retaining validation fields."""
+
+    try:
+        items = json.loads(payload or "{}").get("items", [])
+    except json.JSONDecodeError:
+        return {}
+    indexed: dict[str, dict[str, Any]] = {}
+    for item in items if isinstance(items, list) else []:
+        metadata = item.get("metadata", {}) or {}
+        status = item.get("status", {}) or {}
+        affinity = (status.get("resource_affinity", {}) or {}).get("compute_v1", {}) or {}
+        reservation_id = str(metadata.get("id") or "")
+        if not reservation_id:
+            continue
+        indexed[reservation_id] = {
+            "parent_id": str(metadata.get("parent_id") or ""),
+            "region": str(status.get("region") or ""),
+            "platform": str(affinity.get("platform") or ""),
+            "fabric": str(affinity.get("fabric") or ""),
+            "state": str(status.get("state") or ""),
+            "available_gpus": _available_reserved_gpus(status),
+        }
+    return indexed
+
+
+def find_reservation_shortfalls(
+    requirements: dict[str, ReservationRequirement],
+    blocks: dict[str, dict[str, Any]],
+    tenant_id: str,
+) -> list[ReservationShortfall]:
+    """Validate explicit capacity block groups and their remaining GPU capacity."""
+
+    shortfalls: list[ReservationShortfall] = []
+    for reservation_id, requirement in requirements.items():
+        block = blocks.get(reservation_id)
+        if block is None:
+            shortfalls.append(ReservationShortfall(reservation_id, "not found in tenant"))
+            continue
+        if block["parent_id"] != tenant_id:
+            shortfalls.append(ReservationShortfall(reservation_id, "belongs to another tenant"))
+        elif block["state"] != "STATE_ACTIVE":
+            shortfalls.append(
+                ReservationShortfall(reservation_id, f"is not active ({block['state'] or 'unknown'})")
+            )
+        elif block["region"] != requirement.region:
+            shortfalls.append(
+                ReservationShortfall(
+                    reservation_id,
+                    f"region {block['region']!r} does not match {requirement.region!r}",
+                )
+            )
+        elif block["platform"] != requirement.platform:
+            shortfalls.append(
+                ReservationShortfall(
+                    reservation_id,
+                    f"platform {block['platform']!r} does not match {requirement.platform!r}",
+                )
+            )
+        elif block["fabric"] != requirement.fabric:
+            shortfalls.append(
+                ReservationShortfall(
+                    reservation_id,
+                    f"fabric {block['fabric']!r} does not match {requirement.fabric!r}",
+                )
+            )
+        elif block["available_gpus"] is None:
+            shortfalls.append(
+                ReservationShortfall(reservation_id, "remaining GPU capacity is unavailable")
+            )
+        elif block["available_gpus"] < requirement.required_gpus:
+            shortfalls.append(
+                ReservationShortfall(
+                    reservation_id,
+                    f"needs {requirement.required_gpus} GPUs, only "
+                    f"{block['available_gpus']} reserved GPUs remain",
+                )
+            )
+    return shortfalls
+
+
+def reservation_shortfall_message(shortfalls: list[ReservationShortfall]) -> str:
+    """Format reservation failures without suggesting an on-demand bypass."""
+
+    return "\n".join(
+        [
+            "reserved capacity is insufficient or incompatible for this fleet:",
+            *(f"  - {shortfall.describe()}" for shortfall in shortfalls),
+            "STRICT reservation-backed node groups will not fall back to on-demand capacity.",
+        ]
+    )
+
+
 def required_quotas(clusters: Iterable[ClusterSpec]) -> dict[str, int]:
     """Aggregate the tenant quota amounts *clusters* need in one region.
 
@@ -89,7 +284,7 @@ def required_quotas(clusters: Iterable[ClusterSpec]) -> dict[str, int]:
         add("compute.disk.count", nodes)  # one boot disk per node
         if cpu and cpu.count > 0:
             add("compute.instance.non-gpu.vcpu", cpu.count * _preset_vcpus(cpu.preset))
-        if gpu and gpu.count > 0:
+        if gpu and gpu.count > 0 and not gpu.capacity_block_group:
             family = gpu_family(gpu.platform)
             if family:
                 add(f"compute.instance.gpu.{family}", gpu.count * _preset_gpus(gpu.preset))
@@ -189,10 +384,50 @@ def preflight_region(
 ) -> list[QuotaShortfall]:
     """Check one region's tenant allowances against *clusters*' requirements.
 
-    Returns the shortfalls (empty when the fleet fits). A quota API that cannot
-    be read is reported and treated as "no shortfall": losing the preflight must
-    not block a deploy that would otherwise succeed.
+    Returns quota shortfalls (empty when the fleet fits). A quota API that cannot
+    be read is reported and treated as "no shortfall": losing the quota check
+    must not block a deploy that would otherwise succeed. In contrast, an
+    unreadable or incompatible explicitly bound capacity block raises: STRICT
+    reservation safety must not be silently bypassed.
     """
+
+    clusters = list(clusters)
+    reservations = required_reservations(clusters, region)
+    if reservations:
+        reservation_result = run_capture(
+            [
+                *nebius_argv(nebius_bin, profile),
+                "capacity",
+                "capacity-block-group",
+                "list",
+                "--parent-id",
+                tenant_id,
+                "--all",
+                "--format",
+                "json",
+            ],
+            env=env,
+            check=False,
+            timeout=120,
+        )
+        reservation_payload = getattr(reservation_result, "stdout", "") or ""
+        if getattr(reservation_result, "returncode", 1) != 0 or not reservation_payload.strip():
+            raise ValueError(
+                "could not read capacity block groups; refusing to bypass STRICT "
+                "reservation preflight"
+            )
+        blocks = parse_capacity_blocks(reservation_payload)
+        reservation_shortfalls = find_reservation_shortfalls(
+            reservations, blocks, tenant_id
+        )
+        if reservation_shortfalls:
+            raise ValueError(reservation_shortfall_message(reservation_shortfalls))
+        if on_status is not None:
+            reserved = sum(item.required_gpus for item in reservations.values())
+            on_status(
+                f"validated {reserved} GPU(s) against {len(reservations)} active "
+                "capacity block group(s); ordinary GPU quota excluded"
+            )
 
     needed = required_quotas(clusters)
     if not needed:

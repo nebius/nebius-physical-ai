@@ -62,6 +62,10 @@ class NodePoolSpec:
     platform: str = "cpu-d3"
     preset: str = "16vcpu-64gb"
     disk_size_gib: int = 0  # 0 -> let the recipe/tfvars default apply
+    # Optional capacity block group for GPU nodes. Fleet renders this as a
+    # STRICT reservation policy, so the node group can never fall back to
+    # ordinary on-demand capacity when the reservation is unavailable.
+    capacity_block_group: str = ""
 
     def is_gpu(self) -> bool:
         return self.platform.startswith("gpu-")
@@ -111,6 +115,20 @@ class ClusterSpec:
             raise FleetSpecError(
                 f"cluster {self.name!r}: needs at least one CPU or GPU node"
             )
+        if self.cpu_nodes and self.cpu_nodes.capacity_block_group:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: capacity_block_group is only valid for gpu_nodes"
+            )
+        gpu = self.gpu_nodes
+        if gpu and gpu.capacity_block_group:
+            if gpu.count <= 0 or not gpu.is_gpu():
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: capacity_block_group requires a GPU node pool"
+                )
+            if not gpu.preset or not gpu.preset.split("gpu-", 1)[0].isdigit():
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: capacity_block_group requires a GPU-count preset"
+                )
         if self.resolved_enable_gpu_cluster():
             gpu = self.gpu_nodes
             if not (gpu and gpu.preset.startswith("8gpu-")):
@@ -226,6 +244,7 @@ def _node_pool_from(data: dict[str, Any] | None, *, default_platform: str) -> No
         platform=str(data.get("platform", default_platform)),
         preset=str(data.get("preset", "")),
         disk_size_gib=int(data.get("disk_size_gib", 0) or 0),
+        capacity_block_group=str(data.get("capacity_block_group", "") or "").strip(),
     )
 
 

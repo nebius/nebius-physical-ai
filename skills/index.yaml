@@ -300,7 +300,7 @@ skills:
       - type: configure_provision_dry_run
   - name: fleet
     category: tools
-    when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
+    when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
     path: skills/tools/fleet/SKILL.md
     smoke:
       - type: cli_help

@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: Use to deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec — identical and/or custom clusters, create-on-demand projects, and a k8s-training recipe source that can consume the latest upstream changes.
+description: Use to deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec — including strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training recipe source that can consume the latest upstream changes.
 ---
 
 # Fleet (multi-cluster, multi-project Kubernetes)
@@ -41,7 +41,12 @@ profile: ""                  # ~/.nebius profile to authenticate as; "" = active
 project_prefix: "fleet1-test-"
 defaults:
   cpu_nodes: { count: 1, platform: cpu-d3, preset: 48vcpu-192gb }
-  gpu_nodes: { count: 1, platform: gpu-rtx6000, preset: 1gpu-24vcpu-218gb }
+  gpu_nodes:
+    count: 1
+    platform: gpu-rtx6000
+    preset: 1gpu-24vcpu-218gb
+    # Optional runtime-only ID; renders STRICT and never falls back to PAYG.
+    capacity_block_group: ""
   enable_filestore: true
 projects:
   - name: a                  # -> project fleet1-test-a (identical profile)
@@ -101,7 +106,31 @@ depends on it.
    valid on fabric-capable 8-GPU SXM presets. Single-GPU presets (e.g. RTX PRO
    6000 `1gpu-24vcpu-218gb`) auto-set `enable_gpu_cluster=false`; set it `true`
    only with an 8-GPU preset **and** `infiniband_fabric`.
-4. **Preflight quotas at the tenant, before anything else.** Each cluster needs,
+4. **Bind reserved GPU capacity explicitly when required.** Set
+   `gpu_nodes.capacity_block_group` to a runtime-supplied Capacity Block Group
+   ID. Fleet renders `gpu_nodes_reservation_policy = { policy = "STRICT", ... }`,
+   so an unavailable or incompatible block fails instead of falling back to
+   ordinary on-demand capacity. Never commit a live capacity block ID.
+
+   Discover and verify reservations read-only with:
+
+   ```bash
+   nebius --profile <p> capacity capacity-block-group list \
+     --parent-id <tenant> --all --format json
+   nebius --profile <p> capacity capacity-interval list \
+     --parent-id <capacity-block-group> --all --format json
+   nebius --profile <p> capacity capacity-block-group list-resources \
+     --id <capacity-block-group> --format json
+   nebius --profile <p> capacity resource-advice list \
+     --parent-id <tenant> --all --format json
+   ```
+
+   Preflight requires the named block to be active, in the target tenant and
+   region, and matched to the GPU platform and InfiniBand fabric. It checks the
+   aggregate GPU requirement against remaining reserved capacity. Only after
+   that validation does it exclude those GPUs from ordinary GPU quota; all
+   node, boot-disk, GPU-cluster, Kubernetes, and storage quotas still apply.
+5. **Preflight quotas at the tenant, before anything else.** Each cluster needs,
    in the target region: `compute.instance.count` (nodes + etcd),
    `compute.instance.non-gpu.vcpu` for the CPU preset,
    `compute.instance.gpu.<family>` for the GPU preset (on-demand GPU quota is
@@ -113,11 +142,10 @@ depends on it.
    (each item carries `metadata.name`, `spec.region`, `spec.limit`).
 
    `deploy` does this automatically (`--preflight`, on by default) and refuses to
-   apply when a tenant limit cannot cover the in-scope clusters; `--no-preflight`
-   attempts it anyway. The check compares requirements against the *limit* only —
-   current consumption is not subtracted, because the allowance API reports usage
-   only as a percentage — so it catches definite walls (above all a limit of 0)
-   and stays quiet when a limit merely looks tight.
+   apply when a capacity block or tenant limit cannot cover the in-scope
+   clusters; `--no-preflight` attempts it anyway. Ordinary quota checks compare
+   requirements against the *limit* only; capacity-block checks use the block's
+   current limit and usage percentage conservatively.
 
    Project-level allowances only *subdivide* the tenant allowance, so a tenant
    limit of 0 cannot be worked around by creating a project quota: raising a
@@ -125,16 +153,16 @@ depends on it.
    account gets `PermissionDenied ... resource ID: root-g00root`. A new tenant
    therefore needs its GPU/filesystem quotas raised by the Nebius account team
    before any GPU or shared-filesystem cluster can be applied.
-5. **Deploy** (asks for confirmation): `npa fleet deploy --spec fleet.yaml`. It
+6. **Deploy** (asks for confirmation): `npa fleet deploy --spec fleet.yaml`. It
    prints the projects/clusters it will create/update and prompts before acting;
    pass `--yes`/`-y` for non-interactive runs. Missing projects are created via
    the `nebius` CLI unless `--no-create-projects`. Deploy runs per cluster and
    continues past a failing target (`--fail-fast` to stop); a JSON summary lists
    deployed vs failed clusters with kube contexts.
-6. **Consume the latest recipe**: `--k8s-training-ref main` clones
+7. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
    for a local checkout). Omit both to use the repo-vendored, tested copy.
-7. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
+8. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
    destroy --spec fleet.yaml` (prompts; `--yes`/`-y` or `--force` to skip).
 
 ## Add / remove clusters and projects
@@ -211,6 +239,9 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   `QuotaFailure` with `quota`, `limit`, and `requested`. This is exactly why the
   quota preflight exists — the node group's k8s-side state is `PROVISIONING`, not
   `FAILED`, so nothing else surfaces the wall.
+- **`AUTO` is not an explicit reservation guarantee**: Nebius may fall back to
+  ordinary on-demand capacity. Fleet's `capacity_block_group` surface therefore
+  always renders `STRICT` and validates that exact block before apply.
 - **terraform >= 1.12**: the recipe's modules use `ephemeral` blocks and a
   `>= 1.12` version constraint; set `NPA_TERRAFORM_BIN` if the system terraform
   is older.

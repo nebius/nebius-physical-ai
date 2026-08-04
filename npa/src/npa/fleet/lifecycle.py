@@ -726,6 +726,11 @@ def plan_fleet(
                     "gpu_nodes": cluster.gpu_count(),
                     "gpu_platform": cluster.gpu_nodes.platform if cluster.gpu_nodes else "",
                     "gpu_preset": cluster.gpu_nodes.preset if cluster.gpu_nodes else "",
+                    "gpu_reservation": (
+                        "strict"
+                        if cluster.gpu_nodes and cluster.gpu_nodes.capacity_block_group
+                        else "on-demand"
+                    ),
                     "enable_gpu_cluster": cluster.resolved_enable_gpu_cluster(),
                     "k8s_version": cluster.k8s_version or "backend-default",
                 }
@@ -786,10 +791,11 @@ def deploy_fleet(
     how one workstation deploys into several tenants (a service account is
     single-tenant) without switching the machine-wide active profile.
 
-    ``preflight`` (default on) compares the tenant's quota allowances against
-    what the in-scope clusters need and raises before any apply. mk8s accepts a
-    node group it cannot fill, so without this a quota wall shows up as terraform
-    blocking on ``Still creating...`` until the timeout.
+    ``preflight`` (default on) validates explicitly bound capacity blocks and
+    compares the remaining on-demand requirements against tenant quota
+    allowances before any apply. mk8s accepts a node group it cannot fill, so
+    without this a capacity/quota wall shows up as terraform blocking on
+    ``Still creating...`` until the timeout.
     """
 
     spec.validate()
@@ -957,11 +963,11 @@ def _preflight_quotas(
     profile: str,
     on_status: Callable[[str], None] | None,
 ) -> None:
-    """Raise when the tenant's quota cannot cover the in-scope clusters."""
+    """Raise when reservations or tenant quota cannot cover the scoped clusters."""
 
     shortfalls = []
     for region, clusters in sorted(by_region.items()):
-        _log(on_status, f"quota preflight: {len(clusters)} cluster(s) in {region}")
+        _log(on_status, f"capacity/quota preflight: {len(clusters)} cluster(s) in {region}")
         shortfalls += preflight_region(
             nebius_bin=nebius_bin,
             tenant_id=tenant_id,
