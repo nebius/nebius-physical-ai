@@ -15,14 +15,14 @@ materializes stock or BYO scene and robot specs. Every step writes local artifac
 `--upload-artifacts` is set, uploads the run tree to S3.
 
 > **Naming: `sim2real` vs `sim-to-real`.** Two related surfaces exist and the
-> spelling is the disambiguator. **`sim2real`** (this directory,
-> `npa workbench sim2real …`, `runbook.yaml`) is the canonical staged
+> spelling is the disambiguator. **`sim2real`** (`npa/workflows/sim2real.yaml`,
+> `npa workbench sim2real …`) is the canonical staged
 > VLM-to-RL loop described above. **`sim-to-real`** (hyphenated) was the older standalone
 > training pipeline; it is retired, because it ran `npa.workflows.sim_to_real real-loop`,
 > which raises a `DeprecationWarning` pointing here. There is now one loop, not two.
 
 Canonical operator routing after CLI namespace cleanup: use
-`npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
+`npa workbench workflow submit npa/workflows/sim2real.yaml`
 for cluster execution (auto-routes to the direct K8s staged Job when SkyPilot is
 unavailable), `python -m npa.workflows.sim2real status <run-id> --watch` for live
 progress, module CLI staged subcommands (`preamble`, `outer-iteration`,
@@ -77,7 +77,7 @@ export NPA_SIM2REAL_VLM_DUAL_REASON=1
 # Mirror HF_TOKEN into cluster secret hf-ngc-tokens before GPU sibling Jobs run.
 
 npa workbench workflow submit \
-  npa/workflows/workbench/sim2real/runbook.yaml \
+  npa/workflows/sim2real.yaml \
   --run-id "${NPA_SIM2REAL_RUN_ID}" \
   --var NPA_SIM2REAL_RUN_ID="${NPA_SIM2REAL_RUN_ID}" \
   --var NPA_SIM2REAL_BUCKET="${NPA_SIM2REAL_BUCKET}" \
@@ -231,45 +231,23 @@ measured against.
 The runbook is the one canonical YAML. The SDK and CLI wrap the same staged
 engine without substituting a toolRef graph.
 
-Raw SkyPilot — `runbook.yaml` is materialized with literal defaults because
-SkyPilot 0.12.2 does **not** interpolate `${VAR}` inside the YAML `envs` block or
-in `image_id`. Override the literals at submit time with `--env` / `--secret`,
-and edit `image_id` to your own registry:
+The canonical `npa/workflows/sim2real.yaml` is materialized with literal defaults.
+Use the direct-Kubernetes workflow route and repeated `--var KEY=VALUE`
+overrides; do not invoke this engine with raw `sky jobs launch`:
 
 ```bash
-cat > /tmp/sim2real-skypilot-k8s.yaml <<'YAML'
-kubernetes:
-  pod_config:
-    spec:
-      serviceAccountName: agent-sa
-      envFrom:
-        - secretRef:
-            name: hf-ngc-tokens
-YAML
-
-# Reaching GPUs: raw `sky jobs launch` against this YAML is currently blocked by
-# the SkyPilot 0.12.2 pre-setup getcwd() bug. Until that is fixed upstream, reach
-# GPUs through the in-repo materializer — it renders this runbook (envs, GPU
-# resources, service account, pull/env secrets, setup+run script) into a plain
-# Kubernetes Job that needs no SkyPilot controller and no operator pack:
-#
-#   npa workbench sim2real materialize \
-#     --run-id my-run \
-#     --image cr.<region>.nebius.cloud/<your-registry-id>/npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z \
-#     --env NPA_SIM2REAL_BUCKET=<bucket> \
-#     --env AWS_ENDPOINT_URL=<your-s3-compatible-endpoint> \
-#     -o /tmp/sim2real-job.yaml
-#   kubectl apply -f /tmp/sim2real-job.yaml
-#   npa workbench sim2real status --run-id my-run --watch
-sky jobs launch \
-  --config /tmp/sim2real-skypilot-k8s.yaml \
-  --infra k8s/<cluster-name> \
-  --env NPA_SIM2REAL_BUCKET=<bucket> \
-  --env AWS_ENDPOINT_URL=<your-s3-compatible-endpoint> \
-  --secret AWS_ACCESS_KEY_ID \
-  --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/sim2real/runbook.yaml
+npa/.venv/bin/npa workbench workflow submit npa/workflows/sim2real.yaml \
+  --run-id my-run \
+  --var NPA_SIM2REAL_BUCKET=<bucket> \
+  --var AWS_ENDPOINT_URL=<your-s3-compatible-endpoint> \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<bucket>/<trigger-prefix>/ \
+  --var OMNI_KIT_ACCEPT_EULA=YES \
+  --var ISAACSIM_ACCEPT_EULA=YES
 ```
+
+The complete real-tier command, parameter table, preflight, monitoring, and
+artifact access are in
+[`docs/workbench/guides/sim2real-workflow.md`](../../../../docs/workbench/guides/sim2real-workflow.md).
 
 SDK:
 
@@ -321,7 +299,7 @@ Workflow submit:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/sim2real/runbook.yaml \
+  npa/workflows/sim2real.yaml \
   --run-id pusht-cli-demo \
   --var NPA_SIM2REAL_RUN_ID=pusht-cli-demo \
   --var NPA_SIM2REAL_BUCKET=<bucket> \
@@ -364,16 +342,17 @@ npa/.venv/bin/python -m npa.workflows.sim2real_loop inner-loop \
     met it writes `checkpoints/candidate/candidate.json`, otherwise
     `outer_loop/loopback.json` points back to Stage 7. The canonical qualification
     runbook uses `--no-early-exit`, so it records this decision but still executes
-    every configured outer iteration.
+    every configured outer iteration by default (`NPA_SIM2REAL_EARLY_EXIT=0`).
 12. Real-robot validation: documented external stub at
     `stage_12_external_validation/external_stub.json`.
 13. Retrigger: writes `stage_13_retrigger/retrigger.json`, targeting Stage 1
     when a new real-world LeRobot dataset lands in the trigger path.
 14. Rerun visualization: writes `reports/sim2real.rrd` (a single Rerun recording)
     from the completed run's artifacts. Default on (`NPA_SIM2REAL_RERUN=1` /
-    `--rerun`); set `NPA_SIM2REAL_RERUN=0` / `--no-rerun` to skip. Degrades to a
-    WARN (not a hard failure) when `rerun-sdk` is not installed locally, but
-    always produces the `.rrd` when it is available.
+    `--rerun`); set `NPA_SIM2REAL_RERUN=0` / `--no-rerun` to skip. The canonical
+    tier fails when either enabled recording is missing
+    (`NPA_SIM2REAL_REQUIRE_VISUALIZATION=1`). Development callers may explicitly
+    set the requirement to `0` for a degraded local run.
 
 ### Rerun Visualization
 

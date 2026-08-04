@@ -122,6 +122,12 @@ def _component_job_manifest(
         "app.kubernetes.io/component": component.replace("_", "-"),
         "sim2real.local/run-id": _label_value(config.run_id),
     }
+    job_spec: dict[str, Any] = {
+        "backoffLimit": 0,
+        "template": {"metadata": {"labels": labels}, "spec": template_spec},
+    }
+    if timeout_s > 0:
+        job_spec["activeDeadlineSeconds"] = timeout_s
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -133,11 +139,7 @@ def _component_job_manifest(
                 "sim2real.local/gpu-request": f"{selected_gpu_product}:1"
             },
         },
-        "spec": {
-            "backoffLimit": 0,
-            "activeDeadlineSeconds": timeout_s,
-            "template": {"metadata": {"labels": labels}, "spec": template_spec},
-        },
+        "spec": job_spec,
     }
 
 
@@ -292,7 +294,15 @@ def _kubernetes_component_env(
         if (
             key.startswith("NPA_SIM2REAL")
             or key.startswith("NPA_COSMOS_")
-            or key in {"HF_HOME", "HF_XET_CACHE", "UV_CACHE_DIR", "XDG_CACHE_HOME"}
+            or key
+            in {
+                "HF_HOME",
+                "HF_XET_CACHE",
+                "UV_CACHE_DIR",
+                "XDG_CACHE_HOME",
+                "OMNI_KIT_ACCEPT_EULA",
+                "ISAACSIM_ACCEPT_EULA",
+            }
         ):
             safe[key] = value
     endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
@@ -302,6 +312,10 @@ def _kubernetes_component_env(
     safe["S3_ENDPOINT_URL"] = endpoint
     apply_cosmos_reason_kubernetes_env(safe)
     for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        value = str(env.get(key) or os.environ.get(key) or "").strip()
+        if value:
+            safe[key] = value
+    for key in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:
             safe[key] = value

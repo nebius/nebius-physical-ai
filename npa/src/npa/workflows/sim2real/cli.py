@@ -164,10 +164,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--early-exit",
         action=argparse.BooleanOptionalAction,
-        default=_bool_value(os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "1")),
+        default=_bool_value(os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "0")),
         help=(
-            "Stop after a checkpoint clears the promotion threshold (default on). "
-            "Use --no-early-exit for fixed-count qualification runs."
+            "Stop after a checkpoint clears the promotion threshold (default off). "
+            "Use --early-exit for score-gated development runs."
         ),
     )
     parser.add_argument(
@@ -188,7 +188,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--upload-artifacts", action="store_true")
     parser.add_argument("--no-guardrails", action="store_true")
     parser.add_argument("--signal-loss-weight", type=float, default=1.0)
-    parser.add_argument("--learning-rate", type=float, default=0.05)
+    parser.add_argument("--learning-rate", type=float, default=0.08)
     parser.add_argument("--byo-signal-converter", default="")
     parser.add_argument("--byo-trainer-command", default="")
     parser.add_argument("--byo-vlm-command", default="")
@@ -261,7 +261,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--k8s-job-timeout-s",
         type=int,
-        default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200")),
+        default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "0")),
+        help="Sibling Job deadline in seconds; 0 waits without a deadline.",
     )
     parser.add_argument(
         "--k8s-max-parallel-gpus",

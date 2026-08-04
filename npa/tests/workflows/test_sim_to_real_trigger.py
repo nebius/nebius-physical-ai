@@ -198,7 +198,7 @@ def test_the_watcher_launches_the_spec_not_the_retired_pipeline_template() -> No
     command = _pipeline_command(config, run_id="trigger-001")
 
     assert command[:4] == ["npa", "workbench", "workflow", "submit"]
-    assert command[4].endswith("sim2real/runbook.yaml")
+    assert command[4].endswith("workflows/sim2real.yaml")
     assert "run_sim_to_real_pipeline" not in " ".join(command)
     # The trigger prefix the watch fired on is what the spec's first stage reads.
     assert "NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://example-bucket/datasets/lerobot-pusht/" in command

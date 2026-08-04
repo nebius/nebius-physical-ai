@@ -36,9 +36,17 @@ import time
 from pathlib import Path
 from typing import Any
 
+from npa.workflows.sim2real.capture import (
+    DEFAULT_PPO_ITERATIONS,
+    DEFAULT_PPO_NUM_ENVS,
+    DEFAULT_PPO_STEPS_PER_ENV,
+    ppo_settings,
+)
+
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
-DEFAULT_NUM_ENVS = 1024
-DEFAULT_ITERATIONS = 150
+DEFAULT_NUM_ENVS = DEFAULT_PPO_NUM_ENVS
+DEFAULT_ITERATIONS = DEFAULT_PPO_ITERATIONS
+DEFAULT_STEPS_PER_ENV = DEFAULT_PPO_STEPS_PER_ENV
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # Default PPO entropy coefficient for the Franka Lift run. The stock Isaac Lift
 # cfg uses ~0.006, which lets the action-noise std collapse by ~iter 400-600;
@@ -373,6 +381,7 @@ def build_isaac_job_manifest(
     task: str,
     num_envs: int,
     iterations: int,
+    steps_per_env: int = DEFAULT_STEPS_PER_ENV,
     s3_output_uri: str,
     s3_endpoint: str,
     namespace: str,
@@ -521,7 +530,8 @@ def build_isaac_job_manifest(
             + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
             f'{robot_spec.get("name")} seed={int(seed)}"\n'
             f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
-            f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} ROBOT_SEED={int(seed)}\n'
+            f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} '
+            f'ROBOT_STEPS_PER_ENV={steps_per_env} ROBOT_SEED={int(seed)}\n'
             + "export ROBOT_RESUME_CKPT_LOCAL=" + shlex.quote(resume_local) + "\n"
             "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
             + task_cfg_block
@@ -553,7 +563,8 @@ def build_isaac_job_manifest(
             + wrapper_src + "\nRUNEOF\n"
             f'echo "PHYSICS_INJECTION: friction={fr} mass_scale={ms} seed={int(seed)}"\n'
             f'export NPA_PHYS_MODULE_DIR=/tmp/npa_phys PHYS_OUT_DIR="$OUT" '
-            f'PHYS_NUM_ENVS={num_envs} PHYS_ITERS={iterations} PHYS_SEED={int(seed)} '
+            f'PHYS_NUM_ENVS={num_envs} PHYS_ITERS={iterations} '
+            f'PHYS_STEPS_PER_ENV={steps_per_env} PHYS_SEED={int(seed)} '
             f'NPA_GEN_FRICTION={fr} NPA_GEN_MASS_SCALE={ms}\n'
             '"$PY" /tmp/npa_phys/runner.py 2>&1 | tail -120\n'
         )
@@ -581,7 +592,8 @@ def build_isaac_job_manifest(
             )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-            f'--max_iterations {iterations} --headless{seed_arg} agent.save_interval=25 {override_str}'
+            f'--max_iterations {iterations} --headless{seed_arg} '
+            f'agent.num_steps_per_env={steps_per_env} agent.save_interval=25 {override_str}'
         )
         train_block = (
             f'{resume_block}'
@@ -721,6 +733,8 @@ def build_update_result(
     status: str,
     duration_ms: float,
     reward_overrides: dict[str, float] | None = None,
+    num_envs: int = DEFAULT_NUM_ENVS,
+    steps_per_env: int = DEFAULT_STEPS_PER_ENV,
 ) -> dict[str, Any]:
     """Build a VlmSignalUpdateResult-shaped dict from a real training run.
 
@@ -743,6 +757,12 @@ def build_update_result(
         "status": status,
         "backend": "isaac_rsl_rl_ppo",
         "steps": int(iterations),
+        "ppo": {
+            "iterations": int(iterations),
+            "num_envs": int(num_envs),
+            "steps_per_env": int(steps_per_env),
+            "total_environment_steps": int(iterations * num_envs * steps_per_env),
+        },
         "loss_before": 1.0,
         "loss_after": round(max(0.0, 1.0 - 0.5 * reward_target), 6),
         "reward_head_before": round(float(initial_reward_head), 6),
@@ -818,7 +838,13 @@ def artifact_tag_from_output_dir(output_dir: Path, *, default: str = "iter") -> 
     return artifact_tag(name, default=default)
 
 
-def latest_byo_checkpoint_uri(bucket: str, run_id: str, *, s3_endpoint: str = "") -> str:
+def latest_byo_checkpoint_uri(
+    bucket: str,
+    run_id: str,
+    *,
+    s3_endpoint: str = "",
+    s3_prefix: str = "sim2real-b",
+) -> str:
     """Return the newest same-run BYO trainer model_latest.pt, if any."""
 
     if not bucket or not run_id:
@@ -827,7 +853,7 @@ def latest_byo_checkpoint_uri(bucket: str, run_id: str, *, s3_endpoint: str = ""
         import boto3
 
         s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
-        prefix = f"sim2real-b/{run_id}/byo-trainer/"
+        prefix = f"{s3_prefix.strip('/')}/{run_id}/byo-trainer/"
         paginator = s3.get_paginator("list_objects_v2")
         newest_key = ""
         newest_ts = None
@@ -850,12 +876,15 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     """Submit the Isaac sibling Job, wait, and return an update-result dict."""
 
     task = _env("NPA_BYO_ISAAC_TASK", DEFAULT_ISAAC_TASK)
-    num_envs = int(_env("NPA_BYO_ISAAC_NUM_ENVS", str(DEFAULT_NUM_ENVS)) or DEFAULT_NUM_ENVS)
-    iterations = int(_env("NPA_BYO_ISAAC_ITERATIONS", str(DEFAULT_ITERATIONS)) or DEFAULT_ITERATIONS)
+    ppo = ppo_settings()
+    num_envs = int(ppo["num_envs"])
+    iterations = int(ppo["iterations"])
+    steps_per_env = int(ppo["steps_per_env"])
     image = _env("ISAAC_IMAGE") or _env("NPA_SIM2REAL_ISAAC_IMAGE")
     if not image:
         raise SystemExit("byo_isaac_trainer: ISAAC_IMAGE/NPA_SIM2REAL_ISAAC_IMAGE not set")
     bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET")
+    s3_prefix = _env("NPA_SIM2REAL_PREFIX", "sim2real-b").strip("/")
     endpoint = _env("AWS_ENDPOINT_URL")
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
     service_account = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
@@ -867,8 +896,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     # Unset => byte-identical to the historical single-shot path.
     tag = _sanitize_tag(_env("NPA_SIM2REAL_TRAINER_TAG"))
     path_seg = f"{job_name}/{tag}/" if tag else f"{job_name}/"
-    s3_output = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/{path_seg}"
-    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "7200") or 7200)
+    s3_output = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-trainer/{path_seg}"
+    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "0") or 0)
 
     # VLM critique -> PPO reward-term shaping (the VLM drives what the policy learns).
     stats = read_signal_stats(signal_json)
@@ -966,7 +995,12 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     # the physics-variant path (different task) — log it so the skip is visible.
     resume_uri = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_URI")
     if not resume_uri and _env("NPA_BYO_ISAAC_AUTO_RESUME", "1") != "0":
-        resume_uri = latest_byo_checkpoint_uri(bucket, run_id, s3_endpoint=endpoint)
+        resume_uri = latest_byo_checkpoint_uri(
+            bucket,
+            run_id,
+            s3_endpoint=endpoint,
+            s3_prefix=s3_prefix,
+        )
         if resume_uri:
             print(f"byo_isaac_trainer: AUTO-RESUME from latest same-run checkpoint {resume_uri}",
                   flush=True)
@@ -986,6 +1020,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         task=task,
         num_envs=num_envs,
         iterations=iterations,
+        steps_per_env=steps_per_env,
         s3_output_uri=s3_output,
         s3_endpoint=endpoint,
         namespace=namespace,
@@ -1048,6 +1083,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         status=status,
         duration_ms=(time.time() - start) * 1000.0,
         reward_overrides=reward_overrides,
+        num_envs=num_envs,
+        steps_per_env=steps_per_env,
     )
     result["component_invocation"] = {
         "mode": "kubernetes_job",
@@ -1055,6 +1092,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         "image": image,
         "gpu_provenance": provenance,
     }
+    result["ppo"] = ppo
     return result
 
 
@@ -1068,13 +1106,16 @@ def main() -> int:
 
     if _env("NPA_BYO_ISAAC_DRYRUN") == "1":
         stats = read_signal_stats(signal_json)
+        ppo = ppo_settings()
         result = build_update_result(
             stats=stats,
             initial_reward_head=float(_env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0),
-            iterations=int(_env("NPA_BYO_ISAAC_ITERATIONS", "2") or 2),
+            iterations=int(ppo["iterations"]),
             checkpoint_uri=f"s3://dryrun/{run_id}/model_latest.pt",
             status="success",
             duration_ms=0.0,
+            num_envs=int(ppo["num_envs"]),
+            steps_per_env=int(ppo["steps_per_env"]),
         )
     else:
         result = run_isaac_training_job(run_id, signal_json=signal_json)

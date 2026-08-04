@@ -61,6 +61,7 @@ from npa.workflows.sim2real.component_records import (
     _expand_envgen_component_records,
     _loop_component_records,
 )
+from npa.workflows.sim2real.capture import runtime_parameter_metadata
 from npa.workflows.sim2real.constants import (
     CORRECTIVE_TARGETS,
     DEFAULT_ISAAC_TASK,
@@ -106,6 +107,7 @@ from npa.workflows.sim2real.utils import (
     _utc_now,
     _write_json_artifact,
 )
+from npa.workflows.sim2real.viz_contract import visualization_run_metadata
 
 # Isaac Sim app handle — closed only after held-out report upload.
 _ISAAC_SIMULATION_APP: Any = None
@@ -177,22 +179,14 @@ def emit_active_progress_rerun(
             heldout_report=dict(state.get("final_eval") or {}) or None,
             stage_components=components,
             outer_history=list(state.get("outer_history") or []),
-            run_metadata={
-                "run_id": config.run_id,
-                "artifact_root": _artifact_root_uri(config) + "/",
-                "rrd_s3_uri": f"{_artifact_root_uri(config)}/reports/sim2real-progress.rrd",
-                "candidate_s3_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
-                "policy_checkpoint": str(
+            run_metadata=visualization_run_metadata(
+                config=config,
+                artifact_root=_artifact_root_uri(config),
+                policy_checkpoint=str(
                     (state.get("final_decision") or {}).get("checkpoint_uri") or ""
                 ),
-                "orchestrator_job_name": config.run_id,
-                "orchestrator_node_product": config.k8s_gpu_product,
-                "viewer_command": (
-                    "npa workbench sim2real rerun serve "
-                    f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
-                    f"--s3-prefix {config.s3_prefix}"
-                ),
-            },
+                progress=True,
+            ),
             output_rrd=progress_path,
             write_mp4=False,
             allow_progress_only=True,
@@ -660,6 +654,7 @@ def run_finalize(
         "local_artifact_dir": str(local_dir),
         "s3_artifacts": artifact_uris(config),
         "config": _redacted_config(config),
+        "runtime_parameters": runtime_parameter_metadata(),
         "byo_seams": byo_seams(config),
         "components": components,
         "gpu_fallback_contract": gpu_fallback_report_contract(config, components),
@@ -840,38 +835,23 @@ def _run_sim2real_viz_stage(
             heldout_report=heldout_report,
             stage_components=stage_components,
             outer_history=outer_history,
-            run_metadata={
-                "run_id": config.run_id,
-                "artifact_root": _artifact_root_uri(config) + "/",
-                "rrd_s3_uri": f"{_artifact_root_uri(config)}/reports/sim2real.rrd",
-                "candidate_s3_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
-                "policy_checkpoint": str((final_decision or {}).get("checkpoint_uri") or ""),
-                "policy_checkpoint_identity": candidate_payload.get(
-                    "policy_checkpoint_identity", ""
+            run_metadata=visualization_run_metadata(
+                config=config,
+                artifact_root=_artifact_root_uri(config),
+                policy_checkpoint=str(
+                    (final_decision or {}).get("checkpoint_uri") or ""
                 ),
-                "policy_checkpoint_sha256": candidate_payload.get(
-                    "policy_checkpoint_sha256", ""
-                ),
-                "policy_checkpoint_size_bytes": candidate_payload.get(
-                    "policy_checkpoint_size_bytes", ""
-                ),
-                "policy_download_command": candidate_payload.get(
-                    "policy_download_command", ""
-                ),
-                "policy_ui_action": candidate_payload.get("policy_ui_action", ""),
-                "policy_deployable": candidate_payload.get("deployable_policy", False),
-                "orchestrator_job_name": config.run_id,
-                "orchestrator_node_product": config.k8s_gpu_product,
-                "viewer_command": (
-                    "npa workbench sim2real rerun serve "
-                    f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
-                    f"--s3-prefix {config.s3_prefix}"
-                ),
-            },
+                candidate=candidate_payload,
+                heldout_report=heldout_report,
+            ),
             output_rrd=rrd_path,
             write_mp4=_bool_value(os.environ.get("NPA_SIM2REAL_RERUN_MP4", "0")),
         )
     except RerunUnavailableError as exc:
+        if _bool_value(os.environ.get("NPA_SIM2REAL_REQUIRE_VISUALIZATION", "0")):
+            raise Sim2RealLoopError(
+                f"required Stage 14 Rerun recording could not be emitted: {exc}"
+            ) from exc
         info = {"status": "skipped", "reason": str(exc), "source": "reference"}
         info["mcap"] = emit_sim2real_mcap_if_enabled(
             local_dir=local_dir,
@@ -897,6 +877,15 @@ def _run_sim2real_viz_stage(
         output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
     info["mcap"] = mcap_info
+    if (
+        _bool_value(os.environ.get("NPA_SIM2REAL_REQUIRE_VISUALIZATION", "0"))
+        and _bool_value(os.environ.get("NPA_SIM2REAL_MCAP", "1"))
+        and mcap_info.get("status") != "written"
+    ):
+        raise Sim2RealLoopError(
+            "required Stage 14 MCAP recording could not be emitted: "
+            + str(mcap_info.get("reason") or mcap_info.get("status"))
+        )
     root = _artifact_root_uri(config)
     artifacts: dict[str, Any] = {
         "rrd": f"{root}/reports/sim2real.rrd" if config.s3_bucket else str(rrd_path),
@@ -1611,7 +1600,7 @@ def _run_component_command(
     cwd: Path,
     env: dict[str, str],
     component: str,
-    timeout_s: int = 7200,
+    timeout_s: int = 0,
 ) -> dict[str, Any]:
     result = subprocess.run(
         command,
@@ -1621,7 +1610,7 @@ def _run_component_command(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=timeout_s,
+        timeout=timeout_s or None,
         check=False,
     )
     if result.returncode != 0:
@@ -1883,8 +1872,11 @@ def _run_image_component(
     output_json: Path,
     output_uri: str,
     config: Sim2RealLoopConfig,
-    timeout_s: int = 7200,
+    timeout_s: int | None = None,
 ) -> dict[str, Any]:
+    effective_timeout_s = (
+        config.k8s_job_timeout_s if timeout_s is None else timeout_s
+    )
     return _run_kubernetes_image_component(
         image,
         component=component,
@@ -1892,7 +1884,7 @@ def _run_image_component(
         output_json=output_json,
         output_uri=output_uri,
         config=config,
-        timeout_s=timeout_s,
+        timeout_s=effective_timeout_s,
     )
 
 
@@ -2000,8 +1992,8 @@ def _wait_kubernetes_job(
             return "failed"
 
     poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
+    deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
+    while deadline is None or time.monotonic() < deadline:
         result = _kubectl(
             config,
             [
@@ -3405,6 +3397,12 @@ def _normalize_heldout_report(
         "generated_envs_tested",
         "generated_env_ids",
         "policy_checkpoint",
+        "policy_checkpoint_sha256",
+        "policy_checkpoint_size_bytes",
+        "policy_inference_provenance",
+        "capture",
+        "camera_metadata",
+        "success_distance_m",
         "deployable_policy_eval",
     ):
         if payload.get(key):

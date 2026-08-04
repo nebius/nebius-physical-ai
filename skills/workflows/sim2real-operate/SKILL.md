@@ -16,35 +16,31 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 
 ## Entry Points
 
-- `npa/workflows/workbench/sim2real/runbook.yaml` — the standalone, materialized
-  raw-SkyPilot runbook. Read its header first: it documents every env var, the
+- `npa/workflows/sim2real.yaml` — the standalone canonical direct-Kubernetes
+  workflow. Read its header first: it documents every env var, the
   trigger-bucket vs artifact-bucket split, and the S3-compatible endpoint map.
-- `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh` — the direct-Kubernetes
-  submit path (bypasses the SkyPilot 0.12.2 getcwd/kubeconfig blocker). This is
-  the route that actually reaches GPUs today. It applies a one-GPU orchestrator
-  Job that clones `NPA_SOURCE_REF` and runs `python -m npa.workflows.sim2real run`,
-  which fans out sibling Jobs (Isaac sim, VLM, eval, trainer, envgen).
-- `npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
-  and `sim2real.run` (SDK) wrap the same workflow; they do not gate it.
+- `npa workbench workflow submit npa/workflows/sim2real.yaml`
+  detects this exact file and calls the in-repo direct-K8s materializer. It
+  stages the current source and applies the one-GPU orchestrator that fans out
+  sibling Jobs (Isaac, Cosmos Transfer/Reason, PPO, eval, envgen).
 
 ## Procedure
 
 1. **Configure once.** `~/.npa/config.yaml` (bucket, endpoint, registry,
-   `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens). Generate
-   operator files with `<private-operator-pack>/sim2real-rtxpro/setup-local-operator.sh`.
-2. **Seed the trigger** on a new bucket: `seed-stock-trigger.sh`, then set
+   `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens).
+2. **Seed the trigger** with a valid LeRobot prefix, then set
    `storage.sim2real_stock_trigger_uri`.
 3. **Sync the cluster storage secret** so pods get the endpoint + keys:
-   `<private-operator-pack>/sim2real-rtxpro/sync-cluster-storage-secret.sh`.
+   ensure `npa-storage-credentials` and `hf-ngc-tokens` exist in the namespace.
 4. **Preflight:** `npa workbench health sim2real --checks all` (accepts `all` or
    a comma list: `config,coherence,s3,registry,tokens,cluster`). Expect PASS on
    s3, tokens, cluster; WARN on registry only when `NPA_REGISTRY` is unset.
-5. **Submit:** `INNER_ITERATIONS=… OUTER_ITERATIONS=… submit-k8s-staged-job.sh`
-   (or `run.sh trigger`). It registry-qualifies every image, refreshes the
-   `npa-nebius-registry` pull secret, and preflights the trigger + S3 write.
-6. **Monitor:** `<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>`
-   or `npa workbench sim2real status <run-id> --watch`.
-7. **View results:** `run.sh sync <run-id>` (Rerun), or read
+5. **Submit:** `npa workbench workflow submit npa/workflows/sim2real.yaml
+   --run-id <id> --var ...`; pass explicit Isaac EULA acceptance and use the
+   real-tier example in `docs/workbench/guides/sim2real-workflow.md`.
+6. **Monitor:** `npa workbench workflow status <run-id> --watch` plus
+   `kubectl get jobs -l sim2real.local/run-id=<run-id>` for sibling evidence.
+7. **View results:** download the Rerun/MCAP objects, or read
    `reports/sim2real-report.json` (`.outer_loop.latest_decision`,
    `.inner_loop.reward_trend`, `.policy_access`, `.upload.status`). The canonical
    `reports/sim2real.rrd` includes the 14-stage timeline, every persisted
@@ -78,13 +74,13 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 - Every retry preserves registry-qualified real-tier images and Kubernetes
   execution. Candidate exhaustion is reported with exact scheduler evidence;
   it never falls back to SEAM/reference/in-process behavior.
-- Keep `runbook.yaml`'s `envs:` literals and the `run:` block `${VAR:-default}`
+- Keep `npa/workflows/sim2real.yaml`'s `envs:` literals and the `run:` block `${VAR:-default}`
   fallbacks in agreement — a cleared env var must not silently change behavior.
 
 ## Verify
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
-npa workbench health sim2real --checks all
-bash -n <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh
+npa/.venv/bin/npa workbench health sim2real --checks all
+npa/.venv/bin/npa workbench workflow submit npa/workflows/sim2real.yaml --run-id <id> --plan-only --var ...
 ```

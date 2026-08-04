@@ -435,6 +435,6 @@ def test_is_sim2real_runbook() -> None:
     from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
 
     root = Path(__file__).resolve().parents[2]
-    runbook = root / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
+    runbook = root / "workflows" / "sim2real.yaml"
     assert is_sim2real_runbook(runbook)
     assert not is_sim2real_runbook(root / "src" / "npa" / "workflows" / "skypilot" / "vlm-eval.yaml")

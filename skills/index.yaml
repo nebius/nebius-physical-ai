@@ -129,7 +129,7 @@ skills:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/sim2real/runbook.yaml
+          - npa/workflows/sim2real.yaml
   - name: review-checklist
     category: atomic
     when_to_use: "Code reviews and risk classification."
@@ -435,7 +435,7 @@ skills:
     smoke:
       - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/sim2real/runbook.yaml
+          - npa/workflows/sim2real.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
@@ -445,7 +445,7 @@ skills:
     path: skills/workflows/sim2real-operate/SKILL.md
     smoke:
       - type: file_exists
-        path: npa/workflows/workbench/sim2real/runbook.yaml
+        path: npa/workflows/sim2real.yaml
       - type: cli_help
         args: ["workbench", "health", "sim2real", "--help"]
         contains: "checks"

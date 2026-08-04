@@ -1,9 +1,16 @@
 # Sim-to-Real Pipeline — 10-Minute Demo Script
 
+> **Presentation-only legacy script.** Do not use the private operator-pack
+> commands below to launch a qualification run. The sole production entrypoint
+> is `npa workbench workflow submit npa/workflows/sim2real.yaml`; follow
+> [the canonical operator guide](sim2real-workflow.md). Pre-staged artifacts here
+> are for a timed presentation, never live-run evidence.
+
 **Audience:** Platform + robotics stakeholders  
 **Duration:** 10 minutes (includes ~30 s buffer)  
 **Data types & artifacts:** [sim2real-data-contracts.md](./sim2real-data-contracts.md)  
-**Runtime:** Direct Kubernetes staged job on RTX PRO cluster (SkyPilot bypass)
+**Runtime:** pre-staged presentation artifacts; canonical live runs use the
+adjacent workflow and in-repo direct-Kubernetes submitter
 
 Replace placeholders before rehearsal:
 
@@ -63,7 +70,7 @@ Use this table as the backbone of the demo. Every row is a file or prefix you ca
 | 5 | **Train / held-out split** | 80/20 split | `envs/train/manifest.json`, `envs/heldout/manifest.json` | Point at held-out count (demo: 4) |
 | 6 | **Token manifest** | Stage-A-compatible reference tokens | `tokens/manifest.json` | Quick JSON peek |
 | 7 | **Action rollouts** | Policy sibling Job when `POLICY_IMAGE` qualified; else reference in orchestrator | `actions/train/outer-01/iter-01/rollout-*/` | **Live:** `kubectl get jobs -l sim2real.local/run-id=<live-run-id>` |
-| 8 | **VLM critique** | Cosmos-Reason sibling Job on GPU image | `vlm_eval/train/outer-01/iter-01/<rollout-id>.json` | **Live:** `kubectl get jobs -l run-id=<live-run-id>`; **pre-staged:** open one critique JSON |
+| 8 | **VLM critique** | Cosmos-Reason sibling Job on GPU image | `vlm_eval/train/outer-01/iter-01/<rollout-id>.json` | **Live:** `kubectl get jobs -l sim2real.local/run-id=<live-run-id>`; **pre-staged:** open one critique JSON |
 | 9 | **RL signal + trainer** | Critique → reward signal → policy update | `training_signal/train/...`, `inner_loop/outer-01/evidence.json` | Show `reward_trend` in evidence |
 | 10 | **Held-out eval** | Genesis or Isaac Lab sibling Job | `eval/heldout/report.json` | **Live:** longest stage; default Isaac task `Isaac-Lift-Cube-Franka-v0` when `sim_backend=isaac` |
 | 11 | **Threshold gate** | Compare `success_rate` to threshold (demo: 0.45) | `outer_loop/decision.json`; promote → `checkpoints/candidate/candidate.json`; fail → `outer_loop/loopback.json` | **Fallback story** (below) |

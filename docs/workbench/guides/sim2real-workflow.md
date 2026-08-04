@@ -1,457 +1,320 @@
-# Sim-to-Real VLM→RL Workflow — User Guide
+# Canonical Sim2Real workflow
 
-Closed loop on Nebius GPUs: simulation rollouts → VLM critique → RL signal → policy
-update → held-out eval → threshold gate → Rerun observability.
+The production Sim2Real entrypoint is
+[`npa/workflows/sim2real.yaml`](../../../npa/workflows/sim2real.yaml). It is the
+only executable 14-stage Sim2Real YAML and sits beside
+[`npa/workflows/physical-ai-data-factory.yaml`](../../../npa/workflows/physical-ai-data-factory.yaml).
+For the neighboring data-factory workflow, see the
+[Physical AI Data Factory guide](physical-ai-data-factory.md).
 
-**Doc map:** [sim2real-data-contracts.md](./sim2real-data-contracts.md) (formats & schemas) ·
-[sim2real-customer-assets.md](./sim2real-customer-assets.md) (uploads) ·
-[sim2real-architecture.md](./sim2real-architecture.md) (K8s & control flow)
+`npa workbench workflow submit` recognizes the canonical file and routes it
+through `detect.py` to the direct-Kubernetes Sim2Real submitter. The orchestrator
+then dispatches real `s2r-*` sibling Jobs. It does not use the generic workflow
+graph runtime or demo toolRefs.
 
-**Canonical workflow file:** `npa/workflows/workbench/sim2real/runbook.yaml`  
-**Easy env overlay:** `npa/workflows/workbench/sim2real/quickstart.env`
+## What the 14 stages do
 
-**External object-store bucket:** use GCS with the S3-compatible API. Set `storage.bucket`
-and `storage.endpoint_url` (`https://storage.googleapis.com`) in `~/.npa/config.yaml`,
-GCS HMAC keys in `~/.npa/credentials.yaml`, and
-`NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-object-store-bucket>/sim2real-triggers/<batch>/lerobot-pusht/`
-in operator env or `--var` on submit. See the **Trigger bucket & S3-compatible
-storage** comment block at the top of `runbook.yaml` for the full variable map
-(`NPA_SIM2REAL_BUCKET`, `AWS_ENDPOINT_URL`, `S3_BUCKET`, seed + cluster secret sync).
-
----
-
-## Configuration reference
-
-| Concern | Where to set | Example vars |
+| Stage | Work | Required evidence |
 | --- | --- | --- |
-| Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | `ASSETS_URI`, `SCENE_SPEC_URI`, `CAMERAS_URI`, `NPA_SIM2REAL_CAMERAS_URI`, `ROBOT_SPEC_URI`, `NPA_SIM2REAL_ROBOT_SPEC_URI`, `ROBOT_PRESET`, `NPA_SIM2REAL_ROBOT_PRESET` |
-| Artifact bucket vs trigger bucket | `config.yaml`, operator env, runbook | `NPA_SIM2REAL_BUCKET` (alias `S3_BUCKET`), `NPA_SIM2REAL_TRIGGER_DATASET_URI` (alias `TRIGGER_DATASET_URI`), `storage.bucket`, `storage.sim2real_stock_trigger_uri` |
-| External object-store bucket | endpoint + HMAC keys | `AWS_ENDPOINT_URL`, `S3_ENDPOINT_URL`, `storage.endpoint_url`, `~/.npa/credentials.yaml` |
-| LeRobot custom/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `lerobot/pusht` |
-| Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
+| 1 | consume the LeRobot trigger | `stage_01_trigger/trigger.json` |
+| 2 | resolve scene, robot, and camera assets | `stage_02_assets/consumed_*_spec.json` |
+| 3 | real Cosmos Transfer augmentation | `augment/manifest.json`, generated frames/video |
+| 4 | generate raw environments | `envs/raw/` |
+| 5 | disjoint train split | `envs/train/envs.jsonl` |
+| 6 | tokenize/index environments | `tokens/manifest.json` |
+| 7 | real Isaac policy rollouts | `actions/train/` and camera provenance |
+| 8 | real Cosmos Reason critique | `vlm_eval/train/**/*.json` |
+| 9 | critique-to-reward plus real RSL-RL PPO | `training_signal/train/`, `model_*.pt` |
+| 10 | candidate-loaded held-out Isaac inference | `eval/heldout/report.json` and RGB-D captures |
+| 11 | aggregate threshold decision | `outer_loop/decision.json` |
+| 12 | external real-robot validation record | intentional `SEAM` stub; no GPU compute |
+| 13 | retrigger record | `stage_13_retrigger/retrigger.json` |
+| 14 | operator visualization | `reports/sim2real.rrd` and `.mcap` |
 
-Artifact bucket and trigger prefix may differ (common on S3-compatible object stores). Sim assets are optional — leave URIs empty for stock smoke. See [sim2real-customer-assets.md](./sim2real-customer-assets.md) for BYO scene/robot detail.
+Stage 12 is deliberately an external-validation record. It records the promoted
+checkpoint handoff; it does not claim that a robot was operated or that another
+GPU workload ran.
 
----
+## Preflight
 
-## Pipeline at a glance
-
-You can read the entire loop in the runbook `run:` block — no hidden orchestrator.
-
-```mermaid
-flowchart LR
-  S1[1 Trigger] --> S2[2 Assets]
-  S2 --> S3[3 Augment]
-  S3 --> S4[4-6 Envgen + split]
-  S4 --> S7[7-9 Inner loop]
-  S7 --> S10[10 Held-out eval]
-  S10 --> S11{11 Threshold}
-  S11 -->|promote| S12[12-13 Report]
-  S11 -->|loop back| S7
-```
-
-| Stage | What happens | Primary artifact types |
-| --- | --- | --- |
-| **1** Trigger | Consume LeRobot dataset trigger path | LeRobot + `npa.sim2real.trigger.v1` |
-| **2** Assets | Stock or BYO scene + robot specs | `consumed_*_spec.json` |
-| **3** Augment | Cosmos Transfer sibling Job (or reference) | augment manifest + frames |
-| **4–6** Envgen | Raw envs + train/held-out split | `npa.sim2real.raw_env.v1` JSONL |
-| **7–9** Inner loop | Rollouts → VLM → RL signal → trainer | rollouts, VLM eval, RL signal JSON |
-| **10** Held-out | Isaac (default) or Genesis eval | `npa.sim2real.heldout_eval.v1` |
-| **11** Gate | Promote checkpoint or loop back | threshold decision JSON |
-| **12–13** Finish | External validation stub + retrigger | SEAM stubs |
-| **Report** | E2E summary + optional S3 upload | `npa.sim2real.e2e_report.v1` |
-
-Full schema list and S3 layout: [sim2real-data-contracts.md](./sim2real-data-contracts.md).
-
-**State between stages:** `state/workflow_state.json` (quality, outer history, latest decision).
-
-Status update (June 2026): stage-runner waits now pre-check Kubernetes Job
-terminal counters before relying on `kubectl wait`, so already-failed sibling
-jobs are reported as failed immediately instead of being misclassified as
-complete in race/mock edge cases.
-
----
-
-## Quick start (8 knobs)
-
-Edit **`quickstart.env`** (or pass `--var` on submit):
+Use the repository environment for every command:
 
 ```bash
-# Copy and edit only these for a first run:
-NPA_SIM2REAL_RUN_ID=pusht-demo-$(date -u +%Y%m%dT%H%M%SZ)
-NPA_SIM2REAL_BUCKET=<your-bucket-without-s3-prefix>
-NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<bucket>/sim2real-triggers/<run-id>/lerobot-pusht/
-ASSETS_URI=s3://<bucket>/sim2real-assets/pusht/
-AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
-INNER_ITERATIONS=2
-OUTER_ITERATIONS=1
-SUCCESS_THRESHOLD=0.75
+npa/.venv/bin/npa --version
+npa/.venv/bin/npa workbench health sim2real --checks all --json
 ```
 
-**Before submit:** complete [Hugging Face model access](#hugging-face-model-access-self-hosted-workbench) — accept `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason2-2B`, and `nvidia/Cosmos-Transfer2.5-2B`, put `HF_TOKEN` in `~/.npa/credentials.yaml`, and ensure cluster secret `hf-ngc-tokens` is present.
+Configure these non-secret values in `~/.npa/config.yaml`:
 
-Run credential preflight first (recommended):
+- `storage.bucket`: usable S3-compatible artifact bucket.
+- `storage.endpoint_url`: its endpoint.
+- `storage.registry`: qualified Nebius registry, for example
+  `cr.eu-north1.nebius.cloud/<registry-id>`.
+- `storage.sim2real_stock_trigger_uri`: a populated LeRobot trigger prefix.
+- Kubernetes context/profile for the target cluster.
+
+Keep S3 HMAC credentials, `HF_TOKEN`, `NGC_API_KEY`, registry credentials, and
+Token Factory credentials in `~/.npa/credentials.yaml`; never put them in YAML or
+shell history. The `default` namespace needs `npa-storage-credentials` and
+`hf-ngc-tokens`, and the service account needs a current registry pull secret.
+
+Accept access for all three runtime weight repositories with the same Hugging
+Face account as `HF_TOKEN`:
+
+- `nvidia/Cosmos-Reason2-8B`
+- `nvidia/Cosmos-Reason2-2B`
+- `nvidia/Cosmos-Transfer2.5-2B`
+
+Check the cluster before launch:
 
 ```bash
-npa workbench health preflight
+kubectl get nodes -L nvidia.com/gpu.product
+kubectl -n default get secret npa-storage-credentials hf-ngc-tokens
+kubectl -n default get serviceaccount agent-sa -o yaml
 ```
 
-For cluster/config coherence before a staged submit, follow the operator checks
-in [sim2real-operate](../../../skills/workflows/sim2real-operate/SKILL.md)
-(`kubectl` context, registry pull secret, HF gated-model access).
+Isaac rendering is restricted to RT-core products: RTX PRO 6000 or L40S label
+variants. It is never routed to H100, H200, B200, or B300. When Kubernetes gives
+concrete insufficient-capacity evidence, the submitter tries every compatible
+product label in `NPA_SIM2REAL_K8S_GPU_CANDIDATES` in order. Image, credential,
+and runtime failures are not misclassified as capacity and do not trigger a GPU
+fallback.
 
-Then submit:
+## One-command real-tier launch
+
+This example uses the canonical loop counts, no early exit, uncapped held-out
+evaluation, real BYO Isaac PPO, all three cameras at 640×480, and required Rerun
+and MCAP output. Replace the three angle-bracket values. The image tags shown are
+the repository-pinned real component tags; the registry prefix makes every image
+pull explicit.
 
 ```bash
-# Load the env overlay into your shell (the staged submit reads these via the
-# environment), then name the run with --run-id:
-set -a
-source npa/workflows/workbench/sim2real/quickstart.env
-set +a
+RUN=sim2real-production-$(date -u +%Y%m%dt%H%M%Sz)
+BUCKET=<artifact-bucket>
+ENDPOINT=https://storage.us-central1.nebius.cloud
+REGISTRY=cr.eu-north1.nebius.cloud/<registry-id>
+TRIGGER=s3://${BUCKET}/sim2real-triggers/<batch>/lerobot-pusht/
 
-npa workbench workflow submit \
-  npa/workflows/workbench/sim2real/runbook.yaml \
-  --run-id pusht-demo
+npa/.venv/bin/npa workbench workflow submit npa/workflows/sim2real.yaml \
+  --run-id "${RUN}" \
+  --var NPA_SIM2REAL_BUCKET="${BUCKET}" \
+  --var AWS_ENDPOINT_URL="${ENDPOINT}" \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI="${TRIGGER}" \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_ID=lerobot/pusht \
+  --var AUGMENT_IMAGE="${REGISTRY}/npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z" \
+  --var ENVGEN_IMAGE="${REGISTRY}/npa-envgen:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
+  --var POLICY_IMAGE="${REGISTRY}/npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
+  --var TRAINER_IMAGE="${REGISTRY}/npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
+  --var VLM_IMAGE="${REGISTRY}/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
+  --var EVAL_IMAGE="${REGISTRY}/npa-loop-eval:cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
+  --var ISAAC_IMAGE="${REGISTRY}/npa-isaac-lab:2.3.2.post1" \
+  --var NPA_SIM2REAL_SIM_BACKEND=isaac \
+  --var NPA_SIM2REAL_ISAAC_TASK=Isaac-Lift-Cube-Franka-v0 \
+  --var BYO_POLICY_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_policy_rollout' \
+  --var BYO_TRAINER_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_trainer' \
+  --var BYO_EVAL_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_eval' \
+  --var INNER_ITERATIONS=3 \
+  --var OUTER_ITERATIONS=2 \
+  --var LOOP_OF_LOOPS_ITERATIONS=1 \
+  --var NPA_SIM2REAL_EARLY_EXIT=0 \
+  --var NPA_ENV_COUNT=10000 \
+  --var ROLLOUT_COUNT=8 \
+  --var STEPS_PER_ROLLOUT=6 \
+  --var HELDOUT_ENV_COUNT=8 \
+  --var NPA_SIM2REAL_HELDOUT_EVAL_LIMIT=0 \
+  --var NPA_BYO_ISAAC_NUM_ENVS=1024 \
+  --var NPA_BYO_ISAAC_ITERATIONS=150 \
+  --var NPA_BYO_ISAAC_STEPS_PER_ENV=24 \
+  --var NPA_SIM2REAL_CAMERA_VIEWS=primary,side,overhead \
+  --var NPA_SIM2REAL_CAPTURE_WIDTH=640 \
+  --var NPA_SIM2REAL_CAPTURE_HEIGHT=480 \
+  --var NPA_SIM2REAL_ROLLOUT_CAPTURE_STRIDE=1 \
+  --var NPA_SIM2REAL_HELDOUT_CAPTURE_STRIDE=20 \
+  --var NPA_SIM2REAL_PNG_COMPRESS_LEVEL=3 \
+  --var NPA_SIM2REAL_CAPTURE_FPS=10 \
+  --var NPA_SIM2REAL_RERUN=1 \
+  --var NPA_SIM2REAL_MCAP=1 \
+  --var NPA_SIM2REAL_REQUIRE_VISUALIZATION=1 \
+  --var NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=0 \
+  --var NPA_BYO_ISAAC_JOB_TIMEOUT_S=0 \
+  --var NPA_SIM2REAL_K8S_GPU_CANDIDATES='RTX PRO 6000,L40S' \
+  --var OMNI_KIT_ACCEPT_EULA=YES \
+  --var ISAACSIM_ACCEPT_EULA=YES
 ```
 
-Use `--run-id` for the run name (it feeds `RUN_ID` to the staged submit). For
-the staged Sim2Real runbook, `--var` only overrides
-`NPA_SIM2REAL_TRIGGER_DATASET_URI` / `NPA_SIM2REAL_TRIGGER_DATASET_ID`,
-`INNER_ITERATIONS`, `OUTER_ITERATIONS`, and `NPA_ENV_COUNT`; set every other knob
-(images, thresholds, assets, endpoint) via the sourced env overlay above. A
-`--var NPA_SIM2REAL_RUN_ID=...` is ignored — use `--run-id`.
+Use `--plan-only` on the same command to materialize and validate without
+applying the Job. Every `--var KEY=VALUE` is passed into the materialized
+orchestrator environment; it is not limited to a small allowlist.
 
-Track progress:
+## Parameter contract
+
+### Loop, evaluation, and thresholds
+
+| Variable | Default | Allowed value / unit | Operational effect |
+| --- | ---: | --- | --- |
+| `INNER_ITERATIONS` | `3` | integer ≥1 | rollout→critique→PPO passes per outer pass |
+| `OUTER_ITERATIONS` | `2` | integer ≥1 | held-out evaluation and threshold decisions |
+| `LOOP_OF_LOOPS_ITERATIONS` | `1` | integer ≥1 | Stage 13 external retrigger-cycle ceiling; one run records one cycle and whether another should be triggered |
+| `NPA_SIM2REAL_EARLY_EXIT` | `0` | boolean | if true, stop outer passes after promotion; false runs fixed counts |
+| `SUCCESS_THRESHOLD` | `0.50` | 0..1 fraction | aggregate held-out success-rate gate at Stage 11 |
+| `NPA_BYO_ISAAC_SUCCESS_DIST_M` | `0.05` | 0.001..10 m | per-episode cube-to-goal success distance in Isaac |
+| `ROLLOUT_COUNT` | `8` | integer ≥1 | policy rollouts per inner pass |
+| `STEPS_PER_ROLLOUT` | `6` | integer ≥1 | policy steps per rollout |
+| `NPA_ENV_COUNT` | `10000` | integer ≥1 | generated environments before split |
+| `NPA_TRAIN_FRACTION` | `0.8` | 0..1 fraction | train share; remainder is held out |
+| `HELDOUT_ENV_COUNT` | `8` | integer ≥1 | held-out episodes requested from Stage 10 |
+| `NPA_SIM2REAL_HELDOUT_EVAL_LIMIT` | `0` | integer ≥0 | cap on held-out input rows; `0` means uncapped |
+
+The two thresholds are intentionally different: a single Isaac episode succeeds
+when final distance is below `NPA_BYO_ISAAC_SUCCESS_DIST_M`; Stage 11 promotes
+only when the fraction of successful held-out episodes reaches
+`SUCCESS_THRESHOLD`.
+
+Fixed-count evidence run:
 
 ```bash
-npa workbench workflow status <run-id> --watch
+--var INNER_ITERATIONS=3 --var OUTER_ITERATIONS=2 --var NPA_SIM2REAL_EARLY_EXIT=0
 ```
 
----
-
-## Hugging Face model access (self-hosted workbench)
-
-Sim2real on Kubernetes downloads **gated NVIDIA Cosmos weights at runtime** inside
-GPU sibling Jobs. A Hugging Face token alone is not enough: you must **accept each
-model license** on https://huggingface.co while signed in with the same account
-that owns the token.
-
-### One-time setup
-
-1. Create a read token at https://huggingface.co/settings/tokens
-2. Accept the license on each repo page (click **Agree and access** when prompted)
-3. Add the token to `~/.npa/credentials.yaml`:
-
-   ```yaml
-   tokens:
-     HF_TOKEN: hf_...
-   ```
-
-4. Mirror credentials into the cluster (default namespace):
-
-   ```bash
-   # Registry pull secret (expires ~weekly — refresh when image pulls return 401)
-   export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig
-   npa/.venv/bin/python - <<'PY'
-   from npa.cli.workbench.detection_training import _ensure_image_pull_secret
-   reg = "<your-registry>/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-   for name in ("npa-nebius-registry", "agent-sa"):
-       _ensure_image_pull_secret(image=reg, secret_name=name, namespace="default",
-                                 kubeconfig="~/.npa/clusters/<context>/kubeconfig")
-   PY
-   ```
-
-   Ensure `hf-ngc-tokens` and `npa-storage-credentials` secrets exist in
-   `default` (S3 + `HF_TOKEN` for sibling Jobs). The runbook mounts them via
-   `NPA_SIM2REAL_K8S_ENV_SECRET_NAMES`.
-
-### Self-hosted sim2real VLM repos (dual Reason eval)
-
-| Hugging Face repo | Gated? | Role | Notes |
-| --- | --- | --- | --- |
-| `nvidia/Cosmos-Reason2-8B` | **Yes — accept license** | Reason2 sibling (`vlm_eval_reason2`) | Default `VLM_REASON2_MODEL` |
-| `nvidia/Cosmos-Reason2-2B` | **Yes — accept license** | Reason3 sibling (`vlm_eval_reason3`) | Default `VLM_REASON3_MODEL` (smaller second Reason2 checkpoint) |
-| `nvidia/Cosmos-Transfer2.5-2B` | **Yes — accept license** | Stage 3 augment (Cosmos Transfer image) | Downloaded inside `npa-cosmos2-transfer` |
-
-### Cosmos 3 on Hugging Face (not used by sim2real VLM Jobs today)
-
-| Hugging Face repo | Gated? | Notes |
-| --- | --- | --- |
-| `nvidia/Cosmos3-Nano` | Often early-access | 16B omni-model (reason + generate); used by Cosmos3 text-to-image workflows, not the `npa-cosmos3-reason` VLM sibling image |
-| `nvidia/Cosmos3-Super` | Often early-access | 64B omni-model; datacenter scale |
-| `nvidia/Cosmos-Reason1-7B` | Open | Legacy Reason1 generation; superseded by Reason2 for sim2real defaults |
-
-### Hosted-only (not for self-hosted VLM Jobs)
-
-| Model id | Where it runs | Notes |
-| --- | --- | --- |
-| `nvidia/Cosmos3-Super-Reasoner` | Nebius **Token Factory** API | No HF repo; use `npa workbench token-factory reason`. Do **not** set as `VLM_REASON3_MODEL` on cluster sim2real. |
-| `nvidia/Cosmos3-Super` | Hugging Face (64B omnimodel) | Datacenter scale (multi-GPU vLLM); not used by the 1-GPU sim2real sibling Job pattern. |
-
-### Verify access before launch
+Promotion-short-circuit run:
 
 ```bash
-huggingface-cli whoami
-# Optional: probe a repo you accepted
-python -c "from huggingface_hub import hf_hub_download; hf_hub_download('nvidia/Cosmos-Reason2-8B', 'config.json')"
-npa workbench health preflight --checks hf,ngc,s3,token_factory
+--var INNER_ITERATIONS=3 --var OUTER_ITERATIONS=5 --var NPA_SIM2REAL_EARLY_EXIT=1
 ```
 
-If a sibling Job fails with `GatedRepoError` or `403`, re-open the repo page,
-confirm access, and retry. If pulls fail with `401 Unauthorized`, refresh the
-`npa-nebius-registry` pull secret (see above). Sibling Jobs use writable
-`/tmp/hf_home` caches by default (see `npa.workbench.cosmos.reason`).
+### Real PPO
 
----
+| Variable | Default | Allowed value / unit | Operational effect |
+| --- | ---: | --- | --- |
+| `NPA_BYO_ISAAC_NUM_ENVS` | `1024` | 1..65536 environments | vectorized Isaac PPO environments |
+| `NPA_BYO_ISAAC_ITERATIONS` | `150` | 1..1000000 iterations | RSL-RL optimization iterations |
+| `NPA_BYO_ISAAC_STEPS_PER_ENV` | `24` | 1..16384 steps | rollout horizon per environment and iteration |
+| `LEARNING_RATE` | `0.08` | positive scalar | critique-to-training-signal adapter learning rate |
 
-> Top-level `npa workbench sim2real` was removed. Use **`workflow submit`**, module CLI
-> (`python -m npa.workflows.sim2real run …`), staged subcommands (`preamble`,
-> `outer-iteration`, `finalize`), or SDK (`npa.sdk.workbench.sim2real`).
+The default PPO workload is 3,686,400 environment steps per inner pass. Stage 9
+records these dimensions, training curves, and the real `model_*.pt` URI. Later
+rollout/eval Jobs must load the exact bytes or fail closed.
 
----
+### Cameras and recording
 
-## How to edit the workflow (agent-friendly)
+| Variable | Default | Allowed value / unit | Operational effect |
+| --- | ---: | --- | --- |
+| `NPA_SIM2REAL_CAMERA_VIEWS` | `primary,side,overhead` | comma list; aliases `front,left,top` | synchronized front/operator, side, and oblique/top views |
+| `NPA_SIM2REAL_CAPTURE_WIDTH` | `640` | 320..4096 px | RGB/depth width |
+| `NPA_SIM2REAL_CAPTURE_HEIGHT` | `480` | 240..2160 px | RGB/depth height |
+| `NPA_SIM2REAL_ROLLOUT_CAPTURE_STRIDE` | `1` | 1..10000 sim steps | policy-rollout frame sampling |
+| `NPA_SIM2REAL_HELDOUT_CAPTURE_STRIDE` | `20` | 1..10000 sim steps | held-out frame sampling |
+| `NPA_SIM2REAL_PNG_COMPRESS_LEVEL` | `3` | 0..9 | lossless PNG compression, not visual quality loss |
+| `NPA_SIM2REAL_CAPTURE_FPS` | `10` | 0.1..240 fps | artifact/viewer timestamps |
+| `NPA_SIM2REAL_RERUN` | `1` | boolean | emit `reports/sim2real.rrd` |
+| `NPA_SIM2REAL_MCAP` | `1` | boolean | emit aligned `reports/sim2real.mcap` |
+| `NPA_SIM2REAL_REQUIRE_VISUALIZATION` | `1` | boolean | fail Stage 14 if an enabled recording is missing |
+| `NPA_SIM2REAL_RERUN_SERVE` | `1` | boolean | publish the completed `.rrd` through the shared authenticated viewer |
+| `NPA_SIM2REAL_K8S_JOB_TIMEOUT_S` | `0` | integer ≥0 seconds | orchestrator/sibling deadline; `0` means no deadline |
+| `NPA_BYO_ISAAC_JOB_TIMEOUT_S` | `0` | integer ≥0 seconds | Isaac rollout/train/eval wait; `0` means no deadline |
 
-Open **`npa/workflows/workbench/sim2real/runbook.yaml`**. The `run:` block is the source of truth:
+Every frame records view name, Isaac world pose and intrinsics, environment and
+episode, pixel resolution, frame index, simulation step/timestamp, and candidate
+checkpoint URI/SHA. The Rerun scene combines measured Isaac RGB-D point clouds
+with clearly labeled nominal table/cube/goal/Franka task context.
 
-```yaml
-# Stage 1-13: single Python orchestrator (replaces bash preamble/outer/finalize loop)
-./npa/.venv/bin/python -m npa.workflows.sim2real run "${common_args[@]}" \
-  --initial-quality "${INITIAL_QUALITY:-0.38}" \
-  --upload-artifacts
-```
+### GPU routing
 
-### What to edit where
+| Variable | Default | Allowed value / unit | Operational effect |
+| --- | ---: | --- | --- |
+| `NPA_SIM2REAL_K8S_GPU_PRODUCT` | `NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition` | exact cluster `nvidia.com/gpu.product` label for RTX PRO 6000 or L40S | preferred RT-core product |
+| `NPA_SIM2REAL_K8S_GPU_CANDIDATES` | `RTX PRO 6000,L40S` | ordered comma list of compatible aliases or exact labels | capacity fallback order, normalized against live node labels |
+| `NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS` | `16` | integer ≥1 | maximum concurrently dispatched sibling GPU tasks |
+| `NPA_ENVGEN_SHARD_COUNT` | `16` | integer ≥1 | indexed Stage 4 environment-generation shards |
 
-| You want to… | Edit this | Example |
-| --- | --- | --- |
-| Scale the loop | `envs:` headline block | `INNER_ITERATIONS`, `ROLLOUT_COUNT`, `HELDOUT_ENV_COUNT` |
-| Change success bar | `SUCCESS_THRESHOLD` | `0.75` → `0.85` |
-| Swap sim engine | `NPA_SIM2REAL_SIM_BACKEND` | `isaac` (default) or `genesis` |
-| Swap trainer / VLM images | `TRAINER_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE` | your registry tags |
-| BYO trainer | `BYO_TRAINER_COMMAND` | shell command honoring § contracts below |
-| Add a second outer pass | `OUTER_ITERATIONS` + the bash `for` loop (already there) | `OUTER_ITERATIONS=2` |
-| Disable Rerun | `NPA_SIM2REAL_RERUN=0` or `--no-rerun` locally | |
+Isaac jobs reject non-RT products before apply. A fallback is attempted only
+after concrete Kubernetes capacity evidence; image, credential, and runtime
+failures stay attached to the selected product and fail closed.
 
-**Do not** put secrets in YAML. Credentials live in `~/.npa/credentials.yaml`.
-
-### Inspect stage progress during a run
+## Monitor and diagnose
 
 ```bash
-npa workbench workflow status <run-id> --watch
+npa/.venv/bin/npa workbench workflow status "${RUN}" --watch
+kubectl -n default get jobs -l sim2real.local/run-id="${RUN}" -o wide
+kubectl -n default get pods -l sim2real.local/run-id="${RUN}" -o wide
+kubectl -n default logs job/"${RUN}" --follow
 ```
 
-SDK (same backend):
+The orchestrator Job name may be DNS-truncated; use the `job_name` printed by
+submit when that happens. Stage status is also persisted at:
 
-```python
-from npa.sdk.workbench import sim2real
-
-sim2real.status(run_id="<run-id>", watch=True)
+```text
+s3://<bucket>/sim2real-b/<run-id>/state/workflow_state.json
 ```
 
-Module CLI (`python -m npa.workflows.sim2real status`) remains available for
-in-cluster/debug use; operators should prefer ``npa workbench workflow status``.
+On `ImagePullBackOff`/401, refresh the registry pull secret and delete only the
+failed run-scoped Job so the same documented submit can be repeated. On
+`Insufficient nvidia.com/gpu`, inspect Job events; the submitter will try every
+compatible RTX PRO 6000/L40S label before returning capacity exhaustion.
 
-Stage 3 (augment) is marked **SUCCEEDED** only when
-`augment/cosmos2-transfer-result.json` exists on S3—not when `augment/manifest.json`
-alone is present. If status shows augment pending while the driver is waiting on a
-Cosmos Transfer sibling Job, check sibling Jobs and cluster events rather than
-relying on partial augment markers.
+## Artifact and policy access
+
+The run root is `s3://<bucket>/sim2real-b/<run-id>/`. Key objects are:
+
+| Object | Purpose |
+| --- | --- |
+| `reports/sim2real-report.json` | all-stage report, tiers, Jobs, digests, metrics, runtime parameters |
+| `reports/sim2real.rrd` | Rerun 3D scene, synchronized cameras, charts, timeline, provenance |
+| `reports/sim2real.mcap` | aligned Foxglove/Lichtblick cameras, point cloud, signals, provenance |
+| `eval/heldout/report.json` | per-env result and exact loaded checkpoint SHA/size |
+| `outer_loop/decision.json` | aggregate threshold and promotion decision |
+| `checkpoints/candidate/candidate.json` | deployable candidate metadata and authenticated access instructions |
+| `byo-trainer/**/model_latest.pt` | real learned policy weights |
+
+Download and inspect without presigned URLs:
 
 ```bash
-RUN=/tmp/npa-sim2real-<run-id>
-cat "$RUN/state/workflow_state.json" | jq '{quality:.current_quality, decision:.final_decision.decision}'
-cat "$RUN/inner_loop/outer-01/evidence.json" | jq '{reward_trend, final_quality, signal_diversity}'
-cat "$RUN/eval/heldout/report.json" | jq '{success_rate, per_env: .per_env|length}'
-cat "$RUN/outer_loop/decision.json" | jq .
+PREFIX=s3://${BUCKET}/sim2real-b/${RUN}
+aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/reports/sim2real-report.json" - | jq .
+aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/eval/heldout/report.json" - | \
+  jq '{success_rate, policy_inference_provenance, capture, camera_metadata}'
+aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - | \
+  jq '{deployable_policy, policy_checkpoint_uri, policy_checkpoint_sha256, policy_checkpoint_size_bytes}'
+aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/reports/sim2real.rrd" /tmp/sim2real.rrd
+aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/reports/sim2real.mcap" /tmp/sim2real.mcap
 ```
 
-When stage 10+ has completed, `npa workbench workflow status <run-id>` also prints
-`success_rate`, `threshold`, and `decision` from workflow state or S3 artifacts
-(not only per-stage `SUCCEEDED`/`PENDING`).
-
-### Fetch final reports (S3)
-
-For a completed cluster run, artifacts live under
-`s3://<bucket>/sim2real-b/<run-id>/`. Replace placeholders with your bucket and
-run id from submit output.
+Open the recordings:
 
 ```bash
-source ~/.npa/sim2real-operator.env   # sets AWS_* and endpoint
-RUN=sim2real-staged-20260615t180818z
-BUCKET="${S3_BUCKET:-<your-bucket>}"
-PREFIX="s3://${BUCKET}/sim2real-b/${RUN}"
-
-# E2E summary (includes rerun_serve.public_url when auto-serve ran)
-aws s3 cp "${PREFIX}/reports/sim2real-report.json" /tmp/sim2real-report.json \
-  --endpoint-url "${AWS_ENDPOINT_URL}"
-
-# Held-out eval (stage 10)
-aws s3 cp "${PREFIX}/eval/heldout/report.json" /tmp/heldout-report.json \
-  --endpoint-url "${AWS_ENDPOINT_URL}"
-
-# One-liners
-jq '{status, public_url: .rerun_serve.public_url, decision: .outer_loop.latest_decision.decision, success_rate: .outer_loop.latest_heldout_report.success_rate, threshold: .outer_loop.latest_decision.threshold}' \
-  /tmp/sim2real-report.json
-jq '{success_rate, threshold, passed: [.per_env[]|select(.success)]|length, total: (.per_env|length)}' \
-  /tmp/heldout-report.json
-jq '{decision, success_rate, threshold, checkpoint_uri}' \
-  <(aws s3 cp "${PREFIX}/outer_loop/decision.json" - --endpoint-url "${AWS_ENDPOINT_URL}")
+npa/.venv/bin/rerun /tmp/sim2real.rrd
+npa/.venv/bin/npa workbench lichtblick serve --input-path /tmp/sim2real.mcap --execute
 ```
 
-Sync the full run tree locally (debug / air-gap):
+The visualization is evidence, not an inference engine. Its held-out camera and
+point-cloud streams are generated by Isaac after loading the candidate weights;
+the recording embeds the same URI/SHA/size as `candidate.json` and the held-out
+report so that relationship can be independently checked.
+
+## Cleanup
+
+Cleanup is run-scoped. It does not delete the S3 evidence tree:
 
 ```bash
-aws s3 sync "${PREFIX}/" "/tmp/sim2real-demo/${RUN}/" --endpoint-url "${AWS_ENDPOINT_URL}"
+kubectl -n default delete job -l sim2real.local/run-id="${RUN}"
 ```
 
-Live workflow state (updated during the run):
+Remove the shared hosted viewer only when intended:
 
 ```bash
-aws s3 cp "${PREFIX}/state/workflow_state.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
-  | jq '{status, success_rate: .final_eval.success_rate, threshold: .final_decision.threshold, decision: .final_decision.decision}'
+npa/.venv/bin/npa workbench sim2real rerun serve --run-id "${RUN}" --destroy
 ```
 
----
+## Troubleshooting guardrails
 
-## Local smoke (no cluster)
-
-Run the same three commands the YAML uses:
-
-```bash
-OUT=/tmp/s2r-smoke
-npa/.venv/bin/python -m npa.workflows.sim2real run \
-  --run-id smoke --output-dir "$OUT" --inner-iterations 2 --rollout-count 2 --no-rerun
-
-# Or explicit stage boundaries (debug / partial reruns):
-npa/.venv/bin/python -m npa.workflows.sim2real preamble \
-  --run-id smoke --output-dir "$OUT" --inner-iterations 2 --rollout-count 2 --no-rerun
-npa/.venv/bin/python -m npa.workflows.sim2real outer-iteration \
-  --run-id smoke --output-dir "$OUT" --outer-iteration 1 --initial-quality 0.38 \
-  --inner-iterations 2 --rollout-count 2 --no-rerun
-npa/.venv/bin/python -m npa.workflows.sim2real finalize \
-  --run-id smoke --output-dir "$OUT" --inner-iterations 2 --rollout-count 2 --no-rerun
-```
-
-Without `s3_bucket`, VLM/held-out use **local reference** mode (CPU smoke). With
-`s3_bucket`, sibling K8s GPU jobs run augment (Stage 3), policy (Stage 7), VLM
-(Stage 8), and held-out eval (Stage 10) when images are registry-qualified.
-
-SDK equivalent:
-
-```python
-from npa.sdk.workbench import sim2real
-
-sim2real.preamble(run_id="sdk", output_dir="/tmp/s2r-sdk", inner_iterations=2)
-sim2real.outer_iteration(run_id="sdk", output_dir="/tmp/s2r-sdk", outer_iteration=1)
-sim2real.finalize(run_id="sdk", output_dir="/tmp/s2r-sdk")
-# Or one call: sim2real.run(...)
-```
-
----
-
-## Custom LeRobot trainer (§ contract)
-
-Set `BYO_TRAINER_COMMAND` for an in-process shell hook, or rely on the reference
-trainer in the orchestrator pod (`TRAINER_IMAGE` is recorded in the report; it is
-not a sibling Job by default).
-
-Your command must read `NPA_SIM2REAL_SIGNAL_JSON` and write `NPA_SIM2REAL_OUTPUT_JSON`
-with `reward_head_after`, `policy_output_after`, `policy_delta_l2`.
-
----
-
-## Rerun observability
-
-Stage 14 writes `reports/sim2real.rrd` locally and uploads it with the run tree.
-When `NPA_SIM2REAL_RERUN=1` (default), artifact upload succeeds, and cluster
-credentials are available, **`run_finalize` also deploys a hosted Rerun viewer**
-on mk8s (`npa workbench sim2real rerun serve` logic). The workflow logs and
-`reports/sim2real-report.json` include `rerun_serve.public_url` — one shared
-LoadBalancer per mk8s cluster (stable URL for the whole team).
-
-Disable hosted serve only: `NPA_SIM2REAL_RERUN_SERVE=0`. Disable `.rrd` emission:
-`NPA_SIM2REAL_RERUN=0` or `--no-rerun`.
-
-Point the shared cluster viewer at a completed run (updates the served recording
-without a new external IP):
-
-```bash
-npa workbench sim2real rerun serve --run-id <sim2real-staged-…>
-# optional: --cluster-name <profile from ~/.npa/clusters/>
-```
-
-Teardown the shared viewer for the cluster:
-
-```bash
-npa workbench sim2real rerun serve --run-id <any-valid-run-id> --destroy
-```
-
-Local offline review:
-
-```bash
-pip install rerun-sdk
-rerun /path/to/reports/sim2real.rrd
-```
-
-Logs: rollout frames, VLM critiques, RL rewards/advantages, held-out scores.
-
----
-
-## Real-world policy deployment (Stage 12 seam)
-
-After Stage 11 promotes, artifacts land under
-`s3://<bucket>/sim2real-b/<run-id>/checkpoints/candidate/`:
-
-| Artifact | Schema | What it is today |
-| --- | --- | --- |
-| `candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote metadata (success rate, threshold, run id) |
-| `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `checkpoint_uri` pointer when decision is `promote_checkpoint` |
-| Inner-loop trainer update | in `inner_loop/…/evidence.json` | Reference VLM→RL bias update (`policy_output_after`) — not a LeRobot `pretrained_model/` tree |
-
-**WORKS today:** sim training, held-out eval, checkpoint **metadata** on S3, loop
-retrigger record (Stage 13).
-
-**SEAM today:** live real-robot execution. Stage 12 writes
-`stage_12_external_validation/external_stub.json` with `input_checkpoint` —
-a documented BYO gate, not an automated deploy.
-
-**Customer deploy path (BYO):**
-
-1. On promote, download `checkpoints/candidate/` from the run prefix on S3.
-2. Map the reference trainer state to your robot policy format (or run your own
-   trainer via `BYO_TRAINER_COMMAND` that writes a deployable LeRobot checkpoint).
-3. Deploy with LeRobot on your robot stack, for example:
-   `npa workbench lerobot serve --input-path s3://<your-bucket>/policies/<run-id>/`
-   (requires a standard LeRobot checkpoint layout — not emitted by the reference
-   trainer today).
-4. Collect a new LeRobot dataset on hardware, upload to
-   `s3://<bucket>/sim2real-triggers/<batch>/lerobot-<task>/`, and re-trigger
-   (Stage 13).
-
-Detail and scorecard: [sim2real-customer-assets.md § Real-world policy](./sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam).
-
-## Simulation assets & robots
-
-- **Trigger data:** LeRobot dataset only (Stage 1) — see [data contracts](./sim2real-data-contracts.md#not-everything-is-lerobot)
-- **Objects / scene:** mesh + SceneSpec via `ASSETS_URI` / `SCENE_SPEC_URI`
-- **Robot:** customer UR/Flexiv via `ROBOT_SPEC_URI`; stock Franka is platform smoke only
-- **Backend:** `isaac` (default, RT-core held-out) or `genesis` (legacy)
-
-Asset handoff and scorecard: [sim2real-customer-assets.md](./sim2real-customer-assets.md)
-
----
-
-## Validate before merge
-
-```bash
-npa/.venv/bin/python -m pytest npa/tests/workflows/test_sim2real_loop.py -q
-npa workbench health preflight
-```
-
-## Upload behavior (`--upload-artifacts`)
-
-When artifact upload is enabled, upload errors now fail the run instead of being
-silently downgraded. This makes storage/config regressions visible immediately in
-CI and operator dashboards.
+- A real-component stage without a registry-qualified image or real command is
+  rejected before submit.
+- A supplied candidate checkpoint that cannot be loaded is a hard failure; the
+  policy/eval path never substitutes a stock policy.
+- Missing or malformed Cosmos, Isaac, trainer, Rerun, or MCAP evidence must be
+  fixed and rerun; a process exit code alone is not proof.
+- `NPA_SIM2REAL_HELDOUT_EVAL_LIMIT=0` is uncapped, not zero episodes.
+- `SUCCESS_THRESHOLD` is a fraction; `NPA_BYO_ISAAC_SUCCESS_DIST_M` is metres.
+- H100/H200/B200/B300 are invalid for Isaac rendering even if idle.
+- Stage 12 remains an intentional external-validation stub and is the only
+  expected non-`WORKS` canonical stage.

@@ -9,6 +9,7 @@ from typing import Any
 from npa.deploy.images import registry_from_env
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
+    DEFAULT_ENV_COUNT,
     DEFAULT_ENVGEN_SHARD_COUNT,
     DEFAULT_K8S_MAX_PARALLEL_GPUS,
     DEFAULT_INNER_ITERATIONS,
@@ -148,7 +149,9 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or default_envgen_image(registry=registry or None)
         ),
         env_count=int(
-            overrides.get("env_count", os.environ.get("NPA_ENV_COUNT", "0"))
+            overrides.get(
+                "env_count", os.environ.get("NPA_ENV_COUNT", DEFAULT_ENV_COUNT)
+            )
         ),
         train_fraction=float(
             overrides.get(
@@ -246,7 +249,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         early_exit=_bool_value(
             overrides["early_exit"]
             if "early_exit" in overrides
-            else os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "1")
+            else os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "0")
         ),
         inner_iterations=int(
             overrides.get(
@@ -298,7 +301,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             )
         ),
         learning_rate=float(
-            overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.05"))
+            overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.08"))
         ),
         byo_signal_converter=str(
             overrides.get("byo_signal_converter")
@@ -385,7 +388,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_job_timeout_s=int(
             overrides.get(
                 "k8s_job_timeout_s",
-                os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200"),
+                os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "0"),
             )
         ),
         k8s_max_parallel_gpus=int(

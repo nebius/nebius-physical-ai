@@ -63,7 +63,7 @@ When you're ready to do it for real on an H100:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/sim2real/runbook.yaml \
+  npa/workflows/sim2real.yaml \
   --run-id <run-id> \
   --var NPA_SIM2REAL_BUCKET=<your-bucket> \
   --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
@@ -115,6 +115,6 @@ you recorded in Genesis, or a [Reachy 2](reachy2-lerobot-policy.md) dataset.
 ## Dig deeper
 
 - **14-stage production loop:** [Sim-to-real workflow](sim2real-workflow.md) · [Data contracts](sim2real-data-contracts.md)
-- Canonical 14-stage YAML: `npa/workflows/workbench/sim2real/runbook.yaml`
+- Canonical 14-stage YAML: `npa/workflows/sim2real.yaml`
 - Demo-only DSL fixture: `npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml`
 - Skill: `skills/workflows/sim-to-real/SKILL.md`

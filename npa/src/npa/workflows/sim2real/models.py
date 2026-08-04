@@ -13,6 +13,7 @@ from npa.deploy.images import container_image_for_tool, registry_from_env
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_COSMOS2_TRANSFER_TAG,
+    DEFAULT_ENV_COUNT,
     DEFAULT_ENVGEN_SHARD_COUNT,
     DEFAULT_K8S_MAX_PARALLEL_GPUS,
     DEFAULT_ENVGEN_TAG,
@@ -82,7 +83,7 @@ class Sim2RealLoopConfig:
     robot_preset: str = ""
     augment_image: str = f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
     envgen_image: str = f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
-    env_count: int = 0
+    env_count: int = DEFAULT_ENV_COUNT
     train_fraction: float = DEFAULT_TRAIN_FRACTION
     envgen_shard_count: int = DEFAULT_ENVGEN_SHARD_COUNT
     action_env_limit: int = DEFAULT_ACTION_ENV_LIMIT
@@ -103,7 +104,7 @@ class Sim2RealLoopConfig:
     # Continue through every configured outer iteration even after a checkpoint
     # clears the promotion threshold when false. Real qualification runs use this
     # to prove the complete fixed-count loop rather than only its early-exit path.
-    early_exit: bool = True
+    early_exit: bool = False
     inner_iterations: int = DEFAULT_INNER_ITERATIONS
     outer_iterations: int = DEFAULT_OUTER_ITERATIONS
     loop_of_loops_iterations: int = DEFAULT_LOOP_OF_LOOPS_ITERATIONS
@@ -114,7 +115,7 @@ class Sim2RealLoopConfig:
     upload_artifacts: bool = False
     no_guardrails: bool = False
     signal_loss_weight: float = 1.0
-    learning_rate: float = 0.05
+    learning_rate: float = 0.08
     byo_signal_converter: str = ""
     byo_trainer_command: str = ""
     byo_vlm_command: str = ""
@@ -131,7 +132,7 @@ class Sim2RealLoopConfig:
     k8s_gpu_candidates: tuple[str, ...] = ()
     k8s_kubeconfig: str = ""
     k8s_context: str = ""
-    k8s_job_timeout_s: int = 7200
+    k8s_job_timeout_s: int = 0
     k8s_max_parallel_gpus: int = DEFAULT_K8S_MAX_PARALLEL_GPUS
     source_repo: str = ""
     source_ref: str = ""
@@ -160,8 +161,8 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("learning_rate must be positive")
         if self.signal_loss_weight < 0:
             raise Sim2RealLoopError("signal_loss_weight must be non-negative")
-        if self.k8s_job_timeout_s <= 0:
-            raise Sim2RealLoopError("k8s_job_timeout_s must be positive")
+        if self.k8s_job_timeout_s < 0:
+            raise Sim2RealLoopError("k8s_job_timeout_s must be non-negative (0 is unlimited)")
         if self.k8s_max_parallel_gpus <= 0:
             raise Sim2RealLoopError("k8s_max_parallel_gpus must be positive")
         if self.heldout_eval_limit < 0:

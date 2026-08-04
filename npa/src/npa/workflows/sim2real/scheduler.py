@@ -40,7 +40,7 @@ DAG_SPEC_SCHEMA = "npa.workflow/v1"
 
 # Default spec shipped with the repo, resolved relative to the workbench tree.
 # __file__ = <repo>/npa/src/npa/workflows/sim2real/scheduler.py; parents[4] = <repo>/npa,
-# which is where the workbench workflow YAMLs (runbook.yaml, sim2real.dag.yaml) live.
+# which is where the workbench workflow YAMLs and canonical sim2real.yaml live.
 DEFAULT_DAG_SPEC = (
     Path(__file__).resolve().parents[4]
     / "workflows"

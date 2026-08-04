@@ -264,6 +264,28 @@ def test_capacity_retry_order_and_provenance(monkeypatch: pytest.MonkeyPatch) ->
     ]
 
 
+def test_zero_timeout_waits_without_imposing_job_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+    result = run_gpu_job_with_fallback(
+        kubectl=scheduler,
+        manifest_factory=_manifest,
+        base_job_name="s2r-unbounded",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=0,
+    )
+    assert result["selected_product"] == RTX
+    assert result["attempts"][-1]["status"] == "complete"
+
+
 def test_unrelated_runtime_failure_never_switches_product(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

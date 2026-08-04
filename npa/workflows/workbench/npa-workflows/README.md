@@ -98,7 +98,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `sim2real-envgen-shards.yaml` | **DEMO ONLY** isolated envgen fan-out fixture |
 
 The single canonical Sim2Real **14-stage engine** YAML is
-`npa/workflows/workbench/sim2real/runbook.yaml`. `npa workbench workflow submit`
+`npa/workflows/sim2real.yaml`. `npa workbench workflow submit`
 detects that exact file and routes it to direct Kubernetes; none of the demo
 specs above can take that route.
 

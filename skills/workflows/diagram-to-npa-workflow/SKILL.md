@@ -139,7 +139,7 @@ The method is domain-agnostic. Confirm on a new diagram:
 
 The v0.0.1 spec captures the **graph**; the sim2real GPU **engine** that produces
 real weight updates is the staged runbook
-`npa/workflows/workbench/sim2real/runbook.yaml` (see
+`npa/workflows/sim2real.yaml` (see
 `skills/workbench/sim2real-engine/SKILL.md` for the 14-stage map and
 `skills/workflows/sim2real-operate/SKILL.md` to run it on a cluster). The produced
 spec mirrors that engine one-to-one (augment → envgen → inner rollouts/VLM → heldout

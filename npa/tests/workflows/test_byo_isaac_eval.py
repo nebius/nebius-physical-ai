@@ -65,7 +65,19 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
 
     monkeypatch.setattr(ev, "build_isaac_eval_job_manifest", fake_build)
     monkeypatch.setattr(ev, "_kubectl", lambda *a, **k: _Proc())
-    monkeypatch.setattr(ev, "_download_json", lambda _uri: {"object_goal_distances": [0.01]})
+    monkeypatch.setattr(
+        ev,
+        "_download_json",
+        lambda _uri: {
+            "note": "rollout_ok",
+            "object_goal_distances": [0.01],
+            "policy_checkpoint": {
+                "uri": "s3://bkt/run/model_latest.pt",
+                "sha256": "a" * 64,
+                "size_bytes": 4096,
+            },
+        },
+    )
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_EVAL_TAG", "outer-02")
@@ -106,6 +118,13 @@ def test_dryrun_main_writes_normalizable_report(tmp_path, monkeypatch):
     assert payload["policy_checkpoint"] == "s3://b/run/model_latest.pt"
     assert payload["deployable_policy_eval"] is True
     assert len(payload["per_env"]) == 4
+    assert [item["name"] for item in payload["camera_metadata"]] == [
+        "primary",
+        "side",
+        "overhead",
+    ]
+    assert payload["camera_metadata"][0]["width"] == 640
+    assert payload["camera_metadata"][0]["height"] == 480
     # The engine normalizer computes success_rate from per_env (2 of 4 < 0.05m).
     cfg = build_config_from_env(threshold=0.45, s3_bucket="", run_id="t")
     report = _normalize_heldout_report(
@@ -163,7 +182,9 @@ def test_eval_script_uses_oblique_workspace_camera_for_renders():
     assert '"heldout_cam" if name == "primary"' in script
     assert '"heldout_cam_" + name' in script
     assert 'convention="world"' in script
-    assert "width=256" in script and "height=256" in script
+    assert 'EVAL_CAPTURE_WIDTH", "640"' in script
+    assert 'EVAL_CAPTURE_HEIGHT", "480"' in script
+    assert "width=CAPTURE_WIDTH" in script and "height=CAPTURE_HEIGHT" in script
     assert "clipping_range=(0.05, 20.0)" in script
 
 

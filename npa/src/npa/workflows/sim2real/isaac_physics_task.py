@@ -146,6 +146,7 @@ SYS_DIR = os.environ.get("NPA_PHYS_MODULE_DIR", "/tmp/npa_phys")
 sys.path.insert(0, SYS_DIR)
 NUM_ENVS = int(os.environ.get("PHYS_NUM_ENVS", "64"))
 ITERS = int(os.environ.get("PHYS_ITERS", "2"))
+STEPS_PER_ENV = int(os.environ.get("PHYS_STEPS_PER_ENV", "24"))
 SEED = int(os.environ.get("PHYS_SEED", "0"))
 OUT = os.environ.get("PHYS_OUT_DIR", "/tmp/physrun")
 os.makedirs(OUT, exist_ok=True)
@@ -183,6 +184,7 @@ try:
     agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     acfg["max_iterations"] = ITERS
+    acfg["num_steps_per_env"] = STEPS_PER_ENV
     # Guarantee a checkpoint even for a tiny probe run.
     acfg["save_interval"] = max(1, min(int(acfg.get("save_interval", 50) or 50), ITERS))
     if SEED:
@@ -223,4 +225,3 @@ except Exception:
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
 '''
-

@@ -27,7 +27,9 @@ def _materialize(**kwargs):
 
 def test_default_runbook_path_is_the_committed_runbook() -> None:
     assert RUNBOOK.is_file()
-    assert RUNBOOK.name == "runbook.yaml"
+    assert RUNBOOK.name == "sim2real.yaml"
+    assert RUNBOOK.parent.name == "workflows"
+    assert (RUNBOOK.parent / "physical-ai-data-factory.yaml").is_file()
 
 
 def test_placeholder_image_is_rejected_with_actionable_error() -> None:
@@ -65,7 +67,15 @@ def test_runbook_resources_map_to_k8s_limits_and_node_selector() -> None:
     assert pod["nodeSelector"]["nvidia.com/gpu.product"]
     assert pod["serviceAccountName"]
     assert {entry["name"] for entry in pod["imagePullSecrets"]}
-    assert job.manifest["spec"]["activeDeadlineSeconds"] > 0
+    assert "activeDeadlineSeconds" not in job.manifest["spec"]
+    labels = job.manifest["metadata"]["labels"]
+    assert labels["sim2real.local/run-id"] == "sim2real-unit-run"
+    assert job.manifest["spec"]["template"]["metadata"]["labels"] == labels
+
+
+def test_explicit_positive_timeout_adds_job_deadline() -> None:
+    job = _materialize(env_overrides={"NPA_SIM2REAL_K8S_JOB_TIMEOUT_S": "3600"})
+    assert job.manifest["spec"]["activeDeadlineSeconds"] == 3600
 
 
 def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:

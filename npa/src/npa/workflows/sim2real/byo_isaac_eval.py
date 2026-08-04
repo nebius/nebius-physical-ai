@@ -30,7 +30,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from npa.workflows.sim2real.camera_views import camera_views_json
+from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
+from npa.workflows.sim2real.capture import capture_settings
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -42,6 +43,7 @@ DEFAULT_SUCCESS_DIST_M = 0.05
 _RENDERS_LOCAL_DIR = ""
 _RENDER_MANIFEST: dict[str, Any] = {}
 _LAST_GPU_PROVENANCE: dict[str, Any] = {}
+_CHECKPOINT_PROVENANCE: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -173,7 +175,7 @@ def per_env_from_distances(
 # distance, and writes per_env_distances.json. Verbose so the first run reveals
 # the exact API if anything mismatches.
 ISAAC_EVAL_SCRIPT = r'''
-import json, os, sys, traceback
+import hashlib, json, os, sys, traceback
 import numpy as np
 N = int(os.environ.get("EVAL_NUM_ENVS", "4"))
 STEPS = int(os.environ.get("EVAL_MAX_STEPS", "300"))
@@ -182,10 +184,29 @@ CKPT = os.environ["EVAL_CKPT_LOCAL"]
 OUT = os.environ["EVAL_OUT_JSON"]
 SEED = int(os.environ.get("EVAL_SEED", "0"))  # generated-env seed (envgen envs.jsonl)
 CAMERA_VIEWS = json.loads(os.environ.get("EVAL_CAMERA_VIEWS_JSON", "[]") or "[]")
+CAPTURE_WIDTH = int(os.environ.get("EVAL_CAPTURE_WIDTH", "640"))
+CAPTURE_HEIGHT = int(os.environ.get("EVAL_CAPTURE_HEIGHT", "480"))
+CAPTURE_STRIDE = max(1, int(os.environ.get("EVAL_CAPTURE_STRIDE", "20")))
+PNG_COMPRESS_LEVEL = int(os.environ.get("EVAL_PNG_COMPRESS_LEVEL", "3"))
+CAPTURE_FPS = float(os.environ.get("EVAL_CAPTURE_FPS", "10"))
+CKPT_URI = os.environ.get("EVAL_CKPT_URI", "").strip()
+def checkpoint_provenance():
+    if not os.path.isfile(CKPT):
+        return {"uri": CKPT_URI, "sha256": "", "size_bytes": 0}
+    h = hashlib.sha256()
+    with open(CKPT, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return {"uri": CKPT_URI, "sha256": h.hexdigest(), "size_bytes": os.path.getsize(CKPT)}
 def dump(distances, note, episodes=None):
     json.dump({"object_goal_distances": list(distances), "note": note,
                "render_episodes": episodes or [],
-               "camera_views": [view["name"] for view in CAMERA_VIEWS]},
+               "camera_views": [view["name"] for view in CAMERA_VIEWS],
+               "camera_metadata": CAMERA_VIEWS,
+               "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
+                           "heldout_stride": CAPTURE_STRIDE,
+                           "png_compress_level": PNG_COMPRESS_LEVEL, "fps": CAPTURE_FPS},
+               "policy_checkpoint": checkpoint_provenance()},
               open(OUT, "w"))
     print("EVAL_WROTE", OUT, note, "episodes", len(episodes or []), flush=True)
 try:
@@ -257,10 +278,12 @@ try:
                     convention="world",
                 ),
                 data_types=["rgb", "distance_to_image_plane"],
-                width=256,
-                height=256,
+                width=CAPTURE_WIDTH,
+                height=CAPTURE_HEIGHT,
                 spawn=sim_utils.PinholeCameraCfg(
-                    focal_length=24.0, clipping_range=(0.05, 20.0)
+                    focal_length=float(view.get("focal_length_mm", 24.0)),
+                    horizontal_aperture=float(view.get("horizontal_aperture_mm", 20.955)),
+                    clipping_range=(0.05, 20.0),
                 ),
             ),
         )
@@ -350,12 +373,15 @@ try:
         i: {view["name"]: [] for view in CAMERA_VIEWS}
         for i in range(N)
     }
+    frame_metadata = {
+        i: {view["name"]: [] for view in CAMERA_VIEWS}
+        for i in range(N)
+    }
     try:
         from PIL import Image as _PILImage
         _have_pil = True
     except Exception:
         _have_pil = False
-    CAP_EVERY = max(1, STEPS // 16)
     # GPU depth -> colored point clouds (world frame) for env 0. Capturing every
     # angle fills the rear/side occlusions that made the original single-camera
     # point cloud look incomplete when the Rerun 3D view was orbited.
@@ -431,8 +457,22 @@ try:
                         if view_name == "primary"
                         else f"camera-{view_name}-{index:04d}.png"
                     )
-                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(os.path.join(d, name))
+                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(
+                        os.path.join(d, name), compress_level=PNG_COMPRESS_LEVEL
+                    )
                     frame_names[i][view_name].append(name)
+                    frame_metadata[i][view_name].append({
+                        "path": name,
+                        "view_name": view_name,
+                        "frame_index": index,
+                        "sim_step": int(step),
+                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        "episode_id": _env_id(i),
+                        "isaac_env_index": i,
+                        "width": CAPTURE_WIDTH,
+                        "height": CAPTURE_HEIGHT,
+                        "policy_checkpoint": CKPT_URI,
+                    })
             except Exception as e:
                 print("capture_err", view_name, repr(e), flush=True)
         capture_pointcloud()
@@ -445,7 +485,7 @@ try:
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
-        if _step % CAP_EVERY == 0:
+        if _step % CAPTURE_STRIDE == 0:
             capture(_step)
         # object-to-goal distance: prefer an explicit metric, else infer.
         d = None
@@ -476,6 +516,7 @@ try:
             "env_id": _env_id(i),
             "frames": frame_names[i].get("primary", []),
             "camera_views": frame_names[i],
+            "camera_frame_metadata": frame_metadata[i],
         }
         for i in range(N)
         if any(frame_names[i].values())
@@ -554,6 +595,7 @@ def build_isaac_eval_job_manifest(
     robot_usd_uri: str = "",
     task_config: dict[str, Any] | None = None,
     camera_views: str = "",
+    capture: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
@@ -566,6 +608,8 @@ def build_isaac_eval_job_manifest(
 
     import shlex as _shlex
     import json as _json
+
+    capture = dict(capture or capture_settings({}))
 
     # Opt-in BYO-robot eval: ship the isaac_byo_robot_task module + stage the
     # customer robot USD, and pass the spec via NPA_BYO_ROBOT_SPEC_JSON. The
@@ -628,7 +672,7 @@ def build_isaac_eval_job_manifest(
             "RLEOF\n"
         )
     script = (
-        "set -uo pipefail\n"
+        "set -euo pipefail\n"
         'exec > >(tee -a /tmp/byo-eval.log) 2>&1\n'
         'if [ -x /isaac-sim/python.sh ]; then\n'
         '  PY=/isaac-sim/python.sh\n'
@@ -648,6 +692,12 @@ def build_isaac_eval_job_manifest(
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
         f'EVAL_OBJECT_USD="{object_usd}" EVAL_ENV_IDS={_shlex.quote(env_ids_json)} '
         f'EVAL_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} '
+        f'EVAL_CAPTURE_WIDTH="{capture["width"]}" '
+        f'EVAL_CAPTURE_HEIGHT="{capture["height"]}" '
+        f'EVAL_CAPTURE_STRIDE="{capture["heldout_stride"]}" '
+        f'EVAL_PNG_COMPRESS_LEVEL="{capture["png_compress_level"]}" '
+        f'EVAL_CAPTURE_FPS="{capture["fps"]}" '
+        f'EVAL_CKPT_URI={_shlex.quote(checkpoint_uri)} '
         f'EVAL_OUT_S3={_shlex.quote(per_env_s3_uri)} '
         f'EVAL_RENDERS_S3={_shlex.quote(renders_s3_prefix)} '
         'EVAL_RENDERS_DIR=/tmp/evalwork/renders '
@@ -665,7 +715,7 @@ def build_isaac_eval_job_manifest(
         + 'cat > /tmp/evalwork/eval_rollout.py <<\'PYEOF\'\n'
         f"{ISAAC_EVAL_SCRIPT}\n"
         "PYEOF\n"
-        '"$PY" /tmp/evalwork/eval_rollout.py || echo "EVAL_SCRIPT_RC=$?"\n'
+        '"$PY" /tmp/evalwork/eval_rollout.py\n'
         'OUT_URI="' + per_env_s3_uri + '" "$PY" - <<\'ULEOF\'\n'
         "import os, boto3\n"
         "from urllib.parse import urlparse\n"
@@ -775,16 +825,18 @@ def run_isaac_eval_job(
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
     bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET") or _env("NPA_SIM2REAL_S3_BUCKET")
+    s3_prefix = _env("NPA_SIM2REAL_PREFIX", "sim2real-b").strip("/")
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
     sa = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
-    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
+    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "0") or 0)
+    capture = capture_settings()
     from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 
     eval_tag = artifact_tag(_env("NPA_SIM2REAL_EVAL_TAG"))
     job_name = k8s_job_name("s2r-byo-isaac-eval", run_id, eval_tag)
-    per_env_uri = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/per_env_distances.json"
+    per_env_uri = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-eval/{job_name}/per_env_distances.json"
 
     gen = generated_envs or []
     env_ids = [e["env_id"] for e in gen] or None
@@ -795,7 +847,7 @@ def run_isaac_eval_job(
     from npa.workflows.sim2real.byo_isaac_trainer import resolve_object_usd
 
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
-    renders_prefix = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/renders"
+    renders_prefix = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-eval/{job_name}/renders"
 
     # Opt-in BYO-robot eval path (guarded; default unchanged): eval the policy on
     # the same robot-swapped Lift variant it was trained on. Reuses the trainer's
@@ -836,7 +888,15 @@ def run_isaac_eval_job(
         service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
         env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
         robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri, task_config=task_config_dict,
-        camera_views=camera_views_json(_env("NPA_SIM2REAL_CAMERA_VIEWS")),
+        camera_views=json.dumps(
+            camera_metadata(
+                _env("NPA_SIM2REAL_CAMERA_VIEWS"),
+                width=int(capture["width"]),
+                height=int(capture["height"]),
+            ),
+            separators=(",", ":"),
+        ),
+        capture=capture,
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
@@ -874,7 +934,28 @@ def run_isaac_eval_job(
     global _LAST_GPU_PROVENANCE
     _LAST_GPU_PROVENANCE = provenance
     out = _download_json(per_env_uri)
+    note = str(out.get("note") or "")
+    if note != "rollout_ok":
+        raise RuntimeError(
+            f"real Isaac held-out inference failed closed: {note or 'missing status'}"
+        )
     distances = out.get("object_goal_distances", [])
+    if len(distances) != num_envs:
+        raise RuntimeError(
+            "real Isaac held-out inference returned "
+            f"{len(distances)} distances for {num_envs} environments"
+        )
+    checkpoint_provenance = dict(out.get("policy_checkpoint") or {})
+    if (
+        checkpoint_provenance.get("uri") != checkpoint_uri
+        or not checkpoint_provenance.get("sha256")
+        or int(checkpoint_provenance.get("size_bytes") or 0) <= 0
+    ):
+        raise RuntimeError(
+            "held-out inference did not prove the loaded candidate checkpoint bytes"
+        )
+    global _CHECKPOINT_PROVENANCE
+    _CHECKPOINT_PROVENANCE = checkpoint_provenance
     # Pull the rendered frames of the (custom) object down to the local heldout
     # renders dir so stage-14 Rerun viz logs them under heldout/camera/**.
     episodes = out.get("render_episodes") or []
@@ -920,16 +1001,24 @@ def run_isaac_eval_job(
         except Exception as e:
             print("byo_isaac_eval: render sync failed:", repr(e), flush=True)
     global _RENDER_MANIFEST
-    _RENDER_MANIFEST = {"schema": "npa.sim2real.heldout_renders.v1", "sim_backend": "isaac",
-                        "isaac_task": task,
-                        "camera_views": out.get("camera_views") or [],
-                        "episodes": episodes}
+    _RENDER_MANIFEST = {
+        "schema": "npa.sim2real.heldout_renders.v1",
+        "sim_backend": "isaac",
+        "isaac_task": task,
+        "camera_views": out.get("camera_views") or [],
+        "camera_metadata": out.get("camera_metadata") or [],
+        "capture": out.get("capture") or capture,
+        "policy_checkpoint": checkpoint_provenance,
+        "episodes": episodes,
+    }
     return per_env_from_distances(distances, success_dist_m=success_dist, env_ids=env_ids, seeds=seeds)
 
 
 def main() -> int:
-    global _LAST_GPU_PROVENANCE
+    global _CHECKPOINT_PROVENANCE, _LAST_GPU_PROVENANCE, _RENDER_MANIFEST
     _LAST_GPU_PROVENANCE = {}
+    _CHECKPOINT_PROVENANCE = {}
+    _RENDER_MANIFEST = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
         print("byo_isaac_eval: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
@@ -979,6 +1068,31 @@ def main() -> int:
     report["component_invocation"] = {
         "mode": "kubernetes_job" if _LAST_GPU_PROVENANCE else "dryrun",
         "gpu_provenance": _LAST_GPU_PROVENANCE,
+    }
+    report["success_distance_m"] = success_dist
+    capture = capture_settings()
+    report["capture"] = capture
+    report["camera_metadata"] = list(
+        _RENDER_MANIFEST.get("camera_metadata")
+        or camera_metadata(
+            _env("NPA_SIM2REAL_CAMERA_VIEWS"),
+            width=int(capture["width"]),
+            height=int(capture["height"]),
+        )
+    )
+    report["policy_checkpoint_sha256"] = str(
+        _CHECKPOINT_PROVENANCE.get("sha256") or ""
+    )
+    report["policy_checkpoint_size_bytes"] = int(
+        _CHECKPOINT_PROVENANCE.get("size_bytes") or 0
+    )
+    report["policy_inference_provenance"] = {
+        "backend": "isaac_rsl_rl_inference",
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": report["policy_checkpoint_sha256"],
+        "checkpoint_size_bytes": report["policy_checkpoint_size_bytes"],
+        "loaded_for_inference": bool(_CHECKPOINT_PROVENANCE),
+        "stock_or_scripted_policy": False,
     }
     if _RENDER_MANIFEST.get("episodes"):
         report["render_manifest"] = _RENDER_MANIFEST

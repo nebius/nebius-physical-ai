@@ -41,10 +41,34 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
         camera_views=views,
         actions=[{"step": 0, "action": [0.1]}],
         checkpoint_uri="s3://bucket/model_latest.pt",
+        checkpoint_sha256="b" * 64,
+        checkpoint_size_bytes=12345,
         is_trained=True,
+        capture={"width": 640, "height": 480, "fps": 10.0},
+        camera_metadata_items=[
+            {"name": "primary", "position": [-2.0, 0.0, 1.0], "width": 640, "height": 480}
+        ],
+        frame_metadata={
+            "primary": [
+                {
+                    "view_name": "primary",
+                    "frame_index": 0,
+                    "sim_step": 0,
+                    "timestamp_s": 0.0,
+                    "checkpoint_uri": "s3://bucket/model_latest.pt",
+                }
+            ]
+        },
     )
     assert manifest["camera_observations"] == views["primary"]
     assert manifest["camera_views"] == views
+    assert manifest["capture"]["width"] == 640
+    assert manifest["camera_metadata"][0]["name"] == "primary"
+    assert manifest["camera_frame_metadata"]["primary"][0]["checkpoint_uri"].endswith(
+        "model_latest.pt"
+    )
+    assert manifest["policy_checkpoint_sha256"] == "b" * 64
+    assert manifest["policy_checkpoint_size_bytes"] == 12345
 
 
 def test_latest_checkpoint_uri_empty_inputs():
@@ -114,6 +138,8 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "DOWNLOADED_CKPT" in script
     assert "ROLLOUT_OBJECT_USD" in script
     assert "ROLLOUT_CAMERA_VIEWS_JSON=" in script
+    assert 'ROLLOUT_CAPTURE_WIDTH="640"' in script
+    assert 'ROLLOUT_CAPTURE_HEIGHT="480"' in script
     assert '\"name\":\"side\"' in script
     assert '\"name\":\"overhead\"' in script
     assert "rollout.py" in script

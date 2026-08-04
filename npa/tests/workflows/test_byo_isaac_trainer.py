@@ -54,6 +54,7 @@ def test_build_update_result_satisfies_byo_contract(tmp_path):
         stats=stats,
         initial_reward_head=0.0,
         iterations=150,
+        steps_per_env=24,
         checkpoint_uri="s3://bucket/run/model_latest.pt",
         status="success",
         duration_ms=1234.0,
@@ -104,6 +105,7 @@ def test_build_isaac_job_manifest_shape():
     assert "Isaac-Lift-Cube-Franka-v0" in args
     assert "--max_iterations 150" in args
     assert "--num_envs 1024" in args
+    assert "agent.num_steps_per_env=24" in args
     assert byo.TRAIN_SCRIPT in args
     assert "model_latest.pt" in args  # uploads the trained checkpoint
 

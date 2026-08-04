@@ -506,6 +506,14 @@ def test_emit_mcap_includes_pointclouds(tmp_path: Path) -> None:
     from mcap.reader import make_reader
 
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    heldout_report["policy_inference_provenance"] = {
+        "checkpoint_uri": "s3://bucket/run/model_150.pt",
+        "checkpoint_sha256": "d" * 64,
+        "checkpoint_size_bytes": 98765,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+    }
+    heldout_report["capture"] = {"width": 640, "height": 480, "fps": 10.0}
     _write_pointcloud_npz(tmp_path, frames=4)
     out = tmp_path / "reports" / "sim2real.mcap"
     result = viz_module.emit_sim2real_mcap(
@@ -526,6 +534,7 @@ def test_emit_mcap_includes_pointclouds(tmp_path: Path) -> None:
     assert "/heldout/points" in topics
     assert "foxglove.PointCloud" in schema_names
     assert "/tf" in topics
+    assert "/provenance/heldout_policy" in topics
     assert "foxglove.FrameTransform" in schema_names
 
 
@@ -1067,6 +1076,36 @@ def test_emit_logs_synchronized_multiview_cameras_and_rotatable_scene(
             {"env_id": "heldout-0000", "frames": views["primary"], "camera_views": views}
         ],
     }
+    heldout_report["capture"] = {
+        "width": 640,
+        "height": 480,
+        "heldout_stride": 20,
+        "png_compress_level": 3,
+        "fps": 10.0,
+    }
+    heldout_report["camera_metadata"] = [
+        {
+            "name": name,
+            "pose_frame": "isaac_world",
+            "width": 640,
+            "height": 480,
+            "intrinsics_px": {
+                "fx": 733.0,
+                "fy": 733.0,
+                "cx": 320.0,
+                "cy": 240.0,
+            },
+        }
+        for name in views
+    ]
+    heldout_report["policy_inference_provenance"] = {
+        "backend": "isaac_rsl_rl_ppo",
+        "checkpoint_uri": "s3://bucket/run/model_150.pt",
+        "checkpoint_sha256": "c" * 64,
+        "checkpoint_size_bytes": 123456,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+    }
     for view in views:
         _write_pointcloud_npz(tmp_path, env_id="heldout-0000", frames=2, view=view)
 
@@ -1077,6 +1116,21 @@ def test_emit_logs_synchronized_multiview_cameras_and_rotatable_scene(
         local_dir=tmp_path,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
+        run_metadata={
+            "run_id": "run",
+            "heldout_policy_checkpoint": "s3://bucket/run/model_150.pt",
+            "heldout_policy_checkpoint_sha256": "c" * 64,
+            "heldout_policy_checkpoint_size_bytes": 123456,
+            "heldout_policy_loaded_for_inference": True,
+            "runtime_parameters": {
+                "capture": {"width": 640, "height": 480},
+                "ppo": {
+                    "num_envs": 1024,
+                    "iterations": 150,
+                    "steps_per_env": 24,
+                },
+            },
+        },
         output_rrd=tmp_path / "reports" / "sim2real.rrd",
     )
 
@@ -1086,6 +1140,12 @@ def test_emit_logs_synchronized_multiview_cameras_and_rotatable_scene(
     for view in views:
         assert f"heldout/camera/heldout-0000/{view}/camera" in entities
     assert "world/heldout/points" in entities
+    assert "world/task_context/table" in entities
+    assert "world/task_context/cube_start_region" in entities
+    assert "world/task_context/goal_region" in entities
+    assert "world/task_context/franka_home/links" in entities
+    assert "world/task_context/provenance" in entities
+    assert "summary/policy_access" in entities
     assert any(
         view["kind"] == "Spatial3DView"
         and view["origin"] == "world"

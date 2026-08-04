@@ -7,10 +7,10 @@ roadmap or desired-state design.
 
 | Layer | Path |
 | --- | --- |
-| SkyPilot runbook | `npa/workflows/workbench/sim2real/runbook.yaml` (`run:` block) |
-| Stage CLI | `npa/src/npa/workflows/sim2real_loop.py` |
+| Canonical direct-K8s workflow | `npa/workflows/sim2real.yaml` (`run:` block) |
+| Stage CLI/runner | `npa/src/npa/workflows/sim2real/{cli,runner}.py` |
 | SDK wrappers | `npa/src/npa/sdk/workbench/sim2real.py` |
-| Direct K8s submit | `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh` |
+| Direct K8s submit | `npa/src/npa/workflows/sim2real/k8s_submit.py` |
 
 User-facing guide: [sim2real-workflow.md](./sim2real-workflow.md)
 
@@ -21,9 +21,9 @@ User-facing guide: [sim2real-workflow.md](./sim2real-workflow.md)
 ```mermaid
 flowchart TB
   subgraph entries["Entry points"]
-    RB["runbook.yaml run: block<br/>(SkyPilot / workflow submit)"]
-    K8S["submit-k8s-staged-job.sh<br/>(direct K8s Job)"]
-    CLI["python -m npa.workflows.sim2real_loop"]
+    RB["sim2real.yaml run: block<br/>(workflow submit)"]
+    K8S["k8s_submit.py<br/>(direct K8s Job)"]
+    CLI["python -m npa.workflows.sim2real"]
     SDK["npa.sdk.workbench.sim2real"]
   end
 
@@ -37,9 +37,9 @@ flowchart TB
   FINAL["finalize"]
 ```
 
-`submit-k8s-staged-job.sh` mirrors the runbook bash loop: it clones NPA source into
-the orchestrator pod, installs `kubectl`, then runs `preamble` → bash outer loop →
-`finalize` with `--upload-artifacts`.
+`workflow submit` detects this exact YAML, stages the current checkout, and uses
+`k8s_submit.py` to materialize/apply the orchestrator Job. No private operator
+script or raw SkyPilot launch is part of the canonical path.
 
 The SDK (`sim2real.run`) calls `run_full_loop()` in one process; staged helpers
 (`preamble`, `outer_iteration`, `finalize`) map 1:1 to the CLI subcommands the
@@ -49,33 +49,32 @@ runbook invokes.
 
 ## YAML orchestration layer
 
-The runbook `run:` block is the outer shell. It does **not** embed loop logic in
-Python for staging — bash drives stage boundaries and reads persisted state.
+The YAML `run:` block builds one validated argument list and calls the package
+runner once. Python owns stage boundaries, fixed-count/early-exit behavior, state
+persistence, and the sibling Job fan-out.
 
 ```mermaid
 flowchart TD
-  START["runbook run: starts"] --> SETUP["Resolve run_id, output_dir<br/>/tmp/npa-sim2real-{run_id}<br/>Build common_args[]"]
-  SETUP --> P["python -m npa.workflows.sim2real_loop preamble"]
-  P --> STATE["Write state/workflow_state.json<br/>current_quality, stage_records, components"]
-  STATE --> READQ["Read current_quality from state"]
-  READQ --> LOOP{"outer_iteration = 1..OUTER_ITERATIONS"}
-  LOOP --> OI["python -m ... outer-iteration<br/>--outer-iteration N<br/>--initial-quality current_quality"]
-  OI --> UPD["Update state:<br/>final_inner, final_eval,<br/>final_decision, outer_history,<br/>current_quality"]
-  UPD --> READQ2["Re-read current_quality + final_decision.decision"]
-  READQ2 --> PROMOTE{"decision == promote_checkpoint?"}
-  PROMOTE -->|yes| FIN
-  PROMOTE -->|no| LOOP
-  LOOP -->|exhausted| FIN
-  FIN["python -m ... finalize --upload-artifacts"]
+  START["sim2real.yaml run: starts"] --> SETUP["Resolve run_id/output_dir<br/>Build common_args[]"]
+  SETUP --> RUN["python -m npa.workflows.sim2real run<br/>--upload-artifacts"]
+  RUN --> P["run_preamble: stages 1–6"]
+  P --> LOOP{"outer pass 1..N"}
+  LOOP --> OI["run_single_outer_iteration<br/>stages 7–11"]
+  OI --> STATE["Persist workflow_state.json<br/>metrics, checkpoint, decision"]
+  STATE --> EARLY{"early exit enabled<br/>and promoted?"}
+  EARLY -->|no| LOOP
+  EARLY -->|yes| FIN
+  LOOP -->|fixed count complete| FIN
+  FIN["run_finalize: stages 12–14 + report"]
   FIN --> REPORT["reports/sim2real-report.json<br/>+ optional S3 tree upload"]
 ```
 
 **State file:** `{output_dir}/state/workflow_state.json`
 
-Fields the bash loop depends on:
+Fields the runner and live monitor depend on:
 
-- `current_quality` — fed into the next `outer-iteration` as `--initial-quality`
-- `final_decision.decision` — `promote_checkpoint` breaks the bash loop early
+- `current_quality` — fed into the next outer iteration.
+- `final_decision.decision` — permits a break only when early exit is enabled.
 
 ---
 

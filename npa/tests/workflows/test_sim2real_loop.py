@@ -39,7 +39,7 @@ from npa.workflows.sim2real.runner import Sim2RealWorkflow
 
 
 ROOT = Path(__file__).resolve().parents[3]
-RUNBOOK = ROOT / "npa" / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
+RUNBOOK = ROOT / "npa" / "workflows" / "sim2real.yaml"
 SIM2REAL_ACTIONS = (
     ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim2real-actions.yaml"
 )
@@ -175,6 +175,8 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
         threshold=0.45,
         inner_iterations=2,
         outer_iterations=1,
+        env_count=6,
+        train_fraction=0.34,
         rollout_count=2,
         steps_per_rollout=3,
         heldout_env_count=4,
@@ -1073,9 +1075,15 @@ def test_resolve_env_records_s3_uri_appends_jsonl_for_split_prefixes() -> None:
 
 
 def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) -> None:
+    from npa.workflows.sim2real.k8s_components import (
+        _kubernetes_component_env as package_component_env,
+    )
+
     monkeypatch.delenv("HF_HOME", raising=False)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "orch-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "orch-secret")
+    monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")
+    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "YES")
     config = Sim2RealLoopConfig(
         run_id="r",
         s3_endpoint="https://storage.example.test",
@@ -1089,6 +1097,14 @@ def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) ->
     assert safe["AWS_ENDPOINT_URL"] == "https://storage.example.test"
     assert safe["HF_HOME"] == "/tmp/hf_home"
     assert safe["NPA_COSMOS_REASON2_CACHE"] == "/tmp/hf_home/cosmos-reason2"
+    assert safe["OMNI_KIT_ACCEPT_EULA"] == "YES"
+    assert safe["ISAACSIM_ACCEPT_EULA"] == "YES"
+    package_safe = package_component_env(
+        {**safe, "OMNI_KIT_ACCEPT_EULA": "YES", "ISAACSIM_ACCEPT_EULA": "YES"},
+        config,
+    )
+    assert package_safe["OMNI_KIT_ACCEPT_EULA"] == "YES"
+    assert package_safe["ISAACSIM_ACCEPT_EULA"] == "YES"
 
 
 def test_wait_kubernetes_job_returns_failed_without_waiting(monkeypatch) -> None:

@@ -199,7 +199,14 @@ def emit_sim2real_rerun(
     synthetic_frame_count = 0
     mp4_paths: list[str] = []
     critique_panel_rows: list[str] = []
-    if not has_heldout_cameras:
+    if has_heldout_cameras:
+        _log_real_isaac_scene_context(
+            rr,
+            recording,
+            heldout_report=heldout_report or {},
+            counts=counts,
+        )
+    else:
         _log_scene_overview(rr, recording, inner_evidence, counts)
 
     iteration_records = _all_inner_iteration_records(local_dir, inner_evidence)
@@ -344,6 +351,34 @@ def _log_rollout(
     score = evaluation.get("score")
     summary = str(evaluation.get("summary") or "")
     last_critique = ""
+
+    provenance = {
+        key: manifest.get(key)
+        for key in (
+            "source",
+            "sim_backend",
+            "policy_checkpoint",
+            "policy_checkpoint_sha256",
+            "policy_checkpoint_size_bytes",
+            "policy_trained",
+            "capture",
+            "camera_metadata",
+            "camera_frame_metadata",
+        )
+        if manifest.get(key) not in (None, "", [], {})
+    }
+    _set_time(rr, recording, seconds)
+    rr.log(
+        f"{root}/provenance",
+        rr.TextDocument(
+            "# Policy rollout provenance\n\n```json\n"
+            + json.dumps(provenance, indent=2, sort_keys=True)
+            + "\n```",
+            media_type="text/markdown",
+        ),
+        recording=recording,
+    )
+    _bump(counts, f"{root}/provenance")
 
     frame_total = max((len(frames) for frames in camera_frames.values()), default=0)
     for step in range(frame_total):
@@ -731,6 +766,14 @@ def _stage_progress_markdown(
 
 
 def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
+    heldout_loaded = bool(run_metadata.get("heldout_policy_loaded_for_inference"))
+    inference_statement = (
+        "The synchronized held-out Isaac cameras and 3D point cloud were generated "
+        "after loading these exact candidate checkpoint bytes; "
+        "`stock_or_scripted_policy=false`."
+        if heldout_loaded
+        else "Held-out inference checkpoint loading was not proven in this recording."
+    )
     return "\n".join(
         [
             "# Deployable policy and viewer access",
@@ -741,6 +784,10 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
             f"- SHA-256: `{run_metadata.get('policy_checkpoint_sha256', '')}`",
             f"- Size (bytes): `{run_metadata.get('policy_checkpoint_size_bytes', '')}`",
             f"- Deployable: `{run_metadata.get('policy_deployable', False)}`",
+            f"- Held-out inference checkpoint: `{run_metadata.get('heldout_policy_checkpoint', '')}`",
+            f"- Held-out inference SHA-256: `{run_metadata.get('heldout_policy_checkpoint_sha256', '')}`",
+            f"- Held-out inference size (bytes): `{run_metadata.get('heldout_policy_checkpoint_size_bytes', '')}`",
+            f"- Loaded for held-out inference: `{heldout_loaded}`",
             f"- Candidate record: `{run_metadata.get('candidate_s3_uri', '')}`",
             f"- Rerun recording: `{run_metadata.get('rrd_s3_uri', '')}`",
             f"- Artifact root: `{run_metadata.get('artifact_root', '')}`",
@@ -748,6 +795,13 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
             f"- Authenticated checkpoint download: `{run_metadata.get('policy_download_command', '')}`",
             f"- UI action: {run_metadata.get('policy_ui_action', '')}",
             "- The Rerun viewer inspects behavior and links the checkpoint; it does not execute the policy.",
+            f"- {inference_statement}",
+            "",
+            "## Runtime parameters",
+            "",
+            "```json",
+            json.dumps(run_metadata.get("runtime_parameters") or {}, indent=2, sort_keys=True),
+            "```",
         ]
     )
 
@@ -1550,6 +1604,101 @@ def _log_scene_overview(
         _log_franka_scene_frame(rr, recording, frame_index=frame_index, frame_count=frame_count, counts=counts)
     _bump(counts, "world/table")
     _bump(counts, "world/summary")
+
+
+def _log_real_isaac_scene_context(
+    rr: Any,
+    recording: Any,
+    *,
+    heldout_report: dict[str, Any],
+    counts: dict[str, int],
+) -> None:
+    """Add truthful task geometry around the measured Isaac RGB-D point cloud.
+
+    The boxes and Franka home skeleton are task-context guides, not a fabricated
+    trajectory.  The time-varying geometry remains the RGB-D point cloud emitted
+    by the real held-out Isaac evaluation.
+    """
+
+    _set_time(rr, recording, 0.0)
+    rr.log(
+        "world/task_context/table",
+        rr.Boxes3D(
+            centers=[[0.5, 0.0, 0.0]],
+            half_sizes=[[0.4, 0.3, 0.02]],
+            colors=[[155, 163, 175, 150]],
+        ),
+        recording=recording,
+    )
+    rr.log(
+        "world/task_context/cube_start_region",
+        rr.Boxes3D(
+            centers=[[0.5, 0.25, 0.05]],
+            half_sizes=[[0.04, 0.04, 0.04]],
+            colors=[[59, 130, 246, 140]],
+        ),
+        recording=recording,
+    )
+    rr.log(
+        "world/task_context/goal_region",
+        rr.Boxes3D(
+            centers=[[0.5, -0.25, 0.12]],
+            half_sizes=[[0.06, 0.06, 0.06]],
+            colors=[[34, 197, 94, 120]],
+        ),
+        recording=recording,
+    )
+    positions = _franka_joint_positions(FRANKA_HOME_JOINTS)
+    arm_points = positions[:8]
+    segments = [
+        [left, right]
+        for left, right in zip(arm_points, arm_points[1:])
+        if left != right
+    ]
+    rr.log(
+        "world/task_context/franka_home/joints",
+        rr.Points3D(
+            arm_points,
+            colors=[[234, 88, 12, 180]] * len(arm_points),
+            radii=[0.025] * len(arm_points),
+        ),
+        recording=recording,
+    )
+    if segments:
+        rr.log(
+            "world/task_context/franka_home/links",
+            rr.LineStrips3D(
+                segments,
+                colors=[[234, 88, 12, 180]] * len(segments),
+                radii=[0.014] * len(segments),
+            ),
+            recording=recording,
+        )
+    provenance = heldout_report.get("policy_inference_provenance") or {}
+    rr.log(
+        "world/task_context/provenance",
+        rr.TextDocument(
+            "# Real Isaac 3D scene\n\n"
+            "The animated `world/heldout/*/pointcloud` entities are measured RGB-D "
+            "from the synchronized real Isaac held-out cameras. The translucent "
+            "table, cube/goal regions, and Franka home skeleton are nominal task "
+            "context—not a synthetic motion claim.\n\n"
+            f"Checkpoint: `{provenance.get('checkpoint_uri', '')}`\n\n"
+            f"SHA-256: `{provenance.get('checkpoint_sha256', '')}`\n\n"
+            f"Loaded for inference: `{provenance.get('loaded_for_inference', False)}`",
+            media_type="text/markdown",
+        ),
+        recording=recording,
+    )
+    for entity in (
+        "world/task_context/table",
+        "world/task_context/cube_start_region",
+        "world/task_context/goal_region",
+        "world/task_context/franka_home/joints",
+        "world/task_context/franka_home/links",
+        "world/task_context/provenance",
+    ):
+        _bump(counts, entity)
 
 
 def _log_heldout(
@@ -2485,12 +2634,14 @@ def emit_sim2real_mcap(
                 root = f"/rollouts/iter_{iteration:02d}/{rollout_id}"
                 evaluation = _read_json(eval_dir / f"{rollout_id}.json") if eval_dir else {}
                 signal = _read_json(signal_dir / f"{rollout_id}.json") if signal_dir else {}
+                manifest = _read_json(rollout_dir / "manifest.json")
                 stamp_ns = _emit_mcap_rollout(
                     emitter,
                     root=root,
                     frame_paths_by_view=frame_paths_by_view,
                     evaluation=evaluation,
                     signal=signal,
+                    manifest=manifest,
                     start_ns=stamp_ns,
                     frame_period_ns=frame_period_ns,
                     encode=encode_frame_to_compressed_bytes,
@@ -2519,6 +2670,29 @@ def emit_sim2real_mcap(
             emitter, _heldout_pointcloud_frames(local_dir), frame_period_ns=frame_period_ns
         )
         _emit_mcap_heldout_scores(emitter, heldout_report, heldout_period_ns=heldout_period_ns)
+        if heldout_report and any(
+            heldout_report.get(key)
+            for key in (
+                "policy_inference_provenance",
+                "capture",
+                "camera_metadata",
+                "success_distance_m",
+            )
+        ):
+            policy_provenance = {
+                "policy_inference_provenance": heldout_report.get(
+                    "policy_inference_provenance"
+                ),
+                "capture": heldout_report.get("capture"),
+                "camera_metadata": heldout_report.get("camera_metadata"),
+                "success_distance_m": heldout_report.get("success_distance_m"),
+            }
+            emitter.log_text(
+                "/provenance/heldout_policy",
+                json.dumps(policy_provenance, sort_keys=True),
+                0,
+                name="heldout_policy_provenance",
+            )
 
         writer.finish()
 
@@ -2591,6 +2765,7 @@ def _emit_mcap_rollout(
     frame_paths_by_view: dict[str, list[Path]],
     evaluation: dict[str, Any],
     signal: dict[str, Any],
+    manifest: dict[str, Any],
     start_ns: int,
     frame_period_ns: int,
     encode: Any,
@@ -2607,6 +2782,26 @@ def _emit_mcap_rollout(
     score = evaluation.get("score")
     summary = str(evaluation.get("summary") or "")
     stamp_ns = start_ns
+    provenance = {
+        key: manifest.get(key)
+        for key in (
+            "source",
+            "sim_backend",
+            "policy_checkpoint",
+            "policy_checkpoint_sha256",
+            "policy_checkpoint_size_bytes",
+            "policy_trained",
+            "capture",
+            "camera_metadata",
+        )
+        if manifest.get(key) not in (None, "", [], {})
+    }
+    emitter.log_text(
+        f"{root}/provenance",
+        json.dumps(provenance, sort_keys=True),
+        stamp_ns,
+        name=root.strip("/") + "_provenance",
+    )
     frame_total = max((len(paths) for paths in frame_paths_by_view.values()), default=0)
     for step in range(frame_total):
         for view_name, paths in frame_paths_by_view.items():

@@ -92,6 +92,10 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     result = k8s_submit.submit_sim2real_staged_job(
         run_id="unit-plan",
         trigger_dataset_uri="s3://unit-bucket/trigger/",
+        env_overrides={
+            "OMNI_KIT_ACCEPT_EULA": "YES",
+            "ISAACSIM_ACCEPT_EULA": "YES",
+        },
         plan_only=True,
     )
 
@@ -172,6 +176,8 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
         run_id="unit-submit",
         trigger_dataset_uri="s3://unit-bucket/trigger/",
         env_overrides={
+            "OMNI_KIT_ACCEPT_EULA": "YES",
+            "ISAACSIM_ACCEPT_EULA": "YES",
             "BYO_TRAINER_COMMAND": "python3 -m npa.workflows.sim2real.byo_isaac_trainer",
             "BYO_POLICY_COMMAND": "python3 -m npa.workflows.sim2real.byo_isaac_policy_rollout",
             "BYO_EVAL_COMMAND": "python3 -m npa.workflows.sim2real.byo_isaac_eval",
@@ -197,7 +203,11 @@ def test_unqualified_real_component_override_is_rejected(
     with pytest.raises(ValueError, match="AUGMENT_IMAGE must be a registry-qualified image"):
         k8s_submit.submit_sim2real_staged_job(
             run_id="unit-bad-image",
-            env_overrides={"AUGMENT_IMAGE": "npa-cosmos2-transfer:latest"},
+            env_overrides={
+                "AUGMENT_IMAGE": "npa-cosmos2-transfer:latest",
+                "OMNI_KIT_ACCEPT_EULA": "YES",
+                "ISAACSIM_ACCEPT_EULA": "YES",
+            },
             plan_only=True,
         )
 

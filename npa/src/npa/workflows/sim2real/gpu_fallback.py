@@ -607,17 +607,40 @@ def run_gpu_job_with_fallback(
             )
             return provenance
 
-        wait = kubectl(
-            [
-                "wait",
-                f"job/{job_name}",
-                "-n",
-                namespace,
-                "--for=condition=complete",
-                f"--timeout={max(1, timeout_s)}s",
-            ],
-            timeout_s=timeout_s + 60,
-        )
+        wait_chunk_s = max(1, timeout_s) if timeout_s > 0 else 30
+        while True:
+            wait = kubectl(
+                [
+                    "wait",
+                    f"job/{job_name}",
+                    "-n",
+                    namespace,
+                    "--for=condition=complete",
+                    f"--timeout={wait_chunk_s}s",
+                ],
+                timeout_s=wait_chunk_s + 60,
+            )
+            if wait.returncode == 0 or timeout_s > 0:
+                break
+            counters = kubectl(
+                [
+                    "get",
+                    "job",
+                    job_name,
+                    "-n",
+                    namespace,
+                    "-o",
+                    "jsonpath={.status.succeeded} {.status.failed}",
+                ],
+                timeout_s=120,
+            )
+            parts = (counters.stdout or "").strip().split()
+            failed = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            if failed:
+                break
+            wait_text = str(wait.stderr or wait.stdout or "").lower()
+            if "timed out waiting" not in wait_text and "deadline exceeded" not in wait_text:
+                break
         pod_result = kubectl(
             [
                 "get",

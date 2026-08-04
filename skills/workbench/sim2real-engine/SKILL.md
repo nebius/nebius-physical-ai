@@ -73,7 +73,7 @@ Stages 4–6 share one component name in monitor: `stage_04_06_env_gen_split_tok
   evidence and exposes reward/loss/success metrics, real rollout cameras with
   synchronized actions, Cosmos evidence, and a byte-verified deployable policy
   SHA/size/S3 access command. The viewer links the `.pt`; it does not execute it.
-- `npa/workflows/workbench/sim2real/runbook.yaml` passes explicit trainer, VLM,
+- `npa/workflows/sim2real.yaml` passes explicit trainer, VLM,
   and evaluator image fallbacks on the CLI, so those values override the Python
   defaults. Keep them synchronized with `[tool.npa.supported-tools]`; the
   contract is guarded by `tests/workflows/test_sim2real_image_pins.py` and the

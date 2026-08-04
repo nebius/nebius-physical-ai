@@ -1,5 +1,6 @@
 # DEMO ONLY — stub-toolRef DSL example. This does not run the 14-stage engine.
-# The only canonical executable Sim2Real YAML is ../sim2real/runbook.yaml.
+# DEMO-ONLY DSL fixture. The only canonical executable Sim2Real YAML is
+# ../../../sim2real.yaml; this file never routes to the 14-stage engine.
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 

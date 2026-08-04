@@ -566,15 +566,15 @@ def _pipeline_prefix(config: TriggerConfig, *, run_id: str) -> str:
     return config.pipeline_s3_prefix.format(run_id=run_id).strip("/")
 
 
-#: The single canonical runbook the watcher launches: the staged VLM-to-RL loop.
-DEFAULT_PIPELINE_SPEC = "runbook.yaml"
+#: The single canonical workflow the watcher launches: the staged VLM-to-RL loop.
+DEFAULT_PIPELINE_SPEC = "sim2real.yaml"
 
 
 def _default_pipeline_spec() -> Path:
     """Resolve the shipped spec, from a checkout or an installed wheel alike."""
 
     root = Path(__file__).resolve().parents[3]
-    path = root / "workflows" / "workbench" / "sim2real" / DEFAULT_PIPELINE_SPEC
+    path = root / "workflows" / DEFAULT_PIPELINE_SPEC
     if not path.exists():
         raise SimToRealTriggerError(f"sim2real workflow spec not found: {path}")
     return path

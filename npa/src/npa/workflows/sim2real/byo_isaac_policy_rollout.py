@@ -41,7 +41,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from npa.workflows.sim2real.camera_views import camera_views_json
+from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
+from npa.workflows.sim2real.capture import capture_settings
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -64,6 +65,11 @@ def build_rollout_manifest(
     is_trained: bool,
     task_description: str = DEFAULT_TASK_DESCRIPTION,
     camera_views: dict[str, list[str]] | None = None,
+    camera_metadata_items: list[dict[str, Any]] | None = None,
+    frame_metadata: dict[str, list[dict[str, Any]]] | None = None,
+    capture: dict[str, Any] | None = None,
+    checkpoint_sha256: str = "",
+    checkpoint_size_bytes: int = 0,
 ) -> dict[str, Any]:
     """Build an ``npa.sim2real.action_rollout.v1`` manifest for one rollout.
 
@@ -82,16 +88,27 @@ def build_rollout_manifest(
         "steps": len(actions),
         "camera_observations": list(frames),
         "camera_views": views,
+        "camera_metadata": list(camera_metadata_items or []),
+        "camera_frame_metadata": dict(frame_metadata or {}),
+        "capture": dict(capture or {}),
         "actions": list(actions),
         # Provenance: distinguishes a real policy rollout from the synthetic stub.
         "source": "byo_isaac_policy_rollout",
         "sim_backend": "isaac",
         "policy_checkpoint": checkpoint_uri,
+        "policy_checkpoint_sha256": checkpoint_sha256,
+        "policy_checkpoint_size_bytes": int(checkpoint_size_bytes),
         "policy_trained": bool(is_trained),
     }
 
 
-def latest_checkpoint_uri(bucket: str, run_id: str, *, s3_endpoint: str = "") -> str:
+def latest_checkpoint_uri(
+    bucket: str,
+    run_id: str,
+    *,
+    s3_endpoint: str = "",
+    s3_prefix: str = "sim2real-b",
+) -> str:
     """Return the most-recent BYO-trainer ``model_latest.pt`` for this run.
 
     Scans ``s3://<bucket>/sim2real-b/<run_id>/byo-trainer/`` and returns the
@@ -105,7 +122,7 @@ def latest_checkpoint_uri(bucket: str, run_id: str, *, s3_endpoint: str = "") ->
         import boto3
 
         s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
-        prefix = f"sim2real-b/{run_id}/byo-trainer/"
+        prefix = f"{s3_prefix.strip('/')}/{run_id}/byo-trainer/"
         paginator = s3.get_paginator("list_objects_v2")
         newest_key = ""
         newest_ts = None
@@ -175,7 +192,7 @@ def write_dryrun_rollouts(
 # byo_isaac_eval rollout (reset-first batched obs; whole obs (Tensor)Dict to the
 # policy; per-env [realN,...] sizing) but records actions instead of distances.
 ISAAC_ROLLOUT_SCRIPT = r'''
-import json, os, sys, traceback
+import hashlib, json, os, sys, traceback
 import numpy as np
 N = int(os.environ.get("ROLLOUT_COUNT", "4"))
 STEPS = int(os.environ.get("ROLLOUT_STEPS", "8"))
@@ -184,9 +201,30 @@ CKPT = os.environ.get("ROLLOUT_CKPT_LOCAL", "").strip()
 OUT_S3 = os.environ["ROLLOUT_OUT_S3"]            # s3 prefix for frames+actions
 FRAMES_DIR = os.environ.get("ROLLOUT_FRAMES_DIR", "/tmp/rollwork/frames")
 CAMERA_VIEWS = json.loads(os.environ.get("ROLLOUT_CAMERA_VIEWS_JSON", "[]") or "[]")
+CAPTURE_WIDTH = int(os.environ.get("ROLLOUT_CAPTURE_WIDTH", "640"))
+CAPTURE_HEIGHT = int(os.environ.get("ROLLOUT_CAPTURE_HEIGHT", "480"))
+CAPTURE_STRIDE = max(1, int(os.environ.get("ROLLOUT_CAPTURE_STRIDE", "1")))
+PNG_COMPRESS_LEVEL = int(os.environ.get("ROLLOUT_PNG_COMPRESS_LEVEL", "3"))
+CAPTURE_FPS = float(os.environ.get("ROLLOUT_CAPTURE_FPS", "10"))
+CKPT_URI = os.environ.get("ROLLOUT_CKPT_URI", "").strip()
+trained = False
+def checkpoint_provenance():
+    if not CKPT or not os.path.isfile(CKPT):
+        return {"uri": CKPT_URI, "sha256": "", "size_bytes": 0}
+    h = hashlib.sha256()
+    with open(CKPT, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return {"uri": CKPT_URI, "sha256": h.hexdigest(), "size_bytes": os.path.getsize(CKPT)}
 def upload_and_exit(rollouts, note):
     # rollouts: list of {rollout_id, frames:[names], actions:[{step,action}]}
-    meta = {"rollouts": rollouts, "note": note, "policy_trained": bool(CKPT)}
+    checkpoint = checkpoint_provenance()
+    meta = {"rollouts": rollouts, "note": note, "policy_trained": bool(trained),
+            "policy_checkpoint": checkpoint,
+            "camera_metadata": CAMERA_VIEWS,
+            "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
+                        "rollout_stride": CAPTURE_STRIDE,
+                        "png_compress_level": PNG_COMPRESS_LEVEL, "fps": CAPTURE_FPS}}
     json.dump(meta, open("/tmp/rollwork/rollouts.json", "w"))
     print("ROLLOUT_WROTE", note, "rollouts", len(rollouts), flush=True)
     try:
@@ -240,9 +278,12 @@ try:
                     convention="world",
                 ),
                 data_types=["rgb"],
-                width=128,
-                height=128,
-                spawn=sim_utils.PinholeCameraCfg(),
+                width=CAPTURE_WIDTH,
+                height=CAPTURE_HEIGHT,
+                spawn=sim_utils.PinholeCameraCfg(
+                    focal_length=float(view.get("focal_length_mm", 24.0)),
+                    horizontal_aperture=float(view.get("horizontal_aperture_mm", 20.955)),
+                ),
             ),
         )
     print("ROLLOUT_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
@@ -266,7 +307,7 @@ try:
             runner.load(CKPT); trained = True
             print("ROLLOUT_CKPT_LOADED", CKPT, flush=True)
         except Exception as e:
-            print("ckpt_load_failed:", repr(e), "-> untrained policy", flush=True)
+            raise RuntimeError("trained checkpoint failed to load: %r" % (e,)) from e
     else:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
     policy = runner.get_inference_policy(device="cuda:0")
@@ -305,9 +346,15 @@ try:
         i: {view["name"]: [] for view in CAMERA_VIEWS}
         for i in range(N)
     }
+    frame_metadata = {
+        i: {view["name"]: [] for view in CAMERA_VIEWS}
+        for i in range(N)
+    }
     actions_log = {i: [] for i in range(N)}
     def capture(step):
         if not _have_pil:
+            return
+        if step % CAPTURE_STRIDE != 0 and step != STEPS:
             return
         for view in CAMERA_VIEWS:
             view_name = view["name"]
@@ -322,8 +369,22 @@ try:
                         if view_name == "primary"
                         else "camera-%s-%03d.png" % (view_name, index)
                     )
-                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(os.path.join(d, name))
+                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(
+                        os.path.join(d, name), compress_level=PNG_COMPRESS_LEVEL
+                    )
                     frame_names[i][view_name].append(name)
+                    frame_metadata[i][view_name].append({
+                        "path": name,
+                        "view_name": view_name,
+                        "frame_index": index,
+                        "sim_step": int(step),
+                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        "episode_id": rollout_ids[i],
+                        "isaac_env_index": i,
+                        "width": CAPTURE_WIDTH,
+                        "height": CAPTURE_HEIGHT,
+                        "policy_checkpoint": CKPT_URI,
+                    })
             except Exception as e:
                 print("capture_err", view_name, repr(e), flush=True)
     for _step in range(STEPS):
@@ -342,6 +403,7 @@ try:
     rollouts = [{"rollout_id": rollout_ids[i],
                  "frames": frame_names[i].get("primary", []),
                  "camera_views": frame_names[i],
+                 "camera_frame_metadata": frame_metadata[i],
                  "actions": actions_log[i]}
                 for i in range(N)]
     upload_and_exit(rollouts, "rollout_ok" if trained else "rollout_ok_untrained")
@@ -388,6 +450,7 @@ def build_isaac_rollout_job_manifest(
     gpu_resource: str = "nvidia.com/gpu",
     object_usd: str = "",
     camera_views: str = "",
+    capture: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Isaac policy-rollout Job: roll the policy, capture frames+actions, upload.
 
@@ -397,6 +460,8 @@ def build_isaac_rollout_job_manifest(
     """
 
     import shlex as _shlex
+
+    capture = dict(capture or capture_settings({}))
 
     download = ""
     if checkpoint_uri:
@@ -415,7 +480,7 @@ def build_isaac_rollout_job_manifest(
         ckpt_local = ""
 
     script = (
-        "set -uo pipefail\n"
+        "set -euo pipefail\n"
         'exec > >(tee -a /tmp/byo-rollout.log) 2>&1\n'
         'if [ -x /isaac-sim/python.sh ]; then\n'
         '  PY=/isaac-sim/python.sh\n'
@@ -435,6 +500,12 @@ def build_isaac_rollout_job_manifest(
         f'export ROLLOUT_TASK="{task}" ROLLOUT_COUNT="{rollout_count}" '
         f'ROLLOUT_STEPS="{steps_per_rollout}" ROLLOUT_OBJECT_USD="{object_usd}" '
         f'ROLLOUT_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} '
+        f'ROLLOUT_CAPTURE_WIDTH="{capture["width"]}" '
+        f'ROLLOUT_CAPTURE_HEIGHT="{capture["height"]}" '
+        f'ROLLOUT_CAPTURE_STRIDE="{capture["rollout_stride"]}" '
+        f'ROLLOUT_PNG_COMPRESS_LEVEL="{capture["png_compress_level"]}" '
+        f'ROLLOUT_CAPTURE_FPS="{capture["fps"]}" '
+        f'ROLLOUT_CKPT_URI={_shlex.quote(checkpoint_uri)} '
         f'ROLLOUT_CKPT_LOCAL="{ckpt_local}" '
         f'ROLLOUT_OUT_S3={_shlex.quote(out_s3_prefix)} '
         'ROLLOUT_FRAMES_DIR=/tmp/rollwork/frames\n'
@@ -442,7 +513,7 @@ def build_isaac_rollout_job_manifest(
         + 'cat > /tmp/rollwork/rollout.py <<\'PYEOF\'\n'
         f"{ISAAC_ROLLOUT_SCRIPT}\n"
         "PYEOF\n"
-        '"$PY" /tmp/rollwork/rollout.py || echo "ROLLOUT_SCRIPT_RC=$?"\n'
+        '"$PY" /tmp/rollwork/rollout.py\n'
         'echo "BYO_ROLLOUT_EXIT"\n'
     )
     return {
@@ -535,6 +606,16 @@ def materialize_rollout_dirs(
     u = urlparse(out_s3_prefix)
     base = u.path.lstrip("/").rstrip("/")
     is_trained = bool(meta.get("policy_trained"))
+    note = str(meta.get("note") or "")
+    if not note.startswith("rollout_ok"):
+        raise RuntimeError(f"real Isaac rollout failed closed: {note or 'missing status'}")
+    if checkpoint_uri and not is_trained:
+        raise RuntimeError(
+            "real Isaac rollout did not load the requested trained checkpoint"
+        )
+    checkpoint = dict(meta.get("policy_checkpoint") or {})
+    camera_meta = list(meta.get("camera_metadata") or [])
+    capture = dict(meta.get("capture") or {})
     dirs: list[str] = []
     for roll in meta.get("rollouts", []) or []:
         rid = roll["rollout_id"]
@@ -558,9 +639,16 @@ def materialize_rollout_dirs(
             rollout_id=rid, frames=roll.get("frames", []), actions=roll.get("actions", []),
             checkpoint_uri=checkpoint_uri, is_trained=is_trained,
             camera_views=view_frames,
+            camera_metadata_items=camera_meta,
+            frame_metadata=dict(roll.get("camera_frame_metadata") or {}),
+            capture=capture,
+            checkpoint_sha256=str(checkpoint.get("sha256") or ""),
+            checkpoint_size_bytes=int(checkpoint.get("size_bytes") or 0),
         )
         (rdir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         dirs.append(str(rdir))
+    if not dirs:
+        raise RuntimeError("real Isaac rollout returned no episodes")
     return dirs
 
 
@@ -578,7 +666,9 @@ def run_isaac_rollout_job(
     sa = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     endpoint = _env("AWS_ENDPOINT_URL")
-    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
+    s3_prefix = _env("NPA_SIM2REAL_PREFIX", "sim2real-b").strip("/")
+    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "0") or 0)
+    capture = capture_settings()
     # Rollouts spawn the SAME manipuland as train/eval (default: the proven
     # rigid-ready USD, not the stock primitive cube).
     from npa.workflows.sim2real.byo_isaac_trainer import (
@@ -590,12 +680,17 @@ def run_isaac_rollout_job(
 
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
 
-    checkpoint_uri = latest_checkpoint_uri(bucket, run_id, s3_endpoint=endpoint)
+    checkpoint_uri = latest_checkpoint_uri(
+        bucket,
+        run_id,
+        s3_endpoint=endpoint,
+        s3_prefix=s3_prefix,
+    )
     # Unique per (run, outer, inner) so second-pass component artifacts do not
     # overwrite first-pass rollouts.
     job_suffix = artifact_tag(_env("NPA_SIM2REAL_ROLLOUT_TAG")) or artifact_tag_from_output_dir(output_dir)
     job_name = k8s_job_name("s2r-byo-isaac-roll", run_id, job_suffix)
-    out_s3 = f"s3://{bucket}/sim2real-b/{run_id}/byo-rollouts/{job_suffix}"
+    out_s3 = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-rollouts/{job_suffix}"
 
     manifest = build_isaac_rollout_job_manifest(
         job_name=job_name, run_id=run_id, image=image, task=task,
@@ -603,7 +698,15 @@ def run_isaac_rollout_job(
         checkpoint_uri=checkpoint_uri, out_s3_prefix=out_s3, s3_endpoint=endpoint,
         namespace=namespace, service_account=sa, gpu_product=gpu_product,
         object_usd=object_usd,
-        camera_views=camera_views_json(_env("NPA_SIM2REAL_CAMERA_VIEWS")),
+        camera_views=json.dumps(
+            camera_metadata(
+                _env("NPA_SIM2REAL_CAMERA_VIEWS"),
+                width=int(capture["width"]),
+                height=int(capture["height"]),
+            ),
+            separators=(",", ":"),
+        ),
+        capture=capture,
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
@@ -669,7 +772,12 @@ def main() -> int:
 
     if _env("NPA_BYO_ISAAC_DRYRUN") == "1":
         bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET")
-        checkpoint_uri = latest_checkpoint_uri(bucket, run_id, s3_endpoint=_env("AWS_ENDPOINT_URL"))
+        checkpoint_uri = latest_checkpoint_uri(
+            bucket,
+            run_id,
+            s3_endpoint=_env("AWS_ENDPOINT_URL"),
+            s3_prefix=_env("NPA_SIM2REAL_PREFIX", "sim2real-b"),
+        )
         rollout_dirs = write_dryrun_rollouts(
             output_dir, count=rollout_count, steps_per_rollout=steps_per_rollout,
             checkpoint_uri=checkpoint_uri)
@@ -683,6 +791,7 @@ def main() -> int:
         "source": "byo_isaac_policy_rollout",
         "sim_backend": "isaac",
         "rollout_dirs": rollout_dirs,
+        "capture": capture_settings(),
         "component_invocation": {
             "mode": "kubernetes_job" if _LAST_GPU_PROVENANCE else "dryrun",
             "gpu_provenance": _LAST_GPU_PROVENANCE,

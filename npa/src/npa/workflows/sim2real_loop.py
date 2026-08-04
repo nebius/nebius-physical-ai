@@ -80,17 +80,17 @@ DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 # Isaac Sim's SimulationApp.close() hard-terminates the process, so it is closed
 # only after the held-out report.json has been uploaded. See _close_isaac_app.
 _ISAAC_SIMULATION_APP: Any = None
-DEFAULT_THRESHOLD = 0.75
-DEFAULT_INNER_ITERATIONS = 2
-DEFAULT_OUTER_ITERATIONS = 1
+DEFAULT_THRESHOLD = 0.50
+DEFAULT_INNER_ITERATIONS = 3
+DEFAULT_OUTER_ITERATIONS = 2
 DEFAULT_LOOP_OF_LOOPS_ITERATIONS = 1
-DEFAULT_ROLLOUT_COUNT = 3
-DEFAULT_STEPS_PER_ROLLOUT = 4
+DEFAULT_ROLLOUT_COUNT = 8
+DEFAULT_STEPS_PER_ROLLOUT = 6
 DEFAULT_HELDOUT_ENVS = 8
 DEFAULT_ENV_COUNT = 10_000
 DEFAULT_TRAIN_FRACTION = 0.8
 DEFAULT_ENVGEN_SHARD_COUNT = 16
-DEFAULT_K8S_MAX_PARALLEL_GPUS = 2
+DEFAULT_K8S_MAX_PARALLEL_GPUS = 16
 DEFAULT_ACTION_ENV_LIMIT = 256
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
@@ -184,7 +184,7 @@ class Sim2RealLoopConfig:
     robot_preset: str = ""
     augment_image: str = f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
     envgen_image: str = f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
-    env_count: int = 0
+    env_count: int = DEFAULT_ENV_COUNT
     train_fraction: float = DEFAULT_TRAIN_FRACTION
     envgen_shard_count: int = DEFAULT_ENVGEN_SHARD_COUNT
     action_env_limit: int = DEFAULT_ACTION_ENV_LIMIT
@@ -212,7 +212,7 @@ class Sim2RealLoopConfig:
     upload_artifacts: bool = False
     no_guardrails: bool = False
     signal_loss_weight: float = 1.0
-    learning_rate: float = 0.05
+    learning_rate: float = 0.08
     byo_signal_converter: str = ""
     byo_trainer_command: str = ""
     byo_vlm_command: str = ""
@@ -229,7 +229,7 @@ class Sim2RealLoopConfig:
     k8s_gpu_candidates: tuple[str, ...] = ()
     k8s_kubeconfig: str = ""
     k8s_context: str = ""
-    k8s_job_timeout_s: int = 7200
+    k8s_job_timeout_s: int = 0
     k8s_max_parallel_gpus: int = DEFAULT_K8S_MAX_PARALLEL_GPUS
     source_repo: str = ""
     source_ref: str = ""
@@ -258,8 +258,8 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("learning_rate must be positive")
         if self.signal_loss_weight < 0:
             raise Sim2RealLoopError("signal_loss_weight must be non-negative")
-        if self.k8s_job_timeout_s <= 0:
-            raise Sim2RealLoopError("k8s_job_timeout_s must be positive")
+        if self.k8s_job_timeout_s < 0:
+            raise Sim2RealLoopError("k8s_job_timeout_s must be non-negative (0 is unlimited)")
         if self.k8s_max_parallel_gpus <= 0:
             raise Sim2RealLoopError("k8s_max_parallel_gpus must be positive")
         if self.heldout_eval_limit < 0:
@@ -457,7 +457,9 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or default_envgen_image(registry=registry or None)
         ),
         env_count=int(
-            overrides.get("env_count", os.environ.get("NPA_ENV_COUNT", "0"))
+            overrides.get(
+                "env_count", os.environ.get("NPA_ENV_COUNT", DEFAULT_ENV_COUNT)
+            )
         ),
         train_fraction=float(
             overrides.get(
@@ -602,7 +604,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             )
         ),
         learning_rate=float(
-            overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.05"))
+            overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.08"))
         ),
         byo_signal_converter=str(
             overrides.get("byo_signal_converter")
@@ -691,7 +693,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_job_timeout_s=int(
             overrides.get(
                 "k8s_job_timeout_s",
-                os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200"),
+                os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "0"),
             )
         ),
         k8s_max_parallel_gpus=int(
@@ -1838,7 +1840,7 @@ def _run_component_command(
     cwd: Path,
     env: dict[str, str],
     component: str,
-    timeout_s: int = 7200,
+    timeout_s: int = 0,
 ) -> dict[str, Any]:
     result = subprocess.run(
         command,
@@ -1848,7 +1850,7 @@ def _run_component_command(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=timeout_s,
+        timeout=timeout_s or None,
         check=False,
     )
     if result.returncode != 0:
@@ -2029,8 +2031,11 @@ def _run_image_component(
     output_json: Path,
     output_uri: str,
     config: Sim2RealLoopConfig,
-    timeout_s: int = 7200,
+    timeout_s: int | None = None,
 ) -> dict[str, Any]:
+    effective_timeout_s = (
+        config.k8s_job_timeout_s if timeout_s is None else timeout_s
+    )
     return _run_kubernetes_image_component(
         image,
         component=component,
@@ -2038,7 +2043,7 @@ def _run_image_component(
         output_json=output_json,
         output_uri=output_uri,
         config=config,
-        timeout_s=timeout_s,
+        timeout_s=effective_timeout_s,
     )
 
 
@@ -2149,8 +2154,8 @@ def _wait_kubernetes_job(
             return "failed"
 
     poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
+    deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
+    while deadline is None or time.monotonic() < deadline:
         result = _kubectl(
             config,
             [
@@ -2448,6 +2453,21 @@ def _component_job_manifest(
     }
     if pull_secrets:
         template_spec["imagePullSecrets"] = pull_secrets
+    job_spec: dict[str, Any] = {
+        "backoffLimit": 0,
+        "template": {
+            "metadata": {
+                "labels": {
+                    "app.kubernetes.io/name": "sim2real-sibling-component",
+                    "app.kubernetes.io/component": component.replace("_", "-"),
+                    "sim2real.local/run-id": _label_value(config.run_id),
+                }
+            },
+            "spec": template_spec,
+        },
+    }
+    if timeout_s > 0:
+        job_spec["activeDeadlineSeconds"] = timeout_s
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -2465,20 +2485,7 @@ def _component_job_manifest(
                 )
             },
         },
-        "spec": {
-            "backoffLimit": 0,
-            "activeDeadlineSeconds": timeout_s,
-            "template": {
-                "metadata": {
-                    "labels": {
-                        "app.kubernetes.io/name": "sim2real-sibling-component",
-                        "app.kubernetes.io/component": component.replace("_", "-"),
-                        "sim2real.local/run-id": _label_value(config.run_id),
-                    }
-                },
-                "spec": template_spec,
-            },
-        },
+        "spec": job_spec,
     }
 
 
@@ -2615,7 +2622,12 @@ def _kubernetes_component_env(
 ) -> dict[str, str]:
     safe: dict[str, str] = {}
     for key, value in env.items():
-        if key.startswith("NPA_SIM2REAL") or key.startswith("NPA_COSMOS_") or key == "HF_HOME":
+        if (
+            key.startswith("NPA_SIM2REAL")
+            or key.startswith("NPA_COSMOS_")
+            or key == "HF_HOME"
+            or key in {"OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"}
+        ):
             safe[key] = value
     endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
         "AWS_ENDPOINT_URL", ""
@@ -2624,6 +2636,10 @@ def _kubernetes_component_env(
     safe["S3_ENDPOINT_URL"] = endpoint
     apply_cosmos_reason_kubernetes_env(safe)
     for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        value = str(env.get(key) or os.environ.get(key) or "").strip()
+        if value:
+            safe[key] = value
+    for key in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:
             safe[key] = value
@@ -5335,7 +5351,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--upload-artifacts", action="store_true")
     parser.add_argument("--no-guardrails", action="store_true")
     parser.add_argument("--signal-loss-weight", type=float, default=1.0)
-    parser.add_argument("--learning-rate", type=float, default=0.05)
+    parser.add_argument("--learning-rate", type=float, default=0.08)
     parser.add_argument("--byo-signal-converter", default="")
     parser.add_argument("--byo-trainer-command", default="")
     parser.add_argument("--byo-vlm-command", default="")
@@ -5398,7 +5414,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--k8s-job-timeout-s",
         type=int,
-        default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200")),
+        default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "0")),
     )
     parser.add_argument(
         "--k8s-max-parallel-gpus",

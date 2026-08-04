@@ -18,7 +18,7 @@
 | LeRobot custom/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `lerobot/pusht` |
 | Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
 
-Trace env names from `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh`, `runbook.yaml` `envs:`, and `npa.workflows.sim2real.config.build_config_from_env`.
+Trace env names from `npa/workflows/sim2real.yaml` `envs:`, `npa.workflows.sim2real.k8s_submit`, and `npa.workflows.sim2real.config.build_config_from_env`.
 
 ---
 
@@ -207,25 +207,20 @@ the operator supplies a registry-qualified image or customer asset.
 | --- | --- | --- | --- |
 | 1 | LeRobot trigger | **WORKS** | `NPA_SIM2REAL_TRIGGER_DATASET_URI` at submit |
 | 2 | LanceDB curation | **SEAM** | Trigger path only; no LanceDB stage |
-| 3 | Cosmos augment | **WORKS** / **SEAM** | Cosmos Transfer 2.5 K8s job when `AUGMENT_IMAGE` qualified; else reference augment |
+| 3 | Cosmos augment | **WORKS** | Canonical submit requires qualified Cosmos Transfer 2.5 and real Job evidence |
 | 4 | Sim assets / catalog | **WORKS** | Stock SceneSpec + Franka; BYO mesh / SceneSpec / RobotSpec; UR/Flexiv pending URDF |
 | 5 | 10K envgen | **WORKS** | `NPA_ENV_COUNT=10000` via `sim2real_envgen` |
 | 6 | 80/20 split | **WORKS** | `NPA_TRAIN_FRACTION=0.8`; state carries `train_envs_uri` / `heldout_envs_uri` |
-| 7 | Policy action rollouts | **WORKS** / **SEAM** | `POLICY_IMAGE` K8s job when qualified; placeholder → reference rollouts; `BYO_POLICY_COMMAND` |
-| 8–9 | VLM + RL trainer | **WORKS** | Cosmos3 Reason + LeRobot VLM-signal trainer on cluster |
-| 10 | Held-out eval | **PARTIAL** | Genesis or Isaac Lab rollouts; BYO robot/scene must load (no silent Franka fallback) |
+| 7 | Policy action rollouts | **WORKS** | Real Isaac sibling Job; every frame names the loaded checkpoint |
+| 8–9 | VLM + RL trainer | **WORKS** | Cosmos Reason + real Isaac RSL-RL PPO on cluster |
+| 10 | Held-out eval | **WORKS** | Candidate-loaded Isaac inference; BYO robot/scene must load with no silent fallback |
 | 11 | Threshold gate | **WORKS** | Promote vs loop-back |
 | 12 | Real-world validation | **SEAM** | `stage_12_external_validation/external_stub.json` — customer deploys checkpoint |
 | 13 | Next batch | **Explicit trigger** | Customer uploads new LeRobot batch + runs `trigger-pipeline.sh` (no S3 polling) |
 
-**Overall:** ~**80%** as an NPA orchestration framework on RTX PRO class GPUs; ~**20%**
-gap is third-party asset catalogs, LanceDB stage, live real-world loop, and UR/Flexiv
-URDF upload before full embodiment parity.
-
-**PR stack:** [#109](https://github.com/nebius/nebius-physical-ai/pull/109) staged
-runbook + direct K8s submit (`<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh`);
-[#110](https://github.com/nebius/nebius-physical-ai/pull/110) mandatory stages +
-Stage 2 asset materialization + `POLICY_IMAGE` / augment placeholder fallbacks.
+The remaining intentional seam is Stage 12 external real-world validation.
+LanceDB curation and customer embodiment assets are separate capabilities, not
+silent substitutions inside the canonical 14-stage qualification run.
 
 ---
 

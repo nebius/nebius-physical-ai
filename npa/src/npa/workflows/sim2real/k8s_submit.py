@@ -41,6 +41,12 @@ _REQUIRED_REAL_IMAGE_ENVS = (
     "ISAAC_IMAGE",
 )
 
+_REQUIRED_REAL_COMMAND_ENVS = (
+    "BYO_POLICY_COMMAND",
+    "BYO_TRAINER_COMMAND",
+    "BYO_EVAL_COMMAND",
+)
+
 
 def _repo_root() -> Path:
     here = Path(__file__).resolve()
@@ -56,6 +62,64 @@ def _registry_qualified(image: str) -> bool:
         return False
     host, leaf = ref.split("/", 1)
     return bool(("." in host or ":" in host or host == "localhost") and (":" in leaf or "@" in leaf))
+
+
+def _validate_real_runtime_env(values: dict[str, str]) -> None:
+    """Fail before apply when a canonical real-tier knob is invalid or inert."""
+
+    from npa.workflows.sim2real.camera_views import camera_view_names
+    from npa.workflows.sim2real.capture import capture_settings, ppo_settings
+
+    capture_settings(values)
+    ppo_settings(values)
+    camera_view_names(values.get("NPA_SIM2REAL_CAMERA_VIEWS", ""))
+
+    def integer(name: str, *, minimum: int = 1) -> int:
+        raw = values.get(name, "")
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+        if parsed < minimum:
+            raise ValueError(f"{name} must be >= {minimum}, got {parsed}")
+        return parsed
+
+    for name in (
+        "INNER_ITERATIONS",
+        "OUTER_ITERATIONS",
+        "LOOP_OF_LOOPS_ITERATIONS",
+        "ROLLOUT_COUNT",
+        "STEPS_PER_ROLLOUT",
+        "HELDOUT_ENV_COUNT",
+        "NPA_ENV_COUNT",
+    ):
+        integer(name)
+    integer("NPA_SIM2REAL_HELDOUT_EVAL_LIMIT", minimum=0)
+    integer("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", minimum=0)
+    integer("NPA_BYO_ISAAC_JOB_TIMEOUT_S", minimum=0)
+
+    threshold = float(values.get("SUCCESS_THRESHOLD", "0.50"))
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"SUCCESS_THRESHOLD must be in [0, 1], got {threshold}")
+    distance = float(values.get("NPA_BYO_ISAAC_SUCCESS_DIST_M", "0.05"))
+    if not 0.001 <= distance <= 10.0:
+        raise ValueError(
+            "NPA_BYO_ISAAC_SUCCESS_DIST_M must be in [0.001, 10] metres, "
+            f"got {distance}"
+        )
+    early_exit = values.get("NPA_SIM2REAL_EARLY_EXIT", "0").strip().lower()
+    if early_exit not in {"", "0", "1", "false", "true", "no", "yes", "off", "on"}:
+        raise ValueError("NPA_SIM2REAL_EARLY_EXIT must be boolean")
+    for name in _REQUIRED_REAL_COMMAND_ENVS:
+        if not values.get(name, "").strip():
+            raise ValueError(
+                f"{name} must invoke a real external component in the canonical real tier"
+            )
+    for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
+        if values.get(name, "").strip().upper() != "YES":
+            raise ValueError(
+                f"{name}=YES is required after the operator accepts the NVIDIA Isaac licence"
+            )
 
 
 def _default_image_env(registry: str, *, orchestrator_image: str = "") -> tuple[dict[str, str], str]:
@@ -254,6 +318,14 @@ def submit_sim2real_staged_job(
         image_env["OUTER_ITERATIONS"] = str(outer_iterations)
     if env_count is not None:
         image_env["NPA_ENV_COUNT"] = str(env_count)
+
+    from npa.workflows.sim2real.materialize import load_runbook_task
+
+    runbook_env = {
+        str(key): str(value)
+        for key, value in (load_runbook_task(default_runbook_path()).get("envs") or {}).items()
+    }
+    _validate_real_runtime_env({**runbook_env, **image_env})
 
     for key in _REQUIRED_REAL_IMAGE_ENVS:
         if not _registry_qualified(image_env.get(key, "")):

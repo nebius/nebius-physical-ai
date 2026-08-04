@@ -21,6 +21,8 @@ class CameraViewSpec:
     name: str
     position: tuple[float, float, float]
     rotation: tuple[float, float, float, float]
+    focal_length_mm: float = 24.0
+    horizontal_aperture_mm: float = 20.955
 
 
 def _camera_quaternion(
@@ -86,3 +88,31 @@ def camera_views_json(value: str = "") -> str:
         [asdict(CAMERA_VIEW_SPECS[name]) for name in camera_view_names(value)],
         separators=(",", ":"),
     )
+
+
+def camera_metadata(value: str, *, width: int, height: int) -> list[dict[str, object]]:
+    """Return pose and pinhole intrinsics for the selected Isaac cameras."""
+
+    metadata: list[dict[str, object]] = []
+    for name in camera_view_names(value):
+        spec = CAMERA_VIEW_SPECS[name]
+        fx = width * spec.focal_length_mm / spec.horizontal_aperture_mm
+        vertical_aperture = spec.horizontal_aperture_mm * height / width
+        fy = height * spec.focal_length_mm / vertical_aperture
+        metadata.append(
+            {
+                **asdict(spec),
+                "pose_frame": "isaac_world",
+                "quaternion_order": "wxyz",
+                "optical_axis": "+X",
+                "width": int(width),
+                "height": int(height),
+                "intrinsics_px": {
+                    "fx": round(fx, 6),
+                    "fy": round(fy, 6),
+                    "cx": width / 2.0,
+                    "cy": height / 2.0,
+                },
+            }
+        )
+    return metadata
