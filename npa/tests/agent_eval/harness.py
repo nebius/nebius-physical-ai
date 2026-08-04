@@ -10,6 +10,7 @@ scorecard (success_rate / avg_steps / avg_tokens).
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -21,6 +22,7 @@ from npa.cli import agent_sim2real_loop
 from npa.cli import agent_workflow
 
 from .scenarios import SCENARIOS, Scenario
+from .policy import scorecard_policy_violations
 
 KNOWN_INTENTS = frozenset(agent_chat.INTENT_APIS.keys())
 
@@ -75,19 +77,26 @@ def _scripted(script: list[dict]):
     return _call
 
 
-def _run_grounded(sc: Scenario) -> EvalResult:
-    intent = agent_chat.match_chat_intent(sc.goal)
-    reply = agent_chat.build_grounded_reply(intent or "", {}, ["workbench.cosmos.train"]) if intent else ""
+def _module(overrides: Mapping[str, Any] | None, name: str, default: Any) -> Any:
+    return (overrides or {}).get(name, default)
+
+
+def _run_grounded(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+    chat = _module(overrides, "agent_chat", agent_chat)
+    intent = chat.match_chat_intent(sc.goal)
+    reply = chat.build_grounded_reply(intent or "", {}, ["workbench.cosmos.train"]) if intent else ""
     success = intent == sc.expected.get("intent") and bool(reply)
     return EvalResult(sc.id, sc.kind, success, steps=1, tokens=0, detail=f"intent={intent}")
 
 
-def _run_workflow(sc: Scenario) -> EvalResult:
+def _run_workflow(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
     # End-state: the intent is recognized AND a runnable spec is drafted+validated.
-    intent = agent_chat.match_chat_intent(sc.goal)
+    chat = _module(overrides, "agent_chat", agent_chat)
+    workflow = _module(overrides, "agent_workflow", agent_workflow)
+    intent = chat.match_chat_intent(sc.goal)
     if intent != sc.expected.get("intent"):
         return EvalResult(sc.id, sc.kind, False, steps=1, tokens=0, detail=f"intent={intent}")
-    draft = agent_workflow.generate_workflow_draft(
+    draft = workflow.generate_workflow_draft(
         intent=intent, user_text=sc.goal, tool_refs=_EVAL_TOOL_REFS
     )
     validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
@@ -97,12 +106,13 @@ def _run_workflow(sc: Scenario) -> EvalResult:
     )
 
 
-def _run_action_loop(sc: Scenario) -> EvalResult:
+def _run_action_loop(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+    actions = _module(overrides, "agent_actions", agent_actions)
     expected_tool = sc.expected.get("tool")
     if sc.expected.get("needs_confirmation"):
         planner = _scripted([{ "tool": expected_tool, "args": {"run_id": "eval"}}])
         tools = {expected_tool: lambda args: {"run_id": "eval"}}
-        result = agent_actions.run_action_loop(sc.goal, tools=tools, model_call=planner)
+        result = actions.run_action_loop(sc.goal, tools=tools, model_call=planner)
         success = bool(result.get("needs_confirmation")) and result.get(
             "proposed_action", {}
         ).get("tool") == expected_tool
@@ -114,7 +124,7 @@ def _run_action_loop(sc: Scenario) -> EvalResult:
             ]
         )
         tools = {expected_tool: lambda args: {"run_id": "r", "stage": "demo"}}
-        result = agent_actions.run_action_loop(sc.goal, tools=tools, model_call=planner)
+        result = actions.run_action_loop(sc.goal, tools=tools, model_call=planner)
         success = (
             result.get("stopped_reason") == sc.expected.get("stopped_reason")
             and expected_tool in result.get("tools_used", [])
@@ -123,12 +133,13 @@ def _run_action_loop(sc: Scenario) -> EvalResult:
     return EvalResult(sc.id, sc.kind, success, steps=steps, tokens=int(result.get("tokens") or 0))
 
 
-def _run_sim2real_loop(sc: Scenario) -> EvalResult:
+def _run_sim2real_loop(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+    sim2real = _module(overrides, "agent_sim2real_loop", agent_sim2real_loop)
     def _status(run_id):
         return {"ok": True, "sim_viz": {"run_id": run_id}, "run": {"run_id": run_id}}
 
     if sc.expected.get("needs_confirmation"):
-        result = agent_sim2real_loop.drive_sim2real_loop(
+        result = sim2real.drive_sim2real_loop(
             sc.goal,
             config={"run_id": "eval", "threshold": 0.8},
             launch=lambda cfg: {"ok": True, "run_id": "eval"},
@@ -137,7 +148,7 @@ def _run_sim2real_loop(sc: Scenario) -> EvalResult:
         )
         success = bool(result.get("needs_confirmation"))
     else:
-        result = agent_sim2real_loop.drive_sim2real_loop(
+        result = sim2real.drive_sim2real_loop(
             sc.goal,
             config={"run_id": "eval", "threshold": 0.8},
             launch=lambda cfg: {"ok": True, "run_id": "eval"},
@@ -154,16 +165,18 @@ def _run_sim2real_loop(sc: Scenario) -> EvalResult:
     return EvalResult(sc.id, sc.kind, success, steps=steps, tokens=0)
 
 
-def _run_semantic(sc: Scenario) -> EvalResult:
+def _run_semantic(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+    chat = _module(overrides, "agent_chat", agent_chat)
+    semantic_router = _module(overrides, "agent_semantic_router", agent_semantic_router)
     expected = sc.expected.get("intent")
     # End-state: the turn resolves to the EXPECTED intent, whether the regex
     # already grounds it or the semantic fallthrough maps the paraphrase.
-    regex_intent = agent_chat.match_chat_intent(sc.goal)
+    regex_intent = chat.match_chat_intent(sc.goal)
     if regex_intent is not None:
         return EvalResult(
             sc.id, sc.kind, regex_intent == expected, steps=1, tokens=0, detail="regex-hit"
         )
-    result = agent_semantic_router.classify_intent_semantic(
+    result = semantic_router.classify_intent_semantic(
         sc.goal,
         known_intents=KNOWN_INTENTS,
         model_call=lambda *a, **k: _completion({"intent": "none"}),
@@ -185,14 +198,15 @@ def _fake_embed(texts, dim: int = 32):
     return vectors
 
 
-def _run_retrieval(sc: Scenario) -> EvalResult:
+def _run_retrieval(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
     # End-state: indexing the corpus then retrieving returns a citation whose uri
     # matches the expected source. Fully mocked embedder -> 0 tokens.
-    store = agent_retrieval.InMemoryVectorStore()
+    retrieval = _module(overrides, "agent_retrieval", agent_retrieval)
+    store = retrieval.InMemoryVectorStore()
     corpus = sc.expected.get("corpus") or []
     documents = [(uri, title, text) for uri, title, text in corpus]
-    agent_retrieval.index_corpus(documents, embed=_fake_embed, store=store, source="repo")
-    result = agent_retrieval.retrieve(sc.goal, embed=_fake_embed, store=store, k=3, min_score=0.0)
+    retrieval.index_corpus(documents, embed=_fake_embed, store=store, source="repo")
+    result = retrieval.retrieve(sc.goal, embed=_fake_embed, store=store, k=3, min_score=0.0)
     citations = result.get("citations") or []
     expected_uri = sc.expected.get("uri")
     success = bool(result.get("ok")) and bool(citations) and citations[0].get("uri") == expected_uri
@@ -209,19 +223,38 @@ _RUNNERS = {
 }
 
 
-def run_scenario(sc: Scenario) -> EvalResult:
+def run_scenario(
+    sc: Scenario, *, module_overrides: Mapping[str, Any] | None = None
+) -> EvalResult:
     runner = _RUNNERS.get(sc.kind)
     if runner is None:
         return EvalResult(sc.id, sc.kind, False, steps=0, tokens=0, detail="unknown kind")
     try:
-        return runner(sc)
+        return runner(sc, module_overrides)
     except Exception as exc:  # noqa: BLE001 - a crash is a failed task, not a suite error
         return EvalResult(sc.id, sc.kind, False, steps=0, tokens=0, detail=f"error: {exc}")
 
 
-def run_suite(scenarios: list[Scenario] | None = None) -> dict[str, Any]:
+def _scenario_identity(scenarios: list[Scenario]) -> dict[str, Any]:
+    payload = [
+        {"id": sc.id, "kind": sc.kind, "goal": sc.goal, "expected": sc.expected}
+        for sc in scenarios
+    ]
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "scenario_count": len(payload),
+        "scenario_ids": [item["id"] for item in payload],
+        "scenario_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def run_suite(
+    scenarios: list[Scenario] | None = None,
+    *,
+    module_overrides: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     cases = scenarios if scenarios is not None else SCENARIOS
-    results = [run_scenario(sc) for sc in cases]
+    results = [run_scenario(sc, module_overrides=module_overrides) for sc in cases]
     total = len(results) or 1
     passed = sum(1 for r in results if r.success)
     scorecard = {
@@ -230,6 +263,7 @@ def run_suite(scenarios: list[Scenario] | None = None) -> dict[str, Any]:
         "success_rate": round(passed / float(total), 4),
         "avg_steps": round(sum(r.steps for r in results) / float(total), 4),
         "avg_tokens": round(sum(r.tokens for r in results) / float(total), 4),
+        **_scenario_identity(cases),
     }
     return {"results": [r.to_dict() for r in results], "scorecard": scorecard}
 
@@ -245,7 +279,8 @@ def scorecard_regressions(
     current: Mapping[str, Any], baseline: Mapping[str, Any]
 ) -> list[str]:
     """Describe competitive-scorecard regressions relative to a committed baseline."""
-    regressions: list[str] = []
+    regressions = scorecard_policy_violations(current, role="current")
+    regressions.extend(scorecard_policy_violations(baseline, role="baseline"))
     for metric, direction in _SCORECARD_DIRECTIONS.items():
         if metric not in current or metric not in baseline:
             regressions.append(f"{metric} is missing from current or baseline scorecard")

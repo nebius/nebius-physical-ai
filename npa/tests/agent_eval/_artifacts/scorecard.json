@@ -85,6 +85,20 @@
     "avg_steps": 1.1,
     "avg_tokens": 1.8,
     "passed": 10,
+    "scenario_count": 10,
+    "scenario_ids": [
+      "grounded_status",
+      "grounded_tools_catalog",
+      "grounded_cosmos_caps",
+      "workflow_vlm_rl_draft",
+      "action_status_then_answer",
+      "action_gpu_needs_confirmation",
+      "sim2real_promote",
+      "sim2real_needs_confirmation",
+      "semantic_watch_paraphrase",
+      "retrieval_genesis_doc"
+    ],
+    "scenario_sha256": "a9d3f7ee6b2763d21e855763192486409dd9a81c42ca67af6698966a00103e55",
     "success_rate": 1.0,
     "total": 10
   }

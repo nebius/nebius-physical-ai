@@ -22,6 +22,15 @@ from agent_eval.harness import (
     run_suite,
     scorecard_regressions,
 )
+from agent_eval.live import post_agent_action, request_timeout_seconds
+from agent_eval.policy import (
+    MAX_AVG_STEPS,
+    MAX_AVG_TOKENS,
+    MIN_SUCCESS_RATE,
+    SCENARIO_COUNT,
+    SCENARIO_IDS,
+    SCENARIO_SHA256,
+)
 from agent_eval.scenarios import SCENARIOS
 
 ARTIFACT_DIR = Path(__file__).with_name("_artifacts")
@@ -34,9 +43,10 @@ def test_agent_eval_scorecard_meets_bar():
 
     # Competitive bar: the mocked suite must fully pass and stay cheap.
     assert scorecard["total"] == len(SCENARIOS)
-    assert scorecard["success_rate"] >= 0.9, report["results"]
+    assert scorecard["success_rate"] >= MIN_SUCCESS_RATE, report["results"]
+    assert scorecard["avg_steps"] <= MAX_AVG_STEPS, scorecard
     # avg_tokens is simulated (mocked planner); it must stay small.
-    assert scorecard["avg_tokens"] <= 5.0, scorecard
+    assert scorecard["avg_tokens"] <= MAX_AVG_TOKENS, scorecard
 
 
 def _baseline_scorecard() -> dict:
@@ -49,21 +59,92 @@ def test_agent_eval_scorecard_does_not_regress_from_committed_baseline():
 
 
 def test_agent_eval_regression_gate_rejects_negative_control():
+    class BrokenGroundedRouter:
+        """Deterministically break the zero-token router used by four scenarios."""
+
+        @staticmethod
+        def match_chat_intent(text):
+            return None
+
+        @staticmethod
+        def build_grounded_reply(intent, state, tool_refs):
+            return ""
+
     baseline = _baseline_scorecard()
-    degraded = {
-        **baseline,
-        "success_rate": baseline["success_rate"] - 0.1,
-        "avg_steps": baseline["avg_steps"] + 1.0,
-        "avg_tokens": baseline["avg_tokens"] + 1.0,
-    }
+    degraded = run_suite(module_overrides={"agent_chat": BrokenGroundedRouter})[
+        "scorecard"
+    ]
+    assert degraded["passed"] == 6
+    assert degraded["success_rate"] == 0.6
     regressions = scorecard_regressions(degraded, baseline)
-    assert {item.split("=", 1)[0] for item in regressions} == {
-        "success_rate",
-        "avg_steps",
-        "avg_tokens",
-    }
+    assert any("success_rate=0.6" in item for item in regressions)
     with pytest.raises(AssertionError, match="scorecard regressed"):
         assert_scorecard_not_regressed(degraded, baseline)
+
+
+def test_laundered_baseline_cannot_lower_the_policy_bar():
+    current = run_suite()["scorecard"]
+    laundered = {**current, "success_rate": 0.9}
+
+    with pytest.raises(AssertionError, match="baseline success_rate=0.9 is below policy=1.0"):
+        assert_scorecard_not_regressed(current, laundered)
+
+
+def test_scenario_identity_and_count_are_policy_pinned():
+    scorecard = run_suite()["scorecard"]
+    assert scorecard["scenario_count"] == SCENARIO_COUNT
+    assert tuple(scorecard["scenario_ids"]) == SCENARIO_IDS
+    assert scorecard["scenario_sha256"] == SCENARIO_SHA256
+
+    dropped = run_suite(SCENARIOS[:-1])["scorecard"]
+    with pytest.raises(AssertionError, match="scenario_count|scenario_ids|scenario_sha256"):
+        assert_scorecard_not_regressed(dropped, _baseline_scorecard())
+
+
+def test_live_request_timeout_is_configurable_without_network():
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return Response()
+
+    result = post_agent_action(
+        url="https://agent.invalid/api/agent/act",
+        payload={"goal": "query"},
+        auth=None,
+        verify=False,
+        post=fake_post,
+        env={"NPA_AGENT_EVAL_REQUEST_TIMEOUT_SECONDS": "17.5"},
+    )
+
+    assert result == {"ok": True}
+    assert captured["timeout"] == 17.5
+
+
+def test_live_request_timeout_error_is_clear_without_network():
+    import httpx
+
+    def fake_post(url, **kwargs):
+        raise httpx.ReadTimeout("slow", request=httpx.Request("POST", url))
+
+    with pytest.raises(AssertionError, match="timed out after 2.5 seconds"):
+        post_agent_action(
+            url="https://agent.invalid/api/agent/act",
+            payload={"goal": "query"},
+            auth=None,
+            verify=False,
+            post=fake_post,
+            env={"NPA_AGENT_EVAL_REQUEST_TIMEOUT_SECONDS": "2.5"},
+        )
+    with pytest.raises(ValueError, match="positive finite number"):
+        request_timeout_seconds({"NPA_AGENT_EVAL_REQUEST_TIMEOUT_SECONDS": "none"})
 
 
 def test_every_scenario_kind_is_exercised():
@@ -151,7 +232,6 @@ def test_operate_eval_mocked_round_trip_is_grounded(tmp_path: Path):
 )
 def test_agent_eval_live_operate_round_trip():  # pragma: no cover - opt-in live variant
     """Submit CPU workflow → ingest Insights → ask deployed agent → verify evidence."""
-    import httpx
     from npa.sdk.workbench.insights import query
 
     base = os.environ.get("NPA_AGENT_URL", "").rstrip("/")
@@ -224,20 +304,17 @@ def test_agent_eval_live_operate_round_trip():  # pragma: no cover - opt-in live
     password = os.environ.get("AGENT_PASSWORD", "")
 
     def ask(input_uri: str) -> dict:
-        response = httpx.post(
-            f"{base}/api/agent/act",
-            json={
+        return post_agent_action(
+            url=f"{base}/api/agent/act",
+            payload={
                 "goal": (
                     "Use insights_query with input_uri "
                     f"{input_uri} and report only run ids returned by the store."
                 )
             },
             auth=(user, password) if user else None,
-            timeout=None,
             verify=os.environ.get("NPA_AGENT_TLS_VERIFY") == "1",
         )
-        response.raise_for_status()
-        return response.json()
 
     report = run_operate_eval(
         run_id=run_id,
