@@ -266,6 +266,7 @@ fi
         else f"python -m npa.workflows.sim2real {subcommand}"
     )
     return f"""set -euo pipefail
+export NPA_SKIP_EAGER_IMPORTS=1
 {vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
   rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
   python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
@@ -311,10 +312,6 @@ def _kubernetes_component_env(
     safe["AWS_ENDPOINT_URL"] = endpoint
     safe["S3_ENDPOINT_URL"] = endpoint
     apply_cosmos_reason_kubernetes_env(safe)
-    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
-        value = str(env.get(key) or os.environ.get(key) or "").strip()
-        if value:
-            safe[key] = value
     for key in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:

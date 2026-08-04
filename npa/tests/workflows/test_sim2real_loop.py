@@ -1074,7 +1074,9 @@ def test_resolve_env_records_s3_uri_appends_jsonl_for_split_prefixes() -> None:
     )
 
 
-def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) -> None:
+def test_kubernetes_component_env_uses_secret_refs_for_storage_credentials(
+    monkeypatch,
+) -> None:
     from npa.workflows.sim2real.k8s_components import (
         _kubernetes_component_env as package_component_env,
     )
@@ -1092,17 +1094,25 @@ def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) ->
         {"NPA_SIM2REAL_HELDOUT_ENVS_URI": "s3://bucket/run/envs/heldout/envs.jsonl"},
         config,
     )
-    assert safe["AWS_ACCESS_KEY_ID"] == "orch-key"
-    assert safe["AWS_SECRET_ACCESS_KEY"] == "orch-secret"
+    assert "AWS_ACCESS_KEY_ID" not in safe
+    assert "AWS_SECRET_ACCESS_KEY" not in safe
     assert safe["AWS_ENDPOINT_URL"] == "https://storage.example.test"
     assert safe["HF_HOME"] == "/tmp/hf_home"
     assert safe["NPA_COSMOS_REASON2_CACHE"] == "/tmp/hf_home/cosmos-reason2"
     assert safe["OMNI_KIT_ACCEPT_EULA"] == "YES"
     assert safe["ISAACSIM_ACCEPT_EULA"] == "YES"
     package_safe = package_component_env(
-        {**safe, "OMNI_KIT_ACCEPT_EULA": "YES", "ISAACSIM_ACCEPT_EULA": "YES"},
+        {
+            **safe,
+            "AWS_ACCESS_KEY_ID": "explicit-key-must-not-be-copied",
+            "AWS_SECRET_ACCESS_KEY": "explicit-secret-must-not-be-copied",
+            "OMNI_KIT_ACCEPT_EULA": "YES",
+            "ISAACSIM_ACCEPT_EULA": "YES",
+        },
         config,
     )
+    assert "AWS_ACCESS_KEY_ID" not in package_safe
+    assert "AWS_SECRET_ACCESS_KEY" not in package_safe
     assert package_safe["OMNI_KIT_ACCEPT_EULA"] == "YES"
     assert package_safe["ISAACSIM_ACCEPT_EULA"] == "YES"
 
