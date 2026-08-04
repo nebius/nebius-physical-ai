@@ -87,6 +87,7 @@ from npa.workflows.sim2real.gpu_fallback import (
     GpuCapacityExhausted,
     GpuJobFailure,
     gpu_fallback_report_contract,
+    minimum_vram_for_workload,
     run_gpu_job_with_fallback,
     workload_kind,
 )
@@ -96,6 +97,7 @@ from npa.workflows.sim2real.k8s_components import (
     _indexed_component_job_manifest,
     _kubernetes_component_env as _kubernetes_component_env,
 )
+from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import (
     _artifact_root_uri,
     _bool_value,
@@ -668,6 +670,7 @@ def run_finalize(
             "latest_heldout_report": final_eval,
             "latest_decision": final_decision,
         },
+        "progress_metrics": build_progress_metrics(local_dir, outer_history),
         "visualization": viz_info,
         "policy_access": {
             "deployable_policy": candidate_payload.get("deployable_policy", False),
@@ -1451,6 +1454,19 @@ def evaluate_rollout_with_vlm(
                     "resource": config.k8s_gpu_resource,
                     "count_per_job": 1,
                 },
+                "minimum_vram_gb": max(
+                    int(
+                        (reason2_invocation.get("gpu_provenance") or {}).get(
+                            "minimum_vram_gb", 0
+                        )
+                    ),
+                    int(
+                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                            "minimum_vram_gb", 0
+                        )
+                    ),
+                ),
+                "model_requirement": [config.vlm_reason2_model, config.vlm_reason3_model],
                 "image_digests": list(
                     dict.fromkeys(
                         list((reason2_invocation.get("gpu_provenance") or {}).get("image_digests", []))
@@ -2206,6 +2222,8 @@ def _run_kubernetes_indexed_image_component(
     def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return _kubectl(config, args, check=False, **kwargs)
 
+    job_workload = workload_kind(component, sim_backend=config.sim_backend)
+    model_hint = env.get("NPA_SIM2REAL_VLM_MODEL", "")
     try:
         gpu_provenance = run_gpu_job_with_fallback(
             kubectl=kubectl,
@@ -2215,10 +2233,16 @@ def _run_kubernetes_indexed_image_component(
             image=image,
             preferred_product=config.k8s_gpu_product,
             explicit_candidates=config.k8s_gpu_candidates,
-            workload=workload_kind(component, sim_backend=config.sim_backend),
+            workload=job_workload,
             gpu_resource=config.k8s_gpu_resource,
             gpu_count=1,
             timeout_s=timeout_s,
+            minimum_vram_gb=minimum_vram_for_workload(
+                job_workload,
+                model=model_hint,
+                explicit=env.get("NPA_SIM2REAL_MIN_GPU_VRAM_GB"),
+            ),
+            model=model_hint,
         )
     except (GpuCapacityExhausted, GpuJobFailure) as exc:
         raise Sim2RealLoopError(str(exc)) from exc
@@ -2299,6 +2323,8 @@ def _run_kubernetes_image_component(
     def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return _kubectl(config, args, check=False, **kwargs)
 
+    job_workload = workload_kind(component, sim_backend=config.sim_backend)
+    model_hint = env.get("NPA_SIM2REAL_VLM_MODEL", "")
     try:
         gpu_provenance = run_gpu_job_with_fallback(
             kubectl=kubectl,
@@ -2308,10 +2334,16 @@ def _run_kubernetes_image_component(
             image=image,
             preferred_product=config.k8s_gpu_product,
             explicit_candidates=config.k8s_gpu_candidates,
-            workload=workload_kind(component, sim_backend=config.sim_backend),
+            workload=job_workload,
             gpu_resource=config.k8s_gpu_resource,
             gpu_count=1,
             timeout_s=timeout_s,
+            minimum_vram_gb=minimum_vram_for_workload(
+                job_workload,
+                model=model_hint,
+                explicit=env.get("NPA_SIM2REAL_MIN_GPU_VRAM_GB"),
+            ),
+            model=model_hint,
         )
     except (GpuCapacityExhausted, GpuJobFailure) as exc:
         raise Sim2RealLoopError(str(exc)) from exc
@@ -5126,7 +5158,8 @@ def run_cosmos2_transfer_component_from_s3(
         manifest["frame_count"] = real["frame_count"]
         manifest["video_bytes"] = real["video_bytes"]
         manifest["control_spec"] = real["spec"]
-        manifest["fixture_provenance"] = real["fixture_provenance"]
+        if real.get("fixture_provenance"):
+            manifest["fixture_provenance"] = real["fixture_provenance"]
     else:
         if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
             raise Sim2RealLoopError(

@@ -27,6 +27,8 @@ def _placement_artifacts(invocation: dict[str, Any]) -> dict[str, Any]:
         "selected_gpu_product": selected,
         "selected_gpu_node": nodes,
         "allocated_gpu": provenance.get("allocated_gpu", {}),
+        "minimum_vram_gb": provenance.get("minimum_vram_gb", 0),
+        "model_requirement": provenance.get("model_requirement", ""),
         "image_digests": provenance.get("image_digests", []),
         "duration_s": provenance.get("duration_s", ""),
     }

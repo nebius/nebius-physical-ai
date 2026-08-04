@@ -258,10 +258,12 @@ Direct-Kubernetes runs accept a preferred product in
 `NPA_SIM2REAL_K8S_GPU_PRODUCT` and an ordered surface in
 `NPA_SIM2REAL_K8S_GPU_CANDIDATES`. The engine normalizes those values against
 actual `nvidia.com/gpu.product` node labels, filters them for the component and
-image architecture, and retries only when Kubernetes reports concrete GPU
+image architecture plus the model/workload VRAM floor, and retries only when Kubernetes reports concrete GPU
 capacity or selector evidence. Isaac candidates are limited to L40S and RTX PRO
 6000 variants; H100/H200 are never an Isaac fallback. Image pull, credential,
 checkpoint, container, and application failures do not change GPU products.
+Set `NPA_SIM2REAL_MIN_GPU_VRAM_GB` only when a model requires a stricter floor
+than the built-in workload/model rule; an invalid or unsatisfied value fails closed.
 
 The final ComponentRecords expose candidate order, attempts and scheduler
 reasons, selected product/node, allocated resource/count, Job name, runtime

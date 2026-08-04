@@ -12,6 +12,7 @@ from npa.workflows.sim2real.gpu_fallback import (
     GpuCapacityExhausted,
     GpuJobFailure,
     capacity_scheduling_reason,
+    minimum_vram_for_workload,
     normalize_gpu_family,
     ordered_compatible_products,
     product_is_compatible,
@@ -86,7 +87,33 @@ def test_non_isaac_filter_honors_transfer_and_image_architecture() -> None:
     assert not product_is_compatible(
         H100,
         workload="cosmos_reason",
+        image="registry/reason:architecture-unproven",
+    )
+    assert not product_is_compatible(
+        H100,
+        workload="cosmos_reason",
         image="registry/reason:cuda-sm120",
+    )
+
+
+def test_non_isaac_filter_honors_model_and_operator_vram_requirements() -> None:
+    assert minimum_vram_for_workload("cosmos_reason", model="Reason2-8B") == 24
+    assert minimum_vram_for_workload("cosmos_reason", model="Reason2-70B") == 141
+    plan = ordered_compatible_products(
+        preferred=L40S,
+        explicit=(H100, H200),
+        discovered=(L40S, H100, H200),
+        workload="cosmos_reason",
+        image="registry/reason:cuda-sm90",
+        minimum_vram_gb=80,
+    )
+    assert plan.products == (H100, H200)
+    assert any(item["product"] == L40S for item in plan.skipped)
+    assert (
+        minimum_vram_for_workload(
+            "cosmos_reason", model="Reason2-2B", explicit="invalid"
+        )
+        == 10**9
     )
 
 
@@ -168,10 +195,14 @@ class _Scheduler:
                     "items": [
                         {
                             "metadata": {"name": f"{self.current_job}-pod"},
-                            "spec": {"nodeName": f"node-{normalize_gpu_family(self.current_product)}"},
+                            "spec": {
+                                "nodeName": f"node-{normalize_gpu_family(self.current_product)}"
+                            },
                             "status": {
                                 "containerStatuses": [
-                                    {"imageID": "docker-pullable://registry/image@sha256:abc123"}
+                                    {
+                                        "imageID": "docker-pullable://registry/image@sha256:abc123"
+                                    }
                                 ]
                             },
                         }
@@ -226,9 +257,7 @@ def test_capacity_retry_order_and_provenance(monkeypatch: pytest.MonkeyPatch) ->
     assert result["selected_node"] == "node-l40s"
     assert result["allocated_gpu"] == {"resource": "nvidia.com/gpu", "count": 1}
     assert result["job_name"].endswith("-gpu2")
-    assert result["image_digests"] == [
-        "docker-pullable://registry/image@sha256:abc123"
-    ]
+    assert result["image_digests"] == ["docker-pullable://registry/image@sha256:abc123"]
     assert [item["status"] for item in result["attempts"]] == [
         "unschedulable",
         "complete",
@@ -262,7 +291,9 @@ def test_all_compatible_products_exhausted_fails_closed(
 ) -> None:
     monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
     scheduler = _Scheduler({RTX: "capacity", L40S: "capacity"})
-    with pytest.raises(GpuCapacityExhausted, match="all compatible GPU products exhausted") as exc:
+    with pytest.raises(
+        GpuCapacityExhausted, match="all compatible GPU products exhausted"
+    ) as exc:
         run_gpu_job_with_fallback(
             kubectl=scheduler,
             manifest_factory=_manifest,

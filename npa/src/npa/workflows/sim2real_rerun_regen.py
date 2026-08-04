@@ -14,6 +14,7 @@ from typing import Any
 
 from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
@@ -506,6 +507,7 @@ def regen_sim2real_rrd(
         from npa.workflows.sim2real.engine import gpu_fallback_report_contract
 
         report["policy_access"] = policy_access
+        report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)
         report["gpu_fallback_contract"] = gpu_fallback_report_contract(
             config, list(report.get("components") or [])
         )
