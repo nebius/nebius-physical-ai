@@ -462,6 +462,43 @@ def test_author_workflow_semantically_chains_curate_train_eval() -> None:
     assert referenced_config <= set(config), "every live argv config token must resolve"
 
 
+def test_author_workflow_keeps_semantic_flow_when_requested_count_differs() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    result = author_workflow_from_goal(
+        "write a 4-step npa yaml: curate a dataset -> train a policy -> evaluate it",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert len(result["tool_refs"]) == 4
+    assert "curat" in result["tool_refs"][0]
+    assert "train" in result["tool_refs"][1]
+    assert "eval" in result["tool_refs"][2] or "evaluate" in result["tool_refs"][2]
+    assert result["padded_tool_refs"] == [result["tool_refs"][3]]
+    assert "placeholder" in result["yaml"].lower()
+    assert len(result["data_flow"]) >= 2
+
+
+def test_author_workflow_understands_paraphrased_semantic_flow() -> None:
+    from npa.cli.agent_workflow import author_workflow_from_goal
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    result = author_workflow_from_goal(
+        "Refine the dataset before fitting a policy, followed by benchmarking it.",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert len(result["tool_refs"]) == 3
+    assert "curat" in result["tool_refs"][0]
+    assert "train" in result["tool_refs"][1]
+    assert "eval" in result["tool_refs"][2] or "evaluate" in result["tool_refs"][2]
+    assert result["padded_tool_refs"] == []
+    assert len(result["data_flow"]) == 2
+
+
 def test_author_workflow_returns_no_yaml_when_validation_fails(mocker) -> None:
     from npa.cli import agent_workflow
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG

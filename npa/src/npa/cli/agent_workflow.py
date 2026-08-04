@@ -1915,26 +1915,44 @@ def _select_author_tool_refs(
 
 
 _AUTHOR_SEMANTIC_TERMS: dict[str, tuple[str, ...]] = {
-    "curate": ("curate", "curation", "slice", "filter"),
-    "train": ("train", "training", "fit"),
-    "eval": ("eval", "evaluate", "evaluation", "benchmark", "score"),
+    "curate": ("curate", "curation", "slice", "filter", "refine", "clean"),
+    "train": ("train", "training", "fit", "fitting"),
+    "eval": (
+        "eval",
+        "evaluate",
+        "evaluation",
+        "benchmark",
+        "benchmarking",
+        "score",
+    ),
     "ingest": ("ingest", "import", "load"),
     "augment": ("augment", "augmentation", "transfer"),
     "generate": ("generate", "generation", "synthesize"),
 }
 
 
-def _author_semantic_stages(goal: str, n_steps: int) -> list[str]:
-    """Return ordered clauses when the operator described an explicit data flow."""
+def _author_semantic_stages(goal: str, n_steps: int | None = None) -> list[str]:
+    """Return ordered semantic stages without requiring count/clause equality."""
     text = str(goal or "").strip()
     if re.search(r"[→⟶➨]|->", text):
         parts = re.split(r"\s*(?:[→⟶➨]|->)\s*", text)
     elif re.search(r"\bthen\b", text, flags=re.IGNORECASE):
         parts = re.split(r"\bthen\b", text, flags=re.IGNORECASE)
     else:
-        return []
+        mentions: list[tuple[int, str]] = []
+        lowered = text.lower()
+        for canonical, terms in _AUTHOR_SEMANTIC_TERMS.items():
+            positions = [
+                match.start()
+                for term in terms
+                if (match := re.search(rf"\b{re.escape(term)}\b", lowered))
+            ]
+            if positions:
+                mentions.append((min(positions), canonical))
+        mentions.sort()
+        return [canonical for _, canonical in mentions][:6] if len(mentions) >= 2 else []
     stages = [part.strip(" ,;:") for part in parts if part.strip(" ,;:")]
-    return stages if len(stages) == n_steps else []
+    return stages[:6]
 
 
 def _semantic_stage_score(stage: str, tool_ref: str) -> int:
@@ -2274,8 +2292,15 @@ def author_workflow_from_goal(
         n_steps = max(1, min(len(pre_matched), 6))
     semantic_selected = _select_semantic_tool_refs(goal, catalog, n_steps)
     if semantic_selected:
-        selected = semantic_selected
+        selected = list(semantic_selected)
         matched = list(semantic_selected)
+        target_steps = max(n_steps, len(selected))
+        for ref in sorted(catalog):
+            if len(selected) >= target_steps:
+                break
+            if ref not in selected:
+                selected.append(ref)
+        n_steps = target_steps
     else:
         selected, matched = _select_author_tool_refs(goal, catalog, n_steps)
     if not selected:
