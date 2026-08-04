@@ -383,10 +383,17 @@ def test_emit_mcap_roundtrip_camera_signal_critique(tmp_path: Path) -> None:
     assert first_camera["format"] == "png"
 
 
-def _write_pointcloud_npz(tmp_path: Path, env_id: str = "env-0001", frames: int = 3) -> None:
+def _write_pointcloud_npz(
+    tmp_path: Path,
+    env_id: str = "env-0001",
+    frames: int = 3,
+    view: str | None = None,
+) -> None:
     import numpy as np
 
     root = tmp_path / "eval" / "heldout" / "renders" / viz_module.POINTCLOUD_SUBDIR / env_id
+    if view:
+        root /= view
     root.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(3)
     for i in range(frames):
@@ -481,6 +488,17 @@ def test_heldout_pointcloud_frames_reads_npz(tmp_path: Path) -> None:
     xyz, rgb = frames[0]
     assert xyz.shape[1] == 3 and rgb.shape[1] == 3
     assert xyz.dtype.name == "float32" and rgb.dtype.name == "uint8"
+
+
+def test_heldout_pointcloud_frames_fuses_synchronized_camera_views(tmp_path: Path) -> None:
+    _write_pointcloud_npz(tmp_path, frames=2, view="primary")
+    _write_pointcloud_npz(tmp_path, frames=2, view="side")
+    _write_pointcloud_npz(tmp_path, frames=2, view="overhead")
+    frames = viz_module._heldout_pointcloud_frames(tmp_path)
+    assert len(frames) == 2
+    xyz, rgb = frames[0]
+    assert xyz.shape == (1500, 3)
+    assert rgb.shape == (1500, 3)
 
 
 def test_emit_mcap_includes_pointclouds(tmp_path: Path) -> None:
@@ -930,6 +948,38 @@ def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> 
     assert is_reference_stub_rollout(rollout_dir, frames) is False
 
 
+def test_rollout_camera_frames_preserve_synchronized_named_views(tmp_path: Path) -> None:
+    rollout_dir = tmp_path / "rollout-0000"
+    views = {
+        "primary": ["camera-000.png", "camera-001.png"],
+        "side": ["camera-side-000.png", "camera-side-001.png"],
+        "overhead": ["camera-overhead-000.png", "camera-overhead-001.png"],
+    }
+    for view_index, names in enumerate(views.values()):
+        for frame_index, name in enumerate(names):
+            _write_test_png(
+                rollout_dir / name,
+                red=20 + view_index * 40,
+                green=60 + frame_index * 20,
+                blue=160,
+            )
+    (rollout_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.action_rollout.v1",
+                "camera_observations": views["primary"],
+                "camera_views": views,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    grouped = viz_module._rollout_camera_frames(rollout_dir)
+    assert list(grouped) == ["primary", "side", "overhead"]
+    assert all(len(frames) == 2 for frames in grouped.values())
+    assert len(viz_module._rollout_frames(rollout_dir)) == 2
+
+
 def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_path: Path) -> None:
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
     _write_summary_artifacts(tmp_path)
@@ -991,6 +1041,59 @@ def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_
     assert index["synthetic"]["augmentation_sample_count"] == 1
 
 
+def test_emit_logs_synchronized_multiview_cameras_and_rotatable_scene(
+    monkeypatch, tmp_path: Path
+) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    renders_dir = tmp_path / "eval" / "heldout" / "renders" / "heldout-0000"
+    views = {
+        "primary": ["camera-000.png", "camera-001.png"],
+        "side": ["camera-side-000.png", "camera-side-001.png"],
+        "overhead": ["camera-overhead-000.png", "camera-overhead-001.png"],
+    }
+    for view_index, names in enumerate(views.values()):
+        for frame_index, name in enumerate(names):
+            _write_test_png(
+                renders_dir / name,
+                red=40 + view_index * 30,
+                green=90 + frame_index * 20,
+                blue=180,
+            )
+    heldout_report["render_manifest"] = {
+        "schema": "npa.sim2real.heldout_renders.v1",
+        "sim_backend": "isaac",
+        "camera_views": list(views),
+        "episodes": [
+            {"env_id": "heldout-0000", "frames": views["primary"], "camera_views": views}
+        ],
+    }
+    for view in views:
+        _write_pointcloud_npz(tmp_path, env_id="heldout-0000", frames=2, view=view)
+
+    fake = _FakeRerun()
+    rrb = _RecordingRRB()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, rrb))
+    result = emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=tmp_path / "reports" / "sim2real.rrd",
+    )
+
+    entities = {entity for entity, _kind in fake.logged}
+    assert result.heldout_frame_count == 6
+    assert result.pointcloud_frame_count == 2
+    for view in views:
+        assert f"heldout/camera/heldout-0000/{view}/camera" in entities
+    assert "world/heldout/points" in entities
+    assert any(
+        view["kind"] == "Spatial3DView"
+        and view["origin"] == "world"
+        and view["name"] == "Scene overview"
+        for view in rrb.views
+    )
+
+
 def test_emit_logs_augmentation_previews_from_manifest_without_frame_index(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1039,6 +1142,33 @@ def test_build_heldout_render_manifest_from_png_tree(tmp_path: Path) -> None:
     )
     assert manifest["episodes"][0]["env_id"] == "heldout-0000"
     assert manifest["episodes"][0]["frames"] == ["camera-000.png", "camera-001.png"]
+    assert manifest["episodes"][0]["camera_views"] == {
+        "primary": ["camera-000.png", "camera-001.png"]
+    }
+
+
+def test_build_heldout_render_manifest_groups_multi_camera_tree(tmp_path: Path) -> None:
+    from npa.workflows.sim2real.engine import _build_heldout_render_manifest
+
+    env_dir = tmp_path / "heldout-0000"
+    env_dir.mkdir(parents=True)
+    for name in (
+        "camera-000.png",
+        "camera-side-000.png",
+        "camera-overhead-000.png",
+    ):
+        (env_dir / name).write_bytes(b"png")
+    episode = _build_heldout_render_manifest(
+        tmp_path,
+        sim_backend="isaac",
+        isaac_task="Isaac-Lift-Cube-Franka-v0",
+    )["episodes"][0]
+    assert episode["frames"] == ["camera-000.png"]
+    assert episode["camera_views"] == {
+        "primary": ["camera-000.png"],
+        "overhead": ["camera-overhead-000.png"],
+        "side": ["camera-side-000.png"],
+    }
 
 
 def test_usable_camera_frames_drops_blank_warmup() -> None:
@@ -1126,10 +1256,30 @@ def test_build_blueprint_one_2d_view_per_heldout_env() -> None:
         if v["kind"] == "Spatial2DView" and v["origin"].startswith("heldout/camera/")
     ]
     assert heldout_origins == [
-        "heldout/camera/env-00006",
-        "heldout/camera/env-00009",
-        "heldout/camera/env-00018",
+        "heldout/camera/env-00006/primary",
+        "heldout/camera/env-00009/primary",
+        "heldout/camera/env-00018/primary",
     ]
+
+
+def test_build_blueprint_exposes_all_camera_angles_and_3d_scene() -> None:
+    rrb = _RecordingRRB()
+    viz_module._build_blueprint(
+        rrb,
+        heldout_env_ids=["env-00006"],
+        heldout_camera_views=["primary", "side", "overhead"],
+        has_3d_scene=True,
+    )
+    origins = {view["origin"] for view in rrb.views}
+    assert {
+        "heldout/camera/env-00006/primary",
+        "heldout/camera/env-00006/side",
+        "heldout/camera/env-00006/overhead",
+    }.issubset(origins)
+    assert any(
+        view["kind"] == "Spatial3DView" and view["origin"] == "world"
+        for view in rrb.views
+    )
 
 
 def test_build_blueprint_without_env_ids_keeps_single_camera_view() -> None:
@@ -1170,3 +1320,21 @@ def test_log_heldout_cameras_time_aligns_envs() -> None:
     assert fake.times[:3] == fake.times[3:6]
     assert fake.times[0] == 10.0
     assert end_seconds == 10.0 + 3 * viz_module.ROLLOUT_FRAME_SECONDS
+
+
+def test_log_heldout_cameras_time_aligns_views() -> None:
+    import numpy as np
+
+    fake = _FakeRerun()
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    episodes = [
+        ("env-a", {"primary": [frame, frame], "side": [frame, frame], "overhead": [frame, frame]})
+    ]
+    counts: dict[str, int] = {}
+    logged, end_seconds = viz_module._log_heldout_cameras(
+        fake, None, episodes, counts, start_seconds=3.0
+    )
+    assert logged == 6
+    for view in ("primary", "side", "overhead"):
+        assert counts[f"/heldout/camera/env-a/{view}/camera"] == 2
+    assert end_seconds == 3.0 + 2 * viz_module.ROLLOUT_FRAME_SECONDS

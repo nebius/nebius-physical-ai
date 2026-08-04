@@ -381,7 +381,10 @@ The `.rrd` reuses the repo's existing Rerun capability (the same `rerun-sdk`
 recording API the LeRobot/GR00T adapters build on) and logs, on a shared
 `frame_time` timeline:
 
-- `rollouts/iter_NN/<rollout_id>/camera` — rollout camera frames as image streams.
+- `rollouts/iter_NN/<rollout_id>/camera` — compatibility primary rollout stream.
+- `rollouts/iter_NN/<rollout_id>/cameras/{primary,side,overhead}` — synchronized
+  real Isaac views. Configure the ordered subset with
+  `NPA_SIM2REAL_CAMERA_VIEWS` (`front`, `left`, and `top` are accepted aliases).
 - `rollouts/iter_NN/<rollout_id>/critique` — per-step VLM critique text + error
   tags as a text document overlay.
 - `rollouts/iter_NN/<rollout_id>/score` — the VLM success score.
@@ -389,6 +392,10 @@ recording API the LeRobot/GR00T adapters build on) and logs, on a shared
   timeseries, plus `signal/reward_trend` across iterations.
 - `heldout/scores` and `heldout/per_env/<env_id>` — held-out per-env scores as a
   scalar/bar view.
+- `heldout/camera/<env_id>/<view>/camera` — synchronized primary, side, and
+  overhead held-out streams. `world/heldout/points` fuses their depth-derived
+  world-space point clouds; use the default **Scene overview** 3D panel to orbit,
+  pan, and zoom the captured scene. The 2D camera panels remain fixed images.
 
 Open it with `rerun reports/sim2real.rrd`, or load it headlessly with
 `rerun.recording.load_recording(...)` to inspect entity counts. Set

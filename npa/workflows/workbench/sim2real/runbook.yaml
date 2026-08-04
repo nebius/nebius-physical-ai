@@ -162,6 +162,11 @@ envs:
   BYO_POLICY_COMMAND: ""
   BYO_VLM_COMMAND: ""
   BYO_EVAL_COMMAND: ""
+  # Comma-separated real Isaac camera views. The primary stream preserves the
+  # established VLM/eval contract; side and overhead are captured in sync and
+  # their depth clouds are fused in world coordinates for an orbitable Rerun 3D
+  # view. Supported names: primary, side, overhead (aliases: front, left, top).
+  NPA_SIM2REAL_CAMERA_VIEWS: "primary,side,overhead"
   # BYO_RERUN_COMMAND: optional shell command run instead of the in-process Rerun
   # emitter. Contract: reads the run dir from $NPA_SIM2REAL_RUN_DIR and report from
   # $NPA_SIM2REAL_REPORT_JSON, writes a non-empty .rrd to $NPA_SIM2REAL_OUTPUT_RRD.

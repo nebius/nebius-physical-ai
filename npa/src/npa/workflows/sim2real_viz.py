@@ -176,12 +176,15 @@ def emit_sim2real_rerun(
     output_rrd.parent.mkdir(parents=True, exist_ok=True)
 
     heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
+    heldout_pointclouds = _heldout_pointcloud_frames(local_dir)
     has_heldout_cameras = bool(heldout_episodes)
     has_synthetic_data = _has_synthetic_visual_data(local_dir)
     blueprint = _build_blueprint(
         rrb,
         has_heldout_cameras=has_heldout_cameras,
-        heldout_env_ids=[env_id for env_id, _frames in heldout_episodes],
+        heldout_env_ids=[env_id for env_id, _views in heldout_episodes],
+        heldout_camera_views=_heldout_camera_view_names(heldout_episodes),
+        has_3d_scene=bool(heldout_pointclouds),
         has_synthetic_data=has_synthetic_data,
     )
     recording = rr.RecordingStream(APPLICATION_ID)
@@ -207,8 +210,9 @@ def emit_sim2real_rerun(
         eval_dir = _maybe_path(record.get("vlm_eval_dir"))
         signal_dir = _maybe_path(record.get("signal_dir"))
         for rollout_dir in _rollout_dirs(actions_dir):
-            frames = _rollout_frames(rollout_dir)
-            if has_heldout_cameras and is_reference_stub_rollout(rollout_dir, frames):
+            camera_frames = _rollout_camera_frames(rollout_dir)
+            primary_frames = camera_frames.get("primary", [])
+            if has_heldout_cameras and is_reference_stub_rollout(rollout_dir, primary_frames):
                 continue
             rollout_id = rollout_dir.name
             if multiple_outer_iterations:
@@ -225,7 +229,7 @@ def emit_sim2real_rerun(
                 rr,
                 recording,
                 root=iter_root,
-                frames=frames,
+                camera_frames=camera_frames,
                 evaluation=evaluation,
                 signal=signal,
                 manifest=manifest,
@@ -234,9 +238,9 @@ def emit_sim2real_rerun(
                 critique_panel_rows=critique_panel_rows,
             )
             rollout_count += 1
-            frame_count += len(frames)
-            if write_mp4 and frames:
-                mp4_path = _maybe_write_mp4(rollout_dir, frames)
+            frame_count += sum(len(frames) for frames in camera_frames.values())
+            if write_mp4 and primary_frames:
+                mp4_path = _maybe_write_mp4(rollout_dir, primary_frames)
                 if mp4_path is not None:
                     mp4_paths.append(str(mp4_path))
 
@@ -259,7 +263,7 @@ def emit_sim2real_rerun(
     pointcloud_frame_count = _log_heldout_pointclouds(
         rr,
         recording,
-        _heldout_pointcloud_frames(local_dir),
+        heldout_pointclouds,
         counts,
     )
     heldout_env_count = _log_heldout(
@@ -325,7 +329,7 @@ def _log_rollout(
     recording: Any,
     *,
     root: str,
-    frames: list[np.ndarray],
+    camera_frames: dict[str, list[np.ndarray]],
     evaluation: dict[str, Any],
     signal: dict[str, Any],
     manifest: dict[str, Any],
@@ -341,10 +345,18 @@ def _log_rollout(
     summary = str(evaluation.get("summary") or "")
     last_critique = ""
 
-    for step, frame in enumerate(frames):
+    frame_total = max((len(frames) for frames in camera_frames.values()), default=0)
+    for step in range(frame_total):
         _set_time(rr, recording, seconds)
-        rr.log(f"{root}/camera", _rerun_image(rr, frame), recording=recording)
-        _bump(counts, f"{root}/camera")
+        for view_name, frames in camera_frames.items():
+            if step >= len(frames):
+                continue
+            image = _rerun_image(rr, frames[step])
+            rr.log(f"{root}/cameras/{view_name}", image, recording=recording)
+            _bump(counts, f"{root}/cameras/{view_name}")
+            if view_name == "primary":
+                rr.log(f"{root}/camera", image, recording=recording)
+                _bump(counts, f"{root}/camera")
 
         eval_step = per_step_eval.get(step, {})
         critique = str(eval_step.get("critique_text") or summary or "")
@@ -1571,29 +1583,37 @@ def _log_heldout(
 def _log_heldout_cameras(
     rr: Any,
     recording: Any,
-    episodes: list[tuple[str, list[np.ndarray]]],
+    episodes: list[tuple[str, dict[str, list[np.ndarray]] | list[np.ndarray]]],
     counts: dict[str, int],
     *,
     start_seconds: float,
 ) -> tuple[int, float]:
     logged = 0
     end_seconds = start_seconds
-    for episode_index, (env_id, frames) in enumerate(episodes):
+    for episode_index, (env_id, episode_views) in enumerate(episodes):
+        views = _normalize_camera_views(episode_views)
         root = f"heldout/camera/{env_id}"
         # Reset to the same start for every env so all held-out episodes share one
         # time window and play in sync (frame i of every env at the same t). Without
         # this, envs are laid end-to-end and only one is ever visible at the cursor.
         seconds = start_seconds
-        for frame in frames:
+        frame_total = max((len(frames) for frames in views.values()), default=0)
+        for frame_index in range(frame_total):
             _set_time(rr, recording, seconds)
-            image = _rerun_image(rr, frame)
-            rr.log(f"{root}/camera", image, recording=recording)
-            _bump(counts, f"{root}/camera")
-            if episode_index == 0:
-                rr.log("camera", image, recording=recording)
-                _bump(counts, "camera")
+            for view_name, frames in views.items():
+                if frame_index >= len(frames):
+                    continue
+                image = _rerun_image(rr, frames[frame_index])
+                rr.log(f"{root}/{view_name}/camera", image, recording=recording)
+                _bump(counts, f"{root}/{view_name}/camera")
+                logged += 1
+                if view_name == "primary":
+                    rr.log(f"{root}/camera", image, recording=recording)
+                    _bump(counts, f"{root}/camera")
+                    if episode_index == 0:
+                        rr.log("camera", image, recording=recording)
+                        _bump(counts, "camera")
             seconds += ROLLOUT_FRAME_SECONDS
-            logged += 1
         end_seconds = max(end_seconds, seconds)
     return logged, end_seconds
 
@@ -1644,10 +1664,10 @@ def is_reference_stub_rollout(rollout_dir: Path, frames: list[np.ndarray]) -> bo
 def _heldout_render_episodes(
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
-) -> list[tuple[str, list[np.ndarray]]]:
+) -> list[tuple[str, dict[str, list[np.ndarray]]]]:
     renders_root = local_dir / "eval" / "heldout" / "renders"
     manifest = (heldout_report or {}).get("render_manifest") or {}
-    episodes: list[tuple[str, list[np.ndarray]]] = []
+    episodes: list[tuple[str, dict[str, list[np.ndarray]]]] = []
     for item in manifest.get("episodes") or []:
         if not isinstance(item, dict):
             continue
@@ -1655,30 +1675,68 @@ def _heldout_render_episodes(
         if not env_id:
             continue
         env_dir = renders_root / env_id
-        frames = _usable_camera_frames(
-            [
-                frame
-                for name in item.get("frames") or []
-                if (frame := _read_image(env_dir / str(name))) is not None
-            ]
-        )
-        if frames:
-            episodes.append((env_id, frames))
+        view_names = item.get("camera_views") or {"primary": item.get("frames") or []}
+        views = {
+            str(view_name): _usable_camera_frames(
+                [
+                    frame
+                    for name in names or []
+                    if (frame := _read_image(env_dir / str(name))) is not None
+                ]
+            )
+            for view_name, names in view_names.items()
+        }
+        views = {name: frames for name, frames in views.items() if frames}
+        if views:
+            episodes.append((env_id, views))
     if episodes:
         return episodes
     if not renders_root.is_dir():
         return []
     for env_dir in sorted(path for path in renders_root.iterdir() if path.is_dir()):
-        frames = _usable_camera_frames(
-            [
-                frame
-                for frame_path in sorted(env_dir.glob("camera-*.png"))
-                if (frame := _read_image(frame_path)) is not None
-            ]
-        )
-        if frames:
-            episodes.append((env_dir.name, frames))
+        grouped = _camera_paths_by_view(sorted(env_dir.glob("camera-*.png")))
+        views = {
+            view_name: _usable_camera_frames(
+                [
+                    frame
+                    for frame_path in paths
+                    if (frame := _read_image(frame_path)) is not None
+                ]
+            )
+            for view_name, paths in grouped.items()
+        }
+        views = {name: frames for name, frames in views.items() if frames}
+        if views:
+            episodes.append((env_dir.name, views))
     return episodes
+
+
+def _normalize_camera_views(
+    value: dict[str, list[Any]] | list[Any],
+) -> dict[str, list[Any]]:
+    if isinstance(value, dict):
+        return {str(name): list(frames) for name, frames in value.items()}
+    return {"primary": list(value)}
+
+
+def _camera_paths_by_view(paths: list[Path]) -> dict[str, list[Path]]:
+    views: dict[str, list[Path]] = {}
+    for path in paths:
+        parts = path.stem.split("-")
+        view_name = parts[1] if len(parts) >= 3 and not parts[1].isdigit() else "primary"
+        views.setdefault(view_name, []).append(path)
+    return views
+
+
+def _heldout_camera_view_names(
+    episodes: list[tuple[str, dict[str, list[np.ndarray]] | list[np.ndarray]]],
+) -> list[str]:
+    names: list[str] = []
+    for _env_id, episode_views in episodes:
+        for name in _normalize_camera_views(episode_views):
+            if name not in names:
+                names.append(name)
+    return names
 
 
 # Sub-directory (under eval/heldout/renders) where the Isaac held-out eval writes
@@ -1700,11 +1758,24 @@ def _heldout_pointcloud_frames(local_dir: Path) -> list[tuple[np.ndarray, np.nda
     env_dirs = sorted(path for path in root.iterdir() if path.is_dir())
     if not env_dirs:
         return []
+    env_dir = env_dirs[0]
+    view_dirs = sorted(path for path in env_dir.iterdir() if path.is_dir())
+    if not view_dirs:
+        view_dirs = [env_dir]
+    view_frames = [sorted(path.glob("cloud-*.npz")) for path in view_dirs]
     frames: list[tuple[np.ndarray, np.ndarray]] = []
-    for cloud_path in sorted(env_dirs[0].glob("cloud-*.npz")):
-        cloud = _read_pointcloud_npz(cloud_path)
-        if cloud is not None:
-            frames.append(cloud)
+    for frame_index in range(max((len(paths) for paths in view_frames), default=0)):
+        clouds = [
+            cloud
+            for paths in view_frames
+            if frame_index < len(paths)
+            if (cloud := _read_pointcloud_npz(paths[frame_index])) is not None
+        ]
+        if not clouds:
+            continue
+        xyz = np.concatenate([cloud[0] for cloud in clouds], axis=0)
+        rgb = np.concatenate([cloud[1] for cloud in clouds], axis=0)
+        frames.append((xyz, rgb))
     return frames
 
 
@@ -1727,9 +1798,12 @@ def _build_blueprint(
     *,
     has_heldout_cameras: bool = False,
     heldout_env_ids: list[str] | None = None,
+    heldout_camera_views: list[str] | None = None,
+    has_3d_scene: bool = False,
     has_synthetic_data: bool = False,
 ) -> Any:
     env_ids = list(heldout_env_ids or [])
+    camera_views = list(heldout_camera_views or ["primary"])
     has_heldout_cameras = has_heldout_cameras or bool(env_ids)
     if env_ids:
         # Keep a top-level camera alias first: the web viewer reliably opens this
@@ -1740,10 +1814,11 @@ def _build_blueprint(
             rrb.Grid(
                 *[
                     rrb.Spatial2DView(
-                        origin=f"heldout/camera/{env_id}",
-                        name=f"Held-out {env_id}",
+                        origin=f"heldout/camera/{env_id}/{view_name}",
+                        name=f"Held-out {env_id} · {view_name}",
                     )
                     for env_id in env_ids
+                    for view_name in camera_views
                 ],
                 name="Held-out sim cameras",
             ),
@@ -1814,8 +1889,15 @@ def _build_blueprint(
         row_shares=[1.0, 1.5, 1.0, 1.0, 1.0, 1.0],
     )
     if has_heldout_cameras:
-        columns = [left_column]
-        shares = [2.4]
+        columns = []
+        shares = []
+        if has_3d_scene:
+            columns.append(
+                rrb.Spatial3DView(origin="world", contents="world/**", name="Scene overview")
+            )
+            shares.append(2.0)
+        columns.append(left_column)
+        shares.append(2.4)
         if has_synthetic_data:
             columns.append(synthetic_view)
             shares.append(2.1)
@@ -1848,32 +1930,54 @@ def _rollout_dirs(actions_dir: Path | None) -> list[Path]:
 
 
 def _rollout_frames(rollout_dir: Path) -> list[np.ndarray]:
-    frames: list[np.ndarray] = []
-    for frame_path in sorted(rollout_dir.glob("camera-*.ppm")):
-        frame = _read_image(frame_path)
-        if frame is not None:
-            frames.append(frame)
-    if frames:
-        return frames
-    for frame_path in sorted(rollout_dir.iterdir()):
-        if frame_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
-            frame = _read_image(frame_path)
-            if frame is not None:
-                frames.append(frame)
-    return frames
+    """Return the compatibility primary camera stream for one rollout."""
+
+    return _rollout_camera_frames(rollout_dir).get("primary", [])
+
+
+def _rollout_camera_frames(rollout_dir: Path) -> dict[str, list[np.ndarray]]:
+    return {
+        view_name: [
+            frame
+            for path in paths
+            if (frame := _read_image(path)) is not None
+        ]
+        for view_name, paths in _rollout_camera_frame_paths(rollout_dir).items()
+    }
 
 
 def _rollout_frame_paths(rollout_dir: Path) -> list[Path]:
     """Ordered rollout camera frame paths (``.ppm`` preferred, else PNG/JPEG)."""
 
+    return _rollout_camera_frame_paths(rollout_dir).get("primary", [])
+
+
+def _rollout_camera_frame_paths(rollout_dir: Path) -> dict[str, list[Path]]:
+    """Return ordered rollout frame paths grouped by synchronized camera view."""
+
+    manifest = _read_json(rollout_dir / "manifest.json")
+    configured = manifest.get("camera_views") or {}
+    if isinstance(configured, dict) and configured:
+        views = {
+            str(view_name): [rollout_dir / str(name) for name in names or []]
+            for view_name, names in configured.items()
+        }
+        if "primary" not in views:
+            views["primary"] = [
+                rollout_dir / str(name)
+                for name in manifest.get("camera_observations") or []
+            ]
+        return views
+
     ppm = sorted(rollout_dir.glob("camera-*.ppm"))
     if ppm:
-        return ppm
-    return [
+        return {"primary": ppm}
+    grouped = _camera_paths_by_view([
         path
         for path in sorted(rollout_dir.iterdir())
         if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
-    ]
+    ])
+    return grouped or {"primary": []}
 
 
 def _read_image(path: Path) -> np.ndarray | None:
@@ -2371,9 +2475,10 @@ def emit_sim2real_mcap(
             eval_dir = _maybe_path(record.get("vlm_eval_dir"))
             signal_dir = _maybe_path(record.get("signal_dir"))
             for rollout_dir in _rollout_dirs(actions_dir):
-                frame_paths = _rollout_frame_paths(rollout_dir)
+                frame_paths_by_view = _rollout_camera_frame_paths(rollout_dir)
+                primary_paths = frame_paths_by_view.get("primary", [])
                 if has_heldout_cameras and is_reference_stub_rollout(
-                    rollout_dir, [f for p in frame_paths if (f := _read_image(p)) is not None]
+                    rollout_dir, [f for p in primary_paths if (f := _read_image(p)) is not None]
                 ):
                     continue
                 rollout_id = rollout_dir.name
@@ -2383,7 +2488,7 @@ def emit_sim2real_mcap(
                 stamp_ns = _emit_mcap_rollout(
                     emitter,
                     root=root,
-                    frame_paths=frame_paths,
+                    frame_paths_by_view=frame_paths_by_view,
                     evaluation=evaluation,
                     signal=signal,
                     start_ns=stamp_ns,
@@ -2483,7 +2588,7 @@ def _emit_mcap_rollout(
     emitter: _McapEmitter,
     *,
     root: str,
-    frame_paths: list[Path],
+    frame_paths_by_view: dict[str, list[Path]],
     evaluation: dict[str, Any],
     signal: dict[str, Any],
     start_ns: int,
@@ -2502,16 +2607,27 @@ def _emit_mcap_rollout(
     score = evaluation.get("score")
     summary = str(evaluation.get("summary") or "")
     stamp_ns = start_ns
-    for step, path in enumerate(frame_paths):
-        try:
-            payload, fmt = encode(str(path))
-        except Exception:
-            logging.getLogger(__name__).debug("skipping unreadable frame %s", path, exc_info=True)
-            stamp_ns += frame_period_ns
-            continue
-        emitter.log_image_bytes(f"{root}/camera", payload, fmt, stamp_ns)
-        if mirror_primary_camera:
-            emitter.log_image_bytes(MCAP_PRIMARY_CAMERA_TOPIC, payload, fmt, stamp_ns)
+    frame_total = max((len(paths) for paths in frame_paths_by_view.values()), default=0)
+    for step in range(frame_total):
+        for view_name, paths in frame_paths_by_view.items():
+            if step >= len(paths):
+                continue
+            path = paths[step]
+            try:
+                payload, fmt = encode(str(path))
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "skipping unreadable frame %s", path, exc_info=True
+                )
+                continue
+            if view_name != "primary":
+                emitter.log_image_bytes(
+                    f"{root}/cameras/{view_name}", payload, fmt, stamp_ns
+                )
+            else:
+                emitter.log_image_bytes(f"{root}/camera", payload, fmt, stamp_ns)
+                if mirror_primary_camera:
+                    emitter.log_image_bytes(MCAP_PRIMARY_CAMERA_TOPIC, payload, fmt, stamp_ns)
 
         eval_step = per_step_eval.get(step, {})
         critique = str(eval_step.get("critique_text") or summary or "")
@@ -2543,20 +2659,32 @@ def _emit_mcap_rollout(
 
 def _emit_mcap_heldout_cameras(
     emitter: _McapEmitter,
-    episodes: list[tuple[str, list[np.ndarray]]],
+    episodes: list[tuple[str, dict[str, list[np.ndarray]] | list[np.ndarray]]],
     *,
     frame_period_ns: int,
 ) -> None:
-    for episode_index, (env_id, frames) in enumerate(episodes):
+    for episode_index, (env_id, episode_views) in enumerate(episodes):
+        views = _normalize_camera_views(episode_views)
         root = f"/heldout/camera/{env_id}"
         stamp_ns = 0
-        for frame in frames:
-            payload = _png_bytes(frame)
-            emitter.log_image_bytes(f"{root}/camera", payload, "png", stamp_ns)
-            if episode_index == 0:
-                # Mirror the primary episode onto the well-known topic the default
-                # layout binds to.
-                emitter.log_image_bytes(MCAP_PRIMARY_CAMERA_TOPIC, payload, "png", stamp_ns)
+        frame_total = max((len(frames) for frames in views.values()), default=0)
+        for frame_index in range(frame_total):
+            for view_name, frames in views.items():
+                if frame_index >= len(frames):
+                    continue
+                payload = _png_bytes(frames[frame_index])
+                if view_name != "primary":
+                    emitter.log_image_bytes(
+                        f"{root}/{view_name}/camera", payload, "png", stamp_ns
+                    )
+                else:
+                    emitter.log_image_bytes(f"{root}/camera", payload, "png", stamp_ns)
+                    if episode_index == 0:
+                        # Mirror the primary episode onto the well-known topic the
+                        # default layout binds to.
+                        emitter.log_image_bytes(
+                            MCAP_PRIMARY_CAMERA_TOPIC, payload, "png", stamp_ns
+                        )
             stamp_ns += frame_period_ns
 
 

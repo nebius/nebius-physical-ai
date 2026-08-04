@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from npa.workflows.sim2real.camera_views import camera_views_json
+
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # Object-to-goal distance (metres) under which a Lift episode counts as success.
@@ -179,9 +181,11 @@ TASK = os.environ["EVAL_TASK"]
 CKPT = os.environ["EVAL_CKPT_LOCAL"]
 OUT = os.environ["EVAL_OUT_JSON"]
 SEED = int(os.environ.get("EVAL_SEED", "0"))  # generated-env seed (envgen envs.jsonl)
+CAMERA_VIEWS = json.loads(os.environ.get("EVAL_CAMERA_VIEWS_JSON", "[]") or "[]")
 def dump(distances, note, episodes=None):
     json.dump({"object_goal_distances": list(distances), "note": note,
-               "render_episodes": episodes or []},
+               "render_episodes": episodes or [],
+               "camera_views": [view["name"] for view in CAMERA_VIEWS]},
               open(OUT, "w"))
     print("EVAL_WROTE", OUT, note, "episodes", len(episodes or []), flush=True)
 try:
@@ -235,22 +239,32 @@ try:
         except Exception:
             pass
         print("EVAL_SEED_APPLIED", SEED, flush=True)
-    # Add a workspace camera so we can RENDER the robot/object interaction for
-    # Rerun viz. Isaac Lab's "world" convention camera looks along +X; place it
-    # on the negative-X side of the table with a slight downward pitch. The
-    # previous +X-side/near-180deg quaternion often rendered only the floor grid.
-    env_cfg.scene.heldout_cam = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/heldout_cam",
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(-2.0, 0.0, 1.0),
-            rot=(0.9945, 0.0, 0.1045, 0.0),
-            convention="world",
-        ),
-        data_types=["rgb", "distance_to_image_plane"],
-        width=256,
-        height=256,
-        spawn=sim_utils.PinholeCameraCfg(focal_length=24.0, clipping_range=(0.05, 20.0)),
-    )
+    # Capture synchronized primary, side, and overhead views. Isaac Lab's
+    # ``world`` camera convention looks along +X; the orchestrator serializes
+    # validated wxyz poses into CAMERA_VIEWS. ``heldout_cam`` remains the primary
+    # sensor key for backward compatibility with existing real-run tooling.
+    def _camera_key(name):
+        return "heldout_cam" if name == "primary" else "heldout_cam_" + name
+    for view in CAMERA_VIEWS:
+        setattr(
+            env_cfg.scene,
+            _camera_key(view["name"]),
+            TiledCameraCfg(
+                prim_path="{ENV_REGEX_NS}/heldout_cam_" + view["name"],
+                offset=TiledCameraCfg.OffsetCfg(
+                    pos=tuple(view["position"]),
+                    rot=tuple(view["rotation"]),
+                    convention="world",
+                ),
+                data_types=["rgb", "distance_to_image_plane"],
+                width=256,
+                height=256,
+                spawn=sim_utils.PinholeCameraCfg(
+                    focal_length=24.0, clipping_range=(0.05, 20.0)
+                ),
+            ),
+        )
+    print("EVAL_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
     # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,
@@ -332,15 +346,19 @@ try:
     rend_root = os.environ.get("EVAL_RENDERS_DIR", "/tmp/evalwork/renders")
     def _env_id(i):
         return env_ids[i] if i < len(env_ids) else f"heldout-{i:04d}"
-    frame_names = {i: [] for i in range(N)}
+    frame_names = {
+        i: {view["name"]: [] for view in CAMERA_VIEWS}
+        for i in range(N)
+    }
     try:
         from PIL import Image as _PILImage
         _have_pil = True
     except Exception:
         _have_pil = False
     CAP_EVERY = max(1, STEPS // 16)
-    # GPU depth -> colored point cloud (world frame) for env 0, so the viewers get
-    # a real 3D render alongside the 2D camera. Best-effort: never breaks the eval.
+    # GPU depth -> colored point clouds (world frame) for env 0. Capturing every
+    # angle fills the rear/side occlusions that made the original single-camera
+    # point cloud look incomplete when the Rerun 3D view was orbited.
     def _pc_fn():
         for mod in ("isaaclab.sensors.camera.utils", "omni.isaac.lab.sensors.camera.utils"):
             try:
@@ -350,62 +368,73 @@ try:
                 continue
         return None
     _create_pc = _pc_fn()
-    _pc_dir = os.path.join(rend_root, "_pointcloud", _env_id(0))
-    _pc_count = [0]
+    _pc_count = {view["name"]: 0 for view in CAMERA_VIEWS}
     def capture_pointcloud():
         if _create_pc is None:
             return
-        try:
-            cam = env.unwrapped.scene["heldout_cam"]
-            intr = cam.data.intrinsic_matrices
-            depth = cam.data.output.get("distance_to_image_plane")
-            rgb = cam.data.output["rgb"]
-            if depth is None:
-                return
-            pts, cols = _create_pc(
-                intrinsic_matrix=intr[0], depth=depth[0], rgb=rgb[0],
-                position=cam.data.pos_w[0], orientation=cam.data.quat_w_ros[0],
-                device="cuda:0", num_channels=3,
-            )
-            xyz = pts.detach().cpu().numpy().reshape(-1, 3).astype(np.float32)
-            col = cols.detach().cpu().numpy().reshape(-1, 3)
-            if col.dtype != np.uint8:
-                col = (np.clip(col, 0.0, 1.0) * 255).astype(np.uint8) if col.max() <= 1.0 else col.astype(np.uint8)
-            good = np.isfinite(xyz).all(axis=1)
-            xyz, col = xyz[good], col[good]
-            # Clip to the workspace neighbourhood so the far ground plane does not
-            # dominate the 3D view (keep points within RANGE_M of the camera).
+        for view in CAMERA_VIEWS:
+            name = view["name"]
             try:
-                cam_pos = cam.data.pos_w[0].detach().cpu().numpy().reshape(3)
-                range_m = float(os.environ.get("NPA_SIM2REAL_POINTCLOUD_RANGE_M", "5.0"))
-                near = np.linalg.norm(xyz - cam_pos[None, :], axis=1) <= range_m
-                if int(near.sum()) >= 200:
-                    xyz, col = xyz[near], col[near]
-            except Exception as _pe:
-                print("pc_clip_err", repr(_pe), flush=True)
-            if xyz.shape[0] > 6000:
-                sel = np.random.default_rng(0).choice(xyz.shape[0], 6000, replace=False)
-                xyz, col = xyz[sel], col[sel]
-            if xyz.shape[0] == 0:
-                return
-            os.makedirs(_pc_dir, exist_ok=True)
-            np.savez_compressed(os.path.join(_pc_dir, f"cloud-{_pc_count[0]:04d}.npz"), xyz=xyz, rgb=col)
-            _pc_count[0] += 1
-        except Exception as e:
-            print("pc_capture_err", repr(e), flush=True)
+                cam = env.unwrapped.scene[_camera_key(name)]
+                intr = cam.data.intrinsic_matrices
+                depth = cam.data.output.get("distance_to_image_plane")
+                rgb = cam.data.output["rgb"]
+                if depth is None:
+                    continue
+                pts, cols = _create_pc(
+                    intrinsic_matrix=intr[0], depth=depth[0], rgb=rgb[0],
+                    position=cam.data.pos_w[0], orientation=cam.data.quat_w_ros[0],
+                    device="cuda:0", num_channels=3,
+                )
+                xyz = pts.detach().cpu().numpy().reshape(-1, 3).astype(np.float32)
+                col = cols.detach().cpu().numpy().reshape(-1, 3)
+                if col.dtype != np.uint8:
+                    col = (np.clip(col, 0.0, 1.0) * 255).astype(np.uint8) if col.max() <= 1.0 else col.astype(np.uint8)
+                good = np.isfinite(xyz).all(axis=1)
+                xyz, col = xyz[good], col[good]
+                try:
+                    cam_pos = cam.data.pos_w[0].detach().cpu().numpy().reshape(3)
+                    range_m = float(os.environ.get("NPA_SIM2REAL_POINTCLOUD_RANGE_M", "5.0"))
+                    near = np.linalg.norm(xyz - cam_pos[None, :], axis=1) <= range_m
+                    if int(near.sum()) >= 200:
+                        xyz, col = xyz[near], col[near]
+                except Exception as _pe:
+                    print("pc_clip_err", name, repr(_pe), flush=True)
+                if xyz.shape[0] > 6000:
+                    sel = np.random.default_rng(0).choice(xyz.shape[0], 6000, replace=False)
+                    xyz, col = xyz[sel], col[sel]
+                if xyz.shape[0] == 0:
+                    continue
+                pc_dir = os.path.join(rend_root, "_pointcloud", _env_id(0), name)
+                os.makedirs(pc_dir, exist_ok=True)
+                np.savez_compressed(
+                    os.path.join(pc_dir, f"cloud-{_pc_count[name]:04d}.npz"),
+                    xyz=xyz,
+                    rgb=col,
+                )
+                _pc_count[name] += 1
+            except Exception as e:
+                print("pc_capture_err", name, repr(e), flush=True)
     def capture(step):
         if not _have_pil:
             return
-        try:
-            rgb = env.unwrapped.scene["heldout_cam"].data.output["rgb"]
-            arr = rgb.detach().cpu().numpy()
-            for i in range(min(N, arr.shape[0])):
-                d = os.path.join(rend_root, _env_id(i)); os.makedirs(d, exist_ok=True)
-                name = f"camera-{len(frame_names[i]):04d}.png"
-                _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(os.path.join(d, name))
-                frame_names[i].append(name)
-        except Exception as e:
-            print("capture_err", repr(e), flush=True)
+        for view in CAMERA_VIEWS:
+            view_name = view["name"]
+            try:
+                rgb = env.unwrapped.scene[_camera_key(view_name)].data.output["rgb"]
+                arr = rgb.detach().cpu().numpy()
+                for i in range(min(N, arr.shape[0])):
+                    d = os.path.join(rend_root, _env_id(i)); os.makedirs(d, exist_ok=True)
+                    index = len(frame_names[i][view_name])
+                    name = (
+                        f"camera-{index:04d}.png"
+                        if view_name == "primary"
+                        else f"camera-{view_name}-{index:04d}.png"
+                    )
+                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(os.path.join(d, name))
+                    frame_names[i][view_name].append(name)
+            except Exception as e:
+                print("capture_err", view_name, repr(e), flush=True)
         capture_pointcloud()
     min_dist = np.full(N, 1e9)
     for _step in range(STEPS):
@@ -442,7 +471,15 @@ try:
         if d is not None:
             min_dist = np.minimum(min_dist, np.full(N, d))
     capture(STEPS)  # final frame
-    episodes = [{"env_id": _env_id(i), "frames": frame_names[i]} for i in range(N) if frame_names[i]]
+    episodes = [
+        {
+            "env_id": _env_id(i),
+            "frames": frame_names[i].get("primary", []),
+            "camera_views": frame_names[i],
+        }
+        for i in range(N)
+        if any(frame_names[i].values())
+    ]
     dump([float(x if x < 1e8 else 0.5) for x in min_dist], "rollout_ok", episodes)
 except Exception as e:
     traceback.print_exc()
@@ -516,6 +553,7 @@ def build_isaac_eval_job_manifest(
     robot_spec: dict[str, Any] | None = None,
     robot_usd_uri: str = "",
     task_config: dict[str, Any] | None = None,
+    camera_views: str = "",
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
@@ -609,6 +647,7 @@ def build_isaac_eval_job_manifest(
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
         f'EVAL_OBJECT_USD="{object_usd}" EVAL_ENV_IDS={_shlex.quote(env_ids_json)} '
+        f'EVAL_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} '
         f'EVAL_OUT_S3={_shlex.quote(per_env_s3_uri)} '
         f'EVAL_RENDERS_S3={_shlex.quote(renders_s3_prefix)} '
         'EVAL_RENDERS_DIR=/tmp/evalwork/renders '
@@ -797,6 +836,7 @@ def run_isaac_eval_job(
         service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
         env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
         robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri, task_config=task_config_dict,
+        camera_views=camera_views_json(_env("NPA_SIM2REAL_CAMERA_VIEWS")),
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
@@ -847,16 +887,43 @@ def run_isaac_eval_job(
             base = u.path.lstrip("/").rstrip("/")
             for ep in episodes:
                 eid = ep["env_id"]
-                for name in ep.get("frames", []):
+                names = list(ep.get("frames", []))
+                for view_names in (ep.get("camera_views") or {}).values():
+                    names.extend(view_names or [])
+                for name in dict.fromkeys(names):
                     dst = Path(_RENDERS_LOCAL_DIR) / eid / name
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     s3.download_file(u.netloc, f"{base}/{eid}/{name}", str(dst))
-            print(f"byo_isaac_eval: synced {sum(len(e.get('frames',[])) for e in episodes)} frames", flush=True)
+            pointcloud_count = 0
+            pointcloud_prefix = f"{base}/_pointcloud/"
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=u.netloc, Prefix=pointcloud_prefix):
+                for item in page.get("Contents", []) or []:
+                    key = str(item.get("Key") or "")
+                    if not key.endswith(".npz") or not key.startswith(pointcloud_prefix):
+                        continue
+                    relative = key[len(base) + 1 :]
+                    dst = Path(_RENDERS_LOCAL_DIR) / relative
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    s3.download_file(u.netloc, key, str(dst))
+                    pointcloud_count += 1
+            total = sum(
+                len({name for names in (e.get("camera_views") or {}).values() for name in names})
+                or len(e.get("frames", []))
+                for e in episodes
+            )
+            print(
+                f"byo_isaac_eval: synced {total} multi-view frames and "
+                f"{pointcloud_count} point clouds",
+                flush=True,
+            )
         except Exception as e:
             print("byo_isaac_eval: render sync failed:", repr(e), flush=True)
     global _RENDER_MANIFEST
     _RENDER_MANIFEST = {"schema": "npa.sim2real.heldout_renders.v1", "sim_backend": "isaac",
-                        "isaac_task": task, "episodes": episodes}
+                        "isaac_task": task,
+                        "camera_views": out.get("camera_views") or [],
+                        "episodes": episodes}
     return per_env_from_distances(distances, success_dist_m=success_dist, env_ids=env_ids, seeds=seeds)
 
 

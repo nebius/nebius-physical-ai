@@ -21,11 +21,30 @@ def test_build_rollout_manifest_matches_action_rollout_schema():
     assert m["rollout_id"] == "rollout-0001"
     assert m["steps"] == 2
     assert m["camera_observations"] == ["camera-000.png", "camera-001.png"]
+    assert m["camera_views"] == {"primary": ["camera-000.png", "camera-001.png"]}
     assert len(m["actions"]) == 2
     # Provenance: real Isaac policy rollout, not the synthetic stub.
     assert m["source"] == "byo_isaac_policy_rollout"
     assert m["policy_trained"] is True
     assert m["policy_checkpoint"].endswith("model_latest.pt")
+
+
+def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
+    views = {
+        "primary": ["camera-000.png"],
+        "side": ["camera-side-000.png"],
+        "overhead": ["camera-overhead-000.png"],
+    }
+    manifest = pr.build_rollout_manifest(
+        rollout_id="rollout-0001",
+        frames=views["primary"],
+        camera_views=views,
+        actions=[{"step": 0, "action": [0.1]}],
+        checkpoint_uri="s3://bucket/model_latest.pt",
+        is_trained=True,
+    )
+    assert manifest["camera_observations"] == views["primary"]
+    assert manifest["camera_views"] == views
 
 
 def test_latest_checkpoint_uri_empty_inputs():
@@ -94,6 +113,9 @@ def test_build_isaac_rollout_job_manifest_shape():
     # downloads the checkpoint, applies the custom object, runs the rollout script.
     assert "DOWNLOADED_CKPT" in script
     assert "ROLLOUT_OBJECT_USD" in script
+    assert "ROLLOUT_CAMERA_VIEWS_JSON=" in script
+    assert '\"name\":\"side\"' in script
+    assert '\"name\":\"overhead\"' in script
     assert "rollout.py" in script
     assert m["spec"]["backoffLimit"] == 0
 

@@ -159,11 +159,26 @@ def test_eval_manifest_embeds_generated_seed():
 
 def test_eval_script_uses_oblique_workspace_camera_for_renders():
     script = ev.ISAAC_EVAL_SCRIPT
-    assert "pos=(-2.0, 0.0, 1.0)" in script
-    assert "rot=(0.9945, 0.0, 0.1045, 0.0)" in script
+    assert 'for view in CAMERA_VIEWS' in script
+    assert '"heldout_cam" if name == "primary"' in script
+    assert '"heldout_cam_" + name' in script
     assert 'convention="world"' in script
     assert "width=256" in script and "height=256" in script
     assert "clipping_range=(0.05, 20.0)" in script
+
+
+def test_eval_manifest_enables_default_multi_camera_views():
+    m = ev.build_isaac_eval_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=2, checkpoint_uri="s3://b/m.pt",
+        per_env_s3_uri="s3://b/o/d.json", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    )
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "EVAL_CAMERA_VIEWS_JSON=" in args
+    assert '\"name\":\"primary\"' in args
+    assert '\"name\":\"side\"' in args
+    assert '\"name\":\"overhead\"' in args
 
 
 def test_eval_manifest_embeds_custom_object_usd():

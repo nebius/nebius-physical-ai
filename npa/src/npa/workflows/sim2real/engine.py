@@ -4728,10 +4728,16 @@ def _build_heldout_render_manifest(
             frames = sorted(env_dir.glob("camera-*.png"))
             if not frames:
                 continue
+            views: dict[str, list[str]] = {}
+            for frame in frames:
+                parts = frame.stem.split("-")
+                view = parts[1] if len(parts) >= 3 and not parts[1].isdigit() else "primary"
+                views.setdefault(view, []).append(frame.name)
             episodes.append(
                 {
                     "env_id": env_dir.name,
-                    "frames": [frame.name for frame in frames],
+                    "frames": views.get("primary", []),
+                    "camera_views": views,
                 }
             )
     return {

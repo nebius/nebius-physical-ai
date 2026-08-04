@@ -41,6 +41,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from npa.workflows.sim2real.camera_views import camera_views_json
+
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 ROLLOUT_SCHEMA = "npa.sim2real.action_rollout.v1"
@@ -61,6 +63,7 @@ def build_rollout_manifest(
     checkpoint_uri: str,
     is_trained: bool,
     task_description: str = DEFAULT_TASK_DESCRIPTION,
+    camera_views: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Build an ``npa.sim2real.action_rollout.v1`` manifest for one rollout.
 
@@ -69,12 +72,16 @@ def build_rollout_manifest(
     making clear this is a REAL Isaac policy rollout, not synthetic.
     """
 
+    views = {name: list(names) for name, names in (camera_views or {}).items()}
+    if not views:
+        views = {"primary": list(frames)}
     return {
         "schema": ROLLOUT_SCHEMA,
         "rollout_id": rollout_id,
         "task_description": task_description,
         "steps": len(actions),
         "camera_observations": list(frames),
+        "camera_views": views,
         "actions": list(actions),
         # Provenance: distinguishes a real policy rollout from the synthetic stub.
         "source": "byo_isaac_policy_rollout",
@@ -176,6 +183,7 @@ TASK = os.environ["ROLLOUT_TASK"]
 CKPT = os.environ.get("ROLLOUT_CKPT_LOCAL", "").strip()
 OUT_S3 = os.environ["ROLLOUT_OUT_S3"]            # s3 prefix for frames+actions
 FRAMES_DIR = os.environ.get("ROLLOUT_FRAMES_DIR", "/tmp/rollwork/frames")
+CAMERA_VIEWS = json.loads(os.environ.get("ROLLOUT_CAMERA_VIEWS_JSON", "[]") or "[]")
 def upload_and_exit(rollouts, note):
     # rollouts: list of {rollout_id, frames:[names], actions:[{step,action}]}
     meta = {"rollouts": rollouts, "note": note, "policy_trained": bool(CKPT)}
@@ -218,10 +226,26 @@ try:
             print("ROLLOUT_OBJECT_USD_APPLIED", OBJECT_USD, flush=True)
         except Exception as e:
             print("could not set object usd:", repr(e), flush=True)
-    env_cfg.scene.rollout_cam = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/rollout_cam",
-        offset=TiledCameraCfg.OffsetCfg(pos=(1.2, 0.0, 0.8), rot=(0.6, 0.0, 0.35, 0.0), convention="world"),
-        data_types=["rgb"], width=128, height=128, spawn=sim_utils.PinholeCameraCfg())
+    def _camera_key(name):
+        return "rollout_cam" if name == "primary" else "rollout_cam_" + name
+    for view in CAMERA_VIEWS:
+        setattr(
+            env_cfg.scene,
+            _camera_key(view["name"]),
+            TiledCameraCfg(
+                prim_path="{ENV_REGEX_NS}/rollout_cam_" + view["name"],
+                offset=TiledCameraCfg.OffsetCfg(
+                    pos=tuple(view["position"]),
+                    rot=tuple(view["rotation"]),
+                    convention="world",
+                ),
+                data_types=["rgb"],
+                width=128,
+                height=128,
+                spawn=sim_utils.PinholeCameraCfg(),
+            ),
+        )
+    print("ROLLOUT_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
     agent_cfg = None
@@ -277,21 +301,31 @@ try:
     except Exception:
         _have_pil = False
     rollout_ids = [f"rollout-{i:04d}" for i in range(N)]
-    frame_names = {i: [] for i in range(N)}
+    frame_names = {
+        i: {view["name"]: [] for view in CAMERA_VIEWS}
+        for i in range(N)
+    }
     actions_log = {i: [] for i in range(N)}
     def capture(step):
         if not _have_pil:
             return
-        try:
-            rgb = env.unwrapped.scene["rollout_cam"].data.output["rgb"]
-            arr = rgb.detach().cpu().numpy()
-            for i in range(min(N, arr.shape[0])):
-                d = os.path.join(FRAMES_DIR, rollout_ids[i]); os.makedirs(d, exist_ok=True)
-                name = "camera-%03d.png" % len(frame_names[i])
-                _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(os.path.join(d, name))
-                frame_names[i].append(name)
-        except Exception as e:
-            print("capture_err", repr(e), flush=True)
+        for view in CAMERA_VIEWS:
+            view_name = view["name"]
+            try:
+                rgb = env.unwrapped.scene[_camera_key(view_name)].data.output["rgb"]
+                arr = rgb.detach().cpu().numpy()
+                for i in range(min(N, arr.shape[0])):
+                    d = os.path.join(FRAMES_DIR, rollout_ids[i]); os.makedirs(d, exist_ok=True)
+                    index = len(frame_names[i][view_name])
+                    name = (
+                        "camera-%03d.png" % index
+                        if view_name == "primary"
+                        else "camera-%s-%03d.png" % (view_name, index)
+                    )
+                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(os.path.join(d, name))
+                    frame_names[i][view_name].append(name)
+            except Exception as e:
+                print("capture_err", view_name, repr(e), flush=True)
     for _step in range(STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
@@ -305,7 +339,10 @@ try:
             actions_log[i].append({"step": _step, "action": [round(float(x), 5) for x in a_np[i].tolist()]})
         obs, _, dones, extras = env.step(actions)
     capture(STEPS)
-    rollouts = [{"rollout_id": rollout_ids[i], "frames": frame_names[i], "actions": actions_log[i]}
+    rollouts = [{"rollout_id": rollout_ids[i],
+                 "frames": frame_names[i].get("primary", []),
+                 "camera_views": frame_names[i],
+                 "actions": actions_log[i]}
                 for i in range(N)]
     upload_and_exit(rollouts, "rollout_ok" if trained else "rollout_ok_untrained")
 except Exception as e:
@@ -350,6 +387,7 @@ def build_isaac_rollout_job_manifest(
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
     object_usd: str = "",
+    camera_views: str = "",
 ) -> dict[str, Any]:
     """Isaac policy-rollout Job: roll the policy, capture frames+actions, upload.
 
@@ -396,6 +434,7 @@ def build_isaac_rollout_job_manifest(
         "mkdir -p /tmp/rollwork/frames; cd /tmp/rollwork\n"
         f'export ROLLOUT_TASK="{task}" ROLLOUT_COUNT="{rollout_count}" '
         f'ROLLOUT_STEPS="{steps_per_rollout}" ROLLOUT_OBJECT_USD="{object_usd}" '
+        f'ROLLOUT_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} '
         f'ROLLOUT_CKPT_LOCAL="{ckpt_local}" '
         f'ROLLOUT_OUT_S3={_shlex.quote(out_s3_prefix)} '
         'ROLLOUT_FRAMES_DIR=/tmp/rollwork/frames\n'
@@ -501,7 +540,16 @@ def materialize_rollout_dirs(
         rid = roll["rollout_id"]
         rdir = output_dir / rid
         rdir.mkdir(parents=True, exist_ok=True)
-        for name in roll.get("frames", []):
+        view_frames = {
+            str(name): [str(frame) for frame in frames]
+            for name, frames in (roll.get("camera_views") or {}).items()
+        }
+        if not view_frames:
+            view_frames = {"primary": [str(name) for name in roll.get("frames", [])]}
+        all_frames = list(
+            dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
+        )
+        for name in all_frames:
             try:
                 s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(rdir / name))
             except Exception as exc:  # pragma: no cover - network
@@ -509,6 +557,7 @@ def materialize_rollout_dirs(
         manifest = build_rollout_manifest(
             rollout_id=rid, frames=roll.get("frames", []), actions=roll.get("actions", []),
             checkpoint_uri=checkpoint_uri, is_trained=is_trained,
+            camera_views=view_frames,
         )
         (rdir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         dirs.append(str(rdir))
@@ -554,6 +603,7 @@ def run_isaac_rollout_job(
         checkpoint_uri=checkpoint_uri, out_s3_prefix=out_s3, s3_endpoint=endpoint,
         namespace=namespace, service_account=sa, gpu_product=gpu_product,
         object_usd=object_usd,
+        camera_views=camera_views_json(_env("NPA_SIM2REAL_CAMERA_VIEWS")),
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
