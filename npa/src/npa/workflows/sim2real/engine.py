@@ -3553,11 +3553,8 @@ def threshold_decision(
         "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
         "duration_s": round(time.monotonic() - stage_started, 3),
     }
-    # A learned checkpoint remains an operator-accessible deployable candidate
-    # even when it misses the aggregate promotion threshold.  Promotion is the
-    # quality-gate decision; candidate packaging is the provenance/access
-    # contract.  Keeping those concepts separate prevents a fixed-count run
-    # from finishing with real trained weights but no candidate manifest.
+    # Package real weights even below threshold; promotion remains a distinct
+    # quality decision so fixed-count runs never lose candidate access.
     if promoted or is_real_policy:
         _write_json_artifact(
             checkpoint_dir / "candidate.json",
@@ -3575,12 +3572,8 @@ def threshold_decision(
                 "heldout_success_rate": round(success_rate, 6),
                 "threshold": config.threshold,
                 "threshold_met": promoted,
-                "promotion_decision": (
-                    "promote_checkpoint" if promoted else "loop_back_to_inner_loop"
-                ),
-                "candidate_status": (
-                    "promoted" if promoted else "below_threshold_deployable_candidate"
-                ),
+                "promotion_decision": "promote_checkpoint" if promoted else "loop_back_to_inner_loop",
+                "candidate_status": "promoted" if promoted else "below_threshold_deployable_candidate",
                 "evaluated_at": _utc_now(),
                 "promoted_at": _utc_now() if promoted else "",
             },
