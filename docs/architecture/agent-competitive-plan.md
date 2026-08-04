@@ -190,6 +190,12 @@ disabled, chat falls through to the existing cheap-LLM path exactly as today.
 - `test_agent_eval_scorecard.py` — asserts a competitive bar and emits a
   scorecard artifact (`success_rate`, `avg_steps`, `avg_tokens`) to
   `npa/tests/agent_eval/_artifacts/scorecard.json`.
+- `policy.py` — independently pins the ten scenario identities and digest,
+  requires 1.0 success, and caps average steps/tokens at the defended policy;
+  editing the reviewable baseline alone cannot weaken this ratchet.
+- The negative control injects a deterministic broken router into the real
+  harness. It produces 6/10 successful scenarios (0.6) and the real regression
+  gate rejects its generated scorecard; no degraded dictionary is synthesized.
 - Fully mocked by default (0 tokens, CI-safe); a live variant is gated behind
   `NPA_AGENT_CHAT_LIVE=1` with the cheapest pinned model (Tier-2 convention).
 
