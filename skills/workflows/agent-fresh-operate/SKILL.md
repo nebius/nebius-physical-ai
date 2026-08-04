@@ -116,6 +116,11 @@ Do not block a smoke deploy on `verify-live` UI wiring markers alone.
 - **Destroy: disk/SG in use.** Orphan cloud VM may exist outside TF state after a
   failed apply/rollback. `npa agent destroy` deletes matching instances by name
   before TF destroy; retry destroy if preconditions fail once.
+- **CPU destroy output.** Canonical Terraform outputs are `platform`/`preset`
+  plus `cpu_platform`/`cpu_preset`. Deprecated `gpu_platform`/`gpu_preset`
+  remain GPU-only machine compatibility fields (null for CPU agents) and are
+  suppressed from human destroy progress, so `cpu-d3` is never presented as a
+  GPU fact.
 - **`fresh-setup --replace`.** Destroy must run **before** updating project env
   (otherwise TF backend keys drift mid-destroy).
 - **502 / SyntaxError on chat.** Re-bootstrap; check embedded `\n` escaping in

@@ -164,12 +164,23 @@ after roughly five to seven minutes.
 
 Root cause: draining respects PodDisruptionBudgets. Single-replica platform add-ons
 (`coredns`, `cilium-operator`, `metrics-server`) declare budgets that allow zero
-disruptions on a small node pool, so eviction retries until their pods reschedule.
-It is expected, but indistinguishable from a hang.
+disruptions on a one-node/default pool. A preview that inherits the wrong
+kubeconfig can also try browser authentication or fail RBAC before it can explain
+which protections were checked.
 
-Mitigation: `npa cluster down` reports node-group state while the destroy runs, and
-previews the budgets that currently allow no evictions — so you can see both that
-it is progressing and why it is slow.
+Mitigation: `npa cluster down` selects NPA's saved kubeconfig for the target
+cluster, runs its exec credential in non-interactive/no-browser mode, and
+distinguishes authentication, authorization, kubeconfig, and API failures. Those
+failures affect only the best-effort preview; Terraform destroy is still attempted,
+and NPA says explicitly that PDB safety was not verified. For a full managed-cluster
+deletion, NPA patches only the three exact `kube-system` add-on budgets above so
+their single-replica policy does not add an avoidable multi-minute stall. User and
+unrecognized PDBs are never changed and remain visible as protected blockers.
+
+During node-group reconciliation, a `ComputeInstanceDeletionFailed` event whose
+detail confirms `NotFound` means the instance is already absent; NPA reports that
+race as idempotent progress. The same event with PermissionDenied or any other
+real deletion failure remains visible verbatim.
 
 Category for follow-up: platform.
 
@@ -199,7 +210,9 @@ made `lerobot-training`; after bucket deletion,
 `npa storage service-account delete --project <alias> --dry-run` shows the exact
 account/access keys and `--yes` removes them. An ID or familiar account name alone
 is not ownership proof, so legacy, reused, mismatched, and user-managed identities
-are left untouched.
+are left untouched. Bucket credentials and IAM provenance have separate lifecycle
+records: deleting the bucket cannot erase the `storage_iam` proof or a legacy ID,
+and agent bootstrap cannot replace the owned storage identity with `npa-agent`.
 
 Category for follow-up: platform.
 

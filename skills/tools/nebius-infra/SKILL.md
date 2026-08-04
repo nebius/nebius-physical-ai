@@ -56,7 +56,11 @@ npa cleanup --full --yes
 
 The storage service-account command is ownership-gated: it only deletes the
 exact `lerobot-training` identity whose successful create call NPA recorded for
-that project. A familiar name or legacy saved ID is not proof of ownership.
+that project. Bucket credentials and storage IAM provenance have separate
+lifecycles: bucket deletion preserves the dedicated `storage_iam` record until
+the account is deleted or conclusively absent, while a familiar name or legacy
+saved ID remains evidence but is not proof of ownership. Agent bootstrap may
+change the generic `nebius.service_account_id` without changing this record.
 Plain `npa cleanup --yes` keeps credentials; `--full --yes` additionally removes
 the locally saved Hugging Face, Token Factory, and NGC entries and prunes only
 empty NPA-owned local state. It does not delete cloud resources.
@@ -85,6 +89,12 @@ empty NPA-owned local state. It does not delete cloud resources.
 ## Gotchas
 
 - Use `https://storage.eu-north1.nebius.cloud` for the current primary region.
+- `npa cluster down` uses the selected cluster's saved kubeconfig for its
+  best-effort PDB preview, sets exec auth to non-interactive, and adds Nebius
+  `--no-browser`. Authentication/RBAC/API/kubeconfig preview failures are
+  explained and never masquerade as verified drain safety. Full-cluster deletion
+  relaxes only the exact managed `kube-system` PDBs for `coredns`,
+  `cilium-operator`, and `metrics-server`; user/unknown PDBs are never patched.
 - On Nebius VMs with an attached service account, IAM token resolution can use
   service-account token sources (`/mnt/cloud-metadata/token` and IMDS) even
   when `~/.nebius/config.yaml` is absent. Keep this as fallback behavior, not a

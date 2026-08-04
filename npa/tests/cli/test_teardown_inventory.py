@@ -96,6 +96,8 @@ def test_down_keeps_local_state_when_asked(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert state_dir.exists()
     assert "Removed local cluster state" not in result.output
+    assert "best-effort drain preview unavailable" in result.output
+    assert "teardown will continue" in result.output
 
 
 def test_down_removes_state_for_an_explicit_context(monkeypatch, tmp_path: Path) -> None:

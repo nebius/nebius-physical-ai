@@ -393,15 +393,25 @@ def _iam_note() -> str:
 
         if CREDENTIALS_PATH.exists():
             data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
-            sa_id = str(((data or {}).get("nebius") or {}).get("service_account_id", "") or "").strip()
+            nebius = (data or {}).get("nebius") or {}
+            storage_iam = (data or {}).get("storage_iam") or {}
+            ownership = (
+                storage_iam
+                if str(storage_iam.get("service_account_managed_by", "") or "") == "npa"
+                else nebius
+            )
+            owned_sa_id = str(ownership.get("service_account_id", "") or "").strip()
+            if (
+                owned_sa_id
+                and str(ownership.get("service_account_managed_by", "") or "") == "npa"
+            ):
+                return (
+                    f"Cloud IAM (not removed here): NPA recorded creating storage "
+                    f"principal {owned_sa_id}. After deleting its bucket, remove it safely with "
+                    "`npa storage service-account delete --project <alias> --yes`."
+                )
+            sa_id = str(nebius.get("service_account_id", "") or "").strip()
             if sa_id:
-                nebius = (data or {}).get("nebius") or {}
-                if str(nebius.get("service_account_managed_by", "") or "") == "npa":
-                    return (
-                        f"Cloud IAM (not removed here): NPA recorded creating storage "
-                        f"principal {sa_id}. After deleting its bucket, remove it safely with "
-                        "`npa storage service-account delete --project <alias> --yes`."
-                    )
                 return (
                     f"Cloud IAM (not removed): the storage principal {sa_id} and any "
                     "pre-existing service accounts remain — deleting a shared SA can "

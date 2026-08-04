@@ -13,8 +13,13 @@ from npa.cli import cleanup as cleanup_cli
 from npa.cli.main import app
 from npa.clients.config import ConfigError, _resolve_project_section
 from npa.cluster.drain import (
+    DrainPreviewIssue,
     blocking_pod_disruption_budgets,
+    classify_drain_preview_failure,
     describe_drain_expectation,
+    describe_preview_unavailable,
+    is_managed_system_pdb,
+    relax_managed_system_pdbs,
 )
 
 
@@ -121,9 +126,19 @@ def test_cleanup_prints_the_runbook_when_it_finds_nothing(npa_home: Path) -> Non
 # --- PodDisruptionBudget drain guidance --------------------------------------
 
 
-def _pdb(namespace: str, name: str, allowed: int, *, desired: int = 1, current: int = 1) -> dict:
+def _pdb(
+    namespace: str,
+    name: str,
+    allowed: int,
+    *,
+    desired: int = 1,
+    current: int = 1,
+    min_available: int | None = 1,
+) -> dict:
+    spec = {} if min_available is None else {"minAvailable": min_available}
     return {
         "metadata": {"namespace": namespace, "name": name},
+        "spec": spec,
         "status": {
             "disruptionsAllowed": allowed,
             "desiredHealthy": desired,
@@ -150,9 +165,9 @@ def test_only_budgets_that_allow_no_evictions_are_reported() -> None:
         ]
     }
 
-    blockers, error = blocking_pod_disruption_budgets(runner=_pdb_runner(payload))
+    blockers, issue = blocking_pod_disruption_budgets(runner=_pdb_runner(payload))
 
-    assert error == ""
+    assert issue is None
     assert [blocker.name for blocker in blockers] == ["cilium-operator", "coredns"]
 
 
@@ -177,12 +192,162 @@ def test_no_blocking_budgets_produces_no_guidance() -> None:
 
 
 def test_an_unreachable_cluster_is_reported_not_assumed_clean() -> None:
-    blockers, error = blocking_pod_disruption_budgets(
+    blockers, issue = blocking_pod_disruption_budgets(
         runner=_pdb_runner({}, returncode=1, stderr="connection refused")
     )
 
     assert blockers == []
-    assert "connection refused" in error
+    assert issue is not None
+    assert issue.kind == "api"
+
+
+@pytest.mark.parametrize(
+    ("message", "kind"),
+    [
+        ("error: You must be logged in to the server (Unauthorized)", "authentication"),
+        (
+            'poddisruptionbudgets.policy is forbidden: User "operator" cannot list resource',
+            "authorization",
+        ),
+        ("error loading config file: context demo was not found", "kubeconfig"),
+        ("Unable to connect to the server: dial tcp: connection refused", "api"),
+    ],
+)
+def test_drain_preview_failure_causes_are_classified(message: str, kind: str) -> None:
+    assert classify_drain_preview_failure(message).kind == kind
+
+
+def test_noninteractive_preview_disables_browser_auth_in_the_kubeconfig(
+    tmp_path: Path,
+) -> None:
+    import yaml
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "npa-cluster",
+                "users": [
+                    {
+                        "name": "npa-user",
+                        "user": {
+                            "exec": {
+                                "apiVersion": "client.authentication.k8s.io/v1beta1",
+                                "command": "/usr/local/bin/nebius",
+                                "args": [
+                                    "mk8s",
+                                    "v1",
+                                    "cluster",
+                                    "get-token",
+                                    "--profile",
+                                    "npa-service-account",
+                                    "--format",
+                                    "json",
+                                ],
+                                "interactiveMode": "IfAvailable",
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def run(cmd, **kwargs):  # noqa: ANN001 - subprocess test double
+        generated = Path(kwargs["env"]["KUBECONFIG"])
+        rendered = yaml.safe_load(generated.read_text())
+        exec_config = rendered["users"][0]["user"]["exec"]
+        observed.update(
+            {
+                "stdin": kwargs.get("stdin"),
+                "interactive_mode": exec_config["interactiveMode"],
+                "args": exec_config["args"],
+            }
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"items": []}', stderr="")
+
+    blockers, issue = blocking_pod_disruption_budgets(
+        kubeconfig=str(kubeconfig), runner=run
+    )
+
+    assert blockers == []
+    assert issue is None
+    assert observed["stdin"] is subprocess.DEVNULL
+    assert observed["interactive_mode"] == "Never"
+    assert observed["args"][0] == "--no-browser"
+    assert "npa-service-account" in observed["args"]
+
+
+def test_preview_unavailable_explains_scope_safety_and_operator_action() -> None:
+    issue = DrainPreviewIssue(
+        kind="authorization",
+        summary="Kubernetes RBAC denied listing policy/v1 PodDisruptionBudgets",
+    )
+
+    message = describe_preview_unavailable(issue)
+
+    assert "best-effort drain preview" in message
+    assert "teardown will continue" in message
+    assert "not verified" in message
+    assert "only the preview" in message
+    assert "list access" in message
+    assert "policy/v1 PodDisruptionBudgets" in message
+
+
+def test_only_known_kube_system_addons_are_managed_system_pdbs() -> None:
+    assert is_managed_system_pdb(
+        blocking_pod_disruption_budgets(
+            runner=_pdb_runner({"items": [_pdb("kube-system", "coredns", 0)]})
+        )[0][0]
+    )
+    assert not is_managed_system_pdb(
+        blocking_pod_disruption_budgets(
+            runner=_pdb_runner({"items": [_pdb("customer", "coredns", 0)]})
+        )[0][0]
+    )
+    assert not is_managed_system_pdb(
+        blocking_pod_disruption_budgets(
+            runner=_pdb_runner({"items": [_pdb("kube-system", "customer-api", 0)]})
+        )[0][0]
+    )
+
+
+def test_managed_cluster_teardown_relaxes_only_exact_system_addon_pdbs() -> None:
+    payload = {
+        "items": [
+            _pdb("kube-system", "cilium-operator", 0),
+            _pdb("kube-system", "coredns", 0),
+            _pdb("kube-system", "metrics-server", 0),
+            _pdb("customer", "orders", 0),
+            _pdb("kube-system", "customer-api", 0),
+        ]
+    }
+    blockers, issue = blocking_pod_disruption_budgets(runner=_pdb_runner(payload))
+    assert issue is None
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):  # noqa: ANN001 - subprocess test double
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="patched", stderr="")
+
+    relaxed, failures = relax_managed_system_pdbs(blockers, runner=run)
+
+    assert failures == []
+    assert {(item.namespace, item.name) for item in relaxed} == {
+        ("kube-system", "cilium-operator"),
+        ("kube-system", "coredns"),
+        ("kube-system", "metrics-server"),
+    }
+    patched = {(call[call.index("-n") + 1], call[call.index("patch") + 2]) for call in calls}
+    assert patched == {
+        ("kube-system", "cilium-operator"),
+        ("kube-system", "coredns"),
+        ("kube-system", "metrics-server"),
+    }
+    assert all('"minAvailable": 0' in call[call.index("--patch") + 1] for call in calls)
 
 
 def test_cluster_down_reports_the_budgets_that_will_block_the_drain(
@@ -203,19 +368,63 @@ def test_cluster_down_reports_the_budgets_that_will_block_the_drain(
     assert "kube-system/coredns" in err
 
 
-def test_cluster_down_preview_is_quiet_when_the_cluster_is_unreachable(
+def test_cluster_down_preview_explains_when_the_cluster_is_unreachable(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from npa.cli.cluster import terraform_lifecycle
 
     monkeypatch.setattr(
         "npa.cluster.drain.blocking_pod_disruption_budgets",
-        lambda **kwargs: ([], "connection refused"),
+        lambda **kwargs: (
+            [],
+            DrainPreviewIssue(
+                kind="api", summary="the Kubernetes API endpoint could not be reached"
+            ),
+        ),
     )
 
     terraform_lifecycle._report_drain_blockers(None)
 
-    assert "skipped" in capsys.readouterr().err
+    message = capsys.readouterr().err
+    assert "teardown will continue" in message
+    assert "not verified" in message
+    assert "Kubernetes API" in message
+
+
+def test_cluster_down_relaxes_system_addons_but_preserves_user_pdbs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from npa.cli.cluster import terraform_lifecycle
+
+    blockers, issue = blocking_pod_disruption_budgets(
+        runner=_pdb_runner(
+            {
+                "items": [
+                    _pdb("kube-system", "coredns", 0),
+                    _pdb("customer", "orders", 0),
+                ]
+            }
+        )
+    )
+    assert issue is None
+    system = [item for item in blockers if item.namespace == "kube-system"]
+    monkeypatch.setattr(
+        "npa.cluster.drain.blocking_pod_disruption_budgets",
+        lambda **kwargs: (blockers, None),
+    )
+    monkeypatch.setattr(
+        "npa.cluster.drain.relax_managed_system_pdbs",
+        lambda selected, **kwargs: (system, []),
+    )
+
+    terraform_lifecycle._report_drain_blockers(None)
+
+    message = capsys.readouterr().err
+    assert "relaxed 1 managed system add-on" in message
+    assert "kube-system/coredns" in message
+    assert "customer/orders" in message
+    assert "user-workload" in message
+    assert "was not changed" in message
 
 
 # --- explicit project alias that no longer exists ----------------------------

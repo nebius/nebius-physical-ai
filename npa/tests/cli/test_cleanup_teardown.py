@@ -84,10 +84,11 @@ def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
     assert deletes == [("bucket-abc", "1m")]
     assert "scheduled for purge" in result.output
     # Every stale secret for the deleted bucket is gone: the aws_* HMAC keys, the
-    # endpoint, the bucket, and the storage principal's service account id.
+    # endpoint, and the bucket. IAM evidence has its own lifecycle and remains
+    # available for the ownership-gated follow-up command.
     saved = yaml.safe_load(creds_path.read_text())
     assert "storage" not in saved  # section emptied and dropped
-    assert "nebius" not in saved
+    assert saved["nebius"]["service_account_id"] == "serviceaccount-storage"
     # Unrelated secrets are untouched.
     assert saved["tokens"]["HF_TOKEN"] == "hf_keep"
     assert creds_path.stat().st_mode & 0o077 == 0

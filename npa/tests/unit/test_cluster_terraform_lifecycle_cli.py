@@ -576,6 +576,41 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     assert _find_call(stream_calls, "terraform", "destroy", "-auto-approve")
 
 
+def test_down_preview_uses_the_selected_npa_cluster_kubeconfig(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cluster import state as state_module
+
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "selected-cluster"\n'
+    )
+    saved_kubeconfig = tmp_path / "clusters" / "selected-cluster" / "kubeconfig"
+    saved_kubeconfig.parent.mkdir(parents=True)
+    saved_kubeconfig.write_text("apiVersion: v1\n")
+    observed: list[tuple[Path | None, str]] = []
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_capture", lambda *args, **kwargs: _completed("token-a\n"))
+    monkeypatch.setattr(tf_mod, "_run_stream", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(
+        state_module,
+        "existing_kubeconfig",
+        lambda name: saved_kubeconfig if name == "selected-cluster" else None,
+    )
+    monkeypatch.setattr(
+        tf_mod,
+        "_report_drain_blockers",
+        lambda path, *, context="": observed.append((path, context)),
+    )
+
+    result = runner.invoke(app, ["down", "--terraform-dir", str(tf_dir), "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == [(saved_kubeconfig, "selected-cluster")]
+
+
 def test_up_rejects_terraform_older_than_the_vendored_modules(monkeypatch, tmp_path: Path) -> None:
     """The vendored modules need >= 1.12; an old binary must fail before init."""
     tf_dir = tmp_path / "deploy" / "cluster"
@@ -940,6 +975,53 @@ def test_node_group_status_ignores_benign_nested_fields() -> None:
 
     assert tf_mod.terminal_node_group_failure(status) == ""
     assert "scaled to 2" in tf_mod._format_node_group_status(status)
+
+
+def test_node_group_instance_deletion_not_found_is_idempotent_progress() -> None:
+    status = {
+        "state": "DELETING",
+        "target_node_count": "0",
+        "ready_node_count": "0",
+        "events": [
+            {
+                "type": "ComputeInstanceDeletionFailed",
+                "last_occurrence": (
+                    "rpc error: code = NotFound desc = compute instance was not found"
+                ),
+                "count": 1,
+            }
+        ],
+    }
+
+    line = tf_mod._format_node_group_status(status)
+
+    assert "DELETING (0/0 ready)" in line
+    assert "already absent" in line
+    assert "idempotent" in line
+    assert "ComputeInstanceDeletionFailed" not in line
+
+
+def test_node_group_genuine_instance_deletion_failure_stays_visible() -> None:
+    status = {
+        "state": "DELETING",
+        "target_node_count": "0",
+        "ready_node_count": "1",
+        "events": [
+            {
+                "type": "ComputeInstanceDeletionFailed",
+                "last_occurrence": (
+                    "ComputeInstanceDeletionFailed: PermissionDenied deleting compute instance"
+                ),
+                "count": 3,
+            }
+        ],
+    }
+
+    line = tf_mod._format_node_group_status(status)
+
+    assert "ComputeInstanceDeletionFailed" in line
+    assert "PermissionDenied" in line
+    assert "already absent" not in line
 
 
 def test_terminal_node_group_failure_detects_a_refusal() -> None:

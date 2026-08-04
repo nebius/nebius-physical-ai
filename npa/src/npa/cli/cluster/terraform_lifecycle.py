@@ -231,8 +231,9 @@ def down_cmd(
         None,
         "--kubeconfig",
         help=(
-            "Kubeconfig used to report which PodDisruptionBudgets will hold up the "
-            "node drain. Defaults to the ambient KUBECONFIG."
+            "Kubeconfig used for the non-interactive PodDisruptionBudget drain "
+            "preview. Defaults to NPA's saved kubeconfig for this cluster/context, "
+            "then the ambient KUBECONFIG."
         ),
     ),
 ) -> None:
@@ -255,9 +256,38 @@ def down_cmd(
     tfvars = _read_tfvars(tf_dir)
     _apply_project_tf_vars(env, project, tfvars)
     _guard_tfvars_iam_token(tf_dir, tfvars)
+    # Prefer the kubeconfig NPA saved for this exact cluster/context instead of
+    # an unrelated ambient current-context. The preview rewrites only a temporary
+    # copy so its exec credential cannot launch browser authentication.
+    preview_context = context_name.strip() or str(
+        tfvars.get("cluster_name") or "npa-cluster"
+    )
+    preview_kubeconfig = kubeconfig
+    preview_state_issue = None
+    if preview_kubeconfig is None:
+        from npa.cluster.exceptions import ClusterStateError
+        from npa.cluster.state import existing_kubeconfig
+
+        try:
+            preview_kubeconfig = existing_kubeconfig(preview_context)
+        except (OSError, ClusterStateError):
+            from npa.cluster.drain import DrainPreviewIssue
+
+            preview_state_issue = DrainPreviewIssue(
+                "kubeconfig",
+                "NPA's saved kubeconfig reference or cluster state could not be loaded",
+            )
     # The node-group watcher below shows that the drain is progressing; this names
-    # *why* it is slow, which is the part an operator can reason about.
-    _report_drain_blockers(kubeconfig)
+    # *why* it is slow and safely relaxes only exact managed system add-ons.
+    if preview_state_issue is not None:
+        from npa.cluster.drain import describe_preview_unavailable
+
+        typer.echo(
+            f"drain-preview: {describe_preview_unavailable(preview_state_issue)}",
+            err=True,
+        )
+    else:
+        _report_drain_blockers(preview_kubeconfig, context=preview_context)
     _run_stream(
         [terraform_bin, "init", "-lockfile=readonly"],
         cwd=tf_dir,
@@ -400,24 +430,71 @@ def kubeconfig_cmd(
     )
 
 
-def _report_drain_blockers(kubeconfig: Path | None) -> None:
-    """Warn, before destroy, about budgets that will make the drain look hung.
+def _report_drain_blockers(kubeconfig: Path | None, *, context: str = "") -> None:
+    """Inspect drain safety and relax only managed system add-ons.
 
-    Best-effort: a cluster that cannot be reached is simply not described, since
-    the destroy itself does not depend on this.
+    This is best-effort and preview-only. Authentication, RBAC, kubeconfig and
+    API failures are explained, but none blocks the Terraform destroy.
     """
 
-    from npa.cluster.drain import blocking_pod_disruption_budgets, describe_drain_expectation
-
-    blockers, error = blocking_pod_disruption_budgets(
-        kubeconfig=str(kubeconfig) if kubeconfig else "",
+    from npa.cluster.drain import (
+        blocking_pod_disruption_budgets,
+        describe_drain_expectation,
+        describe_preview_unavailable,
+        is_managed_system_pdb,
+        relax_managed_system_pdbs,
     )
-    if error:
-        typer.echo(f"drain-preview: skipped ({error})", err=True)
+
+    selected_kubeconfig = str(kubeconfig) if kubeconfig else ""
+    blockers, issue = blocking_pod_disruption_budgets(
+        kubeconfig=selected_kubeconfig,
+        context=context,
+    )
+    if issue is not None:
+        typer.echo(f"drain-preview: {describe_preview_unavailable(issue)}", err=True)
         return
-    guidance = describe_drain_expectation(blockers)
+    if not blockers:
+        typer.echo(
+            "drain-preview: inspected policy/v1 PodDisruptionBudgets; none currently "
+            "allows zero evictions.",
+            err=True,
+        )
+        return
+
+    system_blockers = [item for item in blockers if is_managed_system_pdb(item)]
+    protected_blockers = [item for item in blockers if not is_managed_system_pdb(item)]
+    relaxed, failures = relax_managed_system_pdbs(
+        system_blockers,
+        kubeconfig=selected_kubeconfig,
+        context=context,
+    )
+    if relaxed:
+        names = ", ".join(item.render() for item in relaxed)
+        typer.echo(
+            f"drain-preview: relaxed {len(relaxed)} managed system add-on PDB(s) "
+            f"for this full cluster deletion: {names}. No user PDB was changed.",
+            err=True,
+        )
+    for blocker, failure in failures:
+        correction = (
+            "Grant the selected kubeconfig identity patch access to this exact "
+            "kube-system PodDisruptionBudget if a faster drain is required."
+            if failure.kind == "authorization"
+            else "Restore the selected kubeconfig's non-interactive Kubernetes access "
+            "if a faster drain is required."
+        )
+        typer.echo(
+            f"drain-preview: could not relax managed system add-on {blocker.render()} "
+            f"({failure.summary}). Teardown will continue and may wait for the platform's "
+            f"normal node-group reconciliation; no user PDB was changed. {correction}",
+            err=True,
+        )
+    guidance = describe_drain_expectation(protected_blockers)
     if guidance:
-        typer.echo(f"drain-preview: {guidance}", err=True)
+        typer.echo(
+            f"drain-preview: {guidance} Each user-workload or unrecognized PDB was not changed.",
+            err=True,
+        )
 
 
 def terraform_status(terraform_dir: Path | None = None) -> dict[str, Any] | None:
@@ -1116,11 +1193,44 @@ def _format_node_group_status(status: dict[str, Any]) -> str:
     counts = (
         f"{status.get('ready_node_count', '?')}/{status.get('target_node_count', '?')} ready"
     )
-    # The failure shape is not part of the documented schema — QuotaFailure arrives
-    # under status.events[].last_occurrence — so surface every nested diagnostic
-    # string verbatim rather than guessing at a field name.
-    details = [text for text in _status_texts({k: v for k, v in status.items() if k != "state"})]
+    details = _node_group_status_details(status)
     return ", ".join([f"{state} ({counts})", *dict.fromkeys(details)])
+
+
+def _node_group_status_details(status: dict[str, Any]) -> list[str]:
+    """Render diagnostics while reconciling confirmed absence as success.
+
+    Managed Kubernetes can race its own instance reconciliation: deletion sees
+    an instance that has already disappeared, records an event whose *type* says
+    ``ComputeInstanceDeletionFailed``, then completes normally. Preserve every
+    genuine failure, but translate that exact type + NotFound combination into
+    idempotent progress rather than alarming the operator.
+    """
+
+    details = _status_texts(
+        {key: value for key, value in status.items() if key not in {"state", "events"}}
+    )
+    events = status.get("events")
+    if not isinstance(events, list):
+        details.extend(_status_texts(events, key="events"))
+        return details
+    for event in events:
+        if isinstance(event, dict) and _instance_deletion_already_absent(event):
+            details.append(
+                "compute instance already absent; node-group deletion is reconciling "
+                "idempotently"
+            )
+            continue
+        details.extend(_status_texts(event, key="event"))
+    return details
+
+
+def _instance_deletion_already_absent(event: dict[str, Any]) -> bool:
+    event_type = re.sub(r"[^a-z]", "", str(event.get("type") or "").lower())
+    if event_type != "computeinstancedeletionfailed":
+        return False
+    detail = " ".join(_status_texts(event, key="event")).lower()
+    return any(marker in detail for marker in ("notfound", "not found", "already absent"))
 
 
 def _echo_apply_recovery(tf_dir: Path, tfvars: dict[str, Any], interrupted: bool) -> None:

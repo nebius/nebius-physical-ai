@@ -771,8 +771,17 @@ Notes:
   when NPA's create call made `lerobot-training`. The storage service-account
   command refuses an ID-only legacy record, a mismatched project, or an account
   configure reused. It also refuses to run while bucket credentials remain, which
-  is why bucket deletion comes first. Nebius CLI's raw
+  is why bucket deletion comes first. Bucket cleanup never removes IAM evidence:
+  the dedicated `storage_iam` ownership record remains until the account is
+  deleted or confirmed absent, even if agent bootstrap changes the generic
+  `nebius.service_account_id`. Nebius CLI's raw
   `nebius iam service-account delete --id <id>` command has no `--yes` flag.
+- **Cluster drain preview is non-interactive and ownership-aware.** `cluster down`
+  uses NPA's saved kubeconfig for the selected context, disables browser auth in
+  a temporary copy, and explains authentication, RBAC, kubeconfig, and API
+  failures as preview-only. During a full cluster deletion it relaxes only the
+  exact `kube-system` budgets for `coredns`, `cilium-operator`, and
+  `metrics-server`; every user or unrecognized PDB remains untouched.
 
 ## 9. Where to go next
 

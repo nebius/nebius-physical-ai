@@ -36,7 +36,8 @@ def _seed_owned_account(
 
     credentials_path = tmp_path / "credentials.yaml"
     payload: dict[str, object] = {
-        "nebius": {
+        "nebius": {"service_account_id": "serviceaccount-storage"},
+        "storage_iam": {
             "service_account_id": "serviceaccount-storage",
             "service_account_name": "lerobot-training",
             "service_account_project_id": "project-a",
@@ -106,6 +107,65 @@ def test_storage_service_account_yes_deletes_keys_then_account_and_prunes_marker
     assert not credentials_path.exists()
 
 
+def test_bucket_then_owned_service_account_delete_preserves_provenance_until_iam_is_gone(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.cli import storage as storage_cli
+    from npa.clients import nebius as nebius_module
+
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path, include_storage=True)
+    deleted = _stub_iam(monkeypatch)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_bucket_by_name",
+        lambda project_id, name: {
+            "metadata": {"id": "bucket-storage", "name": name}
+        },
+    )
+    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+    waited: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        storage_cli,
+        "_wait_for_bucket_gone",
+        lambda project_id, name, target, timeout: waited.append((project_id, name)),
+    )
+
+    bucket_result = runner.invoke(
+        app,
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--project",
+            "prod",
+            "--yes",
+            "--wait",
+        ],
+    )
+
+    assert bucket_result.exit_code == 0, bucket_result.output
+    assert waited == [("project-a", "still-configured")]
+    after_bucket = yaml.safe_load(credentials_path.read_text())
+    assert "storage" not in after_bucket
+    assert after_bucket["storage_iam"] == {
+        "service_account_id": "serviceaccount-storage",
+        "service_account_name": "lerobot-training",
+        "service_account_project_id": "project-a",
+        "service_account_managed_by": "npa",
+    }
+
+    iam_result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert iam_result.exit_code == 0, iam_result.output
+    assert deleted == ["accesskey-storage", "serviceaccount-storage"]
+    assert not credentials_path.exists()
+
+
 def test_storage_service_account_refuses_unowned_legacy_identity(monkeypatch, tmp_path) -> None:
     credentials_path = _seed_owned_account(monkeypatch, tmp_path, managed_by="")
     deleted = _stub_iam(monkeypatch)
@@ -120,6 +180,92 @@ def test_storage_service_account_refuses_unowned_legacy_identity(monkeypatch, tm
     assert "not proof of ownership" in result.output
     assert deleted == []
     assert credentials_path.exists()
+
+
+def test_bucket_delete_preserves_nonowned_identity_evidence_but_iam_delete_refuses_it(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.clients import nebius as nebius_module
+
+    credentials_path = _seed_owned_account(
+        monkeypatch, tmp_path, include_storage=True, managed_by=""
+    )
+    deleted = _stub_iam(monkeypatch)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_bucket_by_name",
+        lambda project_id, name: {
+            "metadata": {"id": "bucket-storage", "name": name}
+        },
+    )
+    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+
+    bucket_result = runner.invoke(
+        app,
+        ["storage", "bucket", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert bucket_result.exit_code == 0, bucket_result.output
+    after_bucket = yaml.safe_load(credentials_path.read_text())
+    assert "storage" not in after_bucket
+    assert after_bucket["nebius"]["service_account_id"] == "serviceaccount-storage"
+
+    iam_result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert iam_result.exit_code == 0, iam_result.output
+    assert "not proof of ownership" in iam_result.output
+    assert "serviceaccount-storage" in iam_result.output
+    assert deleted == []
+    assert credentials_path.exists()
+
+
+def test_agent_service_account_id_cannot_overwrite_storage_ownership(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    data = yaml.safe_load(credentials_path.read_text())
+    data["nebius"]["service_account_id"] = "serviceaccount-agent"
+    credentials_path.write_text(yaml.safe_dump(data))
+    deleted = _stub_iam(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert deleted == ["accesskey-storage", "serviceaccount-storage"]
+    remaining = yaml.safe_load(credentials_path.read_text())
+    assert remaining["nebius"]["service_account_id"] == "serviceaccount-agent"
+    assert "storage_iam" not in remaining
+
+
+def test_complete_legacy_nebius_ownership_record_remains_deletable(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    data = yaml.safe_load(credentials_path.read_text())
+    data["nebius"].update(data.pop("storage_iam"))
+    credentials_path.write_text(yaml.safe_dump(data))
+    deleted = _stub_iam(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert deleted == ["accesskey-storage", "serviceaccount-storage"]
+    assert not credentials_path.exists()
 
 
 def test_storage_service_account_refuses_while_bucket_credentials_remain(
@@ -156,7 +302,7 @@ def test_storage_service_account_requires_yes_in_noninteractive_mode(monkeypatch
 def test_storage_service_account_rejects_mismatched_project_marker(monkeypatch, tmp_path) -> None:
     credentials_path = _seed_owned_account(monkeypatch, tmp_path)
     data = yaml.safe_load(credentials_path.read_text())
-    data["nebius"]["service_account_project_id"] = "project-other"
+    data["storage_iam"]["service_account_project_id"] = "project-other"
     credentials_path.write_text(yaml.safe_dump(data))
     deleted = _stub_iam(monkeypatch)
 
@@ -203,9 +349,76 @@ def test_storage_service_account_failure_is_reported_and_marker_is_retriable(
     assert "could not delete access key accesskey-storage" in result.output
     assert "could not delete NPA-owned service account serviceaccount-storage" in result.output
     assert credentials_path.exists()
-    assert yaml.safe_load(credentials_path.read_text())["nebius"][
+    assert yaml.safe_load(credentials_path.read_text())["storage_iam"][
         "service_account_managed_by"
     ] == "npa"
+
+
+def test_storage_service_account_list_not_found_reconciles_absent_account(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import nebius as nebius_module
+
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius_module,
+        "list_access_keys_for_service_account",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            nebius_module.NebiusError("NotFound: service account is absent")
+        ),
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "delete_service_account",
+        lambda account_id: deleted.append(account_id),
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "already absent" in result.output
+    assert deleted == []
+    assert not credentials_path.exists()
+
+
+def test_storage_service_account_access_key_not_found_is_idempotent(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import nebius as nebius_module
+
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        nebius_module,
+        "list_access_keys_for_service_account",
+        lambda *args, **kwargs: [{"id": "accesskey-storage"}],
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "delete_access_key",
+        lambda key_id: (_ for _ in ()).throw(
+            nebius_module.NebiusError("NotFound: access key is absent")
+        ),
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius_module,
+        "delete_service_account",
+        lambda account_id: deleted.append(account_id),
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Access key accesskey-storage is already absent" in result.output
+    assert deleted == ["serviceaccount-storage"]
+    assert not credentials_path.exists()
 
 
 def test_storage_service_account_does_not_delete_when_key_inventory_fails(

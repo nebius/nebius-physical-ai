@@ -236,6 +236,38 @@ def test_write_credentials_file_does_not_normalize_legacy_token_factory_key(
     assert stored["storage"]["bucket"] == "s3://bucket/checkpoints/"
 
 
+def test_generic_service_account_update_migrates_legacy_storage_ownership(
+    tmp_path: Path,
+) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "nebius": {
+                    "service_account_id": "serviceaccount-storage",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "npa",
+                }
+            }
+        )
+    )
+
+    write_credentials_file(
+        {"nebius": {"service_account_id": "serviceaccount-agent"}},
+        path=credentials_path,
+    )
+
+    stored = yaml.safe_load(credentials_path.read_text())
+    assert stored["nebius"] == {"service_account_id": "serviceaccount-agent"}
+    assert stored["storage_iam"] == {
+        "service_account_id": "serviceaccount-storage",
+        "service_account_name": "lerobot-training",
+        "service_account_project_id": "project-a",
+        "service_account_managed_by": "npa",
+    }
+
+
 def test_shared_credential_env_never_emits_ai_cloud_key(tmp_path: Path) -> None:
     """The removed NEBIUS_AI_CLOUD_KEY must not leak back into the shared env."""
     credentials_path = tmp_path / "credentials.yaml"

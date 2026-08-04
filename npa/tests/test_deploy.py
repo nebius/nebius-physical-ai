@@ -140,6 +140,39 @@ def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> No
     assert 'output "gpu_platform"' in outputs
     assert 'output "gpu_preset"' in outputs
     assert "DEPRECATED compatibility alias" in outputs
+    # The aliases remain for schema compatibility, but CPU-only instances must
+    # never publish CPU selectors under machine-readable GPU field names.
+    assert (
+        'value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_platform'
+        in outputs
+    )
+    assert (
+        'value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_preset'
+        in outputs
+    )
+
+
+def test_agent_destroy_hides_deprecated_gpu_aliases_from_human_terraform_output() -> None:
+    assert (
+        provisioner._filter_destroy_output_line(
+            '  - gpu_platform = "cpu-d3" -> null\n'
+        )
+        == ""
+    )
+    assert (
+        provisioner._filter_destroy_output_line(
+            '  - gpu_preset = "8vcpu-32gb" -> null\n'
+        )
+        == ""
+    )
+    # Canonical CPU/compute output remains visible, and a genuine resource-level
+    # GPU fact is not hidden merely because its value contains "gpu".
+    assert "cpu-d3" in provisioner._filter_destroy_output_line(
+        '  - cpu_platform = "cpu-d3" -> null\n'
+    )
+    assert "gpu-h100-sxm" in provisioner._filter_destroy_output_line(
+        '  - platform = "gpu-h100-sxm" -> null\n'
+    )
 
 
 def test_cloud_init_mounts_cosmos_data_disk() -> None:

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -119,6 +121,9 @@ def _run(
     cmd = [tf] + args
     kwargs: dict[str, Any] = {"cwd": str(cwd), "text": True, "env": _tf_env()}
 
+    if stream and args and args[0] == "destroy":
+        return _run_destroy_stream(cmd, cwd=Path(cwd), env=kwargs["env"])
+
     if capture:
         kwargs["capture_output"] = True
     elif stream:
@@ -137,6 +142,75 @@ def _run(
             f"terraform {args[0]} failed (exit {result.returncode}):\n{stderr.strip()}"
         )
     return result
+
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_DEPRECATED_GPU_OUTPUT_RE = re.compile(
+    r"^\s*[+~-]\s+gpu_(?:platform|preset)\s+="
+)
+
+
+def _filter_destroy_output_line(line: str) -> str:
+    """Hide deprecated Terraform output aliases from human destroy progress.
+
+    The aliases remain in the machine-readable Terraform schema for compatible
+    GPU callers, but a CPU agent's destroy plan must not label ``cpu-d3`` or
+    ``8vcpu-32gb`` as GPU facts. Canonical ``platform``/``preset`` and
+    ``cpu_platform``/``cpu_preset`` lines remain visible.
+    """
+
+    plain = _ANSI_ESCAPE_RE.sub("", line)
+    return "" if _DEPRECATED_GPU_OUTPUT_RE.match(plain) else line
+
+
+def _run_destroy_stream(
+    cmd: list[str], *, cwd: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Stream Terraform destroy while filtering only deprecated output aliases."""
+
+    process = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+    )
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    def _pump_stdout() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            stdout_lines.append(line)
+            visible = _filter_destroy_output_line(line)
+            if visible:
+                sys.stdout.write(visible)
+                sys.stdout.flush()
+
+    def _pump_stderr() -> None:
+        assert process.stderr is not None
+        for line in process.stderr:
+            stderr_lines.append(line)
+            sys.stderr.write(line)
+            sys.stderr.flush()
+
+    threads = [
+        threading.Thread(target=_pump_stdout, name="npa-terraform-stdout", daemon=True),
+        threading.Thread(target=_pump_stderr, name="npa-terraform-stderr", daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    returncode = process.wait()
+    for thread in threads:
+        thread.join()
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=returncode,
+        stdout="".join(stdout_lines),
+        stderr="".join(stderr_lines),
+    )
 
 
 def _build_var_args(tf_vars: dict[str, str]) -> list[str]:

@@ -75,15 +75,16 @@ output "cpu_preset" {
 }
 
 # Compatibility aliases for existing state/readers. These names predate the
-# CPU-only agent VM and may contain CPU values; new callers use platform/preset.
+# CPU-only agent VM; new callers use platform/preset. Old state may contain CPU
+# values under these names, but current CPU instances publish null aliases.
 output "gpu_platform" {
-  description = "DEPRECATED compatibility alias for platform; may identify a CPU platform"
-  value       = var.gpu_platform
+  description = "DEPRECATED compatibility alias for GPU platform; null for CPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_platform
 }
 
 output "gpu_preset" {
-  description = "DEPRECATED compatibility alias for preset; may identify a CPU preset"
-  value       = var.gpu_preset
+  description = "DEPRECATED compatibility alias for GPU preset; null for CPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_preset
 }
 
 output "security_group_id" {

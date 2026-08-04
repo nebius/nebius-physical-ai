@@ -312,7 +312,17 @@ runbook. Plain `npa cleanup --yes` keeps credentials; the explicit
 and NGC credentials and prunes an empty `~/.npa` tree. Cloud resources remain
 separate: `npa storage service-account delete` removes `lerobot-training` only
 when configure recorded that NPA created that exact identity, and refuses
-legacy, reused, mismatched, or user-managed accounts.
+legacy, reused, mismatched, or user-managed accounts. Bucket deletion removes
+only bucket credentials; the separate storage-IAM ownership record survives
+until that identity is deleted or confirmed absent.
+
+`npa cluster down` uses the kubeconfig saved for the selected NPA cluster and
+forces its credential plugin into non-interactive/no-browser mode for the
+best-effort drain preview. It distinguishes authentication, RBAC, kubeconfig,
+and API failures and still attempts Terraform destroy. For a full managed-cluster
+deletion it relaxes only the exact `kube-system` PDBs for the NPA system add-ons
+`coredns`, `cilium-operator`, and `metrics-server`; user and unknown PDBs remain
+protected and are named if they can delay the drain.
 
 For the full known-issues surface: [docs/workbench/troubleshooting/known-footguns.md](docs/workbench/troubleshooting/known-footguns.md)
 and the active operational backlog in [FIXME.md](FIXME.md).

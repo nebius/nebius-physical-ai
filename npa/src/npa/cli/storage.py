@@ -123,14 +123,24 @@ def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | Non
         data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return None, "No readable NPA-owned storage service-account record was found."
-    nebius = data.get("nebius") if isinstance(data, dict) else None
-    if not isinstance(nebius, dict):
+    if not isinstance(data, dict):
         return None, "No NPA-owned storage service account is recorded."
 
-    account_id = str(nebius.get("service_account_id", "") or "").strip()
-    managed_by = str(nebius.get("service_account_managed_by", "") or "").strip()
-    name = str(nebius.get("service_account_name", "") or "").strip()
-    project_id = str(nebius.get("service_account_project_id", "") or "").strip()
+    # New writes use a dedicated lifecycle record so agent bootstrap can update
+    # nebius.service_account_id without changing which IAM identity NPA proved it
+    # created for storage. A complete legacy nebius record remains readable for
+    # upgrades, but an ID alone is never promoted to ownership.
+    storage_iam = data.get("storage_iam")
+    if isinstance(storage_iam, dict):
+        record_data = storage_iam
+    else:
+        nebius = data.get("nebius")
+        record_data = nebius if isinstance(nebius, dict) else {}
+
+    account_id = str(record_data.get("service_account_id", "") or "").strip()
+    managed_by = str(record_data.get("service_account_managed_by", "") or "").strip()
+    name = str(record_data.get("service_account_name", "") or "").strip()
+    project_id = str(record_data.get("service_account_project_id", "") or "").strip()
     if managed_by != "npa":
         suffix = (
             f" The saved ID {account_id} is not proof of ownership and was left untouched."
@@ -161,22 +171,41 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
         return False
     if not isinstance(data, dict):
         return False
+    storage_iam = data.get("storage_iam")
+    removed = False
+    if isinstance(storage_iam, dict):
+        if str(storage_iam.get("service_account_id", "") or "").strip() != account_id:
+            return False
+        data.pop("storage_iam", None)
+        removed = True
+
     nebius = data.get("nebius")
-    if not isinstance(nebius, dict):
+    if isinstance(nebius, dict):
+        legacy_owned = (
+            str(nebius.get("service_account_id", "") or "").strip() == account_id
+            and str(nebius.get("service_account_managed_by", "") or "").strip()
+            == "npa"
+        )
+        # A generic ID equal to the deleted storage identity is stale. If agent
+        # bootstrap replaced it with a different npa-agent ID, preserve that ID.
+        same_generic_id = (
+            str(nebius.get("service_account_id", "") or "").strip() == account_id
+        )
+        if legacy_owned or same_generic_id:
+            for key in (
+                "service_account_id",
+                "service_account_name",
+                "service_account_project_id",
+                "service_account_managed_by",
+            ):
+                nebius.pop(key, None)
+            removed = True
+        if nebius:
+            data["nebius"] = nebius
+        else:
+            data.pop("nebius", None)
+    if not removed:
         return False
-    if str(nebius.get("service_account_id", "") or "").strip() != account_id:
-        return False
-    for key in (
-        "service_account_id",
-        "service_account_name",
-        "service_account_project_id",
-        "service_account_managed_by",
-    ):
-        nebius.pop(key, None)
-    if nebius:
-        data["nebius"] = nebius
-    else:
-        data.pop("nebius", None)
     if not data:
         try:
             CREDENTIALS_PATH.unlink()
@@ -262,6 +291,19 @@ def delete_service_account_cmd(
             record.project_id, record.account_id, strict=True
         )
     except NebiusError as exc:
+        if is_not_found(str(exc)):
+            typer.echo(
+                f"NPA-owned service account {record.name} ({record.account_id}) "
+                "is already absent."
+            )
+            if not _remove_storage_service_account_record(record.account_id):
+                typer.echo(
+                    "Warning: the stale local service-account ownership record could "
+                    "not be removed; retry after fixing its file permissions.",
+                    err=True,
+                )
+                raise typer.Exit(code=1) from exc
+            return
         raise typer.BadParameter(
             f"Could not inspect access keys for NPA-owned service account "
             f"{record.account_id}; nothing was deleted: {exc}"
@@ -294,8 +336,13 @@ def delete_service_account_cmd(
         try:
             delete_access_key(key_id)
         except NebiusError as exc:
-            failed = True
-            typer.echo(f"Warning: could not delete access key {key_id}: {exc}", err=True)
+            if is_not_found(str(exc)):
+                typer.echo(f"Access key {key_id} is already absent.")
+            else:
+                failed = True
+                typer.echo(
+                    f"Warning: could not delete access key {key_id}: {exc}", err=True
+                )
         else:
             typer.echo(f"Deleted access key {key_id}.")
     try:
@@ -597,8 +644,9 @@ def _prune_storage_credentials(bucket_name: str) -> None:
     Leaving them behind means the next `npa configure` / deploy reuses an access
     key for a deleted bucket — the stale-secret half of the teardown report.
     Removes the access key, secret key, endpoint and bucket from the storage
-    section (under whatever key names the file uses) and the
-    ``nebius.service_account_id`` of the deleted bucket's storage principal.
+    section (under whatever key names the file uses). IAM identity state is a
+    separate lifecycle: its ID and any NPA ownership proof remain until the
+    explicit ownership-gated service-account teardown confirms it is gone.
     """
     from npa.clients.credentials import CREDENTIALS_PATH, load_credentials
 
@@ -634,19 +682,10 @@ def _prune_storage_credentials(bucket_name: str) -> None:
         else:
             data.pop(section_key, None)
 
-    # Keep a verifiable NPA ownership record until the explicit IAM teardown
-    # runs. A legacy/user-managed ID has no such provenance and retains the old
-    # behavior of being detached from the deleted bucket's credentials.
-    nebius = data.get("nebius")
-    if isinstance(nebius, dict) and nebius.get("service_account_id") not in (None, ""):
-        owned = str(nebius.get("service_account_managed_by", "") or "") == "npa"
-        if not owned:
-            nebius.pop("service_account_id", None)
-            removed.append("service_account_id")
-        if nebius:
-            data["nebius"] = nebius
-        else:
-            data.pop("nebius", None)
+    # Never prune the nebius section here. Even an unproven legacy ID is useful
+    # evidence for an operator, while still being categorically insufficient for
+    # NPA to delete it. Coupling IAM evidence to bucket cleanup was what made the
+    # documented bucket -> service-account order unverifiable after step one.
 
     if not removed:
         return

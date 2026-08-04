@@ -1232,7 +1232,23 @@ def _run_interactive_configure(
         },
     }
     if service_account_keys:
-        credentials_payload["nebius"] = service_account_keys
+        # Keep the generic ID for existing credential resolution, but store the
+        # ownership proof under its own lifecycle key. Agent bootstrap also uses
+        # nebius.service_account_id and may replace it with the npa-agent ID; that
+        # must never rewrite which identity NPA proved it created for storage.
+        account_id = service_account_keys.get("service_account_id", "")
+        if account_id:
+            credentials_payload["nebius"] = {"service_account_id": account_id}
+        if all(
+            service_account_keys.get(key)
+            for key in (
+                "service_account_id",
+                "service_account_name",
+                "service_account_project_id",
+                "service_account_managed_by",
+            )
+        ):
+            credentials_payload["storage_iam"] = service_account_keys
 
     credentials_path = write_credentials_file(credentials_payload)
 

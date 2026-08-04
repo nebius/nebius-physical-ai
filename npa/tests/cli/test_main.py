@@ -1069,7 +1069,8 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     assert creds["storage"]["aws_secret_access_key"] == "provisioned-secret"
     assert creds["storage"]["endpoint_url"] == "https://storage.eu-north1.nebius.cloud"
     assert creds["storage"]["bucket"] == "s3://my-bucket/"
-    assert creds["nebius"] == {
+    assert creds["nebius"] == {"service_account_id": "serviceaccount-storage"}
+    assert creds["storage_iam"] == {
         "service_account_id": "serviceaccount-storage",
         "service_account_name": "lerobot-training",
         "service_account_project_id": "project-12345",

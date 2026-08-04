@@ -312,6 +312,63 @@ def _prune_empty(data: dict[str, Any]) -> dict[str, Any]:
     return pruned
 
 
+_STORAGE_IAM_PROOF_KEYS = (
+    "service_account_id",
+    "service_account_name",
+    "service_account_project_id",
+    "service_account_managed_by",
+)
+
+
+def _separate_legacy_storage_ownership(
+    existing: dict[str, Any], incoming: dict[str, Any]
+) -> None:
+    """Keep legacy storage ownership separate from a new generic SA ID.
+
+    Older credentials stored the complete storage ownership proof under
+    ``nebius``. Agent bootstrap also writes ``nebius.service_account_id``; a
+    normal deep merge could therefore combine the agent ID with the old storage
+    name/project/provenance and make that unrelated identity look NPA-owned.
+    Migrate the complete old proof before a different ID is written, and remove
+    duplicate provenance from the generic section whenever a dedicated record
+    exists. An incomplete or unproven legacy record is never promoted.
+    """
+
+    saved_nebius = existing.get("nebius")
+    incoming_nebius = incoming.get("nebius")
+    if not isinstance(saved_nebius, dict):
+        return
+
+    saved_id = str(saved_nebius.get("service_account_id", "") or "").strip()
+    incoming_id = (
+        str(incoming_nebius.get("service_account_id", "") or "").strip()
+        if isinstance(incoming_nebius, dict)
+        else ""
+    )
+    has_complete_owned_legacy_proof = (
+        str(saved_nebius.get("service_account_managed_by", "") or "") == "npa"
+        and all(str(saved_nebius.get(key, "") or "").strip() for key in _STORAGE_IAM_PROOF_KEYS)
+    )
+    dedicated_exists = isinstance(existing.get("storage_iam"), dict) or isinstance(
+        incoming.get("storage_iam"), dict
+    )
+    if (
+        not dedicated_exists
+        and incoming_id
+        and incoming_id != saved_id
+        and has_complete_owned_legacy_proof
+    ):
+        existing["storage_iam"] = {
+            key: saved_nebius[key] for key in _STORAGE_IAM_PROOF_KEYS
+        }
+        dedicated_exists = True
+
+    if dedicated_exists:
+        for key in _STORAGE_IAM_PROOF_KEYS:
+            if key != "service_account_id":
+                saved_nebius.pop(key, None)
+
+
 def set_token_factory_api_key(api_key: str, *, path: Path | None = None) -> Path:
     """Persist the Nebius Token Factory key under ``tokens.NEBIUS_TOKEN_FACTORY_KEY``."""
 
@@ -342,7 +399,9 @@ def write_credentials_file(
             loaded = yaml.safe_load(handle)
         if isinstance(loaded, dict):
             existing = loaded
-    merged = _deep_merge(existing, _prune_empty(dict(data)))
+    incoming = _prune_empty(dict(data))
+    _separate_legacy_storage_ownership(existing, incoming)
+    merged = _deep_merge(existing, incoming)
     credentials_path.parent.mkdir(parents=True, exist_ok=True)
     with credentials_path.open("w") as handle:
         yaml.dump(merged, handle, default_flow_style=False, sort_keys=False)

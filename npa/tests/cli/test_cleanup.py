@@ -98,6 +98,32 @@ def test_cleanup_iam_note_names_the_storage_service_account(monkeypatch) -> None
     assert "nebius iam service-account delete" in result.output
 
 
+def test_cleanup_iam_note_prefers_owned_storage_lifecycle_record(monkeypatch) -> None:
+    from npa.clients import credentials as credentials_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "nebius": {"service_account_id": "serviceaccount-agent"},
+                "storage_iam": {
+                    "service_account_id": "serviceaccount-storage",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "npa",
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["cleanup"])
+
+    assert result.exit_code == 0, result.output
+    assert "serviceaccount-storage" in result.output
+    assert "npa storage service-account delete" in result.output
+    assert "serviceaccount-agent" not in result.output
+
+
 def test_cleanup_is_quiet_when_nothing_is_left() -> None:
     result = runner.invoke(app, ["cleanup"])
 
