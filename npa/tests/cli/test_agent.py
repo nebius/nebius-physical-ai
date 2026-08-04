@@ -25,6 +25,35 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
+def test_staged_agent_source_is_readable_by_unprivileged_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    archive = tmp_path / "source.tar.gz"
+    archive.write_bytes(b"archive")
+    monkeypatch.setattr(agent_module, "_create_agent_source_archive", lambda: str(archive))
+
+    class FakeSSH:
+        command = ""
+
+        def upload_file(self, local: str, remote: str) -> None:
+            assert local == str(archive)
+            assert remote.startswith("/tmp/npa-agent-source-")
+
+        def run_or_raise(self, command: str) -> None:
+            self.command = command
+
+        def run(self, command: str) -> None:
+            assert command.startswith("rm -f /tmp/npa-agent-source-")
+
+    ssh = FakeSSH()
+    agent_module._stage_agent_npa_source(ssh)  # type: ignore[arg-type]
+
+    assert "sudo chown -R root:root /opt/npa-agent/npa-src" in ssh.command
+    assert "sudo chmod -R a+rX /opt/npa-agent/npa-src" in ssh.command
+
+
 def _agent_source() -> str:
     """agent.py plus the nginx site policy split out of it.
 

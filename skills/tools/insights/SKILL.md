@@ -32,6 +32,13 @@ Every append writes a **new shard object**; readers concatenate the base object
 object storage has no native append, so read-modify-write silently drops rows
 when two writers overlap (both read N, both write N + their own).
 
+Readers expose a logically idempotent view: metric rows are deduplicated by run,
+source artifact URI, metric, stage/tool, canonical labels (including curve step),
+and lineage; lineage edges use their endpoint/version/relation/run identity. This
+also repairs legacy stores that already contain duplicate shards. Explicit
+emissions without an artifact URI retain their timestamp/value identity so
+distinct observations with the same metric name are not collapsed.
+
 Do NOT introduce a database service or hardcode a metadata backend. Reuse the
 **LanceDB** tool as the optional query index (HTTP seam in `integrations.py`),
 exactly as `dataset` does; absence degrades to the JSONL scan.
@@ -68,7 +75,9 @@ Endpoints: `/health`, `/status`, `/system-info`, `/list`, `POST /record`,
 - `GET /lineage`: traverse the provenance graph (ancestors + descendants) for an
   artifact/version, reconstructed from recorded `lineage_edge` records.
 - `GET /query`: query metric records by facet (workflow, run id, tool, stage,
-  dataset/model version, metric name, time range, threshold predicate).
+  dataset/model version, metric name, metric kind, cost basis, time range,
+  threshold predicate). Cost records always label `cost_basis` as `estimated` or
+  `billed`; only billing artifacts are authoritative for billed dollars.
 - `GET /compare`: cross-run/cross-stack comparison; emits
   `npa.insights.comparison.v1` (per-metric delta + regressed/improved flags).
   Metrics whose name looks failure-like (corruption/latency/loss/…) are treated
@@ -76,6 +85,12 @@ Endpoints: `/health`, `/status`, `/system-info`, `/list`, `POST /record`,
 - `GET /dashboard`: return `npa.insights.dashboard.v1` (grouped metrics +
   latest-run rollup) and optionally write a self-contained static HTML report to
   `--output-path`. Keep viz thin — JSON + a single-file HTML, no web UI.
+
+Known evaluation reports use an explicit numeric taxonomy: score/quality fields
+become `eval_score`, step/sample/epoch values become `counter`, and latency or
+`*_ms` values become `duration`. Arbitrary numeric metadata is not promoted to a
+score. When root placeholders conflict with nested `metrics` or
+`success_summary`, the authoritative nested value wins deterministically.
 
 ## Lineage
 
@@ -110,6 +125,10 @@ toolRefs: `workbench.insights.record`, `workbench.insights.ingest_run`,
 - Object storage has no native append, so each write lands in its own immutable
   shard under `records.d/` / `edges.d/` and reads concatenate base + shards. This
   is what makes concurrent ingests safe; a store is never rewritten in place.
+- Re-ingesting a source prefix may append nothing (`recorded_count: 0`) when all
+  logical observations already exist. Concurrent writers may still create
+  duplicate immutable shards, but readers deduplicate them without losing
+  distinct source observations or skewing dashboard means.
 - **Reader version skew:** a reader older than sharding sees only the base object
   and silently reports a truncated store (e.g. an agent VM answering "no runs
   found" for runs that did ingest). Re-bootstrap deployed agents

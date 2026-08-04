@@ -19,6 +19,11 @@ DEFAULT_QUERY_LIMIT = 100
 # manifest's resource profile, plus the label key carrying the accelerator spec.
 GPU_METRIC_NAME = "gpus"
 ACCELERATORS_LABEL = "accelerators"
+METRIC_KIND_LABEL = "metric_kind"
+STEP_LABEL = "step"
+CURRENCY_LABEL = "currency"
+COST_BASIS_LABEL = "cost_basis"
+SCORE_NAME_LABEL = "score_name"
 
 # Append-only store layout under a configurable prefix on S3 (JSONL fallback).
 RECORDS_OBJECT = "records.jsonl"
@@ -253,6 +258,11 @@ class QueryRequest(BaseModel):
     model_version: str = ""
     metric_name: str = ""
     accelerator: str = ""
+    metric_kind: str = ""
+    step: str = ""
+    currency: str = ""
+    cost_basis: Literal["", "estimated", "billed"] = ""
+    score_name: str = ""
     time_start: str = ""
     time_end: str = ""
     threshold_metric: str = ""
@@ -307,6 +317,7 @@ class MetricDelta(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metric_name: str
+    dimensions: dict[str, str] = Field(default_factory=dict)
     base_value: float
     candidate_value: float
     delta: float
@@ -339,7 +350,17 @@ class DashboardRequest(BaseModel):
     input_uri: str = Field(..., min_length=1)
     output_path: str = ""
     workflow: str = ""
-    group_by: Literal["metric_name", "tool", "stage", "workflow"] = "metric_name"
+    group_by: Literal[
+        "metric_name",
+        "tool",
+        "stage",
+        "workflow",
+        "metric_kind",
+        "step",
+        "currency",
+        "cost_basis",
+        "score_name",
+    ] = "metric_name"
     latest_run: str = ""
 
     @field_validator("input_uri")

@@ -49,11 +49,13 @@ def test_preamble_serves_the_model_the_tool_will_ask_for() -> None:
 def test_preamble_starts_waits_and_tears_down() -> None:
     preamble = render_self_hosted_vlm_preamble({})
 
-    assert "vllm.entrypoints.openai.api_server" in preamble
+    assert 'vllm serve "$npa_vlm_model"' in preamble
     # Backgrounded, then trapped so neither success nor failure leaks a GPU-resident server.
     assert preamble.count("&\n") >= 1
     assert "trap 'kill \"$npa_vlm_pid\" 2>/dev/null || true' EXIT" in preamble
-    assert "/health" in preamble
+    assert "/v1/models" in preamble
+    assert "expected_model not in model_ids" in preamble
+    assert "vLLM server models:" in preamble
     expected_attempts = DEFAULT_VLM_SERVER_READY_SECONDS // VLM_SERVER_POLL_INTERVAL_SECONDS
     assert f"attempts, interval = {expected_attempts}, {VLM_SERVER_POLL_INTERVAL_SECONDS}" in preamble
 
@@ -89,7 +91,7 @@ def test_preamble_puts_the_interpreters_script_dir_on_path() -> None:
     assert 'sysconfig.get_path("scripts")' in preamble
     assert "export PATH=$npa_vlm_scripts:$PATH" in preamble
     # Must happen before the server starts, or the JIT still cannot find ninja.
-    assert preamble.index("export PATH=") < preamble.index("api_server")
+    assert preamble.index("export PATH=") < preamble.index("vllm serve")
 
 
 def test_preamble_survives_an_image_with_no_cuda_toolchain() -> None:
@@ -104,7 +106,7 @@ def test_preamble_survives_an_image_with_no_cuda_toolchain() -> None:
     # ... and disables the sampler that wants the JIT, so a compiler-less image cannot
     # break startup at all.
     assert "export VLLM_USE_FLASHINFER_SAMPLER=0" in preamble
-    assert preamble.index("VLLM_USE_FLASHINFER_SAMPLER") < preamble.index("api_server")
+    assert preamble.index("VLLM_USE_FLASHINFER_SAMPLER") < preamble.index("vllm serve")
 
 
 def test_flashinfer_sampler_can_be_opted_back_in() -> None:
@@ -221,9 +223,9 @@ def test_shipped_self_hosted_spec_renders_a_server_start(
     assert spec.config["vlm_backend"] == "self-hosted"
     docs = [doc for doc in yaml.safe_load_all(text) if doc]
     run_script = docs[1]["run"]
-    assert "vllm.entrypoints.openai.api_server" in run_script
+    assert 'vllm serve "$npa_vlm_model"' in run_script
     assert "npa workbench vlm-eval run" in run_script
-    assert run_script.index("api_server") < run_script.index("npa workbench vlm-eval run")
+    assert run_script.index("vllm serve") < run_script.index("npa workbench vlm-eval run")
     assert_no_unresolved_placeholders(text)
 
 

@@ -570,8 +570,13 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
         # Set config.vlm_use_flashinfer_sampler=1 to opt back in.
         f"export VLLM_USE_FLASHINFER_SAMPLER={flashinfer_sampler}\n"
         "echo \"starting vLLM for $npa_vlm_model on port $npa_vlm_port\" >&2\n"
-        "python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 "
-        "--port \"$npa_vlm_port\" --model \"$npa_vlm_model\" "
+        # vLLM 0.26 removed the executable ``__main__`` block from
+        # ``vllm.entrypoints.openai.api_server``.  Importing that module with
+        # ``python -m`` can therefore leave no OpenAI server behind while an
+        # unrelated process on the same port still makes a /health-only probe
+        # look ready.  ``vllm serve`` is the supported, versioned CLI entrypoint.
+        "vllm serve \"$npa_vlm_model\" --host 0.0.0.0 "
+        "--port \"$npa_vlm_port\" "
         f"--served-model-name \"$npa_vlm_model\"{trust_flag} "
         "> \"$npa_vlm_log\" 2>&1 &\n"
         "npa_vlm_pid=$!\n"
@@ -579,14 +584,17 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
         "trap 'kill \"$npa_vlm_pid\" 2>/dev/null || true' EXIT\n"
         # Health-wait in python3, not curl: curl is not guaranteed in every task image,
         # and python3 is (setup records an interpreter and the shim puts it on PATH).
-        "python3 - \"$npa_vlm_pid\" \"$npa_vlm_port\" \"$npa_vlm_log\" <<'PY'\n"
+        "python3 - \"$npa_vlm_pid\" \"$npa_vlm_port\" \"$npa_vlm_log\" "
+        "\"$npa_vlm_model\" <<'PY'\n"
         "import os\n"
         "import sys\n"
         "import time\n"
         "import urllib.error\n"
         "import urllib.request\n"
         "\n"
-        "pid, port, log_path = int(sys.argv[1]), sys.argv[2], sys.argv[3]\n"
+        "pid, port, log_path, expected_model = (\n"
+        "    int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]\n"
+        ")\n"
         f"attempts, interval = {attempts}, {interval}\n"
         "\n"
         "def alive() -> bool:\n"
@@ -605,7 +613,21 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
         "\n"
         "for attempt in range(attempts):\n"
         "    try:\n"
-        "        with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=5):\n"
+        # Probe the OpenAI surface the client will actually use.  A generic
+        # /health response is insufficient: live job 364 reached it, then got a
+        # 404 from /v1/chat/completions because no OpenAI server was running.
+        "        with urllib.request.urlopen(\n"
+        "            f'http://127.0.0.1:{port}/v1/models', timeout=5\n"
+        "        ) as response:\n"
+        "            payload = __import__('json').load(response)\n"
+        "            model_ids = [str(item.get('id') or '') for item in payload.get('data', [])]\n"
+        "            if not model_ids:\n"
+        "                raise RuntimeError('vLLM model list is empty')\n"
+        "            if expected_model not in model_ids:\n"
+        "                raise RuntimeError(\n"
+        "                    f'vLLM serves {model_ids!r}, expected {expected_model!r}'\n"
+        "                )\n"
+        "            print(f'vLLM server models: {model_ids}', file=sys.stderr)\n"
         "            print(f'vLLM server ready after {attempt * interval}s', file=sys.stderr)\n"
         "            raise SystemExit(0)\n"
         "    except SystemExit:\n"

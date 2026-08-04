@@ -1935,6 +1935,219 @@ def _select_author_tool_refs(
     return selected[:n], matched
 
 
+_AUTHOR_SEMANTIC_TERMS: dict[str, tuple[str, ...]] = {
+    "curate": ("curate", "curation", "slice", "filter", "refine", "clean"),
+    "train": ("train", "training", "fit", "fitting"),
+    "eval": (
+        "eval",
+        "evaluate",
+        "evaluation",
+        "benchmark",
+        "benchmarking",
+        "score",
+    ),
+    "ingest": ("ingest", "import", "load"),
+    "augment": ("augment", "augmentation", "transfer"),
+    "generate": ("generate", "generation", "synthesize"),
+}
+
+
+def _author_semantic_stages(goal: str, n_steps: int | None = None) -> list[str]:
+    """Return ordered semantic stages without requiring count/clause equality."""
+    text = str(goal or "").strip()
+    if re.search(r"[→⟶➨]|->", text):
+        parts = re.split(r"\s*(?:[→⟶➨]|->)\s*", text)
+    elif re.search(r"\bthen\b", text, flags=re.IGNORECASE):
+        parts = re.split(r"\bthen\b", text, flags=re.IGNORECASE)
+    else:
+        mentions: list[tuple[int, str]] = []
+        lowered = text.lower()
+        for canonical, terms in _AUTHOR_SEMANTIC_TERMS.items():
+            positions = [
+                match.start()
+                for term in terms
+                if (match := re.search(rf"\b{re.escape(term)}\b", lowered))
+            ]
+            if positions:
+                mentions.append((min(positions), canonical))
+        mentions.sort()
+        return [canonical for _, canonical in mentions][:6] if len(mentions) >= 2 else []
+    stages = [part.strip(" ,;:") for part in parts if part.strip(" ,;:")]
+    return stages[:6]
+
+
+def _semantic_stage_score(stage: str, tool_ref: str) -> int:
+    """Score one live-catalog entry against one ordered goal clause."""
+    keywords = set(_author_goal_keywords(stage))
+    stage_words = set(re.findall(r"[a-z0-9_]+", str(stage or "").lower()))
+    for canonical, terms in _AUTHOR_SEMANTIC_TERMS.items():
+        if canonical in stage_words or any(term in stage_words for term in terms):
+            keywords.update(terms)
+    ref = str(tool_ref or "").lower()
+    ref_words = set(re.findall(r"[a-z0-9_]+", ref))
+    description = _describe_tool_ref(tool_ref).lower()
+    description_words = set(re.findall(r"[a-z0-9_]+", description))
+    score = 0
+    for keyword in keywords:
+        if keyword in ref_words:
+            score += 12
+        elif keyword in ref:
+            score += 7
+        if keyword in description_words:
+            score += 4
+        elif keyword in description:
+            score += 2
+    return score
+
+
+def _flow_binding_kind(key: str, flag: str, role: str) -> str:
+    text = f"{key} {flag}".lower()
+    if "checkpoint" in text or "policy" in text or (role == "output" and "train" in text):
+        return "checkpoint"
+    if any(term in text for term in ("eval", "report", "metric", "score", "benchmark")):
+        return "report"
+    if any(term in text for term in ("dataset", "data_", "data-", "manifest", "curat")):
+        return "dataset"
+    if any(term in text for term in ("rollout", "episode", "trajectory")):
+        return "rollout"
+    if any(term in text for term in ("image", "video", "frame")):
+        return "media"
+    return "artifact"
+
+
+def _tool_flow_bindings(tool_ref: str) -> list[dict[str, str]]:
+    """Read artifact-like input/output config bindings from a catalog argv."""
+    from npa.orchestration.npa_workflow.catalog import argv_for_tool
+
+    try:
+        argv = argv_for_tool(tool_ref)
+    except Exception:  # noqa: BLE001
+        return []
+    bindings: list[dict[str, str]] = []
+    for index, token in enumerate(argv):
+        match = re.fullmatch(r"\{\{\s*config\.([a-zA-Z0-9_.-]+)\s*\}\}", str(token))
+        if not match:
+            continue
+        key = match.group(1)
+        previous = str(argv[index - 1]) if index else ""
+        flag = previous.lower() if previous.startswith("--") else ""
+        output_flag = (
+            "output" in flag
+            or flag.startswith("--out-")
+            or flag in {
+                "--artifacts-s3-uri",
+                "--checkpoint-s3-uri",
+                "--rollouts-s3-uri",
+                "--destination",
+                "--save-path",
+            }
+        )
+        input_flag = any(
+            marker in flag
+            for marker in (
+                "input",
+                "source",
+                "checkpoint",
+                "dataset",
+                "data-path",
+                "artifact",
+                "manifest",
+                "view",
+            )
+        )
+        role = "output" if output_flag else "input" if input_flag else ""
+        if not role:
+            continue
+        bindings.append(
+            {
+                "key": key,
+                "flag": flag,
+                "role": role,
+                "kind": _flow_binding_kind(key, flag, role),
+            }
+        )
+    return bindings
+
+
+def _best_flow_link(upstream: str, downstream: str) -> dict[str, Any]:
+    outputs = [binding for binding in _tool_flow_bindings(upstream) if binding["role"] == "output"]
+    inputs = [binding for binding in _tool_flow_bindings(downstream) if binding["role"] == "input"]
+    best: dict[str, Any] = {}
+    best_score = 0
+    for output in outputs:
+        for input_binding in inputs:
+            score = 0
+            if output["kind"] == input_binding["kind"]:
+                score += 24
+            if output["key"] == input_binding["key"]:
+                score += 48
+            if not score:
+                continue
+            if score > best_score:
+                best_score = score
+                best = {
+                    "from_tool": upstream,
+                    "to_tool": downstream,
+                    "output_config": output["key"],
+                    "input_config": input_binding["key"],
+                    "artifact_kind": output["kind"],
+                    "score": score,
+                }
+    return best
+
+
+def _flow_transition_score(upstream: str, downstream: str) -> int:
+    link = _best_flow_link(upstream, downstream)
+    score = int(link.get("score") or -20)
+    if upstream.rsplit(".", 1)[0] == downstream.rsplit(".", 1)[0]:
+        score += 18
+    return score
+
+
+def _select_semantic_tool_refs(
+    goal: str, catalog: frozenset[str], n_steps: int
+) -> list[str]:
+    """Choose the highest-scoring coherent path for ordered stage clauses."""
+    stages = _author_semantic_stages(goal, n_steps)
+    if not stages:
+        return []
+    candidates: list[list[tuple[int, str]]] = []
+    for stage in stages:
+        ranked = [
+            (_semantic_stage_score(stage, ref), ref)
+            for ref in catalog
+        ]
+        ranked = sorted((item for item in ranked if item[0] > 0), key=lambda item: (-item[0], item[1]))
+        if not ranked:
+            return []
+        candidates.append(ranked[:24])
+
+    paths: list[tuple[int, list[str]]] = [(score, [ref]) for score, ref in candidates[0]]
+    for stage_candidates in candidates[1:]:
+        next_paths: list[tuple[int, list[str]]] = []
+        for path_score, path in paths:
+            for stage_score, ref in stage_candidates:
+                if ref in path:
+                    continue
+                if not _best_flow_link(path[-1], ref):
+                    continue
+                score = path_score + stage_score + _flow_transition_score(path[-1], ref)
+                next_paths.append((score, [*path, ref]))
+        if not next_paths:
+            return []
+        next_paths.sort(key=lambda item: (-item[0], item[1]))
+        paths = next_paths[:96]
+    return paths[0][1] if paths else []
+
+
+def _workflow_flow_links(selected: list[str]) -> list[dict[str, Any]]:
+    return [
+        link
+        for upstream, downstream in zip(selected, selected[1:])
+        if (link := _best_flow_link(upstream, downstream))
+    ]
+
+
 def _author_placeholder_for(key: str) -> str:
     low = key.lower()
     if low == "bucket":
@@ -1967,8 +2180,10 @@ def _build_authored_spec(
     bucket: str,
     name: str,
     matched: set[str] | frozenset[str] | None = None,
+    flow_links: list[dict[str, Any]] | None = None,
 ) -> OrderedDict[str, Any]:
     matched_set = set(matched or ())
+    resolved_links = list(flow_links or [])
 
     config: OrderedDict[str, Any] = OrderedDict()
     config["bucket"] = str(bucket)
@@ -1976,6 +2191,11 @@ def _build_authored_spec(
     for key in config_keys:
         if key not in config:
             config[key] = _author_placeholder_for(key)
+    for link in resolved_links:
+        output_key = str(link.get("output_config") or "")
+        input_key = str(link.get("input_config") or "")
+        if output_key and input_key and output_key != input_key:
+            config[input_key] = "{{config." + output_key + "}}"
 
     taken: set[str] = set()
     state_names = [_state_name_for(ref, idx, taken) for idx, ref in enumerate(selected)]
@@ -1988,13 +2208,39 @@ def _build_authored_spec(
         # Steps that did not match a goal keyword are padding to reach the
         # requested step count — flag them so the operator replaces them rather
         # than mistaking an arbitrary catalog tool for an intended step.
-        if matched_set and ref not in matched_set:
+        if ref not in matched_set:
             entry_desc = f"[placeholder — no goal match; replace with the intended tool] {entry_desc}"
         state: OrderedDict[str, Any] = OrderedDict()
         state["description"] = _FoldedStr(entry_desc)
         if idx > 0:
             state["needs"] = [state_names[idx - 1]]
         state["toolRef"] = ref
+        incoming = next(
+            (link for link in resolved_links if link.get("to_tool") == ref), None
+        )
+        outgoing = next(
+            (link for link in resolved_links if link.get("from_tool") == ref), None
+        )
+        if incoming:
+            upstream_key = str(incoming.get("output_config") or "")
+            if upstream_key:
+                state["inputs"] = [
+                    OrderedDict({"uri": "{{config." + upstream_key + "}}"})
+                ]
+        output_key = str((outgoing or {}).get("output_config") or "")
+        if not output_key:
+            output_key = next(
+                (
+                    binding["key"]
+                    for binding in _tool_flow_bindings(ref)
+                    if binding["role"] == "output"
+                ),
+                "",
+            )
+        if output_key:
+            state["outputs"] = [
+                OrderedDict({"uri": "{{config." + output_key + "}}"})
+            ]
         if idx < len(selected) - 1:
             state["next"] = state_names[idx + 1]
         else:
@@ -2061,10 +2307,23 @@ def author_workflow_from_goal(
     # count when the operator did not pin an explicit step count.
     n_steps = _desired_step_count(goal)
     explicit_step_count = bool(_STEP_COUNT_RE.search(str(goal or "")))
+    semantic_stages = _author_semantic_stages(goal, n_steps)
     _, pre_matched = _select_author_tool_refs(goal, catalog, min(6, max(n_steps, 6)))
-    if (not explicit_step_count) and len(pre_matched) > n_steps:
+    if (not explicit_step_count) and not semantic_stages and len(pre_matched) > n_steps:
         n_steps = max(1, min(len(pre_matched), 6))
-    selected, matched = _select_author_tool_refs(goal, catalog, n_steps)
+    semantic_selected = _select_semantic_tool_refs(goal, catalog, n_steps)
+    if semantic_selected:
+        selected = list(semantic_selected)
+        matched = list(semantic_selected)
+        target_steps = max(n_steps, len(selected))
+        for ref in sorted(catalog):
+            if len(selected) >= target_steps:
+                break
+            if ref not in selected:
+                selected.append(ref)
+        n_steps = target_steps
+    else:
+        selected, matched = _select_author_tool_refs(goal, catalog, n_steps)
     if not selected:
         return {"ok": False, "runnable": False, "yaml": "", "error": "could not select any toolRef from the catalog", "tool_refs": []}
     resolved_name = (
@@ -2081,6 +2340,7 @@ def author_workflow_from_goal(
             f"(catalog match / 1–6 bound); some requested stages may be missing."
         )
     config_keys = _config_tokens_for(selected)
+    flow_links = _workflow_flow_links(selected)
 
     matched_set = set(matched)
     padded = [ref for ref in selected if ref not in matched_set]
@@ -2089,7 +2349,12 @@ def author_workflow_from_goal(
     yaml_text = ""
     for _attempt in range(max(1, int(max_repairs) + 1)):
         spec = _build_authored_spec(
-            selected, config_keys, bucket=bucket, name=resolved_name, matched=matched_set
+            selected,
+            config_keys,
+            bucket=bucket,
+            name=resolved_name,
+            matched=matched_set,
+            flow_links=flow_links,
         )
         yaml_text = _render_spec_yaml(spec)
         validation = validate_workflow_yaml_text(yaml_text, tool_refs=catalog)
@@ -2111,7 +2376,7 @@ def author_workflow_from_goal(
         "ok": runnable,
         "runnable": runnable,
         "template": "catalog-composed",
-        "yaml": yaml_text,
+        "yaml": yaml_text if runnable else "",
         "validation": validation,
         "plan": plan,
         "tool_refs": selected,
@@ -2121,6 +2386,7 @@ def author_workflow_from_goal(
         "name": resolved_name,
         "dropped_stages_note": dropped_note,
         "desired_steps": n_steps,
+        "data_flow": flow_links,
     }
 
 

@@ -72,6 +72,28 @@ def test_spans_flag_empty_tool_result_event():
     assert any(e["name"] == "empty_tool_result" for e in tool_span.events)
 
 
+def test_spans_treat_terminal_empty_as_successful_observation():
+    result = _action_result(
+        steps=[
+            {
+                "step": 1,
+                "phase": "call",
+                "tool": "insights_query",
+                "args": {},
+                "status": "empty",
+                "observation": {"count": 0, "records": []},
+                "terminal_observation": True,
+            }
+        ]
+    )
+    spans = T.spans_from_action_loop(result)
+    tool_span = next(s for s in spans if s.kind == T.KIND_TOOL)
+    assert tool_span.status == T.SPAN_OK
+    assert tool_span.attributes["terminal_observation"] is True
+    assert tool_span.events == [{"name": "empty_terminal_result"}]
+    assert T.analyze_traces([result])["silent_failures"] == []
+
+
 def test_spans_never_leak_secret_args():
     result = _action_result(
         steps=[{"step": 1, "phase": "call", "tool": "x", "args": {"api_key": "sekret"}, "status": "ok", "observation": {"a": 1}}]

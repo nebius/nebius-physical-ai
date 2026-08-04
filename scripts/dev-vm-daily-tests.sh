@@ -57,6 +57,8 @@
 #                          check (unset => that check is skipped with a warning)
 #   NPA_DAILY_ENABLE_GPU=1 run one rotating real-GPU workflow submit as part of
 #                          the e2e-daily tier (default off). gpu-daily always runs it.
+#   NPA_DAILY_AGENT_GPU_E2E=1 replace the rotating case with the agent-confirmed
+#                          self-hosted VLM GPU proof (requires a deployed agent).
 #   NPA_DAILY_GPU_MAX_WAIT_SECONDS / _POLL_SECONDS / NPA_DAILY_GPU_PYTEST_TIMEOUT
 #                          bound the GPU submit wait (defaults 2400 / 30 / 2600)
 #   NPA_DAILY_ALLOW_LIVE_GPU=1  required to run the full live-gpu suite tier
@@ -191,6 +193,19 @@ run_workflow_coverage_gate() {
   "$py" "$helper" check
 }
 
+run_agent_eval_gate() {
+  local py="$1"
+  log "e2e-daily [agent-eval]: defend the committed zero-token scorecard"
+  (
+    cd "${CI_REPO_DIR}/npa"
+    NPA_AGENT_CHAT_LIVE=0 "$py" -m pytest \
+      tests/agent_eval/test_agent_eval_scorecard.py \
+      tests/cli/test_agent_backend_render.py \
+      tests/guardrails/test_agent_no_hardcoded_data.py \
+      -q
+  )
+}
+
 run_workflow_plan_smoke() {
   local py="$1"
   log "e2e-daily [2/5]: validate + plan every npa.workflow spec (all >= 4-step workflows, no GPU)"
@@ -270,9 +285,14 @@ run_gpu_daily() {
   local day case_line spec driver
   day="$(date -u +%j)"
   day=$((10#$day))
-  case_line="$("$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" gpu-case --day-index "$day" 2>/dev/null)"
-  spec="$(printf '%s' "$case_line" | cut -f1 | tr -d '[:space:]')"
-  driver="$(printf '%s' "$case_line" | cut -f2 | tr -d '[:space:]')"
+  if [[ "${NPA_DAILY_AGENT_GPU_E2E:-0}" == "1" ]]; then
+    spec="vlm-eval-single.yaml"
+    driver="agent"
+  else
+    case_line="$("$py" "${CI_REPO_DIR}/npa/scripts/daily_workflow_e2e.py" gpu-case --day-index "$day" 2>/dev/null)"
+    spec="$(printf '%s' "$case_line" | cut -f1 | tr -d '[:space:]')"
+    driver="$(printf '%s' "$case_line" | cut -f2 | tr -d '[:space:]')"
+  fi
   if [[ -z "$spec" ]]; then
     log "GPU e2e: no real-GPU workflow twin available; skipping"
     return 0
@@ -297,7 +317,9 @@ run_gpu_daily() {
   # pytest exits 5.
   local node='tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal'
   local runtime_flag=0
-  if [[ "$driver" == "runtime" ]]; then
+  if [[ "$driver" == "agent" ]]; then
+    node='tests/e2e/test_agent_gpu_workflow_live_e2e.py::test_agent_confirmation_to_real_gpu_artifact_and_grounded_answer'
+  elif [[ "$driver" == "runtime" ]]; then
     node='tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_runtime_live_reaches_terminal'
     runtime_flag=1
   fi
@@ -307,6 +329,8 @@ run_gpu_daily() {
     NPA_INTEGRATION_E2E=1 \
     NPA_E2E_NPA_WORKFLOW_SUBMIT=1 \
     NPA_E2E_NPA_WORKFLOW_RUNTIME="$runtime_flag" \
+    NPA_AGENT_GPU_LIVE="${NPA_DAILY_AGENT_GPU_E2E:-0}" \
+    NPA_AGENT_LIVE="${NPA_DAILY_AGENT_GPU_E2E:-0}" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS="gpu,multi" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS="$spec" \
     NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS="${NPA_DAILY_GPU_MAX_WAIT_SECONDS:-2400}" \
@@ -320,6 +344,7 @@ run_gpu_daily() {
 run_e2e_daily() {
   local py="$1"
   log "Tier=e2e-daily: comprehensive >= 4-step workflow coverage + all-image check + rotating S3 e2e subset"
+  run_agent_eval_gate "$py"
   run_workflow_coverage_gate "$py"
   run_workflow_plan_smoke "$py"
   run_image_reachability "$py"

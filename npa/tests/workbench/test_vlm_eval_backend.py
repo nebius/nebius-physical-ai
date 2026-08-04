@@ -12,6 +12,7 @@ import time
 import uuid
 
 import numpy as np
+import httpx
 import pytest
 from PIL import Image
 from PIL import ImageDraw
@@ -193,6 +194,37 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
         "rationale": "mocked endpoint saw the expected frame sequence",
     }
     assert 0.0 <= structured["score"] <= 1.0
+
+
+def test_http_status_error_includes_bounded_server_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detail = '{"error":{"message":"The model `requested` does not exist."}}'
+
+    class FailingClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, url, **_kwargs):
+            request = httpx.Request("POST", url)
+            return httpx.Response(404, text=detail, request=request)
+
+    monkeypatch.setattr(vlm_eval.httpx, "Client", FailingClient)
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="requested.*does not exist"):
+        vlm_eval._post_with_readiness_retry(
+            url="http://127.0.0.1:8000/v1/chat/completions",
+            headers={},
+            request={"model": "requested"},
+            backend="self-hosted",
+            timeout_s=1.0,
+        )
 
 
 @pytest.mark.gpu
@@ -482,12 +514,13 @@ def _live_gpu_task_yaml(accelerator: str) -> str:
           python3 -m pip install "vllm>=0.8.5" "transformers>=4.49.0" qwen-vl-utils pillow
         run: |
           set -euo pipefail
-          pkill -f "vllm.entrypoints.openai.api_server" >/dev/null 2>&1 || true
+          if [[ -f vlm-server.pid ]]; then
+            kill "$(cat vlm-server.pid)" >/dev/null 2>&1 || true
+          fi
           rm -f vlm-server.log
-          nohup python3 -m vllm.entrypoints.openai.api_server \\
+          nohup vllm serve "${{VLM_MODEL}}" \\
             --host 0.0.0.0 \\
             --port {LIVE_GPU_PORT} \\
-            --model "${{VLM_MODEL}}" \\
             --served-model-name "${{VLM_MODEL}}" \\
             --trust-remote-code \\
             --max-model-len 4096 \\
@@ -496,7 +529,8 @@ def _live_gpu_task_yaml(accelerator: str) -> str:
             > vlm-server.log 2>&1 &
           echo "$!" > vlm-server.pid
           for _attempt in $(seq 1 240); do
-            if curl -fsS http://127.0.0.1:{LIVE_GPU_PORT}/health >/dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:{LIVE_GPU_PORT}/v1/models \\
+              | grep -Fq "${{VLM_MODEL}}"; then
               echo "NPA_VLM_EVAL_SERVER_READY model=${{VLM_MODEL}}"
               while true; do
                 if ! kill -0 "$(cat vlm-server.pid)" >/dev/null 2>&1; then

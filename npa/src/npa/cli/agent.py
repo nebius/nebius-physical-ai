@@ -36,6 +36,7 @@ from npa.clients.network import (
     remove_ingress_for_instance,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.agent_backend.shipping import render_shipped_backend_install
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -232,17 +233,6 @@ def _embedded_agent_chat_source() -> str:
     return raw
 
 
-def _embedded_agent_actions_source() -> str:
-    """Return agent_actions.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_actions.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
 def _embedded_agent_recordings_source() -> str:
     """Return agent_recordings.py source embedded into the remote agent backend."""
     import re
@@ -254,51 +244,9 @@ def _embedded_agent_recordings_source() -> str:
     return raw
 
 
-def _embedded_agent_sim2real_loop_source() -> str:
-    """Return agent_sim2real_loop.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_sim2real_loop.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_semantic_router_source() -> str:
-    """Return agent_semantic_router.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_semantic_router.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _shipped_agent_backend_module_source(name: str) -> str:
-    """Return the FULL source of a shipped agent_backend module.
-
-    Unlike the embed readers, shipped modules are uploaded to the VM as their own
-    importable files (Phase G), so the source is returned verbatim — docstring and
-    ``from __future__`` line intact — not inlined into the backend f-string.
-    """
-    path = Path(__file__).resolve().parents[1] / "agent_backend" / f"{name}.py"
-    return path.read_text(encoding="utf-8")
-
-
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
-_AGENT_ACTIONS_EMBED = "__NPA_AGENT_ACTIONS_EMBED__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
-_AGENT_SIM2REAL_LOOP_EMBED = "__NPA_AGENT_SIM2REAL_LOOP_EMBED__"
-_AGENT_SEMANTIC_ROUTER_EMBED = "__NPA_AGENT_SEMANTIC_ROUTER_EMBED__"
-# Phase G: shipped (uploaded + imported) rather than embedded.
-_AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
-# Blueprint Phases H/I: also shipped as importable files.
-_AGENT_RETRIEVAL_SHIP = "__NPA_AGENT_RETRIEVAL_SHIP__"
-_AGENT_TRACE_SHIP = "__NPA_AGENT_TRACE_SHIP__"
-_AGENT_FOXGLOVE_SHIP = "__NPA_AGENT_FOXGLOVE_SHIP__"
-_AGENT_FOXGLOVE_ROUTES_SHIP = "__NPA_AGENT_FOXGLOVE_ROUTES_SHIP__"
+_AGENT_BACKEND_SHIP = "__NPA_AGENT_BACKEND_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
@@ -1588,6 +1536,7 @@ def _stage_agent_npa_source(ssh: SSHClient) -> None:
                     f"sudo mkdir -p {shlex.quote(AGENT_SOURCE_ROOT)}",
                     f"sudo tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(AGENT_SOURCE_ROOT)}",
                     f"sudo chown -R root:root {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo chmod -R a+rX {shlex.quote(AGENT_SOURCE_ROOT)}",
                     f"rm -f {shlex.quote(remote_archive)}",
                 ]
             )
@@ -1821,15 +1770,8 @@ def _bootstrap_agent_stack(
     )
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
-    agent_actions_source = _embedded_agent_actions_source()
     agent_recordings_source = _embedded_agent_recordings_source()
-    agent_sim2real_loop_source = _embedded_agent_sim2real_loop_source()
-    agent_semantic_router_source = _embedded_agent_semantic_router_source()
-    agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
-    agent_retrieval_ship_source = _shipped_agent_backend_module_source("retrieval")
-    agent_trace_ship_source = _shipped_agent_backend_module_source("trace")
-    agent_foxglove_ship_source = _shipped_agent_backend_module_source("foxglove")
-    agent_foxglove_routes_ship_source = _shipped_agent_backend_module_source("foxglove_routes")
+    agent_backend_ship_script = render_shipped_backend_install()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
@@ -1959,23 +1901,7 @@ else
 fi
 sudo cp {AGENT_SOURCE_ROOT}/npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js /opt/npa-agent/foxglove/app/npa-foxglove-host.js
 sudo chmod -R a+rX /opt/npa-agent/foxglove
-sudo mkdir -p /opt/npa-agent/agent_backend
-printf '' | sudo tee /opt/npa-agent/agent_backend/__init__.py >/dev/null
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
-{_AGENT_MEMORY_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
-{_AGENT_RETRIEVAL_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/trace.py >/dev/null
-{_AGENT_TRACE_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove.py >/dev/null
-{_AGENT_FOXGLOVE_SHIP}
-PY
-cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove_routes.py >/dev/null
-{_AGENT_FOXGLOVE_ROUTES_SHIP}
-PY
+{_AGENT_BACKEND_SHIP}
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
 import os
@@ -3355,15 +3281,7 @@ def _list_chat_sessions(state: dict) -> list[dict]:
     _save_state(state)
     rows = []
     for session in sessions.values():
-        history = session.get("chat_history") if isinstance(session, dict) else []
-        rows.append({{
-            "id": str(session.get("id") or ""),
-            "title": str(session.get("title") or "New chat"),
-            "created_at": str(session.get("created_at") or ""),
-            "updated_at": str(session.get("updated_at") or ""),
-            "message_count": len(history) if isinstance(history, list) else 0,
-            "memory_uri": str(session.get("memory_uri") or ""),
-        }})
+        rows.append(public_chat_session_payload(session))
     return sorted(rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
 
@@ -4180,21 +4098,35 @@ def _chat_with_resilience(
 
 {_AGENT_PROVENANCE_EMBED}
 
-{_AGENT_CHAT_EMBED}
-
-{_AGENT_ACTIONS_EMBED}
-
-{_AGENT_RECORDINGS_EMBED}
-
-{_AGENT_SIM2REAL_LOOP_EMBED}
-
-{_AGENT_SEMANTIC_ROUTER_EMBED}
-
-# Phase G: run memory is a SHIPPED module (uploaded to /opt/npa-agent/agent_backend
-# and imported here) rather than string-substituted into this f-string.
 import sys as _npa_sys
 if "/opt/npa-agent" not in _npa_sys.path:
     _npa_sys.path.insert(0, "/opt/npa-agent")
+
+{_AGENT_CHAT_EMBED}
+
+from agent_backend.actions import (
+    DEFAULT_MAX_STEPS,
+    action_digest,
+    allowlist_specs,
+    confirmation_ok,
+    normalize_group_by,
+    normalize_threshold_op,
+    run_action_loop,
+    run_chat_action_loop,
+)
+
+{_AGENT_RECORDINGS_EMBED}
+
+from agent_backend.sim2real_loop import (
+    drive_sim2real_loop,
+    gate_with_config_threshold,
+    resolve_drive_config,
+)
+
+from agent_backend.semantic_router import classify_intent_semantic
+
+# Phase G: run memory is a SHIPPED module (uploaded to /opt/npa-agent/agent_backend
+# and imported here) rather than string-substituted into this f-string.
 from agent_backend.memory import RunMemory, JsonFileStore
 # Blueprint Phases H/I: retrieval + observability are also shipped modules.
 from agent_backend import retrieval as _retrieval
@@ -5292,7 +5224,7 @@ def _maybe_toolground_chat_reply(
         # (e.g. "npa yaml that uses cosmos"): compose from the LIVE catalog and
         # self-validate/plan — no hardcoded template. Fall back to the template
         # catalog for generic/simple requests or if composition is not runnable.
-        if intent == "create_workflow":
+        if intent == "create_workflow" and goal_requests_catalog_composition(user_text):
             from npa.cli.agent_workflow import author_workflow_from_goal
 
             authored = author_workflow_from_goal(user_text, tool_refs=frozenset(TOOL_REFS))
@@ -5612,12 +5544,7 @@ def chat(payload: dict):
             "apis_used": origin_apis,
             "skills_used": ["agent-visual-feedback"],
             "session_id": session["id"],
-            "session": {{
-                "id": session["id"],
-                "title": session["title"],
-                "memory_uri": session.get("memory_uri", ""),
-                "message_count": len(session.get("chat_history", [])),
-            }},
+            "session": public_chat_session_payload(session),
         }}
     # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
     if (not visual_turn) and re.search(
@@ -5656,12 +5583,7 @@ def chat(payload: dict):
             "apis_used": ["workflows/sim2real/submit"],
             "submit": submit,
             "session_id": session["id"],
-            "session": {{
-                "id": session["id"],
-                "title": session["title"],
-                "memory_uri": session.get("memory_uri", ""),
-                "message_count": len(session.get("chat_history", [])),
-            }},
+            "session": public_chat_session_payload(session),
         }}
     # Metadata-only Describe-this: grounded reply (never invent pixels). Vision
     # turns with an attached frame fall through to Token Factory.
@@ -5689,12 +5611,7 @@ def chat(payload: dict):
             "apis_used": ["sim-viz/status"],
             "skills_used": ["agent-visual-feedback"],
             "session_id": session["id"],
-            "session": {{
-                "id": session["id"],
-                "title": session["title"],
-                "memory_uri": session.get("memory_uri", ""),
-                "message_count": len(session.get("chat_history", [])),
-            }},
+            "session": public_chat_session_payload(session),
         }}
     # Never short-circuit framed Describe-this / vision turns through intent tools.
     tool_result = None if visual_turn else _agent_chat_with_tools(raw_messages=history, model=model)
@@ -5715,12 +5632,7 @@ def chat(payload: dict):
         state = _load_state()
         session = _save_chat_session(state, session, active=True)
         tool_result["session_id"] = session["id"]
-        tool_result["session"] = {{
-            "id": session["id"],
-            "title": session["title"],
-            "memory_uri": session.get("memory_uri", ""),
-            "message_count": len(session.get("chat_history", [])),
-        }}
+        tool_result["session"] = public_chat_session_payload(session)
         _save_state(state)
         return tool_result
     live_ctx = format_live_context_block(_load_state())
@@ -5806,12 +5718,7 @@ def chat(payload: dict):
                 "semantic_mode": sem_mode,
                 "apis_used": ["agent/act"],
                 "session_id": session["id"],
-                "session": {{
-                    "id": session["id"],
-                    "title": session["title"],
-                    "memory_uri": session.get("memory_uri", ""),
-                    "message_count": len(session.get("chat_history", [])),
-                }},
+                "session": public_chat_session_payload(session),
             }}
             if action_result.get("confirm_token"):
                 response["confirm_token"] = action_result["confirm_token"]
@@ -5842,12 +5749,7 @@ def chat(payload: dict):
                 "apis_used": [],
                 "apis_suggested": apis_for_intent(mapped) if mapped else [],
                 "session_id": session["id"],
-                "session": {{
-                    "id": session["id"],
-                    "title": session["title"],
-                    "memory_uri": session.get("memory_uri", ""),
-                    "message_count": len(session.get("chat_history", [])),
-                }},
+                "session": public_chat_session_payload(session),
             }}
     # Retrieval grounded-first fallthrough (Blueprint Phase H): after the regex
     # AND semantic routers miss, answer from the indexed docs/skills corpus with
@@ -5880,12 +5782,7 @@ def chat(payload: dict):
                 "citations": retrieved.get("citations") or [],
                 "apis_used": ["agent/retrieval/search"],
                 "session_id": session["id"],
-                "session": {{
-                    "id": session["id"],
-                    "title": session["title"],
-                    "memory_uri": session.get("memory_uri", ""),
-                    "message_count": len(session.get("chat_history", [])),
-                }},
+                "session": public_chat_session_payload(session),
             }}
     # Cost-tier routing: vision when an image is attached; otherwise escalate
     # Describe-this metadata-only turns to reasoning (not cheap caption fluff).
@@ -5993,12 +5890,7 @@ def chat(payload: dict):
         "input_budget_ok": budget_ok,
         "visual_kind": visual_kind if visual_turn else "",
         "session_id": session["id"],
-        "session": {{
-            "id": session["id"],
-            "title": session["title"],
-            "memory_uri": session.get("memory_uri", ""),
-            "message_count": len(session.get("chat_history", [])),
-        }},
+        "session": public_chat_session_payload(session),
         "skills_used": skill_names,
     }}
 
@@ -6065,7 +5957,13 @@ def _agent_act_tools():
             limit = int(limit)
         except (TypeError, ValueError):
             limit = 10
-        return _act_response_to_dict(artifacts_runs(prefix=str(args.get("prefix") or ""), limit=limit))
+        return _act_response_to_dict(
+            artifacts_runs(
+                prefix=str(args.get("prefix") or ""),
+                limit=limit,
+                q=str(args.get("q") or ""),
+            )
+        )
 
     def _tool_artifacts_run(args):
         run_id = str(args.get("run_id") or "").strip()
@@ -6131,6 +6029,10 @@ def _agent_act_tools():
             stage=str(args.get("stage") or ""),
             metric_name=str(args.get("metric_name") or ""),
             accelerator=str(args.get("accelerator") or ""),
+            metric_kind=str(args.get("metric_kind") or ""),
+            currency=str(args.get("currency") or ""),
+            cost_basis=str(args.get("cost_basis") or ""),
+            score_name=str(args.get("score_name") or ""),
             threshold_metric=str(args.get("threshold_metric") or ""),
             threshold_op=normalize_threshold_op(args.get("threshold_op")),
             threshold_value=threshold_value,
@@ -6214,6 +6116,17 @@ def _agent_act_tools():
         )
         return response.model_dump(mode="json")
 
+    def _tool_memory_explain_regression(args):
+        baseline_run = str(
+            args.get("baseline_run") or args.get("baseline") or args.get("run_a") or ""
+        ).strip()
+        candidate_run = str(
+            args.get("candidate_run") or args.get("candidate") or args.get("run_b") or ""
+        ).strip()
+        if not baseline_run or not candidate_run:
+            return {{"error": "baseline_run and candidate_run are required"}}
+        return _agent_run_memory().explain_regression_data(candidate_run, baseline_run)
+
     def _tool_workflow_author(args):
         goal = str(args.get("goal") or args.get("description") or args.get("prompt") or "").strip()
         if not goal:
@@ -6261,6 +6174,7 @@ def _agent_act_tools():
         "insights_compare": _tool_insights_compare,
         "insights_lineage": _tool_insights_lineage,
         "insights_dashboard": _tool_insights_dashboard,
+        "memory_explain_regression": _tool_memory_explain_regression,
         "workflow_author": _tool_workflow_author,
         "sim2real_submit": _tool_submit,
     }}
@@ -6280,9 +6194,9 @@ def agent_act(payload: dict):
     # Only consume (and clear) the pending gate when the operator actually
     # presents a token — an unrelated turn must not burn a pending confirmation.
     if confirm_token:
-        session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+        session_token, confirm_digest, pending = _consume_agent_confirm_token()
     else:
-        session_token, confirm_digest = "", ""
+        session_token, confirm_digest, pending = "", "", None
     try:
         max_steps = int(body.get("max_steps"))
     except (TypeError, ValueError):
@@ -6304,6 +6218,7 @@ def agent_act(payload: dict):
         confirm_token=confirm_token,
         session_token=session_token,
         confirm_digest=confirm_digest,
+        confirmed_action=pending,
         tier=tier,
         max_steps=max_steps,
         live_context=live_ctx,
@@ -6406,7 +6321,22 @@ def agent_sim2real_drive(payload: dict):
             mode = "policy_collapse"
         else:
             mode = "low_success"
-        return {{"failure_mode": mode, "signals": signals, "notes": "; ".join(signals.get("notes", []))}}
+        diagnosis = {{
+            "failure_mode": mode,
+            "signals": signals,
+            "notes": "; ".join(signals.get("notes", [])),
+        }}
+        baseline_run = str(cfg.get("baseline_run_id") or cfg.get("baseline_run") or "").strip()
+        current_run = str(
+            (run_status or {{}}).get("run_id") if isinstance(run_status, dict) else ""
+        ).strip()
+        if baseline_run and current_run:
+            memory_evidence = _agent_run_memory().explain_regression_data(
+                current_run, baseline_run
+            )
+            if memory_evidence.get("ok"):
+                diagnosis["run_memory"] = memory_evidence
+        return diagnosis
 
     # Honor the operator-configured threshold when the run report omits one.
     _gate = gate_with_config_threshold(_sim2real_gate_metrics, cfg.get("threshold"))
@@ -6486,6 +6416,10 @@ def agent_memory_run(run_id: str):
 @app.get("/agent/memory/compare")
 def agent_memory_compare(run_a: str, run_b: str):
     return _agent_run_memory().compare_runs(run_a, run_b)
+
+@app.get("/agent/memory/explain")
+def agent_memory_explain(baseline_run: str, candidate_run: str):
+    return _agent_run_memory().explain_regression_data(candidate_run, baseline_run)
 
 # ── Blueprint Phase H: retrieval / grounding ─────────────────────────────────
 # LanceDB-backed vector store + Token Factory embeddings + provider-agnostic
@@ -8617,15 +8551,8 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
-        .replace(_AGENT_ACTIONS_EMBED, agent_actions_source)
         .replace(_AGENT_RECORDINGS_EMBED, agent_recordings_source)
-        .replace(_AGENT_SIM2REAL_LOOP_EMBED, agent_sim2real_loop_source)
-        .replace(_AGENT_SEMANTIC_ROUTER_EMBED, agent_semantic_router_source)
-        .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
-        .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)
-        .replace(_AGENT_TRACE_SHIP, agent_trace_ship_source)
-        .replace(_AGENT_FOXGLOVE_SHIP, agent_foxglove_ship_source)
-        .replace(_AGENT_FOXGLOVE_ROUTES_SHIP, agent_foxglove_routes_ship_source)
+        .replace(_AGENT_BACKEND_SHIP, agent_backend_ship_script)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)

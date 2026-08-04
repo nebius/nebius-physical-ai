@@ -1,0 +1,105 @@
+{
+  "results": [
+    {
+      "detail": "intent=sim2real_status",
+      "id": "grounded_status",
+      "kind": "grounded",
+      "steps": 1,
+      "success": true,
+      "tokens": 0
+    },
+    {
+      "detail": "intent=tools_catalog",
+      "id": "grounded_tools_catalog",
+      "kind": "grounded",
+      "steps": 1,
+      "success": true,
+      "tokens": 0
+    },
+    {
+      "detail": "intent=cosmos_capabilities",
+      "id": "grounded_cosmos_caps",
+      "kind": "grounded",
+      "steps": 1,
+      "success": true,
+      "tokens": 0
+    },
+    {
+      "detail": "template=vlm-rl-loop",
+      "id": "workflow_vlm_rl_draft",
+      "kind": "workflow",
+      "steps": 2,
+      "success": true,
+      "tokens": 0
+    },
+    {
+      "detail": "",
+      "id": "action_status_then_answer",
+      "kind": "action_loop",
+      "steps": 1,
+      "success": true,
+      "tokens": 12
+    },
+    {
+      "detail": "",
+      "id": "action_gpu_needs_confirmation",
+      "kind": "action_loop",
+      "steps": 1,
+      "success": true,
+      "tokens": 6
+    },
+    {
+      "detail": "",
+      "id": "sim2real_promote",
+      "kind": "sim2real_loop",
+      "steps": 1,
+      "success": true,
+      "tokens": 0
+    },
+    {
+      "detail": "",
+      "id": "sim2real_needs_confirmation",
+      "kind": "sim2real_loop",
+      "steps": 1,
+      "success": true,
+      "tokens": 0
+    },
+    {
+      "detail": "keyword",
+      "id": "semantic_watch_paraphrase",
+      "kind": "semantic",
+      "steps": 1,
+      "success": true,
+      "tokens": 0
+    },
+    {
+      "detail": "count=2",
+      "id": "retrieval_genesis_doc",
+      "kind": "retrieval",
+      "steps": 1,
+      "success": true,
+      "tokens": 0
+    }
+  ],
+  "scorecard": {
+    "avg_steps": 1.1,
+    "avg_tokens": 1.8,
+    "passed": 10,
+    "scenario_count": 10,
+    "scenario_ids": [
+      "grounded_status",
+      "grounded_tools_catalog",
+      "grounded_cosmos_caps",
+      "workflow_vlm_rl_draft",
+      "action_status_then_answer",
+      "action_gpu_needs_confirmation",
+      "sim2real_promote",
+      "sim2real_needs_confirmation",
+      "semantic_watch_paraphrase",
+      "retrieval_genesis_doc"
+    ],
+    "scenario_sha256": "a9d3f7ee6b2763d21e855763192486409dd9a81c42ca67af6698966a00103e55",
+    "success_rate": 1.0,
+    "total": 10
+  }
+}
