@@ -37,3 +37,27 @@ def test_promote_stub_without_real_checkpoint(tmp_path):
     cand = _candidate(tmp_path)
     assert cand["deployable_policy"] is False
     assert cand["policy_artifact_kind"] == "reference_metadata"
+
+
+def test_below_threshold_real_checkpoint_remains_deployable_candidate(tmp_path):
+    report = {
+        "success_rate": 0.125,
+        "policy_checkpoint": "s3://b/run/byo-trainer/model_latest.pt",
+    }
+
+    decision = threshold_decision(
+        _cfg(tmp_path),
+        local_dir=tmp_path,
+        heldout_report=report,
+        outer_iteration=1,
+    )
+
+    assert decision["decision"] == "loop_back_to_inner_loop"
+    candidate = _candidate(tmp_path)
+    assert candidate["deployable_policy"] is True
+    assert candidate["policy_artifact_kind"] == "isaac_rsl_rl_checkpoint"
+    assert candidate["policy_checkpoint_uri"].endswith("model_latest.pt")
+    assert candidate["threshold_met"] is False
+    assert candidate["promotion_decision"] == "loop_back_to_inner_loop"
+    assert candidate["candidate_status"] == "below_threshold_deployable_candidate"
+    assert candidate["promoted_at"] == ""

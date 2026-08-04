@@ -31,9 +31,9 @@ graph runtime or demo toolRefs.
 | 13 | retrigger record | `stage_13_retrigger/retrigger.json` |
 | 14 | operator visualization | `reports/sim2real.rrd` and `.mcap` |
 
-Stage 12 is deliberately an external-validation record. It records the promoted
-checkpoint handoff; it does not claim that a robot was operated or that another
-GPU workload ran.
+Stage 12 is deliberately an external-validation record. It records the candidate
+checkpoint handoff and its promotion status; it does not claim that a robot was
+operated or that another GPU workload ran.
 
 ## Preflight
 
@@ -176,6 +176,13 @@ when final distance is below `NPA_BYO_ISAAC_SUCCESS_DIST_M`; Stage 11 promotes
 only when the fraction of successful held-out episodes reaches
 `SUCCESS_THRESHOLD`.
 
+Candidate packaging is distinct from promotion. When PPO produced a real
+checkpoint, `checkpoints/candidate/candidate.json` remains deployable and names
+those exact weights even if Stage 11 records `loop_back_to_inner_loop`. In that
+case `threshold_met` is false and `candidate_status` is
+`below_threshold_deployable_candidate`; operators must not present it as a
+promoted policy.
+
 Fixed-count evidence run:
 
 ```bash
@@ -272,7 +279,7 @@ The run root is `s3://<bucket>/sim2real-b/<run-id>/`. Key objects are:
 | `reports/sim2real.mcap` | aligned Foxglove/Lichtblick cameras, point cloud, signals, provenance |
 | `eval/heldout/report.json` | per-env result and exact loaded checkpoint SHA/size |
 | `outer_loop/decision.json` | aggregate threshold and promotion decision |
-| `checkpoints/candidate/candidate.json` | deployable candidate metadata and authenticated access instructions |
+| `checkpoints/candidate/candidate.json` | deployable candidate metadata, promotion status, and authenticated access instructions |
 | `byo-trainer/**/model_latest.pt` | real learned policy weights |
 
 Download and inspect without presigned URLs:
@@ -283,7 +290,7 @@ aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/reports/sim2real-report.json" 
 aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/eval/heldout/report.json" - | \
   jq '{success_rate, policy_inference_provenance, capture, camera_metadata}'
 aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - | \
-  jq '{deployable_policy, policy_checkpoint_uri, policy_checkpoint_sha256, policy_checkpoint_size_bytes}'
+  jq '{deployable_policy, candidate_status, threshold_met, promotion_decision, policy_checkpoint_uri, policy_checkpoint_sha256, policy_checkpoint_size_bytes}'
 aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/reports/sim2real.rrd" /tmp/sim2real.rrd
 aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/reports/sim2real.mcap" /tmp/sim2real.mcap
 ```
