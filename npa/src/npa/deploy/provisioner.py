@@ -491,6 +491,23 @@ def state_list(tf_dir: str | Path | None = None) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def state_resource_id(address: str, tf_dir: str | Path | None = None) -> str:
+    """Return the id of one Terraform state resource without dumping full state.
+
+    ``terraform show -json`` also contains sensitive variables for this stack.
+    Query only the NPA-owned network resource whose ID is needed for the narrow
+    default-security-group teardown recovery.
+    """
+
+    tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
+    result = _run(["state", "show", "-no-color", address], cwd=tf_dir, capture=True)
+    for line in result.stdout.splitlines():
+        match = re.match(r'^\s*id\s*=\s*"([^"\r\n]+)"\s*$', line)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
 def outputs(tf_dir: str | Path | None = None) -> dict[str, Any]:
     """Run terraform output -json, parse and return dict of {key: value}."""
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR

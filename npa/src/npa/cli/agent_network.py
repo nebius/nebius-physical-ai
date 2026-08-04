@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import socket
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
@@ -32,6 +33,80 @@ _DISABLED_VALUES = frozenset({"0", "off", "false", "no", "none", "skip"})
 _TIMEOUT_SECONDS = 3.0
 
 Connector = Callable[[tuple[str, int], float], object]
+
+_AGENT_NETWORK_STATE_ADDRESSES = (
+    "nebius_vpc_v1_network.workbench",
+    # Compatibility with state written before the resource rename/moved block.
+    "nebius_vpc_v1_network.lerobot",
+)
+_AGENT_INSTANCE_DESTROY_TARGETS = (
+    "null_resource.wait_for_cloud_init",
+    "nebius_compute_v1_instance.workbench",
+)
+
+
+def destroy_with_default_security_group_recovery(
+    *,
+    run_destroy: Callable[[], None],
+    cleanup_ingress: Callable[[], None],
+    tf_dir: str | Path | None,
+    tf_vars: dict[str, str],
+    cleanup_action: str,
+    on_status: Callable[[str], None],
+) -> None:
+    """Run Terraform destroy with the provider-supported default-SG recovery."""
+
+    from npa.clients.network import (
+        NetworkCleanupError,
+        is_default_security_group_delete_refusal,
+        recover_default_security_group_delete,
+    )
+    from npa.deploy import provisioner
+    from npa.deploy.provisioner import ProvisionerError
+
+    try:
+        run_destroy()
+    except ProvisionerError as first_exc:
+        network_id = ""
+        if is_default_security_group_delete_refusal(str(first_exc)):
+            try:
+                managed = set(provisioner.state_list(tf_dir))
+                for address in _AGENT_NETWORK_STATE_ADDRESSES:
+                    if address in managed:
+                        network_id = provisioner.state_resource_id(
+                            address, tf_dir=tf_dir
+                        )
+                        break
+            except ProvisionerError:
+                network_id = ""
+        try:
+            recovered = recover_default_security_group_delete(
+                error=str(first_exc),
+                parent_network_id=network_id,
+                parent_network_owned=bool(network_id),
+                cleanup_action=cleanup_action,
+                on_status=on_status,
+            )
+        except NetworkCleanupError as exc:
+            raise ProvisionerError(str(exc)) from None
+        if recovered:
+            # Reconcile Terraform state after the parent deletion. Missing child
+            # SG/network resources are idempotent provider reads.
+            run_destroy()
+            return
+        cleanup_ingress()
+        try:
+            managed = set(provisioner.state_list(tf_dir))
+            targets = [
+                target
+                for target in _AGENT_INSTANCE_DESTROY_TARGETS
+                if target in managed
+            ]
+            if targets:
+                provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars, targets=targets)
+            run_destroy()
+        except ProvisionerError:
+            raise first_exc from None
 
 
 def _probe_setting() -> str:

@@ -84,9 +84,10 @@ _lerobot_delete_named_access_key() {
   existing_key_by_name="$(
     nebius iam v2 access-key list \
       --parent-id "${NEBIUS_PROJECT_ID}" \
-      --format json 2>/dev/null \
-      | jq -r '.items[]? | select(.metadata.name == "lerobot-access-key") | .metadata.id' \
-      | head -1
+      --all \
+      --format 'jsonpath={range .items[*]}{.metadata.id}{"\t"}{.metadata.name}{"\n"}{end}' \
+      2>/dev/null \
+      | awk -F '\t' '$2 == "lerobot-access-key" {print $1; exit}'
   )" || true
 
   if [ -n "${existing_key_by_name}" ]; then
@@ -340,22 +341,25 @@ _lerobot_environment_setup() {
   printf "Setting up access key for S3...\n"
 
   local _create_new_key=true
-  local _existing_key_json
+  local _existing_key_fields
 
-  # Look for an existing access key for this service account.
-  _existing_key_json="$(
+  # Look for an existing access key for this service account. Access-key list
+  # JSON is secret-bearing, so select only identifiers/status inside the CLI;
+  # never pipe or retain the raw object in this shell.
+  _existing_key_fields="$(
     nebius iam v2 access-key list \
       --parent-id "${NEBIUS_PROJECT_ID}" \
-      --format json 2>/dev/null \
-      | jq -r --arg SAID "${NEBIUS_SA_ID}" \
-          '[.items[]? | select(((.spec.account.service_account.id // .spec.account.service_account_id // "") == $SAID) and ((.status.state // "") == "ACTIVE"))][0] // empty'
+      --all \
+      --format 'jsonpath={range .items[*]}{.metadata.id}{"\t"}{.metadata.name}{"\t"}{.spec.account.service_account.id}{"\t"}{.spec.account.service_account_id}{"\t"}{.status.state}{"\t"}{.spec.expires_at}{"\n"}{end}' \
+      2>/dev/null \
+      | awk -F '\t' -v SAID="${NEBIUS_SA_ID}" \
+          '{for (i = 1; i <= 6; i++) if ($i == "<no value>") $i = ""}
+           ($3 == SAID || $4 == SAID) && $5 == "ACTIVE" {print $1 "\t" $6; exit}'
   )" || true
 
-  if [ -n "${_existing_key_json}" ]; then
-    NEBIUS_SA_ACCESS_KEY_ID="$(printf '%s' "${_existing_key_json}" | jq -r '.metadata.id // empty')"
-    AWS_SECRET_ACCESS_KEY="$(printf '%s' "${_existing_key_json}" | jq -r '.status.secret // empty')"
+  if [ -n "${_existing_key_fields}" ]; then
     local _expires_at
-    _expires_at="$(printf '%s' "${_existing_key_json}" | jq -r '.spec.expires_at // empty')"
+    IFS=$'\t' read -r NEBIUS_SA_ACCESS_KEY_ID _expires_at <<< "${_existing_key_fields}"
 
     if [ -n "${_expires_at}" ]; then
       # Check if key is still valid (compare with current UTC time).

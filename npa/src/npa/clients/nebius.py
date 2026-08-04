@@ -141,7 +141,7 @@ def _run(args: list[str], *, check: bool = True) -> str:
         env=nebius_cli_env(),
     )
     if check and result.returncode != 0:
-        stderr = result.stderr.strip()
+        stderr = redact_nebius_output(result.stderr.strip())
         raise NebiusError(
             f"nebius {' '.join(args[:3])} failed (exit {result.returncode}):\n{stderr}"
         )
@@ -153,7 +153,111 @@ def _run_json(args: list[str], *, check: bool = True) -> dict[str, Any]:
     raw = _run(args + ["--format", "json"], check=check)
     if not raw:
         return {}
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # JSONDecodeError retains the complete source document on ``exc.doc``.
+        # Never let malformed secret-bearing responses (for example get-secret)
+        # escape through an exception, traceback, logger, or serialized error.
+        raise NebiusError(
+            f"nebius {' '.join(args[:3])} returned invalid JSON"
+        ) from None
+
+
+_SENSITIVE_FIELD_NAMES = frozenset(
+    {
+        "accesstoken",
+        "apikey",
+        "authorization",
+        "awssecretaccesskey",
+        "credential",
+        "credentials",
+        "iamtoken",
+        "password",
+        "passwd",
+        "privatekey",
+        "secret",
+        "secretaccesskey",
+        "secretkey",
+        "token",
+    }
+)
+_SENSITIVE_FIELD_MARKERS = (
+    "credential",
+    "password",
+    "passwd",
+    "privatekey",
+    "secret",
+)
+_SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"""(?ix)
+    (?P<prefix>
+      [\"']?
+      (?:access[-_]?token|api[-_]?key|aws[-_]?secret[-_]?access[-_]?key|
+         authorization|credential(?:s)?|iam[-_]?token|pass(?:word|wd)|
+         private[-_]?key|secret(?:[-_]?access)?[-_]?key|secret|token)
+      (?:[-_]?(?:data|material|value))?
+      [\"']?\s*[:=]\s*
+    )
+    (?P<value>
+      \"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,}\]]+
+    )
+    """
+)
+_AUTHORIZATION_ASSIGNMENT_RE = re.compile(
+    r"(?im)(?P<prefix>[\"']?authorization[\"']?\s*[:=]\s*)[^,}\]\r\n]+"
+)
+_PRIVATE_KEY_BLOCK_RE = re.compile(
+    r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _sensitive_field_name(value: object) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", str(value).lower())
+    return (
+        normalized in _SENSITIVE_FIELD_NAMES
+        or any(marker in normalized for marker in _SENSITIVE_FIELD_MARKERS)
+        or normalized.endswith("token")
+    )
+
+
+def _redact_sensitive_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "<redacted>"
+            if _sensitive_field_name(key)
+            else _redact_sensitive_data(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_data(item) for item in value]
+    return value
+
+
+def redact_nebius_output(value: str) -> str:
+    """Redact plausible credential fields from Nebius diagnostics.
+
+    Access-key list output is prevented at the source by a JSONPath allowlist
+    below. This is the second line of defence for CLI failures and other provider
+    diagnostics: nested JSON is redacted structurally, while ordinary
+    ``key=value`` / ``key: value`` messages use a conservative field-name match.
+    """
+
+    text = str(value or "")
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        redacted = _PRIVATE_KEY_BLOCK_RE.sub("<redacted>", text)
+        redacted = _AUTHORIZATION_ASSIGNMENT_RE.sub(
+            lambda match: f"{match.group('prefix')}<redacted>", redacted
+        )
+        return _SENSITIVE_ASSIGNMENT_RE.sub(
+            lambda match: f"{match.group('prefix')}<redacted>", redacted
+        )
+    return json.dumps(_redact_sensitive_data(parsed), sort_keys=True)
 
 
 # ── IAM token ────────────────────────────────────────────────────────────
@@ -792,6 +896,80 @@ def ensure_editors_membership(tenant_id: str, sa_id: str) -> None:
 # ── Access keys ──────────────────────────────────────────────────────────
 
 
+# Nebius CLI list JSON currently contains secret-bearing status fields. Request
+# only the identifiers/metadata NPA needs before the CLI writes anything to its
+# stdout pipe. The CLI uses kubectl's JSONPath implementation, whose range/text
+# syntax keeps one record per line without serializing the rest of each item.
+_ACCESS_KEY_LIST_JSONPATH = (
+    "jsonpath={range .items[*]}"
+    '{.metadata.id}{"\\t"}'
+    '{.metadata.name}{"\\t"}'
+    '{.spec.account.service_account.id}{"\\t"}'
+    '{.spec.account.service_account_id}{"\\t"}'
+    '{.status.state}{"\\t"}'
+    '{.spec.expires_at}{"\\n"}'
+    "{end}"
+)
+
+
+def _safe_access_key_field(value: str) -> str:
+    field = str(value or "").strip()
+    return "" if field == "<no value>" else field
+
+
+def _list_access_key_metadata(project_id: str) -> list[dict[str, Any]]:
+    """Return a strict allowlist of access-key metadata from the Nebius CLI.
+
+    Do not replace this with ``_run_json(... access-key list ...)``: the upstream
+    list response can include the access-key secret. JSONPath field selection is
+    performed inside the CLI, so the raw secret-bearing object never reaches NPA
+    stdout capture, parsing, exceptions, logs, or machine-readable state.
+    """
+
+    if not project_id:
+        return []
+    output = _run(
+        [
+            "iam",
+            "v2",
+            "access-key",
+            "list",
+            "--parent-id",
+            project_id,
+            "--all",
+            "--format",
+            _ACCESS_KEY_LIST_JSONPATH,
+        ]
+    )
+    items: list[dict[str, Any]] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        if len(fields) != 6:
+            raise NebiusError(
+                "Nebius returned malformed allowlisted access-key metadata; "
+                "the unparsed response was discarded"
+            )
+        key_id, name, nested_sa_id, direct_sa_id, state, expires_at = (
+            _safe_access_key_field(field) for field in fields
+        )
+        items.append(
+            {
+                "metadata": {"id": key_id, "name": name},
+                "spec": {
+                    "account": {
+                        "service_account": {"id": nested_sa_id},
+                        "service_account_id": direct_sa_id,
+                    },
+                    "expires_at": expires_at,
+                },
+                "status": {"state": state},
+            }
+        )
+    return items
+
+
 def _find_active_access_key(
     project_id: str,
     sa_id: str,
@@ -799,11 +977,7 @@ def _find_active_access_key(
     key_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Return the first ACTIVE access key for the given service account, or None."""
-    data = _run_json([
-        "iam", "v2", "access-key", "list",
-        "--parent-id", project_id,
-    ])
-    for item in data.get("items", []):
+    for item in _list_access_key_metadata(project_id):
         spec = item.get("spec", {})
         account = spec.get("account", {})
         # The SA ID can live under different JSON paths depending on API version.
@@ -1225,13 +1399,13 @@ def list_access_keys_for_service_account(
     if not project_id or not sa_id:
         return []
     try:
-        data = _run_json(["iam", "v2", "access-key", "list", "--parent-id", project_id])
+        items = _list_access_key_metadata(project_id)
     except NebiusError:
         if strict:
             raise
         return []
     keys: list[dict[str, str]] = []
-    for item in data.get("items", []):
+    for item in items:
         account = (item.get("spec", {}) or {}).get("account", {}) or {}
         item_sa_id = (
             (account.get("service_account", {}) or {}).get("id", "")

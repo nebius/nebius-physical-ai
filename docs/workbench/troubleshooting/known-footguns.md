@@ -216,6 +216,59 @@ and agent bootstrap cannot replace the owned storage identity with `npa-agent`.
 
 Category for follow-up: platform.
 
+## Raw Access-Key List JSON Can Disclose The Secret
+
+Symptom: ordinary `nebius iam v2 access-key list --format json` output contains
+an access-key secret that an operator expected only the explicit secret endpoint
+to return. Piping that object through `jq` does not undo the disclosure: the raw
+response has already crossed the process pipe and may reach tracing, debug, or
+error capture.
+
+Ownership boundary: this response shape is behavior of the external Nebius CLI
+and API, not an NPA implementation. NPA does not patch or claim to fix that
+binary. Every NPA-owned inventory/cleanup path instead asks the CLI to select
+only IDs, names, service-account references, state, and expiry with JSONPath
+before stdout is written. Provider diagnostics are defensively redacted as a
+second line of protection.
+
+For a human-readable inventory, use the CLI's supported output field selection
+and do not enable debug output:
+
+```bash
+nebius iam v2 access-key list --parent-id <project-id> --all \
+  --format 'jsonpath={range .items[*]}{.metadata.id}{"\t"}{.metadata.name}{"\t"}{.status.state}{"\n"}{end}'
+```
+
+This deliberately cannot recover a secret. If a workload no longer has the
+secret saved through its creation flow, rotate/create a key rather than listing
+raw JSON. See the Nebius CLI's
+[JSONPath output documentation](https://docs.nebius.com/cli/jsonpath-output).
+
+Category for follow-up: upstream CLI + platform mitigation.
+
+## A Default Security Group Is Deleted With Its Owned Parent Network
+
+Symptom: Nebius rejects direct deletion of a network's default security group.
+Retrying `nebius vpc security-group delete` cannot make that lifecycle valid;
+Nebius documents that only non-default security groups are directly deletable.
+
+Mitigation: use the existing owner-level cleanup action. `npa agent destroy
+--project <alias> --name <name> --yes` and `npa cluster down --force` tear down
+the complete NPA-owned network. If agent Terraform encounters the provider's
+specific default-group refusal, it resolves the parent network only from that
+stack's Terraform state, deletes the proven NPA-owned parent, and reconciles the
+already-absent child resources. An absent network/security group is safe to
+retry.
+
+For an existing subnet, reused network, shared network, or any stack without
+Terraform ownership proof, NPA does not broaden deletion. It preserves the
+network and explains that only the network owner may remove the parent network;
+unrelated permission, dependency, and non-default security-group failures remain
+ordinary failures. See Nebius'
+[security-group deletion rules](https://docs.nebius.com/vpc/security-groups/manage#deleting-security-groups).
+
+Category for follow-up: platform.
+
 ## Literal AWS Endpoint In SkyPilot YAML
 
 Symptom: S3 uploads fail and logs show the literal string `${AWS_ENDPOINT_URL}`

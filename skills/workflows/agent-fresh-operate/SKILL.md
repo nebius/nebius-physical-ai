@@ -125,8 +125,12 @@ Do not block a smoke deploy on `verify-live` UI wiring markers alone.
   (otherwise TF backend keys drift mid-destroy).
 - **502 / SyntaxError on chat.** Re-bootstrap; check embedded `\n` escaping in
   bootstrap `backend.py` template.
-- **Ingress rules.** Stale `allow-npa-*` rules can block security-group delete;
-  destroy path removes npa-managed ingress first.
+- **Ingress rules and default SGs.** Stale `allow-npa-*` rules can block a
+  non-default security-group delete, so destroy removes NPA-managed ingress
+  first. Nebius default security groups cannot be deleted directly; if the
+  provider surfaces that specific refusal, destroy deletes the parent only when
+  this agent's Terraform state proves the whole network is NPA-owned. A
+  reused/shared/unproven network is preserved with an ownership explanation.
 - **Cloud agent → dev VM.** Sync branch (`git pull` or tar/scp), confirm
   `npa agent --help` lists `fresh-setup`, then run live loop on dev VM.
 

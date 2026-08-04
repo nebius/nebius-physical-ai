@@ -90,6 +90,42 @@ def test_prepare_working_dir_copies_tf_files_and_writes_backend(
     assert 's3 = "https://storage"' in backend
 
 
+def test_state_resource_id_reads_only_the_named_network_resource(
+    mocker, tmp_path
+) -> None:
+    run = mocker.patch(
+        "npa.deploy.provisioner._run",
+        return_value=subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '# nebius_vpc_v1_network.workbench:\n'
+                'resource "nebius_vpc_v1_network" "workbench" {\n'
+                '    id = "vpcnetwork-owned"\n'
+                '}\n'
+            ),
+            stderr="",
+        ),
+    )
+
+    assert (
+        provisioner.state_resource_id(
+            "nebius_vpc_v1_network.workbench", tf_dir=tmp_path
+        )
+        == "vpcnetwork-owned"
+    )
+    run.assert_called_once_with(
+        [
+            "state",
+            "show",
+            "-no-color",
+            "nebius_vpc_v1_network.workbench",
+        ],
+        cwd=tmp_path,
+        capture=True,
+    )
+
+
 def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
     assert "\t" not in template

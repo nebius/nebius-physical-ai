@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from typer import Exit
@@ -3042,6 +3043,154 @@ def test_destroy_terraform_no_state_uses_orphan_reclaim(monkeypatch) -> None:
     agent_module._destroy_agent_terraform("p", "n", record=None)
 
     assert calls == ["ingress", "orphan"]
+
+
+def _stub_owned_agent_destroy(monkeypatch, tmp_path):
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda p, n, r: {
+            "nebius_region": "eu-north1",
+            "instance_name": f"agent-{p}-{n}",
+            "nebius_project_id": "project-x",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(
+            bucket="b", access_key="k", secret_key="s", endpoint="e"
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "_agent_terraform_state_exists", lambda _p, _n: True
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner, "prepare_working_dir", lambda *a, **k: tmp_path
+    )
+    monkeypatch.setattr(agent_module.provisioner, "init", lambda *a, **k: None)
+    return agent_module
+
+
+def test_agent_destroy_recovers_default_sg_by_deleting_owned_parent_network(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    destroys: list[dict] = []
+
+    def destroy(**kwargs):
+        destroys.append(kwargs)
+        if len(destroys) == 1:
+            raise agent_module.ProvisionerError(
+                "rpc error: FailedPrecondition: cannot delete default security group"
+            )
+
+    monkeypatch.setattr(agent_module.provisioner, "destroy", destroy)
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "state_list",
+        lambda _tf_dir: ["nebius_vpc_v1_network.workbench"],
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "state_resource_id",
+        lambda address, **kwargs: "vpcnetwork-owned",
+    )
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
+
+    assert len(destroys) == 2
+    network_delete.assert_called_once_with(
+        ["vpc", "network", "delete", "--id", "vpcnetwork-owned"]
+    )
+
+
+def test_agent_destroy_preserves_unowned_network_on_default_sg_refusal(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "destroy",
+        lambda **kwargs: (_ for _ in ()).throw(
+            agent_module.ProvisionerError(
+                "rpc error: FailedPrecondition: cannot delete default security group"
+            )
+        ),
+    )
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _tf_dir: [])
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    with pytest.raises(agent_module.ProvisionerError) as caught:
+        agent_module._destroy_agent_terraform(
+            "prod", "agent", record={"instance_id": "i"}
+        )
+
+    assert "reused/shared network" in str(caught.value)
+    assert "npa agent destroy" in str(caught.value)
+    network_delete.assert_not_called()
+
+
+def test_agent_destroy_does_not_mask_genuine_nondefault_sg_failure(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    failures = iter(
+        [
+            agent_module.ProvisionerError(
+                "FailedPrecondition: non-default security group is still in use"
+            ),
+            agent_module.ProvisionerError("second destroy also failed"),
+        ]
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "destroy",
+        lambda **kwargs: (_ for _ in ()).throw(next(failures)),
+    )
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _tf_dir: [])
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    with pytest.raises(agent_module.ProvisionerError) as caught:
+        agent_module._destroy_agent_terraform(
+            "prod", "agent", record={"instance_id": "i"}
+        )
+
+    assert "non-default security group is still in use" in str(caught.value)
+    network_delete.assert_not_called()
+
+
+def test_agent_destroy_retries_an_already_absent_security_group(
+    monkeypatch, tmp_path
+) -> None:
+    agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
+    destroys = 0
+
+    def destroy(**kwargs):
+        nonlocal destroys
+        destroys += 1
+        if destroys == 1:
+            raise agent_module.ProvisionerError("NotFound: security group is absent")
+
+    monkeypatch.setattr(agent_module.provisioner, "destroy", destroy)
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _tf_dir: [])
+    network_delete = Mock()
+    monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
+
+    agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
+
+    assert destroys == 2
+    network_delete.assert_not_called()
 
 
 def test_agent_project_option_defaults_are_consistent() -> None:

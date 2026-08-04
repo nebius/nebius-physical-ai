@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -627,24 +628,22 @@ def test_nebius_bootstrap_reuses_saved_storage_on_access_key_permission_denied(m
 
 def test_nebius_find_active_access_key_prefers_requested_name(mocker) -> None:
     mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "other-id", "name": "other"},
-                    "spec": {"account": {"service_account_id": "sa"}},
-                    "status": {"state": "ACTIVE"},
+        "npa.clients.nebius._list_access_key_metadata",
+        return_value=[
+            {
+                "metadata": {"id": "other-id", "name": "other"},
+                "spec": {"account": {"service_account_id": "sa"}},
+                "status": {"state": "ACTIVE"},
+            },
+            {
+                "metadata": {"id": "target-id", "name": "lerobot-access-key"},
+                "spec": {
+                    "account": {"service_account": {"id": "sa"}},
+                    "expires_at": "1970-01-01T00:00:00Z",
                 },
-                {
-                    "metadata": {"id": "target-id", "name": "lerobot-access-key"},
-                    "spec": {
-                        "account": {"service_account": {"id": "sa"}},
-                        "expires_at": "1970-01-01T00:00:00Z",
-                    },
-                    "status": {"state": "ACTIVE"},
-                },
-            ],
-        },
+                "status": {"state": "ACTIVE"},
+            },
+        ],
     )
 
     result = nebius._find_active_access_key(
@@ -655,6 +654,149 @@ def test_nebius_find_active_access_key_prefers_requested_name(mocker) -> None:
 
     assert result is not None
     assert result["metadata"]["id"] == "target-id"
+
+
+def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
+    mocker,
+) -> None:
+    run = mocker.patch(
+        "npa.clients.nebius._run",
+        return_value=(
+            "accesskey-a\tlerobot-access-key\tserviceaccount-a\t\tACTIVE\t"
+            "1970-01-01T00:00:00Z"
+        ),
+    )
+
+    items = nebius._list_access_key_metadata("project-a")
+
+    assert items == [
+        {
+            "metadata": {"id": "accesskey-a", "name": "lerobot-access-key"},
+            "spec": {
+                "account": {
+                    "service_account": {"id": "serviceaccount-a"},
+                    "service_account_id": "",
+                },
+                "expires_at": "1970-01-01T00:00:00Z",
+            },
+            "status": {"state": "ACTIVE"},
+        }
+    ]
+    args = run.call_args.args[0]
+    assert args[:4] == ["iam", "v2", "access-key", "list"]
+    assert "--all" in args
+    output_format = args[args.index("--format") + 1]
+    assert output_format.startswith("jsonpath=")
+    assert all(
+        field not in output_format.lower()
+        for field in ("secret", "credential", "password", "private_key", "token")
+    )
+
+
+def test_nebius_error_redaction_keeps_access_key_canaries_out_of_all_outputs(
+    mocker, capsys, caplog
+) -> None:
+    canaries = (
+        "NPA_CANARY_SECRET_1_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_2_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_3_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_4_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_5_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_6_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_7_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_8_DO_NOT_DISCLOSE",
+    )
+    provider_error = json.dumps(
+        {
+            "status": {
+                "secret": canaries[0],
+                "secretAccessKey": canaries[1],
+            },
+            "nested": {
+                "credentials": {
+                    "aws_secret_access_key": canaries[2],
+                    "private-key": canaries[3],
+                    "secret_value": canaries[4],
+                    "clientSecret": canaries[5],
+                    "privateKeyData": canaries[6],
+                    "refresh_token": canaries[7],
+                },
+            },
+        }
+    )
+    mocker.patch("npa.clients.nebius._require_nebius", return_value="nebius")
+    mocker.patch(
+        "npa.clients.nebius.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr=provider_error
+        ),
+    )
+
+    with pytest.raises(NebiusError) as caught:
+        nebius._run(
+            [
+                "iam",
+                "v2",
+                "access-key",
+                "list",
+                "--parent-id",
+                "project-a",
+                "--format",
+                nebius._ACCESS_KEY_LIST_JSONPATH,
+            ]
+        )
+
+    captured = capsys.readouterr()
+    serialized = json.dumps(
+        {
+            "exception": str(caught.value),
+            "args": caught.value.args,
+            "stdout": captured.out,
+            "stderr": captured.err,
+            "logs": caplog.text,
+        }
+    )
+    for canary in canaries:
+        assert canary not in serialized
+    # The parent ``credentials`` field is itself sensitive, so the complete
+    # nested mapping is replaced by one marker rather than one per child.
+    assert serialized.count("<redacted>") >= 3
+
+
+def test_malformed_access_key_allowlist_output_is_discarded_without_echo(
+    mocker,
+) -> None:
+    canary = "NPA_CANARY_SECRET_MALFORMED_DO_NOT_DISCLOSE"
+    mocker.patch("npa.clients.nebius._run", return_value=f"accesskey-a\t{canary}")
+
+    with pytest.raises(NebiusError) as caught:
+        nebius._list_access_key_metadata("project-a")
+
+    assert canary not in str(caught.value)
+
+
+def test_nebius_plain_text_diagnostics_redact_nested_secret_field_variants() -> None:
+    canaries = (
+        "NPA_CANARY_SECRET_TEXT_1_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_TEXT_2_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_TEXT_3_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_TEXT_4_DO_NOT_DISCLOSE",
+        "NPA_CANARY_SECRET_TEXT_5_DO_NOT_DISCLOSE",
+    )
+    diagnostic = (
+        f"provider error: clientSecret={canaries[0]} "
+        f"privateKeyData: {canaries[1]} refresh_token={canaries[2]}\n"
+        f"Authorization: Bearer {canaries[3]}\n"
+        "private_key: -----BEGIN PRIVATE KEY-----\n"
+        f"{canaries[4]}\n"
+        "-----END PRIVATE KEY-----"
+    )
+
+    redacted = nebius.redact_nebius_output(diagnostic)
+
+    assert redacted.count("<redacted>") == len(canaries)
+    for canary in canaries:
+        assert canary not in redacted
 
 
 def test_nebius_ensure_access_key_does_not_delete_existing_key_without_secret(mocker) -> None:

@@ -46,7 +46,10 @@ from npa.cli.agent_preflight import (
     _agent_token_factory_result,
     _render_agent_checks,
 )
-from npa.cli.agent_network import _agent_ssh_egress_result
+from npa.cli.agent_network import (
+    _agent_ssh_egress_result,
+    destroy_with_default_security_group_recovery,
+)
 from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_destroy_tf_vars
 from npa.clients.config import (
     ConfigError,
@@ -764,10 +767,6 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
         typer.echo(f"  Warning: could not remove npa ingress rules: {exc}", err=True)
 
 
-_AGENT_INSTANCE_DESTROY_TARGETS = (
-    "null_resource.wait_for_cloud_init",
-    "nebius_compute_v1_instance.workbench",
-)
 
 
 def _cleanup_orphan_agent_instances(project_id: str, instance_name: str) -> None:
@@ -856,21 +855,14 @@ def _destroy_agent_terraform(
     def _run_destroy() -> None:
         provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
 
-    def _destroy_compute_first() -> None:
-        managed = set(provisioner.state_list(tf_dir))
-        targets = [t for t in _AGENT_INSTANCE_DESTROY_TARGETS if t in managed]
-        if targets:
-            provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars, targets=targets)
-
-    try:
-        _run_destroy()
-    except ProvisionerError as first_exc:
-        _cleanup_agent_ingress(instance_id)
-        try:
-            _destroy_compute_first()
-            _run_destroy()
-        except ProvisionerError:
-            raise first_exc from None
+    destroy_with_default_security_group_recovery(
+        run_destroy=_run_destroy,
+        cleanup_ingress=lambda: _cleanup_agent_ingress(instance_id),
+        tf_dir=tf_dir,
+        tf_vars=tf_vars,
+        cleanup_action=f"`npa agent destroy --project {project} --name {name} --yes`",
+        on_status=lambda message: typer.echo(f"  {message}", err=True),
+    )
     # Terraform owns the managed instance and destroyed it above. Sweep for a
     # by-name leftover ONLY as a safety net: after a successful destroy the
     # managed VM is already gone, so this catches only a genuine orphan/duplicate

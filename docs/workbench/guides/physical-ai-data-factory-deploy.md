@@ -762,6 +762,11 @@ Notes:
   leaves the Terraform-managed `<cluster>-network` and subnet running — so use it
   for a cluster Terraform does not manage, or to clear local state for a cluster
   that is already gone.
+- **Default security groups follow the parent network lifecycle.** Nebius does
+  not allow direct deletion of a default security group. The agent/cluster
+  teardown commands above delete the parent network only when their Terraform
+  state proves NPA owns it; an existing/reused/shared network is preserved for
+  its owner. Do not substitute a manual security-group delete loop.
 - **Agent IAM is removed by default.** `destroy` deletes the project's
   `npa-agent` service account and access keys once no agent is left in the project
   (other agents share it, so it is kept while any remain). A deploy that rolled
@@ -776,6 +781,10 @@ Notes:
   deleted or confirmed absent, even if agent bootstrap changes the generic
   `nebius.service_account_id`. Nebius CLI's raw
   `nebius iam service-account delete --id <id>` command has no `--yes` flag.
+- **Do not inventory access keys as raw JSON.** The upstream list response may
+  contain secret material. NPA cleanup uses CLI-side JSONPath field selection;
+  for safe operator inventory use the filtered example in
+  [Known footguns](../troubleshooting/known-footguns.md#raw-access-key-list-json-can-disclose-the-secret).
 - **Cluster drain preview is non-interactive and ownership-aware.** `cluster down`
   uses NPA's saved kubeconfig for the selected context, disables browser auth in
   a temporary copy, and explains authentication, RBAC, kubeconfig, and API

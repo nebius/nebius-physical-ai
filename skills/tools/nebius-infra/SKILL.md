@@ -88,6 +88,15 @@ empty NPA-owned local state. It does not delete cloud resources.
 
 ## Gotchas
 
+- `nebius iam v2 access-key list --format json` may disclose access-key secret
+  material in the external CLI's ordinary list response. NPA inventory uses
+  CLI-side JSONPath to select identifiers/metadata before stdout capture and
+  redacts provider errors; never replace that helper with a raw list or recommend
+  raw JSON in diagnostics/docs.
+- A default security group cannot be deleted directly. Full teardown deletes its
+  parent network only when the NPA Terraform state proves ownership (`npa agent
+  destroy` / `npa cluster down`). Existing, reused, shared, and unproven networks
+  are preserved for their owner.
 - Use `https://storage.eu-north1.nebius.cloud` for the current primary region.
 - `npa cluster down` uses the selected cluster's saved kubeconfig for its
   best-effort PDB preview, sets exec auth to non-interactive, and adds Nebius
