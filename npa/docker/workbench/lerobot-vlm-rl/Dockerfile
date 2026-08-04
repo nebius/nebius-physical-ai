@@ -1,7 +1,7 @@
-ARG BASE_IMAGE=npa-genesis:0.4.6-sm80-sm90-sm120-latest
+ARG BASE_IMAGE=npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 FROM ${BASE_IMAGE}
 
-ARG LEROBOT_VLM_RL_VERSION=0.1.0
+ARG LEROBOT_VLM_RL_VERSION=0.1.1
 
 LABEL npa.tool="lerobot-vlm-rl" \
       npa.version="${LEROBOT_VLM_RL_VERSION}"

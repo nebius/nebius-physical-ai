@@ -78,6 +78,47 @@ Known constraints:
   export contract.
 - EGL/DRI-dependent visual-generation/rendering paths remain deferred.
 
+## Predict2 CUDA Wheel Contract
+
+The `npa-cosmos` Predict2 1.0.9 image uses NVIDIA's complete v1.2.0
+`cu128_torch27` wheel set: torch 2.7.0, torchvision 0.22.0, flash-attn 2.7.3,
+NATTEN 0.21.0, and Transformer Engine 1.13.0. Keep these as one ABI-locked
+unit. Do not bump torch alone, and do not replace either custom-kernel wheel
+with a source build during an image refresh.
+
+Predict2 1.0.9's package metadata still pins triton 3.2.0 for its former torch
+2.6 stack, while torch 2.7 requires triton 3.3.0. Install Predict2 itself with
+`--no-deps`, exclude torch/torchvision/triton and the three NVIDIA kernel
+packages from its derived dependency closure, and constrain every subsequent
+resolver pass to torch 2.7.0, torchvision 0.22.0, and triton 3.3.0. Otherwise a
+later broad dependency can silently replace the selected cu128 stack.
+
+An architecture import check is insufficient. A release validation must read
+`torch._C._cuda_getArchFlags()` and find `sm_100`, then execute both custom
+kernels on B200: a real flash-attn forward and the exact pinned
+Predict2 `NeighborhoodAttention` module with one of the model's shipped NATTEN
+configurations. Run checkpoint-backed Video2World with `--natten` whenever the
+operator has access to NVIDIA's gated checkpoint. If access is denied, record
+that generation as unverified with the HTTP evidence; the model-module kernel
+smoke is valid kernel-compatibility evidence, but it is not a generated-video
+result.
+
+Predict2 1.0.9 rejects B300 capability 10.3 in its own `[90, 100]` allowlist;
+forward-compatible `sm_100` wheel SASS does not bypass that check. Route this
+pin to B200 or H100 and require a real-forward negative test when rechecking
+B300.
+
+## Cosmos Transfer B300 Contract
+
+The published Cosmos Transfer 2.5 cu128 image is validated for B200, not B300.
+On physical B300 it reaches real `Control2WorldInference` model construction,
+then `torch.nn.init.trunc_normal_` JIT-compiles an `erfinv` kernel and CUDA 12.8
+NVRTC rejects capability 10.3 with `invalid value for --gpu-architecture`.
+This demonstrates that wheel SASS coverage alone cannot establish compatibility
+for workloads that generate kernels at runtime. A B300 port must move the whole
+locked environment to CUDA 13/cu130 and pass the full depth-conditioned
+Video2Video smoke; a CUDA probe or import is not sufficient.
+
 ## Sim2Real VLM (self-hosted Reason2 + Reason3)
 
 Sim2Real stage 8 evaluates rollouts with **two** workbench-hosted Cosmos Reason

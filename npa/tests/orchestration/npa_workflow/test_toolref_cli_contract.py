@@ -38,6 +38,16 @@ def _toolref_flags(tool_ref: str) -> list[str]:
 CHECKED_TOOLREFS = [
     ("workbench.cosmos2.transfer", "npa.cli.workbench.cosmos2", "transfer"),
     ("workbench.cosmos2.transfer_execute", "npa.cli.workbench.cosmos2", "transfer"),
+    (
+        "workbench.cosmos2.transfer_conditioned_execute",
+        "npa.cli.workbench.cosmos2",
+        "transfer",
+    ),
+    (
+        "workbench.sim2real_envgen.raw_shard",
+        "npa.cli.workbench.sim2real_envgen",
+        "raw-shard",
+    ),
     ("workbench.cosmos3.generate", "npa.cli.workbench.cosmos3", "generate"),
     ("workbench.cosmos3.reason", "npa.cli.workbench.cosmos3", "reason"),
     ("workbench.cosmos_curate.curate", "npa.cli.workbench.cosmos_curate", "curate-augmented"),

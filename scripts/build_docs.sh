@@ -9,8 +9,19 @@
 set -euo pipefail
 
 NPA_BIN="${NPA_BIN:-npa}"
-export COLUMNS="${COLUMNS:-120}"
+# Execution may use an absolute path from an isolated venv, but generated docs
+# must show the stable public command name rather than leaking that checkout.
+NPA_DISPLAY_BIN="${NPA_DOCS_DISPLAY_BIN:-$(basename "$NPA_BIN")}"
+# Typer/Rich reads COLUMNS when rendering help. Do not inherit a shell or tmux
+# width: the generated Markdown must be identical in CI and an interactive TTY.
+DOCS_COLUMNS="${NPA_DOCS_COLUMNS:-200}"
 export NO_COLOR=1
+
+run_with_docs_width() {
+  # Bash treats COLUMNS specially and can reset an exported value to the TTY's
+  # current width. Put it directly in each child environment instead.
+  env COLUMNS="$DOCS_COLUMNS" NO_COLOR=1 "$@"
+}
 
 CHECK=0
 if [ "${1:-}" = "--check" ]; then
@@ -24,6 +35,9 @@ TEMP_DOCS_DIR=""
 cleanup() {
   [ -n "$TMP_FILE" ] && rm -f "$TMP_FILE"
   [ -n "$TEMP_DOCS_DIR" ] && rm -rf "$TEMP_DOCS_DIR"
+  # An EXIT trap's final command can replace an otherwise successful status.
+  # Keep normal regeneration successful when TEMP_DOCS_DIR is intentionally empty.
+  return 0
 }
 trap cleanup EXIT
 
@@ -56,7 +70,7 @@ print("\n".join(sorted(set(names))))
 # spurious non-match.
 is_group() {
   local help_text
-  help_text="$("$@" --help 2>&1 || true)"
+  help_text="$(run_with_docs_width "$@" --help 2>&1 || true)"
   case "$help_text" in
     *"COMMAND [ARGS]"*) return 0 ;;
     *) return 1 ;;
@@ -76,6 +90,7 @@ document_command() {
   local output_name="$1"
   shift
   local command_path=("$@")
+  local display_path=("$NPA_DISPLAY_BIN" "${command_path[@]:1}")
   local output="${DOCS_DIR}/${output_name}.md"
   # Pages are keyed by leaf group name. Generation starts from a clean slate, so
   # a pre-existing file here means two distinct subgroups share a leaf name and
@@ -85,8 +100,8 @@ document_command() {
          "same-named subgroup already generated ${output}. Use a unique group name." >&2
     exit 1
   fi
-  "${command_path[@]}" --help > "$tmp"
-  python3 scripts/_help_to_markdown.py "$tmp" "$output_name" "${command_path[*]}" > "$output"
+  run_with_docs_width "${command_path[@]}" --help > "$tmp"
+  python3 scripts/_help_to_markdown.py "$tmp" "$output_name" "${display_path[*]}" > "$output"
 }
 
 # Document a group and, recursively, every nested subgroup (e.g. the
@@ -98,7 +113,7 @@ document_group_recursive() {
   local command_path=("$@")
   document_command "$output_name" "${command_path[@]}"
   local child_help child
-  child_help="$("${command_path[@]}" --help 2>&1)"
+  child_help="$(run_with_docs_width "${command_path[@]}" --help 2>&1)"
   for child in $(printf "%s" "$child_help" | discover_commands); do
     if is_group "${command_path[@]}" "$child"; then
       document_group_recursive "$child" "${command_path[@]}" "$child"
@@ -106,7 +121,7 @@ document_group_recursive() {
   done
 }
 
-top_help="$("$NPA_BIN" --help 2>&1)"
+top_help="$(run_with_docs_width "$NPA_BIN" --help 2>&1)"
 groups="$(printf "%s" "$top_help" | discover_commands)"
 
 for group in $groups; do

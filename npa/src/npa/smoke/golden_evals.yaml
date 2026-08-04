@@ -274,17 +274,17 @@ containers:
         synthetic data augmentation.
     safety:
       runs_as: ubuntu
-      base_image: cosmos transfer runtime (built outside this repo)
-      network: transfer/serve endpoint
-      external_fetch: [huggingface, s3]
+      base_image: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04 (linux/amd64 digest pinned)
+      network: runtime Hugging Face model fetch and workflow S3 I/O
+      external_fetch: [github-source-build, pypi-build, pytorch-cu128-build, huggingface-runtime, s3-runtime]
       notes: >-
-        Base transfer runtime is built outside this repo; this repo's wrapper
-        Dockerfile bakes the real cosmos-transfer2.5 inference venv (Python 3.10 +
-        torch cu128 + flash-attn via `uv sync`) so the container can actually run
-        transfer. The golden eval runs a real video-to-video transfer on a bundled
-        robot control example and asserts a generated video; the gated
-        Cosmos-Transfer2.5-2B checkpoints auto-download on first use (HF_TOKEN +
-        NVIDIA Open Model License).
+        Complete source build from immutable upstream commit 67d56b7d550a3911024a32dc23ae0bae5258e633
+        and the upstream locked cu128 dependency closure; no private parent. Git LFS
+        smudging is disabled and upstream assets, media, model weights, caches, and
+        Git metadata are forbidden. The golden eval creates a repository-authored
+        procedural input at runtime, runs four real diffusion steps, and numerically
+        validates the output MP4. Gated Cosmos-Transfer2.5-2B checkpoints download
+        only at runtime with the operator's HF_TOKEN and model-license acceptance.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_cosmos2_transfer_functional

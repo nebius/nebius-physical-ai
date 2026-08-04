@@ -168,19 +168,25 @@ COSMOS_HF_CACHE = f"{COSMOS_DATA_HOME}/hf_cache"
 COSMOS_OUTPUT_DIR = f"{COSMOS_DATA_HOME}/outputs"
 COSMOS_SERVICE = "npa-cosmos-server"
 COSMOS_PIP_EXTRA_INDEX_URL = (
-    "https://nvidia-cosmos.github.io/cosmos-dependencies/cu126_torch260/simple"
+    "https://nvidia-cosmos.github.io/cosmos-dependencies/v1.2.0/cu128_torch27/simple"
 )
-COSMOS_TORCH_VERSION = "2.6.0"
-COSMOS_TORCHVISION_VERSION = "0.21.0"
-COSMOS_FLASH_ATTN_VERSION = "2.6.3"
+COSMOS_TORCH_VERSION = "2.7.0"
+COSMOS_TORCHVISION_VERSION = "0.22.0"
+COSMOS_TRITON_VERSION = "3.3.0"
+COSMOS_FLASH_ATTN_VERSION = "2.7.3"
 COSMOS_FLASH_ATTN_WHEEL_URL = (
-    "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.1.0/"
-    "flash_attn-2.6.3%2Bcu126.torch260-cp310-cp310-linux_x86_64.whl"
+    "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/"
+    "flash_attn-2.7.3%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl"
 )
 COSMOS_NATTEN_VERSION = "0.21.0"
 COSMOS_NATTEN_WHEEL_URL = (
-    "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.1.0/"
-    "natten-0.21.0%2Bcu126.torch260-cp310-cp310-linux_x86_64.whl"
+    "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/"
+    "natten-0.21.0%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl"
+)
+COSMOS_TRANSFORMER_ENGINE_VERSION = "1.13.0"
+COSMOS_TRANSFORMER_ENGINE_WHEEL_URL = (
+    "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/"
+    "transformer_engine-1.13.0%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl"
 )
 COSMOS_PEFT_MIN_VERSION = "0.17.0"
 DEFAULT_MODEL = "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
@@ -1197,14 +1203,32 @@ sudo chown -R "$USER:$USER" {COSMOS_HOME} {COSMOS_DATA_HOME}
 python3.10 -m venv {COSMOS_VENV}
 {COSMOS_VENV}/bin/python -m pip install --upgrade pip setuptools wheel
 {COSMOS_VENV}/bin/python -m pip install "torch=={COSMOS_TORCH_VERSION}" "torchvision=={COSMOS_TORCHVISION_VERSION}" --extra-index-url {COSMOS_PIP_EXTRA_INDEX_URL}
+{COSMOS_VENV}/bin/python -m pip install --no-deps "cosmos-predict2=={COSMOS_VERSION}"
+cosmos_requirements="/tmp/cosmos-predict2-noncuda-requirements.txt"
+cosmos_constraints="/tmp/cosmos-cu128-constraints.txt"
+printf "%s\\n" "torch=={COSMOS_TORCH_VERSION}" "torchvision=={COSMOS_TORCHVISION_VERSION}" "triton=={COSMOS_TRITON_VERSION}" > "$cosmos_constraints"
+{COSMOS_VENV}/bin/python - <<'PY' > "$cosmos_requirements"
+from importlib import metadata
+from packaging.requirements import Requirement
+
+excluded = {{"flash-attn", "natten", "torch", "torchvision", "transformer-engine", "triton"}}
+for raw in metadata.requires("cosmos-predict2") or ():
+    requirement = Requirement(raw)
+    normalized = requirement.name.lower().replace("_", "-")
+    if normalized not in excluded and (requirement.marker is None or requirement.marker.evaluate()):
+        print(raw)
+PY
+{COSMOS_VENV}/bin/python -m pip install -c "$cosmos_constraints" -r "$cosmos_requirements"
 flash_attn_wheel="/tmp/flash_attn-{COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl"
 curl -L -o "$flash_attn_wheel" "{COSMOS_FLASH_ATTN_WHEEL_URL}"
 {COSMOS_VENV}/bin/python -m pip install --no-deps "$flash_attn_wheel"
 natten_wheel="/tmp/natten-{COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl"
 curl -L -o "$natten_wheel" "{COSMOS_NATTEN_WHEEL_URL}"
 {COSMOS_VENV}/bin/python -m pip install --no-deps "$natten_wheel"
-{COSMOS_VENV}/bin/python -m pip install "cosmos-predict2[cu126]=={COSMOS_VERSION}" --extra-index-url {COSMOS_PIP_EXTRA_INDEX_URL}
-{COSMOS_VENV}/bin/python -m pip install "diffusers>=0.38.0" "peft>={COSMOS_PEFT_MIN_VERSION}" transformers accelerate fastapi "uvicorn[standard]" huggingface_hub pillow "imageio[ffmpeg]" pydantic python-multipart
+transformer_engine_wheel="/tmp/transformer_engine-{COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl"
+curl -L -o "$transformer_engine_wheel" "{COSMOS_TRANSFORMER_ENGINE_WHEEL_URL}"
+{COSMOS_VENV}/bin/python -m pip install --no-deps "$transformer_engine_wheel"
+{COSMOS_VENV}/bin/python -m pip install -c "$cosmos_constraints" "diffusers>=0.38.0" "peft>={COSMOS_PEFT_MIN_VERSION}" transformers accelerate fastapi "uvicorn[standard]" huggingface_hub pillow "imageio[ffmpeg]" pydantic python-multipart
 {COSMOS_VENV}/bin/python -m pip install --no-deps cosmos_guardrail
 cat > {COSMOS_HOME}/server.py <<'PY'
 {server_py}

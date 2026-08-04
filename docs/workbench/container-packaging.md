@@ -349,6 +349,13 @@ copies the rest. Two properties matter here:
   gets a pull failure for those tags until the image is built and the workflow re-run.
   Adding one later costs one more visibility flip.
 
+The copy itself is incremental. After the complete source preflight and licensing gates,
+the publisher compares each source and target manifest digest. An exact match prints
+``Already current; skipping copy`` and performs no registry write; only a missing or changed
+target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new
+image lands without republishing every existing image. A second run after the one-time GHCR
+visibility flips likewise skips all matching copies and only re-verifies anonymous pulls.
+
 or the `Publish public images` GitHub Actions workflow (manual dispatch,
 dry-run by default). **Consumers in any tenant** then pull the OSS images by
 pointing the resolver at the public mirror:
@@ -450,6 +457,10 @@ direct service-to-service file coupling.
 - [ ] Skill + `skills/index.yaml` smoke updated
 
 ## Related docs
+
+- Cosmos Transfer 2.5 has an artifact-by-artifact redistribution record at
+  `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`; its `public`
+  classification is valid only after the registry-image audits named there pass.
 
 - `docs/security/container-golden-evals.md` — usefulness + safety contract
 - `docs/security/image-reproducibility.md` — digests and tag families

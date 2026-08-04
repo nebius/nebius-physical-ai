@@ -116,45 +116,34 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
-    # Default LeRobot pin. Selectable additional versions: see
-    # lerobot_version_manifest.json (0.5.1 default + 0.6.0).
-    "lerobot": "0.5.1",
+    # Default LeRobot image release. Selectable package versions and their
+    # image tags live in lerobot_version_manifest.json.
+    "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-policy": "0.1.1",
-    "genesis": "0.4.6",
+    "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "2.3.2.post1",
-    "cosmos": "1.0.9",
+    "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
     "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
     # cosmos-framework 1.2.2 (pinned commit 5e67049c) + torch cu130 inference env.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
     "cosmos3": "1.2.2-cu130",
-    "cosmos3-reason": "3.0.1-genuine-sm120",
+    "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2",
     "cosmos-evaluator": "0.1.2",
     "groot": "0.1.0",
     "fiftyone": "1.15.0",
-    "sonic": "0.1.2",
+    "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "retargeting": "0.1.1",
-    "envgen": "0.1.2",
-    "reference-policy": "0.1.2",
-    "lerobot-vlm-rl": "0.1.1",
-    # 0.1.3-genuine-sm120 is the canonical pin (matches
-    # sim2real.constants.DEFAULT_EVAL_TAG). Rebuilt+pushed 2026-07-21 from
-    # npa-genesis:0.4.6-sm80-sm90-sm120-latest (torch 2.9.0+cu130;
-    # torch._C._cuda_getArchFlags() reports sm_75..sm_120 + compute_120). It
-    # supersedes 0.1.1-genuine-sm120, whose bundled torch was 2.6.0+cu124
-    # (sm_50..sm_90 only) and crashed heldout_eval on RTX PRO 6000 (sm_120) with
-    # "no kernel image is available for execution on the device", and
-    # 0.1.2-genuine-sm120 (never pushed to the registry). Validated end-to-end on
-    # an RTX PRO 6000 node (sm_120) 2026-07-21: torch matmul + gs.init(gpu) + a
-    # FrankaPickPlaceEnv step, no "no kernel image" error. 0.1.1 has been deleted
-    # from the registry.
-    "loop-eval": "0.1.3-genuine-sm120",
+    "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "rerun-viewer": "0.31.4",
     # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
     "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
     "lichtblick": "1.26.0",
-    "lancedb": "0.30.3",
+    "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     "nebius-cli": "0.12.192",
     "terraform": "~> 0.5.201",
@@ -218,11 +207,12 @@ def supported_lerobot_versions() -> tuple[str, ...]:
 
 
 def resolve_lerobot_image_tag(version: str | None = None) -> str:
-    """Resolve a validated LeRobot image tag (equals the LeRobot package version)."""
+    """Resolve the validated image tag for a supported LeRobot package version."""
 
-    from npa.workbench.lerobot.version_compat import resolve_lerobot_version
+    from npa.workbench.lerobot.version_compat import lerobot_version_entry
 
-    return resolve_lerobot_version(version)
+    entry = lerobot_version_entry(version)
+    return str(entry.get("image_tag") or entry["version"])
 
 
 def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:

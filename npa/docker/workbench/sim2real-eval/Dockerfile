@@ -1,7 +1,7 @@
-ARG BASE_IMAGE=npa-genesis:0.4.6-sm80-sm90-sm120-latest
+ARG BASE_IMAGE=npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 FROM ${BASE_IMAGE}
 
-ARG SIM2REAL_EVAL_VERSION=0.1.3-genuine-sm120
+ARG SIM2REAL_EVAL_VERSION=cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 
 LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}"

@@ -965,7 +965,8 @@ def _train_serverless(
         existing = None
     platform = _lerobot_gpu_platform(gpu_type)
     try:
-        image_tag = resolve_lerobot_image_tag(lerobot_version or None)
+        resolved_lerobot_version = resolve_lerobot_version(lerobot_version or None)
+        image_tag = resolve_lerobot_image_tag(resolved_lerobot_version)
     except LeRobotVersionError as exc:
         _fail(str(exc))
         return
@@ -1057,7 +1058,7 @@ def _train_serverless(
                 device=device,
                 smoke=smoke,
                 training_config=training_config,
-                lerobot_version=image_tag,
+                lerobot_version=resolved_lerobot_version,
             ),
             gpu_type=platform,
             gpu_count=gpu_count or 1,

@@ -5,6 +5,8 @@
   "supported_versions": ["0.5.1", "0.6.0"],
   "versions": {
     "0.5.1": {
+      "image_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "image_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
       "pip_extras": "pusht,libero",
       "train_env_eval_flag": "eval_freq",
       "eval_checkpoint_flag": "policy.path",
@@ -12,7 +14,7 @@
       "torch_pin": "torch==2.12.1",
       "torchvision_pin": "torchvision==0.27.1",
       "diffusers_pin": "diffusers>=0.38.0",
-      "notes": "Default workbench pin. Keep for GR00T N1.5 and sim2real policy image parity."
+      "notes": "Default package pin. The image_tag selects the separately validated Python 3.12 / torch 2.9 cu130 B300 build; the VM installer pins below remain the legacy in-place install contract."
     },
     "0.6.0": {
       "pip_extras": "training,evaluation,pusht,libero",

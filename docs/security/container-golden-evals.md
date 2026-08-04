@@ -105,10 +105,10 @@ flowchart TB
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
 | `isaac-lab` | `2.3.2.post1` | container-smoke | version; runtime; manipulation env; step | required | gpu-gated |
-| `cosmos` | `1.0.9` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
+| `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-golden-eval-smoke-*` | container-smoke | venv torch; CUDA; GPU matmul probe | required | gpu-gated |
 | `cosmos3` | `1.2.2-cu130` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
-| `cosmos3-reason` | `3.0.1-genuine-sm120` | container-smoke | CUDA; Reason cache wiring | optional | blocked-on-upstream |
+| `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
 | `fiftyone` | `1.15.0` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
@@ -116,7 +116,7 @@ flowchart TB
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
 | `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
 | `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
-| `loop-eval` | `0.1.3-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
+| `loop-eval` | `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
 | `rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
 | `foxglove-embed` | `0.58.0` | server-smoke | health + pinned SDK version; real `@foxglove/embed` (FoxgloveViewer + embed handshake); NPA glue module; host page; `/data` 206 byte range; Range CORS preflight | none | ready |
 
@@ -269,10 +269,11 @@ pipeline. Key safety notes are condensed below.
   required); `groot`/`sonic` clone pinned Git refs; several images fetch from
   Hugging Face. Base images are digest-pinned and tracked by the weekly Trivy
   CVE scan.
-- **B300 / CUDA13 family** — `base-cuda13-b300` and its derivatives
-  (`cosmos3-reason`) are `blocked-on-upstream` (Taichi sm_103, flash-attn
-  Blackwell wheels, CUDA 13 host driver >= 580); their golden evals are defined
-  but expected to remain gated until upstream lands.
+- **B300 / CUDA13 family** — `base-cuda13-b300`, `cosmos3-reason`, LeRobot,
+  LanceDB, Genesis, and the Sim2Real children have physical B300 capability
+  evidence recorded in `blackwell-dc-images.json`. Keep per-image blockers
+  separate: Cosmos Predict2's NATTEN allowlist, Cosmos Transfer's CUDA 12.8
+  runtime JIT, and the NVIDIA Isaac vendor stack remain gated.
 
 ## Per-container golden eval commands
 

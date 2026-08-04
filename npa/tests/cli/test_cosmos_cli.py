@@ -21,6 +21,9 @@ from npa.cli.cosmos import (
     COSMOS_PIP_EXTRA_INDEX_URL,
     COSMOS_TORCH_VERSION,
     COSMOS_TORCHVISION_VERSION,
+    COSMOS_TRITON_VERSION,
+    COSMOS_TRANSFORMER_ENGINE_VERSION,
+    COSMOS_TRANSFORMER_ENGINE_WHEEL_URL,
     COSMOS_VERSION,
     _build_reload_env_command,
     _build_install_command,
@@ -1138,7 +1141,9 @@ def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) ->
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-cosmos"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-cosmos:1.0.9")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith(
+        "/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
+    )
     wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"]["cosmos-container"]
     assert wb_cfg["runtime"] == "container"
     assert update_status.call_args_list[0].args == ("proj", "cosmos-container", "installing")
@@ -1486,7 +1491,7 @@ def test_cosmos_teardown_rejects_vm_alias(mocker) -> None:
     assert "serverless aliases" in result.output
 
 
-def test_cosmos_install_command_installs_torch_before_flash_attn_and_cosmos() -> None:
+def test_cosmos_install_command_installs_cu128_torch_before_cosmos_kernels() -> None:
     cmd = _build_install_command("nvidia/Cosmos-Test", 8080)
 
     torch_install = (
@@ -1503,11 +1508,31 @@ def test_cosmos_install_command_installs_torch_before_flash_attn_and_cosmos() ->
     natten_download = f'curl -L -o "$natten_wheel" "{COSMOS_NATTEN_WHEEL_URL}"'
     natten_install = '/opt/cosmos/venv/bin/python -m pip install --no-deps "$natten_wheel"'
     cosmos_install = (
-        f'/opt/cosmos/venv/bin/python -m pip install "cosmos-predict2[cu126]=={COSMOS_VERSION}" '
-        f"--extra-index-url {COSMOS_PIP_EXTRA_INDEX_URL}"
+        f'/opt/cosmos/venv/bin/python -m pip install --no-deps "cosmos-predict2=={COSMOS_VERSION}"'
+    )
+    constraints = (
+        'printf "%s\\n" '
+        f'"torch=={COSMOS_TORCH_VERSION}" "torchvision=={COSMOS_TORCHVISION_VERSION}" '
+        f'"triton=={COSMOS_TRITON_VERSION}" > "$cosmos_constraints"'
+    )
+    dependency_install = (
+        '/opt/cosmos/venv/bin/python -m pip install -c "$cosmos_constraints" '
+        '-r "$cosmos_requirements"'
+    )
+    transformer_engine_wheel = (
+        'transformer_engine_wheel="/tmp/transformer_engine-'
+        f'{COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl"'
+    )
+    transformer_engine_download = (
+        'curl -L -o "$transformer_engine_wheel" '
+        f'"{COSMOS_TRANSFORMER_ENGINE_WHEEL_URL}"'
+    )
+    transformer_engine_install = (
+        '/opt/cosmos/venv/bin/python -m pip install --no-deps "$transformer_engine_wheel"'
     )
     server_extras_install = (
-        f'/opt/cosmos/venv/bin/python -m pip install "diffusers>=0.38.0" '
+        f'/opt/cosmos/venv/bin/python -m pip install -c "$cosmos_constraints" '
+        f'"diffusers>=0.38.0" '
         f'"peft>={COSMOS_PEFT_MIN_VERSION}"'
     )
     guardrail_install = "/opt/cosmos/venv/bin/python -m pip install --no-deps cosmos_guardrail"
@@ -1520,20 +1545,40 @@ def test_cosmos_install_command_installs_torch_before_flash_attn_and_cosmos() ->
     assert natten_download in cmd
     assert natten_install in cmd
     assert cosmos_install in cmd
+    assert constraints in cmd
+    assert dependency_install in cmd
+    assert transformer_engine_wheel in cmd
+    assert transformer_engine_download in cmd
+    assert transformer_engine_install in cmd
     assert server_extras_install in cmd
     assert guardrail_install in cmd
     assert (
         cmd.index(torch_install)
+        < cmd.index(cosmos_install)
+        < cmd.index(constraints)
+        < cmd.index(dependency_install)
         < cmd.index(flash_attn_wheel)
         < cmd.index(flash_attn_download)
         < cmd.index(flash_attn_install)
         < cmd.index(natten_wheel)
         < cmd.index(natten_download)
         < cmd.index(natten_install)
-        < cmd.index(cosmos_install)
+        < cmd.index(transformer_engine_wheel)
+        < cmd.index(transformer_engine_download)
+        < cmd.index(transformer_engine_install)
         < cmd.index(server_extras_install)
         < cmd.index(guardrail_install)
     )
+
+
+def test_cosmos_dockerfile_constrains_every_dependency_resolver_pass() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "docker" / "workbench" / "cosmos" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "ARG COSMOS_TRITON_VERSION=3.3.0" in dockerfile
+    assert '"triton==${COSMOS_TRITON_VERSION}"' in dockerfile
+    assert dockerfile.count("-c /tmp/cosmos-cu128-constraints.txt") == 2
 
 
 def test_cosmos_install_command_uses_data_disk_for_models_and_cache() -> None:

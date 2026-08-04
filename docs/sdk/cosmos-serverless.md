@@ -32,7 +32,7 @@ registry_id = os.environ["NPA_REGISTRY_ID"]
 bucket = os.environ["NPA_S3_BUCKET"].rstrip("/")
 run_id = "cosmos-sdk-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 output_path = f"{bucket}/cosmos-verify/{run_id}/"
-image = f"cr.<your-region>.nebius.cloud/{registry_id}/npa-cosmos:1.0.9"
+image = f"cr.<your-region>.nebius.cloud/{registry_id}/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
 
 # Multi-subnet projects require an explicit READY subnet.
 subnets = json.loads(

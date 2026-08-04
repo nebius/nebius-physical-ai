@@ -9,6 +9,8 @@ these bare constants — this test closes that gap.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from npa.deploy.images import supported_tool_version
@@ -30,5 +32,32 @@ def test_sim2real_constant_matches_supported_tool_version(
     constant_value = getattr(constants, constant_name)
     assert constant_value == supported_tool_version(tool), (
         f"{constant_name}={constant_value!r} drifted from canonical "
+        f"{tool}={supported_tool_version(tool)!r} (pyproject supported-tools)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("environment_variable", "tool"),
+    [
+        ("TRAINER_IMAGE", "lerobot-vlm-rl"),
+        ("VLM_IMAGE", "cosmos3-reason"),
+        ("EVAL_IMAGE", "loop-eval"),
+    ],
+)
+def test_sim2real_runbook_fallback_matches_supported_tool_version(
+    environment_variable: str, tool: str
+) -> None:
+    runbook = (
+        Path(__file__).resolve().parents[2]
+        / "workflows"
+        / "workbench"
+        / "sim2real"
+        / "runbook.yaml"
+    ).read_text(encoding="utf-8")
+    expected = (
+        f"${{{environment_variable}:-npa-{tool}:{supported_tool_version(tool)}}}"
+    )
+    assert expected in runbook, (
+        f"{environment_variable} runbook fallback drifted from canonical "
         f"{tool}={supported_tool_version(tool)!r} (pyproject supported-tools)"
     )

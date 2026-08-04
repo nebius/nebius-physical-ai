@@ -115,44 +115,55 @@ dev = [
 npa = "npa.cli.main:app_entry"
 
 [tool.npa.supported-tools]
-# Default LeRobot pin. Additional supported tags live in
-# npa/src/npa/deploy/lerobot_version_manifest.json (currently 0.5.1 + 0.6.0).
-lerobot = "0.5.1"
+# Default LeRobot image release. Selectable package versions and their image tags
+# live in npa/src/npa/deploy/lerobot_version_manifest.json (0.5.1 + 0.6.0).
+lerobot = "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-policy = "0.1.1"
-genesis = "0.4.6"
+genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 isaac-lab = "2.3.2.post1"
-cosmos = "1.0.9"
+cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
 cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
 # cosmos-framework 1.2.2 (pinned commit) + torch cu130; weights stay out of the image.
 cosmos3 = "1.2.2-cu130"
-cosmos3-reason = "3.0.1-genuine-sm120"
+cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
 cosmos-curate = "0.1.2"
 # Cosmos Evaluator: NVIDIA upstream checkout; no model weights (CV + hosted VLM).
 cosmos-evaluator = "0.1.2"
 groot = "0.1.0"
 fiftyone = "1.15.0"
-sonic = "0.1.2"
+sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 retargeting = "0.1.1"
-envgen = "0.1.2"
-reference-policy = "0.1.2"
-lerobot-vlm-rl = "0.1.1"
-# 0.1.3-genuine-sm120: rebuilt+pushed 2026-07-21 from npa-genesis 0.4.6-sm120
-# (torch 2.9.0+cu130; _cuda_getArchFlags reports sm_120/compute_120). Supersedes
-# 0.1.1-genuine-sm120 (sm_90-capped torch, crashed on RTX PRO 6000) and
-# 0.1.2-genuine-sm120 (never pushed). Validated end-to-end on RTX PRO 6000
-# (sm_120) 2026-07-21; 0.1.1 deleted from the registry. See FIXME.md.
-loop-eval = "0.1.3-genuine-sm120"
+envgen = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+reference-policy = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+lerobot-vlm-rl = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+loop-eval = "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 rerun-viewer = "0.31.4"
 # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
 foxglove-embed = "0.58.0"
 # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle tag.
 lichtblick = "1.26.0"
-lancedb = "0.30.3"
+lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
 nebius-cli = "0.12.192"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"
+
+# Installed package/application versions are distinct from immutable image tags.
+# Container smokes and build metadata read this table; deploy/CLI/SDK resolution
+# reads supported-tools above. This keeps additive UTC-stamped image releases
+# auditable without asking an installed package to report an image tag as its
+# Python package version.
+[tool.npa.package-versions]
+lerobot = "0.5.1"
+genesis = "0.4.6"
+cosmos = "1.0.9"
+cosmos3-reason = "3.0.1"
+sonic = "0.1.2"
+envgen = "0.1.2"
+reference-policy = "0.1.2"
+lerobot-vlm-rl = "0.1.1"
+loop-eval = "0.1.3"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/npa"]

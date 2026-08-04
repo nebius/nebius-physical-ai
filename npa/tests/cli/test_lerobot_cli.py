@@ -458,7 +458,10 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     kwargs = client.create_job.call_args.kwargs
     assert kwargs["project_id"] == "project-1"
     assert kwargs["name"] == "train-1"
-    assert kwargs["image"] == "registry.example/npa/npa-lerobot:0.5.1"
+    assert kwargs["image"] == (
+        "registry.example/npa/npa-lerobot:"
+        "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
     assert kwargs["gpu_type"] == "gpu-h200-sxm"
     assert kwargs["subnet_id"] == "vpcsubnet-1"
     assert kwargs["output_path"] == "s3://bucket/out/"

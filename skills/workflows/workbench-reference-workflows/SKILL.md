@@ -1,15 +1,15 @@
 ---
 name: workbench-reference-workflows
-description: Use when working on NPA reference SkyPilot YAMLs, runner scripts, cookbooks, or customer-adaptable pipeline implementations.
+description: Use when working on NPA reference workflow specs, runner scripts, cookbooks, customer-adaptable pipeline implementations, or the guarded examples that are not workflow authoring surfaces.
 ---
 
 # Workbench Reference Workflows
 
-> The supported, customer-facing catalog is the `npa.workflow` spec set under
+> The supported, customer-facing catalog and source of truth is the `npa.workflow` spec set under
 > `npa/workflows/workbench/npa-workflows/`. The old raw SkyPilot task catalog has
 > no remaining templates. Raw SkyPilot YAMLs may still exist only as guarded
 > tool-specific examples or resource profiles, not as workflow authoring
-> surfaces.
+> surfaces. SkyPilot remains the engine that executes rendered specs.
 
 ## When To Use
 
@@ -18,19 +18,25 @@ artifact contracts, and customer-adaptable pipeline implementations.
 
 ## Procedure
 
-1. Start from the checked-in `npa.workflow` spec under
+1. Start from the closest checked-in `npa.workflow` spec under
    `npa/workflows/workbench/npa-workflows/`.
-2. Keep the runner thin. Python runners should materialize config, call the
-   workflow submission helper, and report artifacts; they should not duplicate
-   YAML orchestration logic.
-3. Keep all input and output paths configurable and run-scoped through S3.
-4. Validate YAML parsing and command help locally before live submission.
+2. Reuse a toolRef from
+   `npa/src/npa/orchestration/npa_workflow/catalog.py`; add missing behavior to
+   the workbench tool rather than implementing it again in a runner.
+3. Keep the runner thin. Python runners materialize config, call the workflow
+   submission helper, and report artifacts; the spec owns the stage graph.
+4. Keep all input and output paths configurable and run-scoped through S3.
+   Stages run in separate pods and cannot depend on a repository-relative path.
+5. Declare the output the tool actually writes. Extend
+   `test_spec_declared_outputs.py` when a tool exposes a result-URI helper.
+6. Run `validate-spec`, then `plan-spec --run-id preview`, before live submit.
+   Register every shipped spec in `SUBMIT_LIVE_MATRIX`.
 
 ## Current Reference YAMLs
 
-This list is machine-checked against the retiring catalog by
+The retired catalog path is machine-checked by
 `npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so a raw template
-cannot quietly appear there.
+cannot quietly reappear there.
 
 No raw SkyPilot templates remain in the retired catalog. Author workflow examples
 as `npa.workflow/v0.0.1` specs under
@@ -124,17 +130,19 @@ workflow templates.
   such as `npa workbench mjlab workflow` or `npa workbench retargeting workflow`.
 - SDK: route through shared workflow submission helpers rather than shelling out
   from business logic.
-- YAML: SkyPilot YAML is the executable source of truth for workflow order,
-  resources, environment, and artifact paths.
+- Workflow: the `npa.workflow` spec is the executable source of truth for stage
+  order, resources, configuration, and artifact paths. ToolRef argv templates
+  are the source of truth for commands; SkyPilot is the rendered execution
+  layer.
 
 ## Gotchas
 
-- SkyPilot `envs` does not support self-referencing interpolation. Use explicit
-  values and comments for alternatives.
-- `sky jobs launch` has no dry-run flag in the pinned path. Use local YAML
-  parsing, command help, and mock-endpoint tests before live submission.
-- Keep orchestration in YAML for SONIC locomotion; do not add a Python runner
-  that re-implements the DAG.
+- Customer-provided raw SkyPilot `envs` does not support self-referencing
+  interpolation; repository specs use resolved `config` tokens.
+- `sky jobs launch` has no dry-run flag. Use `workflow submit --plan-only` for a
+  rendered spec preflight.
+- Keep SONIC locomotion orchestration in its spec; do not add a Python runner
+  that re-implements the graph.
 
 ## Verify
 

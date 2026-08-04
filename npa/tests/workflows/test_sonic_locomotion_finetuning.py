@@ -16,6 +16,10 @@ PIPELINE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-locomotion-finetuning.
 # npa.workflow specs are the surface now (each live-verified — see EVIDENCE §R4/§R5).
 NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 SONIC_TRAIN_STANDALONE_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-train-standalone.yaml"
+EXPECTED_SONIC_IMAGE = (
+    "registry.example/workbench/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
+    "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+)
 
 
 def _docs(path: Path) -> list[dict]:
@@ -46,13 +50,13 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     retarget, train, eval_task = docs[1:]
 
     assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.1"
-    assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    assert train["resources"]["image_id"] == f"docker:{EXPECTED_SONIC_IMAGE}"
     assert retarget["envs"]["AWS_PROFILE"] == "nebius"
     assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert train["resources"]["cloud"] == "kubernetes"
     assert train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert eval_task["resources"]["image_id"] == (
-        "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+        f"docker:{EXPECTED_SONIC_IMAGE}"
     )
     assert eval_task["resources"]["cloud"] == "kubernetes"
     assert eval_task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
@@ -60,10 +64,10 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
     assert train["envs"]["AWS_PROFILE"] == "nebius"
     assert train["envs"]["POLICY_IMAGE"] == (
-        "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+        EXPECTED_SONIC_IMAGE
     )
     assert eval_task["envs"]["POLICY_IMAGE"] == (
-        "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+        EXPECTED_SONIC_IMAGE
     )
     assert eval_task["envs"]["AWS_PROFILE"] == "nebius"
     assert train["envs"]["SONIC_TRAIN_OUTPUT_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/training/"

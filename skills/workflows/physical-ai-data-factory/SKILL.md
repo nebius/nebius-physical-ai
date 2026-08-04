@@ -88,17 +88,18 @@ planned before it is returned (chat only emits runnable specs). `generate_data_f
 is the direct entry point; `generate_workflow_draft(intent="create_data_factory_workflow", user_text=...)`
 is the chat path.
 
-**Input conditioning (real augmentation of the caller's clip).** By default the
-augment renders the bundled, self-contained control example (`robot_depth_spec.json`),
-which keeps the golden eval hermetic but is NOT an augmentation of the run's own
-input. To make the output a genuine transform of the run's real footage, opt in:
-set `NPA_COSMOS_CONDITION_ON_INPUT=1` at submit (or pass `--condition-on-input` /
-`--input-video <path|s3://>` to `npa workbench cosmos2 transfer`). The augment then
-downloads the first clip under `--input-uri` (the run's `input/`), builds a
-controlnet spec with `video_path` = that clip and an **`edge`** (or `vis`) control
-computed on-the-fly, and the sampled appearance prompt drives the new look — so the
-output preserves the input's structure/motion with a new appearance. `edge`/`vis`
-need no precomputed control asset; `depth`/`seg` would need one, so input-only
+**Input conditioning (real augmentation of the caller's clip).** The managed
+`workbench.cosmos2.transfer_execute` path always conditions on the caller's real
+footage. Its `config.trigger_uri` must contain at least one supported video (`.mp4`,
+`.mov`, `.webm`, `.mkv`, or `.avi`); an empty, inaccessible, or video-free input
+fails closed before inference. Bundled upstream media was removed for
+redistribution reasons and is not a fallback. The augment downloads the first clip
+under `--input-uri` (the run's `input/`), builds a controlnet spec with `video_path`
+= that clip and an **`edge`** (or `vis`) control computed on-the-fly, and the sampled
+appearance prompt drives the new look — so the output preserves the input's
+structure/motion with a new appearance. Generic direct CLI callers can opt into the
+same behavior with `--condition-on-input` or `--input-video <path|s3://>`. `edge`/
+`vis` need no precomputed control asset; `depth`/`seg` would need one, so input-only
 conditioning falls back to `edge`. Conditioned runs record `mode:
 cosmos_transfer2.5_gpu` + `input_conditioned: true` + `conditioned_input` in the
 augment `metadata.json` / `manifest.json`, which the agent's provenance panel surfaces.
@@ -119,10 +120,10 @@ evaluate` runs two of upstream's checks per augmented variant and writes
   when a checkout is importable (`NPA_COSMOS_EVALUATOR_SRC`, else
   `/opt/cosmos-evaluator`) and otherwise runs the in-repo port of the same
   algorithm; the result's `engine` field says which ran, and the two agree to
-  ~1e-3. It only feeds the score for **input-conditioned** variants (see
-  `NPA_COSMOS_CONDITION_ON_INPUT` below) — without conditioning the two clips are
-  different scenes and the motion comparison carries no signal, so it stays
-  informational and the score is the attribute pass rate.
+  ~1e-3. Managed variants are input-conditioned, so this comparison contributes
+  to their score. For a generic unconditioned transfer the source and output are
+  different scenes, so it remains informational and the score is the attribute
+  pass rate.
 
 `grade_gate` thresholds on that report's `score`. It also still accepts the older
 `vlm_eval` report (`vlm_eval_stub.json`, a LEGACY filename of the vlm_eval tool's

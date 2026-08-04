@@ -192,6 +192,12 @@ Base image and tag conventions are backed by:
 - `docs/security/image-reproducibility.md`
 - `.github/workflows/image-security-scan.yml`
 
+For the complete external-fork-to-release procedure, including the maintainer
+trust boundary, licensing gate, trusted registry build, and incremental GHCR
+publication, follow `skills/workflows/contribute-workbench-image/SKILL.md`.
+The contributor-facing checklist is
+`docs/workbench/contributing-a-containerized-solution.md`.
+
 The current tag-family strategy is `cuda12` for production CUDA 12.x images and
 `cuda13-b300` for B300 and future Blackwell images. The latter remains blocked
 or vendor-paced for much of the stack.

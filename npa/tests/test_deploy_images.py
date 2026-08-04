@@ -57,7 +57,8 @@ def test_default_registry_is_real_first_party_registry() -> None:
 def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("lancedb")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.3"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:"
+        "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
     )
     assert container_image_for_tool("detection-training") == (
         "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
@@ -74,19 +75,23 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     )
     assert (
         container_image_for_tool("cosmos3-reason")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:3.0.1-genuine-sm120"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:"
+        "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert (
         container_image_for_tool("envgen")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-envgen:0.1.2"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-envgen:"
+        "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert (
         container_image_for_tool("reference-policy")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-reference-policy:0.1.2"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-reference-policy:"
+        "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert (
         container_image_for_tool("loop-eval")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-loop-eval:0.1.3-genuine-sm120"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-loop-eval:"
+        "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
 
 
@@ -109,11 +114,13 @@ def test_byo_workflow_images_have_pushed_defaults(monkeypatch) -> None:
 
     assert (
         default_vlm_image()
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
+        "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
     )
     assert (
         default_workbench_image()
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:"
+        "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
 
 

@@ -20,10 +20,12 @@ Example (dry run first, then execute):
     python -m npa.deploy.publish_public --target ghcr.io/nebius/nebius-physical-ai --dry-run
     python -m npa.deploy.publish_public --target ghcr.io/nebius/nebius-physical-ai
 
-The copy path preflights the source registry first and verifies the result after, so a
-stale credential fails before anything is written and a copy cannot report success while
-nothing is publicly pullable. Making the packages public is the one step that cannot be
-automated (see ``package_settings_url``); the verification prints a click-through list.
+The copy path preflights the source registry first, skips targets whose manifest digest
+already matches the source, and verifies the result after. A stale credential therefore
+fails before anything is written, unchanged images are not recopied, and a copy cannot
+report success while nothing is publicly pullable. Making the packages public is the one
+step that cannot be automated (see ``package_settings_url``); the verification prints a
+click-through list.
 
 ``--describe-credential`` reads a source-registry credential on stdin and reports its
 expiry offline, because the credential is what actually breaks: a Nebius access token
@@ -404,11 +406,77 @@ def visibility_checklist(failures: list[tuple[PublishItem, str]]) -> str:
     return "\n".join(lines)
 
 
-def _crane_copy(item: PublishItem) -> None:
+def _crane_digest(ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Return ``(True, digest)`` or ``(False, registry error)`` for ``ref``.
+
+    ``crane copy`` is content-addressed, but invoking it for every image still walks and
+    negotiates every manifest and layer. Comparing the top-level manifest digest first
+    lets repeat workflow runs prove that a tag is already current without writing it
+    again. The source preflight remains separate and complete: incrementality must not
+    weaken the credential, pin, or licensing gates.
+    """
     crane = shutil.which("crane")
     if not crane:
         raise RuntimeError("crane not found on PATH; install go-containerregistry crane")
+    try:
+        completed = subprocess.run(
+            [crane, "digest", ref],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {timeout:g}s"
+    if completed.returncode == 0:
+        output = (completed.stdout or "").strip().splitlines()
+        if output:
+            return True, output[-1]
+        return False, "crane returned an empty digest"
+    detail = (completed.stderr or completed.stdout or "").strip().splitlines()
+    return False, detail[-1] if detail else f"crane exited {completed.returncode}"
+
+
+def _crane_copy(item: PublishItem) -> bool:
+    """Copy ``item`` only when the target is absent or has a different digest.
+
+    Returns ``True`` when a copy ran and ``False`` when the exact source digest was
+    already present. A target denial is allowed to reach ``crane copy`` because a new
+    private GHCR package can be unreadable through the pull path while the workflow's
+    token is still authorised to create it; the copy remains the authoritative write
+    check. Transient or unknown digest failures stop instead of risking an unnecessary
+    rewrite.
+    """
+    crane = shutil.which("crane")
+    if not crane:
+        raise RuntimeError("crane not found on PATH; install go-containerregistry crane")
+
+    source_ok, source_detail = _crane_digest(item.source_ref)
+    if not source_ok:
+        raise RuntimeError(
+            f"could not resolve source digest for {item.source_ref}: {source_detail}"
+        )
+
+    target_ok, target_detail = _crane_digest(item.target_ref)
+    if target_ok and target_detail == source_detail:
+        print(f"Already current; skipping copy: {item.target_ref} ({source_detail})")
+        return False
+    if target_ok:
+        print(
+            f"Digest changed; copying {item.target_ref}: "
+            f"{target_detail} -> {source_detail}"
+        )
+    else:
+        failure_kind = classify_preflight_failure(target_detail)
+        if failure_kind == "other":
+            raise RuntimeError(
+                f"could not determine target digest for {item.target_ref}: {target_detail}; "
+                "refusing to copy because the target may already be current"
+            )
+        print(f"Target absent or unreadable ({target_detail}); copying {item.target_ref}")
+
     subprocess.run([crane, "copy", item.source_ref, item.target_ref], check=True)
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -538,9 +606,18 @@ def main(argv: list[str] | None = None) -> int:
     publishable = _preflight_or_explain(plan, skip_missing=args.skip_missing)
     if not publishable:
         return 1
+    copied = 0
+    already_current = 0
     for item in publishable:
-        _crane_copy(item)
-    print(f"\nCopied {len(publishable)} image(s).")
+        # Existing tests and third-party instrumentation historically returned ``None``
+        # from _crane_copy; count every result except the explicit incremental ``False``
+        # as a copy for backwards-compatible instrumentation.
+        if _crane_copy(item) is False:
+            already_current += 1
+        else:
+            copied += 1
+    print(f"\nCopied {copied} image(s).")
+    print(f"Skipped {already_current} already-current image(s).")
 
     # Copying is not publishing, so do not stop here and report success. Verifying
     # inline means the operator learns the real state -- and gets the click-through

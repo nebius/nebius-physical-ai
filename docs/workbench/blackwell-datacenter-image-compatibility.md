@@ -126,7 +126,7 @@ npa/.venv/bin/python -m pytest npa/tests/docker/test_packaging_contract.py \
 1. `npa-base` arch widen, then `npa-workbench-cuda-base` — they gate most of the tree.
 2. The ready set: `npa-lerobot` (+ policy), `npa-lancedb`, `npa-detection-training`.
 3. `npa-cosmos3-reason` rebuild on the widened base, plus a real `npa-cosmos2-transfer` transfer.
-4. `npa-cosmos` (Predict2) port, once cu128 Blackwell flash-attn/natten wheels are confirmed upstream.
+4. `npa-cosmos` (Predict2) now uses NVIDIA's complete v1.2.0 cu128/torch-2.7 wheel set. Its flash-attn and real Predict2 NATTEN module passed on B200; B300 remains blocked by Predict2 v1.0.9's compute-capability allowlist until upstream admits capability 103.
 5. Genesis subtree and Isaac Lab / SONIC / GR00T: blocked. Track upstream; add headless-only datacenter variants only where the work is compute-only.
 6. Update `pyproject.toml`, the manifests, CLI routing, and this page.
 

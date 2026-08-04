@@ -1,6 +1,6 @@
 # Additive Blackwell Genesis image. This Dockerfile is intentionally separate
-# from the proven CUDA 12.4 npa-genesis:0.4.6 path so sm_120 validation never
-# overwrites the production tag.
+# from the proven CUDA 12.4 npa-genesis:0.4.6 path so widened-architecture
+# validation never overwrites the production tag.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
@@ -11,7 +11,7 @@ ARG RSL_RL_VERSION=2.2.4
 
 LABEL npa.tool="genesis" \
       npa.version="${GENESIS_VERSION}" \
-      npa.image.flavor="sm80-sm90-sm120" \
+      npa.image.flavor="sm80-sm90-sm100-sm103-sm120" \
       npa.base.image="${BASE_IMAGE}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -41,6 +41,12 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     groupadd -g 44 video 2>/dev/null || true; \
     groupadd -g 992 render 2>/dev/null || true; \
     usermod -aG video,render ubuntu
+
+# npa-base force-purges linux-libc-dev in its final hardening layer, which
+# intentionally leaves libc6-dev unsatisfied. Restore the headers while native
+# Python dependencies such as evdev build, then reapply the purge below.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --fix-broken
 
 RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install \
@@ -77,6 +83,9 @@ if actual != expected:
 print(f"GENESIS_BUILD_IMPORT_OK {actual}")
 print(f"TORCH_BUILD_CUDA {torch.__version__} cuda={torch.version.cuda}")
 PY
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
 WORKDIR /opt/genesis

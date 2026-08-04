@@ -364,7 +364,29 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
             "--configs-uri",
             "{{config.configs_uri}}",
+            "--condition-on-input",
             "--execute",
+        ],
+    ),
+    "workbench.cosmos2.transfer_conditioned_execute": ToolEntry(
+        name="workbench.cosmos2.transfer_conditioned_execute",
+        description=(
+            "Run the REAL Cosmos-Transfer2.5 model conditioned on the input video "
+            "and upload its video, exact frame list, and manifest to S3."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "{{config.trigger_uri}}",
+            "--output-uri",
+            "{{config.augment_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--execute",
+            "--condition-on-input",
         ],
     ),
     "workbench.cosmos3.text_to_image": ToolEntry(
@@ -502,13 +524,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real_envgen.raw_shard",
         description="Generate raw simulation env shard.",
         argv_template=[
-            "python3",
-            "-m",
-            "npa.workflows.sim2real_envgen",
+            "npa",
+            "workbench",
+            "sim2real-envgen",
             "raw-shard",
-            # --run-id is REQUIRED by the module's parser and was missing, so every stage
-            # using this toolRef died with "the following arguments are required: --run-id".
-            # Invisible to the flag audit, which only understands `npa …` Typer commands.
             "--run-id",
             "{{run.id}}",
             # The module takes the RUN ROOT and derives envs/raw, envs/train,
@@ -525,8 +544,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.shard_index}}",
             "--shard-count",
             "{{config.shard_count}}",
-            "--train-fraction",
-            "{{config.train_fraction}}",
             "--seed",
             "{{config.envgen_seed}}",
             "--augmented-frames-uri",

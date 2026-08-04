@@ -121,8 +121,8 @@ def test_declared_case_budget_survives_the_daily_runner_cap(monkeypatch) -> None
     """
     import importlib
 
-    # Keep this import valid whether pytest is launched from the repository
-    # root or from ``npa/`` (the daily runner uses the latter).
+    # Keep this import deterministic both for the documented repository-root
+    # invocation against ``npa/tests`` and for the daily runner from ``npa/``.
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
     mod = importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
     monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS", "2400")

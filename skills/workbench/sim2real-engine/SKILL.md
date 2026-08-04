@@ -60,6 +60,11 @@ Stages 4–6 share one component name in monitor: `stage_04_06_env_gen_split_tok
 - K8s sibling job names embed only the first 22 characters of `run_id`.
 - Registry-qualified images gate K8s execution; placeholders fall back to local
   reference paths (SEAM tier in component records).
+- `npa/workflows/workbench/sim2real/runbook.yaml` passes explicit trainer, VLM,
+  and evaluator image fallbacks on the CLI, so those values override the Python
+  defaults. Keep them synchronized with `[tool.npa.supported-tools]`; the
+  contract is guarded by `tests/workflows/test_sim2real_image_pins.py` and the
+  stale-tag audit.
 - Do not hardcode bucket names, tenant IDs, or registry paths in engine code.
 
 ## Verify

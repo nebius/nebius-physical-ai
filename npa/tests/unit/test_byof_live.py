@@ -59,7 +59,13 @@ def test_resolve_byof_kubernetes_target_falls_back_to_home_kubeconfig(
 def test_resolve_byof_kubernetes_target_from_cluster_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # This unit path exercises cluster state, independent of the operator's live
+    # project configuration (which may itself declare a Kubernetes context).
+    monkeypatch.setattr("npa.workflows.byof.live._project_kubernetes_block", lambda _project: {})
+    monkeypatch.setattr("npa.workflows.byof.live._project_storage_block", lambda _project: {})
     monkeypatch.delenv("NPA_BYOF_K8S_CONTEXT", raising=False)
+    monkeypatch.delenv("NPA_K8S_CONTEXT", raising=False)
+    monkeypatch.delenv("KUBECONTEXT", raising=False)
     monkeypatch.delenv("NPA_BYOF_KUBECONFIG", raising=False)
     monkeypatch.delenv("KUBECONFIG", raising=False)
     cluster_dir = tmp_path / "clusters" / "customer-mk8s"

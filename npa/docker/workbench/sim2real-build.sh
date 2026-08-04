@@ -6,12 +6,12 @@ NPA_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 REGISTRY=""
 PUSH=0
-BASE_IMAGE="${BASE_IMAGE:-npa-base:cuda13-b300-sm80-sm90-sm120-latest}"
-GENESIS_IMAGE="${GENESIS_IMAGE:-npa-genesis:0.4.6-sm80-sm90-sm120-latest}"
-VLM_TAG="${VLM_TAG:-3.0.1-genuine-sm120}"
-ENVGEN_TAG="${ENVGEN_TAG:-0.1.2}"
-EVAL_TAG="${EVAL_TAG:-0.1.3-genuine-sm120}"
-VLM_RL_TAG="${VLM_RL_TAG:-0.1.1}"
+BASE_IMAGE="${BASE_IMAGE:-npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest}"
+GENESIS_IMAGE="${GENESIS_IMAGE:-npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
+VLM_TAG="${VLM_TAG:-cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
+ENVGEN_TAG="${ENVGEN_TAG:-cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
+EVAL_TAG="${EVAL_TAG:-cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
+VLM_RL_TAG="${VLM_RL_TAG:-cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 
 usage() {
   cat <<EOF
@@ -23,9 +23,10 @@ Builds the Sim2Real reference images one at a time:
   npa-reference-policy:${ENVGEN_TAG}
   npa-lerobot-vlm-rl:${VLM_RL_TAG}
   npa-loop-eval:${EVAL_TAG}
-  npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.31.4}
+  npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.31.4} (skipped when SKIP_RERUN_VIEWER=1)
 
-Set BASE_IMAGE and GENESIS_IMAGE to the pushed CUDA 13 / sm80-sm90-sm120 base
+Set BASE_IMAGE and GENESIS_IMAGE to the pushed CUDA 13 /
+sm80-sm90-sm100-sm103-sm120 base
 and Genesis image tags before building. Set ENVGEN_TAG when the reference
 policy image should build from a non-default envgen tag. Set VLM_TAG and
 EVAL_TAG for additive component rebuilds.
@@ -94,4 +95,8 @@ build_one "npa-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile
 build_one "npa-reference-policy" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-reference-policy/Dockerfile" "BASE_IMAGE=npa-envgen:${ENVGEN_TAG}"
 build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
 build_one "npa-loop-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
-build_one "npa-rerun-viewer" "${RERUN_VIEWER_TAG:-0.31.4}" "${SCRIPT_DIR}/rerun-viewer/Dockerfile" "RERUN_SDK_VERSION=${RERUN_VIEWER_TAG:-0.31.4}"
+if [ -n "${SKIP_RERUN_VIEWER:-}" ]; then
+  echo "Skipping npa-rerun-viewer (SKIP_RERUN_VIEWER=${SKIP_RERUN_VIEWER})"
+else
+  build_one "npa-rerun-viewer" "${RERUN_VIEWER_TAG:-0.31.4}" "${SCRIPT_DIR}/rerun-viewer/Dockerfile" "RERUN_SDK_VERSION=${RERUN_VIEWER_TAG:-0.31.4}"
+fi

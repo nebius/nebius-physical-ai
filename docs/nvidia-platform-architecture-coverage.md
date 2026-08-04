@@ -40,15 +40,15 @@ Two more constraints follow from the hardware rather than the toolchain:
 
 | Workbench tool | Dependence | Datacenter Blackwell readiness (B200 `sm_100` / B300 `sm_103`) |
 |---|---|---|
-| LeRobot | Independent of NVIDIA vendor stack | Tier 1; B300 validated, B200 pending hardware |
+| LeRobot | Independent of NVIDIA vendor stack | Exact final image validated with ACT train/checkpoint/eval on B200 and B300 |
 | SONIC | Isaac Lab -> Isaac Sim -> x86_64 CUDA 12.8 | Vendor-paced; render can never target B200/B300 (no RT cores) |
 | GR00T | NVIDIA GR00T, x86_64 = CUDA 12.8 | Vendor-paced; a headless compute-only finetune variant is plausible since cu128 carries `sm_100` |
 | Isaac Lab | NVIDIA Isaac Lab, x86_64 = CUDA 12.8 | Vendor-paced; render can never target B200/B300 |
-| Cosmos Predict2 | NVIDIA Cosmos, cu126 wheels cap at `sm_90` | Needs a port to cu128 flash-attn/natten Blackwell wheels |
-| Cosmos Transfer2.5 | Already on the cu128 track | Ready; needs a real video-to-video validation run |
+| Cosmos Predict2 | NVIDIA Cosmos, v1.2.0 cu128/torch-2.7 wheels carry `sm_100` | B200 custom kernels verified; Predict2 v1.0.9's capability allowlist still blocks B300 `sm_103` |
+| Cosmos Transfer2.5 | Already on the cu128 track | Real Video2Video verified on B200; B300 blocked because CUDA 12.8 NVRTC rejects runtime JIT for `sm_103` |
 | FiftyOne | Not GPU-perf critical | Not architecture-gated |
-| LanceDB | cu130 base, no custom CUDA build | Ready; needs a CLIP-embed validation run |
-| Genesis | Taichi `sm_103` (separate axis) | Upstream-blocked; re-test Taichi on `sm_100` first |
+| LanceDB | cu130 base, no custom CUDA build | CLIP → Lance table → self-search verified on B200 and B300 |
+| Genesis | Taichi runtime kernel compilation | Real scene construction, kernel compilation, and physics step verified on B200 and B300 |
 
 ## Tracking signals for vendor movement
 
@@ -58,10 +58,10 @@ Two more constraints follow from the hardware rather than the toolchain:
 
 ## Customer messaging
 
-- B300 is ready for LeRobot training on Nebius today; B200 uses the same images and the same `sm_100` SASS.
-- Other Physical AI workloads are gated on NVIDIA's x86_64 CUDA 13 alignment, not on Nebius infrastructure.
+- B200 and B300 are ready for LeRobot training and the validated headless Genesis/Sim2Real paths on Nebius today.
+- NVIDIA Isaac workloads and specific Cosmos paths remain gated on their own vendor/runtime constraints, not on Nebius placement.
 - aarch64 (Jetson Thor, DGX Spark) already has CUDA 13 from NVIDIA. Nebius does not currently offer aarch64 GPU compute.
-- Genesis is independently blocked on upstream Taichi sm_103, unrelated to this split.
+- Do not generalize the Genesis result to Isaac or Cosmos custom kernels; every image keeps its own measured verdict.
 - Rendering workloads belong on L40S or RTX PRO 6000. Datacenter Blackwell has no RT cores, so this is a hardware fact rather than a software gap that will be fixed.
 
 ## Sources

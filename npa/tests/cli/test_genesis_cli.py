@@ -1137,7 +1137,9 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-genesis"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-genesis:0.4.6")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith(
+        "/npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
     env_vars = write_env.call_args.args[2]
     assert env_vars["NVIDIA_DRIVER_CAPABILITIES"] == "all"
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["sim-container"]

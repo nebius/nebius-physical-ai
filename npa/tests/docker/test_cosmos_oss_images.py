@@ -243,92 +243,26 @@ def test_transfer_image_keeps_its_interpreter_out_of_root() -> None:
     )
     assert "chown -R ubuntu:ubuntu" in body and "/opt/cosmos/uv-python" in body
     # And the build proves it rather than assuming it.
-    assert "venv usable as ubuntu" in body, (
+    assert "su ubuntu -s /bin/bash -c" in body, (
         "the build must verify the venv runs as ubuntu, not just that it exists"
     )
-    # A prebuilt BASE_IMAGE already carries a venv pointing into /root, and uv would
-    # reuse it, so the repair branch is what makes UV_PYTHON_INSTALL_DIR effective.
-    assert "UV_LEGACY_PYTHON_DIR=/root/.local/share/uv/python" in body, (
-        "the legacy interpreter location must be named once so the repair can detect it"
+    assert "! grep -q '/root' .venv/pyvenv.cfg" in body, (
+        "the build must fail if pyvenv.cfg points into the root-only tree"
     )
-    assert 'interpreter still under ${UV_LEGACY_PYTHON_DIR}' in body, (
-        "the build must fail if the resolved interpreter is still the legacy one"
+    assert "UV_LEGACY_PYTHON_DIR" not in body, (
+        "a complete source build must never inherit or repair the opaque private parent's venv"
     )
 
 
-def test_transfer_relocation_repoints_a_root_venv(tmp_path: Path) -> None:
-    """Exercise the Dockerfile's relocation block against the layout it repairs.
+def test_transfer_builds_a_fresh_rootless_venv_instead_of_relocating_one() -> None:
+    """The clean-source build cannot regress to repairing an opaque parent's venv."""
 
-    Mirrors what the published image actually contains: a uv interpreter under
-    /root and a venv whose ``bin/python`` symlinks into it. Verified against the real
-    image in-cluster as well; this keeps the shell logic from regressing without one.
-    """
-
-    import re
-    import subprocess
-
-    legacy = tmp_path / "legacy" / "python"
-    interpreter = legacy / "cpython-3.10.20-linux-x86_64-gnu" / "bin"
-    interpreter.mkdir(parents=True)
-    (interpreter / "python3.10").write_text("#!/bin/sh\necho interpreter\n", encoding="utf-8")
-    (interpreter / "python3.10").chmod(0o755)
-
-    project = tmp_path / "project"
-    venv_bin = project / ".venv" / "bin"
-    venv_bin.mkdir(parents=True)
-    (venv_bin / "python").symlink_to(interpreter / "python3.10")
-    (venv_bin / "python3").symlink_to("python")
-    # uv records the interpreter in pyvenv.cfg through its version symlink, which is a
-    # different string from what `readlink -f` resolves to. Matching only the resolved
-    # form leaves `home =` in the legacy tree and Python takes sys._home from it.
-    symlinked = legacy / "cpython-3.10-linux-x86_64-gnu"
-    symlinked.symlink_to(interpreter.parent, target_is_directory=True)
-    (project / ".venv" / "pyvenv.cfg").write_text(
-        f"home = {symlinked / 'bin'}\nversion = 3.10.20\n", encoding="utf-8"
-    )
-
-    # Lift the block straight out of the Dockerfile so the test cannot drift from it.
-    # The two directories it works on are env vars precisely so this is drivable.
     body = _dockerfile("cosmos2-transfer")
-    block = body.split("RUN set -eux; \\", 1)[1].split("\n\n", 1)[0]
-    script = re.sub(r"\\\n\s*", " ", block)
-    install_dir = tmp_path / "relocated"
-
-    result = subprocess.run(
-        ["bash", "-c", "set -eux; " + script],
-        cwd=project,
-        capture_output=True,
-        text=True,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "UV_PYTHON_INSTALL_DIR": str(install_dir),
-            "UV_LEGACY_PYTHON_DIR": str(legacy),
-        },
-    )
-    assert result.returncode == 0, result.stderr
-
-    resolved = (venv_bin / "python").resolve()
-    assert str(resolved).startswith(str(install_dir)), resolved
-    config = (project / ".venv" / "pyvenv.cfg").read_text(encoding="utf-8")
-    assert str(install_dir) in config
-    assert str(legacy) not in config, (
-        "pyvenv.cfg still points into the legacy tree; Python takes sys._home from it, "
-        "so an inference run fails later in distutils.sysconfig"
-    )
-    assert not legacy.exists(), (
-        "the stale interpreter tree should be removed so the trap cannot come back"
-    )
-    # `cp -a` copies uv's absolute version symlink verbatim, so the relocated tree can
-    # still point back into the legacy location and resolve into it.
-    dangling = [
-        path
-        for path in install_dir.rglob("*")
-        if path.is_symlink() and str(path.readlink()).startswith(str(legacy))
-    ]
-    assert not dangling, f"relocated tree still links into the legacy dir: {dangling}"
-    assert (install_dir / "cpython-3.10-linux-x86_64-gnu" / "bin" / "python3.10").exists(), (
-        "resolving through the version symlink must reach the relocated interpreter"
-    )
+    assert "ARG BASE_IMAGE=npa-cosmos2-transfer" not in body
+    assert 'uv python install "${COSMOS_PYTHON_VERSION}"' in body
+    assert 'uv sync --locked --no-dev --no-editable --extra=cu128' in body
+    assert 'readlink -f .venv/bin/python' in body
+    assert 'find "${UV_PYTHON_INSTALL_DIR}"' in body
 
 
 @pytest.mark.parametrize("image", IMAGES)
