@@ -2,6 +2,8 @@
 
 B300 is validated for the `cuda13-b300` base image and the LeRobot ACT smoke-training workload listed below. SONIC is not yet validated on B300 because its current Isaac Sim / Isaac Lab dependency path does not preserve the CUDA 13 / PyTorch 2.9 x86_64 base contract. Cosmos, GR00T, and Isaac Lab remain vendor-paced, while Genesis remains upstream-blocked on Taichi Blackwell support.
 
+> **B200 (`sm_100`) as well as B300 (`sm_103`).** The base image no longer pins `TORCH_CUDA_ARCH_LIST=10.3`; it builds for `8.0 9.0 10.0 10.3 12.0`, so one image covers A100, Hopper, both datacenter Blackwell parts, and RTX PRO 6000. Since `sm_100` SASS runs on a `sm_103` device by forward compatibility, B200 is the architecture to build and validate first. The compatibility model, build conventions, and per-image verdicts are in [Blackwell datacenter image compatibility](workbench/blackwell-datacenter-image-compatibility.md) and `npa/docker/workbench/blackwell-dc-images.json`. The results below predate the widened arch list and cover B300 only.
+
 ## NVIDIA Physical AI x86_64 vs aarch64 architecture split
 
 As of May 2026, NVIDIA publishes different CUDA / PyTorch versions per host architecture. B300 in the dGPU form factor is x86_64, which is on the older CUDA 12.8 track for the major vendor frameworks.

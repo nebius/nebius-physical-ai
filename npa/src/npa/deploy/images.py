@@ -15,9 +15,12 @@ from typing import Any
 # or `container_registry` in ~/.npa/config.yaml.
 DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
 DEFAULT_CONTAINER_REGISTRY = f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
-# Backup registry (us-central1) used for failover when the primary is
-# unavailable. Override with NPA_BACKUP_REGISTRY.
-BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/registry-u00gwj4vqcp98k7ph6"
+# Mirror registry (us-central1) used for region-agnostic failover: every tool
+# image is mirrored to both this and the primary (eu-north1) registry, so a pull
+# succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
+# cannot reach the cross-region eu-north1 registry, and vice versa. A registry
+# path is a public locator, not a credential. Override with NPA_BACKUP_REGISTRY.
+BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
@@ -29,7 +32,10 @@ CONTAINER_IMAGE_NAMES = {
     "isaac-lab": "npa-isaac-lab",
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
+    "cosmos3": "npa-cosmos3",
     "cosmos3-reason": "npa-cosmos3-reason",
+    "cosmos-curate": "npa-cosmos-curate",
+    "cosmos-evaluator": "npa-cosmos-evaluator",
     "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
     "sonic": "npa-sonic",
@@ -39,41 +45,105 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
     "loop-eval": "npa-loop-eval",
     "rerun-viewer": "npa-rerun-viewer",
+    "foxglove-embed": "npa-foxglove-embed",
+    "lichtblick": "npa-lichtblick",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
 }
 
+# Tools whose built image may NOT be published to a public/anonymous registry,
+# because it bakes a runtime we are not licensed to redistribute.
+#
+# THIS SET IS DELIBERATELY EMPTY, and the mechanism around it is deliberately kept.
+#
+# It used to hold {"isaac-lab", "sonic", "groot"}, because those images baked NVIDIA
+# Omniverse Kit (Isaac Sim): the Isaac Sim SOURCE is Apache-2.0, but the shipped
+# binary bundles the Kit SDK + NVIDIA assets, and both the isaacsim AND isaaclab
+# PyPI packages declare "License: NVIDIA Proprietary Software". Publishing them
+# would have made us the third-party redistributor of Omniverse Kit, which needs
+# an NVIDIA AI Enterprise license.
+#
+# They were re-architected to contain no NVIDIA Isaac bytes at all: Isaac Sim and
+# Isaac Lab are fetched on first run from pypi.nvidia.com, into a cache volume,
+# under the OPERATOR's own EULA acceptance, and the image refuses to start Isaac
+# without it (npa/docker/workbench/common/isaac_bootstrap.sh). NVIDIA delivers to
+# each operator directly, so we are never the redistributor — the same pattern the
+# workbench already uses for gated model weights. Verified mechanically against the
+# built images by npa/scripts/scan_image_omniverse_payload.py.
+#
+# Keeping an empty set rather than deleting the machinery is a deliberate choice:
+# the next runtime we cannot ship needs exactly this, and a mechanism that is
+# deleted when unused has to be rebuilt (and re-reviewed) under time pressure. Its
+# tests monkeypatch a synthetic restricted tool in, so the guard cannot rot while
+# its membership is empty. Kept in sync with packaging-contract.yaml's
+# `redistribution:` fields by npa/tests/deploy/test_public_publish.py.
+OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset()
+
+# Images built FROM a restricted tool image, so they inherit whatever it bakes and
+# the same no-public-redistribution rule. They are not separate
+# CONTAINER_IMAGE_NAMES entries (they are variants of their parent tool), so they
+# never reach publicly_publishable_tools(); they are listed here so operator-facing
+# output can name every excluded image without hardcoding it at the call site.
+# Empty for the same reason as above: ``sonic-mujoco`` inherits sonic's runtime-fetch
+# architecture and adds no Isaac and no Omniverse assets of its own.
+OMNIVERSE_RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
+
+# Public mirror registry for the OSS-redistributable image subset. Nebius CR does
+# NOT support anonymous/public pulls and has no cross-tenant / all-authenticated
+# grant, so making images pullable by any Nebius tenant (or anyone) means
+# mirroring the publicly_publishable_tools() set to a public-capable registry.
+# GHCR is the default (public, anonymous pull, native to the GitHub org). A
+# registry path is a public locator, not a credential. Override with
+# NPA_PUBLIC_REGISTRY; consumers in any tenant pull the OSS images by setting
+# NPA_REGISTRY to this value.
+PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
+DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+
+# Registry hosts that serve anonymous/public pulls. Resolving a restricted image
+# against one of these is always wrong: either it is not there (we never publish
+# it) or someone has published a non-redistributable runtime to third parties.
+# Private registries are deliberately absent — an operator building the image
+# into their OWN registry is the licensed path, whichever registry that is.
+PUBLIC_REGISTRY_HOSTS = frozenset(
+    {
+        "ghcr.io",
+        "docker.io",
+        "index.docker.io",
+        "registry-1.docker.io",
+        "quay.io",
+        "public.ecr.aws",
+    }
+)
+
 SUPPORTED_TOOL_VERSIONS = {
-    # Default LeRobot pin. Selectable additional versions: see
-    # lerobot_version_manifest.json (0.5.1 default + 0.6.0).
-    "lerobot": "0.5.1",
+    # Default LeRobot image release. Selectable package versions and their
+    # image tags live in lerobot_version_manifest.json.
+    "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-policy": "0.1.1",
-    "genesis": "0.4.6",
+    "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "2.3.2.post1",
-    "cosmos": "1.0.9",
-    "cosmos2-transfer": "2.5.1-golden-eval-smoke-20260616T033000Z",
-    "cosmos3-reason": "3.0.1-genuine-sm120",
+    "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
+    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
+    # cosmos-framework 1.2.2 (pinned commit 5e67049c) + torch cu130 inference env.
+    # No weights baked; gated Cosmos3 checkpoints download at runtime.
+    "cosmos3": "1.2.2-cu130",
+    "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "cosmos-curate": "0.1.2",
+    "cosmos-evaluator": "0.1.2",
     "groot": "0.1.0",
     "fiftyone": "1.15.0",
-    "sonic": "0.1.2",
+    "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "retargeting": "0.1.1",
-    "envgen": "0.1.2",
-    "reference-policy": "0.1.2",
-    "lerobot-vlm-rl": "0.1.1",
-    # 0.1.3-genuine-sm120 is the canonical pin (matches
-    # sim2real.constants.DEFAULT_EVAL_TAG). Rebuilt+pushed 2026-07-21 from
-    # npa-genesis:0.4.6-sm80-sm90-sm120-latest (torch 2.9.0+cu130;
-    # torch._C._cuda_getArchFlags() reports sm_75..sm_120 + compute_120). It
-    # supersedes 0.1.1-genuine-sm120, whose bundled torch was 2.6.0+cu124
-    # (sm_50..sm_90 only) and crashed heldout_eval on RTX PRO 6000 (sm_120) with
-    # "no kernel image is available for execution on the device", and
-    # 0.1.2-genuine-sm120 (never pushed to the registry). Validated end-to-end on
-    # an RTX PRO 6000 node (sm_120) 2026-07-21: torch matmul + gs.init(gpu) + a
-    # FrankaPickPlaceEnv step, no "no kernel image" error. 0.1.1 has been deleted
-    # from the registry.
-    "loop-eval": "0.1.3-genuine-sm120",
+    "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "rerun-viewer": "0.31.4",
-    "lancedb": "0.30.3",
+    # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
+    "foxglove-embed": "0.58.0",
+    # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
+    "lichtblick": "1.26.0",
+    "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     "nebius-cli": "0.12.192",
     "terraform": "~> 0.5.201",
@@ -137,11 +207,12 @@ def supported_lerobot_versions() -> tuple[str, ...]:
 
 
 def resolve_lerobot_image_tag(version: str | None = None) -> str:
-    """Resolve a validated LeRobot image tag (equals the LeRobot package version)."""
+    """Resolve the validated image tag for a supported LeRobot package version."""
 
-    from npa.workbench.lerobot.version_compat import resolve_lerobot_version
+    from npa.workbench.lerobot.version_compat import lerobot_version_entry
 
-    return resolve_lerobot_version(version)
+    entry = lerobot_version_entry(version)
+    return str(entry.get("image_tag") or entry["version"])
 
 
 def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
@@ -200,6 +271,14 @@ def container_image_for_tool(
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
     resolved_registry = registry or _primary_registry()
+    if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
+        raise ValueError(
+            f"{tool!r} is not publicly redistributable and is never distributed from a "
+            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
+            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
+            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
+            f"docs/workbench/container-packaging.md."
+        )
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
@@ -243,11 +322,16 @@ def container_image_candidates(
     tag: str | None = None,
     gpu_target: str | None = None,
     image_variant: str | None = None,
+    preferred_region: str | None = None,
 ) -> list[str]:
-    """Return image refs to try in order: primary first, then the backup registry.
+    """Return image refs to try in order across both mirror registries.
 
-    Callers that support pull failover should iterate these. When the primary is
-    explicitly overridden, the backup is still appended unless it is identical.
+    Callers that support pull failover should iterate these so a pull works
+    region-agnostically: every image is mirrored to both registries, and a caller
+    that cannot reach one region (cross-region 403, or an identity without read on
+    the other project's registry) falls through to the other. ``preferred_region``
+    reorders so the caller's local-region registry (``cr.<region>.nebius.cloud``)
+    is tried first, avoiding a guaranteed-denied cross-region attempt.
     """
     primary = container_image_for_tool(
         tool, registry=registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
@@ -260,7 +344,65 @@ def container_image_candidates(
         )
         if backup != primary:
             candidates.append(backup)
+    region = (preferred_region or "").strip().lower()
+    if region:
+        host_prefix = f"cr.{region}.nebius.cloud/"
+        local = [ref for ref in candidates if ref.startswith(host_prefix)]
+        other = [ref for ref in candidates if not ref.startswith(host_prefix)]
+        candidates = local + other
     return candidates
+
+
+def public_container_registry() -> str:
+    """Return the public mirror registry: ``NPA_PUBLIC_REGISTRY`` or the default."""
+    return (
+        os.environ.get(PUBLIC_CONTAINER_REGISTRY_ENV, "").strip()
+        or DEFAULT_PUBLIC_CONTAINER_REGISTRY
+    )
+
+
+def is_public_registry(registry: str) -> bool:
+    """Whether a registry serves anonymous/public pulls.
+
+    True for the well-known public hosts and for whatever registry is configured
+    as our public mirror. A Nebius (or other private) registry is not public: an
+    operator's own registry is exactly where a restricted image is supposed to
+    live.
+    """
+    candidate = registry.strip().rstrip("/")
+    if not candidate:
+        return False
+    host = candidate.split("/", 1)[0].lower()
+    if host in PUBLIC_REGISTRY_HOSTS:
+        return True
+    mirror = public_container_registry().strip().rstrip("/")
+    return bool(mirror) and candidate.lower() == mirror.lower()
+
+
+def is_publicly_redistributable(tool: str) -> bool:
+    """Whether a tool image may be published to a public/anonymous registry.
+
+    ``False`` for any tool in ``OMNIVERSE_RESTRICTED_TOOLS`` — images that bake a
+    runtime we may not redistribute, which are licensed for internal-R&D /
+    build-your-own use only. That set is currently empty; see its comment.
+    """
+    return tool not in OMNIVERSE_RESTRICTED_TOOLS
+
+
+def omniverse_restricted_image_names() -> list[str]:
+    """Return every image name excluded from public registries (tools + variants)."""
+    return sorted(OMNIVERSE_RESTRICTED_TOOLS | OMNIVERSE_RESTRICTED_DERIVED_IMAGES)
+
+
+def publicly_publishable_tools() -> list[str]:
+    """Return the workbench tools that are OSS-redistributable to a public registry.
+
+    Excludes anything in ``OMNIVERSE_RESTRICTED_TOOLS``, which is currently empty:
+    the Isaac images now fetch Isaac Sim / Isaac Lab at run time under the
+    operator's own EULA acceptance rather than baking it, so every workbench tool
+    is publishable. See that set's comment for why the exclusion mechanism is kept.
+    """
+    return sorted(tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool))
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:

@@ -813,3 +813,42 @@ def test_nebius_discover_container_registry_best_effort_on_error(mocker) -> None
     mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
 
     assert nebius.discover_container_registry("project") == ""
+
+
+def test_lazy_storage_client_does_not_connect_until_it_is_used(monkeypatch) -> None:
+    """Holding one must be free; the whole point is local runs need no credentials."""
+
+    import copy
+
+    from npa.clients import storage
+
+    def explode(**kwargs: object) -> object:
+        raise AssertionError("built a StorageClient without a remote URI being touched")
+
+    monkeypatch.setattr(storage.StorageClient, "from_environment", staticmethod(explode))
+    client = storage.LazyStorageClient()
+
+    # Several stdlib paths probe for dunders; forwarding those would connect.
+    copy.deepcopy(client)
+    assert not hasattr(client, "__deepcopy__")
+    repr(client)
+
+
+def test_lazy_storage_client_builds_once_on_first_real_call(monkeypatch) -> None:
+    from npa.clients import storage
+
+    built: list[int] = []
+
+    class FakeClient:
+        def download_path(self, uri: str, dest: str) -> str:
+            return dest
+
+    def build(**kwargs: object) -> FakeClient:
+        built.append(1)
+        return FakeClient()
+
+    monkeypatch.setattr(storage.StorageClient, "from_environment", staticmethod(build))
+    client = storage.LazyStorageClient()
+    assert client.download_path("s3://b/k", "/tmp/x") == "/tmp/x"
+    assert client.download_path("s3://b/k", "/tmp/y") == "/tmp/y"
+    assert len(built) == 1

@@ -58,18 +58,14 @@ def _signal_training_imports():
 DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
-DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-golden-eval-smoke-20260616T033000Z"
-DEFAULT_VLM_IMAGE_TAG = "3.0.1-genuine-sm120"
-DEFAULT_ENVGEN_TAG = "0.1.2"
-DEFAULT_REFERENCE_POLICY_TAG = "0.1.2"
-DEFAULT_TRAINER_TAG = "0.1.1"
-# 0.1.3-genuine-sm120 is the canonical pin: rebuilt 2026-07-21 from
-# npa-genesis:0.4.6-sm80-sm90-sm120 (torch 2.9.0+cu130; _cuda_getArchFlags shows
-# sm_120/compute_120). It replaces 0.1.1-genuine-sm120, whose bundled torch was
-# sm_90-capped and crashed on RTX PRO 6000, and 0.1.2-genuine-sm120 (never in the
-# registry). Validated end-to-end on RTX PRO 6000 (sm_120) 2026-07-21. See
-# images.py and FIXME.md.
-DEFAULT_EVAL_TAG = "0.1.3-genuine-sm120"
+DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.1-skypilot-ready-20260801T053000Z"
+DEFAULT_VLM_IMAGE_TAG = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+DEFAULT_ENVGEN_TAG = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+DEFAULT_REFERENCE_POLICY_TAG = (
+    "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+)
+DEFAULT_TRAINER_TAG = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+DEFAULT_EVAL_TAG = "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 DEFAULT_ISAAC_TAG = "2.3.2.post1"
 # Pluggable held-out sim backend. Genesis remains fully supported; Isaac Lab
 # (Isaac Sim headless) is the default and requires RT-core GPUs (L40S / RTX Pro).
@@ -1202,6 +1198,11 @@ def _run_sim2real_viz_stage(
         )
     except RerunUnavailableError as exc:
         info = {"status": "skipped", "reason": str(exc), "source": "reference"}
+        info["mcap"] = _emit_sim2real_loop_mcap(
+            local_dir=local_dir,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+        )
         return (
             ComponentRecord(
                 "stage_14_rerun_viz",
@@ -1213,6 +1214,18 @@ def _run_sim2real_viz_stage(
             info,
         )
     info = {"source": "reference", **result.to_dict()}
+    mcap_info = _emit_sim2real_loop_mcap(
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+    )
+    info["mcap"] = mcap_info
+    artifacts = {"rrd": str(rrd_path)}
+    if mcap_info.get("status") == "written" and mcap_info.get("output_mcap_path"):
+        artifacts["mcap"] = str(mcap_info["output_mcap_path"])
+    mcap_note = ""
+    if mcap_info.get("status") == "written":
+        mcap_note = f" Also wrote a Lichtblick/Foxglove MCAP with {mcap_info.get('message_count', 0)} message(s)."
     return (
         ComponentRecord(
             "stage_14_rerun_viz",
@@ -1221,11 +1234,33 @@ def _run_sim2real_viz_stage(
                 f"Wrote Rerun recording with {result.rollout_count} rollout(s), "
                 f"{result.frame_count} camera frame(s), and {result.heldout_env_count} "
                 "held-out env score(s); camera streams, VLM critiques, RL signal, and "
-                "held-out scores are logged."
+                "held-out scores are logged." + mcap_note
             ),
-            {"rrd": str(rrd_path)},
+            artifacts,
         ),
         info,
+    )
+
+
+def _emit_sim2real_loop_mcap(
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Emit ``reports/sim2real.mcap`` alongside the ``.rrd`` (best-effort).
+
+    Gated behind ``NPA_SIM2REAL_MCAP`` (default on when rerun viz is on); degrades
+    gracefully when ``mcap`` is unavailable so it never fails the finalize stage.
+    """
+
+    from npa.workflows.sim2real_viz import emit_sim2real_mcap_if_enabled
+
+    return emit_sim2real_mcap_if_enabled(
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
 
 
@@ -2226,14 +2261,23 @@ def _run_kubernetes_image_component(
     job_name = _k8s_job_name(config.run_id, component)
     env = _ensure_sibling_source_env(config, env)
     # Refresh before each sibling Job: IAM registry tokens expire mid-pipeline.
+    # Best-effort: sibling Jobs already carry the run's imagePullSecrets (e.g.
+    # ``agent-sa``), so a mint failure (no ``nebius`` CLI / no ``NEBIUS_IAM_TOKEN``
+    # in-pod) must not crash the orchestrator — a genuinely stale secret surfaces
+    # as a sibling ImagePullBackOff rather than a hard orchestrator failure.
     from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
 
-    ensure_registry_pull_secret_for_images(
-        image,
-        namespace=namespace,
-        kubeconfig=config.k8s_kubeconfig,
-        k8s_context=config.k8s_context,
-    )
+    try:
+        ensure_registry_pull_secret_for_images(
+            image,
+            namespace=namespace,
+            kubeconfig=config.k8s_kubeconfig,
+            k8s_context=config.k8s_context,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort refresh must never abort the run
+        logging.getLogger(__name__).warning(
+            "sibling registry pull-secret refresh skipped for %s: %s", image, exc
+        )
     manifest = _component_job_manifest(
         image,
         component=component,

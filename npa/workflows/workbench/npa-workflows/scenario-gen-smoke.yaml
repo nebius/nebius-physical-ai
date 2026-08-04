@@ -1,13 +1,26 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
-# CPU-only live smoke for the scenario-gen tool.
+# CPU-only live smoke for the scenario-gen tool, and the twin that replaced the retired
+# skypilot/scenario-gen-adversarial.yaml.
 #
 # Exercises the two scenario-gen endpoints end-to-end against real S3 with no
 # GPU: generate mines a ranked adversarial set with the deterministic default
 # adversary backend, then rank re-scores it by severity + diversity. Intended
 # for `npa workbench workflow run-spec --execute` on a configured environment.
 # See docs/workbench/cookbooks/workbench-parity-tools.md.
+#
+# CPU is not a downgrade: `generate_scenarios(adversary_backend=...)` is a Python-API seam
+# with no CLI flag, so every CLI invocation runs `simulate_adversary` — "NOT RL... a
+# deterministic heuristic stand-in" by its own docstring, O(num_scenarios), with
+# adversary_steps entering only through a log10 budget term. The retired template's Isaac Lab
+# image and 200000 steps therefore selected no different code path
+# (npa/tests/workflows/test_scenario_gen_workflow.py pins this, and fails the day a real
+# backend becomes selectable).
+#
+# For the retired template's production scale:
+#   npa workbench workflow submit npa/workflows/workbench/npa-workflows/scenario-gen-smoke.yaml \
+#     --var num_scenarios=16 --var adversary_steps=200000 --var rank_top_k=4
 
 metadata:
   name: scenario-gen-smoke

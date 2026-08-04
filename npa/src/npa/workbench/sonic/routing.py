@@ -8,13 +8,18 @@ wasting a live GPU launch:
 * ``retarget`` is a CPU-only motion-library job.
 * ``finetune`` / ``train`` / ``mujoco-eval`` are headless, state-based
   (proprioceptive) workloads. They run on datacenter-headless GPUs
-  (H100/H200/A100/B200) and also run on RT-core GPUs.
+  (H100/H200/A100/B200/B300) and also run on RT-core GPUs.
 * ``isaac-render`` needs RT cores to rasterize frames, so it is restricted to
   RT-core GPUs (L40S, RTX PRO 6000, Blackwell ``sm_120``) and must never be
-  routed to H100/H200/A100 datacenter parts.
+  routed to H100/H200/A100 or datacenter Blackwell (B200/B300) parts.
 
-Blackwell (``sm_120``) additionally requires a CUDA 12.8+ build; that build
-selection is handled by the image manifest, but the GPU class is RT-core here.
+"Blackwell" is a marketing family, not one GPU class. The workstation part
+(RTX PRO 6000, ``sm_120``) has RT cores; the datacenter parts (B200 ``sm_100``,
+B300 ``sm_103``) do not, exactly like H100/H200. So a bare "blackwell" token is
+only read as RT-core when no datacenter model number is present.
+
+Blackwell also requires a CUDA 12.8+ build; that build selection is handled by
+the image manifest, but the GPU class is decided here.
 
 The helpers are pure and dependency-free so they can be reused across all three
 tiers (raw YAML materialization, the SDK, and the CLI) without drift.
@@ -51,6 +56,11 @@ _DATACENTER_HEADLESS_TOKENS = (
     "h200",
     "a100",
     "b200",
+    "b300",
+    "sm-100",
+    "sm100",
+    "sm-103",
+    "sm103",
 )
 _CPU_TOKENS = (
     "cpu",
@@ -93,12 +103,15 @@ def classify_gpu_target(gpu_target: str | None) -> str:
     normalized = _normalize(gpu_target)
     if not normalized:
         return UNKNOWN
-    # RT-core tokens win over the datacenter set so that an RTX/Blackwell part is
-    # never misread as headless-only.
-    if any(token in normalized for token in _RT_CORE_TOKENS):
-        return RT_CORE
+    # Datacenter models are checked first: "b200"/"b300" are unambiguous, and a
+    # name like "blackwell-b300" must not be read as RT-core just because it
+    # carries the family name. Datacenter Blackwell has no RT cores.
     if any(token in normalized for token in _DATACENTER_HEADLESS_TOKENS):
         return DATACENTER_HEADLESS
+    # RT-core tokens then win over the remaining datacenter set so an RTX or
+    # workstation-Blackwell part is never misread as headless-only.
+    if any(token in normalized for token in _RT_CORE_TOKENS):
+        return RT_CORE
     if any(token == normalized or token in normalized for token in _CPU_TOKENS):
         return CPU
     return UNKNOWN
@@ -132,7 +145,8 @@ def validate_render_gpu_target(gpu_target: str | None, *, what: str = "Isaac-Lab
     if gpu_class == DATACENTER_HEADLESS:
         raise SonicRoutingError(
             f"{what} cannot run on the datacenter-headless GPU {gpu_target!r} "
-            f"(H100/H200/A100 have no RT cores). {_RENDER_HINT}"
+            f"(H100/H200/A100 and datacenter Blackwell B200/B300 have no RT "
+            f"cores). {_RENDER_HINT}"
         )
     raise SonicRoutingError(
         f"{what} requires an RT-core GPU; {gpu_target!r} is not recognized as "

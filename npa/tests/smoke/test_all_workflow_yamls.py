@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -15,7 +14,6 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SKYPILOT_SPECS = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 RUNNER = CliRunner()
 
 # Specs with dynamic transitions / decision-gated loops need an assumed decision
@@ -28,25 +26,8 @@ ASSUME_DECISION_SPECS = {
 }
 
 
-def _skypilot_yaml_paths() -> list[Path]:
-    return sorted(SKYPILOT_SPECS.glob("*.yaml"))
-
-
 def _npa_yaml_paths() -> list[Path]:
     return iter_npa_workflow_specs()
-
-
-@pytest.mark.parametrize("path", _skypilot_yaml_paths(), ids=lambda p: p.name)
-def test_skypilot_yaml_documents_parse(path: Path) -> None:
-    docs = [
-        doc
-        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
-        if doc is not None
-    ]
-    assert docs, path.name
-    assert isinstance(docs[0], dict)
-    assert docs[0].get("name"), path.name
-    assert docs[0].get("execution") in {"serial", None} or "execution" in docs[0]
 
 
 @pytest.mark.parametrize("path", _npa_yaml_paths(), ids=lambda p: p.name)

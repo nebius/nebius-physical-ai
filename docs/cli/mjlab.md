@@ -11,7 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 eval  Evaluate a SONIC locomotion checkpoint against MJLab metrics.
-workflow  Show the SkyPilot YAML template for MJLab evaluation.
+workflow  Show the npa.workflow spec for MJLab evaluation.
 status  Show MJLab tool status.
 list  List supported MJLab evaluation suites.
 ```
@@ -27,7 +27,7 @@ list  List supported MJLab evaluation suites.
 | Command | Description |
 | --- | --- |
 | `eval` | Evaluate a SONIC locomotion checkpoint against MJLab metrics. |
-| `workflow` | Show the SkyPilot YAML template for MJLab evaluation. |
+| `workflow` | Show the npa.workflow spec for MJLab evaluation. |
 | `status` | Show MJLab tool status. |
 | `list` | List supported MJLab evaluation suites. |
 

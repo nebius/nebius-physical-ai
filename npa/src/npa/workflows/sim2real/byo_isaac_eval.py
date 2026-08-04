@@ -244,7 +244,7 @@ try:
             rot=(0.9945, 0.0, 0.1045, 0.0),
             convention="world",
         ),
-        data_types=["rgb"],
+        data_types=["rgb", "distance_to_image_plane"],
         width=256,
         height=256,
         spawn=sim_utils.PinholeCameraCfg(focal_length=24.0, clipping_range=(0.05, 20.0)),
@@ -337,6 +337,60 @@ try:
     except Exception:
         _have_pil = False
     CAP_EVERY = max(1, STEPS // 16)
+    # GPU depth -> colored point cloud (world frame) for env 0, so the viewers get
+    # a real 3D render alongside the 2D camera. Best-effort: never breaks the eval.
+    def _pc_fn():
+        for mod in ("isaaclab.sensors.camera.utils", "omni.isaac.lab.sensors.camera.utils"):
+            try:
+                m = __import__(mod, fromlist=["create_pointcloud_from_rgbd"])
+                return m.create_pointcloud_from_rgbd
+            except Exception:
+                continue
+        return None
+    _create_pc = _pc_fn()
+    _pc_dir = os.path.join(rend_root, "_pointcloud", _env_id(0))
+    _pc_count = [0]
+    def capture_pointcloud():
+        if _create_pc is None:
+            return
+        try:
+            cam = env.unwrapped.scene["heldout_cam"]
+            intr = cam.data.intrinsic_matrices
+            depth = cam.data.output.get("distance_to_image_plane")
+            rgb = cam.data.output["rgb"]
+            if depth is None:
+                return
+            pts, cols = _create_pc(
+                intrinsic_matrix=intr[0], depth=depth[0], rgb=rgb[0],
+                position=cam.data.pos_w[0], orientation=cam.data.quat_w_ros[0],
+                device="cuda:0", num_channels=3,
+            )
+            xyz = pts.detach().cpu().numpy().reshape(-1, 3).astype(np.float32)
+            col = cols.detach().cpu().numpy().reshape(-1, 3)
+            if col.dtype != np.uint8:
+                col = (np.clip(col, 0.0, 1.0) * 255).astype(np.uint8) if col.max() <= 1.0 else col.astype(np.uint8)
+            good = np.isfinite(xyz).all(axis=1)
+            xyz, col = xyz[good], col[good]
+            # Clip to the workspace neighbourhood so the far ground plane does not
+            # dominate the 3D view (keep points within RANGE_M of the camera).
+            try:
+                cam_pos = cam.data.pos_w[0].detach().cpu().numpy().reshape(3)
+                range_m = float(os.environ.get("NPA_SIM2REAL_POINTCLOUD_RANGE_M", "5.0"))
+                near = np.linalg.norm(xyz - cam_pos[None, :], axis=1) <= range_m
+                if int(near.sum()) >= 200:
+                    xyz, col = xyz[near], col[near]
+            except Exception as _pe:
+                print("pc_clip_err", repr(_pe), flush=True)
+            if xyz.shape[0] > 6000:
+                sel = np.random.default_rng(0).choice(xyz.shape[0], 6000, replace=False)
+                xyz, col = xyz[sel], col[sel]
+            if xyz.shape[0] == 0:
+                return
+            os.makedirs(_pc_dir, exist_ok=True)
+            np.savez_compressed(os.path.join(_pc_dir, f"cloud-{_pc_count[0]:04d}.npz"), xyz=xyz, rgb=col)
+            _pc_count[0] += 1
+        except Exception as e:
+            print("pc_capture_err", repr(e), flush=True)
     def capture(step):
         if not _have_pil:
             return
@@ -350,6 +404,7 @@ try:
                 frame_names[i].append(name)
         except Exception as e:
             print("capture_err", repr(e), flush=True)
+        capture_pointcloud()
     min_dist = np.full(N, 1e9)
     for _step in range(STEPS):
         with torch.inference_mode():
@@ -405,9 +460,10 @@ try:
         import glob
         base = ru.path.lstrip("/").rstrip("/")
         n = 0
-        for p in glob.glob(os.environ["EVAL_RENDERS_DIR"] + "/**/*.png", recursive=True):
-            rel = os.path.relpath(p, os.environ["EVAL_RENDERS_DIR"])
-            s3.upload_file(p, ru.netloc, base + "/" + rel); n += 1
+        for pat in ("**/*.png", "**/*.npz"):
+            for p in glob.glob(os.environ["EVAL_RENDERS_DIR"] + "/" + pat, recursive=True):
+                rel = os.path.relpath(p, os.environ["EVAL_RENDERS_DIR"])
+                s3.upload_file(p, ru.netloc, base + "/" + rel); n += 1
         print("UPLOADED_RENDERS", n, os.environ.get("EVAL_RENDERS_S3"), flush=True)
     print("BYO_EVAL_DONE", flush=True)
 except Exception as _e:
@@ -415,6 +471,26 @@ except Exception as _e:
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
 '''
+
+
+def _isaac_eula_env_entries() -> list[dict[str, str]]:
+    """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
+
+    The Isaac image ships no Isaac Sim and refuses to fetch it (exit 78) unless
+    OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA are set. These jobs invoke
+    /isaac-sim/python.sh, so without forwarding they cannot run at all.
+
+    Read from the submitting process's environment and never defaulted to "YES": the
+    operator driving the pipeline is the one consenting, and hardcoding acceptance here
+    would put us in the position of accepting on their behalf. Unset stays unset, and the
+    job then fails with the bootstrap's actionable refusal instead of silently consenting.
+    """
+
+    return [
+        {"name": name, "value": os.environ[name]}
+        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+        if os.environ.get(name)
+    ]
 
 
 def build_isaac_eval_job_manifest(
@@ -514,7 +590,19 @@ def build_isaac_eval_job_manifest(
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-eval.log) 2>&1\n'
-        'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
+        'if [ -x /isaac-sim/python.sh ]; then\n'
+        '  PY=/isaac-sim/python.sh\n'
+        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
+        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
+        '#!/usr/bin/env bash\n'
+        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
+        'ISPYEOF\n'
+        '  chmod +x /tmp/isaac-python\n'
+        '  PY=/tmp/isaac-python\n'
+        'else\n'
+        '  PY="$(command -v python3 || command -v python || true)"\n'
+        'fi\n'
+        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
@@ -566,6 +654,18 @@ def build_isaac_eval_job_manifest(
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": service_account,
+                    # Deliberate, scoped privilege: npa-isaac-lab defaults to the
+                    # non-root ``ubuntu`` user, but ``/isaac-sim`` is owned by the
+                    # image's ``isaac-sim`` user and is not traversable by it, so
+                    # ``/isaac-sim/python.sh`` resolves empty and the rendered
+                    # held-out eval exits 127. runAsGroup/fsGroup do not help (the
+                    # blocked bit is directory execute for other, not group
+                    # ownership), and chown-ing the Isaac tree at start-up would
+                    # itself need root. This stays bounded: root inside the
+                    # container only, never privileged, no host namespaces, and no
+                    # host paths mounted (enforced by
+                    # npa/tests/workflows/test_isaac_job_security_context.py).
+                    "securityContext": {"runAsUser": 0},
                     "imagePullSecrets": [
                         {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},
@@ -576,6 +676,10 @@ def build_isaac_eval_job_manifest(
                             "name": "eval",
                             "image": image,
                             "imagePullPolicy": "Always",
+                            # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
+                            # write under the prebuilt workspace; current RTX PRO runtime
+                            # requires root for that path. Keep this scoped to BYO Isaac jobs.
+                            "securityContext": {"runAsUser": 0, "runAsGroup": 0},
                             "resources": {
                                 "limits": {gpu_resource: "1"},
                                 "requests": {gpu_resource: "1"},
@@ -584,7 +688,8 @@ def build_isaac_eval_job_manifest(
                                 {"secretRef": {"name": "hf-ngc-tokens"}},
                                 {"secretRef": {"name": "npa-storage-credentials"}},
                             ],
-                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}],
+                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}]
+                            + _isaac_eula_env_entries(),
                             "command": ["/bin/bash", "-lc"],
                             "args": [script],
                         }
@@ -634,7 +739,10 @@ def run_isaac_eval_job(
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
-    job_name = f"s2r-byo-isaac-eval-{run_id}"[:63]
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
+    eval_tag = artifact_tag(_env("NPA_SIM2REAL_EVAL_TAG"))
+    job_name = k8s_job_name("s2r-byo-isaac-eval", run_id, eval_tag)
     per_env_uri = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/per_env_distances.json"
 
     gen = generated_envs or []

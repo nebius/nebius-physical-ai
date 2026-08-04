@@ -27,6 +27,24 @@ if TYPE_CHECKING:
 APPLICATION_ID = "physical-ai-data-factory"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
+#: Run sub-directories materialized from S3 before building a recording. Covers
+#: both producers: the data-factory blueprint (input/cosmos_augmented/labeled_*/
+#: configs/grade/curation) and the NuRec neural-reconstruction workflow
+#: (ncore/reconstruction/novel_views). Missing subtrees are skipped.
+RUN_SUBDIRS = (
+    "input",
+    "cosmos_augmented",
+    "labeled_original",
+    "labeled_augmented",
+    "configs",
+    "grade",
+    "curation",
+    "ncore",
+    "reconstruction",
+    "novel_views",
+    "reports",
+)
+
 
 def _int_env(name: str, default: int) -> int:
     try:
@@ -151,10 +169,10 @@ def build_run_rrd(
         rec = rr.RecordingStream(app_id, recording_id=run_id)
         logged = 0
 
-        for png in _subsample(sorted((local / "input").rglob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
-            clip = "_".join(png.stem.split("_")[:2]) or "clip"
-            _set_frame(rr, rec, _frame_index(png.stem))
-            _log_frame(rr, rec, f"input/{clip}", _load_rgb(png))
+        input_root = local / "input"
+        for frame in _subsample(_image_files(input_root), RRD_MAX_FRAMES_PER_ENTITY):
+            _set_frame(rr, rec, _frame_index(frame.stem))
+            _log_frame(rr, rec, f"input/{_input_entity(frame, input_root)}", _load_rgb(frame))
             logged += 1
 
         aug_root = local / "cosmos_augmented"
@@ -168,6 +186,17 @@ def build_run_rrd(
                     logged += 1
                 if label:
                     rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
+
+        # Neural-reconstruction runs contribute their own entities: the novel views
+        # rendered from the trained Gaussians and NRE's validation renders. Both are
+        # no-ops for a data-factory run, which has neither directory.
+        #
+        # NOTE: the input loop above is NOT a no-op for existing runs -- it was
+        # widened from `rglob("*.png")` to every IMAGE_SUFFIXES entry, and entity
+        # naming now groups by sub-directory when frames are nested. A flat,
+        # all-PNG data-factory run is byte-identical, but a run with .jpg inputs or
+        # nested directories now yields more/differently-named entities than before.
+        logged += _log_nurec_entities(rr, rec, local)
 
         for name, body in captions.items():
             if body:
@@ -209,6 +238,64 @@ def build_run_rrd(
     }
 
 
+def _image_files(root: Path) -> list[Path]:
+    """Every image under ``root``, any supported suffix, deterministically ordered."""
+    if not root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+    )
+
+
+def _input_entity(frame: Path, root: Path) -> str:
+    """Entity suffix for an ``input/`` frame.
+
+    The data factory writes flat files (``input/video_0_frame_01.png``) and groups
+    them by clip prefix. A neural-reconstruction run writes per-sensor
+    sub-directories (``input/camera_images/camera2/000123.jpg``); those group by the
+    owning directory, otherwise every frame would become its own entity and the
+    Rerun timeline would collapse.
+    """
+    relative = frame.relative_to(root)
+    if len(relative.parts) > 1:
+        return relative.parts[-2]
+    return "_".join(frame.stem.split("_")[:2]) or "clip"
+
+
+def _grouped_images(root: Path) -> dict[str, list[Path]]:
+    """Group images under ``root`` by their immediate parent directory name."""
+    groups: dict[str, list[Path]] = {}
+    for frame in _image_files(root):
+        parent = frame.parent
+        name = "frames" if parent == root else parent.name
+        groups.setdefault(name, []).append(frame)
+    return groups
+
+
+def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
+    """Log a neural-reconstruction run's renders as Rerun entities.
+
+    ``novel_view/<camera>`` are the rig-offset views rendered from the trained
+    Gaussians (the point of the capability), and ``reconstruction/<group>`` are
+    NRE's own validation renders. Both entity prefixes are registered in
+    ``npa.cli.agent_recordings.RUN_ENTITY_MARKERS`` so the agent recognises the
+    recording as real run data.
+    """
+    logged = 0
+    for directory, prefix in (("novel_views", "novel_view"), ("reconstruction", "reconstruction")):
+        root = local / directory
+        if not root.is_dir():
+            continue
+        for group, frames in sorted(_grouped_images(root).items()):
+            for frame in _subsample(frames, RRD_MAX_FRAMES_PER_ENTITY):
+                _set_frame(rr, rec, _frame_index(frame.stem))
+                _log_frame(rr, rec, f"{prefix}/{group}", _load_rgb(frame))
+                logged += 1
+    return logged
+
+
 def _augmentation_label(clip_dir: Path) -> str:
     meta_path = clip_dir / "metadata.json"
     if not meta_path.is_file():
@@ -242,6 +329,9 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     """
     docs: dict[str, str] = {}
     stage_log: list[str] = []
+
+    # --- Neural-reconstruction stages (no-ops for a data-factory run) -------------
+    docs.update(_load_nurec_docs(local, stage_log))
 
     # Stage 1 — sampled scenarios (Config Generation). This is the "various
     # scenarios" the augment stage multiplies over.
@@ -314,6 +404,108 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     return docs
 
 
+def _read_yaml(path: Path) -> Any:
+    try:
+        import yaml
+
+        return yaml.safe_load(path.read_text())
+    except Exception:  # noqa: BLE001 - optional artifact, optional dependency
+        return None
+
+
+def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Build the neural-reconstruction stage docs for the Rerun panel.
+
+    Every entry is optional, so a data-factory run (which has none of these
+    artifacts) gets an empty dict and is completely unaffected.
+    """
+    docs: dict[str, str] = {}
+
+    # Stage 1 — the real capture that was reconstructed, plus how the rig frame
+    # NRE requires was obtained.
+    manifest = _read_json(local / "ncore" / "manifest.json")
+    if isinstance(manifest, dict):
+        rig = manifest.get("rig_derivation") or {}
+        lines = [
+            f"**Dataset:** `{manifest.get('dataset_id', 'n/a')}`",
+            f"**Scene:** `{manifest.get('scene', 'n/a')}` "
+            f"(variant `{manifest.get('variant', 'n/a')}`)",
+            f"**NCore shards:** {manifest.get('shard_count', 0)}",
+            f"**Cameras:** {', '.join(manifest.get('camera_ids') or []) or 'n/a'}",
+            f"**LiDARs:** {', '.join(manifest.get('lidar_ids') or []) or 'n/a'}",
+        ]
+        if rig:
+            lines += [
+                "",
+                "_NRE requires a `rig -> world` pose edge that object-centric "
+                "captures do not ship; it was derived from the reference camera._",
+                f"**Reference camera:** `{rig.get('reference_camera', 'n/a')}` "
+                f"({rig.get('pose_count', 0)} poses)",
+                f"**Poses component group:** `{rig.get('poses_component_group', 'n/a')}`",
+            ]
+        docs["pipeline/1_ncore"] = "## NCore input capture\n\n" + "\n".join(lines) + "\n"
+        stage_log.append(
+            f"ncore: {manifest.get('scene', 'n/a')} "
+            f"({manifest.get('shard_count', 0)} shard(s), "
+            f"{len(manifest.get('camera_ids') or [])} camera(s))"
+        )
+
+    # Stage 2 — the trained Gaussian reconstruction and its real quality metrics.
+    metrics = _read_yaml(local / "reconstruction" / "metrics.yaml")
+    if isinstance(metrics, dict):
+        docs["pipeline/2_reconstruct"] = _json_block(
+            "Reconstruction — 3DGUT Gaussian training metrics", metrics
+        )
+        # `gaussians/*` is one of the run-entity markers the agent scans for, so the
+        # metrics also land under that entity path.
+        docs["gaussians/summary"] = _json_block(
+            "Gaussian reconstruction quality (NRE validation)", metrics
+        )
+        flat = {
+            key: value
+            for key, value in _flatten_scalars(metrics)
+            if any(token in key.lower() for token in ("psnr", "ssim", "lpips"))
+        }
+        if flat:
+            stage_log.append(
+                "reconstruct: "
+                + ", ".join(f"{key}={value}" for key, value in sorted(flat.items())[:6])
+            )
+        else:
+            stage_log.append("reconstruct: metrics recorded")
+
+    # Stage 3 — novel views rendered from the trained scene.
+    novel_root = local / "novel_views"
+    if novel_root.is_dir():
+        groups = _grouped_images(novel_root)
+        videos = sorted(novel_root.rglob("*.mp4"))
+        lines = [f"**Cameras rendered:** {len(groups)}", ""]
+        for name, frames in sorted(groups.items()):
+            lines.append(f"- `novel_view/{name}` — {len(frames)} frame(s)")
+        for video in videos:
+            lines.append(f"- video: `{video.name}`")
+        docs["pipeline/3_novel_views"] = (
+            "## Novel-view rendering (rig-offset, not training views)\n\n"
+            + "\n".join(lines)
+            + "\n"
+        )
+        stage_log.append(
+            f"novel_views: {sum(len(v) for v in groups.values())} frame(s) "
+            f"across {len(groups)} camera(s), {len(videos)} video(s)"
+        )
+    return docs
+
+
+def _flatten_scalars(payload: Any, prefix: str = "") -> list[tuple[str, Any]]:
+    out: list[tuple[str, Any]] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            out.extend(_flatten_scalars(value, prefix=f"{prefix}{key}/"))
+    elif isinstance(payload, (int, float)) and not isinstance(payload, bool):
+        out.append((prefix.rstrip("/"), payload))
+    return out
+
+
 _CAPTION_HEADERS = {
     "labeled_original": (
         "## Original-frame captions — Token Factory VLM\n\n"
@@ -359,16 +551,7 @@ def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClie
     client = storage_client or StorageClient.from_environment()
     dest.mkdir(parents=True, exist_ok=True)
     root = input_uri.rstrip("/")
-    for sub in (
-        "input",
-        "cosmos_augmented",
-        "labeled_original",
-        "labeled_augmented",
-        "configs",
-        "grade",
-        "curation",
-        "reports",
-    ):
+    for sub in RUN_SUBDIRS:
         try:
             client.download_path(f"{root}/{sub}/", str(dest / sub))
         except Exception:

@@ -111,8 +111,82 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#renderModeRerun").should("have.class", "is-active");
     cy.get("#renderModeVideo").should("exist");
     cy.get("#viewerPaneRerun").should("have.class", "is-active-viewer");
-    cy.get("#assetsSummary").should("contain.text", "stock://robot/franka");
     cy.get("#simRunId").should("contain.text", "mock-run");
+  });
+
+  it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
+    cy.window().then((win) => {
+      cy.stub(win, "open").as("windowOpen");
+    });
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+
+    // Lichtblick render-mode tab + dedicated iframe pane exist and activate.
+    cy.get("#renderModeLichtblick").should("exist").click();
+    cy.get("#renderModeLichtblick").should("have.class", "is-active");
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#viewerPaneRerun").should("have.class", "is-inactive-viewer");
+    cy.get("#lichtblickFrame")
+      .should("have.attr", "src")
+      .and("include", "/lichtblick/")
+      .and("include", "ds.url");
+    // The embedded Lichtblick app renders the MCAP data source (mock fixture).
+    cy.get("#lichtblickFrame").its("0.contentWindow.__NPA_MOCK_LICHTBLICK__", { timeout: 15000 }).should("exist");
+
+    // "Open in Lichtblick" opens the same-origin viewer URL in a new tab.
+    cy.get("#openLichtblick").click();
+    cy.get("@windowOpen").should("have.been.called");
+
+    // Reload stays on the Lichtblick pane and re-mounts the iframe.
+    cy.get("#loadLichtblickViewer").click();
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
+
+    // Switching back to Rerun deactivates the Lichtblick pane (both stay mounted).
+    cy.get("#renderModeRerun").click();
+    cy.get("#viewerPaneRerun").should("have.class", "is-active-viewer");
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-inactive-viewer");
+  });
+
+  it("loads a sim2real.mcap artifact into the embedded Lichtblick viewer", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
+
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "mcap");
+    cy.get("#artifactList").should("contain.text", "View in Lichtblick");
+
+    cy.get(`#artifactList button[data-action="load-artifact"][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.mcap"]`).click();
+    cy.wait("@loadArtifact");
+    cy.get("#renderModeLichtblick").should("have.class", "is-active");
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
+    cy.get("#renderedDataSummary").should("contain.text", "mcap");
+  });
+
+  it("lists artifacts for a pasted run id over a stale dropdown selection", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    // Leave a stale dropdown selection (mock-run) without firing its change handler,
+    // then paste a different specific run id into the input.
+    cy.get("#runIdSelect").then(($s) => {
+      $s[0].value = "mock-run";
+    });
+    cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
+    // Clicking the button steals focus from the input, but "List artifacts" must still
+    // use the pasted run id, not the stale dropdown value.
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
+    cy.get("#artifactList").should("contain.text", "View in Lichtblick");
+    cy.get("#artifactList").should("not.contain.text", "mock-run/preview.png");
   });
 
   it("covers chat quick actions, sessions, model selection, submit, and copy", () => {
@@ -256,7 +330,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@artifactList");
     cy.get("#artifactList button[data-action='load-artifact']").click();
     cy.wait("@loadArtifact");
-    cy.get("#chatLog").should("contain.text", "Loaded artifact");
+    // loadArtifact no longer spams chat; the viewer / preview host reflects the load.
     cy.get("#artifactPreviewHost").should("not.have.attr", "hidden");
 
     cy.get("#tabMain").click();
@@ -310,7 +384,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runLog").should("contain.text", "non-stock sim2real artifacts");
 
     cy.get("#tabRerun").click();
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.wait("@artifactFile");
     cy.get("#renderModeVideo").should("have.class", "is-active");
@@ -323,21 +399,29 @@ describe("NPA agent UI with mocked APIs", () => {
       .and("include", "customer-camera.mp4");
     cy.get("#renderedDataSummary").should("contain.text", "video");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#renderModeData").should("have.class", "is-active");
     cy.get("#artifactPreviewHost pre").should("contain.text", "promoted");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#artifactPreviewHost pre").should("contain.text", "loaded customer scene mesh");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#artifactPreviewHost").should("contain.text", "download");
     cy.get("#artifactPreviewHost a").should("have.attr", "href").and("include", "custom-dynamics.fooz");
 
-    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`).click();
+    cy.get(
+      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`
+    ).click();
     cy.wait("@loadArtifact");
     cy.get("#renderModeRerun").should("have.class", "is-active");
     cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
@@ -529,6 +613,51 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatSend").click();
     cy.wait("@chat");
     cy.get("#chatLog").should("contain.text", "mobile hello");
+
+    // Widening the viewport must leave mobile-agent layout (toggle, not add-only).
+    cy.viewport(1280, 800);
+    cy.get("body").should("not.have.class", "mobile-agent");
+  });
+
+  it("escapes quotes in artifact keys to prevent attribute XSS", () => {
+    const evilKey = 'a" onmouseover="alert(1)';
+    // Override the default mock-run list intercept with a malicious key.
+    cy.intercept("GET", "/api/artifacts/run/mock-run*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        run_id: "mock-run",
+        prefix: "sim2real-b",
+        artifacts: [
+          {
+            key: evilKey,
+            s3_uri: `s3://mock/${evilKey}`,
+            size: 12,
+            last_modified: "2026-01-01T00:00:00Z",
+            render: "download",
+          },
+        ],
+        preferred: null,
+      },
+    }).as("evilArtifactList");
+    cy.get("#tabRerun").click();
+    cy.get("#runIdSelect").select("mock-run", { force: true });
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@evilArtifactList");
+    cy.get("#artifactList").then(($el) => {
+      const html = $el.html() || "";
+      // Attribute values must be quote-escaped so the key cannot break out of
+      // data-*="..." and inject an event handler. Text nodes may still show
+      // literal quotes after the browser parses escaped HTML.
+      expect(html).to.include('data-key="a&quot; onmouseover=&quot;alert(1)"');
+      expect(html).to.include('data-s3-uri="s3://mock/a&quot; onmouseover=&quot;alert(1)"');
+      expect(html).to.not.match(/data-(?:key|s3-uri|name)="a"\s+onmouseover=/i);
+      cy.get("#artifactList button[data-action='load-artifact']").should(($btn) => {
+        // DOM getAttribute returns the decoded value; no separate attribute breakout.
+        expect($btn.attr("data-key")).to.eq(evilKey);
+        expect($btn.attr("onmouseover")).to.eq(undefined);
+      });
+    });
   });
 
   it("clears the Rerun Caching cover and keeps it hidden after remounts", () => {

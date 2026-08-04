@@ -92,6 +92,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
             serverless=True,
             gpu=args.gpu,
             timeout=args.timeout,
+            registry=getattr(args, "registry", None),
+            tag=getattr(args, "tag", None),
             on_state_change=lambda job: print(f"  -> {getattr(job, 'status', '?')}"),
         )
         payload = result.detail if result.detail else {"ok": result.ok, "name": result.name}
@@ -186,6 +188,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_run.add_argument("--gpu", default="", help="Serverless GPU type override.")
     p_run.add_argument("--timeout", default="40m", help="Serverless job timeout.")
+    p_run.add_argument(
+        "--registry",
+        default=None,
+        help="Registry override; validate a candidate image before promoting its tag.",
+    )
+    p_run.add_argument(
+        "--tag",
+        default=None,
+        help=(
+            "Image tag override, e.g. a release-candidate tag. Without this a golden eval "
+            "can only ever exercise whatever the canonical tag already points at, so "
+            "'prove it, then promote' is impossible."
+        ),
+    )
     p_run.set_defaults(func=_cmd_run)
 
     p_all = sub.add_parser(

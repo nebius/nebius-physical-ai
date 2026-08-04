@@ -3,8 +3,8 @@ FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/your-registry-id/npa-base:cuda13-b300-tag
 ARG BUILD_TS=unknown
-ARG LEROBOT_VERSION=0.4.4
-ARG LEROBOT_COMMIT=8fff0fde7c79f23a93d845d1a50e985de01f8b8a
+ARG LEROBOT_VERSION=0.5.1
+ARG LEROBOT_COMMIT=1396b9fab7aecddd10006c33c47a487ffdcb54b4
 ARG BASE_IMAGE_DIGEST=unknown
 
 LABEL npa.tool="lerobot" \
@@ -30,8 +30,22 @@ SHELL ["/bin/bash", "-lc"]
 
 USER root
 
+# LeRobot 0.5.1 requires Python >=3.12, while npa-base intentionally keeps its
+# validated CUDA stack in a Python 3.11 venv. Keep that base venv intact for the
+# baked GPU validators and add a separate Python 3.12 LeRobot venv. npa-base's
+# final CVE hardening force-purges linux-libc-dev, so apt must repair the package
+# graph before installing the newer interpreter; purge it again afterwards.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --fix-broken \
+    && apt-get install -y --no-install-recommends \
+      python3.12 \
+      python3.12-dev \
+      python3.12-venv \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN install -d -m 0755 \
       /opt/lerobot \
+      /opt/lerobot/venv \
       /opt/lerobot/checkpoints \
       /opt/lerobot/data \
       /opt/lerobot/dataset_cache \
@@ -45,26 +59,48 @@ RUN install -d -m 0755 \
 
 WORKDIR /opt/lerobot
 
-RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install \
+USER 1000
+
+RUN python3.12 -m venv /opt/lerobot/venv \
+    && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
+    && /opt/lerobot/venv/bin/python -m pip install \
+      torch==2.9.0 \
+      torchvision==0.24.0 \
+      --index-url https://download.pytorch.org/whl/cu130 \
+    && /opt/lerobot/venv/bin/python -m pip install \
       "lerobot[pusht,smolvla,libero] @ git+https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}" \
       boto3 \
       fastapi~=0.136.1 \
       num2words \
       tensorboard \
+      torchcodec==0.8.1 \
       "uvicorn[standard]" \
       wandb
 
-RUN python - <<'PY'
+ENV PATH=/opt/lerobot/venv/bin:/opt/npa/venv/bin:$PATH \
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
+
+COPY --chown=1000:1000 pyproject.toml /opt/npa/pyproject.toml
+COPY --chown=1000:1000 src/npa /opt/npa/src/npa
+
+RUN /opt/lerobot/venv/bin/python - <<'PY'
 import importlib
 from importlib import metadata
 
-for module in ("lerobot", "torch", "torchvision", "flash_attn", "flash_attn.cute"):
+for module in ("lerobot", "torch", "torchvision", "torchcodec"):
     importlib.import_module(module)
 print("lerobot", metadata.version("lerobot"))
 print("torch", metadata.version("torch"))
-print("flash-attn-4", metadata.version("flash-attn-4"))
+print("torchcodec", metadata.version("torchcodec"))
 PY
+
+RUN /opt/lerobot/venv/bin/python -m pip install --no-deps -e /opt/npa \
+    && /opt/lerobot/venv/bin/python -m npa.smoke.test_lerobot_env
+
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev
 
 USER 1000
 

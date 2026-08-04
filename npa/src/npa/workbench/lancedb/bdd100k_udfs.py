@@ -104,6 +104,23 @@ def udf_is_duplicate(
     return pa.array(values, type=pa.bool_())
 
 
+def _image_embeddings(result: Any) -> Any:
+    """Return the embedding tensor from whatever `get_image_features` handed back.
+
+    Transformers has returned a plain tensor and, in other versions, a
+    `BaseModelOutputWithPooling`. Live, the backfill stage failed inside the deployed LanceDB
+    service with `'BaseModelOutputWithPooling' object has no attribute 'norm'` (EVIDENCE.md
+    §R41) — a version difference between the image and the machine this was written on, which
+    no unit test pinned because the tensor shape was all anyone asserted.
+    """
+
+    for attribute in ("image_embeds", "pooler_output", "last_hidden_state"):
+        candidate = getattr(result, attribute, None)
+        if candidate is not None:
+            return candidate
+    return result
+
+
 def udf_clip_embedding(
     batch: pa.RecordBatch,
     *,
@@ -126,7 +143,7 @@ def udf_clip_embedding(
         inputs = processor(images=images, return_tensors="pt")
         inputs = {name: value.to(resolved_device) for name, value in inputs.items()}
         with torch.inference_mode():
-            features = model.get_image_features(**inputs)
+            features = _image_embeddings(model.get_image_features(**inputs))
             features = features / features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
             vectors = features.to(torch.float32).detach().cpu().numpy()
         for index, vector in zip(image_indexes, vectors, strict=True):

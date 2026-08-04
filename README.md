@@ -207,6 +207,10 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 - **`workflow validate-spec` / `plan-spec` / `run-spec` / `submit`** operate on
   customer-facing `npa.workflow/v0.0.1` specs — see
   [Author and submit workflows](#author-and-submit-workflows).
+- **`foxglove`** packs run frames/metrics/logs into MCAP and installs the pinned
+  [`@foxglove/embed`](https://docs.foxglove.dev/docs/embed/typescript-sdk) assets
+  behind the agent's embedded Foxglove viewer — see
+  [docs/cli/foxglove.md](docs/cli/foxglove.md).
 - **`trigger`** watches S3-compatible prefixes and retriggers workflows.
 - **`golden-eval`** runs per-container hello-world reruns as a CI gate.
 - SONIC image routing is manifest-driven — see
@@ -225,7 +229,7 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
 | Zero-GPU LLM    | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
 | Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                           |
-| Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
+| Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health preflight`; `npa workbench foxglove convert-run`, `inspect`, `install-sdk`, `config`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
 | Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
 
 </details>
@@ -275,6 +279,37 @@ Architecture context:
 
 ---
 
+## Container registry
+
+Every Workbench tool ships as a container image in a Nebius container registry —
+a primary in `eu-north1` and a mirror in `us-central1`. Resolve the registry
+through `npa configure` or `npa.deploy.images`; never hardcode a registry id.
+
+```bash
+# Log Docker into the registry (tokens expire; a 401 on pull means refresh)
+REGISTRY_HOST=cr.eu-north1.nebius.cloud npa/scripts/nebius_registry_docker_login.sh
+
+# Build and push an image with the canonical tag for its tool
+npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
+```
+
+| Reference | What it tells you |
+| --- | --- |
+| [Image ↔ GPU compatibility matrix](docs/workbench/image-gpu-compatibility-matrix.md) | Every image against every Nebius GPU platform, and which cells are verified on real hardware |
+| [Container packaging contract](docs/workbench/container-packaging.md) | Tiers, non-root users, ports, and redistribution classes each image must satisfy |
+| [Container golden evals](docs/security/container-golden-evals.md) | The real capability test each image must pass — not an import probe |
+| [Blackwell datacenter compatibility](docs/workbench/blackwell-datacenter-image-compatibility.md) | B200 / B300 build, tag, and validation runbook |
+| [SONIC image catalog](docs/workbench/sonic-image-catalog.md) | Manifest-driven SONIC variant routing per GPU |
+| [Image reproducibility](docs/security/image-reproducibility.md) | The two-tag strategy (`cuda12`, `cuda13-b300`) and how tags are pinned |
+
+Every image declares a `redistribution` class in the packaging contract, which
+decides whether it may leave the owning org. All workbench images are currently
+`public`; the `restricted` class is kept for the next runtime we cannot ship.
+Set the class when you add an image — the packaging-contract test fails a build
+that bakes a non-redistributable runtime while claiming `public`.
+
+---
+
 ## Validated on Nebius
 
 Eight Workbench tools are validated end-to-end on Nebius today (LanceDB,
@@ -283,6 +318,7 @@ tool scores across GPU tiers:
 
 | Reference                                                                              | What it tells you                                                                     |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [Image ↔ GPU compatibility matrix](docs/workbench/image-gpu-compatibility-matrix.md)   | Every image × every Nebius GPU platform, with the verified cells called out            |
 | [B300 validation matrix](docs/b300-validation-matrix.md)                               | Which tools have passed on B300 vs which are vendor-paced or upstream-blocked         |
 | [LeRobot GPU benchmarks](docs/workbench/cookbooks/lerobot-gpu-benchmarks.md)           | Steps/s throughput across H200 · B300 · L40S · RTX Pro 6000 by policy type            |
 | [NVIDIA architecture coverage](docs/nvidia-platform-architecture-coverage.md)          | CUDA 12.8 x86_64 vs CUDA 13 aarch64 tool coverage                                     |

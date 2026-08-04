@@ -694,6 +694,12 @@ def _run_sim2real_viz_stage(
         )
     except RerunUnavailableError as exc:
         info = {"status": "skipped", "reason": str(exc), "source": "reference"}
+        info["mcap"] = _emit_sim2real_mcap_artifact(
+            config,
+            local_dir=local_dir,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+        )
         return (
             ComponentRecord(
                 "stage_14_rerun_viz",
@@ -705,6 +711,19 @@ def _run_sim2real_viz_stage(
             info,
         )
     info = {"source": "reference", **result.to_dict()}
+    mcap_info = _emit_sim2real_mcap_artifact(
+        config,
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+    )
+    info["mcap"] = mcap_info
+    artifacts = {"rrd": str(rrd_path)}
+    if mcap_info.get("status") == "written" and mcap_info.get("output_mcap_path"):
+        artifacts["mcap"] = str(mcap_info["output_mcap_path"])
+    mcap_note = ""
+    if mcap_info.get("status") == "written":
+        mcap_note = f" Also wrote a Lichtblick/Foxglove MCAP with {mcap_info.get('message_count', 0)} message(s)."
     return (
         ComponentRecord(
             "stage_14_rerun_viz",
@@ -714,11 +733,35 @@ def _run_sim2real_viz_stage(
                 f"{result.frame_count} policy camera frame(s), "
                 f"{result.heldout_frame_count} held-out sim frame(s), and "
                 f"{result.heldout_env_count} held-out env score(s); camera streams, "
-                "VLM critiques, RL signal, and held-out scores are logged."
+                "VLM critiques, RL signal, and held-out scores are logged." + mcap_note
             ),
-            {"rrd": str(rrd_path)},
+            artifacts,
         ),
         info,
+    )
+
+
+def _emit_sim2real_mcap_artifact(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Emit ``reports/sim2real.mcap`` alongside the ``.rrd`` (best-effort).
+
+    Gated behind ``NPA_SIM2REAL_MCAP`` (default on when rerun viz is on). Degrades
+    gracefully (skip + reason) when ``mcap`` is unavailable, mirroring the ``.rrd``
+    path, so a missing writer never fails the finalize stage.
+    """
+
+    from npa.workflows.sim2real_viz import emit_sim2real_mcap_if_enabled
+
+    return emit_sim2real_mcap_if_enabled(
+        local_dir=local_dir,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
 
 
@@ -1519,6 +1562,7 @@ def _run_policy_rollouts_via_command(
             "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
             "NPA_SIM2REAL_STEPS_PER_ROLLOUT": str(config.steps_per_rollout),
             "NPA_SIM2REAL_OUTPUT_DIR": str(actions_dir),
+            "NPA_SIM2REAL_ROLLOUT_TAG": f"outer-{outer_iteration:02d}-iter-{iteration:02d}",
         },
     )
     invocation = _run_component_command(
@@ -1845,14 +1889,27 @@ def _refresh_registry_pull_secret_for_sibling_job(
     so stale ``npa-nebius-registry`` secrets cause mid-pipeline ImagePullBackOff.
     """
 
+    if _bool_value(os.environ.get("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH", "0")):
+        return
+
     from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
 
-    ensure_registry_pull_secret_for_images(
-        image,
-        namespace=namespace,
-        kubeconfig=config.k8s_kubeconfig,
-        k8s_context=config.k8s_context,
-    )
+    # Best-effort: sibling Jobs already carry the run's imagePullSecrets (e.g.
+    # ``agent-sa``) via ``config.k8s_image_pull_secrets``, so a refresh failure
+    # (no ``nebius`` CLI / no ``NEBIUS_IAM_TOKEN`` in-pod) must not crash the
+    # orchestrator. Log and continue; a genuinely stale secret surfaces as an
+    # ImagePullBackOff on the sibling rather than a hard orchestrator failure.
+    try:
+        ensure_registry_pull_secret_for_images(
+            image,
+            namespace=namespace,
+            kubeconfig=config.k8s_kubeconfig,
+            k8s_context=config.k8s_context,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort refresh must never abort the run
+        logging.getLogger(__name__).warning(
+            "sibling registry pull-secret refresh skipped for %s: %s", image, exc
+        )
 
 
 def _run_kubernetes_indexed_image_component(
@@ -3111,6 +3168,7 @@ def run_heldout_eval(
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
+        "NPA_SIM2REAL_EVAL_TAG": f"outer-{outer_iteration:02d}",
     }
     # BYO robot: opt the held-out eval into the SAME robot-swapped Lift variant the
     # policy trained on. This sets NPA_BYO_ROBOT_TASK=1 (+ the robot uri/source/preset)
@@ -5075,7 +5133,7 @@ def run_cosmos2_transfer_component_from_s3(
     real = _run_real_cosmos_transfer(client, input_uri, augment_prefix, frames_root, run_id)
     if real is not None:
         manifest["status"] = "executed"
-        manifest["mode"] = "cosmos_transfer2.5"
+        manifest["mode"] = "cosmos_transfer2.5_gpu"
         manifest["augmented_frames_uri"] = frames_root
         manifest["augmented_video_uri"] = real["augmented_video_uri"]
         manifest["frame_count"] = real["frame_count"]
@@ -5129,18 +5187,21 @@ def _run_real_cosmos_transfer(
     """Run real Cosmos-Transfer2.5 and publish the generated video + frames.
 
     Returns augment metadata, or ``None`` to signal the caller to fall back to the
-    descriptor manifest (transfer runtime absent, disabled, or inference failed).
+    descriptor manifest (transfer runtime absent, disabled, inference failed, or
+    the generated video cannot provide the frame contract). Unrelated programming
+    errors still propagate.
     """
 
     if os.environ.get("NPA_SIM2REAL_AUGMENT_MODE", "real").strip().lower() == "stub":
         return None
     try:
         from npa.workbench.cosmos.transfer import (
+            FrameExtractionError,
             cosmos_transfer_available,
             extract_frames,
             run_cosmos_transfer,
         )
-    except Exception:  # noqa: BLE001 - transfer module not importable in this env
+    except ImportError:
         return None
     if not cosmos_transfer_available():
         return None
@@ -5150,7 +5211,7 @@ def _run_real_cosmos_transfer(
             run_id=run_id or "augment",
             spec=os.environ.get("NPA_SIM2REAL_TRANSFER_SPEC") or None,
         )
-    except Exception as exc:  # noqa: BLE001 - degrade to descriptor manifest, never crash the run
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(
             json.dumps(
                 {
@@ -5166,24 +5227,50 @@ def _run_real_cosmos_transfer(
     from npa.workflows.sim2real_stages import resolve_augment_frame_count
 
     augmented_video_uri = f"{augment_prefix}video/augmented.mp4"
-    client.upload_file(transfer["video_path"], augmented_video_uri)
-
-    frames = extract_frames(
-        transfer["video_path"],
-        Path("/tmp/npa-augment-frames"),
-        max_frames=resolve_augment_frame_count(),
-    )
     index: list[dict[str, str]] = []
-    for i, frame_path in enumerate(frames):
-        frame_key = f"frame-{i:05d}.png"
-        client.upload_file(str(frame_path), f"{frames_root}{frame_key}")
-        index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_root}{frame_key}"})
+    with tempfile.TemporaryDirectory(prefix="npa-augment-frames-") as frame_tmp:
+        try:
+            frames = extract_frames(
+                transfer["video_path"],
+                Path(frame_tmp),
+                max_frames=resolve_augment_frame_count(),
+            )
+        except FrameExtractionError as exc:
+            print(
+                json.dumps(
+                    {
+                        "component": "cosmos2_transfer",
+                        "event": "frame_extraction_failed_fallback",
+                        "error": str(exc)[:400],
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return None
+        if not frames:
+            print(
+                json.dumps(
+                    {
+                        "component": "cosmos2_transfer",
+                        "event": "zero_frames_fallback",
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return None
+        client.upload_file(transfer["video_path"], augmented_video_uri)
+        for i, frame_path in enumerate(frames):
+            frame_key = f"frame-{i:05d}.png"
+            client.upload_file(str(frame_path), f"{frames_root}{frame_key}")
+            index.append(
+                {"frame_id": f"frame-{i:05d}", "uri": f"{frames_root}{frame_key}"}
+            )
     index_payload = {
         "schema": "npa.sim2real.augmented_frames.v1",
         "frame_count": len(index),
         "frames": index,
         "augmented_video_uri": augmented_video_uri,
-        "mode": "cosmos_transfer2.5",
+        "mode": "cosmos_transfer2.5_gpu",
     }
     index_local = Path("/tmp/augmented-frames-index.json")
     index_local.write_text(
@@ -5206,7 +5293,7 @@ def _run_real_cosmos_transfer(
     )
     return {
         "augmented_video_uri": augmented_video_uri,
-        "frame_count": len(index) or resolve_augment_frame_count(),
+        "frame_count": len(index),
         "video_bytes": transfer["video_bytes"],
         "spec": transfer["spec"],
     }
@@ -5458,5 +5545,3 @@ def _redacted_config(config: Sim2RealLoopConfig) -> dict[str, Any]:
     payload = asdict(config)
     payload["output_dir"] = str(config.output_dir) if config.output_dir else None
     return payload
-
-

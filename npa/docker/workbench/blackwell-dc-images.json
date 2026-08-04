@@ -1,0 +1,682 @@
+{
+  "format": "npa_blackwell_dc_image_manifest_v1",
+  "as_of": "2026-08-03T05:05:26Z",
+  "registry_ref": "${NPA_REGISTRY}",
+  "registry_note": "Resolve the registry through npa.deploy.images / npa configure. Additive tags are pushed to both the primary (eu-north1) and mirror (us-central1) registries; never hardcode a registry id here.",
+  "target": {
+    "family": "Blackwell datacenter",
+    "gpus": [
+      {
+        "name": "B200",
+        "codename": "GB100",
+        "compute_capability": "10.0",
+        "sm": "sm_100",
+        "nebius_platform": "gpu-b200-sxm",
+        "nebius_region": "us-central1",
+        "nebius_platform_variants": [
+          "gpu-b200-sxm",
+          "gpu-b200-sxm-a"
+        ]
+      },
+      {
+        "name": "B300 (Blackwell Ultra)",
+        "codename": "GB300",
+        "compute_capability": "10.3",
+        "sm": "sm_103",
+        "nebius_platform": "gpu-b300-sxm",
+        "nebius_region": "uk-south1"
+      }
+    ],
+    "driver_floor": "R570",
+    "cuda_floor": "12.8",
+    "rt_cores": false,
+    "rt_cores_note": "Datacenter Blackwell has no RT cores, exactly like H100/H200. Rasterized rendering (Isaac Lab / SONIC isaac-render) must stay on L40S or RTX PRO 6000; only headless / state-based work routes here.",
+    "sass_compatibility": "SASS is per-arch with no cross-major compatibility. sm_120 (major 12, RTX PRO 6000) binaries and sm_100/sm_103 (major 10) binaries are mutually incompatible, so validating on RTX PRO 6000 does not prove B200/B300. Within a major, minor-version forward compatibility holds: sm_100 SASS runs on sm_103, not the reverse. Build for sm_100 first and confirm on B300.",
+    "arch_knobs": [
+      "Prebuilt torch wheels ship a fixed fat-binary arch set that TORCH_CUDA_ARCH_LIST cannot change; only the wheel index does. cu128/cu130 include sm_100 and sm_120, cu124/cu126 stop at sm_90.",
+      "Source-compiled CUDA extensions (flash-attn from source, Taichi/Genesis, natten, custom ops) obey TORCH_CUDA_ARCH_LIST. Omitting an arch yields 'no kernel image is available for execution on the device' at runtime."
+    ]
+  },
+  "verdicts": {
+    "ready": "The base wheel/toolchain already covers sm_100, so the image needs an additive rebuild plus live validation - no dependency changes.",
+    "port": "Needs a CUDA/torch bump or arch flags before it can target sm_100; the upstream wheels exist.",
+    "blocked": "Upstream does not ship the architecture yet. Track the upstream reason; never stub a fake pass.",
+    "not-applicable": "CPU-only or GPU-agnostic. It already runs on a B200/B300 host; only node-pool scheduling needs confirming."
+  },
+  "validation_states": {
+    "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
+    "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
+    "not-required": "CPU-only image; no arch assertion applies."
+  },
+  "images": [
+    {
+      "name": "npa-base",
+      "dockerfile": "base/cuda13-b300/Dockerfile",
+      "build_script": "base/cuda13-b300/build.sh",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.9.0+cu130",
+      "torch_cuda_arch_list": "8.0 9.0 10.0 10.3 12.0",
+      "source_compiled_extensions": [
+        "flash-attn-4 (CuTe)"
+      ],
+      "smoke": "gpu_capability_smoke.py: device capability + native SASS, bf16 matmul and torch SDPA as controls, then a flash-attn-4 CuTe forward pass checked against SDPA",
+      "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. The flash-attn-4 CuTe JIT was assumed to make this image usable on any Blackwell part; real-GPU testing disproved that for sm_120 - see known_gaps.flash_attn_sm120.",
+      "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
+      "published_digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
+      "published_registries": [
+        "primary",
+        "mirror"
+      ],
+      "observed_wheel_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ]
+    },
+    {
+      "name": "npa-workbench-cuda-base",
+      "dockerfile": "cuda-base/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.12.1 (cu130, from pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime)",
+      "source_compiled_extensions": [],
+      "smoke": "arch assertion only; children carry the functional smokes",
+      "notes": "No source-compiled extensions, so the wheel arch set is the whole story. Validate through its children (lancedb, detection-training)."
+    },
+    {
+      "name": "npa-lerobot",
+      "dockerfile": "lerobot/Dockerfile",
+      "alternate_dockerfile": "lerobot/Dockerfile.b300",
+      "build_script": "lerobot/build.sh",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.9.0+cu130 (Python 3.12 Dockerfile.b300 image)",
+      "source_compiled_extensions": [],
+      "smoke": "official ACT PushT run: 50 training steps, checkpoint, and one evaluation episode",
+      "notes": "The Dockerfile.b300 image uses a dedicated Python 3.12 LeRobot venv and the widened npa-base validator venv. The exact final tag passed the official ACT PushT functional smoke (50 training steps, checkpoint, and one evaluation episode) on physical B200, B300, H100, and RTX PRO 6000.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e",
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
+    },
+    {
+      "name": "npa-lerobot-policy",
+      "dockerfile": "lerobot-policy/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.12.1+cu130 (measured in the published 0.1.1 image)",
+      "source_compiled_extensions": [],
+      "smoke": "policy inference request against the served endpoint",
+      "notes": "Same wheel story as npa-lerobot: the cu124 base is irrelevant once torch is upgraded.",
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
+    {
+      "name": "npa-lancedb",
+      "dockerfile": "lancedb/Dockerfile",
+      "build_script": "lancedb/build.sh",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.12.1 (cu130 via npa-workbench-cuda-base)",
+      "source_compiled_extensions": [],
+      "smoke": "CLIP embed into a LanceDB table",
+      "notes": "No custom CUDA build; the CLIP path is pure torch/transformers. The corrected additive image handles current transformers BaseModelOutputWithPooling results; the historical 0.30.3 tag does not.",
+      "published_tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
+      "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5",
+      "published_registries": [
+        "primary",
+        "mirror"
+      ],
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
+    {
+      "name": "npa-detection-training",
+      "dockerfile": "detection-training/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.12.1 (cu130 via npa-workbench-cuda-base)",
+      "source_compiled_extensions": [],
+      "smoke": "one detector training step with COCO metrics",
+      "notes": "torchvision/pycocotools ops only, all shipped as wheels.",
+      "measured_torch": "2.12.1+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
+    {
+      "name": "npa-cosmos3-reason",
+      "dockerfile": "cosmos3-reason/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "inherited 2.9.0+cu130 from npa-base",
+      "source_compiled_extensions": [],
+      "smoke": "VLM reason pass over a real clip",
+      "notes": "Rebuilt on the corrected widened npa-base and validated with a real gated Cosmos-Reason2-8B VLM pass on physical B200, B300, H100, and RTX PRO 6000. No compiled extensions of its own.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "published_tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9",
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
+    },
+    {
+      "name": "npa-cosmos2-transfer",
+      "dockerfile": "cosmos2-transfer/Dockerfile",
+      "build_script": "cosmos2-transfer/build.sh",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "cu128 via `uv sync --extra=cu128`",
+      "source_compiled_extensions": [
+        "flash-attn (from the upstream cu128 lock)"
+      ],
+      "smoke": "real video -> video transfer, not a manifest write",
+      "notes": "The cu128 wheel carries sm_100 and the genuine transfer passes on B200. Physical B300 testing showed that model initialization also needs runtime NVRTC JIT support for capability 10.3; CUDA 12.8 rejects that architecture before inference, so the B300 cell is blocked until a cu130 rebuild passes the same transfer."
+    },
+    {
+      "name": "npa-cosmos",
+      "dockerfile": "cosmos/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.7.0+cu128",
+      "source_compiled_extensions": [
+        "flash-attn 2.7.3+cu128.torch27 (NVIDIA prebuilt wheel)",
+        "natten 0.21.0+cu128.torch27 (NVIDIA prebuilt wheel)",
+        "transformer-engine 1.13.0+cu128.torch27 (NVIDIA prebuilt wheel)"
+      ],
+      "upstream_tracking": "NVIDIA cosmos-dependencies v1.2.0 release and versioned index: https://github.com/nvidia-cosmos/cosmos-dependencies/releases/tag/v1.2.0 and https://nvidia-cosmos.github.io/cosmos-dependencies/v1.2.0/cu128_torch27/simple (checked 2026-08-03)",
+      "smoke": "Predict2 NeighborhoodAttention module using a shipped Video2World NATTEN configuration plus a flash-attn forward checked against torch SDPA",
+      "notes": "The complete upstream cu128/torch-2.7 wheel set carries sm_100 and both custom-kernel paths passed on physical B200. Checkpoint-backed Video2World remains unverified because the available Hugging Face identity received HTTP 403 for NVIDIA's gated model. Predict2 v1.0.9 rejects capability 10.3 in software before dispatch (its allowlist contains only 90 and 100), so the B300 cell remains blocked despite same-major sm_100 SASS forward compatibility.",
+      "published_tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
+      "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd",
+      "published_registries": [
+        "primary",
+        "mirror"
+      ],
+      "measured_torch": "2.7.0+cu128",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ]
+    },
+    {
+      "name": "npa-genesis",
+      "dockerfile": "genesis/Dockerfile",
+      "alternate_dockerfile": "genesis/Dockerfile.sm120",
+      "build_script": "genesis/build_sm120.sh",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "inherited 2.9.0+cu130 (published Dockerfile.sm120 path)",
+      "source_compiled_extensions": [
+        "Taichi runtime-JIT kernels (Genesis physics backend; not compiled during the image build)"
+      ],
+      "smoke": "gs.init(gpu), plane/Franka/box scene construction, kernel compilation, and a simulation step",
+      "notes": "The exact final tag passed native/same-major SASS controls, Taichi/Genesis runtime kernel compilation, plane/Franka/box scene construction, and a simulation step on physical B200, B300, H100, and RTX PRO 6000.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "published_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca",
+      "published_registries": [
+        "primary",
+        "mirror"
+      ]
+    },
+    {
+      "name": "npa-envgen",
+      "dockerfile": "sim2real-envgen/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "generate one environment and step it",
+      "notes": "The exact final tag passed real environment generation and a Genesis CUDA scene/physics step on physical B200, B300, H100, and RTX PRO 6000.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376",
+      "published_registries": ["primary", "mirror"]
+    },
+    {
+      "name": "npa-reference-policy",
+      "dockerfile": "sim2real-reference-policy/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "reference-policy variant assertion, environment generation, and a Genesis CUDA scene/physics step",
+      "notes": "The exact final tag passed its reference-policy variant assertion, real environment generation, and a Genesis CUDA scene/physics step on physical B200, B300, H100, and RTX PRO 6000. This smoke does not execute a policy rollout, so none is claimed.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6",
+      "published_registries": ["primary", "mirror"]
+    },
+    {
+      "name": "npa-loop-eval",
+      "dockerfile": "sim2real-eval/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "gs.init(gpu) plus a scored evaluation episode",
+      "notes": "The exact final tag passed a real scored two-environment Franka pick-place rollout on physical B200, B300, H100, and RTX PRO 6000. This image is why the smoke must be functional rather than a CUDA probe: the loop-eval 0.1.1 sm_120 regression passed an import check and failed on a real step.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a",
+      "published_registries": ["primary", "mirror"]
+    },
+    {
+      "name": "npa-lerobot-vlm-rl",
+      "dockerfile": "lerobot-vlm-rl/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "smoke": "VLM-signal adapter parameter update plus checkpoint output",
+      "notes": "The exact final tag passed a real VLM-signal adapter update on physical B200, B300, H100, and RTX PRO 6000: parameters changed by L2 0.000250 and a checkpoint was written. This smoke does not execute a Genesis rollout, so none is claimed.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5",
+      "published_registries": ["primary", "mirror"]
+    },
+    {
+      "name": "npa-isaac-lab",
+      "dockerfile": "isaac-lab/Dockerfile",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "blocked_reason": "The NVIDIA vendor stack is pinned to x86_64 CUDA 12.8 with torch 2.7.0; B200/B300 support is gated on NVIDIA's x86_64 CUDA 13 alignment. Independently, Isaac Lab's value here is rasterized rendering, which datacenter Blackwell cannot do at all (no RT cores).",
+      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "smoke": "headless RL training step (never a render task)",
+      "notes": "Isaac Sim is fetched at first run under the operator's own EULA acceptance rather than baked, so the image is redistributable. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
+    },
+    {
+      "name": "npa-sonic",
+      "dockerfile": "sonic/Dockerfile",
+      "build_script": "sonic/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "blocked_reason": "Same NVIDIA x86_64 CUDA 12.8 pin as Isaac Lab. The k8s variant already builds sm80,sm90,sm120 via NPA_CUDA_ARCHITECTURES, so a compute-only datacenter variant is plausible - cu128 already carries sm_100 - but it is unvalidated.",
+      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "smoke": "headless whole-body-control fine-tune step",
+      "notes": "The exact final Kubernetes tag carries the corrected CUDA base and passed its torch/native-SASS controls on RTX PRO 6000. The same SONIC payload's real fine-tune reaches Isaac environment construction after the image fixes for undeclared lxml and Open3D dependencies, but both cold and warm attempts fail in Isaac's runtime-fetched URDF extension while opening a temporary pelvis USD layer, so this cell remains pending rather than falsely validated. This does not remove the NVIDIA datacenter vendor-stack blocker; isaac-render must never route to B200/B300.",
+      "measured_torch": "2.9.0+cu130",
+      "measured_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"],
+      "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
+      "published_registries": ["primary", "mirror"]
+    },
+    {
+      "name": "npa-sonic-mujoco",
+      "dockerfile": "sonic/Dockerfile.mujoco",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "inherits_blocker_from": "npa-sonic",
+      "blocked_reason": "Built on top of npa-sonic, so it inherits the vendor CUDA 12.8 pin.",
+      "upstream_tracking": "NVIDIA Isaac Lab / Isaac Sim release notes for x86_64 CUDA 13 alignment",
+      "smoke": "MuJoCo evaluation episode",
+      "notes": "Unblocks with npa-sonic."
+    },
+    {
+      "name": "npa-groot",
+      "dockerfile": "groot/Dockerfile",
+      "build_script": "groot/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-hardware",
+      "blocked_reason": "GR00T's uv-locked venv and its Isaac Lab side venv both pin the NVIDIA x86_64 CUDA 12.8 stack; B200/B300 is gated on NVIDIA's CUDA 13 alignment.",
+      "upstream_tracking": "NVIDIA Isaac GR00T release notes for x86_64 CUDA 13 alignment",
+      "smoke": "GR00T finetune step",
+      "notes": "cu128 already carries sm_100, so a headless compute-only finetune variant may be reasonable ahead of full vendor alignment - validate compute-only first."
+    },
+    {
+      "name": "npa-fiftyone",
+      "dockerfile": "fiftyone/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "dataset load and app launch",
+      "notes": "CPU-only (python:3.11-slim + bundled mongod). Only confirm it schedules on the B200/B300 node pool."
+    },
+    {
+      "name": "npa-retargeting",
+      "dockerfile": "retargeting/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "retarget a motion clip",
+      "notes": "CPU-only. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-rerun-viewer",
+      "dockerfile": "rerun-viewer/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "serve an .rrd bundle",
+      "notes": "CPU-only viewer. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-lichtblick",
+      "dockerfile": "lichtblick/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "serve the static bundle and load an MCAP",
+      "notes": "Static caddy file server. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-foxglove-embed",
+      "dockerfile": "foxglove-embed/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "serve the @foxglove/embed SDK with CORS and byte ranges",
+      "notes": "Static caddy file server. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-sonic-export",
+      "dockerfile": "sonic-export/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "ONNX export plus eval",
+      "notes": "CPU torch (whl/cpu index) chosen precisely to avoid the blocked cuda13-b300 base. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-cosmos3",
+      "dockerfile": "cosmos3/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "cu130 inference venv (uv group cu130) on nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04",
+      "source_compiled_extensions": [],
+      "smoke": "real Cosmos 3 generate pass (weights fetched at run time, never baked)",
+      "notes": "The cu130 wheel set carries sm_100 and sm_120, so the arch side is covered; not yet measured in the published image or run on datacenter Blackwell."
+    },
+    {
+      "name": "npa-cosmos-curate",
+      "dockerfile": "cosmos-curate/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "curate a real clip set through the GPU-free stages",
+      "notes": "Deliberately CPU-only: torch is installed from the whl/cpu index and only upstream's GPU-free stages are wired, so the golden eval declares gpu: none. Only confirm node-pool scheduling."
+    },
+    {
+      "name": "npa-cosmos-evaluator",
+      "dockerfile": "cosmos-evaluator/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "grade a real clip set with the wired checks",
+      "notes": "No torch or CUDA in the image (python:3.12-slim plus OpenCV/NumPy); the golden eval declares gpu: none. Only confirm node-pool scheduling."
+    }
+  ],
+  "validation_evidence": {
+    "npa-base": {
+      "built": true,
+      "wheel_arch_check": "passed at image build time (the build asserts sm_80/sm_90/sm_100/sm_120)",
+      "observed_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ],
+      "pushed_to": [
+        "primary",
+        "mirror"
+      ],
+      "hardware_run": "Validated the corrected published 20260803T032705Z image on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03 with npa/scripts/blackwell-gpu-validation-job.yaml. B200 reported capability (10,0) and native sm_100 SASS; B300 reported capability (10,3) with same-major sm_100 SASS coverage; H100 reported native sm_90; RTX reported native sm_120. Every run passed bf16 matmul and torch SDPA, intentionally rejected a different CUDA major, and ended ALL_GPU_VALIDATION_PASSED. flash-attn-4 matched SDPA at max error 0.00206 on B200/B300 and 0.00186 on H100; RTX recorded only the known non-TMA gap with --allow-no-tma. Datacenter runs never used that exception. The earlier rebuilt image's kernels ran on B300 but its baked validator was stale; it is superseded and is not the current alias target.",
+      "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "ALL_GPU_VALIDATION_PASSED"
+        },
+        "B300": {
+          "platform": "gpu-b300-sxm",
+          "capability": "10.3",
+          "result": "ALL_GPU_VALIDATION_PASSED"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "ALL_GPU_VALIDATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "ALL_GPU_VALIDATION_PASSED (known non-TMA exception)"
+        }
+      },
+      "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
+      "published_digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
+      "published_alias": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"
+    },
+    "npa-detection-training": {
+      "hardware_run": "Validated on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. On each GPU a real Faster R-CNN ran three forward/backward/SGD updates and then inference, producing finite classifier, box-regression, objectness, and RPN losses plus 89 detections before DETECTOR_EXTENSIVE_VALIDATION_PASSED.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "DETECTOR_EXTENSIVE_VALIDATION_PASSED"}
+      },
+      "published_tag": "bdd100k-golden-eval-smoke-20260614T210000Z",
+      "published_digest": "sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9"
+    },
+    "npa-cosmos2-transfer": {
+      "hardware_run": "Validated on a physical NVIDIA B200 (capability (10,0)) on 2026-08-03. The real Cosmos Transfer 2.5 depth-conditioned video-to-video path downloaded its gated dependencies, ran two 35-step generation passes, passed prompt and generated-video guardrails, and wrote robot_depth.mp4 (3,891,548 bytes). An extensive physical B300 run on the same immutable image reached the real model initialization path but failed in torch.nn.init.trunc_normal_: its generated erfinv kernel was rejected with 'nvrtc: error: invalid value for --gpu-architecture (-arch)'. No B300 validation is claimed.",
+      "published_tag": "2.5.1-skypilot-ready-20260801T053000Z",
+      "published_digest": "sha256:8ce55c18108810be3c84155f846325f053a1f21113ed0f5d7dad3c9d2831d7a4"
+    },
+    "npa-cosmos": {
+      "hardware_run": "Validated the published cu128/torch-2.7 image on physical B200 and H100 on 2026-08-03. Each extensive run executed a six-case flash-attn 2.7.3 matrix spanning bf16/fp16, causal/noncausal, and three sequence/head shapes, then real Predict2 NeighborhoodAttention forwards for five shipped parameter configurations before COSMOS_KERNEL_EXTENSIVE_VALIDATION_PASSED. On physical B300 and RTX PRO 6000 the flash-attn matrix passed, then the real NATTEN forward rejected capabilities 103/120 through upstream's exact [90,100] allowlist as expected; those are negative evidence, not validations. Full checkpoint-backed Video2World was retried but remains unverified because Hugging Face returned HTTP 403 for the gated model.",
+      "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "COSMOS_KERNEL_EXTENSIVE_VALIDATION_PASSED"
+        },
+        "H100": {
+          "platform": "gpu-h100-sxm",
+          "capability": "9.0",
+          "result": "COSMOS_KERNEL_EXTENSIVE_VALIDATION_PASSED"
+        }
+      },
+      "published_tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
+      "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd"
+    },
+    "npa-lancedb": {
+      "hardware_run": "The corrected additive image was validated on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Each run produced three real CLIP embeddings, checked 512-dimensional normalized distinct vectors, inserted them into a Lance table, and required top-1 self-search before LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED. The historical npa-lancedb:0.30.3 image failed this smoke because it mishandled the current transformers BaseModelOutputWithPooling return type and remains superseded.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "LANCEDB_CLIP_EXTENSIVE_VALIDATION_PASSED"}
+      },
+      "published_tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
+      "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"
+    },
+    "npa-lerobot": {
+      "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run checked the inherited and dedicated LeRobot venv wheel arch sets and ran official ACT PushT for 50 training steps, produced a checkpoint, and evaluated one episode (5/5 checks). B200/B300/H100 also executed the datacenter flash-attn-4 CuTe kernel; RTX recorded the known non-TMA exception. The superseded npa-lerobot:0.5.1 image failed its B200 functional smoke on a torchcodec/FFmpeg mismatch and was not counted.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks (known non-TMA exception)"}
+      },
+      "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:14a2e0dfe61fb2c46c6e4b8d75f1a06f2f68f9cfa4a6428a175411afaf93749e"
+    },
+    "npa-cosmos3-reason": {
+      "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run completed baked arch/capability validators, downloaded four gated nvidia/Cosmos-Reason2-8B checkpoint shards, and completed a real two-frame VLM judgment. B200/B300/H100 also ran the flash-attn-4 forward against SDPA; RTX recorded only the known non-TMA exception. B200 emitted score 0.0/success true; B300, H100, and RTX emitted score 0.0/success false. All are functional execution passes, not semantic-quality claims. The superseded pre-rebuild image lacked the functional smoke module and was not counted.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "Reason2-8B functional execution PASS"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "Reason2-8B functional execution PASS"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "Reason2-8B functional execution PASS"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "Reason2-8B functional execution PASS on exact final tag (known non-TMA exception)"}
+      },
+      "published_tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9"
+    },
+    "npa-genesis": {
+      "hardware_run": "The exact final tag was validated on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run passed native/same-major SASS and bf16/SDPA controls, initialized gs.cuda, generated environment rows, built a plane/Franka/box scene, compiled the runtime simulation kernels, and completed a physics step. The prior Taichi blocker did not reproduce on either datacenter Blackwell GPU.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "Genesis CUDA kernel compilation and physics step PASS"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "Genesis CUDA kernel compilation and physics step PASS"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "Genesis CUDA kernel compilation and physics step PASS"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "Genesis CUDA kernel compilation and physics step PASS (known non-TMA exception in base control)"}
+      },
+      "published_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"
+    },
+    "npa-envgen": {
+      "hardware_run": "The exact final tag passed native/same-major SASS controls, real environment generation, Genesis runtime kernel compilation, and a CUDA physics step on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "environment generation and Genesis CUDA step PASS"}
+      },
+      "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:8e0ea40c064a15409233efdd036a369b36e1c04e713bcf81440d9d4372cae376"
+    },
+    "npa-reference-policy": {
+      "hardware_run": "The exact final tag passed native/same-major SASS controls, the reference-policy variant assertion, real environment generation, Genesis runtime kernel compilation, and a CUDA scene/physics step on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. This smoke did not execute a policy rollout, so none is claimed.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "DATACENTER_CHILD_VALIDATION_PASSED"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "variant assertion, environment generation, and Genesis CUDA step PASS"}
+      },
+      "published_tag": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:58eb0d714f9d57fbae7fc8dfc56caf7f98f84699146c820dce18f2aaa2313cb6"
+    },
+    "npa-lerobot-vlm-rl": {
+      "hardware_run": "The exact final tag passed native/same-major SASS controls and a real VLM-signal adapter update that changed parameters (delta L2 0.000250) and wrote a checkpoint on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. This smoke did not run a Genesis rollout, so none is claimed.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "parameter update and checkpoint PASS"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "parameter update and checkpoint PASS"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "parameter update and checkpoint PASS"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "parameter update and checkpoint PASS"}
+      },
+      "published_tag": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5"
+    },
+    "npa-loop-eval": {
+      "hardware_run": "The exact final tag passed native/same-major SASS controls and a scored two-environment Franka pick-place CUDA rollout on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03.",
+      "validated_gpus": {
+        "B200": {"platform": "gpu-b200-sxm", "capability": "10.0", "result": "two-environment Franka rollout PASS"},
+        "B300": {"platform": "gpu-b300-sxm", "capability": "10.3", "result": "two-environment Franka rollout PASS"},
+        "H100": {"platform": "gpu-h100-sxm", "capability": "9.0", "result": "two-environment Franka rollout PASS"},
+        "RTX PRO 6000": {"platform": "gpu-rtx6000", "capability": "12.0", "result": "two-environment Franka rollout PASS"}
+      },
+      "published_tag": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a"
+    },
+    "npa-sonic": {
+      "hardware_run": "The exact final rebased tag passed its baked torch arch/native-SASS, bf16, and SDPA validators on physical RTX PRO 6000 on 2026-08-03. The immediately preceding dependency-complete image, with the same SONIC payload, reached real fine-tune environment construction; both a cold attempt and an in-pod warm-cache retry then failed inside Isaac's runtime-fetched URDF extension while opening /tmp/IsaacLab/.../configuration/pelvis.tmp.usd, before a learning step or checkpoint. The RTX cell remains pending; no import-only or startup-only result was substituted, and no datacenter rendering route is allowed.",
+      "published_tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+      "published_digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
+    }
+  },
+  "known_gaps": {
+    "flash_attn_sm120": {
+      "summary": "flash-attn-4's CuTe forward kernel cannot execute on sm_120 (RTX PRO 6000 Blackwell). `import flash_attn` succeeds, so an import-only check reports a false pass.",
+      "error": "AttributeError: 'NoneType' object has no attribute '_trait' in cutlass.cute.nvgpu.cpasync.tma_partition, reached from flash_attn/cute/flash_fwd.py epilogue via quack.copy_utils.tma_get_copy_fn",
+      "root_cause": "The kernel partitions its epilogue with a TMA (Tensor Memory Accelerator) copy atom, and that atom is unavailable on workstation Blackwell. TMA is a datacenter feature: sm_90 (Hopper) and sm_100/sm_103 (datacenter Blackwell) have it, sm_120 does not.",
+      "evidence": "Verified on a real NVIDIA RTX PRO 6000 Blackwell Server Edition node (capability (12,0)). All four tested configurations (bf16/fp16, head_dim 64/128, seqlen 64/256) fail at the same line, so it is architecture-wide rather than config-specific. torch SDPA and a bf16 tensor-core matmul both succeed on the same device, ruling out the GPU and the wheel.",
+      "regression": "No. The previously published npa-base:cuda13-b300-sm80-sm90-sm120-latest, built before the arch widen and the CUTLASS pin, fails identically on the same node. This is pre-existing and was hidden by an import-only golden eval.",
+      "affects": [
+        "sm_120 consumers of npa-base"
+      ],
+      "does_not_affect": "sm_100 and sm_103 have TMA. The kernel passed on physical B200 and B300 hardware at max abs error 0.00206 against torch SDPA, so the gap is confined to non-TMA sm_120 in the tested Blackwell set.",
+      "upstream_tracking": "https://github.com/Dao-AILab/flash-attention - flash-attn-4 CuTe TMA path assumes a datacenter architecture",
+      "mitigation": "gpu_capability_smoke.py --allow-no-tma records this as a known gap on non-TMA parts and still fails on datacenter parts, where a TMA failure would be real. Callers on sm_120 should use torch SDPA.",
+      "positive_control": "The same image on a real NVIDIA H100 80GB HBM3 node (capability (9,0), which has TMA) runs flash_attn_func successfully with max abs error 0.00186 against torch SDPA. Same wheel, same flash-attn build, same CUTLASS pin - only the architecture differs. That isolates the cause to TMA availability and shows the kernel path itself is sound."
+    },
+    "cosmos_predict2_b300_allowlist": {
+      "summary": "Cosmos Predict2 v1.0.9 rejects B300 capability 10.3 before kernel dispatch even though its cu128 torch wheel carries forward-compatible sm_100 SASS.",
+      "evidence": "The exact upstream v1.0.9 source at commit 8112a684a3ab589eabd04ed62a2f20ec7df5b96a defines ALLOWED_COMPUTE_CAPS as [90, 100]. B200 custom-kernel validation passed; no B300 Predict2 capability result is claimed.",
+      "affects": [
+        "npa-cosmos on sm_103"
+      ],
+      "upstream_tracking": "https://github.com/nvidia-cosmos/cosmos-predict2",
+      "mitigation": "Route this pinned Predict2 release to B200 or H100. Retest B300 only after upstream admits compute capability 103 and run the same real NATTEN and flash-attn smokes."
+    },
+    "cosmos_transfer_b300_nvrtc": {
+      "summary": "The cu128 Cosmos Transfer 2.5 image reaches B300 with forward-compatible sm_100 wheel SASS, but CUDA 12.8 NVRTC rejects a runtime-generated capability-10.3 kernel before inference.",
+      "error": "RuntimeError from torch.nn.init.trunc_normal_: nvrtc: error: invalid value for --gpu-architecture (-arch)",
+      "evidence": "On physical NVIDIA B300 SXM6 AC, the immutable 2.5.1 image reported capability (10,3) and sm_100 in torch._C._cuda_getArchFlags(), downloaded the gated dependencies, entered real Control2WorldInference model construction, and failed while JIT-compiling torch's erfinv kernel. The same image completed two 35-step transfers on B200.",
+      "affects": [
+        "npa-cosmos2-transfer on sm_103"
+      ],
+      "mitigation": "Keep B200 supported. Rebuild the full locked environment on CUDA 13/cu130 and rerun the genuine Video2Video smoke on B300; an arch-only check is insufficient."
+    }
+  },
+  "measurement_note": "measured_arch_list is torch._C._cuda_getArchFlags() read from the published image on 2026-08-02/03. It is the wheel's fixed fat-binary arch set, so it decides which GPUs the image can execute on regardless of TORCH_CUDA_ARCH_LIST. Reproduce with npa/scripts/validate_blackwell_image.sh <image> --target b200."
+}

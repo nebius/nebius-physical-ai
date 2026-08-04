@@ -312,6 +312,26 @@ except Exception as e:
 '''
 
 
+def _isaac_eula_env_entries() -> list[dict[str, str]]:
+    """Kubernetes ``env`` entries carrying the operator's NVIDIA licence acceptance.
+
+    The Isaac image ships no Isaac Sim and refuses to fetch it (exit 78) unless
+    OMNI_KIT_ACCEPT_EULA and ISAACSIM_ACCEPT_EULA are set. These jobs invoke
+    /isaac-sim/python.sh, so without forwarding they cannot run at all.
+
+    Read from the submitting process's environment and never defaulted to "YES": the
+    operator driving the pipeline is the one consenting, and hardcoding acceptance here
+    would put us in the position of accepting on their behalf. Unset stays unset, and the
+    job then fails with the bootstrap's actionable refusal instead of silently consenting.
+    """
+
+    return [
+        {"name": name, "value": os.environ[name]}
+        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+        if os.environ.get(name)
+    ]
+
+
 def build_isaac_rollout_job_manifest(
     *,
     job_name: str,
@@ -357,7 +377,19 @@ def build_isaac_rollout_job_manifest(
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-rollout.log) 2>&1\n'
-        'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
+        'if [ -x /isaac-sim/python.sh ]; then\n'
+        '  PY=/isaac-sim/python.sh\n'
+        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
+        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
+        '#!/usr/bin/env bash\n'
+        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
+        'ISPYEOF\n'
+        '  chmod +x /tmp/isaac-python\n'
+        '  PY=/tmp/isaac-python\n'
+        'else\n'
+        '  PY="$(command -v python3 || command -v python || true)"\n'
+        'fi\n'
+        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
         "mkdir -p /tmp/rollwork/frames; cd /tmp/rollwork\n"
         f'export ROLLOUT_TASK="{task}" ROLLOUT_COUNT="{rollout_count}" '
@@ -390,6 +422,14 @@ def build_isaac_rollout_job_manifest(
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": service_account,
+                    # Deliberate, scoped privilege: npa-isaac-lab defaults to the
+                    # non-root ``ubuntu`` user, which cannot traverse ``/isaac-sim``,
+                    # so ``python.sh`` resolves empty. runAsGroup/fsGroup do not help
+                    # (the blocked bit is directory execute for other). This stays
+                    # bounded: root inside the container only, never privileged, no
+                    # host namespaces, and no host paths mounted (enforced by
+                    # npa/tests/workflows/test_isaac_job_security_context.py).
+                    "securityContext": {"runAsUser": 0},
                     "imagePullSecrets": [
                         {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},
@@ -400,6 +440,10 @@ def build_isaac_rollout_job_manifest(
                             "name": "rollout",
                             "image": image,
                             "imagePullPolicy": "Always",
+                            # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
+                            # write under the prebuilt workspace; current RTX PRO runtime
+                            # requires root for that path. Keep this scoped to BYO Isaac jobs.
+                            "securityContext": {"runAsUser": 0, "runAsGroup": 0},
                             "resources": {
                                 "limits": {gpu_resource: "1"},
                                 "requests": {gpu_resource: "1"},
@@ -408,7 +452,8 @@ def build_isaac_rollout_job_manifest(
                                 {"secretRef": {"name": "hf-ngc-tokens"}},
                                 {"secretRef": {"name": "npa-storage-credentials"}},
                             ],
-                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}],
+                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}]
+                            + _isaac_eula_env_entries(),
                             "command": ["/bin/bash", "-lc"],
                             "args": [script],
                         }
@@ -485,14 +530,20 @@ def run_isaac_rollout_job(
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
     # Rollouts spawn the SAME manipuland as train/eval (default: the proven
     # rigid-ready USD, not the stock primitive cube).
-    from npa.workflows.sim2real.byo_isaac_trainer import resolve_object_usd
+    from npa.workflows.sim2real.byo_isaac_trainer import (
+        artifact_tag,
+        artifact_tag_from_output_dir,
+        k8s_job_name,
+        resolve_object_usd,
+    )
 
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
 
     checkpoint_uri = latest_checkpoint_uri(bucket, run_id, s3_endpoint=endpoint)
-    # Unique per (run, outer, inner) — the engine sets a distinct OUTPUT_DIR name.
-    job_suffix = output_dir.name or "iter"
-    job_name = f"s2r-byo-isaac-roll-{run_id}-{job_suffix}"[:63]
+    # Unique per (run, outer, inner) so second-pass component artifacts do not
+    # overwrite first-pass rollouts.
+    job_suffix = artifact_tag(_env("NPA_SIM2REAL_ROLLOUT_TAG")) or artifact_tag_from_output_dir(output_dir)
+    job_name = k8s_job_name("s2r-byo-isaac-roll", run_id, job_suffix)
     out_s3 = f"s3://{bucket}/sim2real-b/{run_id}/byo-rollouts/{job_suffix}"
 
     manifest = build_isaac_rollout_job_manifest(

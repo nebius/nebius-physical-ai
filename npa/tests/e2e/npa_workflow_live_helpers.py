@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -20,8 +21,100 @@ from npa.orchestration.npa_workflow.submit_matrix import (
     selected_submit_cases,
 )
 
+SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+# A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
+# testsrc2 source. Keeping the bytes in the test harness makes input seeding
+# independent of an operator host's ffmpeg installation while the live worker
+# still has to decode and condition on a real video.
+_CONDITIONED_COSMOS_MP4_B64 = (
+    "AAAAJGZ0eXBpc29tAAACAGlzb21pc282aXNvMmF2YzFtcDQxAAAC7m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAA"
+    "A+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAIAAAHwdHJhawAAAFx0a2hkAAAAAwAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAABAAAAAQAAAAAABjG1kaWEAAAAg"
+    "bWRoZAAAAAAAAAAAAAAAAAAAQAAAAAAAVcQAAAAAAC1oZGxyAAAAAAAAAAB2aWRlAAAAAAAAAAAAAAAAVmlkZW9I"
+    "YW5kbGVyAAAAATdtaW5mAAAAFHZtaGQAAAABAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJs"
+    "IAAAAAEAAAD3c3RibAAAAKtzdHNkAAAAAAAAAAEAAACbYXZjMQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAABAAEAA"
+    "SAAAAEgAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABj//wAAADVhdmNDAWQACv/hABhn"
+    "ZAAKrNlEJsBEAAADAAQAAAMAIDxIllgBAAZo6+PLIsD9+PgAAAAAEHBhc3AAAAABAAAAAQAAABBzdHRzAAAAAAAA"
+    "AAAAAAAQc3RzYwAAAAAAAAAAAAAAFHN0c3oAAAAAAAAAAAAAAAAAAAAQc3RjbwAAAAAAAAAAAAAAKG12ZXgAAAAg"
+    "dHJleAAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1k"
+    "aXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNTguNzYuMTAwAAAAkG1v"
+    "b2YAAAAQbWZoZAAAAAAAAAABAAAAeHRyYWYAAAAkdGZoZAAAADkAAAABAAAAAAAAAxIAABAAAAAIOAEBAAAAAAAU"
+    "dGZkdAEAAAAAAAAAAAAAAAAAADh0cnVuAAAKBQAAAAQAAACYAgAAAAAACDgAACAAAAADKgAAQAAAAAIAAAAQAAAA"
+    "AaoAABAAAAAPFG1kYXQAAAKtBgX//6ncRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTYzIHIzMDYwIDVkYjZh"
+    "YTYgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDIxIC0gaHR0cDovL3d3dy52aWRl"
+    "b2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9"
+    "MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFu"
+    "Z2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNr"
+    "aXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MiBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJl"
+    "YWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50"
+    "cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBv"
+    "cGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49NCBzY2VuZWN1dD00MCBpbnRyYV9yZWZy"
+    "ZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAg"
+    "cXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAABYNliIQBf9RXbX3adtJ5iaXn8d7k"
+    "cnLNXqoE3wQoAwNN+cd8aslhw1xKwdF73tLnVTjt1U/i9SMqQumY4NXEvGnPVJW4DWYw6aVBtSQbqQPnbMaI+rIB"
+    "WARN6RJuS6eSe8HyCXg5r/yuaCBeBRfXvVL6RfG89BWmuL6np+yZndilR888iRzTaIAJ2ntGABoMqOdTTIvO4fjN"
+    "4C/1BxPGpWvs0JExIXoNFh0BCV7Z66r9oBL/kKNiZzS2WoyTFd62+8dDGp/c1P5j+6EUIyApjzGInyWt29hbW7Y3"
+    "uRUfho2tryc+fIhStj86t8wlMDwkvFzUMKUhCivRwV2vIGpy7nWu846eBkLwNVFvxwc//YfJ1cK8f07VGtFTeIc6"
+    "xANjVAQGCCYrS0GrGathLUsoGt7aTGinRYtjG0hdtF2ITJltIdjgi8g+QUmiaomd5Is9TD1RvrJKDxknMlpHnRgd"
+    "QyvbL+UH8urpaNOLXLnrckZjmzo0pESzhNO0C8vkoi4nTglMHD77XRAZO1qweYLNsPts849JRAscB5X0MSlR+AWS"
+    "kWtrylGGG/Bw+O7jQiKqvJhYgwkr1JCLyhtaaqKDs/UsjU5keaT+FJd1hKfifJPoHwFLTbTP85u+kvAAjR0YbM/l"
+    "lU18VyCtPwTF9OW4a+BaheT30XO8M6Dg1/wNzZI2QMzVkLoSslGojOJmAg72PM2oEiYyr/FHGFreqBA7F/0gFs3J"
+    "J/tq6BgQFWW2sXlwlFglwdWKSU8DhORgkpHZh0s4Arr8mgsDDVhdKFEzOAk/g2w6YOu7r8mPCN4FMe6BaHlJFkwx"
+    "2rxvuF7/RQoLaRciBOaL3TLsTMQ0jLN/pCYHlJ8hYsS3So92S8vmcw7SI1ZgR5Lf80jYRIUKlgV79tPuoCEDE0sL"
+    "jWlxN6U5hyceT/sJzuIOG+xFau9AggV4KmPajAmZgAGlqMth/MI6ntT+vvYX+pB3hM/Y6sr6Jvim4sqG4fcuL4KS"
+    "+haRK1iBdsX+6Z3wLKCzhecWo/WNBjZPfWTasazD0/3sllLBeOl9F/QrrmQc0v8te4FH5JBhbwOIvmEKT47R0ZW+"
+    "AX4eKwEYoeafX+upD/s2ii6ORRcF1Qt36p7pQNThwqY99c8evwyZhw8O0pxo9nLWzsxmFPwCnrOubwyDJx2Fc44N"
+    "usSN8OrsUmCiyCGymbN4M3oibpwymsuCs8CDyxk8CqgiwPnwzx8NAudk6RVcy4kAS7/Vi0h/bFthd9pfPp8xzoEV"
+    "bAIDe0O+"
+    "T44IuSp/"
+    "eq8ivb8H"
+    "SRiRpPQH"
+    "GiYunz/C"
+    "XJ9DwQ6u"
+    "Y/8jki4W"
+    "pXG"
+    "CP5+X"
+    "Bv4xRyAj"
+    "OhPgg9G6"
+    "RHeqvhTn"
+    "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"
+)
 
 
 def resolve_spec_path(name: str) -> Path:
@@ -44,30 +137,39 @@ ALL_GOLDEN_SPECS = sorted(
 
 DYNAMIC_SPECS = frozenset(
     {
+        "adversarial-scenario-hardening.yaml",
+        "dataset-of-record-smoke.yaml",
+        "dataset-ingest-curate.yaml",
+        "hardening-with-insights.yaml",
         "sim2real-vlm-rl.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
+        "token-factory-gate-loop.yaml",
     }
 )
 
 __all__ = [
     "ALL_GOLDEN_SPECS",
     "DYNAMIC_SPECS",
+    "SONIC_MOTION_FIXTURE_PREFIX",
     "SPECS_DIR",
     "SUBMIT_LIVE_MATRIX",
     "SubmitLiveCase",
     "assume_decision_for",
     "assert_cli_ok",
     "assert_no_credential_leakage",
+    "concurrency_overlaps",
     "live_bucket",
     "live_credential_markers",
     "materialize_live_spec",
     "parse_json_output",
     "parse_json_payload",
+    "parse_runtime_json",
     "resolve_spec_path",
     "seed_live_workflow_inputs",
     "selected_submit_cases",
+    "write_runtime_evidence",
 ]
 
 _LEAK_PATTERNS = (
@@ -130,6 +232,23 @@ def seed_live_workflow_inputs(
         )
         return
 
+    if spec_name == "token-factory-parallel-fanout.yaml":
+        # One small image per shard prefix so all three fan-out members have real
+        # Token Factory work to do concurrently.
+        for shard in ("shard-a", "shard-b", "shard-c"):
+            _seed_images(client, bucket=bucket, prefix=f"{marker}/images/{shard}/", count=2)
+        return
+
+    if spec_name == "token-factory-trigger-watch.yaml":
+        # Deliberately NOT seeded here: the whole point of the trigger pattern is that
+        # the run waits for data that is not there yet. Use seed_trigger_inbox_later().
+        return
+
+    if spec_name == "token-factory-gate-loop.yaml":
+        # The loop captions and scores the same small batch every iteration.
+        _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
+        return
+
     if spec_name == "token-factory-generate.yaml":
         body = b'{"id": "e2e-1", "prompt": "Reply with the single word: ready"}\n'
         client.put_object(
@@ -161,36 +280,393 @@ def seed_live_workflow_inputs(
                 Body=buf.getvalue(),
                 ContentType="image/png",
             )
+        if spec_name == "tokenfactory-cosmos-gate.yaml":
+            # The same scene prefix feeds the conditioned transfer stage. Seed a
+            # real clip as well as the frames consumed by the reasoner.
+            _seed_input_video(
+                client,
+                bucket=bucket,
+                prefix=f"{marker}/scene/",
+            )
+        return
+
+    if spec_name in {"sim2real-two-step.yaml", "sim2real-two-step-agent.yaml"}:
+        _seed_input_video(
+            client,
+            bucket=bucket,
+            prefix=f"sim2real-triggers/{run_id}/lerobot-pusht/",
+        )
+        return
+
+    if spec_name == "cosmos2-transfer.yaml":
+        # This is repository-authored procedural media, not an NVIDIA/upstream
+        # sample. The real transfer_execute path downloads it and generates its
+        # edge control on the fly inside the exact image under test.
+        import tempfile
+        from pathlib import Path
+
+        from npa.workbench.cosmos.fixture import generate_fixture
+
+        with tempfile.TemporaryDirectory(prefix="npa-cosmos2-fixture-") as tmp:
+            fixture = generate_fixture(Path(tmp), num_steps=4)
+            video = Path(str(fixture["video_path"]))
+            client.put_object(
+                Bucket=bucket,
+                Key=f"{marker}/input/{video.name}",
+                Body=video.read_bytes(),
+                ContentType="video/mp4",
+            )
+        return
+
+    if spec_name in {"sonic-export.yaml", "sonic-export-eval.yaml"}:
+        # `npa workbench sonic export` needs a loadable torch policy checkpoint. We do
+        # not vendor NVIDIA's gated nvidia/GEAR-SONIC weights, so the operator stages a
+        # small REAL checkpoint once with scripts/stage-sonic-export-fixture.sh (built
+        # in-cluster from npa.workflows.sonic_fixture) and points this at it.
+        src = os.environ.get("NPA_E2E_SONIC_CHECKPOINT_SRC", "").strip()
+        if not src:
+            pytest.skip(
+                "NPA_E2E_SONIC_CHECKPOINT_SRC not set; stage one with "
+                "scripts/stage-sonic-export-fixture.sh --image <registry>/npa-sonic:<tag> "
+                "--uri s3://<bucket>/<prefix>/checkpoint.pt"
+            )
+        _seed_object_from_source(src, bucket, f"{marker}/checkpoint.pt", client)
+        return
+
+    if spec_name == "sonic-eval.yaml":
+        # The eval twin scores an ALREADY exported ONNX policy plus its sidecar
+        # metadata. Both come from a real `sonic export` run, so the operator stages the
+        # pair the same way (sonic_policy.onnx + sonic_policy.onnx.metadata.json).
+        src = os.environ.get("NPA_E2E_SONIC_ONNX_SRC", "").strip()
+        if not src:
+            pytest.skip(
+                "NPA_E2E_SONIC_ONNX_SRC not set; run the sonic-export twin live first "
+                "and point this at its sonic_policy.onnx"
+            )
+        _seed_object_from_source(src, bucket, f"{marker}/sonic_policy.onnx", client)
+        # torch.onnx.export splits large tensors into <name>.onnx.data, which
+        # onnxruntime resolves relative to the model file. Copy it when present.
+        from npa.workbench.sonic.staging import (
+            external_data_uri_candidates,
+            sidecar_uri_candidates,
+        )
+
+        for extra in external_data_uri_candidates(src):
+            try:
+                _seed_object_from_source(
+                    extra, bucket, f"{marker}/{extra.rsplit('/', 1)[-1]}", client
+                )
+            except Exception:  # noqa: BLE001 - absent for small graphs
+                continue
+
+        # The exporter's sidecar is `<stem>.metadata.json`; the tool REQUIRES it
+        # (load_export_metadata validates its format), so a missing sidecar is fatal.
+
+        for candidate in sidecar_uri_candidates(src):
+            try:
+                _seed_object_from_source(
+                    candidate, bucket, f"{marker}/sonic_policy.metadata.json", client
+                )
+            except Exception:  # noqa: BLE001 - try the next naming convention
+                continue
+            return
+        pytest.fail(
+            "no export sidecar next to NPA_E2E_SONIC_ONNX_SRC; point it at the "
+            "sonic_policy.onnx a real `sonic export` run produced "
+            f"(tried {list(sidecar_uri_candidates(src))})"
+        )
+
+    if spec_name in {"dataset-of-record-smoke.yaml", "dataset-ingest-curate.yaml"}:
+        # `config.raw_sensor_uri` points at a SHARED fixture path outside the run prefix
+        # (materialize_live_spec only rewrites `prefix:`), so seeding is idempotent. The
+        # generated set satisfies the stricter of the two specs' gates — see
+        # npa.workflows.dataset_fixture.
+        from npa.orchestration.npa_workflow.spec import load_spec
+
+        raw_uri = str(load_spec(resolve_spec_path(spec_name)).config["raw_sensor_uri"])
+        raw_uri = raw_uri.replace("{{config.bucket}}", bucket)
+        from npa.workflows.dataset_fixture import publish as publish_records
+
+        published = publish_records(raw_uri, client=client)
+        print(f"[seed] {published['record_count']} raw sensor records -> {raw_uri}")
+        return
+
+    if spec_name == "insights-smoke.yaml":
+        # This spec reads a SHARED fixture prefix (`insights-fixtures/run/`), not a
+        # run-scoped one, so seeding is idempotent and safe to repeat.
+        _seed_insights_run_prefix(client, bucket=bucket, prefix="insights-fixtures/run/")
+        return
+
+    if spec_name == "insights-aggregate.yaml":
+        # Its run_prefix_uri is `runs/{{run.id}}/`, outside the e2e marker prefix.
+        _seed_insights_run_prefix(client, bucket=bucket, prefix=f"runs/{run_id}/")
+        return
+
+    if spec_name == "retargeting.yaml":
+        # The retargeting tool feeds NVIDIA's upstream SOMA-CSV converter, so it needs a
+        # real motion clip. Prefer a staged real dataset; otherwise synthesize one that
+        # satisfies the upstream `load_csv_motion` contract (see
+        # npa.workflows.motion_fixture). Before this the case failed with
+        # "S3 input contains no objects" (EVIDENCE §6.1).
+        _seed_motion_clips(client, bucket=bucket, prefix=f"{marker}/source/")
         return
 
     if spec_name == "sonic-locomotion-finetuning.yaml":
-        # SONIC retargeting needs a real G1 motion dataset (SOMA/G1 CSV clips,
-        # each a directory with joint_pos.csv/body_pos.csv/body_quat.csv). We do
-        # not vendor the dual-licensed upstream data; the operator points
-        # NPA_E2E_SONIC_MOTION_SRC at a staged real dataset (an ``s3://`` prefix
-        # or local directory, e.g. NVlabs/GR00T-WholeBodyControl
-        # gear_sonic_deploy/reference/example after ``git lfs pull``).
-        src = os.environ.get("NPA_E2E_SONIC_MOTION_SRC", "").strip()
-        if not src:
-            pytest.skip(
-                "NPA_E2E_SONIC_MOTION_SRC not set; stage a real SOMA/G1 motion "
-                "dataset (soma-csv clips) and point this at it."
-            )
-        _seed_prefix_from_source(src, bucket, f"{marker}/source/", client)
+        _seed_motion_clips(client, bucket=bucket, prefix=f"{marker}/source/")
         return
 
     # VLM-eval GPU twins score a rollout: seed a short RGB frame sequence under
     # the rollouts prefix so the self-hosted VLM has real frames to evaluate.
+    if spec_name == "tokenfactory-scene-to-rollout-judge.yaml":
+        # Three stages, three inputs: a scene for the reasoner and a processor-format policy for
+        # the rollout. The judge's input is produced by the rollout, which is the point.
+        _seed_scene_frame(client, bucket=bucket, marker=marker)
+        src = os.environ.get("NPA_E2E_LEROBOT_POLICY_SRC", "").strip()
+        if not src:
+            pytest.skip("NPA_E2E_LEROBOT_POLICY_SRC not set; see tokenfactory-rollout-judge-combo")
+        _seed_prefix_from_source(src, bucket, f"{marker}/policy/", client)
+        return
+
+    if spec_name == "tokenfactory-rollout-judge-combo.yaml":
+        # The rollout stage needs a policy in LeRobot's PROCESSOR format. The obvious public
+        # choice, `lerobot/diffusion_pusht`, predates it and fails with ProcessorMigrationError
+        # on LeRobot >= 0.6, so seed a checkpoint produced by 0.6 itself (job 256 wrote one;
+        # stage it once and point NPA_E2E_LEROBOT_POLICY_SRC at it).
+        src = os.environ.get("NPA_E2E_LEROBOT_POLICY_SRC", "").strip()
+        if not src:
+            pytest.skip(
+                "NPA_E2E_LEROBOT_POLICY_SRC not set; stage a processor-format LeRobot policy "
+                "prefix (config.json + model.safetensors + policy_{pre,post}processor*.json)"
+            )
+        _seed_prefix_from_source(src, bucket, f"{marker}/policy/", client)
+        return
+
     if spec_name in {
         "vlm-eval-single.yaml",
         "vlm-eval-benchmark.yaml",
+        "vlm-eval-loop.yaml",
+        "vlm-eval-token-factory.yaml",
         "tokenfactory-rollout-judge.yaml",
     }:
+        if spec_name == "vlm-eval-benchmark.yaml":
+            # The benchmark sweeps a *labeled* set, so it needs two rollouts with known
+            # outcomes plus a manifest. The spec's `--dataset` is an S3 URI (a
+            # repo-relative path cannot exist in the pod), so seed the manifest too.
+            _seed_vlm_benchmark_dataset(client, bucket=bucket, marker=marker)
+            return
+        if spec_name == "vlm-eval-loop.yaml":
+            # The loop's whole point is a SET: seed three rollout directories so the
+            # aggregate report has something to aggregate (total_rollouts == 3).
+            _seed_rollout_frames(client, bucket=bucket, marker=marker, episodes=3)
+            return
         _seed_rollout_frames(client, bucket=bucket, marker=marker)
         if spec_name == "tokenfactory-rollout-judge.yaml":
             # This twin also reasons over a captured scene before judging.
             _seed_scene_frame(client, bucket=bucket, marker=marker)
         return
+
+
+def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
+    """Upload ``count`` small deterministic PNGs under ``prefix``."""
+
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover
+        pytest.fail(f"Pillow required to seed image fixtures: {exc}")
+    for index in range(max(1, count)):
+        image = Image.new("RGB", (320, 240), (30, 30, 30))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([0, 190, 320, 240], fill=(90, 70, 50))
+        draw.rectangle([40 + index * 30, 120, 120 + index * 30, 190], fill=(200, 60, 60))
+        draw.rectangle([240, 120, 300, 190], fill=(40, 200, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{prefix}frame_{index:03d}.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+
+
+def _seed_input_video(client, *, bucket: str, prefix: str) -> None:
+    """Upload a small real MP4 for conditioned Cosmos transfer."""
+
+    body = base64.b64decode(_CONDITIONED_COSMOS_MP4_B64, validate=True)
+
+    if len(body) < 12 or body[4:8] != b"ftyp":
+        pytest.fail("conditioned Cosmos seed is not a valid MP4 container")
+    key = f"{prefix.rstrip('/')}/input.mp4"
+    client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=body,
+        ContentType="video/mp4",
+    )
+    print(f"[seed] conditioned Cosmos input video -> s3://{bucket}/{key}")
+
+
+def seed_trigger_inbox_later(
+    *,
+    bucket: str,
+    run_id: str,
+    spec_name: str,
+    delay_seconds: float = 45.0,
+    e2e_project: str | None = None,
+    count: int = 2,
+):
+    """Drop frames into a trigger's inbox after ``delay_seconds``.
+
+    Returns the started timer. Seeding late is what makes the live trigger test
+    meaningful: the driver must poll an empty prefix, wait, and only then submit.
+    """
+
+    import threading
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+
+    def _seed() -> None:
+        client = s3_client_for_project(e2e_project, allow_host_creds=True)
+        _seed_images(client, bucket=bucket, prefix=f"{marker}/inbox/", count=count)
+
+    timer = threading.Timer(delay_seconds, _seed)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def concurrency_overlaps(tasks: Iterable[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Return task-name pairs whose [start_at, end_at] intervals overlap.
+
+    This is the live proof that a ``parallel:`` group really ran concurrently:
+    SkyPilot records per-task ``start_at`` / ``end_at`` for every member of a
+    JobGroup, so overlapping intervals cannot be produced by a serial chain.
+    """
+
+    # SkyPilot leaves ``start_at`` unset for JobGroup members on some versions;
+    # ``submitted_at`` is always recorded, so use it as the interval start.
+    rows = [
+        (
+            str(task.get("task_name") or task.get("task_id")),
+            float(task.get("start_at") or task.get("submitted_at") or 0.0),
+            float(task.get("end_at") or 0.0),
+        )
+        for task in tasks
+        if task.get("start_at") or task.get("submitted_at")
+    ]
+    overlaps: list[tuple[str, str]] = []
+    for index, (name_a, start_a, end_a) in enumerate(rows):
+        for name_b, start_b, end_b in rows[index + 1 :]:
+            latest_start = max(start_a, start_b)
+            earliest_end = min(end_a or float("inf"), end_b or float("inf"))
+            if earliest_end > latest_start:
+                overlaps.append((name_a, name_b))
+    return overlaps
+
+
+def write_runtime_evidence(name: str, payload: Any) -> Path:
+    """Persist a runtime run's JSON summary for EVIDENCE.md (never contains secrets)."""
+
+    log_dir = Path(
+        os.environ.get("NPA_LIVE_E2E_LOG_DIR", "")
+        or (Path.home() / "npa-live-e2e-logs")
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"runtime-{name}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def _seed_insights_run_prefix(client, *, bucket: str, prefix: str) -> None:
+    """Seed a run prefix the insights ingester recognises.
+
+    ``workbench.insights.ingest_run`` scans a prefix for known manifest/report schemas
+    and fails with "no known manifest/report schemas found" when it finds none — which is
+    exactly why the insights specs had no live coverage. Two real artifacts are enough:
+
+    * a ``npa.dataset.manifest.v1`` document, which yields record/corruption metrics and
+      a lineage edge (so the store has something to compare and chart);
+    * a bare ``{"decision": ...}`` document, the shape the gate toolRefs write, which the
+      ingester routes to its decision extractor.
+    """
+
+    import json as _json
+
+    manifest = {
+        "schema": "npa.dataset.manifest.v1",
+        "dataset_id": "insights-fixture",
+        "version": "v1",
+        "source": "insights-fixture",
+        "record_count": 24,
+        "quality_stats": {"record_count": 24, "corrupt_count": 2, "completeness": 0.92},
+        "lineage": {"input_uris": [f"s3://{bucket}/{prefix}raw/"]},
+    }
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}dataset/manifest.json",
+        Body=(_json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
+        ContentType="application/json",
+    )
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}gate/decision.json",
+        Body=b'{"decision": "promote_checkpoint"}\n',
+        ContentType="application/json",
+    )
+
+
+def _seed_motion_clips(client, *, bucket: str, prefix: str) -> None:
+    """Seed SOMA/G1 motion clips for the retargeting-backed specs.
+
+    Prefers a real staged dataset (``NPA_E2E_SONIC_MOTION_SRC`` — an ``s3://`` prefix or
+    a local directory, e.g. NVlabs/GR00T-WholeBodyControl's
+    ``gear_sonic_deploy/reference/example`` after ``git lfs pull``). When that is not
+    set, synthesize a clip set that satisfies the upstream ``load_csv_motion`` contract
+    with :mod:`npa.workflows.motion_fixture`, so these twins are live-testable without
+    the dual-licensed upstream data this repo does not vendor.
+    """
+
+    import tempfile
+
+    src = os.environ.get("NPA_E2E_SONIC_MOTION_SRC", "").strip()
+    if src:
+        _seed_prefix_from_source(src, bucket, prefix, client)
+        return
+
+    from npa.workflows.motion_fixture import build_dataset, upload_dataset
+
+    with tempfile.TemporaryDirectory(prefix="npa-motion-fixture-") as tmp:
+        meta = build_dataset(tmp)
+        uploaded = upload_dataset(tmp, f"s3://{bucket}/{prefix}", client=client)
+    print(
+        f"[seed] synthesized {meta['clip_count']} SOMA-CSV clip(s) "
+        f"({len(uploaded)} objects) — set NPA_E2E_SONIC_MOTION_SRC to use real data"
+    )
+
+
+def _seed_object_from_source(source: str, bucket: str, dest_key: str, client) -> None:
+    """Copy ONE object (``s3://`` URI or local file) to ``dest_key``."""
+
+    source = source.strip()
+    if source.startswith("s3://"):
+        without = source[len("s3://") :]
+        src_bucket, _, src_key = without.partition("/")
+        if not src_key:
+            pytest.fail(f"expected an s3:// object URI with a key, got {source!r}")
+        client.copy_object(
+            Bucket=bucket,
+            Key=dest_key,
+            CopySource={"Bucket": src_bucket, "Key": src_key},
+        )
+        return
+    local = Path(source.replace("file://", ""))
+    if not local.is_file():
+        pytest.fail(f"fixture source {source!r} is not an s3:// object URI or a file")
+    client.upload_file(str(local), bucket, dest_key)
 
 
 def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client) -> None:
@@ -288,6 +764,80 @@ def _seed_rollout_frames(
             )
 
 
+def _seed_vlm_benchmark_dataset(client, *, bucket: str, marker: str) -> None:
+    """Seed a labeled two-rollout benchmark set plus its manifest.
+
+    `vlm-eval benchmark` sweeps thresholds/rubrics/models over rollouts with *known*
+    outcomes and reports accuracy per config, so a single unlabeled rollout would make the
+    sweep meaningless. One rollout reaches the target (expected pass) and one stalls short
+    of it (expected fail), which is a real discrimination task for the VLM.
+
+    ``rollout_base_path`` is absolute so the manifest's relative entries resolve to the
+    seeded frames regardless of where the manifest itself is downloaded to.
+    """
+
+    import json
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover
+        pytest.fail(f"Pillow required to seed benchmark fixtures: {exc}")
+
+    frames = 4
+    # (episode id, whether the cube reaches the target)
+    episodes = (("episode_000", True), ("episode_001", False))
+    for episode, succeeds in episodes:
+        for frame in range(frames):
+            image = Image.new("RGB", (320, 240), (30, 30, 30))
+            draw = ImageDraw.Draw(image)
+            draw.rectangle([0, 200, 320, 240], fill=(90, 70, 50))  # table
+            draw.rectangle([250, 150, 300, 200], fill=(40, 200, 40))  # target
+            # The failing episode stops moving a third of the way across.
+            travel = frame if succeeds else min(frame, 1)
+            x = 40 + travel * 70
+            draw.rectangle([x, 150, x + 40, 200], fill=(200, 40, 40))
+            buf = BytesIO()
+            image.save(buf, format="PNG")
+            client.put_object(
+                Bucket=bucket,
+                Key=f"{marker}/rollouts/{episode}/frame_{frame:03d}.png",
+                Body=buf.getvalue(),
+                ContentType="image/png",
+            )
+
+    manifest = {
+        "format": "npa_vlm_eval_benchmark_v1",
+        "rollout_base_path": f"s3://{bucket}/{marker}/rollouts/",
+        # The spec sweeps `default,strict`, so both names must exist in the manifest.
+        "rubrics": {
+            "default": (
+                "Score whether the red cube reaches the green target. Use 1.0 for clear "
+                "contact with the target and 0.0 when the cube stops short."
+            ),
+            "strict": (
+                "Score 1.0 only if the red cube fully overlaps the green target in the "
+                "final frame. Any gap scores 0.0."
+            ),
+        },
+        "items": [
+            {
+                "id": episode,
+                "rollout": episode,
+                "expected_label": "pass" if succeeds else "fail",
+                "task": "push the red cube onto the green target",
+            }
+            for episode, succeeds in episodes
+        ],
+    }
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{marker}/benchmark/benchmark.json",
+        Body=(json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
 def materialize_live_spec(
     tmp_path: Path,
     name: str,
@@ -315,6 +865,15 @@ def materialize_live_spec(
         text = re.sub(
             r'(synthetic_rows:\s*")[^"]*(")',
             lambda m: f"{m.group(1)}{bdd_synth}{m.group(2)}",
+            text,
+        )
+    # Accepting NVIDIA's terms for a live SONIC run is the OPERATOR's act, so the harness reads
+    # it from the environment rather than shipping an accepted spec (EVIDENCE.md §R47).
+    sonic_eula = os.environ.get("NPA_E2E_SONIC_ACCEPT_NVIDIA_EULA", "").strip()
+    if sonic_eula:
+        text = re.sub(
+            r'(sonic_accept_nvidia_eula:\s*")[^"]*(")',
+            lambda m: f"{m.group(1)}{sonic_eula}{m.group(2)}",
             text,
         )
     bdd_epochs = os.environ.get("NPA_E2E_BDD100K_EPOCHS", "").strip()
@@ -409,8 +968,8 @@ def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
             raw = raw[:-2]
         elif raw.lower().endswith("g"):
             raw = raw[:-1]
-        relaxed = f"{prefix}{raw}+{suffix}"
-        return relaxed if line.endswith("\n") or not line.endswith("\n") else relaxed
+        # Keep the original line ending; `suffix` already carries it when present.
+        return f"{prefix}{raw}+{suffix}"
 
     def flush_profile() -> None:
         nonlocal profile_lines, profile_has_accel
@@ -503,16 +1062,85 @@ def assert_no_credential_leakage(
 
 
 def assert_cli_ok(result: Result, *, forbidden: Iterable[str] | None = None) -> None:
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0, _cli_failure_detail(result)
     assert_no_credential_leakage(result.output, extra_forbidden=forbidden)
+
+
+def _cli_failure_detail(result: Result) -> str:
+    """Include the swallowed CliRunner exception; output alone hides real crashes."""
+
+    parts = [f"exit_code={result.exit_code}", result.output or "(no output)"]
+    exception = getattr(result, "exception", None)
+    if exception is not None and not isinstance(exception, SystemExit):
+        import traceback
+
+        parts.append(
+            "".join(
+                traceback.format_exception(
+                    type(exception), exception, exception.__traceback__
+                )
+            )
+        )
+    stderr = getattr(result, "stderr", None)
+    if stderr:
+        parts.append(f"stderr:\n{stderr}")
+    return "\n".join(parts)
+
+
+def _json_document_from_stream(text: str) -> Any:
+    """Parse the JSON document out of a CLI stream that may carry prose first.
+
+    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, and the submit
+    path legitimately writes advisory lines there (e.g. "Hint: consider --secret-env
+    NGC_API_KEY"). A bare ``json.loads(result.output)`` then dies with
+    ``Expecting value: line 1 column 1`` and *hides the real result* — which is exactly
+    how a successful ``sonic-export`` submit (job 189) was reported as a test failure.
+    """
+
+    stripped = text.lstrip()
+    if stripped.startswith(("{", "[")):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            # A progress line can start with '[' (e.g. "[runtime] wave ..."), so a
+            # leading bracket does not mean the stream *is* the document.
+            pass
+    for index, line in enumerate(text.splitlines(keepends=True)):
+        if not line.lstrip().startswith(("{", "[")):
+            continue
+        offset = sum(len(part) for part in text.splitlines(keepends=True)[:index])
+        candidate = text[offset:].lstrip()
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    raise AssertionError(f"no JSON document in CLI output:\n{text[-4000:]}")
 
 
 def parse_json_output(result: Result, *, forbidden: Iterable[str] | None = None) -> Any:
     assert_cli_ok(result, forbidden=forbidden)
-    return json.loads(result.output)
+    return _json_document_from_stream(result.output or "")
 
 
 def parse_json_payload(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
     payload = parse_json_output(result, forbidden=forbidden)
     assert isinstance(payload, dict)
     return payload
+
+
+def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, Any]:
+    """Parse the JSON summary of a ``submit --runtime`` run.
+
+    The runtime driver streams ``[runtime] ...`` progress to stderr, and
+    ``CliRunner`` merges stderr into ``result.output`` on click < 8.2, so the JSON
+    document has to be sliced out of the combined stream.
+    """
+
+    assert_cli_ok(result, forbidden=forbidden)
+    payload = _json_document_from_stream(result.output or "")
+    assert isinstance(payload, dict)
+    return payload
+
+def _s3_prefix_has_objects(client, bucket: str, prefix: str) -> bool:
+    response = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    return bool(response.get("Contents"))

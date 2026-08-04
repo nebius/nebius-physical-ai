@@ -1,0 +1,53 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# npa.workflow twin of the retired skypilot/cosmos3-ea-fetch.yaml.
+#
+# The template was ~60 lines of setup bash (apt git, install uv, build a 3.11 venv, pip
+# install huggingface_hub) plus a run block that hand-checked three token env vars with
+# `test -n "${!VAR-}"` before calling the two CLI commands that do the real work. The token
+# checks are the tool's job — `cosmos check` reports exactly which of source, checkpoint and
+# NGC access is missing — so the spec is just those two commands.
+#
+#   npa workbench workflow submit cosmos-fetch.yaml --run-id <id> --secret-env HF_TOKEN
+#
+# The defaults name the Cosmos3 assets the template did. Both are GATED (early access plus a
+# licence acceptance), so a live run substitutes public assets with --var; the code path is
+# identical, which is what a live run of this spec proves.
+
+metadata:
+  name: cosmos-fetch
+  description: >
+    Check Cosmos source and checkpoint access, then materialize both into a local cache.
+
+config:
+  cosmos_source_repo: "https://github.com/NVIDIA/cosmos-framework.git"
+  cosmos_model_id: "nvidia/Cosmos3-Nano"
+  cosmos_cache_dir: "/tmp/npa-cosmos3-cache"
+  cosmos_hf_token_env: HF_TOKEN
+  # Carried forward for the serve phase, as in the template.
+  cosmos_reasoning_parser: qwen3
+  cosmos_tool_call_parser: hermes
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    disk_size: 512
+
+initial: check-access
+
+states:
+  check-access:
+    description: Report whether the source repo and checkpoint are reachable.
+    toolRef: workbench.cosmos.check
+    resources: cpu
+    next: fetch-artifacts
+
+  fetch-artifacts:
+    description: Clone the source and download the checkpoint into the cache.
+    needs: [check-access]
+    toolRef: workbench.cosmos.fetch
+    resources: cpu
+    terminal: true

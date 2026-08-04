@@ -52,17 +52,41 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     ],
     "cosmos2-transfer": [
         "cosmos-transfer2.5 inference env (torch cu128 + flash-attn)",
-        "real video-to-video world transfer on a bundled robot control example",
+        "real video-to-video world transfer on a runtime-generated procedural control video",
         "generated output video produced (capability, not a CUDA probe)",
+    ],
+    "cosmos3": [
+        "cosmos-framework inference env (torch cu130 + guardrail deps)",
+        "real text2image generation with the Cosmos 3 omni model",
+        "decodable image artifact produced (capability, not a CUDA probe)",
+        "no baked weights: checkpoint fetched with the operator's HF token",
     ],
     "cosmos3-reason": [
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
         "structured rollout judgment returned (score + success verdict)",
     ],
+    "cosmos-curate": [
+        "real upstream Cosmos Curator stages run in-process (no Ray, no GPU)",
+        "canonical curator output written: clips/*.mp4 + metas/v0/*.json",
+        "per-clip motion score computed by upstream's MotionFilterStage",
+        "no model weights in the image; fetch-models downloads them with HF_TOKEN",
+    ],
+    "cosmos-evaluator": [
+        "upstream Cosmos Evaluator HallucinationProcessor runs on real clips",
+        "hallucinated motion discriminated: appearance-only passes, new scene fails",
+        "upstream engine and the in-repo port agree on verdict and score",
+        "no model weights needed or present (CV check + hosted VLM endpoint)",
+    ],
     "sonic": [
         "entrypoint smoke mode",
         "GPU + image-pull proofs",
         "sonic_smoke_result.json artifact",
+    ],
+    "sonic-mujoco": [
+        "MuJoCo EGL rollout of a SONIC checkpoint (cross-simulator check on a policy "
+        "trained in Isaac Lab — where a sim-to-sim gap shows before a sim-to-real one)",
+        "sonic_eval_results.json artifact",
+        "runs on the baked venv: no Isaac Sim download and no EULA acceptance required",
     ],
     "retargeting": [
         "motion-lib validate_motion_lib on synthetic payload",
@@ -96,6 +120,18 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
     ],
     "rerun-viewer": [
         "rerun SDK import + __version__",
+    ],
+    "foxglove-embed": [
+        "/healthz reports the service and the pinned @foxglove/embed version",
+        "real SDK served (FoxgloveViewer class + embed postMessage handshake)",
+        "shared NPA glue module served and importing the served SDK",
+        "standalone host page served and loading the glue module",
+        "HTTP byte range on /data returns 206 with an exact Content-Range",
+        "CORS preflight for the Range header answered on /data",
+    ],
+    "lichtblick": [
+        "static Lichtblick (Foxglove-compatible) web bundle present (/srv/index.html)",
+        "served bundle version pin (VERSION == 1.26.0)",
     ],
 }
 

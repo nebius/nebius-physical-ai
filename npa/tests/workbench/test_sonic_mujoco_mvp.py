@@ -8,24 +8,22 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SONIC_MVP_YAML = (
-    ROOT
-    / "npa"
-    / "src"
-    / "npa"
-    / "workflows"
-    / "skypilot"
-    / "sonic-locomotion-finetuning.yaml"
-)
+# Frozen raw-task fixture, not a shipped template: what these exercise is the submit
+# WRAPPER's materializer, which still accepts a customer's own SkyPilot YAML.
+# See npa/tests/fixtures/skypilot/README.md.
+SONIC_MVP_YAML = ROOT / "npa/tests/fixtures/skypilot/sonic-locomotion-finetuning.yaml"
 
 
 def _patch_registry_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    from npa.workbench.sonic import workflow as sonic_workflow
+    # SONIC delegates token minting to the canonical npa.clients.nebius_auth
+    # helper, so mock subprocess at that call site (not sonic.workflow, which no
+    # longer imports subprocess).
+    from npa.clients import nebius_auth
 
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(cmd, 0, stdout="fresh-test-token\n", stderr="")
 
-    monkeypatch.setattr(sonic_workflow.subprocess, "run", fake_run)
+    monkeypatch.setattr(nebius_auth.subprocess, "run", fake_run)
 
 
 def _docs(plan) -> list[dict]:

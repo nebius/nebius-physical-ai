@@ -30,11 +30,12 @@ def lerobot_version_manifest() -> dict[str, Any]:
 
 
 def default_lerobot_version() -> str:
-    """Return the default LeRobot version (pyproject / supported-tools pin)."""
+    """Return the default LeRobot package version from its compatibility manifest."""
 
-    from npa.deploy.images import supported_tool_version
-
-    return supported_tool_version("lerobot")
+    value = str(lerobot_version_manifest().get("default_version") or "").strip()
+    if not value:
+        raise LeRobotVersionError("LeRobot version manifest has no default_version")
+    return value
 
 
 def supported_lerobot_versions() -> tuple[str, ...]:

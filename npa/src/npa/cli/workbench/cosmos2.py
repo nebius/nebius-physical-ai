@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
@@ -14,12 +14,57 @@ from npa.workflows.cosmos_split import (
     build_cosmos2_transfer_manifest,
     write_manifest,
 )
+from npa.workbench.cosmos.transfer import (
+    REFERENCE_AUGMENT_MODE,
+    REFERENCE_AUGMENT_STATUS,
+    TRANSFER_MANIFEST_FILENAME,
+    TRANSFER_MANIFEST_MODE,
+    TRANSFER_MANIFEST_STATUS,
+    transfer_manifest_uri_for,
+)
 
 app = typer.Typer(
     name="cosmos2",
     help="Cosmos2 transfer workflow contracts.",
     no_args_is_help=True,
 )
+
+
+#: Compatibility alias; the workbench implementation owns the canonical name.
+MANIFEST_FILENAME = TRANSFER_MANIFEST_FILENAME
+
+
+def _publish_manifest(client: Any, payload: dict, output_uri: str) -> str:
+    """Upload the stage manifest next to the augmented clip and return its URI."""
+
+    import tempfile as _tempfile
+
+    with _tempfile.TemporaryDirectory(prefix="npa-cosmos2-") as tmp:
+        local = Path(tmp) / MANIFEST_FILENAME
+        local.write_bytes(_manifest_bytes(payload))
+        return client.upload_file(str(local), transfer_manifest_uri_for(output_uri))
+
+
+def _manifest_bytes(payload: dict) -> bytes:
+    """Return the canonical manifest serialization used by every backend."""
+
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _publish_output_manifest(payload: dict, output_uri: str) -> str:
+    """Publish a canonical transfer manifest for an S3 or local output prefix."""
+
+    manifest_uri = transfer_manifest_uri_for(output_uri)
+    if output_uri.strip().startswith("s3://"):
+        from npa.clients.storage import StorageClient
+
+        return _publish_manifest(StorageClient.from_environment(), payload, output_uri)
+
+    local_output = output_uri.removeprefix("local://").removeprefix("file://")
+    manifest_path = Path(local_output) / MANIFEST_FILENAME
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_bytes(_manifest_bytes(payload))
+    return manifest_uri
 
 
 def _all_augmentations(configs_uri: str) -> list[dict]:
@@ -94,35 +139,56 @@ def _variant_parallelism(num_variants: int) -> int:
 
 
 def _materialize_input_clip(src: str) -> str:
-    """Resolve a local path or ``s3://`` URI to a local video file to condition on.
+    """Resolve a local path or ``s3://`` URI to a local conditioning video.
 
-    For an ``s3://`` prefix, downloads it and returns the first video found. Returns
-    "" when nothing usable is present (caller then falls back to the default,
-    bundled-example behavior). Best-effort: never raises on a missing input.
+    Returns an empty string only when the source was successfully inspected and no
+    supported video exists. Storage setup, listing, authentication, and download
+    failures propagate so the CLI can report them separately from an empty prefix.
     """
     import glob as _glob
+    import shutil
     import tempfile
+    from urllib.parse import urlsplit
 
     s = str(src or "").strip()
     if not s:
         return ""
     if not s.startswith("s3://"):
         return s if Path(s).is_file() else ""
-    try:
-        from npa.clients.storage import StorageClient
+    from npa.clients.storage import StorageClient
 
-        client = StorageClient.from_environment()
-        tmp = tempfile.mkdtemp(prefix="npa-cosmos-input-")
-        if s.lower().endswith(_VIDEO_EXTS):
-            return client.download_path(s, str(Path(tmp) / Path(s).name))
+    client = StorageClient.from_environment()
+    tmp = tempfile.mkdtemp(prefix="npa-cosmos-input-")
+    keep_tmp = False
+    try:
+        source_path = urlsplit(s).path
+        if source_path.lower().endswith(_VIDEO_EXTS):
+            downloaded = client.download_path(s, str(Path(tmp) / Path(source_path).name))
+            keep_tmp = True
+            return downloaded
         client.download_directory(s, tmp)
         vids = sorted(
             f for f in _glob.glob(str(Path(tmp) / "**" / "*"), recursive=True)
             if f.lower().endswith(_VIDEO_EXTS) and Path(f).is_file()
         )
-        return vids[0] if vids else ""
-    except Exception:  # noqa: BLE001 - input conditioning is opt-in; fall back cleanly
+        if vids:
+            keep_tmp = True
+            return vids[0]
         return ""
+    finally:
+        if not keep_tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _materialize_conditioning_input(src: str) -> str:
+    """Adapt storage failures to a sanitized, actionable CLI error."""
+    try:
+        return _materialize_input_clip(src)
+    except Exception as exc:
+        raise typer.BadParameter(
+            "could not inspect or download the configured conditioning input; "
+            "verify the object-storage endpoint, credentials, permissions, and availability"
+        ) from exc
 
 
 @app.command("transfer")
@@ -163,8 +229,8 @@ def transfer_cmd(
     condition_on_input: bool = typer.Option(
         False,
         "--condition-on-input",
-        help="Condition on the first video under --input-uri (opt-in). Also enabled by "
-        "NPA_COSMOS_CONDITION_ON_INPUT=1. Default off preserves the bundled-example path.",
+        help="Condition on the first video under --input-uri. Also enabled by "
+        "NPA_COSMOS_CONDITION_ON_INPUT=1.",
     ),
     control: str = typer.Option(
         "edge",
@@ -174,7 +240,7 @@ def transfer_cmd(
     control_weight: float = typer.Option(1.0, "--control-weight", help="Control weight for input-conditioning."),
     guidance: float = typer.Option(3.0, "--guidance", help="Classifier-free guidance for input-conditioning."),
 ) -> None:
-    """Build the Cosmos2 transfer stage manifest, then produce real output.
+    """Build a transfer manifest; pass --execute for real vendor output.
 
     Mode is chosen by runtime availability, not just the flag: if the
     Cosmos-Transfer2.5 runtime is present (or ``--execute`` is passed) the real
@@ -209,23 +275,29 @@ def transfer_cmd(
     if execute or runtime_available:
         # Real Cosmos-Transfer2.5 world-transfer model.
         #
-        # Data Factory context (paidf `transfer_execute` passes --configs-uri, or the
-        # caller opts into input-conditioning): the sampled appearance combo drives
-        # the prompt, the augment optionally CONDITIONS on the run's real input clip
-        # (edge control computed on-the-fly — a genuine augmentation of that footage,
-        # not the bundled example), and the result is published in the per-clip layout
-        # that data_factory curate / build_run_rrd / provenance consume. Opt-in via
-        # --input-video, --condition-on-input, or NPA_COSMOS_CONDITION_ON_INPUT=1.
+        # Data Factory context (`transfer_execute` passes --configs-uri and always
+        # enables input conditioning): the sampled appearance combo drives the prompt,
+        # and the augment CONDITIONS on the run's real input clip (edge control
+        # computed on-the-fly — a genuine augmentation of that footage),
+        # and the result is published in the per-clip layout
+        # that data_factory curate / build_run_rrd / provenance consume. Generic
+        # callers opt in via --input-video, --condition-on-input, or
+        # NPA_COSMOS_CONDITION_ON_INPUT=1.
         #
-        # Otherwise (generic `transfer` for sim2real / cosmos-gate / fanout): keep the
-        # flat single-video publish + sim2real-engine field convention unchanged.
+        # Otherwise (generic `transfer` for sim2real / cosmos-gate / fanout), publish
+        # the generated video, flat extracted frames, and durable manifest together.
         condition_requested = bool(
             input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT")
         )
-        data_factory_mode = bool(configs_uri) or condition_requested
+        data_factory_mode = bool(configs_uri)
         local_input = ""
         if condition_requested:
-            local_input = _materialize_input_clip(input_video or input_uri)
+            local_input = _materialize_conditioning_input(input_video or input_uri)
+            if not local_input:
+                raise typer.BadParameter(
+                    "input conditioning was requested, but no supported video "
+                    f"({', '.join(_VIDEO_EXTS)}) was found at the configured input"
+                )
         # Env fallbacks let a submit tune conditioning without changing the toolRef argv.
         control = (os.environ.get("NPA_COSMOS_CONTROL", "").strip() or control)
         _cw = os.environ.get("NPA_COSMOS_CONTROL_WEIGHT", "").strip()
@@ -298,14 +370,15 @@ def transfer_cmd(
                         run_id=run_id,
                         clip_name=clip_name,
                         variables=combo,
+                        require_frames=True,
                     )
                 )
             manifest = write_run_manifest(
                 clips, output_uri, run_id=run_id, variant_parallelism=parallelism
             )
-            payload["status"] = "executed"
+            payload["status"] = TRANSFER_MANIFEST_STATUS
             payload["output_kind"] = "video"
-            payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+            payload["mode"] = TRANSFER_MANIFEST_MODE
             payload["augmented_video_uri"] = manifest["augmented_video_uri"]
             payload["augmented_videos"] = manifest["augmented_videos"]
             payload["frame_count"] = manifest["frame_count"]
@@ -335,7 +408,7 @@ def transfer_cmd(
                 control_weight=control_weight,
                 guidance=guidance,
             )
-            payload["status"] = "executed"
+            payload["status"] = TRANSFER_MANIFEST_STATUS
             payload["output_kind"] = "video"
             payload["output_video"] = transfer["video_path"]
             payload["video_bytes"] = transfer["video_bytes"]
@@ -347,28 +420,41 @@ def transfer_cmd(
                 payload["control"] = transfer.get("control", control)
             if output_uri.strip().startswith("s3://"):
                 # Generic single-video publish + sim2real-engine field convention.
-                from npa.clients.storage import StorageClient
+                # Frame objects are deliberately flat under output_uri because envgen
+                # constructs exactly <augment_uri>/frame-NNNNN.png references.
+                from npa.workbench.cosmos.transfer import publish_transfer_to_s3
 
-                output_video = StorageClient.from_environment().upload_file(
-                    transfer["video_path"], output_uri
+                manifest = publish_transfer_to_s3(
+                    transfer,
+                    output_uri,
+                    run_id=run_id,
+                    variables=variables,
+                    frames_output_uri=output_uri,
+                    require_frames=True,
                 )
-                payload["mode"] = "cosmos_transfer2.5"
-                payload["output_video"] = output_video
-                payload["augmented_video_uri"] = output_video
-                payload["augmented_frames_uri"] = output_uri
+                payload["mode"] = TRANSFER_MANIFEST_MODE
+                payload["output_video"] = manifest["augmented_video_uri"]
+                payload["augmented_video_uri"] = manifest["augmented_video_uri"]
+                payload["augmented_frames_uri"] = manifest["augmented_frames_uri"]
+                payload["frame_count"] = manifest["frame_count"]
+                payload["manifest_uri"] = transfer_manifest_uri_for(output_uri)
             else:
-                payload["mode"] = "cosmos_transfer2.5_gpu" if local_input else "cosmos_transfer2.5"
+                payload["mode"] = TRANSFER_MANIFEST_MODE
                 payload["augmented_video_uri"] = transfer["video_path"]
                 payload["augmented_frames_uri"] = output_uri
     else:
         # No heavy model runtime: run a genuine reference augmentation that
         # writes real augmented image frames to output_uri (not a descriptor stub).
         augment = reference_augment_frames(input_uri, output_uri, run_id=run_id)
-        payload["status"] = "executed_reference"
-        payload["mode"] = "reference_augment"
+        payload["status"] = REFERENCE_AUGMENT_STATUS
+        payload["mode"] = REFERENCE_AUGMENT_MODE
         payload["output_kind"] = "frames"
         payload["augmented_frames_uri"] = augment["augmented_frames_uri"]
+        payload["frames"] = augment["frames"]
         payload["frame_count"] = augment["frame_count"]
+        payload["index_uri"] = augment["index_uri"]
+        payload["manifest_uri"] = transfer_manifest_uri_for(output_uri)
+        _publish_output_manifest(payload, output_uri)
 
     if output_json is not None:
         payload = write_manifest(payload, output_json)

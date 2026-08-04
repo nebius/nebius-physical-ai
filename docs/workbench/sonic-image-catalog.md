@@ -61,7 +61,7 @@ before SkyPilot sees it:
 
 ```bash
 npa workbench workflow submit \
-  npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml \
+  npa/workflows/workbench/npa-workflows/sonic-train.yaml \
   --registry "${NPA_REGISTRY}" \
   --gpu-target l40s \
   --s3-endpoint https://storage.eu-north1.nebius.cloud \
@@ -77,7 +77,7 @@ from pathlib import Path
 from npa.sdk.workbench import sonic
 
 sonic.submit_workflow(
-    Path("npa/src/npa/workflows/skypilot/sonic-train-standalone.yaml"),
+    Path("npa/workflows/workbench/npa-workflows/sonic-train.yaml"),
     run_id="sonic-smoke",
     registry="cr.eu-north1.nebius.cloud/<registry-id>",
     gpu_target="gpu-rtx6000",
@@ -90,7 +90,7 @@ sonic.submit_workflow(
 ## Related BYO Images
 
 The VLM eval workflows use `NPA_VLM_IMAGE` for the serving image. The committed
-default is `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9`,
+default is `${NPA_REGISTRY}/npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z`,
 a pushed CUDA/PyTorch Workbench image; set `NPA_VLM_IMAGE` to a prebuilt VLM or
 vLLM image when you need pinned serving dependencies.
 

@@ -33,28 +33,30 @@ Authoring skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with
   older examples.
 
-### SkyPilot task templates (internal)
+### Raw SkyPilot YAML
 
-The raw SkyPilot task YAMLs that the `npa.workflow` engine and the
-`npa/scripts/run_*.py` wrappers render and launch live under
-`npa/src/npa/workflows/skypilot/` as internal, package-owned runtime resources.
-They are not the shown catalog and should not be authored by customers; the
-supported entry point is always an `npa.workflow` spec above. Their per-file
-reference notes (S3 I/O, GPU targets, HF/NGC rights, raw `sky launch` caveats)
-are documented in
-[`npa/src/npa/workflows/skypilot/README.md`](../../src/npa/workflows/skypilot/README.md).
+The retired raw SkyPilot workflow catalog is gone. The `npa.workflow` engine
+still renders specs to SkyPilot at submit time, and `npa workbench workflow
+submit` still accepts customer-owned raw SkyPilot YAML, but shipped raw YAMLs
+must live only in guarded, tool-specific homes such as burst examples, BYOF
+resource profiles, or the NuRec single-pod example.
 
 ## Sim-To-Real
 
-The H100 quickstart submits:
+Submit the staged VLM-to-RL loop:
 
 ```bash
-npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
+npa workbench workflow submit \
+  npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
+  --run-id <run-id> --var bucket=<your-bucket> \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-It renders and runs the internal template
-`npa/src/npa/workflows/skypilot/sim-to-real-pipeline.yaml`. The deeper reference
-path is documented in `docs/workbench/cookbooks/sim-to-real-pipeline.md`.
+The legacy `sim_to_real` H100 quickstart and its template are retired: that path ran
+`npa.workflows.sim_to_real real-loop`, which raises a `DeprecationWarning` pointing at the
+staged engine. The runbook that reads without npa in the loop is
+[`sim2real/runbook.yaml`](sim2real/runbook.yaml); the deeper reference is
+[`docs/workbench/guides/sim2real-workflow.md`](../../../docs/workbench/guides/sim2real-workflow.md).
 
 ## Submission Pattern
 
@@ -62,7 +64,6 @@ Use the thin Python wrappers under `npa/scripts/` when a workflow needs runtime
 substitution, S3 paths, secret-env injection, GPU validation, or cleanup:
 
 ```bash
-npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py --help
 npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py --help
 npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py --help
 ```

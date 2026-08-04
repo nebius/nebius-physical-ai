@@ -33,6 +33,12 @@ def _validate_against_schema(value: Any, schema: dict[str, Any], *, path: str) -
         for key, subschema in properties.items():
             if key in value:
                 _validate_against_schema(value[key], subschema, path=f"{path}.{key}")
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
+                raise NpaWorkflowError(
+                    f"{path}: unknown field(s): {', '.join(repr(item) for item in extras)}"
+                )
         return
 
     if schema_type == "array":

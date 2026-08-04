@@ -19,6 +19,10 @@ from npa.workflows.distill_two_vm import TwoVMDistillError
 
 runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[2]
+#: Frozen raw-task fixtures. The submit wrapper accepts a customer's own SkyPilot YAML,
+#: so that contract needs a raw task to exercise -- but not a SHIPPED one, which is what
+#: made these tests block the catalog's retirement. See tests/fixtures/skypilot/README.md.
+SKYPILOT_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/skypilot"
 
 
 @pytest.mark.parametrize(
@@ -281,7 +285,7 @@ def test_workbench_workflow_submit_warns_on_unresolved_placeholders(mocker, tmp_
 
 
 def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
-    yaml_path = REPO_ROOT / "src/npa/workflows/skypilot/sonic-train-standalone.yaml"
+    yaml_path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     captured: dict[str, object] = {}
 
     def fake_submit_workflow(path, run_id, **kwargs):
@@ -330,7 +334,10 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     assert "image_id" not in task["resources"]
     assert task["resources"]["cloud"] == "kubernetes"
     assert task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    assert envs["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    assert envs["POLICY_IMAGE"] == (
+        "registry.example/workbench/npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
+        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
     assert envs["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
     assert envs["S3_ENDPOINT_URL"] == "https://storage.example"
@@ -342,7 +349,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
 
 
 def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
-    yaml_path = REPO_ROOT / "src/npa/workflows/skypilot/sonic-train-standalone.yaml"
+    yaml_path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     captured: dict[str, object] = {}
 
     def fake_submit_workflow(path, run_id, **kwargs):
@@ -396,7 +403,7 @@ def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
 
 
 def test_workbench_workflow_submit_materializes_sonic_mvp_workflow(mocker) -> None:
-    yaml_path = REPO_ROOT / "src/npa/workflows/skypilot/sonic-locomotion-finetuning.yaml"
+    yaml_path = SKYPILOT_FIXTURES / "sonic-locomotion-finetuning.yaml"
     captured: dict[str, object] = {}
 
     def fake_submit_workflow(path, run_id, **kwargs):

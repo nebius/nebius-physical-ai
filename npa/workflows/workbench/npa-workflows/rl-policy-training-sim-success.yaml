@@ -11,7 +11,7 @@ config:
   task_name: Isaac-Cartpole-v0
   train_steps: 500000
   learning_rate: 0.0003
-  batch_size: 256
+  num_envs: 256
   eval_episodes: 50
   success_threshold: 0.85
 

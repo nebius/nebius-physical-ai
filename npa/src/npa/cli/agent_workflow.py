@@ -175,8 +175,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
         "two-step": {
             "name": "sim2real-two-step",
             "description": (
-                "Two-step Sim2Real pipeline: Cosmos Transfer augment, then raw "
-                "environment generation."
+                "Two-step Sim2Real pipeline: Cosmos Transfer augment, then raw env "
+                "generation."
             ),
             "config_runtime": OrderedDict(
                 {
@@ -188,7 +188,16 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "trigger_uri": "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/",
                     "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
+                    "augment_manifest_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json",
+                    # `sim2real_envgen` takes the RUN ROOT and derives envs/raw,
+                    # envs/train, envs/heldout and envs/manifest beneath it.
+                    "envgen_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
                     "raw_envs_uri": "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/",
+                    "shard_index": "0",
+                    "shard_count": "1",
+                    "train_fraction": "0.8",
+                    "envgen_seed": "42",
+                    "augmented_frames_uri": "{{config.augment_manifest_uri}}",
                 }
             ),
             "resources": OrderedDict(
@@ -201,8 +210,11 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "augment": OrderedDict(
                         {
-                            "description": "Cosmos Transfer augment of LeRobot trigger data.",
-                            "toolRef": "workbench.cosmos2.transfer",
+                            "description": (
+                                "Real Cosmos Transfer augmentation conditioned on the seeded "
+                                "input video."
+                            ),
+                            "toolRef": "workbench.cosmos2.transfer_conditioned_execute",
                             "resources": "gpu",
                             "inputs": [
                                 OrderedDict(
@@ -215,8 +227,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.augment_uri}}manifest.json",
-                                        "schema": "npa.sim2real.augment.v1",
+                                        "uri": "{{config.augment_manifest_uri}}",
+                                        "schema": "npa.cosmos2.transfer.v1",
                                     }
                                 )
                             ],
@@ -225,23 +237,25 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     ),
                     "envgen": OrderedDict(
                         {
-                            "description": "Generate raw environment shard catalog on object storage.",
+                            "description": (
+                                "Generate raw envs using only frame URIs declared by transfer."
+                            ),
                             "needs": ["augment"],
                             "toolRef": "workbench.sim2real_envgen.raw_shard",
                             "resources": "gpu",
                             "inputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.augment_uri}}manifest.json",
-                                        "schema": "npa.sim2real.augment.v1",
+                                        "uri": "{{config.augment_manifest_uri}}",
+                                        "schema": "npa.cosmos2.transfer.v1",
                                     }
                                 )
                             ],
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.raw_envs_uri}}manifest.json",
-                                        "schema": "npa.sim2real.split_manifest.v1",
+                                        "uri": "{{config.raw_envs_uri}}raw-shard-00-summary.json",
+                                        "schema": "npa.sim2real.raw_env_shard_summary.v1",
                                     }
                                 )
                             ],
@@ -343,6 +357,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "trigger_uri": "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/",
                     "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
+                    "augment_manifest_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json",
                     "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
                     "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/scores/",
                     "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json",
@@ -360,7 +375,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "augment": OrderedDict(
                         {
                             "description": "Cosmos Transfer augment stage.",
-                            "toolRef": "workbench.cosmos2.transfer",
+                            "toolRef": "workbench.cosmos2.transfer_conditioned_execute",
                             "resources": "gpu",
                             "inputs": [
                                 OrderedDict(
@@ -373,8 +388,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.augment_uri}}manifest.json",
-                                        "schema": "npa.sim2real.augment.v1",
+                                        "uri": "{{config.augment_manifest_uri}}",
+                                        "schema": "npa.cosmos2.transfer.v1",
                                     }
                                 )
                             ],
@@ -469,7 +484,16 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "trigger_uri": "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/",
                     "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
+                    "augment_manifest_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json",
+                    # `sim2real_envgen` takes the RUN ROOT and derives envs/raw,
+                    # envs/train, envs/heldout and envs/manifest beneath it.
+                    "envgen_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
                     "raw_envs_uri": "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/",
+                    "shard_index": "0",
+                    "shard_count": "1",
+                    "train_fraction": "0.8",
+                    "envgen_seed": "42",
+                    "augmented_frames_uri": "{{config.augment_manifest_uri}}",
                     "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/actions/train/",
                     "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/",
                     "heldout_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json",
@@ -489,7 +513,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "augment": OrderedDict(
                         {
                             "description": "Cosmos Transfer augment of LeRobot trigger data.",
-                            "toolRef": "workbench.cosmos2.transfer",
+                            "toolRef": "workbench.cosmos2.transfer_conditioned_execute",
                             "resources": "gpu",
                             "inputs": [
                                 OrderedDict(
@@ -502,8 +526,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.augment_uri}}manifest.json",
-                                        "schema": "npa.sim2real.augment.v1",
+                                        "uri": "{{config.augment_manifest_uri}}",
+                                        "schema": "npa.cosmos2.transfer.v1",
                                     }
                                 )
                             ],
@@ -516,11 +540,19 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "needs": ["augment"],
                             "toolRef": "workbench.sim2real_envgen.raw_shard",
                             "resources": "gpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.augment_manifest_uri}}",
+                                        "schema": "npa.cosmos2.transfer.v1",
+                                    }
+                                )
+                            ],
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.raw_envs_uri}}manifest.json",
-                                        "schema": "npa.sim2real.split_manifest.v1",
+                                        "uri": "{{config.raw_envs_uri}}raw-shard-00-summary.json",
+                                        "schema": "npa.sim2real.raw_env_shard_summary.v1",
                                     }
                                 )
                             ],
@@ -643,6 +675,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "plan_uri": "s3://{{config.bucket}}/{{config.prefix}}/plan/",
                     "trigger_uri": "s3://{{config.bucket}}/{{config.prefix}}/scene/",
                     "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
+                    "augment_manifest_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json",
                     "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/augment/",
                     "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/scores/",
                     "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json",
@@ -677,7 +710,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                         {
                             "description": "Cosmos Transfer augment driven by the scene plan.",
                             "needs": ["reason-scene"],
-                            "toolRef": "workbench.cosmos2.transfer",
+                            "toolRef": "workbench.cosmos2.transfer_conditioned_execute",
                             "resources": "gpu",
                             "inputs": [
                                 OrderedDict({"uri": "{{config.trigger_uri}}", "schema": "npa.token_factory.scene.v1"})
@@ -685,8 +718,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.augment_uri}}manifest.json",
-                                        "schema": "npa.sim2real.augment.v1",
+                                        "uri": "{{config.augment_manifest_uri}}",
+                                        "schema": "npa.cosmos2.transfer.v1",
                                     }
                                 )
                             ],
@@ -937,7 +970,10 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "task_name": "Isaac-Cartpole-v0",
                     "train_steps": 500000,
                     "learning_rate": 0.0003,
-                    "batch_size": 256,
+                    # `workbench.rl.policy_train` passes this as Isaac Lab's real
+                    # `--num-envs` (the vectorized rollout batch dimension); there
+                    # is no `--batch-size` option on that CLI.
+                    "num_envs": 256,
                     "eval_episodes": 50,
                     "success_threshold": 0.85,
                 }
@@ -1182,8 +1218,11 @@ def _data_factory_spec() -> dict[str, Any]:
                 "images_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
                 "configs_uri": "s3://{{config.bucket}}/{{config.prefix}}/configs/",
                 "captions_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_original/",
+                # Mandatory: managed Cosmos Transfer fails closed unless this
+                # prefix contains a supported input video.
                 "trigger_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/",
                 "augment_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
+                "augment_manifest_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/manifest.json",
                 "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/",
                 "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",
@@ -1274,7 +1313,8 @@ def _data_factory_spec() -> dict[str, Any]:
                             "Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE GPU "
                             "inference per sampled combo (config.n_augmentations) and fans them "
                             "across the pod's GPUs (config.variant_parallelism), so N combos -> "
-                            "N scenario variants amplifying config.augment_subject. Member of the "
+                            "N input-conditioned scenario variants amplifying config.augment_subject. "
+                            "A supported video under config.trigger_uri is mandatory. Member of the "
                             "grade refinement loop, so loop_back genuinely re-renders."
                         ),
                         "needs": ["annotate-original"],
@@ -1291,7 +1331,7 @@ def _data_factory_spec() -> dict[str, Any]:
                         "outputs": [
                             OrderedDict(
                                 {
-                                    "uri": "{{config.augment_uri}}manifest.json",
+                                    "uri": "{{config.augment_manifest_uri}}",
                                     "schema": "npa.cosmos2.transfer.v1",
                                 }
                             )
@@ -1328,7 +1368,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             OrderedDict(
                                 {
                                     "uri": "{{config.rollouts_uri}}",
-                                    "schema": "npa.sim2real.augment.v1",
+                                    "schema": "npa.cosmos2.transfer.v1",
                                 }
                             )
                         ],
@@ -1800,6 +1840,9 @@ _STEP_COUNT_RE = re.compile(
     r"\b(\d+)[\s-]?step\b|\b(one|two|three|four|five|six)[\s-]?step\b", re.IGNORECASE
 )
 _WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+_WORKFLOW_NAME_RE = re.compile(
+    r"(?i)\b(?:name\s+it|named|called|name\s*[:=])\s+[\"'`]?([a-zA-Z][a-zA-Z0-9_.-]{0,63})[\"'`]?"
+)
 _AUTHOR_STOPWORDS = frozenset(
     {
         "write", "me", "a", "an", "the", "step", "steps", "npa", "yaml", "spec",
@@ -1810,18 +1853,53 @@ _AUTHOR_STOPWORDS = frozenset(
 )
 
 
+def _slugify_workflow_name(raw: str) -> str:
+    text = str(raw or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return text[:64]
+
+
+def extract_workflow_name(goal: str) -> str:
+    """Extract an explicit workflow name from goal text (e.g. 'name it cosmos-video-aug')."""
+    match = _WORKFLOW_NAME_RE.search(str(goal or ""))
+    if not match:
+        return ""
+    return _slugify_workflow_name(match.group(1))
+
+
+def _infer_stage_count_from_goal(goal: str) -> int:
+    """Infer how many stages the operator described (arrows / then / commas)."""
+    text = str(goal or "").strip()
+    if not text:
+        return 0
+    # Prefer arrow-separated pipelines: "generate → augment → ingest"
+    if re.search(r"[→⟶➨]|->", text):
+        parts = re.split(r"\s*(?:[→⟶➨]|->)\s*", text)
+        stages = [p.strip() for p in parts if p.strip()]
+        if len(stages) >= 2:
+            return max(1, min(len(stages), 6))
+    # "A then B then C"
+    then_parts = re.split(r"\bthen\b", text, flags=re.IGNORECASE)
+    if len(then_parts) >= 3:
+        return max(1, min(len(then_parts), 6))
+    return 0
+
+
 def _desired_step_count(goal: str, default: int = 2) -> int:
     match = _STEP_COUNT_RE.search(str(goal or ""))
-    if not match:
-        return default
-    if match.group(1):
-        try:
-            value = int(match.group(1))
-        except (TypeError, ValueError):
-            value = default
-    else:
-        value = _WORD_NUM.get((match.group(2) or "").lower(), default)
-    return max(1, min(value, 6))
+    if match:
+        if match.group(1):
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                value = default
+        else:
+            value = _WORD_NUM.get((match.group(2) or "").lower(), default)
+        return max(1, min(value, 6))
+    inferred = _infer_stage_count_from_goal(goal)
+    if inferred:
+        return inferred
+    return default
 
 
 def _author_goal_keywords(goal: str) -> list[str]:
@@ -1979,11 +2057,29 @@ def author_workflow_from_goal(
     catalog = frozenset(str(t) for t in (tool_refs or []))
     if not catalog:
         return {"ok": False, "runnable": False, "yaml": "", "error": "no toolRefs available in the live catalog", "tool_refs": []}
+    # Prefer explicit N-step / arrow / then counts. Only raise to matched-tool
+    # count when the operator did not pin an explicit step count.
     n_steps = _desired_step_count(goal)
+    explicit_step_count = bool(_STEP_COUNT_RE.search(str(goal or "")))
+    _, pre_matched = _select_author_tool_refs(goal, catalog, min(6, max(n_steps, 6)))
+    if (not explicit_step_count) and len(pre_matched) > n_steps:
+        n_steps = max(1, min(len(pre_matched), 6))
     selected, matched = _select_author_tool_refs(goal, catalog, n_steps)
     if not selected:
         return {"ok": False, "runnable": False, "yaml": "", "error": "could not select any toolRef from the catalog", "tool_refs": []}
-    resolved_name = str(name or "").strip() or "authored-workflow"
+    resolved_name = (
+        str(name or "").strip()
+        or extract_workflow_name(goal)
+        or "authored-workflow"
+    )
+    resolved_name = _slugify_workflow_name(resolved_name) or "authored-workflow"
+    described = _infer_stage_count_from_goal(goal) or n_steps
+    dropped_note = ""
+    if described > len(selected):
+        dropped_note = (
+            f"Requested about {described} stages but composed {len(selected)} "
+            f"(catalog match / 1–6 bound); some requested stages may be missing."
+        )
     config_keys = _config_tokens_for(selected)
 
     matched_set = set(matched)
@@ -2022,6 +2118,9 @@ def author_workflow_from_goal(
         "matched_tool_refs": matched,
         "padded_tool_refs": padded,
         "states": validation.get("states") or [],
+        "name": resolved_name,
+        "dropped_stages_note": dropped_note,
+        "desired_steps": n_steps,
     }
 
 
@@ -2168,6 +2267,7 @@ def format_workflow_chat_reply(
     template: str = "two-step",
     plan: dict[str, Any] | None = None,
     runnable: bool | None = None,
+    dropped_stages_note: str = "",
 ) -> str:
     """Markdown reply for chat when a workflow YAML is generated."""
     name = str(validation.get("name") or "unnamed")
@@ -2189,9 +2289,18 @@ def format_workflow_chat_reply(
             "Physical AI Data Factory: annotate → Cosmos Transfer augment & multiply "
             "(fan out scenarios across GPUs) → VLM grade loop → curate → Rerun visualize"
         ),
+        "two-step": "2-step Sim2Real pipeline",
     }
     t = str(template or "two-step").strip().lower()
-    desc = _desc_map.get(t, "2-step Sim2Real pipeline")
+    state_list = [str(s) for s in states] if isinstance(states, list) else []
+    if t == "catalog-composed" or t not in _desc_map:
+        if state_list:
+            arrow = "→".join(state_list[:6])
+            desc = f"{len(state_list)}-step pipeline: {arrow}"
+        else:
+            desc = "catalog-composed pipeline"
+    else:
+        desc = _desc_map[t]
     lines = [
         f"**Generated {API_VERSION} spec** ({desc}):",
         f"- **name**: `{name}`",
@@ -2208,6 +2317,11 @@ def format_workflow_chat_reply(
         yaml_text.rstrip(),
         "```",
     ]
+    drop_note = str(dropped_stages_note or "").strip()
+    if not drop_note and isinstance(validation, dict):
+        drop_note = str(validation.get("dropped_stages_note") or "").strip()
+    if drop_note:
+        lines.insert(6, f"- **note**: {drop_note}")
     if not validation.get("ok"):
         err = str(validation.get("error") or "validation failed")
         lines.insert(6, f"- **error**: `{err}`")

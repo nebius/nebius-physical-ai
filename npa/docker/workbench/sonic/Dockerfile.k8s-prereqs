@@ -1,0 +1,86 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-sonic image.
+#
+# Same change the main sonic/Dockerfile now applies, expressed as a derived build so an
+# operator can repair an existing tag without pulling (or rebuilding from) the multi-GB
+# Isaac/SONIC base:
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-sonic:<tag> \
+#     --tag  <registry>/npa-sonic:<tag>-k8s-runtime \
+#     --dockerfile npa/docker/workbench/sonic/Dockerfile.k8s-prereqs
+#
+# Why it is needed: SkyPilot's Kubernetes runtime bootstrap runs inside the task
+# container. Without a system python3, rsync, passwordless sudo for the runtime user and
+# the system interpreter first on PATH, provisioning fails with
+# "Failed to get ssh user for pod ...: container not found (ray-node)" — the exact
+# failure the Isaac Lab image hit on npa-rtxpro-mk8s (see
+# ../isaac-lab/Dockerfile.k8s-prereqs for the live bisection).
+#
+# The SONIC base already ships python3/python3-pip, so this adds the remaining three
+# ingredients. Group membership (never a recursive chmod) keeps the layer tiny, and the
+# image stays non-root.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Must match the runtime user the shipped sonic image ends on.
+ARG NPA_RUNTIME_USER=ubuntu
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-pip rsync curl openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (getent group isaac-sim >/dev/null 2>&1 \
+        && usermod -aG isaac-sim "${NPA_RUNTIME_USER}" || true) \
+    && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${NPA_RUNTIME_USER}" \
+         > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && python3 --version
+
+# Kit needs writable data/cache/log directories, and the runtime user does not have them.
+#
+# /isaac-sim is mode 750 isaac-sim:isaac-sim, `kit/data` and `kit/logs` do not exist, and
+# `kit/cache` is root-owned 0755 — so as `ubuntu` the app cannot create or write any of them.
+# Isaac still BOOTS: it logs
+#     [Error] [omni.kit.app.plugin] failed to open file
+#         '/isaac-sim/kit/data/Kit/Isaac-Sim/5.1/user.config.json' - unable to save the dictionary
+#     [Error] [omni.kvdb.plugin] Unexpected key-value database error
+#     [Warning] [omni.kit.material.library.material_library] get_mdl_list_async: mdl_list_cache
+#         is not complete
+# and then never renders a frame. Live job 271 sat at 170% CPU for 45 minutes past
+# "Completed setting up the environment" with an empty output directory, which reads like a slow
+# simulation and is actually a stalled one.
+#
+# Three empty directories, so the layer is tiny. Nothing else about the image changes: it stays
+# non-root, and this does not touch the multi-GB payload under /isaac-sim.
+RUN if [ -d /isaac-sim ]; then \
+      mkdir -p /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache \
+      && chown -R ubuntu:ubuntu /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache; \
+    fi
+
+# Kit must be able to WRITE, which is a separate thing from being schedulable. On an image
+# built from the OLD NVIDIA base, /isaac-sim holds the payload and `kit/data`/`kit/logs` do not
+# exist while `kit/cache` is root-owned — so as `ubuntu` the app cannot create or write any of
+# them. Isaac still BOOTS, logs
+#     [Error] [omni.kit.app.plugin] failed to open file '.../user.config.json'
+# and then never renders a frame: live job 271 sat at 170% CPU for 45 minutes with an empty
+# output directory, which reads like a slow simulation and is a stalled one.
+#
+# Both halves are applied because a derived build does not know which base it is repairing:
+# the directories (a tiny layer, guarded by `-d /isaac-sim`) and the env vars newer images use
+# to keep Kit's state in /tmp instead.
+RUN if [ -d /isaac-sim ]; then \
+      mkdir -p /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache \
+      && chown -R ubuntu:ubuntu /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache; \
+    fi \
+    && install -d -m 0755 -o ubuntu -g ubuntu /tmp/isaac-sim-cache /tmp/isaac-sim-cache/logs
+ENV OMNI_USER_DIR=/tmp/isaac-sim-cache \
+    OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs
+
+ENV PATH=/usr/bin:$PATH
+
+WORKDIR /opt/sonic
+USER ${NPA_RUNTIME_USER}
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["smoke"]

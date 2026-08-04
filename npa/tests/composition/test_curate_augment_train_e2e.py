@@ -26,7 +26,10 @@ PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 FIFTYONE_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-fiftyone:1.15.0"
-COSMOS_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-cosmos:1.0.9"
+COSMOS_IMAGE = (
+    "cr.eu-north1.nebius.cloud/your-registry-id/"
+    "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
+)
 LEROBOT_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-lerobot:0.5.1"
 COSMOS_MODEL_ID = "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
 COSMOS_PIPELINE_CLASS = "CosmosTextToWorldPipeline"

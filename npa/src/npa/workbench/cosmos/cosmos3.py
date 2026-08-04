@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -333,7 +335,7 @@ def fetch_cosmos3_artifacts(
             shutil.rmtree(checkpoint_dir)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         download_cmd = [
-            _huggingface_cli(),
+            *_huggingface_cli(),
             "download",
             config.model_id,
             "--local-dir",
@@ -496,8 +498,22 @@ def _hf_env(config: Cosmos3AccessConfig, env: Mapping[str, str]) -> dict[str, st
     return child
 
 
-def _huggingface_cli() -> str:
-    return shutil.which("huggingface-cli") or "huggingface-cli"
+def _huggingface_cli() -> list[str]:
+    """Return an argv prefix for the Hugging Face CLI, preferring the module over the script.
+
+    Live job 290: `[Errno 2] No such file or directory: 'huggingface-cli'` on a host where
+    `huggingface_hub` was installed moments earlier. Console scripts land in whichever scripts
+    directory pip chose — which under a PEP 668 `--user` fallback is not the one on PATH — while
+    the module is importable from the interpreter that installed it, by construction. Falling
+    back to `python -m` removes the PATH dependency instead of papering over it.
+    """
+
+    executable = shutil.which("huggingface-cli")
+    if executable:
+        return [executable]
+    if importlib.util.find_spec("huggingface_hub") is not None:
+        return [sys.executable, "-m", "huggingface_hub.commands.huggingface_cli"]
+    return ["huggingface-cli"]
 
 
 def _sanitize_output(

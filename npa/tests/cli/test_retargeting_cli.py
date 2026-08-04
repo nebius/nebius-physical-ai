@@ -146,6 +146,7 @@ def test_retargeting_workflow_path() -> None:
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["workflow"] == "npa/src/npa/workflows/skypilot/retargeting.yaml"
+    # The advertised path is the npa.workflow spec, not the SkyPilot template.
+    assert payload["workflow"] == "npa/workflows/workbench/npa-workflows/retargeting.yaml"
     assert payload["image_env"] == "NPA_RETARGETING_IMAGE"
     assert payload["image"].endswith("/npa-retargeting:0.1.1")

@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON_BIN="${NPA_PYTHON_BIN:-}"
-if [ -z "$PYTHON_BIN" ]; then
-  if [ -x /isaac-sim/python.sh ]; then
-    PYTHON_BIN=/isaac-sim/python.sh
-  elif [ -x /opt/npa/venv/bin/python ]; then
-    PYTHON_BIN=/opt/npa/venv/bin/python
-  elif [ -x /opt/isaac-lab/venv/bin/python ]; then
-    PYTHON_BIN=/opt/isaac-lab/venv/bin/python
-  else
-    PYTHON_BIN=python3
-  fi
+# This image bakes no NVIDIA Isaac Sim / Isaac Lab. /isaac-sim/python.sh is a bootstrap
+# shim that downloads them on first use, under the operator's own EULA acceptance (see
+# npa/docker/workbench/common/isaac_bootstrap.sh). That makes the choice of interpreter
+# load-bearing rather than cosmetic:
+#
+#   IMAGE_PYTHON  the plain baked venv. Used for S3 upload/download, GPU proofs, and the
+#                 MuJoCo eval - none of which need Isaac.
+#   ISAAC_PYTHON  the shim. Used only by the modes that genuinely need Isaac Sim.
+#
+# Getting this wrong would make `mujoco-eval` download 4.5 GB of Isaac Sim it never uses,
+# and would make every S3 upload demand EULA acceptance.
+ISAAC_PYTHON="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+
+IMAGE_PYTHON="${NPA_IMAGE_PYTHON:-}"
+if [ -z "$IMAGE_PYTHON" ]; then
+  for candidate in \
+    /opt/npa/sim/venv/bin/python \
+    /opt/npa/venv/bin/python \
+    /opt/isaac-lab/venv/bin/python \
+    "$(command -v python3 || true)"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      IMAGE_PYTHON="$candidate"
+      break
+    fi
+  done
 fi
 
+# `<image> python foo.py` has always meant "the Isaac interpreter"; keep that contract.
 if [ "$#" -gt 0 ]; then
   case "$1" in
     python|python3)
       shift
-      exec "$PYTHON_BIN" "$@"
+      exec "${NPA_PYTHON_BIN:-$ISAAC_PYTHON}" "$@"
       ;;
   esac
 fi
@@ -27,6 +43,23 @@ MODE="${1:-${SONIC_MODE:-smoke}}"
 if [ "$#" -gt 0 ]; then
   shift
 fi
+
+# Modes that import isaaclab / launch Isaac Sim. Everything else runs on the baked venv
+# and needs neither the download nor EULA acceptance.
+case "$MODE" in
+  smoke|eval|train|finetune|fine-tune|serve)
+    PYTHON_BIN="${NPA_PYTHON_BIN:-$ISAAC_PYTHON}"
+    # Resolve the Isaac install up front so an operator who has not accepted the licence
+    # gets the refusal immediately, with the actionable message, instead of a confusing
+    # ImportError several helper functions later.
+    if [ -x /opt/npa/bin/isaac-bootstrap ]; then
+      /opt/npa/bin/isaac-bootstrap ensure >/dev/null
+    fi
+    ;;
+  *)
+    PYTHON_BIN="${NPA_PYTHON_BIN:-$IMAGE_PYTHON}"
+    ;;
+esac
 
 OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-output}"
 mkdir -p "$OUTPUT_DIR"

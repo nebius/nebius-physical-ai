@@ -1,12 +1,14 @@
-# Digest pinned 2026-05-12. Tag: nvidia/cuda:12.6.3-devel-ubuntu22.04
+# Digest pinned 2026-08-03. Tag: nvidia/cuda:12.8.1-devel-ubuntu22.04
 # To update: re-resolve via registry API and update digest below.
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04@sha256:d49bb8a4ff97fb5fe477947a3f02aa8c0a53eae77e11f00ec28618a0bcaa2ad1
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
 
 ARG COSMOS_VERSION=1.0.9
-ARG COSMOS_TORCH_VERSION=2.6.0
-ARG COSMOS_TORCHVISION_VERSION=0.21.0
-ARG COSMOS_FLASH_ATTN_VERSION=2.6.3
+ARG COSMOS_TORCH_VERSION=2.7.0
+ARG COSMOS_TORCHVISION_VERSION=0.22.0
+ARG COSMOS_TRITON_VERSION=3.3.0
+ARG COSMOS_FLASH_ATTN_VERSION=2.7.3
 ARG COSMOS_NATTEN_VERSION=0.21.0
+ARG COSMOS_TRANSFORMER_ENGINE_VERSION=1.13.0
 
 LABEL npa.tool="cosmos" \
       npa.version="${COSMOS_VERSION}"
@@ -61,17 +63,51 @@ RUN python3 -m venv /opt/cosmos/venv \
     && /opt/cosmos/venv/bin/pip install \
       "torch==${COSMOS_TORCH_VERSION}" \
       "torchvision==${COSMOS_TORCHVISION_VERSION}" \
-      --extra-index-url https://nvidia-cosmos.github.io/cosmos-dependencies/cu126_torch260/simple \
+      --extra-index-url https://nvidia-cosmos.github.io/cosmos-dependencies/v1.2.0/cu128_torch27/simple \
+    # Predict2 1.0.9's legacy metadata pins triton 3.2 for torch 2.6. Installing
+    # it normally makes pip backtrack off the explicitly selected torch
+    # 2.7/cu128 wheel. Install the package itself without dependencies, then
+    # install its declared non-CUDA closure while excluding the six artifacts
+    # whose versions are fixed by this cu128 port.
+    && /opt/cosmos/venv/bin/pip install --no-deps \
+      "cosmos-predict2==${COSMOS_VERSION}" \
+    && /opt/cosmos/venv/bin/python - <<'PY' > /tmp/cosmos-predict2-noncuda-requirements.txt
+from importlib import metadata
+from packaging.requirements import Requirement
+
+excluded = {
+    "flash-attn",
+    "natten",
+    "torch",
+    "torchvision",
+    "transformer-engine",
+    "triton",
+}
+for raw in metadata.requires("cosmos-predict2") or ():
+    requirement = Requirement(raw)
+    normalized = requirement.name.lower().replace("_", "-")
+    if normalized not in excluded and (requirement.marker is None or requirement.marker.evaluate()):
+        print(raw)
+PY
+RUN printf '%s\n' \
+      "torch==${COSMOS_TORCH_VERSION}" \
+      "torchvision==${COSMOS_TORCHVISION_VERSION}" \
+      "triton==${COSMOS_TRITON_VERSION}" \
+      > /tmp/cosmos-cu128-constraints.txt \
+    && /opt/cosmos/venv/bin/pip install \
+      -r /tmp/cosmos-predict2-noncuda-requirements.txt \
+      -c /tmp/cosmos-cu128-constraints.txt \
     && curl -L -o "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.1.0/flash_attn-2.6.3%2Bcu126.torch260-cp310-cp310-linux_x86_64.whl" \
+      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/flash_attn-2.7.3%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl" \
     && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl" \
     && curl -L -o "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.1.0/natten-0.21.0%2Bcu126.torch260-cp310-cp310-linux_x86_64.whl" \
+      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/natten-0.21.0%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl" \
     && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl" \
+    && curl -L -o "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl" \
+      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/transformer_engine-1.13.0%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl" \
+    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl" \
     && /opt/cosmos/venv/bin/pip install \
-      "cosmos-predict2[cu126]==${COSMOS_VERSION}" \
-      --extra-index-url https://nvidia-cosmos.github.io/cosmos-dependencies/cu126_torch260/simple \
-    && /opt/cosmos/venv/bin/pip install \
+      -c /tmp/cosmos-cu128-constraints.txt \
       "diffusers==0.38.0" \
       "peft==0.19.1" \
       "transformers==4.51.3" \
@@ -100,7 +136,8 @@ RUN python3 -m venv /opt/cosmos/venv \
       "sentencepiece>=0.2.1" \
       "transformers>=5.3.0" \
     && /opt/cosmos/venv/bin/pip uninstall -y wandb \
-    && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl
+    && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl /tmp/transformer_engine-*.whl \
+      /tmp/cosmos-predict2-noncuda-requirements.txt /tmp/cosmos-cu128-constraints.txt
 
 ENV PATH=/opt/cosmos/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \

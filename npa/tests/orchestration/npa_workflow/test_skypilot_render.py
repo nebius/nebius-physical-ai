@@ -29,7 +29,7 @@ from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-SKYPILOT_SPECS = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
+SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
 
 
@@ -40,9 +40,105 @@ def test_is_npa_workflow_spec_true_for_golden() -> None:
 
 
 def test_is_npa_workflow_spec_false_for_skypilot() -> None:
-    path = SKYPILOT_SPECS / "vlm-eval.yaml"
+    path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     assert not is_npa_workflow_spec(path)
     assert detect_submit_format(path) == "skypilot"
+
+
+def test_sonic_stage_setup_installs_torch_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SONIC train/export/eval need torch + ONNX. On a run with no baked image
+    # (the daily rotation clears image pins) the stage would otherwise reach the
+    # GPU and fail with "requires torch".
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://bucket/prefix/npa")
+    spec = load_spec(NPA_SPECS / "sonic-export-eval.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="demo"),
+        run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
+    assert docs, rendered
+    for doc in docs[1:]:
+        setup = doc.get("setup", "")
+        assert "onnxruntime>=1.18" in setup, doc["name"]
+        assert "torch>=2.12.1" in setup, doc["name"]
+
+
+def test_sonic_specs_train_with_the_in_job_runtime() -> None:
+    # `serverless` (and vm/container) delegate to more infrastructure, which a
+    # stage that already holds a GPU cannot provision.
+    for name in (
+        "sonic-train.yaml",
+        "sonic-export.yaml",
+        "sonic-export-eval.yaml",
+        "sonic-locomotion-finetuning.yaml",
+    ):
+        spec = load_spec(NPA_SPECS / name)
+        assert spec.config["sonic_runtime"] == "local", name
+
+
+def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
+    # The self-hosted vlm-eval twin must launch a background vLLM server in its
+    # run script (the eval client waits for /v1/models readiness). Without this
+    # the server is never up and the eval fails with connection-refused.
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="demo"), run_id="demo", options=SkypilotRenderOptions(materialize_registry_secrets=False)
+    )
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
+    run = next(d["run"] for d in docs if "vlm-eval run" in d.get("run", ""))
+    assert "vllm.entrypoints.openai.api_server" in run
+    assert "--served-model-name" in run
+    assert "npa_vlm_pid=$!" in run  # backgrounded + trap-killed on exit
+    # This branch's preamble also WAITS for readiness before the command runs, rather than
+    # relying on the client to retry a connection-refused (EVIDENCE.md §R21).
+    assert "npa_vlm_log" in run
+    # The served model is exported so the eval client asks for it instead of the
+    # library default, and the twin picks a model whose cold start is bounded.
+    assert "export NPA_VLM_SELF_HOSTED_MODEL=Qwen/Qwen2-VL-2B-Instruct" in run
+    # A server that dies during startup must fail the stage immediately with its
+    # own log, not stall until the client's readiness window expires.
+    assert "vLLM server exited before becoming ready" in run
+    # ... and prints the server's own log rather than leaving the operator to find it.
+    assert "npa_vlm_log" in run
+    # No CUDA toolkit in the task image, so nothing may JIT-compile a kernel.
+    assert "export VLLM_USE_FLASHINFER_SAMPLER=0" in run
+    # Console scripts that vLLM's dependencies install (ninja, for the JIT paths)
+    # live next to the stage interpreter, not on the stage shell's PATH.
+    assert "export PATH=\"$PATH:$npa_scripts\"" in run
+    setup = next(d["setup"] for d in docs if "vlm-eval run" in d.get("run", ""))
+    # Weights are pulled in setup so the run phase only loads local files.
+    assert "snapshot_download(MODEL)" in setup
+
+
+def test_vlm_eval_benchmark_starts_a_server_because_its_twin_scores_for_real() -> None:
+    """#236's benchmark twin was `sample` + backend=stub, so it needed no server.
+
+    This branch's twin seeds a real labeled benchmark in S3 and scores it on the self-hosted
+    backend (EVIDENCE.md §R22), so it does need one — and the decision is made by the backend
+    the spec asks for, not by the toolRef's name.
+    """
+
+    spec = load_spec(NPA_SPECS / "vlm-eval-benchmark.yaml")
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="demo"), run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    backend = str(spec.config.get("vlm_backend") or "").replace("_", "-")
+    if backend == "self-hosted":
+        assert "vllm.entrypoints.openai.api_server" in rendered
+    else:
+        assert "vllm.entrypoints.openai.api_server" not in rendered
+
+
+def _unused_test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
+    # The benchmark twin runs backend=stub; it must NOT launch a vLLM server.
+    spec = load_spec(NPA_SPECS / "vlm-eval-benchmark.yaml")
+    rendered = render_skypilot_yaml(
+        spec, build_plan(spec, run_id="demo"), run_id="demo", options=SkypilotRenderOptions(materialize_registry_secrets=False)
+    )
+    assert "vllm.entrypoints.openai.api_server" not in rendered
 
 
 def test_normalize_resources_strips_gi_suffix() -> None:
@@ -133,6 +229,18 @@ def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.lancedb.import_bdd100k") == "lancedb"
     assert tool_image_key("workbench.sonic.train") == "sonic"
     assert tool_image_key("unknown.tool") is None
+
+
+def test_cosmos3_generate_and_reason_resolve_to_different_images() -> None:
+    """Generation runs in the framework image, reasoning in the Reason VLM image.
+
+    An exact-match entry must beat the ``workbench.cosmos3`` prefix: rendering a
+    generate step into npa-cosmos3-reason would schedule a container that has no
+    cosmos-framework in it.
+    """
+
+    assert tool_image_key("workbench.cosmos3.generate") == "cosmos3"
+    assert tool_image_key("workbench.cosmos3.reason") == "cosmos3-reason"
 
 
 def test_render_token_factory_uses_env_aws_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -425,6 +533,33 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
     assert "live-plan-only-token" not in result.output
 
 
+def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "1")
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NPA_SPECS / "vlm-eval-single.yaml"),
+            "--run-id",
+            "env-clear-is-test-only",
+            "--plan-only",
+            "--registry",
+            "cr.example.invalid/reg",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "status: PLANNED" in result.output
+    assert "image_id: docker:cr.example.invalid/reg/npa-cosmos:" in result.output
+
+
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -466,4 +601,5 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     # baked image so branch code runs on GPU without an image rebuild. Default off.
     assert 'if [ "$NPA_SRC_OVERLAY" = "1" ]' in setup
     assert "/tmp/npa-src-overlay" in setup
-    assert "pip install -q -e /tmp/npa-src-overlay --no-deps" in setup
+    # Installs route through the PEP 668-tolerant helper (see npa_pip_install).
+    assert "npa_pip_install -e /tmp/npa-src-overlay --no-deps" in setup

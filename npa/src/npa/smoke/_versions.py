@@ -1,9 +1,11 @@
 """Version helpers shared by standalone smoke checks.
 
 These run inside container images whose Python may predate 3.11 and may not have
-``tomli`` installed (e.g. the genesis py3.10 venv). To stay dependency-free, the
-``[tool.npa.supported-tools]`` lookup is parsed with the stdlib only; ``tomllib``
-is used when available purely as a fast path.
+``tomli`` installed (e.g. the genesis py3.10 venv). To stay dependency-free,
+the package-version lookup is parsed with the stdlib only; ``tomllib`` is used
+when available purely as a fast path. Image release tags live in
+``[tool.npa.supported-tools]`` while installed versions may be declared in
+``[tool.npa.package-versions]``.
 """
 
 from __future__ import annotations
@@ -26,8 +28,8 @@ def _find_pyproject(start_file: str) -> Path:
     raise FileNotFoundError(f"Could not find pyproject.toml above {start}")
 
 
-def _parse_supported_tools(text: str) -> dict[str, str]:
-    """Parse the ``[tool.npa.supported-tools]`` table without a TOML library."""
+def _parse_table(text: str, table: str) -> dict[str, str]:
+    """Parse a simple ``[tool.npa.*]`` string table without a TOML library."""
 
     versions: dict[str, str] = {}
     in_section = False
@@ -36,7 +38,7 @@ def _parse_supported_tools(text: str) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("["):
-            in_section = line == "[tool.npa.supported-tools]"
+            in_section = line == f"[tool.npa.{table}]"
             continue
         if not in_section:
             continue
@@ -44,6 +46,10 @@ def _parse_supported_tools(text: str) -> dict[str, str]:
         if match:
             versions[match.group(1)] = match.group(2)
     return versions
+
+
+def _parse_supported_tools(text: str) -> dict[str, str]:
+    return _parse_table(text, "supported-tools")
 
 
 def _supported_tools(pyproject: Path) -> dict[str, str]:
@@ -56,8 +62,21 @@ def _supported_tools(pyproject: Path) -> dict[str, str]:
     return _parse_supported_tools(text)
 
 
+def _package_versions(pyproject: Path) -> dict[str, str]:
+    text = pyproject.read_text(encoding="utf-8")
+    if _tomllib is not None:
+        data = _tomllib.loads(text)
+        table = data.get("tool", {}).get("npa", {}).get("package-versions", {})
+        if isinstance(table, dict):
+            return {str(key): str(value) for key, value in table.items()}
+    return _parse_table(text, "package-versions")
+
+
 def supported_tool_version(tool: str, start_file: str) -> str:
     pyproject = _find_pyproject(start_file)
+    package_versions = _package_versions(pyproject)
+    if tool in package_versions:
+        return package_versions[tool]
     versions = _supported_tools(pyproject)
     try:
         return str(versions[tool])
@@ -92,4 +111,3 @@ def train_env_eval_arg_for_version(version: str, value: int = 1_000_000) -> str:
 
     flag = "env_eval_freq" if str(version).startswith("0.6") else "eval_freq"
     return f"--{flag}={int(value)}"
-

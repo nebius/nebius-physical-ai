@@ -10,6 +10,7 @@ from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
+    sync_heldout_renders,
 )
 
 
@@ -82,3 +83,165 @@ def test_regen_sim2real_rrd_success(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     result = regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False, upload=False)
     assert result.heldout_frame_count == 4
     assert result.local_rrd_path.endswith("sim2real.rrd")
+
+
+def _regen_fixture(tmp_path: Path) -> Path:
+    local_dir = tmp_path / "run"
+    (local_dir / "inner_loop/outer-01").mkdir(parents=True)
+    (local_dir / "eval/heldout").mkdir(parents=True)
+    (local_dir / "inner_loop/outer-01/evidence.json").write_text(
+        json.dumps({"iterations": [], "reward_trend": [0.1, 0.2]}), encoding="utf-8"
+    )
+    (local_dir / "eval/heldout/report.json").write_text(
+        json.dumps({"success_rate": 1.0}), encoding="utf-8"
+    )
+    return local_dir
+
+
+def _patch_rrd_emit(monkeypatch: pytest.MonkeyPatch, local_dir: Path) -> None:
+    class FakeResult:
+        output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
+        heldout_frame_count = 4
+        rollout_count = 1
+        frame_count = 4
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
+        lambda **_kwargs: FakeResult(),
+    )
+
+
+def test_regen_also_refreshes_the_mcap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Finalize writes both recordings from one set of inputs, so regen must too.
+
+    Refreshing only the .rrd leaves the run's MCAP frozen at whatever the emitter
+    produced when the run first completed, so viewer-side fixes never reach it.
+    """
+
+    local_dir = _regen_fixture(tmp_path)
+    _patch_rrd_emit(monkeypatch, local_dir)
+
+    seen: dict[str, object] = {}
+
+    def fake_mcap(*, local_dir, inner_evidence, heldout_report, output_mcap):
+        seen["output_mcap"] = output_mcap
+        seen["reward_trend"] = inner_evidence.get("reward_trend")
+        Path(output_mcap).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_mcap).write_bytes(b"\x89MCAP0\r\n")
+        return {"status": "written", "output_mcap_path": str(output_mcap)}
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_mcap_if_enabled", fake_mcap
+    )
+
+    uploaded: list[tuple[str, str]] = []
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            uploaded.append((local, uri))
+            return uri
+
+        def upload_directory(self, local: str, uri: str) -> str:
+            uploaded.append((local, uri))
+            return uri
+
+    (local_dir / "reports").mkdir(parents=True, exist_ok=True)
+    (local_dir / "reports" / "sim2real.rrd").write_bytes(b"rrd")
+
+    result = regen_sim2real_rrd(
+        _config(),
+        local_dir=local_dir,
+        sync_inputs=False,
+        upload=True,
+        client=FakeStorage(),
+    )
+
+    # Emitted next to the .rrd, from the same synced inputs.
+    assert Path(str(seen["output_mcap"])).name == "sim2real.mcap"
+    assert seen["reward_trend"] == [0.1, 0.2]
+    assert result.mcap_status == "written"
+    assert result.local_mcap_path.endswith("sim2real.mcap")
+    # And published to the run prefix so the agent/viewer picks it up.
+    assert result.mcap_upload_uri.endswith("/reports/sim2real.mcap")
+    assert any(uri.endswith("/reports/sim2real.mcap") for _local, uri in uploaded)
+
+
+def test_regen_mcap_failure_never_breaks_the_rrd_regen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """MCAP emission is best-effort here, exactly as in the finalize stage."""
+
+    local_dir = _regen_fixture(tmp_path)
+    _patch_rrd_emit(monkeypatch, local_dir)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_mcap_if_enabled",
+        lambda **_kwargs: {"status": "skipped", "reason": "mcap not installed"},
+    )
+
+    result = regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False, upload=False)
+    assert result.heldout_frame_count == 4
+    assert result.mcap_status == "skipped"
+    assert result.local_mcap_path == ""
+    assert result.mcap_upload_uri == ""
+
+
+def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> None:
+    run_id = "s2r-real-0725t222636z"
+    config = _config(run_id=run_id)
+    local_dir = tmp_path / "run"
+    report_path = local_dir / "eval" / "heldout" / "report.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(json.dumps({"success_rate": 1.0}), encoding="utf-8")
+
+    class FakePaginator:
+        def paginate(self, *, Bucket: str, Prefix: str, Delimiter: str):
+            if Prefix.endswith(f"{run_id}/byo-eval/"):
+                return [
+                    {
+                        "CommonPrefixes": [
+                            {
+                                "Prefix": (
+                                    f"sim2real-b/{run_id}/byo-eval/"
+                                    f"s2r-byo-isaac-eval-{run_id}/"
+                                )
+                            }
+                        ]
+                    }
+                ]
+            return [{"CommonPrefixes": []}]
+
+    class FakeS3:
+        def get_paginator(self, name: str) -> FakePaginator:
+            assert name == "list_objects_v2"
+            return FakePaginator()
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+        def download_directory(self, uri: str, dest: str) -> None:
+            if uri.endswith(f"/byo-eval/s2r-byo-isaac-eval-{run_id}/renders/"):
+                env_dir = Path(dest) / "env-00006"
+                env_dir.mkdir(parents=True)
+                (env_dir / "camera-000.png").write_bytes(b"png")
+                return
+            raise OSError(uri)
+
+        def download_path(self, uri: str, local_path: str) -> None:
+            if uri.endswith(f"/byo-eval/s2r-byo-isaac-eval-{run_id}/render-manifest.json"):
+                Path(local_path).parent.mkdir(parents=True)
+                Path(local_path).write_text(
+                    json.dumps(
+                        {
+                            "schema": "npa.sim2real.heldout_renders.v1",
+                            "episodes": [{"env_id": "env-00006", "frames": ["camera-000.png"]}],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return
+            raise OSError(uri)
+
+    assert sync_heldout_renders(config, local_dir, heldout_report={"success_rate": 1.0}, client=FakeStorage())
+    assert (local_dir / "eval" / "heldout" / "renders" / "env-00006" / "camera-000.png").is_file()
+    updated_report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert updated_report["render_manifest"]["episodes"][0]["env_id"] == "env-00006"

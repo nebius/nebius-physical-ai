@@ -11,10 +11,17 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 SINGLE_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-train.yaml"
+    ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "isaac-lab-rl-train.yaml"
 )
-SWEEP_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-sweep.yaml"
+# The raw isaac-lab-rl-sweep template is retired; its npa.workflow spec is the surface
+# (live-verified on four GPUs in two batches plus a barrier — EVIDENCE §R3).
+SWEEP_SPEC = (
+    ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "isaac-lab-rl-sweep.yaml"
 )
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_isaac_lab_rl.py"
 
@@ -54,11 +61,10 @@ def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> N
 def test_isaac_lab_yaml_files_have_no_literal_aws_endpoint_placeholders() -> None:
     yaml_paths = [
         SINGLE_YAML,
-        SWEEP_YAML,
-        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-train-rtxpro.yaml",
-        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-train-rtxpro-smoke.yaml",
-        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "byof-datagen-rtxpro-smoke.yaml",
-        ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "byof-container-smoke-rtxpro.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "isaac-lab-rl-train-rtxpro.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "isaac-lab-rl-train-rtxpro-smoke.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "byof-datagen-rtxpro-smoke.yaml",
+        ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "byof-container-smoke-rtxpro.yaml",
     ]
     for path in yaml_paths:
         text = path.read_text(encoding="utf-8")
@@ -70,18 +76,39 @@ def test_isaac_lab_yaml_files_have_no_literal_aws_endpoint_placeholders() -> Non
                 assert envs["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
 
 
-def test_isaac_lab_sweep_yaml_uses_parallel_group_and_distinct_variants() -> None:
-    docs = _docs(SWEEP_YAML)
-    tasks = docs[1:]
+def test_isaac_lab_sweep_spec_uses_parallel_group_and_distinct_variants() -> None:
+    """Same contract as the retired `execution: parallel` template, on the spec.
 
-    assert docs[0] == {"name": "isaac-lab-rl-sweep", "execution": "parallel"}
-    assert len(tasks) == 4
-    variants = [task["envs"]["RUN_VARIANT"] for task in tasks]
-    assert variants == ["lr-1e-3", "lr-3e-4", "entropy-0", "entropy-0-01"]
-    for task in tasks:
-        assert task["resources"]["accelerators"] == "L40S:1"
-        assert "scripts/reinforcement_learning/rsl_rl/train.py" in task["run"]
-        assert task["envs"]["S3_OUTPUT_PREFIX"].endswith(f"/{task['envs']['RUN_VARIANT']}/")
+    The template declared four sibling SkyPilot tasks with per-variant ``RUN_VARIANT``
+    and ``S3_OUTPUT_PREFIX`` envs; the spec declares one ``parallel:`` group whose
+    members differ only by their ``params:`` overlay.
+    """
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(SWEEP_SPEC)
+    groups = [state for state in spec.states.values() if state.parallel]
+
+    assert len(groups) == 1
+    members = groups[0].parallel
+    assert [spec.states[name].params["variant"] for name in members] == [
+        "lr-1e-3",
+        "lr-3e-4",
+        "entropy-0",
+        "entropy-0-01",
+    ]
+    for name in members:
+        member = spec.states[name]
+        assert spec.resources[member.resources]["accelerators"] == "L40S:1"
+        # Each variant writes under its own prefix, as the template's envs did.
+        assert member.params["variant_uri"].rstrip("/").endswith(member.params["variant"])
+
+    # The real RSL-RL entrypoint still runs in-pod, via the sweep stage module.
+    plan = build_plan(spec, run_id="probe")
+    sweep_steps = [step for step in plan.steps if step.group]
+    assert len(sweep_steps) == 4
+    assert all("npa.workflows.rl_sweep" in step.shell for step in sweep_steps)
 
 
 def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> None:

@@ -33,6 +33,8 @@ config:
   min_quality: "-1"
 
   lancedb_endpoint: ""
+  # Where the query index lives; empty means manifest-only.
+  lance_uri: ""
 
   raw_sensor_uri: "s3://{{config.bucket}}/dataset-of-record-fixtures/records.json"
   dataset_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"

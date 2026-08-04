@@ -36,6 +36,14 @@ from npa.workbench.training_config import (
 import typer
 
 
+#: Values that count as "the operator said yes".
+_AFFIRMATIVE = frozenset({"1", "y", "yes", "true", "accept", "accepted"})
+
+
+def _is_affirmative(value: str) -> bool:
+    return value.strip().lower() in _AFFIRMATIVE
+
+
 def build_sonic_serverless_train_command(
     *,
     checkpoint: str,
@@ -217,6 +225,39 @@ def _run_serverless_train(
     )
 
 
+def _run_local_train(
+    *,
+    checkpoint: str,
+    data_path: str,
+    embodiment: str,
+    num_envs: int,
+    max_iterations: int,
+    seed: int,
+    device: str,
+    output_path: str,
+    output_format: OutputFormat,
+    accept_nvidia_eula: bool = False,
+    training_config: TrainingConfig,
+) -> None:
+    from npa.workbench.sonic.train import SonicTrainError, train_local
+
+    try:
+        result = train_local(
+            accept_nvidia_eula=accept_nvidia_eula,
+            output_path=output_path,
+            checkpoint=checkpoint,
+            data_path=data_path,
+            embodiment=embodiment,
+            num_envs=num_envs,
+            max_iterations=max_iterations,
+            seed=seed,
+            device=device,
+        )
+    except SonicTrainError as exc:
+        fail(str(exc))
+    output({**result, "training_config": training_config.public_dict()}, output_format)
+
+
 def train_cmd(
     runtime: TrainRuntime = typer.Option(TrainRuntime.serverless, "--runtime", help="Runtime."),
     checkpoint: str = typer.Option(DEFAULT_CHECKPOINT, "--checkpoint", help="Checkpoint ref or path."),
@@ -240,6 +281,24 @@ def train_cmd(
     headless: bool = typer.Option(True, "--headless/--no-headless", help="Run Isaac Lab headless."),
     max_iterations: int = typer.Option(5, "--max-iterations", "--steps", help="Training iterations for smoke."),
     isaac_lab_version: str = typer.Option("2.3+", "--isaac-lab-version", help="Expected Isaac Lab version."),
+    accept_nvidia_eula: str = typer.Option(
+        "",
+        "--accept-nvidia-eula",
+        help=(
+            "Set to yes to accept NVIDIA's Omniverse / Isaac Sim / Software licence terms. "
+            "`--runtime local` runs the SONIC image's own trainer when it is present, and that "
+            "trainer refuses to download Isaac Sim / Isaac Lab until this is given — without "
+            "it the run silently falls back to the reference trainer. Empty by default: "
+            "acceptance is the operator's to give. A VALUE rather than a bare flag so a spec "
+            "can carry it as a config key."
+        ),
+    ),
+    seed: int = typer.Option(0, "--seed", help="Seed for the in-job (--runtime local) trainer."),
+    device: str = typer.Option(
+        "",
+        "--device",
+        help="Torch device for --runtime local. Default: cuda when available, else cpu.",
+    ),
     hf_token_env: str = typer.Option("HF_TOKEN", "--hf-token-env", help="Environment variable containing HF token."),
     output_path: str = typer.Option("", "--output-path", "-o", help="S3 URI where artifacts are written."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
@@ -287,6 +346,21 @@ def train_cmd(
     data_path = training_config.data_path
     effective_sample_data = sample_data or not data_path
     checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
+    if runtime_value == "local":
+        _run_local_train(
+            accept_nvidia_eula=_is_affirmative(accept_nvidia_eula),
+            checkpoint=checkpoint,
+            data_path=data_path,
+            embodiment=embodiment_tag,
+            num_envs=num_envs,
+            max_iterations=max_iterations,
+            seed=seed,
+            device=device,
+            output_path=checkpoint_output_path,
+            output_format=output_format,
+            training_config=training_config,
+        )
+        return
     if runtime_value == "serverless":
         _run_serverless_train(
             checkpoint=checkpoint,

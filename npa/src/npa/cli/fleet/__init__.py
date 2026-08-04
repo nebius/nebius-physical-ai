@@ -9,9 +9,23 @@ profile (identical) or override it (custom), freely mixed.
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
 
 import typer
+
+
+class OutputFormat(str, Enum):
+    """``--output`` selects a rendering, not a destination path.
+
+    Typed as an Enum so a typo fails at parse time, and so the toolRef argv
+    guardrail can tell a format word from the path/URI that ``--output`` means
+    elsewhere in the CLI (it validates Enum values instead of flagging the
+    literal as a misplaced path).
+    """
+
+    text = "text"
+    json = "json"
 
 app = typer.Typer(
     name="fleet",
@@ -96,7 +110,14 @@ def plan_cmd(
         "", "--project-prefix", help="Override the spec's project_prefix for created projects."
     ),
     profile: str = typer.Option("", "--profile", help=_PROFILE_HELP),
-    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        # Pin a short metavar: the derived "<text|json>" widens the help's
+        # metavar column enough to elide long option names on narrow terminals.
+        metavar="<fmt>",
+        help="Output format: text or json.",
+    ),
 ) -> None:
     """Show the resolved deployment plan without touching infrastructure."""
 
@@ -104,7 +125,7 @@ def plan_cmd(
 
     spec = _load(spec_path)
     plan = plan_fleet(spec, project_prefix=project_prefix or None, profile=profile or None)
-    if output == "json":
+    if output == OutputFormat.json:
         typer.echo(json.dumps(plan, indent=2))
         return
     typer.echo(f"Fleet '{plan['name']}': {plan['cluster_count']} cluster(s) across {plan['project_count']} project(s)")
@@ -177,7 +198,14 @@ def deploy_cmd(
         "Parallel runs stream per-cluster output to <install_dir>/deploy.log.",
     ),
     timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform apply timeout in minutes."),
-    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        # Pin a short metavar: the derived "<text|json>" widens the help's
+        # metavar column enough to elide long option names on narrow terminals.
+        metavar="<fmt>",
+        help="Output format: text or json.",
+    ),
 ) -> None:
     """Deploy the fleet: resolve/create projects and apply each cluster."""
 
@@ -187,7 +215,7 @@ def deploy_cmd(
     only = _csv(only_projects)
     only_c = _csv(only_clusters)
     # In json mode stdout must stay a pure JSON document, so progress goes to stderr.
-    json_mode = output == "json"
+    json_mode = output == OutputFormat.json
     _confirm(
         "create/update",
         spec,
@@ -216,7 +244,7 @@ def deploy_cmd(
         # the message instead of a traceback.
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
-    if output == "json":
+    if output == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
         typer.echo(
@@ -253,7 +281,14 @@ def destroy_cmd(
     yes: bool = typer.Option(
         False, "--yes", "-y", "--force", help="Skip the confirmation prompt (non-interactive removal)."
     ),
-    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        # Pin a short metavar: the derived "<text|json>" widens the help's
+        # metavar column enough to elide long option names on narrow terminals.
+        metavar="<fmt>",
+        help="Output format: text or json.",
+    ),
 ) -> None:
     """Destroy the fleet's spec-declared clusters (best-effort, per-target)."""
 
@@ -262,7 +297,7 @@ def destroy_cmd(
     spec = _load(spec_path)
     only = _csv(only_projects)
     only_c = _csv(only_clusters)
-    json_mode = output == "json"
+    json_mode = output == OutputFormat.json
     _confirm(
         "destroy",
         spec,
@@ -280,7 +315,7 @@ def destroy_cmd(
         profile=profile or None,
         on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
     )
-    if output == "json":
+    if output == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
         for c in result["clusters"]:
@@ -290,7 +325,14 @@ def destroy_cmd(
 
 def status_cmd(
     spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML."),
-    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        # Pin a short metavar: the derived "<text|json>" widens the help's
+        # metavar column enough to elide long option names on narrow terminals.
+        metavar="<fmt>",
+        help="Output format: text or json.",
+    ),
 ) -> None:
     """Show the last-known deployment state for the fleet."""
 
@@ -298,7 +340,7 @@ def status_cmd(
 
     spec = _load(spec_path)
     result = fleet_status(spec)
-    if output == "json":
+    if output == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
         return
     typer.echo(f"Fleet '{result['name']}':")

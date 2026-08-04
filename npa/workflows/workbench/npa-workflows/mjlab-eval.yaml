@@ -4,7 +4,6 @@ kind: Workflow
 metadata:
   name: mjlab-eval
   description: Score a SONIC locomotion checkpoint with MJLab metrics.
-  skypilotTwin: npa/src/npa/workflows/skypilot/mjlab-eval.yaml
 
 config:
   bucket: example-bucket
@@ -32,6 +31,6 @@ states:
     toolRef: workbench.mjlab.eval
     resources: gpu
     outputs:
-      - uri: "{{config.mjlab_uri}}report.json"
+      - uri: "{{config.mjlab_uri}}mjlab_eval.json"
         schema: npa.workbench.mjlab.report.v1
     terminal: true

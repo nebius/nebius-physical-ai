@@ -27,6 +27,20 @@ Runs stay manual and on demand. Do not install a cron entry, systemd timer,
 background process job, GitHub Actions schedule, or any other automatic trigger for
 `scripts/live-e2e.sh`.
 
+This rule is specifically about the **full** `gpu and e2e` sky-cluster suite
+(`scripts/live-e2e.sh`), which launches many clusters and can leak spend. It
+stays manual-only: the daily dev-VM workflow (`docs/testing/dev-vm-daily.md`)
+never triggers the `live-gpu` tier on a schedule (guarded in both the workflow
+and the runner).
+
+The daily workflow does support **bounded** real GPU coverage, which the
+operator authorized: when `NPA_DAILY_ENABLE_GPU=1`, its `e2e-daily` tier (or the
+`gpu-daily` tier on demand) submits exactly **one** rotating real-GPU workflow
+E2E per day as a Nebius managed job with a bounded wait and
+`cancel-on-timeout`, so it self-cleans and cannot leak an unattended cluster.
+That is a deliberately different, cost-bounded path from the manual
+`scripts/live-e2e.sh` suite — do not route the full suite onto a schedule.
+
 ## Prerequisites
 
 Run from a SkyPilot-capable checkout after installing the normal NPA development

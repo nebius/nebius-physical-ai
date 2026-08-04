@@ -394,16 +394,27 @@ def test_author_workflow_flags_padded_placeholder_states() -> None:
     from npa.cli.agent_workflow import author_workflow_from_goal
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
-    # More requested steps than goal-matched tools -> the extra state is padded
-    # from the catalog and flagged as a placeholder for the operator to replace.
-    # Derive the step count from how many catalog tools actually match the goal
-    # keyword ("cosmos") so this stays correct as cosmos tools are added/removed
-    # (e.g. cosmos2.transfer, cosmos2.transfer_execute, cosmos3.reason).
-    cosmos_tools = [ref for ref in TOOL_CATALOG if "cosmos" in ref.lower()]
-    n_steps = min(len(cosmos_tools) + 1, 6)
-    assert n_steps > len(cosmos_tools), "need headroom for at least one padded state"
+    # More requested steps than goal-matched tools -> the extra state is padded from the catalog
+    # and flagged as a placeholder for the operator to replace.
+    #
+    # The keyword is chosen rather than fixed. The author caps a workflow at MAX_AUTHORED_STEPS
+    # states, so a keyword matching that many tools leaves no room to pad — which is exactly
+    # what happened when the sixth cosmos toolRef landed and this test started asserting 6 > 6.
+    max_steps = 6
+    keyword = next(
+        (
+            candidate
+            for candidate in ("cosmos", "sonic", "mjlab", "retargeting")
+            if len([ref for ref in TOOL_CATALOG if candidate in ref.lower()]) < max_steps
+        ),
+        "",
+    )
+    assert keyword, "no catalog keyword leaves headroom for a padded state"
+    matched = [ref for ref in TOOL_CATALOG if keyword in ref.lower()]
+    n_steps = len(matched) + 1
+    assert n_steps <= max_steps
     result = author_workflow_from_goal(
-        f"write me a {n_steps} step npa yaml that uses cosmos",
+        f"write me a {n_steps} step npa yaml that uses {keyword}",
         tool_refs=frozenset(TOOL_CATALOG),
     )
     assert len(result["tool_refs"]) == n_steps
@@ -419,3 +430,82 @@ def test_embedded_chat_action_branch_drives_loop_not_boilerplate() -> None:
     assert "Use `POST /api/agent/act` with a JSON body carrying your goal" not in source
     assert "run_chat_action_loop(" in source
     assert '"insights_query": _tool_insights_query' in source
+
+
+def test_foxglove_intent_routes_and_grounds() -> None:
+    from npa.cli.agent_chat import build_grounded_reply, match_chat_intent
+
+    for text in (
+        "open foxglove",
+        "foxglove status",
+        "show me the mcap recording",
+        "can I play this rosbag?",
+    ):
+        assert match_chat_intent(text) == "foxglove_viewer", text
+
+    # Rerun / generic viewer turns must not be captured by the new intent.
+    for text in ("watch the sim", "what is the current status", "open the rerun timeline"):
+        assert match_chat_intent(text) != "foxglove_viewer", text
+
+    reply = build_grounded_reply(
+        "foxglove_viewer",
+        {
+            "foxglove": {
+                "available": True,
+                "embed_src": "https://embed.foxglove.dev/",
+                "org_slug": "acme",
+                "sdk_version": "0.58.0",
+                "run_id": "run-7",
+                "artifact_key": "run-7/reports/session.mcap",
+                "data_source": {
+                    "type": "remote-file",
+                    "urls": ["https://agent.example/foxglove/data/tok-run.mcap"],
+                },
+            },
+            "sim_viz": {"foxglove_ready": True, "run_id": "run-7"},
+        },
+        [],
+    )
+    assert "**Foxglove viewer**" in reply
+    assert "`https://embed.foxglove.dev/`" in reply
+    assert "remote-file" in reply
+    assert "run-7" in reply
+    assert "0.58.0" in reply
+    # Honest about the cross-origin capture limit.
+    assert "cross-origin iframe" in reply
+
+
+def test_foxglove_grounded_reply_explains_unconfigured_state() -> None:
+    from npa.cli.agent_chat import build_grounded_reply
+
+    reply = build_grounded_reply(
+        "foxglove_viewer",
+        {"foxglove": {"available": False, "reason": "Foxglove SDK assets are not installed."}},
+        [],
+    )
+    assert "`False`" in reply
+    assert "not installed" in reply
+    assert "--foxglove-embed-src" in reply
+    # Never claim a viewer is showing data when it is not configured.
+    assert "ready" not in reply.lower().split("foxglove_ready")[0]
+
+
+def test_keyword_skill_rules_lead_with_the_npa_workflow_skill() -> None:
+    """A Cosmos 3 workflow ask must not be answered with the SkyPilot template.
+
+    The two files share a name but differ in shape and submit command, so the
+    declarative-spec skill has to come first for turns the intent router leaves
+    unclassified.
+    """
+    from npa.cli.agent_chat import skill_names_for_keywords
+
+    for text in (
+        "write me a cosmos3 workflow yaml",
+        "cosmos 3 npa spec please",
+        "generate a COSMOS3 WORKFLOW",
+    ):
+        assert skill_names_for_keywords(text) == ["cosmos3-npa-workflow"], text
+
+    # Unrelated or too-generic turns must not pull the skill in.
+    for text in ("write me a workflow yaml", "what is cosmos3", "run cosmos2 transfer"):
+        assert skill_names_for_keywords(text) == [], text

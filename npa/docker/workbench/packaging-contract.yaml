@@ -33,67 +33,237 @@ security:
     - "(?i)(api[_-]?key|secret[_-]?key|password)\\s*=\\s*['\\\"][^'\\\"]+['\\\"]"
     - "(?i)BEGIN (RSA |OPENSSH )?PRIVATE KEY"
 
+# Redistribution eligibility. This classifies whether a built image may be
+# distributed BEYOND the owning Nebius org (e.g. published to a public/anonymous
+# registry, shipped to a customer, or served to third parties). Read access
+# WITHIN the owning org is always permitted; that is not what this gates.
+# Enforced by npa/tests/docker/test_packaging_contract.py.
+redistribution:
+  # Patterns that mean a Dockerfile BAKES NVIDIA Omniverse Kit (Isaac Sim) into the
+  # image's layers, and therefore must be "restricted".
+  #
+  # The distinction this encodes is *baked at build time* vs. *fetched at run time*.
+  # The Isaac images now fetch Isaac Sim / Isaac Lab on first run from
+  # pypi.nvidia.com under the operator's own EULA acceptance (see
+  # npa/docker/workbench/common/isaac_bootstrap.sh), so their Dockerfiles still
+  # legitimately mention isaacsim, isaaclab and the EULA variable names - in
+  # bootstrap plumbing, pins, and prose explaining what is NOT baked. A substring
+  # match on those names would fire on every one of them, and weakening it to make
+  # the build pass would have thrown away the guard.
+  #
+  # So these are regexes matched against a NORMALISED Dockerfile: comment lines
+  # stripped and line continuations joined. Joining matters - the sonic Dockerfile
+  # used to spread one `pip install` over 27 backslash-continued lines, so a
+  # per-line matcher would have missed the real installer while still tripping on
+  # a comment.
+  #
+  # Images that inherit a restricted parent without a pattern of their own are
+  # caught separately by the parent-inheritance check in
+  # npa/tests/docker/test_packaging_contract.py (this is how sonic-mujoco is
+  # caught, since its own Dockerfile carries no marker).
+  #
+  # Both directions are mutation-tested: every historical baking form must still be
+  # detected, and every legitimate runtime-fetch reference must not be.
+  omniverse_bake_patterns:
+    - kind: vendor_base_image
+      why: >-
+        Building FROM an NVIDIA Omniverse/Isaac vendor image puts Omniverse Kit in
+        the layers and needs an NGC login to pull.
+      pattern: '(?im)^\s*(FROM|ARG\s+\w*BASE\w*=)[^\n]*nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)'
+    - kind: isaac_wheel_install
+      why: >-
+        Installing the isaacsim / isaaclab wheels at build time bakes them; both
+        declare "License: NVIDIA Proprietary Software".
+      pattern: '(?is)\bRUN\b[^\n]*?\bpip\b[^\n]*?install[^\n]*?(\bisaacsim\b|\bisaaclab\b|isaaclab\[[^]]*isaacsim)'
+    - kind: baked_eula_acceptance
+      why: >-
+        Baking acceptance removes the operator from the licensing decision. The
+        refusal to run without operator-supplied acceptance is the load-bearing
+        legal mechanism, so pre-granting it in the image is itself the violation.
+      pattern: '(?im)^\s*(ENV|ARG)\s+[^\n]*\b(OMNI_KIT_ACCEPT_EULA|ISAACSIM_ACCEPT_EULA|ACCEPT_EULA|PRIVACY_CONSENT)\s*=\s*\S'
+    - kind: kit_payload_copy
+      why: COPY/ADD of an Isaac Sim or Omniverse Kit tree bakes the payload.
+      pattern: '(?im)^\s*(COPY|ADD)\s+[^\n]*(isaac-sim/|isaacsim/|omniverse/|/kit/)'
+    # The two below are attack vectors the runtime-fetch design itself introduces. They
+    # did not exist before and are easy to add by accident, which is the point of
+    # encoding them here rather than trusting review.
+    - kind: bootstrap_invoked_at_build
+      why: >-
+        Running the runtime bootstrap in a RUN layer materialises the whole Isaac
+        install into the image, silently undoing the re-architecture. `status` is
+        fine (it neither accepts a licence nor downloads); ensure/warm/verify are not.
+      pattern: '(?im)^\s*RUN\b[^\n]*\b(isaac-bootstrap|isaac_bootstrap\.sh)\s+(ensure|warm|verify)\b'
+    - kind: isaac_interpreter_invoked_at_build
+      why: >-
+        /isaac-sim/python.sh is the bootstrap shim: it fetches Isaac on first use, so
+        invoking it from a RUN layer downloads and bakes the install. Build-time work
+        must use the image's own venv python (see Dockerfile.mujoco's
+        ARG NPA_IMAGE_PYTHON, which exists exactly because this was a live trap).
+      pattern: '(?im)^\s*RUN\b[^\n]*(/isaac-sim/python\.sh|\bisaac-python\b)'
+  classes:
+    public:
+      description: >
+        OSS-redistributable. Code is under OSI-approved licenses (Apache-2.0 /
+        BSD-3 / MIT / MPL-2.0); the CUDA/PyTorch base images (docker.io
+        nvidia/cuda, pytorch/pytorch) are freely redistributable; any gated model
+        weights are downloaded at runtime by the operator (never baked in). May
+        be published to a public registry.
+    restricted:
+      description: >
+        Bakes a runtime we may not redistribute — for NVIDIA Omniverse Kit (Isaac
+        Sim) that means the Kit SDK, models and textures, which are proprietary
+        even though the Isaac Sim SOURCE is Apache-2.0 (both the isaacsim and
+        isaaclab PyPI packages list their license as "NVIDIA Proprietary
+        Software"). Such an image may be built and run by the operator who owns
+        the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
+        public/anonymous registry would make us the third-party redistributor,
+        which requires an NVIDIA AI Enterprise license.
+        NOTE: no image is currently classified restricted. The four Isaac images
+        used to be, and were re-architected to fetch Isaac Sim / Isaac Lab at
+        first run under the operator's own EULA acceptance instead of baking it
+        (npa/docker/workbench/common/isaac_bootstrap.sh), which is what made them
+        publicly redistributable. The class and every guard around it are kept
+        deliberately, with an empty membership, for the next runtime we cannot
+        ship — and the guards are tested against synthetic restricted images so
+        they cannot rot while unused.
+      reason: bakes-a-non-redistributable-runtime
+
 # Relative to npa/docker/workbench/
 images:
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service
     ports: [8080]
+    redistribution: public
   lerobot-policy:
     dockerfile: lerobot-policy/Dockerfile
     tier: service
     ports: [8080]
+    redistribution: public
   lancedb:
     dockerfile: lancedb/Dockerfile
     tier: service
     ports: [8686]
+    redistribution: public
   detection-training:
     dockerfile: detection-training/Dockerfile
     tier: service
     ports: [8790]
+    redistribution: public
   sonic:
     dockerfile: sonic/Dockerfile
+    isaac_runtime_fetch: true
     tier: job
+    redistribution: public
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
+    isaac_runtime_fetch: true
     tier: job
+    redistribution: public
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
+    redistribution: public
+  cosmos2-transfer:
+    dockerfile: cosmos2-transfer/Dockerfile
+    tier: job
+    notes: >-
+      Complete source build at immutable commit
+      67d56b7d550a3911024a32dc23ae0bae5258e633 on digest-pinned public
+      CUDA build/runtime bases. Git LFS smudging is disabled; upstream assets, example media,
+      checkpoints, caches, and Git metadata are removed and build-guarded. Gated
+      NVIDIA Open Model License weights are fetched only at runtime with the
+      operator's HF_TOKEN into a mounted cache. The derived whole-container
+      distribution conditions and full artifact evidence are recorded in
+      cosmos2-transfer/REDISTRIBUTION.md; built-byte scans are a release gate.
+    redistribution: public
+  cosmos3:
+    dockerfile: cosmos3/Dockerfile
+    tier: job
+    notes: >-
+      Cosmos 3 omni-model generation. Bakes OpenMDW-1.1 cosmos-framework SOURCE at
+      a pinned commit plus its cu130 inference venv; NO model weights. Gated
+      Cosmos3 checkpoints, the Wan VAE, and the guardrail models download at
+      runtime with the operator's own HF token (plus their NGC key when
+      NPA_COSMOS3_REQUIRE_NGC=1), so distribution never carries weight bytes. The
+      build fails if a checkpoint file lands in a layer. Ships sudo +
+      openssh-server with a NOPASSWD grant for the non-root runtime user because
+      the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
+      docs/security/container-golden-evals.md.
+    redistribution: public
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job
+    redistribution: public
+  cosmos-curate:
+    dockerfile: cosmos-curate/Dockerfile
+    tier: job
+    notes: "Mode-based entrypoint; no model weights baked in (fetch-models mode uses HF_TOKEN)."
+    # Upstream cosmos-curate is Apache-2.0 and its source is redistributable; the
+    # weights it would otherwise need are fetched at run time with the operator's
+    # own token, so nothing license-restricted is baked into this image.
+    redistribution: public
+  cosmos-evaluator:
+    dockerfile: cosmos-evaluator/Dockerfile
+    tier: job
+    notes: "Mode-based entrypoint; the wired checks need no model weights."
+    redistribution: public
   lerobot-vlm-rl:
     dockerfile: lerobot-vlm-rl/Dockerfile
     tier: job
+    redistribution: public
   genesis:
     dockerfile: genesis/Dockerfile
     tier: interactive
+    redistribution: public
   isaac-lab:
     dockerfile: isaac-lab/Dockerfile
+    isaac_runtime_fetch: true
     tier: interactive
+    redistribution: public
   fiftyone:
     dockerfile: fiftyone/Dockerfile
     tier: interactive
     ports: [5151]
+    redistribution: public
   cosmos:
     dockerfile: cosmos/Dockerfile
     tier: interactive
     ports: [8080]
     notes: "Server is built into the image; promote to service when default CMD starts it."
+    redistribution: public
   groot:
     dockerfile: groot/Dockerfile
+    isaac_runtime_fetch: true
     tier: interactive
     ports: [8080]
     notes: "EXPOSE 8080 without default server CMD; promote to service when ready."
+    redistribution: public
   retargeting:
     dockerfile: retargeting/Dockerfile
     tier: interactive
+    redistribution: public
   sim2real-envgen:
     dockerfile: sim2real-envgen/Dockerfile
     tier: interactive
+    redistribution: public
   rerun-viewer:
     dockerfile: rerun-viewer/Dockerfile
     tier: job
     ports: [9090]
     final_user: nobody
+    redistribution: public
+  foxglove-embed:
+    dockerfile: foxglove-embed/Dockerfile
+    tier: service
+    ports: [8099]
+    final_user: nobody
+    notes: "Static host for the @foxglove/embed SDK (MIT), the shared glue module, and MCAP data (CORS + byte ranges)."
+    redistribution: public
+  lichtblick:
+    dockerfile: lichtblick/Dockerfile
+    tier: service
+    ports: [8080]
+    final_user: nobody
+    notes: "Lichtblick (MPL-2.0) OSS Foxglove-compatible static web viewer; caddy file-server default CMD + HEALTHCHECK."
+    redistribution: public

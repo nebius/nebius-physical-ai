@@ -24,6 +24,16 @@ config:
   train_epochs: "10"
   train_batch_size: "8"
   train_learning_rate: "0.005"
+  # The train stage POSTs /train and then polls /status until the run finishes, exactly as
+  # the retired template's bash loop did; otherwise eval runs against a checkpoint that
+  # does not exist yet.
+  train_poll_seconds: "30"
+  train_timeout_seconds: "21600"
+  # Category -> index map for the synthetic BDD100K generator. For real BDD100K labels use
+  # pedestrian/motorcycle/bicycle in place of person/motor/bike.
+  detection_label_map: >-
+    {"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic
+    light":8,"traffic sign":9}
 
   rider_view: bdd100k_rider_train
   nighttime_view: bdd100k_nighttime_person_train
@@ -33,9 +43,9 @@ config:
   nighttime_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/bdd100k_nighttime_person_train"
   distant_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/bdd100k_distant_person_train"
 
-  rider_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_rider_train"
-  nighttime_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_nighttime_person_train"
-  distant_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_distant_person_train"
+  rider_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_rider_train/"
+  nighttime_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_nighttime_person_train/"
+  distant_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_distant_person_train/"
 
 resources:
   cpu:

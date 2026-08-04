@@ -11,7 +11,6 @@ from typing import Any
 import joblib
 import numpy as np
 import pytest
-import yaml
 
 from npa.clients.project_credentials import storage_env_for_project
 
@@ -19,12 +18,6 @@ from npa.clients.project_credentials import storage_env_for_project
 pytestmark = pytest.mark.e2e
 
 ROOT = Path(__file__).resolve().parents[3]
-SIM_TO_REAL_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-loop.yaml"
-SONIC_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sonic-locomotion-finetuning.yaml"
-)
-RETARGETING_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "retargeting.yaml"
-MJLAB_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "mjlab-eval.yaml"
 
 
 @pytest.fixture(autouse=True)
@@ -230,68 +223,21 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     assert written_mjlab["score"] == 0.9
 
 
-def test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts(
-    e2e_test_bucket: str,
-    s3_helper: Any,
-) -> None:
-    sim_docs = _yaml_docs(SIM_TO_REAL_YAML)
-    sonic_docs = _yaml_docs(SONIC_YAML)
-    retarget_docs = _yaml_docs(RETARGETING_YAML)
-    mjlab_docs = _yaml_docs(MJLAB_YAML)
-
-    assert sim_docs[0] == {"name": "sim-to-real-loop", "execution": "serial"}
-    sim_run = sim_docs[1]["run"]
-    assert sim_docs[1]["name"] == "vlm-eval-loop"
-    assert sim_docs[1]["resources"]["accelerators"] == "H100:1"
-    assert sim_docs[1]["envs"]["MODEL"] == "Qwen/Qwen2-VL-7B-Instruct"
-    assert sim_docs[1]["envs"]["ROLLOUTS"].endswith("/rollouts/")
-    assert sim_docs[1]["envs"]["OUTPUT_DIR"].endswith("/vlm-eval-loop/")
-    assert "python3 -m vllm.entrypoints.openai.api_server" in sim_run
-    assert "npa workbench vlm-eval run" in sim_run
-    assert "task_success_report.json" in sim_run
-    assert sim_docs[1]["envs"]["NPA_DRY_RUN"] == "0"
-
-    assert sonic_docs[0] == {"name": "sonic-locomotion-finetuning", "execution": "serial"}
-    assert [task["name"] for task in sonic_docs[1:]] == [
-        "sonic-retarget-motion",
-        "sonic-g1-finetune",
-        "sonic-mujoco-eval",
-    ]
-    assert sonic_docs[1]["resources"]["cloud"] == "kubernetes"
-    assert sonic_docs[1]["envs"]["AWS_PROFILE"] == "nebius"
-    assert "npa workbench sonic retargeting run" in sonic_docs[1]["run"]
-    assert sonic_docs[2]["resources"]["accelerators"] == "H100:1"
-    assert sonic_docs[2]["resources"]["use_spot"] is True
-    assert sonic_docs[2]["resources"]["region"] == "eu-north1"
-    assert sonic_docs[2]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-mujoco-h100-mvp"
-    assert sonic_docs[2]["envs"]["SONIC_RUN_REAL_TRAIN"] == "1"
-    assert "/entrypoint.sh finetune" in sonic_docs[2]["run"]
-    assert sonic_docs[3]["resources"]["accelerators"] == "H100:1"
-    assert sonic_docs[3]["resources"]["use_spot"] is True
-    assert "mujoco-eval" in sonic_docs[3]["run"]
-
-    assert retarget_docs[1]["name"] == "retarget-motion"
-    assert "npa workbench sonic retargeting run" in retarget_docs[1]["run"]
-    assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"
-    assert "npa workbench mjlab eval" in mjlab_docs[1]["run"]
-    assert mjlab_docs[1]["resources"]["accelerators"] == "H100:1"
-
-    manifest = {
-        "status": "validated",
-        "workflows": {
-            str(path.relative_to(ROOT)): _sha256(path)
-            for path in (SIM_TO_REAL_YAML, SONIC_YAML, RETARGETING_YAML, MJLAB_YAML)
-        },
-    }
-    s3_helper.client.put_object(
-        Bucket=e2e_test_bucket,
-        Key="workflow-yaml-validation/manifest.json",
-        Body=(json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
-    )
-    assert (
-        s3_helper.head_object(e2e_test_bucket, "workflow-yaml-validation/manifest.json")
-        is not None
-    )
+# `test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts` used to live here.
+# It asserted the raw shape of four SkyPilot templates (sim-to-real-loop,
+# sonic-locomotion-finetuning, retargeting, mjlab-eval) from inside the *live* tier,
+# so the check only ran when NPA_INTEGRATION_E2E was set. Those templates are being
+# retired, and the same contract is now enforced OFFLINE, on the surface that
+# survives, by tests that run in the default suite:
+#
+#   * npa/tests/workflows/test_sonic_locomotion_finetuning.py - each spec declares the
+#     right toolRef and its resolved argv invokes the real CLI command;
+#   * npa/tests/guardrails/test_three_tier_contract.py - CLI <-> SDK <-> spec/toolRef;
+#   * npa/tests/guardrails/test_tool_catalog_argv.py - every argv flag exists;
+#   * npa/tests/guardrails/test_spec_declared_outputs.py - `outputs:` names the file
+#     the tool actually writes.
+#
+# Net effect: stronger coverage, and it no longer needs credentials to run.
 
 
 def test_e2e_cli_smoke_surfaces_for_pipeline_tools() -> None:
@@ -343,14 +289,6 @@ def _run_npa(
         timeout=timeout,
         check=False,
     )
-
-
-def _yaml_docs(path: Path) -> list[dict[str, Any]]:
-    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc]
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _truthy(value: str) -> bool:

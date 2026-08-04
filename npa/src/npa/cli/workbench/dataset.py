@@ -53,6 +53,19 @@ def ingest_cmd(
     modality: list[str] = typer.Option([], "--modality", help="Allowed sensor modality (repeatable). Empty allows any."),
     source: str = typer.Option("", "--source", help="Source lineage label for the raw data."),
     workflow_run: str = typer.Option("", "--workflow-run", help="Workflow run id threaded into lineage."),
+    lancedb_endpoint: str = typer.Option(
+        "",
+        "--lancedb-endpoint",
+        help=(
+            "LanceDB service endpoint to populate the query index as records are ingested. "
+            "Without it the manifest is the only source of truth and `dataset query` returns "
+            "nothing."
+        ),
+    ),
+    lance_table: str = typer.Option(
+        "", "--lance-table", help="Index table name. Defaults to the dataset id."
+    ),
+    lance_uri: str = typer.Option("", "--lance-uri", help="LanceDB storage URI for the index."),
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Dataset service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
@@ -81,6 +94,9 @@ def ingest_cmd(
             sensor_schema={"modalities": list(modality)},
             source=source,
             workflow_run=workflow_run,
+            lancedb_endpoint=lancedb_endpoint,
+            lance_table=lance_table,
+            lance_uri=lance_uri,
         ).model_dump(mode="json")
     emit(result, output=output, text=f"dataset_id: {result.get('dataset_id')}\nversion: {result.get('version')}\nrecord_count: {result.get('record_count')}\nmanifest_uri: {result.get('manifest_uri')}")
 
@@ -172,6 +188,12 @@ def query_cmd(
     min_quality: float = typer.Option(-1.0, "--min-quality", help="Minimum quality metric value; negative disables."),
     limit: int = typer.Option(DEFAULT_QUERY_LIMIT, "--limit", help="Maximum records to return."),
     lancedb_endpoint: str = typer.Option("", "--lancedb-endpoint", help="LanceDB service endpoint backing the query index."),
+    lance_table: str = typer.Option(
+        "",
+        "--lance-table",
+        help="Index table to read. Ingest writes one per dataset id; defaults to the service's.",
+    ),
+    lance_uri: str = typer.Option("", "--lance-uri", help="LanceDB storage URI for the index."),
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Dataset service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
@@ -189,6 +211,8 @@ def query_cmd(
             "min_quality": resolved_min,
             "limit": limit,
             "lancedb_endpoint": lancedb_endpoint,
+            "lance_table": lance_table,
+            "lance_uri": lance_uri,
         }
         params = {k: v for k, v in params.items() if v not in ("", None)}
         result = request_json("GET", resolve_endpoint(endpoint), "/query", params=params, token_env=token_env, timeout=60.0)
@@ -204,6 +228,8 @@ def query_cmd(
             min_quality=resolved_min,
             limit=limit,
             lancedb_endpoint=lancedb_endpoint,
+            lance_table=lance_table,
+            lance_uri=lance_uri,
         ).model_dump(mode="json")
     emit(result, output=output, text=f"backend: {result.get('backend')}\ncount: {result.get('count')}")
 

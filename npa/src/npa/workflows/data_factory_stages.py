@@ -168,34 +168,77 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
 
 
 def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5) -> str:
-    """Read the real VLM eval score and write a promote/loop decision.
+    """Read the evaluator score and write a promote/loop decision.
 
-    The blueprint's attribute-verify stage runs ``workbench.vlm_eval.run`` with
-    ``--backend api`` (a real hosted VLM). Its output file is RESULT_FILENAME,
-    which is the vlm_eval tool's (legacy-named) real result JSON -- the "stub" in
-    the filename is a historical artifact of the tool, not a stubbed stage. We
-    import the constant so this stays in sync with the tool instead of hardcoding
-    a magic string.
+    The blueprint's evaluate stage runs the real NVIDIA Cosmos Evaluator, which
+    writes ``cosmos_evaluator.json``. Runs produced before that stage existed (and
+    any spec still pointing the loop at ``workbench.vlm_eval.run``) wrote the
+    vlm_eval tool's RESULT_FILENAME instead, so both are accepted, newest contract
+    first. Both filenames come from the producing tool's own constant rather than a
+    literal here, so the gate cannot drift from its producer.
 
     ``threshold`` accepts a str (the blueprint interpolates a quoted config value)
     or float; a non-numeric value falls back to 0.5.
+
+    Best-effort by design: an unreadable, malformed, or self-declared-degraded report
+    yields ``loop_back`` rather than an exception, because a gate that raises takes
+    the whole refinement loop down with it.
     """
     from npa.orchestration.npa_workflow.decisions import write_decision
-    from npa.workbench.vlm_eval import RESULT_FILENAME
+    from npa.workbench.cosmos_evaluator import RESULT_FILENAME as COSMOS_EVALUATOR_RESULT
+    from npa.workbench.vlm_eval import RESULT_FILENAME as VLM_EVAL_RESULT
 
     try:
         threshold = float(threshold)
     except (TypeError, ValueError):
         threshold = 0.5
+    if scores_uri.endswith(".json"):
+        candidates = [scores_uri]
+    else:
+        base = scores_uri.rstrip("/")
+        candidates = [f"{base}/{COSMOS_EVALUATOR_RESULT}", f"{base}/{VLM_EVAL_RESULT}"]
     score = 0.0
-    try:
-        report = _download_json(scores_uri if scores_uri.endswith(".json") else scores_uri.rstrip("/") + "/" + RESULT_FILENAME)
-        score = float(report.get("score", 0.0))
-    except Exception as exc:  # noqa: BLE001 - best-effort; default to loop_back
-        print(json.dumps({"stage": "grade_gate", "warn": f"could not read score: {exc}"[:200]}))
-    decision = "promote_checkpoint" if score >= threshold else "loop_back"
+    status = "completed"
+    source = ""
+    problems: list[str] = []
+    for candidate in candidates:
+        try:
+            report = _download_json(candidate)
+            if not isinstance(report, dict):
+                raise TypeError(f"expected a JSON object, got {type(report).__name__}")
+            # Parsed inside the try on purpose: a report that downloads cleanly but
+            # carries a non-numeric score has to degrade to loop_back exactly like an
+            # unreadable one. Letting it raise would abort the whole refinement loop
+            # over a malformed field, which is the opposite of a gate's job.
+            candidate_score = float(report.get("score", 0.0))
+            # A report the producer itself marked degraded (an evaluator that lost
+            # object storage part-way, say) describes the run's infrastructure, not
+            # its variants. Promoting on it would ship an ungraded batch.
+            candidate_status = str(report.get("status", "completed"))
+        except Exception as exc:  # noqa: BLE001 - fall through to the older contract
+            problems.append(f"{candidate.rsplit('/', 1)[-1]}: {exc}"[:150])
+            continue
+        score = candidate_score
+        status = candidate_status
+        source = candidate
+        break
+    if not source:
+        print(json.dumps({"stage": "grade_gate", "warn": f"could not read a score ({'; '.join(problems)})"[:300]}))
+    graded = status == "completed"
+    decision = "promote_checkpoint" if graded and score >= threshold else "loop_back"
     write_decision(decision_uri, decision)
-    print(json.dumps({"stage": "grade_gate", "score": score, "threshold": threshold, "decision": decision}))
+    print(
+        json.dumps(
+            {
+                "stage": "grade_gate",
+                "score": score,
+                "threshold": threshold,
+                "decision": decision,
+                "source": source,
+                "report_status": status,
+            }
+        )
+    )
     return decision
 
 
@@ -203,6 +246,7 @@ def curate(
     augment_uri: str,
     report_uri: str,
     dedup_threshold: float | str = "",
+    curator_report_uri: str = "",
 ) -> dict[str, Any]:
     """Curate the augmented set and write a real curation report.
 
@@ -212,6 +256,10 @@ def curate(
     a 2D visualization -- and records which variants were kept vs dropped. When
     FiftyOne is absent (unit tests, the dev-VM worktree python) it degrades to the
     report-only counts path so the pipeline never regresses.
+
+    ``curator_report_uri`` points at the preceding Cosmos Curator stage's summary.
+    When present it is folded into this report under ``cosmos_curator``, so one
+    document carries both the curator's clip catalog and the review decisions.
     """
     keys = _list_keys(augment_uri)
     videos = [k for k in keys if k.endswith(".mp4")]
@@ -247,9 +295,40 @@ def curate(
     }
 
     report = _enrich_with_fiftyone_curation(report, augment_uri, keys, dedup_threshold)
+    report = _merge_curator_report(report, curator_report_uri)
 
     report["written_uri"] = _upload_json(report, report_uri)
     print(json.dumps(report))
+    return report
+
+
+def _merge_curator_report(report: dict[str, Any], curator_report_uri: str) -> dict[str, Any]:
+    """Fold the Cosmos Curator stage's summary into the curation report.
+
+    Only the run-level fields are copied; the per-clip catalog stays in the
+    curator's own report so this document does not grow with the clip count.
+    """
+    if not curator_report_uri:
+        return report
+    try:
+        curator = _download_json(curator_report_uri)
+    except Exception as exc:  # noqa: BLE001 - the review report stands on its own
+        report["cosmos_curator"] = {"status": "unavailable", "warn": f"{exc}"[:200]}
+        return report
+    if not isinstance(curator, dict):
+        report["cosmos_curator"] = {"status": "unavailable", "warn": "curator report is not an object"}
+        return report
+    report["cosmos_curator"] = {
+        "status": str(curator.get("status") or ""),
+        "engine": str(curator.get("engine") or ""),
+        "curated_uri": str(curator.get("curated_uri") or ""),
+        "clip_count": int(curator.get("clip_count") or 0),
+        "filtered_count": int(curator.get("filtered_count") or 0),
+        "variant_count": int(curator.get("variant_count") or 0),
+        "total_duration_s": float(curator.get("total_duration_s") or 0.0),
+        "motion_filter": str(curator.get("motion_filter") or ""),
+        "report_uri": curator_report_uri,
+    }
     return report
 
 

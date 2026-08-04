@@ -1,0 +1,69 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-isaac-lab image.
+#
+# This is the same change the main isaac-lab/Dockerfile applies (via
+# docker/workbench/common/install_isaac_runtime_base.sh), expressed as a derived build so
+# an operator can repair an existing published tag without rebuilding from scratch:
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-isaac-lab:2.3.2.post1 \
+#     --tag  <registry>/npa-isaac-lab:2.3.2.post1-sky1 \
+#     --dockerfile npa/docker/workbench/isaac-lab/Dockerfile.k8s-prereqs
+#
+# Why it is needed: SkyPilot's Kubernetes runtime bootstrap runs inside the task container
+# and needs a system python3 (plus rsync). All four ingredients below are required -
+# verified by bisecting derived images against a live GPU cluster - and without them
+# provisioning fails with:
+#     KubernetesError: Failed to get ssh user for pod ...: container not found ("ray-node")
+#
+#   1. a system python3 (+ rsync/curl/ssh client);
+#   2. read access to /isaac-sim for the runtime user. Historically that mattered because
+#      NVIDIA's base shipped /isaac-sim as mode 750 isaac-sim:isaac-sim, unreadable by
+#      `ubuntu`. Since Isaac is now fetched at run time, /isaac-sim holds only our own
+#      python.sh shim at mode 0755 - but the group membership is kept so this recipe
+#      still repairs an image built from the old NVIDIA base;
+#   3. passwordless sudo for the runtime user - SkyPilot's in-pod setup shells out to
+#      sudo, and Debian's default %sudo rule prompts for a password;
+#   4. the system interpreter FIRST on PATH - otherwise python3 resolves to the Isaac
+#      interpreter, which cannot import its own site-packages outside its venv.
+#
+# Isaac work is unaffected: it always runs through ISAAC_LAB_PYTHON
+# (/isaac-sim/python.sh). The image stays non-root.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (getent group isaac-sim >/dev/null 2>&1 && usermod -aG isaac-sim ubuntu || true) \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && python3 --version
+
+# SkyPilot's bootstrap must find the SYSTEM interpreter, not the Isaac venv's python3.11.
+# Kit must be able to WRITE, which is a separate thing from being schedulable. On an image
+# built from the OLD NVIDIA base, /isaac-sim holds the payload and `kit/data`/`kit/logs` do not
+# exist while `kit/cache` is root-owned — so as `ubuntu` the app cannot create or write any of
+# them. Isaac still BOOTS, logs
+#     [Error] [omni.kit.app.plugin] failed to open file '.../user.config.json'
+# and then never renders a frame: live job 271 sat at 170% CPU for 45 minutes with an empty
+# output directory, which reads like a slow simulation and is a stalled one.
+#
+# Both halves are applied because a derived build does not know which base it is repairing:
+# the directories (a tiny layer, guarded by `-d /isaac-sim`) and the env vars newer images use
+# to keep Kit's state in /tmp instead.
+RUN if [ -d /isaac-sim ]; then \
+      mkdir -p /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache \
+      && chown -R ubuntu:ubuntu /isaac-sim/kit/data /isaac-sim/kit/logs /isaac-sim/kit/cache; \
+    fi \
+    && install -d -m 0755 -o ubuntu -g ubuntu /tmp/isaac-sim-cache /tmp/isaac-sim-cache/logs
+ENV OMNI_USER_DIR=/tmp/isaac-sim-cache \
+    OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs
+
+ENV PATH=/usr/bin:$PATH
+
+WORKDIR /workspace/isaaclab
+USER ubuntu
+ENTRYPOINT ["/bin/bash"]

@@ -40,6 +40,14 @@ regexes = [
     '''hf_testsecret123456''',
     '''hf_npae2eworkflowsecret1234567890''',
     '''AKIAABCDEFGHIJKLMNOP''',
+    # Env-var NAME, not a key: generic-api-key matches the `*_API_KEY... = "..."`
+    # shape even when the value is the name of the variable to read the key from.
+    # Same class as the historical NPA_S3_BUCKET false positive noted below.
+    '''NPA_COSMOS3_NGC_API_KEY_ENV''',
+    # Public content-addressable digest of nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04,
+    # pinned in the base-image CVE scan matrix. nebius-generic-id matches it only
+    # because the hex happens to start with "e07".
+    '''e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01''',
 ]
 paths = [
     '''SECURITY\.md''',
@@ -55,4 +63,16 @@ paths = [
 # gitleaks 8.28 allowlists support commits/paths/regexes/stopwords (not fingerprints).
 commits = [
     '''89e7be8d1d902d880b5327f234ed22f84ff6cd3e''',
+    # Historical: the first draft of EVIDENCE.md (live-run records for the
+    # npa.workflow runtime tier) pasted the operational lerobot-* artifact bucket
+    # into the S3 URIs it quotes. It was redacted to <artifact-bucket> two commits
+    # later; a working-tree scan of HEAD reports no leaks. Allowlisted instead of
+    # rewriting a pushed branch's history.
+    '''6937efd3d693c4d7d5bb7afa6c6bf79c98281790''',
+    # Historical false positive: generic-api-key read the import line
+    #   `from npa.workbench.cosmos.cosmos3 import Cosmos3AccessConfig, fetch_cosmos3_artifacts`
+    # as an assignment of a long opaque value. HEAD splits it across two imports, so a
+    # working-tree scan is clean; this allowlists the commit rather than rewriting a pushed
+    # branch's history.
+    '''58d3d4e19b94ddb889f64cdf5ef5a91340db4321''',
 ]

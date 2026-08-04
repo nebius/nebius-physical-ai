@@ -46,6 +46,55 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+# ``docker:cr.<region>.nebius.cloud/<registry-id>/<image>:<tag>`` in a rendered plan.
+_NEBIUS_IMAGE_RE = re.compile(r"image_id:\s*docker:(cr\.[a-z0-9-]+\.nebius\.cloud)/", re.IGNORECASE)
+
+
+def nebius_registry_hosts(rendered_yaml: str) -> list[str]:
+    """Distinct Nebius registry hosts a rendered plan pulls images from."""
+
+    return sorted({match.group(1).lower() for match in _NEBIUS_IMAGE_RE.finditer(rendered_yaml)})
+
+
+def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
+    """Refresh the cluster's Nebius registry pull secret before launching.
+
+    Kubernetes pulls private images with an ``imagePullSecret``, and the Nebius
+    registry only accepts short-lived IAM tokens — so a cluster whose secret was
+    written days ago fails every pull with ``401 Unauthorized`` even though
+    ``docker login`` on the operator box works, and SkyPilot reports it as
+    ``ErrImagePull`` / resources-unavailable rather than an auth problem. Minting a
+    fresh token here keeps a pinned-image submit from failing for a reason that has
+    nothing to do with the workflow.
+
+    Best-effort: a cluster that pulls public images, or an operator without
+    ``kubectl`` reach, must not be blocked by this.
+    """
+
+    try:
+        rendered = rendered_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    hosts = nebius_registry_hosts(rendered)
+    if not hosts:
+        return
+
+    from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
+
+    joined = ", ".join(hosts)
+    # One call with every host: the secret holds a single dockerconfigjson and each
+    # apply replaces it, so refreshing host by host would leave only the last one.
+    try:
+        ensure_nebius_registry_pull_secret(registry_servers=hosts)
+    except Exception as exc:  # noqa: BLE001 - never block a submit on this
+        console.print(
+            f"[yellow]Warning:[/yellow] could not refresh the Kubernetes pull secret "
+            f"for {joined} ({exc}); a private-image pull may fail with 401"
+        )
+    else:
+        console.print(f"Refreshed the Kubernetes pull secret for {joined}")
+
+
 @app.command("submit")
 def submit_cmd(
     yaml_path: Path = typer.Argument(
@@ -108,6 +157,50 @@ def submit_cmd(
         help=(
             "For npa.workflow specs: render the SkyPilot YAML and print it, "
             "but do not submit."
+        ),
+    ),
+    runtime: bool = typer.Option(
+        False,
+        "--runtime/--no-runtime",
+        help=(
+            "For npa.workflow specs: drive the run with the runtime orchestrator "
+            "(submit each wave, poll to terminal, read the real decision artifact "
+            "from S3, then replan). Required for parallel fan-out and for real "
+            "runtime early-exit; the default one-shot path renders the flattened "
+            "serial plan with --assume-decision."
+        ),
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume/--no-resume",
+        help="With --runtime: replay waves already recorded as succeeded for this run id.",
+    ),
+    poll_seconds: int = typer.Option(
+        30,
+        "--poll-seconds",
+        help="With --runtime: seconds between managed-job status polls.",
+    ),
+    max_wait_seconds: int = typer.Option(
+        3600,
+        "--max-wait-seconds",
+        help="With --runtime: per-wave deadline before the job is cancelled.",
+    ),
+    cancel_on_timeout: bool = typer.Option(
+        True,
+        "--cancel-on-timeout/--no-cancel-on-timeout",
+        help="With --runtime: cancel the managed job (and its cluster) on timeout.",
+    ),
+    retries: int = typer.Option(
+        0,
+        "--retries",
+        help="With --runtime: retry a failed wave this many times before failing the run.",
+    ),
+    max_concurrency: int = typer.Option(
+        0,
+        "--max-concurrency",
+        help=(
+            "With --runtime: cap concurrent tasks per parallel group "
+            "(0 keeps each group's declared maxConcurrency)."
         ),
     ),
     deploy_if_absent: bool = typer.Option(
@@ -336,34 +429,53 @@ def submit_cmd(
         # ``none`` / ``default`` clears workbench image pins so tasks use the
         # SkyPilot default image (needed when registry images fail k8s apt-ssh).
         image_value = image.strip()
-        if not image_value and os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {
-            "1",
-            "true",
-            "yes",
-        }:
-            image_value = "none"
         if image_value.lower() in {"none", "default", "-"}:
             image_overrides["*"] = ""
         elif image_value:
             image_overrides["*"] = image_value
+
+        npa_render_options = SkypilotRenderOptions(
+            registry=registry,
+            image_overrides=image_overrides,
+            aws_endpoint_url=s3_endpoint
+            or os.environ.get("AWS_ENDPOINT_URL")
+            or os.environ.get("NEBIUS_S3_ENDPOINT")
+            or "https://storage.eu-north1.nebius.cloud",
+            gpu_target=gpu_target,
+            image_variant=image_variant,
+            # Never mint/print live registry tokens for --plan-only.
+            materialize_registry_secrets=not plan_only,
+        )
+
+        if runtime and not plan_only:
+            _run_npa_workflow_runtime(
+                yaml_path,
+                run_id=resolved_run_id,
+                assume_decision=assume_decision,
+                config_overrides=substitutions,
+                render_options=npa_render_options,
+                secret_envs=secret_env,
+                controller_backend=controller_backend.value,
+                infra=infra,
+                isolated_config_dir=isolated_config_dir,
+                submit_timeout=submit_timeout,
+                poll_seconds=poll_seconds,
+                max_wait_seconds=max_wait_seconds,
+                cancel_on_timeout=cancel_on_timeout,
+                retries=retries,
+                max_concurrency=max_concurrency,
+                resume=resume,
+                output_format=output_format,
+            )
+            return
+
         try:
             prepared_npa = prepare_npa_workflow_for_submit(
                 yaml_path,
                 run_id=resolved_run_id,
                 assume_decision=assume_decision,
                 config_overrides=substitutions,
-                render_options=SkypilotRenderOptions(
-                    registry=registry,
-                    image_overrides=image_overrides,
-                    aws_endpoint_url=s3_endpoint
-                    or os.environ.get("AWS_ENDPOINT_URL")
-                    or os.environ.get("NEBIUS_S3_ENDPOINT")
-                    or "https://storage.eu-north1.nebius.cloud",
-                    gpu_target=gpu_target,
-                    image_variant=image_variant,
-                    # Never mint/print live registry tokens for --plan-only.
-                    materialize_registry_secrets=not plan_only,
-                ),
+                render_options=npa_render_options,
             )
         except NpaWorkflowError as exc:
             _fail(str(exc))
@@ -395,6 +507,8 @@ def submit_cmd(
                 typer.echo(rendered)
             prepared_npa.temp_dir.cleanup()
             return
+
+        _refresh_kubernetes_pull_secrets(prepared_npa.skypilot_yaml_path)
 
         # Skip SkyPilot-path materializers; npa.workflow already planned.
         materializer = ""
@@ -523,6 +637,17 @@ def submit_cmd(
             result.log_paths["run_prefix_uri"] = workflow_state.uri
             result.log_paths["manifest_uri"] = f"{workflow_state.uri.rstrip('/')}/manifest.json"
             result.log_paths["stages"] = ",".join(instrumented_manifest.get("stages", {}).keys())
+        if prepared_npa is not None:
+            # Persist the npa.workflow run manifest for the submitted run. Only the
+            # local `run-spec --persist-state` path used to write it, so a run that
+            # actually reached the cluster left no `npa.workflow.run.v1` record and
+            # was invisible to every manifest consumer (e.g. the insights GPU metric).
+            run_prefix_uri = _persist_npa_run_manifest(prepared_npa, run_id=resolved_run_id)
+            # ``result`` is union-typed across submit paths; only the workflow
+            # result carries log_paths, so probe for it instead of assuming.
+            log_paths = getattr(result, "log_paths", None)
+            if run_prefix_uri and isinstance(log_paths, dict):
+                log_paths.setdefault("npa_workflow_run_prefix_uri", run_prefix_uri)
     except OSError as exc:
         _fail(f"SkyPilot workflow submission failed: {exc}")
         return
@@ -544,6 +669,115 @@ def submit_cmd(
         typer.echo(f"job_id: {result.job_id}")
     if workflow_state is not None:
         typer.echo(f"run_prefix_uri: {workflow_state.uri}")
+
+
+def _persist_npa_run_manifest(prepared, *, run_id: str) -> str:
+    """Write the `npa.workflow.run.v1` manifest for a submitted run (best effort).
+
+    A failed manifest write must never turn an accepted submit into a reported
+    failure, but it must be visible, so the failure is warned about rather than
+    swallowed. Returns the run prefix URI (``""`` when the spec sets no config.bucket).
+    """
+    from npa.orchestration.npa_workflow.run_state import persist_submitted_manifest
+    from npa.orchestration.npa_workflow.runtime import _resolved_config
+
+    try:
+        config = _resolved_config(prepared.spec, run_id)
+        return persist_submitted_manifest(
+            config,
+            run_id=run_id,
+            workflow=prepared.spec.name,
+            api_version=prepared.spec.api_version,
+            steps=prepared.plan.steps,
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail an accepted submit
+        typer.echo(f"warning: could not persist the npa.workflow run manifest: {exc}", err=True)
+        return ""
+
+
+def _run_npa_workflow_runtime(
+    yaml_path: Path,
+    *,
+    run_id: str,
+    assume_decision: str,
+    config_overrides: dict[str, str],
+    render_options,
+    secret_envs: list[str],
+    controller_backend: str,
+    infra: str,
+    isolated_config_dir: Path | None,
+    submit_timeout: int,
+    poll_seconds: int,
+    max_wait_seconds: int,
+    cancel_on_timeout: bool,
+    retries: int,
+    max_concurrency: int,
+    resume: bool,
+    output_format: "OutputFormat",
+) -> None:
+    """Drive an npa.workflow spec through the runtime orchestrator tier."""
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.runtime import (
+        RuntimeOptions,
+        run_workflow_runtime,
+        secret_env_names,
+    )
+    from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+
+    try:
+        spec = load_spec_for_submit(yaml_path, config_overrides=config_overrides)
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
+
+    options = RuntimeOptions(
+        poll_seconds=poll_seconds,
+        max_wait_seconds=max_wait_seconds,
+        retries=max(0, retries),
+        cancel_on_timeout=cancel_on_timeout,
+        max_concurrency=max(0, max_concurrency),
+        secret_envs=secret_env_names(secret_envs),
+        submit_timeout=submit_timeout,
+        infra=infra,
+        controller_backend=controller_backend,
+        isolated_config_dir=isolated_config_dir,
+        resume=resume,
+    )
+    try:
+        report = run_workflow_runtime(
+            spec,
+            run_id=run_id,
+            render_options=render_options,
+            options=options,
+            assume_decision=assume_decision,
+            logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
+        )
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
+
+    payload = report.to_dict()
+    if output_format == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"status: {report.status}")
+        typer.echo(f"run_id: {report.run_id}")
+        typer.echo(f"waves: {len(report.waves)}")
+        for wave in report.waves:
+            states = ",".join(wave.get("states") or [])
+            typer.echo(
+                f"  {wave.get('key')}: {wave.get('status')} "
+                f"[{wave.get('kind')}] states={states} job_id={wave.get('job_id')}"
+            )
+        for decision in report.decisions:
+            typer.echo(f"decision: {decision.get('decision')} <- {decision.get('uri')}")
+        if report.run_prefix_uri:
+            typer.echo(f"run_prefix_uri: {report.run_prefix_uri}")
+        if report.error:
+            typer.echo(f"error: {report.error}")
+    if report.status != "succeeded":
+        raise typer.Exit(1)
 
 
 def _default_submit_run_id(yaml_path: Path) -> str:
@@ -1482,6 +1716,14 @@ def plan_spec_cmd(
         "--assume-decision",
         help="Plan branch after decide states (promote_checkpoint or loop_back).",
     ),
+    waves: bool = typer.Option(
+        False,
+        "--waves",
+        help=(
+            "Show the runtime wave shape (serial steps and parallel fan-out groups "
+            "with their concurrency batches) instead of the flat step list."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON plan."),
 ) -> None:
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
@@ -1495,6 +1737,26 @@ def plan_spec_cmd(
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
+
+    if waves:
+        from npa.orchestration.npa_workflow.waves import wave_plan_from_plan
+
+        wave_plan = wave_plan_from_plan(spec, plan, run_id=resolved_run_id)
+        if json_output:
+            typer.echo(json.dumps(wave_plan.to_dict(), indent=2, sort_keys=True))
+            return
+        typer.echo(f"workflow: {wave_plan.workflow}")
+        typer.echo(f"waves: {len(wave_plan.waves)}")
+        for wave in wave_plan.waves:
+            states = ", ".join(step.state for step in wave.steps)
+            suffix = (
+                f" maxConcurrency={wave.max_concurrency} batches={len(wave.batches())}"
+                if wave.kind == "parallel"
+                else ""
+            )
+            typer.echo(f"  {wave.index:02d}. [{wave.kind}] {wave.name}: {states}{suffix}")
+        return
+
     if json_output:
         typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
         return

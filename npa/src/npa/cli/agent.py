@@ -36,9 +36,16 @@ from npa.clients.network import (
     remove_ingress_for_instance,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
+from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.workbench.foxglove import (
+    DEFAULT_FOXGLOVE_EMBED_SRC,
+    FOXGLOVE_EMBED_SDK_INTEGRITY,
+    FOXGLOVE_EMBED_SDK_VERSION,
+)
 
 app = typer.Typer(
     name="agent",
@@ -64,7 +71,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026072402"
+AGENT_UI_VERSION = "2026073001"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -129,6 +136,29 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "_maybe_origin_reply",
     "build_run_origin",
     "Grounded origin facts for this run",
+)
+
+# Embedded Foxglove viewer: the real @foxglove/embed SDK, loaded on demand from
+# same-origin assets, mounted into its own viewer pane, and fed by /api/foxglove/*.
+AGENT_FOXGLOVE_CONTRACT = (
+    'id="renderModeFoxglove"',
+    'id="viewerPaneFoxglove"',
+    'id="foxgloveHost"',
+    'id="foxgloveStatus"',
+    "ensureFoxgloveViewer",
+    "setFoxgloveDataSource",
+    "refreshFoxgloveViewer",
+    "mountFoxgloveViewer",
+    "/api/foxglove/config",
+    "captureFoxgloveContext",
+    "convertRunToMcap",
+    "/api/foxglove/convert-run",
+    # Two backends behind one pane: the official app (SDK) and the self-hosted
+    # OSS viewer that renders MCAP without a Foxglove account.
+    "mountSelfHostedViewer",
+    "self-hosted",
+    # Cross-origin embed: never claim a captured frame for the official app.
+    "cross-origin iframe",
 )
 
 AGENT_CHAT_QUEUE_CONTRACT = (
@@ -267,11 +297,15 @@ _AGENT_MEMORY_SHIP = "__NPA_AGENT_MEMORY_SHIP__"
 # Blueprint Phases H/I: also shipped as importable files.
 _AGENT_RETRIEVAL_SHIP = "__NPA_AGENT_RETRIEVAL_SHIP__"
 _AGENT_TRACE_SHIP = "__NPA_AGENT_TRACE_SHIP__"
+_AGENT_FOXGLOVE_SHIP = "__NPA_AGENT_FOXGLOVE_SHIP__"
+_AGENT_FOXGLOVE_ROUTES_SHIP = "__NPA_AGENT_FOXGLOVE_ROUTES_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
+_AGENT_STATE_EMBED = "__NPA_AGENT_STATE_EMBED__"
+_AGENT_S3_GUARD_EMBED = "__NPA_AGENT_S3_GUARD_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
 _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
@@ -317,6 +351,28 @@ def _embedded_agent_rrd_proxy_source() -> str:
     import re
 
     path = Path(__file__).with_name("agent_rrd_proxy.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_state_source() -> str:
+    """Return agent_state.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_state.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_s3_guard_source() -> str:
+    """Return agent_s3_guard.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_s3_guard.py")
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -1464,6 +1520,15 @@ def _write_agent_nebius_env(
         )
 
 
+def _env_line_value(value: str) -> str:
+    """Return ``value`` as a single safe ``KEY=value`` line fragment.
+
+    Bootstrap writes plain env files inside a quoted heredoc, so the only real
+    hazard is an embedded newline (which would inject an extra assignment).
+    """
+    return " ".join(str(value or "").split()).strip()
+
+
 def _create_agent_source_archive() -> str:
     """Package the NPA source tree needed for agent-side workflow execution."""
     repo_root = Path(__file__).resolve().parents[4]
@@ -1701,97 +1766,15 @@ def _nginx_agent_site_body(
     *,
     backend_port: int,
     rerun_port: int,
+    lichtblick_port: int = DEFAULT_LICHTBLICK_PORT,
 ) -> str:
-    """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
-    return f"""  auth_basic "NPA Agent";
-  auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
-  # Describe-this / multimodal chat posts JPEG data-URLs; default 1m rejects them (413 → browser Failed to fetch).
-  client_max_body_size 32m;
-  location = /healthz {{
-    auth_basic off;
-    default_type application/json;
-    return 200 '{{"ok":true,"service":"npa-agent","welcome":"/welcome","ui":"/","ui_version":"{AGENT_UI_VERSION}"}}';
-  }}
-  location = /welcome {{
-    auth_basic off;
-    alias /opt/npa-agent/welcome.html;
-    default_type text/html;
-    add_header Cache-Control "no-store" always;
-  }}
-  location = /login-help.html {{
-    auth_basic off;
-    alias /opt/npa-agent/login-help.html;
-    default_type text/html;
-    add_header Cache-Control "no-store" always;
-  }}
-  location /api/ {{
-    proxy_pass http://127.0.0.1:{backend_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 900s;
-    proxy_send_timeout 900s;
-    client_max_body_size 32m;
-  }}
-  location /assets/api/ {{
-    rewrite ^/assets/api/(.*)$ /$1 break;
-    proxy_pass http://127.0.0.1:{backend_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 900s;
-    proxy_send_timeout 900s;
-    client_max_body_size 32m;
-  }}
-  location /rerun/recordings/ {{
-    auth_basic off;
-    alias /opt/npa-agent/recordings/;
-    default_type application/octet-stream;
-    add_header Cache-Control "no-cache" always;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-    add_header Cross-Origin-Resource-Policy "cross-origin" always;
-    # .rrd carries msgpack + metadata that still gzips usefully; the frame
-    # payloads are now JPEG-encoded so the win is modest but the transfer is
-    # smaller and TTFB unaffected (nginx streams as it compresses).
-    gzip on;
-    gzip_types application/octet-stream;
-    gzip_min_length 1024;
-  }}
-  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
-    auth_basic off;
-    rewrite ^/rerun/(.*)$ /$1 break;
-    proxy_pass http://127.0.0.1:{rerun_port};
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    gzip on;
-    gzip_types application/wasm application/javascript text/javascript image/svg+xml;
-    gzip_min_length 256;
-    add_header Cache-Control "public, max-age=31536000, immutable" always;
-  }}
-  location /rerun/ {{
-    auth_basic off;
-    proxy_pass http://127.0.0.1:{rerun_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    add_header Cache-Control "public, max-age=3600" always;
-  }}
-  location / {{
-    root /opt/npa-agent;
-    index ui.html;
-    try_files /ui.html =404;
-    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
-    add_header Pragma "no-cache" always;
-  }}"""
+    """Render the agent nginx site (policy lives in ``agent_site``)."""
+    return nginx_agent_site_body(
+        backend_port=backend_port,
+        rerun_port=rerun_port,
+        lichtblick_port=lichtblick_port,
+        ui_version=AGENT_UI_VERSION,
+    )
 
 
 def _bootstrap_agent_stack(
@@ -1823,6 +1806,9 @@ def _bootstrap_agent_stack(
     nebius_project_id: str = "",
     nebius_tenant_id: str = "",
     public_https: bool = True,
+    foxglove_embed_src: str = "",
+    foxglove_org_slug: str = "",
+    foxglove_live_url: str = "",
 ) -> None:
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -1842,16 +1828,36 @@ def _bootstrap_agent_stack(
     agent_memory_ship_source = _shipped_agent_backend_module_source("memory")
     agent_retrieval_ship_source = _shipped_agent_backend_module_source("retrieval")
     agent_trace_ship_source = _shipped_agent_backend_module_source("trace")
+    agent_foxglove_ship_source = _shipped_agent_backend_module_source("foxglove")
+    agent_foxglove_routes_ship_source = _shipped_agent_backend_module_source("foxglove_routes")
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
+    agent_state_source = _embedded_agent_state_source()
+    agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
     agent_provenance_source = _embedded_agent_provenance_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
+    # Foxglove embedded-viewer settings (no secrets). CLI flag wins, then the
+    # operator environment, then the SDK's documented default embed host.
+    # Left empty unless the operator configured one: the Foxglove-hosted app needs
+    # an account, so a stock deploy renders MCAP with the self-hosted OSS viewer
+    # instead of showing a sign-in wall.
+    foxglove_embed_src_value = _env_line_value(
+        foxglove_embed_src or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
+    )
+    foxglove_org_slug_value = _env_line_value(
+        foxglove_org_slug or os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "")
+    )
+    foxglove_live_url_value = _env_line_value(
+        foxglove_live_url or os.environ.get("NPA_FOXGLOVE_LIVE_URL", "")
+    )
+    foxglove_sdk_version = _env_line_value(FOXGLOVE_EMBED_SDK_VERSION)
+    foxglove_sdk_integrity = shlex.quote(FOXGLOVE_EMBED_SDK_INTEGRITY)
     login_form_html = _agent_public_login_form_html(auth_user)
     mobile_login_help_html = _agent_mobile_login_help_html()
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -1880,6 +1886,18 @@ server {{
 """
     nebius_profile = "cursor-sa"
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
+    lichtblick_port = DEFAULT_LICHTBLICK_PORT
+    lichtblick_image = str(
+        os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
+    )
+    # Region-agnostic image acquisition: the Lichtblick image is mirrored to both
+    # the eu-north1 and us-central1 registries, so a fresh VM in any region pulls
+    # from whichever registry is reachable instead of depending on a locally-built
+    # image. Candidates = primary + mirror registry (see deploy.images).
+    lichtblick_pull_candidates = " ".join(
+        shlex.quote(ref)
+        for ref in container_image_candidates("lichtblick", preferred_region=region)
+    )
     setup_script = f"""set -euo pipefail
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates
@@ -1920,6 +1938,27 @@ cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
 NPA_AGENT_PUBLIC_URL=https://{host}
 NPA_AGENT_PUBLIC_HOST={host}
 ENV
+cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
+NPA_FOXGLOVE_ENABLED=1
+NPA_FOXGLOVE_EMBED_SRC={foxglove_embed_src_value}
+NPA_FOXGLOVE_ORG_SLUG={foxglove_org_slug_value}
+NPA_FOXGLOVE_LIVE_URL={foxglove_live_url_value}
+NPA_FOXGLOVE_SDK_VERSION={foxglove_sdk_version}
+ENV
+sudo mkdir -p /opt/npa-agent/foxglove/sdk /opt/npa-agent/foxglove/app /opt/npa-agent/foxglove/data
+# Install the pinned, sha512-verified @foxglove/embed browser SDK. Non-fatal: an
+# agent VM without egress to the npm registry still deploys, and
+# /api/foxglove/config reports exactly why the viewer is unavailable.
+if sudo bash {AGENT_SOURCE_ROOT}/npa/docker/workbench/foxglove-embed/install-sdk.sh \\
+    --dest /opt/npa-agent/foxglove/sdk \\
+    --version {foxglove_sdk_version} \\
+    --integrity {foxglove_sdk_integrity}; then
+  sudo rm -f /opt/npa-agent/foxglove/INSTALL_FAILED
+else
+  echo "install-sdk.sh failed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee /opt/npa-agent/foxglove/INSTALL_FAILED >/dev/null
+fi
+sudo cp {AGENT_SOURCE_ROOT}/npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js /opt/npa-agent/foxglove/app/npa-foxglove-host.js
+sudo chmod -R a+rX /opt/npa-agent/foxglove
 sudo mkdir -p /opt/npa-agent/agent_backend
 printf '' | sudo tee /opt/npa-agent/agent_backend/__init__.py >/dev/null
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/memory.py >/dev/null
@@ -1930,6 +1969,12 @@ cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/retrieval.py >/dev/null
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/trace.py >/dev/null
 {_AGENT_TRACE_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove.py >/dev/null
+{_AGENT_FOXGLOVE_SHIP}
+PY
+cat <<'PY' | sudo tee /opt/npa-agent/agent_backend/foxglove_routes.py >/dev/null
+{_AGENT_FOXGLOVE_ROUTES_SHIP}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
@@ -1956,8 +2001,33 @@ STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
+FOXGLOVE_ROOT = Path("/opt/npa-agent/foxglove")
+FOXGLOVE_SDK_DIR = FOXGLOVE_ROOT / "sdk"
+FOXGLOVE_DATA_DIR = FOXGLOVE_ROOT / "data"
+# Keep a few published recordings so switching runs back and forth does not
+# re-download, but do not let the public data path grow without bound.
+FOXGLOVE_KEEP_PUBLISHED = 3
+
+{_AGENT_STATE_EMBED}
+
+{_AGENT_S3_GUARD_EMBED}
+
+{_AGENT_RRD_PROXY_EMBED}
+
+# Foxglove viewer helpers + routes are SHIPPED modules (see agent_backend/).
+from agent_backend.foxglove import (
+    convert_run_request,
+    describe_foxglove_context,
+    foxglove_status_payload,
+    is_foxglove_artifact,
+    publish_recording,
+    resolve_foxglove_config,
+)
+from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 
 RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
+MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
+LICHTBLICK_RECORDING_HTTP_PATH = "/lichtblick/recordings/sim2real.mcap"
 
 
 def _agent_public_origin() -> str:
@@ -1992,8 +2062,36 @@ def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
     # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
     return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
 
+
+def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
+    origin = _agent_public_origin()
+    path = LICHTBLICK_RECORDING_HTTP_PATH
+    url = f"{{origin}}{{path}}" if origin else path
+    if cache_bust:
+        url = f"{{url}}?t={{int(time.time() * 1000)}}"
+    return url
+
+
+def _lichtblick_iframe_url(*, mcap_url: str = "") -> str:
+    # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
+    # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
+    source = mcap_url or _lichtblick_recording_url()
+    return f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
+
+
+def _publish_mcap_recording(source: Path) -> Path:
+    source = Path(source)
+    if not source.is_file():
+        return MCAP_RECORDING_PATH
+    MCAP_RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MCAP_RECORDING_PATH.with_suffix(".mcap.tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(MCAP_RECORDING_PATH)
+    return MCAP_RECORDING_PATH
+
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
+LICHTBLICK_WEB_PORT = {lichtblick_port}
 AGENT_PYTHON = Path("/opt/npa-agent/venv/bin/python")
 DEFAULT_SCENE_SPEC = {{
     "schema": "npa.sim2real.manip_scene_spec.v1",
@@ -2054,6 +2152,16 @@ DEFAULT_SIM_VIZ = {{
     "camera": "workspace",
     "rerun_ready": False,
     "rerun_iframe_url": "/rerun/",
+    # MCAP recording for the embedded viewers. The same file is exposed twice:
+    # mcap_uri is the same-origin path Lichtblick (OSS, in-page) streams, and
+    # foxglove_url is the CORS-enabled copy the official Foxglove app fetches
+    # cross-origin. mcap_updated_at timestamps both.
+    "mcap_uri": "",
+    "mcap_updated_at": "",
+    "lichtblick_ready": False,
+    "lichtblick_iframe_url": "/lichtblick/",
+    "foxglove_ready": False,
+    "foxglove_url": "",
 }}
 SIM2REAL_STAGE_TEMPLATE = [
     ("submit", "Submit request"),
@@ -2171,20 +2279,22 @@ def _default_state() -> dict:
         "state_version": 2,
     }}
 
-def _load_state() -> dict:
-    # Single-tenant operator-VM model: lock-free read-modify-write on STATE_PATH
-    # (+ best-effort S3 mirror). Concurrent writers are last-writer-wins — fine
-    # for one operator UI, not safe if this ever becomes a multi-client service.
-    data = None
-    if STATE_PATH.exists():
-        try:
-            payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                data = payload
-        except Exception:
-            data = None
-    if data is None:
-        data = _load_state_from_s3()
+_STATE_LOCK = threading.RLock()
+_STATE_STORE: StateStore | None = None
+
+
+def _get_state_store() -> StateStore:
+    global _STATE_STORE
+    if _STATE_STORE is None:
+        _STATE_STORE = StateStore(
+            STATE_PATH,
+            default_factory=_default_state,
+            after_save=_save_state_to_s3,
+        )
+    return _STATE_STORE
+
+
+def _normalize_loaded_state(data: dict | None) -> dict:
     if not isinstance(data, dict):
         return _default_state()
     merged = _default_state()
@@ -2209,12 +2319,42 @@ def _load_state() -> dict:
         merged["active_chat_session_id"] = "default"
     return merged
 
-def _save_state(state: dict) -> None:
-    # See _load_state: no file lock — last writer wins under concurrent requests.
+
+def _load_state_unlocked() -> dict:
+    # Caller must hold _STATE_LOCK / store.lock for read-modify-write.
+    store = _get_state_store()
+    data = store.load()
+    if not isinstance(data, dict) or not data:
+        data = _load_state_from_s3()
+    return _normalize_loaded_state(data)
+
+
+def _save_state_unlocked(state: dict) -> None:
+    # Caller must hold _STATE_LOCK / store.lock.
     state["updated_at"] = _now_iso()
     state["state_version"] = int(state.get("state_version") or 2)
-    STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
-    _save_state_to_s3(state)
+    _get_state_store().save(state)
+
+
+def _load_state() -> dict:
+    # Process-wide lock so concurrent Starlette threadpool handlers cannot
+    # clobber confirm tokens / chat history / sim-viz selection.
+    with _STATE_LOCK:
+        return _load_state_unlocked()
+
+
+def _save_state(state: dict) -> None:
+    with _STATE_LOCK:
+        _save_state_unlocked(state)
+
+
+def _mutate_state(fn):
+    # Atomic load → mutate → save under the process-wide lock.
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        result = fn(state)
+        _save_state_unlocked(state)
+        return result
 
 
 def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
@@ -2244,9 +2384,11 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                 "artifact_preview_url",
                 "artifact_download_url",
                 "visualization_note",
+                "foxglove_url",
             ):
                 if key not in payload or not str(payload.get(key) or "").strip():
                     snapshot[key] = ""
+            snapshot["foxglove_ready"] = bool(payload.get("foxglove_ready"))
     else:
         # Never let a sparse update erase richer artifact fields from load-run.
         for key in (
@@ -2259,9 +2401,13 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
             "rerun_iframe_url",
             "visualization_note",
             "preview_entity",
+            "foxglove_url",
+            "mcap_updated_at",
         ):
             if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
                 snapshot[key] = existing[key]
+        if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
+            snapshot["foxglove_ready"] = True
     runs[run_id] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
@@ -2924,6 +3070,8 @@ def _agent_s3_buckets(s3, settings) -> list:
     # which bucket a workflow wrote to (never rely on copying runs into one
     # bucket). Primary (configured) bucket first, then optional configured extras
     # (NPA_AGENT_S3_BUCKETS), then everything ListBuckets returns.
+    # NOTE: use only for discovery. Operator-supplied s3_uri must use
+    # _configured_agent_s3_buckets / _assert_s3_uri_in_agent_bucket instead.
     primary = str(settings.get("bucket") or "")
     override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
     extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
@@ -2932,6 +3080,27 @@ def _agent_s3_buckets(s3, settings) -> list:
     except Exception:
         buckets = [primary] if primary else []
     return buckets or ([primary] if primary else [])
+
+
+def _configured_agent_s3_buckets(settings) -> set:
+    return configured_agent_s3_buckets(
+        str((settings or {{}}).get("bucket") or ""),
+        str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
+    )
+
+
+def _assert_s3_uri_in_agent_bucket(uri: str, settings) -> None:
+    # Bucket-only gate (configured primary + explicit NPA_AGENT_S3_BUCKETS).
+    # Prefix is intentionally not enforced: runs live under multiple category
+    # roots inside the same configured bucket.
+    ok, reason = s3_uri_in_configured_buckets(
+        uri,
+        primary=str((settings or {{}}).get("bucket") or ""),
+        extras_csv=str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
+        prefix="",
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason or "s3_uri bucket is not the configured agent bucket")
 
 
 def _chat_memory_tenant() -> str:
@@ -2995,12 +3164,23 @@ def _normalize_chat_history(raw: object) -> list[dict]:
     return normalize_messages_for_storage(raw)
 
 
+_PLACEHOLDER_CHAT_TITLES = frozenset({{"", "new chat", "new chat session"}})
+
+
+def _is_placeholder_chat_title(title: str) -> bool:
+    return str(title or "").strip().lower() in _PLACEHOLDER_CHAT_TITLES
+
+
 def _normalize_chat_session(session_id: str, payload: object | None = None) -> dict:
     now = _now_iso()
     data = payload if isinstance(payload, dict) else {{}}
     resolved_id = _sanitize_chat_session_id(str(data.get("id") or session_id or "default"))
     history = _normalize_chat_history(data.get("chat_history") or data.get("messages") or [])
-    title = str(data.get("title") or "").strip() or _chat_session_title(history, "New chat")
+    raw_title = str(data.get("title") or "").strip()
+    if _is_placeholder_chat_title(raw_title):
+        title = _chat_session_title(history, "New chat")
+    else:
+        title = raw_title or _chat_session_title(history, "New chat")
     created_at = str(data.get("created_at") or now)
     updated_at = str(data.get("updated_at") or now)
     return {{
@@ -3094,7 +3274,8 @@ def _save_chat_session(state: dict, session: dict, *, active: bool = True) -> di
     return normalized
 
 
-def _get_chat_session(state: dict, session_id: str = "") -> dict:
+def _lookup_chat_session(state: dict, session_id: str = "") -> dict | None:
+    # Read-only lookup: never fabricate a placeholder session.
     sessions = _local_chat_sessions(state)
     target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
     remote = _load_chat_session_from_s3(target)
@@ -3104,10 +3285,53 @@ def _get_chat_session(state: dict, session_id: str = "") -> dict:
         return remote
     if target in sessions:
         return sessions[target]
+    return None
+
+
+def _get_chat_session(state: dict, session_id: str = "") -> dict:
+    sessions = _local_chat_sessions(state)
+    target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
+    found = _lookup_chat_session(state, target)
+    if found is not None:
+        return found
     session = _normalize_chat_session(target, {{"id": target, "title": "New chat", "chat_history": []}})
     sessions[target] = session
     state["chat_sessions"] = sessions
     return session
+
+
+def _append_chat_turn(session_id: str, history_base: list, assistant_msg: dict | None = None, *, title_hint: str = "") -> dict:
+    # Re-read session under the state lock and append — never overwrite from a
+    # stale snapshot taken before a long LLM/tool call (B2).
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        session = _get_chat_session(state, session_id)
+        current = normalize_messages_for_storage(session.get("chat_history") or [])
+        incoming = normalize_messages_for_storage(history_base or [])
+        merged = list(current)
+        if incoming:
+            last_in = incoming[-1]
+            tip_match = (
+                merged
+                and merged[-1].get("role") == last_in.get("role")
+                and merged[-1].get("content") == last_in.get("content")
+            )
+            if not tip_match:
+                if len(incoming) > len(merged):
+                    merged = list(incoming)
+                elif last_in not in merged:
+                    merged.append(last_in)
+        if assistant_msg and isinstance(assistant_msg, dict) and str(assistant_msg.get("content") or "").strip():
+            merged.append({{"role": "assistant", "content": str(assistant_msg.get("content"))}})
+        merged = merged[-80:]
+        prior_title = str(session.get("title") or "")
+        if _is_placeholder_chat_title(prior_title) or not prior_title:
+            title = _chat_session_title(merged, title_hint or "New chat")
+        else:
+            title = prior_title
+        session.update({{"id": session_id, "title": title, "chat_history": merged}})
+        # _save_chat_session → _save_state re-acquires RLock (safe).
+        return _save_chat_session(state, session, active=True)
 
 
 def _list_chat_sessions(state: dict) -> list[dict]:
@@ -3278,6 +3502,48 @@ def _sim2real_pipeline_camera_label(requested: str = "") -> str:
     return value if value and value != "workspace" else "heldout-sim"
 
 
+def _copy_artifact_preview(local_path: Path, key: str) -> str:
+    filename = _artifact_filename(key)
+    target = RECORDINGS_DIR / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if local_path.resolve() != target.resolve():
+        shutil.copy2(local_path, target)
+    return _artifact_preview_url(filename)
+
+
+def _publish_foxglove_recording(local_path: Path, key: str) -> str:
+    return publish_recording(
+        local_path, key, data_dir=FOXGLOVE_DATA_DIR, keep=FOXGLOVE_KEEP_PUBLISHED
+    )
+
+
+def _self_hosted_viewer_healthy() -> bool:
+    # The OSS (Lichtblick) sidecar is best-effort on the VM; probe it rather than
+    # assuming, so the Foxglove pane only offers a backend that can actually render.
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{{LICHTBLICK_WEB_PORT}}/", timeout=2
+        ) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _foxglove_config(state: dict | None = None) -> dict:
+    session = state if isinstance(state, dict) else _load_state()
+    sim_viz = session.get("sim_viz") if isinstance(session.get("sim_viz"), dict) else {{}}
+    env, origin = dict(os.environ), _agent_public_origin()
+    return resolve_foxglove_config(
+        env,
+        assets_dir=FOXGLOVE_SDK_DIR,
+        origin=origin,
+        sim_viz=sim_viz,
+        self_hosted_ready=_self_hosted_viewer_healthy(),
+    )
+
+
 def _apply_loaded_artifact(
     *,
     state: dict,
@@ -3293,8 +3559,19 @@ def _apply_loaded_artifact(
     if isinstance(current, dict):
         sim_viz.update(current)
     camera = str(sim_viz.get("camera") or "workspace")
-    if render == "rerun" and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key):
+    # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
+    # guards that exact expression as source text.
+    if (
+        render == "rerun"
+        and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
+        and not is_neural_reconstruction_recording(key)
+    ):
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_neural_reconstruction_recording(key):
+        # Do not inherit the previous run's label: the agent keeps sim_viz state
+        # across loads, so a NuRec run following a Sim2Real one would report
+        # camera="heldout-sim" while its own viewer note says the opposite.
+        camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
     sim_viz.update(
         {{
             "run_id": run_id,
@@ -3325,6 +3602,9 @@ def _apply_loaded_artifact(
                 "captions/ (Token Factory VLM pseudo-labels). Scrub the frame "
                 "timeline to compare original vs augmented."
             )
+        elif is_neural_reconstruction_recording(key):
+            sim_viz["preview_entity"] = NEURAL_RECONSTRUCTION_PREVIEW_ENTITY
+            sim_viz["visualization_note"] = NEURAL_RECONSTRUCTION_VIEWER_NOTE
         elif _is_sim2real_pipeline_recording(key):
             sim_viz["preview_entity"] = "camera"
             sim_viz["visualization_note"] = (
@@ -3332,19 +3612,54 @@ def _apply_loaded_artifact(
                 "held-out simulation camera stream; any 3D Franka/world entities are "
                 "reference proxy context, not custom hardware footage."
             )
+    elif render == "mcap":
+        # One recording, two embedded viewers. Lichtblick (OSS, in-page) streams
+        # the same-origin copy; the official Foxglove app runs cross-origin and
+        # needs the CORS + byte-range copy. Publish both so either backend works.
+        # Only real .mcap files may take the Lichtblick slot (it is a fixed
+        # sim2real.mcap path); bags/db3/ulog are published on the Foxglove path,
+        # which keeps their real extension so the viewer picks the right reader.
+        is_mcap = key.lower().endswith(".mcap")
+        published = _publish_foxglove_recording(local_path, key)
+        sim_viz["rrd_uri"] = ""
+        sim_viz["rerun_iframe_url"] = "/rerun/"
+        sim_viz["rerun_ready"] = False
+        sim_viz["preview_entity"] = ""
+        sim_viz["foxglove_url"] = published
+        sim_viz["foxglove_ready"] = bool(published)
+        sim_viz["mcap_updated_at"] = now
+        if is_mcap:
+            _publish_mcap_recording(local_path)
+            mcap_url = _lichtblick_recording_url()
+            sim_viz["mcap_uri"] = f"file://{{MCAP_RECORDING_PATH}}"
+            sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+            sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
+            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
+            sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
+            sim_viz["visualization_note"] = (
+                "MCAP recording loaded: it plays in the embedded Lichtblick "
+                "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
+                "reward/advantage signals — and the same file is published on a CORS + "
+                "byte-range path for the official Foxglove app."
+            )
+        else:
+            sim_viz["lichtblick_ready"] = False
+            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
+            sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
+            sim_viz["visualization_note"] = (
+                f"Recording loaded ({{Path(key).suffix.lower() or 'unknown'}}). Foxglove-family "
+                "viewers read it directly; the Lichtblick slot is reserved for .mcap."
+            )
     else:
-        filename = _artifact_filename(key)
-        target = RECORDINGS_DIR / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if local_path.resolve() != target.resolve():
-            shutil.copy2(local_path, target)
-        preview_url = _artifact_preview_url(filename)
+        preview_url = _copy_artifact_preview(local_path, key)
         sim_viz["artifact_preview_url"] = preview_url
         sim_viz["artifact_download_url"] = preview_url
         sim_viz["rrd_uri"] = ""
         sim_viz["rerun_iframe_url"] = "/rerun/"
         sim_viz["rerun_ready"] = False
         sim_viz["preview_entity"] = ""
+        sim_viz["foxglove_ready"] = False
+        sim_viz["foxglove_url"] = ""
         sim_viz["visualization_note"] = (
             f"Loaded {{render}} artifact preview. Use the Video/Image/Data viewer tabs."
         )
@@ -3515,8 +3830,10 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     active = _wire_active_sim2real_recording(state, camera=camera)
     if active is not None:
         return active
-    selection = _stock_franka_selection()
-    state["selection"] = selection
+    # Preserve operator-posted custom URIs; only fill stock defaults when empty.
+    current = state.get("selection") if isinstance(state.get("selection"), dict) else {{}}
+    if not current:
+        state["selection"] = _stock_franka_selection()
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
@@ -3708,6 +4025,9 @@ def _agent_system_prompt() -> str:
         "- GET /api/artifacts/run/{{run_id}} — list every object for a run with render hints",
         "- POST /api/sim-viz/load-artifact — load explicit s3_uri (or run_id+key) into viewer/download",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
+        "- GET /api/foxglove/config, /api/foxglove/status — embedded Foxglove viewer config + readiness",
+        "- POST /api/foxglove/load-artifact | /api/foxglove/convert-run | /api/foxglove/live —"
+        " open an .mcap/.bag recording, pack the active run's artifacts into MCAP, or attach a live ws:// source",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
@@ -3856,8 +4176,6 @@ def _chat_with_resilience(
 
 {_AGENT_VISUAL_FEEDBACK_EMBED}
 
-{_AGENT_RRD_PROXY_EMBED}
-
 {_AGENT_STAGES_EMBED}
 
 {_AGENT_PROVENANCE_EMBED}
@@ -3938,11 +4256,9 @@ def _sim_viz_runs(state: dict) -> list[dict]:
     )
 
 def _resolve_workflow_yaml(payload: dict) -> str:
-    yaml_text = str(payload.get("yaml") or "").strip()
-    if yaml_text:
-        return yaml_text
-    draft = _workflow_draft_from_state(_load_state())
-    return str(draft.get("yaml") or "").strip()
+    # Do not fall back to the shared stored draft — empty/omitted yaml must 400
+    # so validate/plan cannot leak another tab's draft.
+    return str(payload.get("yaml") or "").strip()
 
 def _agent_npa_ready() -> tuple[bool, str]:
     if not NPA_CLI.exists():
@@ -4116,15 +4432,23 @@ def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
         raise HTTPException(status_code=409, detail=reason)
-    proc = subprocess.run(
-        [str(NPA_CLI), *args],
-        cwd=str(NPA_SOURCE_ROOT),
-        env=_agent_command_env(),
-        text=True,
-        capture_output=True,
-        timeout=timeout_s,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [str(NPA_CLI), *args],
+            cwd=str(NPA_SOURCE_ROOT),
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"NPA command timed out after {{timeout_s}}s: {{args}}",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail=f"NPA command failed to start: {{exc}}") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         raise HTTPException(status_code=502, detail=detail or f"NPA command failed: {{args}}")
@@ -4529,19 +4853,15 @@ def _write_soperator_temp_spec(spec_text: str) -> Path:
 
 
 def _soperator_spec_text_from_payload(body: dict) -> str:
+    # Network-reachable: never accept local file paths (LFI). Specs must be
+    # supplied inline as YAML text or a mapping.
     spec_text = str(body.get("spec_yaml") or body.get("yaml") or "").strip()
     if spec_text:
         return spec_text
     spec = body.get("spec")
     if isinstance(spec, dict):
         return yaml.safe_dump(spec, sort_keys=False)
-    spec_path = str(body.get("spec_path") or "").strip()
-    if spec_path:
-        path = Path(spec_path).expanduser()
-        if not path.is_file():
-            raise HTTPException(status_code=400, detail=f"soperator spec file not found: {{spec_path}}")
-        return path.read_text(encoding="utf-8")
-    raise HTTPException(status_code=400, detail="Provide spec_yaml, yaml, spec, or spec_path")
+    raise HTTPException(status_code=400, detail="Provide spec_yaml, yaml, or spec")
 
 
 def _soperator_validate_payload(body: dict) -> dict:
@@ -4666,7 +4986,7 @@ _INTENT_SKILLS = {{
     "live_infra_loop": ("submit-workflow", "gpu-selection"),
     "mk8s_provision": ("nebius-infra", "submit-workflow"),
     "soperator": ("soperator", "nebius-infra"),
-    "cosmos3": ("cosmos3-setup",),
+    "cosmos3": ("cosmos3-setup", "cosmos3-npa-workflow"),
     "start_sim2real": ("sim2real-operate", "sim2real-engine"),
     "sim2real_status": ("sim2real-operate",),
     "watch_sim": ("sim2real-operate",),
@@ -4699,8 +5019,8 @@ def _load_skill_index() -> tuple[dict[str, str], Path]:
         skills = payload.get("skills")
         if not isinstance(skills, list):
             continue
-        root_name = str(payload.get("root") or "skills").strip() or "skills"
-        root = candidate.parent / root_name
+        # Paths are repo-root-relative: base on the dir CONTAINING skills/.
+        root = candidate.parent.parent
         index: dict[str, str] = {{}}
         for entry in skills:
             if not isinstance(entry, dict):
@@ -4745,6 +5065,7 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
         names.append("find-artifacts")
     if ("workflow" in lowered or "yaml" in lowered) and "author-npa-workflow" not in names:
         names.append("author-npa-workflow")
+    names[:0] = [n for n in skill_names_for_keywords(lowered) if n not in names]
     if (
         "npa-visual-feedback" in lowered
         or "describe this" in lowered
@@ -4800,7 +5121,7 @@ def _maybe_toolground_chat_reply(
         return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
     if intent == "find_artifacts":
         mentioned_run = ""
-        match = re.search(r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b", str(user_text or ""))
+        match = re.search(r"\\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\\b", str(user_text or ""))
         if match:
             mentioned_run = match.group(1)
         try:
@@ -4896,6 +5217,17 @@ def _maybe_toolground_chat_reply(
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    elif intent == "foxglove_viewer":
+        # Ground the reply on the same payload the viewer pane mounts from.
+        try:
+            state["foxglove"] = foxglove_status_payload(
+                _foxglove_config(state),
+                state.get("sim_viz") if isinstance(state.get("sim_viz"), dict) else {{}},
+            )
+            apis_used.append("foxglove/config")
+            apis_used.append("foxglove/status")
+        except Exception:
+            state["foxglove"] = {{}}
     elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
@@ -4991,7 +5323,15 @@ def _maybe_toolground_chat_reply(
                 " chat returns YAML only after both validation and planning succeed."
             )
             return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "validation": validation, "plan": plan}}, intent
-        reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
+        drop_note = str(draft.get("dropped_stages_note") or "").strip()
+        reply = format_workflow_chat_reply(
+            yaml_text,
+            validation,
+            template=template,
+            plan=plan,
+            runnable=runnable,
+            dropped_stages_note=drop_note,
+        )
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
     if intent in {{
         "onboard_solution",
@@ -5053,16 +5393,16 @@ def _sim2real_stage_count_from_report(state: dict[str, Any]) -> int:
 
 def _maybe_stage_count_numeric_reply(user_text: str, state: dict[str, Any]) -> str | None:
     lowered = str(user_text or "").lower()
-    if not re.search(r"\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|pipeline|workflow)\b", lowered):
+    if not re.search(r"\\b(?:sim\\s*[- ]?2\\s*[- ]?real|sim2real|pipeline|workflow)\\b", lowered):
         return None
-    if not re.search(r"\b(?:stage|stages|step|steps)\b", lowered):
+    if not re.search(r"\\b(?:stage|stages|step|steps)\\b", lowered):
         return None
-    if not re.search(r"\b(?:count|number|how many)\b", lowered):
+    if not re.search(r"\\b(?:count|number|how many)\\b", lowered):
         return None
     value = _sim2real_stage_count_from_report(state)
     if value <= 0:
         return None
-    match = re.search(r"(?:count|number|stages?|steps?)\s*(?:-|minus)\s*(\d+)", lowered)
+    match = re.search(r"(?:count|number|stages?|steps?)\\s*(?:-|minus)\\s*(\\d+)", lowered)
     if match:
         value -= int(match.group(1))
     return str(value)
@@ -5148,7 +5488,7 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     if numeric_reply is not None:
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": numeric_reply,
             "reasoning": None,
             "grounded": True,
@@ -5160,7 +5500,7 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     skill_names, _ = _resolve_skill_context(user_text=last_user, intent=intent)
     payload = {{
         "ok": True,
-        "model": model,
+        "model": "grounded",
         "reply": tool_reply,
         "reasoning": None,
         "grounded": True,
@@ -5205,7 +5545,14 @@ def chat(payload: dict):
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
-    model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    # Normalize UI "Auto" / explicit "auto" to empty so cost-tier routing runs.
+    _raw_model = str(payload.get("model") or "").strip()
+    if _raw_model.lower() in {{"", "auto"}}:
+        explicit_model_override = ""
+        model = ""
+    else:
+        explicit_model_override = _raw_model
+        model = _raw_model
     visual_context = payload.get("visual_context") if isinstance(payload.get("visual_context"), dict) else {{}}
     visual_kind = normalize_visual_kind(
         str(visual_context.get("kind") or visual_context.get("visual_kind") or "")
@@ -5257,7 +5604,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": origin_reply,
             "reasoning": None,
             "grounded": True,
@@ -5274,7 +5621,7 @@ def chat(payload: dict):
         }}
     # Small Sim2Real chat shortcut — persist the turn (do not return before session save).
     if (not visual_turn) and re.search(
-        r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
+        r"\\b(?:run|start|submit|launch)\\b.{{0,80}}\\b(?:small|simple|tiny|minimal)\\b.{{0,80}}\\bsim(?:\\s*[- ]?2\\s*[- ]?real|2real)\\b",
         last_content,
         re.IGNORECASE,
     ):
@@ -5302,7 +5649,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": reply,
             "reasoning": None,
             "grounded": True,
@@ -5333,7 +5680,7 @@ def chat(payload: dict):
         _save_state(state)
         return {{
             "ok": True,
-            "model": model,
+            "model": "grounded",
             "reply": meta_reply,
             "reasoning": None,
             "grounded": True,
@@ -5443,7 +5790,7 @@ def chat(payload: dict):
             _save_state(state)
             response = {{
                 "ok": bool(action_result.get("ok")),
-                "model": model,
+                "model": "grounded",
                 "reply": action_reply,
                 "reasoning": None,
                 "grounded": False,
@@ -5484,7 +5831,7 @@ def chat(payload: dict):
             _save_state(state)
             return {{
                 "ok": True,
-                "model": model,
+                "model": "grounded",
                 "reply": sem_reply,
                 "reasoning": None,
                 "grounded": grounded_zero,
@@ -5524,7 +5871,7 @@ def chat(payload: dict):
             _save_state(state)
             return {{
                 "ok": True,
-                "model": model,
+                "model": "grounded",
                 "reply": reply,
                 "reasoning": None,
                 "grounded": True,
@@ -5545,7 +5892,7 @@ def chat(payload: dict):
     tier = classify_tier(last_user, intent=intent, messages=llm_messages)
     if visual_turn and tier != TIER_VISION:
         tier = TIER_REASONING
-    explicit_model = str(payload.get("model") or "").strip()
+    explicit_model = explicit_model_override
     budget_ok, _ = enforce_input_budget(last_user)
     skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
     if visual_turn and "agent-visual-feedback" not in skill_names:
@@ -5626,19 +5973,15 @@ def chat(payload: dict):
     if not reply and reasoning:
         reply = reasoning
         reasoning = None
-    state = _load_state()
-    session = _get_chat_session(state, session_id)
-    history = list(merged_history)
-    if reply:
-        history.append({{"role": "assistant", "content": reply}})
-    session.update(
-        {{
-            "id": session_id,
-            "title": str(session.get("title") or _chat_session_title(history)),
-            "chat_history": history[-80:],
-        }}
+    if not str(reply or "").strip():
+        reply = "Model returned no content."
+        reasoning = None
+    # Re-read session history under the lock and append (do not clobber concurrent turns).
+    session = _append_chat_turn(
+        session_id,
+        merged_history,
+        {{"role": "assistant", "content": reply}},
     )
-    session = _save_chat_session(state, session, active=True)
     return {{
         "ok": True,
         "model": selected_model,
@@ -6514,7 +6857,9 @@ def create_chat_session(payload: dict | None = None):
 @app.get("/chat/sessions/{{session_id}}")
 def get_chat_session(session_id: str):
     state = _load_state()
-    session = _get_chat_session(state, session_id)
+    session = _lookup_chat_session(state, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"chat session not found: {{session_id}}")
     return {{"ok": True, "session": session}}
 
 
@@ -6635,12 +6980,23 @@ def sim_viz_status(run_id: str = ""):
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # activity_at is when this run was last loaded/visualized in the agent
+            # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
+            # separately so the client never relabels a days-old run as recent just
+            # because it was opened today. Real recency (last_modified) is supplied
+            # by S3 artifact discovery; left blank here so viewer activity cannot
+            # override it in the merged, date-sorted run list.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # When the run started (its submit time). Used for the displayed date;
+            # S3 discovery supplies started_at for runs it can see, and the client
+            # keeps the earliest of the two.
+            "started_at": str(item.get("submitted_at") or "").strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
@@ -6708,12 +7064,17 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
-            "last_modified": str(
+            # See sim_viz_status: activity_at is viewer-load time, not artifact
+            # recency; last_modified stays blank so S3 discovery owns the date.
+            "activity_at": str(
                 item.get("rrd_updated_at")
                 or item.get("updated_at")
                 or item.get("submitted_at")
                 or ""
             ).strip(),
+            # Run start (submit time) for the displayed date; see sim_viz_status.
+            "started_at": str(item.get("submitted_at") or "").strip(),
+            "last_modified": "",
             "stage": str(item.get("stage") or "").strip(),
         }}
         for item in _sim_viz_runs(state)
@@ -6747,6 +7108,7 @@ def sim_viz_load_run(payload: dict | None = None):
     # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
     if requested_rrd_uri:
         s3, _settings = _agent_s3_client()
+        _assert_s3_uri_in_agent_bucket(requested_rrd_uri, _settings)
         bucket, key = parse_s3_uri(requested_rrd_uri)
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
@@ -6817,12 +7179,24 @@ def sim_viz_load_run(payload: dict | None = None):
     if not isinstance(runs, dict):
         runs = {{}}
     selected = runs.get(run_id)
-    if not isinstance(selected, dict):
-        selected = {{}}
+    sim2real_runs = state.get("sim2real_runs") if isinstance(state.get("sim2real_runs"), dict) else {{}}
+    # Never invent phantom run ids — require a known sim-viz or sim2real run.
+    if not isinstance(selected, dict) or not selected:
+        if run_id not in sim2real_runs:
+            raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
+        selected = {{"run_id": run_id}}
+    else:
+        selected = dict(selected)
     rrd_uri = str(body.get("rrd_uri") or "").strip()
     if rrd_uri:
+        if rrd_uri.startswith("file://") and not file_uri_path_allowed(
+            rrd_uri, allowed_paths=(str(RECORDINGS_DIR), str(RRD_PATH))
+        ):
+            raise HTTPException(status_code=400, detail="file:// rrd_uri is outside the recordings allowlist")
+        if rrd_uri.startswith("s3://"):
+            _assert_s3_uri_in_agent_bucket(rrd_uri, _agent_s3_settings())
         selected["rrd_uri"] = rrd_uri
-    if camera:
+    if requested_camera:
         selected["camera"] = camera
     stage = str(body.get("stage") or "").strip()
     if stage:
@@ -6830,8 +7204,6 @@ def sim_viz_load_run(payload: dict | None = None):
     mode = str(body.get("mode") or "").strip().lower()
     if mode in {{"static", "live"}}:
         selected["mode"] = mode
-    if not selected:
-        raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
     selected["run_id"] = run_id
     selected["rrd_updated_at"] = _now_iso()
     state["sim_viz"] = selected
@@ -7136,11 +7508,9 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
         s3, settings = _agent_s3_client()
         if requested_uri:
             obj_bucket, obj_key = parse_s3_uri(requested_uri)
-            # Restrict caller-supplied URIs to the agent's accessible bucket set
-            # (the same buckets discovery serves from) so this cannot be used to
-            # exfiltrate arbitrary objects the agent's S3 creds happen to read.
-            if obj_bucket not in _agent_s3_buckets(s3, settings):
-                raise HTTPException(status_code=403, detail="bucket not in the accessible set")
+            # Restrict caller-supplied URIs to the configured agent bucket(s) only
+            # (never ListBuckets / every credential-readable bucket).
+            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
             uri = requested_uri
         else:
             obj_key = _safe_artifact_key(requested_key)
@@ -7184,10 +7554,8 @@ def sim_viz_load_artifact(payload: dict | None = None):
         s3, settings = _agent_s3_client()
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
-            # Same accessible-bucket allow-list as /artifacts/download: never load
-            # an arbitrary object outside the buckets the agent already serves.
-            if bucket not in _agent_s3_buckets(s3, settings):
-                raise HTTPException(status_code=403, detail="bucket not in the accessible set")
+            # Configured agent bucket only — blocks arbitrary-bucket exfil.
+            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
             run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri
@@ -7227,6 +7595,31 @@ def sim_viz_load_artifact(payload: dict | None = None):
         raise
     except Exception as exc:
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+
+
+def _foxglove_convert_run(**kwargs):
+    from npa.sdk.workbench.foxglove import convert_run
+
+    return convert_run(**kwargs)
+
+
+register_foxglove_routes(
+    app,
+    FoxgloveDeps(
+        load_state=_load_state,
+        save_state=_save_state,
+        record_run=_record_sim_viz_run,
+        foxglove_config=_foxglove_config,
+        load_artifact=sim_viz_load_artifact,
+        convert_run=_foxglove_convert_run,
+        now_iso=_now_iso,
+        validate_run_id=validate_run_id,
+        data_dir=FOXGLOVE_DATA_DIR,
+        runs_dir=Path("/opt/npa-agent/runs"),
+        keep_published=FOXGLOVE_KEEP_PUBLISHED,
+    ),
+    HTTPException,
+)
 
 
 @app.post("/sim-viz/load-franka-demo")
@@ -7275,18 +7668,21 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
     sim_viz = _sim_viz_for_run(state, run_id=run_id)
     uri = str(sim_viz.get("rrd_uri") or "").strip()
     if uri.startswith("file://"):
-        file_path = Path(uri[len("file://"):])
+        if not file_uri_path_allowed(uri, allowed_paths=(str(RECORDINGS_DIR), str(RRD_PATH))):
+            raise HTTPException(status_code=400, detail="Refusing to serve file:// rrd_uri outside recordings allowlist")
+        file_path = Path(uri[len("file://"):]).expanduser().resolve()
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     if uri.startswith("http://") or uri.startswith("https://"):
-        # Server-side fetch of session rrd_uri — hardened allowlist + size cap
-        # (see embedded agent_rrd_proxy.rrd_proxy_uri_allowed / MAX_RRD_PROXY_BYTES).
-        if not rrd_proxy_uri_allowed(uri):
+        # Resolve DNS once and fetch the vetted IP (DNS-rebinding TOCTOU guard).
+        allowed, fetch_url, host_header = resolve_rrd_proxy_target(uri)
+        if not allowed:
             raise HTTPException(status_code=400, detail="Refusing to proxy disallowed rrd_uri host")
         try:
             chunks: list[bytes] = []
             total = 0
-            with httpx.stream("GET", uri, timeout=20.0) as proxied:
+            headers = {{"Host": host_header}} if host_header else {{}}
+            with httpx.stream("GET", fetch_url, timeout=20.0, headers=headers) as proxied:
                 proxied.raise_for_status()
                 for chunk in proxied.iter_bytes(1024 * 1024):
                     total += len(chunk)
@@ -7309,7 +7705,11 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
 def sim_viz_rrd(run_id: str = ""):
     return _sim_viz_rrd_file_response(run_id=run_id)
 
-@app.get("/sim-viz/rrd-blob")
+# HEAD as well as GET: the UI probes this endpoint with HEAD before choosing the
+# viewer URL, and a GET-only route answers 405, logging a console error on every
+# page load. The probe failure is caught and ignored, so this is cosmetic -- but
+# an error that fires every load trains operators to ignore the console.
+@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])
 def sim_viz_rrd_blob(run_id: str = ""):
     # Authenticated .rrd bytes for parent-page blob URL (Rerun wasm cannot send basic auth).
     return _sim_viz_rrd_file_response(run_id=run_id)
@@ -7421,7 +7821,9 @@ def set_sim_assets_selection(payload: dict):
     if preset == "franka":
         cam = str((state.get("camera_selection") or ["workspace"])[0])
         viz = _wire_franka_demo(state, camera=cam)
-        return {{"ok": True, "selection": selection, "sim_viz": viz}}
+        # Return the persisted selection (post-wire) so response matches state.
+        persisted = state.get("selection") if isinstance(state.get("selection"), dict) else selection
+        return {{"ok": True, "selection": persisted, "sim_viz": viz}}
     _save_state(state)
     return {{"ok": True, "selection": selection}}
 
@@ -7506,12 +7908,33 @@ def provision_infra(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     project = _agent_project_alias(str(body.get("project") or ""))
     cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
-    dry_run = bool(body.get("dry_run", False))
+    # Default dry_run=True — real Terraform apply requires an explicit confirm token.
+    dry_run = bool(body.get("dry_run", True))
     validate = bool(body.get("validate", True))
     skip_s3 = bool(body.get("skip_s3", True))
+    if not dry_run:
+        confirm_token = str(body.get("confirm_token") or "").strip()
+        digest = "provision_infra:" + project + ":" + cluster_name
+        if not confirm_token:
+            token = _issue_agent_confirm_token(
+                {{"action": "provision_infra", "project": project, "cluster_name": cluster_name}},
+                digest,
+            )
+            return {{
+                "ok": False,
+                "needs_confirmation": True,
+                "confirm_token": token,
+                "proposed_action": {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "dry_run": False}},
+                "error": "Real infra provision requires confirm_token",
+                "project": project,
+                "cluster_name": cluster_name,
+            }}
+        session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+        if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
+            raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
     result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
     status = _agent_k8s_backends(project)
-    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status}}
+    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status, "dry_run": dry_run}}
 
 
 @app.post("/infra/soperator/validate")
@@ -7629,7 +8052,8 @@ def submit_npa_workflow(payload: dict):
         raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
     project = _agent_project_alias(str(body.get("project") or ""))
     cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
-    allow_provision = bool(body.get("allow_provision", True))
+    # Submit is plan-only by default: never auto-provision real infra.
+    allow_provision = bool(body.get("allow_provision", False))
     dry_run = bool(body.get("dry_run", False))
     validate_infra = bool(body.get("validate_infra", True))
     infra_before = _agent_k8s_backends(project)
@@ -7637,6 +8061,28 @@ def submit_npa_workflow(payload: dict):
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
     provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
     if allow_provision and (dry_run or not infra_before.get("has_infra")):
+        # Real (non-dry-run) provision requires the confirm-token gate.
+        if not dry_run and not infra_before.get("has_infra"):
+            confirm_token = str(body.get("confirm_token") or "").strip()
+            digest = "provision_infra:" + project + ":" + cluster_name
+            if not confirm_token:
+                token = _issue_agent_confirm_token(
+                    {{"action": "provision_infra", "project": project, "cluster_name": cluster_name, "via": "workflows/submit"}},
+                    digest,
+                )
+                blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+                blocked["needs_confirmation"] = True
+                blocked["confirm_token"] = token
+                blocked["proposed_action"] = {{
+                    "action": "provision_infra",
+                    "project": project,
+                    "cluster_name": cluster_name,
+                    "dry_run": False,
+                }}
+                return blocked
+            session_token, confirm_digest, _pending = _consume_agent_confirm_token()
+            if not session_token or confirm_token != session_token or (confirm_digest and confirm_digest != digest):
+                raise HTTPException(status_code=403, detail="invalid or expired confirm_token for provision")
         provision = _provision_agent_infra(
             project,
             cluster_name,
@@ -7768,18 +8214,44 @@ def submit_sim2real(payload: dict | None = None):
     script = Path("/opt/npa-agent/run-live-sim2real.sh")
     live_submit = None
     if script.is_file():
-        proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
-        if proc.returncode == 0:
-            try:
-                live_submit = json.loads((proc.stdout or "{{}}").strip().splitlines()[-1])
-                state["latest_submit"]["submit_mode"] = "live-k8s"
-                state["latest_submit"]["live_submit"] = live_submit
-                _save_state(state)
-                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
-            except Exception:
-                live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
+        try:
+            proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
+        except subprocess.TimeoutExpired as exc:
+            live_submit = {{"ok": False, "error": f"live sim2real submit timed out after 30s: {{exc}}"}}
+            state["latest_submit"]["live_submit"] = live_submit
+            details["result"] = "failed"
+            details["logs"].append({{"timestamp": _now_iso(), "level": "error", "message": live_submit["error"]}})
+            runs_detail[run_id] = details
+            state["sim2real_runs"] = runs_detail
+            _save_state(state)
+            return JSONResponse(
+                status_code=502,
+                content={{
+                    "ok": False,
+                    "error": live_submit["error"],
+                    "run_id": run_id,
+                    "selection": selection,
+                    "env": env_block,
+                    "run": details,
+                    "sim_viz": sim_viz,
+                    "submit_mode": "live-k8s-timeout",
+                    "live_submit": live_submit,
+                }},
+            )
+        except OSError as exc:
+            live_submit = {{"ok": False, "error": f"live sim2real submit failed to start: {{exc}}"}}
         else:
-            live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
+            if proc.returncode == 0:
+                try:
+                    live_submit = json.loads((proc.stdout or "{{}}").strip().splitlines()[-1])
+                    state["latest_submit"]["submit_mode"] = "live-k8s"
+                    state["latest_submit"]["live_submit"] = live_submit
+                    _save_state(state)
+                    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
+                except Exception:
+                    live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
+            else:
+                live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
     _save_state(state)
     thread = threading.Thread(
         target=_run_sim2real_pipeline_background,
@@ -8050,7 +8522,7 @@ HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
 sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
-sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server]"
+sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server,foxglove]"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
@@ -8063,6 +8535,7 @@ EnvironmentFile=-/opt/npa-agent/llm.env
 EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
 EnvironmentFile=-/opt/npa-agent/public.env
+EnvironmentFile=-/opt/npa-agent/foxglove.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
@@ -8078,6 +8551,30 @@ Type=simple
 ExecStart=/opt/npa-agent/venv/bin/rerun /opt/npa-agent/sim2real.rrd --serve-web --web-viewer --bind 0.0.0.0 --web-viewer-port {rerun_port} --port 9876
 WorkingDirectory=/opt/npa-agent
 Restart=always
+StartLimitIntervalSec=0
+[Install]
+WantedBy=multi-user.target
+UNIT
+# Lichtblick (Foxglove-compatible MCAP viewer) sidecar — best-effort: the agent UI
+# embeds it at /lichtblick/ and co-serves the run MCAP at /lichtblick/recordings/.
+# Requires docker + the npa-lichtblick image on the VM; degrades gracefully if absent.
+# The sidecar serves only the viewer bundle: the MCAP itself is served by nginx from
+# the recordings alias below (so it needs no mount into the container), and the file
+# is pre-created so that location returns an empty 200 rather than 404 before a run
+# is loaded.
+sudo mkdir -p /opt/npa-agent/recordings
+sudo touch /opt/npa-agent/recordings/sim2real.mcap
+cat <<'UNIT' | sudo tee /etc/systemd/system/npa-lichtblick.service >/dev/null
+[Unit]
+Description=NPA Lichtblick MCAP viewer sidecar
+After=network.target docker.service
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f npa-lichtblick
+ExecStart=/usr/bin/docker run --rm --name npa-lichtblick -p 127.0.0.1:{lichtblick_port}:8080 {lichtblick_image}
+ExecStop=-/usr/bin/docker rm -f npa-lichtblick
+Restart=always
+RestartSec=10
 StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
@@ -8099,6 +8596,24 @@ sudo systemctl reset-failed npa-agent-backend npa-rerun nginx || true
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
+# Region-agnostic Lichtblick image acquisition: pull from whichever mirror
+# registry (eu-north1 or us-central1) is reachable and retag to the sidecar's
+# image, so a fresh VM in any region works without a locally-built image. Falls
+# back to any local image. Best-effort — never blocks the deploy.
+for lb_cand in {lichtblick_pull_candidates}; do
+  lb_host="${{lb_cand%%/*}}"
+  if command -v nebius >/dev/null 2>&1; then
+    lb_tok="$(nebius iam get-access-token 2>/dev/null || true)"
+    [ -n "$lb_tok" ] && printf '%s' "$lb_tok" | sudo docker login "$lb_host" -u iam --password-stdin >/dev/null 2>&1 || true
+  fi
+  if sudo docker pull "$lb_cand" >/dev/null 2>&1; then
+    sudo docker tag "$lb_cand" {lichtblick_image} >/dev/null 2>&1 || true
+    echo "npa-lichtblick image acquired from $lb_host"
+    break
+  fi
+done
+# Best-effort Lichtblick sidecar (never blocks deploy if docker/image are absent).
+sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick sidecar not started (docker/image unavailable; /lichtblick/ embed degrades gracefully)"
 """
     setup_script = (
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
@@ -8109,11 +8624,15 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_MEMORY_SHIP, agent_memory_ship_source)
         .replace(_AGENT_RETRIEVAL_SHIP, agent_retrieval_ship_source)
         .replace(_AGENT_TRACE_SHIP, agent_trace_ship_source)
+        .replace(_AGENT_FOXGLOVE_SHIP, agent_foxglove_ship_source)
+        .replace(_AGENT_FOXGLOVE_ROUTES_SHIP, agent_foxglove_routes_ship_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
+        .replace(_AGENT_STATE_EMBED, agent_state_source)
+        .replace(_AGENT_S3_GUARD_EMBED, agent_s3_guard_source)
         .replace(_AGENT_STAGES_EMBED, agent_stages_source)
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
@@ -8261,6 +8780,24 @@ def deploy_cmd(
         [],
         "--llm-models",
         help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
+    ),
+    foxglove_embed_src: str = typer.Option(
+        "",
+        "--foxglove-embed-src",
+        help=(
+            "Foxglove embed application URL for the viewer pane "
+            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
+        ),
+    ),
+    foxglove_org_slug: str = typer.Option(
+        "",
+        "--foxglove-org-slug",
+        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
+    ),
+    foxglove_live_url: str = typer.Option(
+        "",
+        "--foxglove-live-url",
+        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
     ),
     no_public_https: bool = typer.Option(
         False,
@@ -8450,6 +8987,9 @@ def deploy_cmd(
             nebius_tenant_id=env_tenant_id,
             service_account_id=str(creds.get("service_account_id", "")),
             public_https=public_https,
+            foxglove_embed_src=foxglove_embed_src,
+            foxglove_org_slug=foxglove_org_slug,
+            foxglove_live_url=foxglove_live_url,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         try:
@@ -8612,6 +9152,24 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
+    foxglove_embed_src: str = typer.Option(
+        "",
+        "--foxglove-embed-src",
+        help=(
+            "Foxglove embed application URL for the viewer pane "
+            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
+        ),
+    ),
+    foxglove_org_slug: str = typer.Option(
+        "",
+        "--foxglove-org-slug",
+        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
+    ),
+    foxglove_live_url: str = typer.Option(
+        "",
+        "--foxglove-live-url",
+        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
+    ),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -8745,6 +9303,9 @@ def bootstrap_cmd(
             nebius_tenant_id=tenant_id,
             service_account_id=service_account_id,
             public_https=public_https,
+            foxglove_embed_src=foxglove_embed_src,
+            foxglove_org_slug=foxglove_org_slug,
+            foxglove_live_url=foxglove_live_url,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
@@ -9147,6 +9708,21 @@ def verify_live_cmd(
     if not rerun_static_ok:
         _fail("rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)")
 
+    # Lichtblick embed probe (informational): the recordings alias serves the co-served
+    # MCAP same-origin, and /lichtblick/ proxies the viewer sidecar. The sidecar is
+    # best-effort (docker/image), so this never fails the run — it reports embed status.
+    for lichtblick_path in ("/lichtblick/recordings/sim2real.mcap", "/lichtblick/"):
+        try:
+            lb_resp = httpx.get(
+                f"{agent_base}{lichtblick_path}",
+                auth=(auth_user, auth_password),
+                timeout=15.0,
+                verify=tls_verify,
+            )
+            typer.echo(f"lichtblick embed probe {lichtblick_path} -> {lb_resp.status_code}")
+        except httpx.HTTPError as exc:
+            typer.echo(f"lichtblick embed probe {lichtblick_path} -> error: {exc}")
+
     from npa.agent_rerun_bundle_check import (
         check_rerun_bundle_load_budget,
         format_bundle_budget_report,
@@ -9267,6 +9843,13 @@ def verify_live_cmd(
         'id="chatDrawerClose"',
         "chat-fab",
         "transform-origin: bottom right",
+        # Embedded Foxglove viewer pane.
+        'id="renderModeFoxglove"',
+        'id="viewerPaneFoxglove"',
+        'id="foxgloveHost"',
+        "ensureFoxgloveViewer",
+        "mountFoxgloveViewer",
+        "/api/foxglove/config",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

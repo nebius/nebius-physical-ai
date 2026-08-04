@@ -26,7 +26,9 @@ app = typer.Typer(
 )
 console = Console(stderr=True)
 
-WORKFLOW_PATH = Path("npa/src/npa/workflows/skypilot/retargeting.yaml")
+# The `npa.workflow` spec this tool is driven by. Path only: `retargeting workflow`
+# / `status` print it; `npa workbench workflow submit <path>` runs it.
+WORKFLOW_PATH = Path("npa/workflows/workbench/npa-workflows/retargeting.yaml")
 DEFAULT_RETARGETING_IMAGE_ENV = "NPA_RETARGETING_IMAGE"
 
 
@@ -127,7 +129,7 @@ def workflow_cmd(
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Show the SkyPilot YAML template for retargeting."""
+    """Show the npa.workflow spec for retargeting."""
 
     _emit(
         {

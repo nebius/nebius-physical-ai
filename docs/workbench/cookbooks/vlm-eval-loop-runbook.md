@@ -8,53 +8,51 @@ task-success report.
 
 - `npa` is installed from this repository.
 - SkyPilot is configured and `sky check` shows Nebius enabled.
-- The workflow image contains `npa`, CUDA/PyTorch, vLLM, `transformers`,
-  `qwen-vl-utils`, `curl`, and `jq`.
+- A GPU with enough memory for the chosen VLM. No prebuilt serving image is
+  required: the renderer installs vLLM (and `ninja`, which its JIT sampler needs)
+  into whatever image the stage runs in.
 - Object storage credentials are available through `AWS_ACCESS_KEY_ID`,
   `AWS_SECRET_ACCESS_KEY`, and `AWS_ENDPOINT_URL`.
 - Rollouts are available under one prefix, with one child directory per rollout.
 
 ## One Command
 
-Set the input and output paths, render the checked-in blueprint to a temporary
-workflow, then submit it:
+The loop is an `npa.workflow` spec, so a submit plus config overrides is the whole
+invocation — no YAML rendering step:
 
 ```bash
 export RUN_ID="vlm-eval-loop-smoke"
 export NPA_S3_BUCKET="<your-bucket-name>"
-export ROLLOUTS="s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/rollouts/"
-export OUTPUT_DIR="s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/vlm-eval-loop/"
-export NPA_VLM_IMAGE="cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
-# For production BYO, set NPA_VLM_IMAGE to a prebuilt VLM/vLLM serving image.
 
-npa/.venv/bin/python - <<'PY'
-import os
-from pathlib import Path
-
-import yaml
-
-source = Path("npa/src/npa/workflows/skypilot/sim-to-real-loop.yaml")
-target = Path("/tmp/vlm-eval-loop.yaml")
-docs = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
-task = docs[1]
-task["envs"]["NPA_VLM_IMAGE"] = os.environ["NPA_VLM_IMAGE"]
-task["resources"]["image_id"] = f"docker:{os.environ['NPA_VLM_IMAGE']}"
-task["envs"]["ROLLOUTS"] = os.environ["ROLLOUTS"]
-task["envs"]["OUTPUT_DIR"] = os.environ["OUTPUT_DIR"]
-target.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
-print(target)
-PY
-
-npa workbench workflow submit /tmp/vlm-eval-loop.yaml --run-id "${RUN_ID}"
+npa workbench workflow submit \
+  npa/workflows/workbench/npa-workflows/vlm-eval-loop.yaml \
+  --run-id "${RUN_ID}" \
+  --var "bucket=${NPA_S3_BUCKET}" \
+  --var "prefix=sim-to-real/${RUN_ID}" \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
+
+That reads rollouts from `s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/rollouts/` and
+writes to `.../scores/`; override `rollouts_uri` / `scores_uri` with `--var` to point
+elsewhere. The stage runs on SkyPilot's default GPU image: the renderer installs vLLM,
+starts it, health-checks `/health`, and tears it down when the stage exits, so no
+prebuilt serving image is required. Set `--var vlm_model=<repo-id>` for a different VLM
+and `--var vlm_serve_ready_seconds=<n>` if a cold checkpoint download needs longer than
+the 900 s default.
 
 The default model is `Qwen/Qwen2-VL-7B-Instruct`, the default frame selection is
 `keyframes`, and the default success threshold is `0.8`.
 
+To score a *single* rollout instead of a set, use
+`npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml`, or call
+`npa workbench vlm-eval run` directly.
+
 ## Inputs
 
-`ROLLOUTS` points to a local path or `s3://` prefix. The loop treats each direct
-child directory as one rollout:
+`rollouts_uri` points to a local path or `s3://` prefix. The loop treats each direct
+child directory as one rollout, and falls back to treating the prefix itself as a
+single rollout when it has no child directories:
 
 ```text
 rollouts/
@@ -73,7 +71,7 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 
 ## Outputs
 
-`OUTPUT_DIR` receives:
+`scores_uri` receives:
 
 - `rollouts/<rollout-id>/vlm_eval_stub.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
@@ -83,7 +81,7 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 Read the report:
 
 ```bash
-aws s3 cp "${OUTPUT_DIR%/}/task_success_report.json" -
+aws s3 cp "s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/scores/task_success_report.json" -
 ```
 
 Use `task_success` as the coarse gate, then inspect low-score rollouts and their
@@ -91,8 +89,8 @@ rationales before iterating on policy, simulation, or rubric.
 
 ## Plug In Real Labeled Rollouts
 
-For unlabeled gating, set `ROLLOUTS` to the rollout prefix and keep the loop
-workflow unchanged. For labeled calibration, create a benchmark manifest that
+For unlabeled gating, point `rollouts_uri` at the rollout prefix and keep the loop
+spec unchanged. For labeled calibration, create a benchmark manifest that
 points at the same rollout directories and includes `expected_label` for each
 item, then run the sweep below.
 
@@ -113,17 +111,20 @@ npa workbench vlm-eval benchmark \
 ```
 
 Use the best threshold and rubric from the benchmark report to update
-`SUCCESS_THRESHOLD` and `RUBRIC` in the loop workflow.
+`vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
+`npa/workflows/workbench/npa-workflows/vlm-eval-benchmark.yaml` runs the same sweep as
+a workflow stage.
 
 ## Troubleshooting
 
 - `sky check` does not show Nebius enabled: fix SkyPilot credentials before
   launching the workflow.
-- vLLM never becomes healthy: check `vlm-server.log`, verify the image has CUDA
-  and vLLM, and try the documented GPU failover in the YAML comments.
-- No rollouts are evaluated: confirm `ROLLOUTS` points to a prefix with child
+- vLLM never becomes healthy: the stage fails fast and prints the last 200 lines of
+  `/tmp/npa-vlm-server.log`, which is where the cause almost always is (out of GPU
+  memory, an unsupported model, or a missing CUDA toolchain).
+- No rollouts are evaluated: confirm `rollouts_uri` points to a prefix with child
   rollout directories or directly to one rollout directory.
 - Scores are all low or noisy: tighten `RUBRIC`, switch `FRAME_SELECTION`, or run
   `vlm-eval benchmark` on labeled rollouts before using the gate.
 - S3 writes fail: verify `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud`
-  and that the storage keys can read `ROLLOUTS` and write `OUTPUT_DIR`.
+  and that the storage keys can read `rollouts_uri` and write `scores_uri`.

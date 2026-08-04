@@ -38,7 +38,15 @@ def _is_secret_env(key: str) -> bool:
 def _auth_mode_for(runtime: LanceDBRuntime, auth_mode: str) -> str:
     value = auth_mode.strip().lower()
     if value == "auto":
-        return "none" if runtime == LanceDBRuntime.container else "token"
+        if runtime == LanceDBRuntime.container:
+            return "none"
+        if runtime == LanceDBRuntime.kubernetes:
+            # `auto` means "token if the operator supplied one". A ClusterIP Service is not
+            # internet-reachable, and defaulting to token without a token deployed a service
+            # whose /health answered `{"detail":"LANCEDB_TOKEN is not configured"}` forever —
+            # a readiness probe that can never pass (live, EVIDENCE.md §R41).
+            return "token" if os.environ.get(DEFAULT_TOKEN_ENV, "").strip() else "none"
+        return "token"
     if value not in {"none", "token"}:
         fail("--auth-mode must be one of auto, none, or token")
     if value == "none" and runtime in {LanceDBRuntime.vm, LanceDBRuntime.byovm}:
@@ -187,7 +195,19 @@ def deploy_cmd(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show actions without running them."),
     default: bool = typer.Option(False, "--default", help="Save endpoint as default config."),
     image: str = typer.Option("", "--image", help="Container image reference."),
-    container_name: str = typer.Option("", "--container-name", help="Local container name override."),
+    container_name: str = typer.Option(
+        "",
+        "--container-name",
+        help="Local container name, or the Kubernetes Deployment/Service name.",
+    ),
+    namespace: str = typer.Option(
+        "default", "--namespace", help="Kubernetes namespace for --runtime kubernetes."
+    ),
+    pull_secret: str = typer.Option(
+        "",
+        "--pull-secret",
+        help="Comma-separated imagePullSecrets for --runtime kubernetes.",
+    ),
     detach: bool = typer.Option(True, "--detach/--no-detach", help="Run local container in the background."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
@@ -204,7 +224,10 @@ def deploy_cmd(
     # TODO: infer the storage endpoint from the selected Nebius region once the
     # VM/BYOVM LanceDB deploy path is backed by shared Workbench registration.
     if runtime == LanceDBRuntime.serverless:
-        fail("LanceDB deploy does not support --runtime serverless; use container, vm, byovm, or cloud.")
+        fail(
+            "LanceDB deploy does not support --runtime serverless; use kubernetes (the only "
+            "runtime a workflow stage can reach), container, vm, byovm, or cloud."
+        )
 
     if runtime == LanceDBRuntime.cloud:
         payload = _cloud_payload(
@@ -231,6 +254,113 @@ def deploy_cmd(
         else:
             subprocess.run(cmd, check=False, capture_output=True, text=True)
         emit({"runtime": "container", "container": name, "status": "removed"}, output=output)
+        return
+
+    if runtime == LanceDBRuntime.kubernetes:
+        from npa.workbench.service_kubernetes import (
+            MANAGED_PULL_SECRET,
+            ServiceKubernetesError,
+            apply,
+            build_manifests,
+            destroy as destroy_kubernetes,
+            ensure_registry_secret,
+            ensure_storage_secret,
+            registry_host,
+            service_endpoint,
+            wait_available,
+        )
+
+        LanceDBKubernetesError = ServiceKubernetesError
+        service_name = container_name.strip() or "npa-lancedb"
+        target_namespace = namespace.strip() or "default"
+        if destroy:
+            try:
+                removed = destroy_kubernetes(service_name, target_namespace)
+            except LanceDBKubernetesError as exc:
+                fail(str(exc))
+            emit(
+                {
+                    "runtime": "kubernetes",
+                    "name": service_name,
+                    "namespace": target_namespace,
+                    "status": "removed",
+                    "detail": removed,
+                },
+                output=output,
+                text=f"LanceDB service {service_name} removed from {target_namespace}",
+            )
+            return
+
+        endpoint_url = storage_endpoint_url(storage_endpoint_override) if storage_endpoint_override else (
+            os.environ.get("AWS_ENDPOINT_URL", "") or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        )
+        secret_name = ""
+        if resolved_storage.startswith("s3://"):
+            secret_name = f"{service_name}-storage"
+        # A private registry needs a pull secret the kubelet can use on every restart, not just
+        # at deploy time. Mint one rather than borrowing a shared secret whose token expires.
+        pull_secrets = tuple(ref.strip() for ref in pull_secret.split(",") if ref.strip())
+        host = registry_host(image_ref)
+        if host and not pull_secrets:
+            pull_secrets = (MANAGED_PULL_SECRET,)
+        manifests = build_manifests(
+            name=service_name,
+            namespace=target_namespace,
+            port=port,
+            image=image_ref,
+            storage_path=resolved_storage,
+            service_env={
+                "LANCEDB_STORAGE_PATH": resolved_storage,
+                "LANCEDB_PORT": str(port),
+                "LANCEDB_AUTH_MODE": resolved_auth,
+                **({"LANCEDB_TOKEN": os.environ[token_env]} if os.environ.get(token_env) else {}),
+            },
+            storage_endpoint_url=endpoint_url,
+            secret_name=secret_name,
+            image_pull_secrets=pull_secrets,
+        )
+        resolved_endpoint = service_endpoint(service_name, target_namespace, port)
+        if dry_run:
+            emit(
+                {
+                    "runtime": "kubernetes",
+                    "name": service_name,
+                    "namespace": target_namespace,
+                    "endpoint": resolved_endpoint,
+                    "image": image_ref,
+                    "storage_path": resolved_storage,
+                    "status": "dry-run",
+                    "manifests": manifests,
+                },
+                output=output,
+                text=f"LanceDB would be deployed to {resolved_endpoint}",
+            )
+            return
+        if resolved_auth == "token" and not os.environ.get(token_env, "").strip():
+            fail(
+                f"--auth-mode token needs a token: set {token_env} before deploying, or pass "
+                "--auth-mode none for a ClusterIP service that is not reachable off-cluster."
+            )
+        try:
+            if host and pull_secrets == (MANAGED_PULL_SECRET,):
+                ensure_registry_secret(MANAGED_PULL_SECRET, target_namespace, host)
+            if secret_name:
+                ensure_storage_secret(secret_name, target_namespace, dict(storage_env()))
+            apply(manifests)
+            wait_available(service_name, target_namespace)
+        except LanceDBKubernetesError as exc:
+            fail(str(exc))
+        payload = {
+            "runtime": "kubernetes",
+            "name": service_name,
+            "namespace": target_namespace,
+            "endpoint": resolved_endpoint,
+            "image": image_ref,
+            "storage_path": resolved_storage,
+            "auth_mode": resolved_auth,
+            "status": "running",
+        }
+        emit(payload, output=output, text=f"LanceDB service available at {resolved_endpoint}")
         return
 
     if runtime == LanceDBRuntime.container:

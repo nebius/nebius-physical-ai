@@ -40,10 +40,15 @@ ALLOWLIST_SUBSTRINGS = (
 # Tags that must not appear on these tools anywhere outside allowlists.
 STALE_TOOL_TAGS: dict[str, set[str]] = {
     "cosmos2-transfer": {"2.5.0"},
-    "envgen": {"0.1.1"},
-    "reference-policy": {"0.1.1"},
-    "loop-eval": {"0.1.1-genuine-sm120", "0.1.2-genuine-sm120"},
-    "lerobot-vlm-rl": {"0.1.0"},
+    "cosmos3-reason": {"3.0.1-genuine-sm120"},
+    "envgen": {"0.1.1", "0.1.2"},
+    "reference-policy": {"0.1.1", "0.1.2"},
+    "loop-eval": {
+        "0.1.1-genuine-sm120",
+        "0.1.2-genuine-sm120",
+        "0.1.3-genuine-sm120",
+    },
+    "lerobot-vlm-rl": {"0.1.0", "0.1.1"},
     "lerobot-policy": {"0.1.0"},
     "lancedb": {"0.30.2"},
     "retargeting": {"0.1.0"},
@@ -54,7 +59,7 @@ STALE_TOOL_TAGS: dict[str, set[str]] = {
 
 IMAGE_REF_RE = re.compile(r"(npa-[a-z0-9-]+):([a-z0-9._-]+(?:T[0-9]+Z)?)", re.IGNORECASE)
 
-SKIP_TAG_SUFFIXES = (":smoke", ":test", ":local", ":latest", "-k8s-runtime", "-sm80-sm90-sm120")
+SKIP_TAG_SUFFIXES = (":smoke", ":test", ":local", ":latest", "-k8s-runtime")
 
 
 def _tool_for_image(image: str) -> str | None:

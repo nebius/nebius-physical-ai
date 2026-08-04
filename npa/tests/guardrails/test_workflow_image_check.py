@@ -13,11 +13,26 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_workflow_image_extraction_finds_skypilot_images() -> None:
-    workflow_dir = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
-    images = image_refs_for_workflows(sorted(workflow_dir.glob("*.yaml")))
+    """The extractor's contract, pinned against a FROZEN task rather than the catalog.
+
+    This used to assert that `npa-sonic` appeared among the shipped templates' images, which
+    quietly made the extractor's test a reason the SONIC templates could not be retired. What is
+    actually under test is that a raw SkyPilot task's image references are found at all, so it
+    reads a fixture that will not move (tests/fixtures/skypilot/README.md).
+    """
+
+    fixtures = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
+    images = image_refs_for_workflows(sorted(fixtures.glob("*.yaml")))
 
     assert images
     assert any("npa-sonic" in image for image in images)
+
+
+def test_retired_catalog_does_not_reappear_for_image_check() -> None:
+    """Use fixtures for image extraction; do not revive the retired catalog."""
+
+    workflow_dir = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
+    assert not workflow_dir.exists()
 
 
 def test_registry_placeholder_resolution_is_local_check_ready() -> None:

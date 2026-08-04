@@ -13,7 +13,7 @@ the Isaac Lab BYOF cookbook and write the first checkpoint to S3.
 
 For the canonical credential setup, see [quickstart.md](../quickstart.md). For
 the H100 sim-to-real proof path, see
-[sim-to-real-quickstart.md](sim-to-real-quickstart.md). For the BYOF training
+[guides/sim2real-workflow.md](guides/sim2real-workflow.md). For the BYOF training
 path, see
 [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md).
 For the SkyPilot runtime details, see
@@ -233,10 +233,13 @@ projects are configured.
 
 ## First Sim-To-Real Run
 
-After the gates above pass, run the H100 quickstart:
+After the gates above pass, submit the staged VLM-to-RL loop:
 
 ```bash
-npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
+npa workbench workflow submit \
+  npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
+  --run-id <run-id> --var bucket=<your-bucket> \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 The command prints the run ID, wall-clock time, task-success metric, checkpoint
@@ -247,7 +250,7 @@ proof checkpoint path has this structure:
 s3://${NPA_S3_BUCKET}/sim-to-real/<run-id>/checkpoints/policy/
 ```
 
-Continue with [sim-to-real-quickstart.md](sim-to-real-quickstart.md) for the
+Continue with [guides/sim2real-workflow.md](guides/sim2real-workflow.md) for the
 exact output format and override options.
 
 ## First BYOF Run
@@ -284,7 +287,7 @@ manifest from S3.
   namespace checks, GPU routing, and Kubernetes troubleshooting.
 - [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md):
   first Isaac Lab BYOF checkpoint.
-- [sim-to-real-quickstart.md](sim-to-real-quickstart.md): first H100
+- [guides/sim2real-workflow.md](guides/sim2real-workflow.md): first H100
   sim-to-real checkpoint and eval metric.
 - [orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md):
   isolated SkyPilot runtime details.

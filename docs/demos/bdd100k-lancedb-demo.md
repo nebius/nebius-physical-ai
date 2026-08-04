@@ -41,7 +41,7 @@ resources:
   cpus: 4
   memory: 16
   # Pinned first-party LanceDB image; override image_id only for BYO registries.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"
@@ -125,7 +125,7 @@ Start with the no-infrastructure validation first:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml \
+  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --mock-endpoints
 ```
@@ -163,7 +163,7 @@ Submit the synthetic pipeline after those services are reachable:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml \
+  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
   --synthetic 5000
 
 # View results in FiftyOne
@@ -187,7 +187,7 @@ npa workbench fiftyone open
 Stage a BDD100K subset at `s3://<your-bucket>/raw-bdd100k/subset-demo/` with
 3-5k frames in standard BDD100K format, then re-run without the synthetic flag.
 Before a production run, switch the three training task label-map comment blocks
-in `npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml` from the synthetic map to the
+in `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml` from the synthetic map to the
 real BDD100K map:
 
 ```json
@@ -207,7 +207,7 @@ export NPA_RUN_ID=bdd100k-real-data-demo
 export BDD100K_PIPELINE_MODE=FULL_SUBMISSION
 
 python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/src/npa/workflows/skypilot/bdd100k-pipeline.yaml \
+  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
   --run-id bdd100k-real-data-demo
 ```
 

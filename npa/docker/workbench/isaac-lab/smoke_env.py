@@ -29,9 +29,26 @@ def _format_exception(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+ISAAC_LAB_PYTHON = os.environ.get("ISAAC_LAB_PYTHON", "/isaac-sim/python.sh")
+TRAIN_REL = "scripts/reinforcement_learning/rsl_rl/train.py"
+PLAY_REL = "scripts/reinforcement_learning/rsl_rl/play.py"
+
+
 def _find_isaaclab_root() -> Path | None:
-    for candidate in (Path("/workspace/isaaclab"), Path("/workspace/IsaacLab")):
-        if (candidate / "isaaclab.sh").is_file():
+    """Locate the Isaac Lab source tree.
+
+    Keyed on the rsl_rl entrypoints rather than on ``isaaclab.sh``: the tree now arrives
+    from the runtime bootstrap (a pinned BSD-3 checkout of isaac-sim/IsaacLab, linked
+    into /workspace/isaaclab by the /isaac-sim/python.sh shim) rather than from the
+    nvcr.io base image, and ``isaaclab.sh`` assumes a local Isaac Sim install layout that
+    does not apply when Isaac lives in the cache volume.
+    """
+    for candidate in (
+        Path(os.environ.get("NPA_ISAAC_LAB_WORKDIR", "/workspace/isaaclab")),
+        Path("/workspace/isaaclab"),
+        Path("/workspace/IsaacLab"),
+    ):
+        if (candidate / TRAIN_REL).is_file():
             return candidate
     return None
 
@@ -60,12 +77,20 @@ def check_import_versions() -> CheckResult:
                 )
             sim_detail = f"{distribution}={sim_version}"
             break
-        if not Path("/isaac-sim/python.sh").is_file():
-            return CheckResult("import Isaac Lab core modules", False, "/isaac-sim/python.sh not found")
+        # The Isaac interpreter is the bootstrap shim (this image bakes no Isaac Sim), so
+        # check it is executable rather than just present.
+        shim = Path(ISAAC_LAB_PYTHON)
+        if not (shim.is_file() and os.access(shim, os.X_OK)):
+            return CheckResult(
+                "import Isaac Lab core modules", False, f"{shim} is not an executable shim"
+            )
+        # Reaching this point at all means the bootstrap already ran: isaaclab and
+        # isaacsim are importable only from the runtime-fetched cache tree.
+        isaac_root = Path(isaaclab.__file__).resolve().parent
         return CheckResult(
             "import Isaac Lab core modules",
             True,
-            f"isaaclab={lab_version}; {sim_detail}; module={isaaclab.__name__}",
+            f"isaaclab={lab_version}; {sim_detail}; runtime-fetched from {isaac_root}",
         )
     except Exception as exc:
         return CheckResult("import Isaac Lab core modules", False, _format_exception(exc))
@@ -145,18 +170,23 @@ def check_training_eval_entrypoints() -> CheckResult:
     try:
         root = _find_isaaclab_root()
         if root is None:
-            return CheckResult("check training/eval entry points", False, "isaaclab.sh not found")
-        isaaclab_sh = root / "isaaclab.sh"
-        train_py = root / "scripts/reinforcement_learning/rsl_rl/train.py"
-        play_py = root / "scripts/reinforcement_learning/rsl_rl/play.py"
+            return CheckResult(
+                "check training/eval entry points",
+                False,
+                f"{TRAIN_REL} not found; the runtime Isaac bootstrap has not linked the "
+                f"Isaac Lab source tree into /workspace/isaaclab",
+            )
+        train_py = root / TRAIN_REL
+        play_py = root / PLAY_REL
         missing = [str(path) for path in (train_py, play_py) if not path.is_file()]
         if missing:
             return CheckResult("check training/eval entry points", False, "missing: " + ", ".join(missing))
 
-        train_ok, train_output = _run_help([str(isaaclab_sh), "-p", str(train_py), "--help"], root)
+        # Invoke through the Isaac interpreter (the bootstrap shim), not isaaclab.sh.
+        train_ok, train_output = _run_help([ISAAC_LAB_PYTHON, str(train_py), "--help"], root)
         if not train_ok:
             return CheckResult("check training/eval entry points", False, f"train --help failed: {train_output}")
-        eval_ok, eval_output = _run_help([str(isaaclab_sh), "-p", str(play_py), "--help"], root)
+        eval_ok, eval_output = _run_help([ISAAC_LAB_PYTHON, str(play_py), "--help"], root)
         if not eval_ok:
             return CheckResult("check training/eval entry points", False, f"eval --help failed: {eval_output}")
         return CheckResult(

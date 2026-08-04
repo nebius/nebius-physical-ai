@@ -1,86 +1,126 @@
+"""VLM-eval workflow coverage, at the spec level.
+
+This file used to assert the raw shape of three SkyPilot templates — `vlm-eval.yaml`,
+`vlm-eval-benchmark.yaml` and `sim-to-real-loop.yaml`. All three are retired (their twins
+reached SUCCEEDED live: jobs 219, 220, 218 — EVIDENCE.md §R18–R20), so the assertions move
+onto the specs that replaced them: same properties, checked where they now live.
+
+What each template guaranteed and what checks it here:
+
+* it served an open VLM itself → the *renderer* starts and health-checks vLLM for any
+  `self-hosted` stage (`test_self_hosted_vlm_preamble.py`), and the specs below ask for
+  that backend;
+* it passed a specific set of CLI flags → the resolved `toolRef` argv;
+* the loop aggregated a rollout set → `tests/workbench/test_vlm_eval_loop.py`, plus the
+  spec's declared artifact here.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
+import pytest
 
-from npa.workbench.vlm_eval import DEFAULT_MODEL
-
+from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.spec import load_spec
+from npa.workbench.vlm_eval import (
+    BENCHMARK_RESULT_FILENAME,
+    DEFAULT_MODEL,
+    LOOP_REPORT_FILENAME,
+    RESULT_FILENAME,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_VLM_IMAGE = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
-VLM_EVAL_YAML = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "vlm-eval.yaml"
-VLM_EVAL_BENCHMARK_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "vlm-eval-benchmark.yaml"
+SPECS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+
+
+def _only_step(spec_name: str):
+    spec = load_spec(SPECS / spec_name)
+    plan = build_plan(spec, run_id="vlm-eval-workflow-test")
+    steps = [step for step in plan.steps if step.argv]
+    assert len(steps) == 1, f"{spec_name} should have exactly one executing stage"
+    return spec, steps[0]
+
+
+def _flag(argv: list[str], flag: str) -> str:
+    assert flag in argv, f"argv is missing {flag}: {argv}"
+    return argv[argv.index(flag) + 1]
+
+
+@pytest.mark.parametrize(
+    "spec_name", ["vlm-eval-single.yaml", "vlm-eval-benchmark.yaml", "vlm-eval-loop.yaml"]
 )
-SIM_TO_REAL_LOOP_YAML = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim-to-real-loop.yaml"
-)
+def test_specs_ask_for_the_self_hosted_backend_the_templates_served(spec_name: str) -> None:
+    """All three templates ran their own vLLM; the specs must still request that backend.
+
+    `vlm-eval-benchmark.yaml` in particular used to say `stub`, which meant the twin never
+    touched a VLM and could not stand in for the template (EVIDENCE.md §R20).
+    """
+
+    spec, step = _only_step(spec_name)
+
+    assert spec.config["vlm_backend"] == "self-hosted"
+    assert _flag(step.argv, "--backend") == "self-hosted"
 
 
-def _docs(path: Path) -> list[dict]:
-    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc is not None]
+def test_single_rollout_spec_scores_one_prefix() -> None:
+    _spec, step = _only_step("vlm-eval-single.yaml")
+
+    assert step.tool_ref == "workbench.vlm_eval.run"
+    assert step.argv[:4] == ["npa", "workbench", "vlm-eval", "run"]
+    # argv carries the RESOLVED uris; config still holds the templated form.
+    assert _flag(step.argv, "--input-path").endswith("/rollouts/")
+    assert _flag(step.argv, "--output-path").endswith("/scores/")
+    assert step.outputs[0]["uri"].endswith(RESULT_FILENAME)
 
 
-def test_vlm_eval_workflow_serves_open_vlm_and_runs_cli() -> None:
-    docs = _docs(VLM_EVAL_YAML)
+def test_loop_spec_scores_a_set_and_declares_the_aggregate_report() -> None:
+    """The property that made retiring `sim-to-real-loop.yaml` possible."""
 
-    assert docs[0] == {"name": "vlm-eval", "execution": "serial"}
-    task = docs[1]
-    assert task["name"] == "vlm-eval-self-hosted"
-    assert task["resources"]["cloud"] == "kubernetes"
-    assert task["resources"]["accelerators"] == "H100:1"
-    assert task["resources"]["image_id"] == "docker:${NPA_VLM_IMAGE}"
-    assert task["envs"]["NPA_VLM_IMAGE"] == EXPECTED_VLM_IMAGE
-    assert task["envs"]["VLM_MODEL"] == DEFAULT_MODEL
-    assert task["envs"]["VLM_BACKEND"] == "self-hosted"
-    assert task["envs"]["VLM_FRAME_SELECTION"] == "keyframes"
-    assert "python3 -m vllm.entrypoints.openai.api_server" in task["run"]
-    assert "npa workbench vlm-eval run" in task["run"]
-    for flag in ("--backend", "--model", "--endpoint-url", "--frame-selection", "--success-threshold"):
-        assert flag in task["run"]
+    _spec, step = _only_step("vlm-eval-loop.yaml")
+
+    assert step.tool_ref == "workbench.vlm_eval.loop"
+    assert step.argv[:4] == ["npa", "workbench", "vlm-eval", "loop"]
+    assert _flag(step.argv, "--input-path").endswith("/rollouts/")
+    # The coarse gate the template computed with `jq`.
+    assert _flag(step.argv, "--success-threshold") == "0.8"
+    assert _flag(step.argv, "--frame-selection") == "keyframes"
+    assert _flag(step.argv, "--max-frames") == "4"
+    assert step.outputs[0]["uri"].endswith(LOOP_REPORT_FILENAME)
 
 
-def test_vlm_eval_benchmark_workflow_serves_open_vlm_and_runs_sweep_cli() -> None:
-    docs = _docs(VLM_EVAL_BENCHMARK_YAML)
+def test_benchmark_spec_sweeps_the_same_grid_the_template_did() -> None:
+    _spec, step = _only_step("vlm-eval-benchmark.yaml")
 
-    assert docs[0] == {"name": "vlm-eval-benchmark", "execution": "serial"}
-    task = docs[1]
-    assert task["name"] == "vlm-eval-benchmark-self-hosted"
-    assert task["resources"]["cloud"] == "kubernetes"
-    assert task["resources"]["accelerators"] == "H100:1"
-    assert task["resources"]["image_id"] == "docker:${NPA_VLM_IMAGE}"
-    assert task["envs"]["NPA_VLM_IMAGE"] == EXPECTED_VLM_IMAGE
-    assert task["envs"]["VLM_MODEL"] == DEFAULT_MODEL
-    assert task["envs"]["VLM_MODELS"] == DEFAULT_MODEL
-    assert task["envs"]["VLM_BACKEND"] == "self-hosted"
-    assert task["envs"]["VLM_RUBRICS"] == "default,strict"
-    assert task["envs"]["VLM_THRESHOLDS"] == "0.5,0.8,0.9"
-    assert "python3 -m vllm.entrypoints.openai.api_server" in task["run"]
-    assert "npa workbench vlm-eval benchmark" in task["run"]
-    for flag in ("--dataset", "--output", "--models", "--rubrics", "--thresholds", "--format json"):
-        assert flag in task["run"]
+    assert step.tool_ref == "workbench.vlm_eval.benchmark"
+    assert step.argv[:4] == ["npa", "workbench", "vlm-eval", "benchmark"]
+    assert _flag(step.argv, "--models") == DEFAULT_MODEL
+    assert _flag(step.argv, "--rubrics") == "default,strict"
+    assert _flag(step.argv, "--thresholds") == "0.5,0.8,0.9"
+    assert _flag(step.argv, "--format") == "json"
 
 
-def test_sim_to_real_loop_workflow_scores_rollout_set_and_reports() -> None:
-    docs = _docs(SIM_TO_REAL_LOOP_YAML)
+def test_benchmark_dataset_is_an_object_uri_not_a_repo_path() -> None:
+    """A stage runs in a pod with no checkout; the template used an S3 URI too."""
 
-    assert docs[0] == {"name": "sim-to-real-loop", "execution": "serial"}
-    task = docs[1]
-    assert task["name"] == "vlm-eval-loop"
-    assert task["resources"]["cloud"] == "kubernetes"
-    assert task["resources"]["accelerators"] == "H100:1"
-    assert task["resources"]["image_id"] == "docker:${NPA_VLM_IMAGE}"
-    assert task["envs"]["NPA_VLM_IMAGE"] == EXPECTED_VLM_IMAGE
-    assert task["envs"]["GPU"] == "H100:1"
-    assert task["envs"]["MODEL"] == DEFAULT_MODEL
-    assert task["envs"]["ROLLOUTS"].endswith("/rollouts/")
-    assert task["envs"]["OUTPUT_DIR"].endswith("/vlm-eval-loop/")
-    assert task["envs"]["SUCCESS_THRESHOLD"] == "0.8"
-    assert task["envs"]["FRAME_SELECTION"] == "keyframes"
-    assert "python3 -m vllm.entrypoints.openai.api_server" in task["run"]
-    assert "npa workbench vlm-eval run" in task["run"]
-    assert "per_rollout.jsonl" in task["run"]
-    assert "task_success_report.json" in task["run"]
-    assert "StorageClient.from_environment().download_path" in task["run"]
-    assert "StorageClient.from_environment().upload_file" in task["run"]
+    _spec, step = _only_step("vlm-eval-benchmark.yaml")
+
+    dataset = _flag(step.argv, "--dataset")
+    assert dataset.startswith("s3://"), dataset
+    assert dataset.endswith(".json")
+    output = _flag(step.argv, "--output")
+    assert output.startswith("s3://")
+    # `--output` names a file here, so the tool writes exactly there rather than appending
+    # BENCHMARK_RESULT_FILENAME; the declared artifact must agree.
+    assert output.endswith(".json")
+    assert step.outputs[0]["uri"] == output
+    assert BENCHMARK_RESULT_FILENAME.endswith(".json")
+
+
+def test_the_three_retired_templates_are_gone() -> None:
+    """Anchor the retirement so a revert cannot quietly restore a second surface."""
+
+    skypilot = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
+
+    for name in ("vlm-eval.yaml", "vlm-eval-benchmark.yaml", "sim-to-real-loop.yaml"):
+        assert not (skypilot / name).exists(), f"{name} came back"

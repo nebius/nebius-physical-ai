@@ -14,6 +14,24 @@ def resources_for_step(spec: NpaWorkflowSpec, step: PlanStep) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def num_nodes_for_step(spec: NpaWorkflowSpec, step: PlanStep) -> int:
+    """Return the node count a step's resource profile asks for (default 1).
+
+    SkyPilot places ``num_nodes`` at the **task** level, next to ``resources`` — not
+    inside it (see ``sky/utils/schemas.py`` and ``npa.burst.core.build_task_spec``). It
+    lives on the resource profile in a spec because that is where per-stage shape
+    belongs, and the renderer lifts it back out to the task document.
+    """
+
+    raw = resources_for_step(spec, step).get("num_nodes")
+    try:
+        return max(1, int(raw)) if raw not in (None, "") else 1
+    except (TypeError, ValueError):
+        # validate_spec rejects a non-integer, so this is only reachable for a spec
+        # built in-process; be conservative rather than crashing the renderer.
+        return 1
+
+
 def build_scheduler_task(
     spec: NpaWorkflowSpec,
     step: PlanStep,
@@ -24,7 +42,13 @@ def build_scheduler_task(
     """Return a portable task document for one workflow step."""
 
     resources = resources_for_step(spec, step)
-    command = step.argv or (["bash", "-lc", step.shell] if step.shell.strip() else [])
+    # `bash -c`, not `bash -lc`: a LOGIN shell re-runs the image's profile scripts and
+    # can resolve a DIFFERENT python3/PATH than the task environment SkyPilot set up.
+    # Two live GPU images broke exactly there (one login python3 had no npa and no
+    # numpy, another had no pip at all), so stage commands inherit the task
+    # environment instead. `render_task_run_script` sources /etc/profile.d/*.sh first,
+    # which is what images actually rely on for activation.
+    command = step.argv or (["bash", "-c", step.shell] if step.shell.strip() else [])
     name = step.state
     if step.iteration is not None:
         name = f"{name}-{step.iteration}"
@@ -34,6 +58,8 @@ def build_scheduler_task(
         "workflow": spec.name,
         "tool_ref": step.tool_ref,
         "resources": resources,
+        # Task-level in SkyPilot, so it is task-level in the portable seam too.
+        "num_nodes": num_nodes_for_step(spec, step),
         "command": command,
         "image": image or str(resources.get("image") or ""),
         "outputs": list(step.outputs),

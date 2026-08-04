@@ -6,8 +6,9 @@ This runbook covers the end-to-end SONIC locomotion path:
 policy checkpoint -> npa workbench sonic export -> npa workbench sonic eval
 ```
 
-The SkyPilot blueprint is
-`npa/src/npa/workflows/skypilot/sonic-export-eval.yaml`.
+The blueprint is the `npa.workflow` spec
+`npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml` (its raw SkyPilot
+template is retired).
 
 ## Prerequisites
 
@@ -45,39 +46,43 @@ the workflow:
 
 ```bash
 npa workbench workflow submit \
-  npa/src/npa/workflows/skypilot/sonic-export-eval.yaml \
+  npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml \
   --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ) \
   --registry "${NPA_REGISTRY}" \
-  --gpu-target l40s \
-  --s3-endpoint https://storage.eu-north1.nebius.cloud \
-  --s3-bucket <bucket> \
+  --var bucket=<bucket> \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-The default run requests `L40S:1` and uses the reference backend:
+The default run requests `H100:1` for both stages and uses the reference eval
+backend. The spec's `config` block is the whole surface:
 
 ```yaml
-POLICY_CKPT: s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/last.pt
-OUTPUT_DIR: s3://<your-bucket-name>/sonic-locomotion/<run-id>/export-eval/
-EVAL_BACKEND: reference
-EVAL_ENV: sonic-locomotion-smoke
-EPISODES: "8"
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/sonic-export-eval"
+  episodes: "8"
+  env: smoke
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.pt"
+  onnx_uri: "s3://{{config.bucket}}/{{config.prefix}}/sonic_policy.onnx"
+  eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval.json"
 ```
 
-Use `--var POLICY_CKPT=s3://...` and `--var OUTPUT_DIR=s3://...` when you want
-to override the checkpoint or output prefix without editing a copy of the YAML.
+Override any of them with `--var key=value` (e.g.
+`--var checkpoint_uri=s3://...`) instead of editing a copy of the spec.
 
 ## Inputs
 
-- `POLICY_CKPT`: trained SONIC checkpoint. `s3://` URIs are downloaded before
-  export; local paths are used as-is.
-- `SONIC_CONFIG`: optional YAML/JSON config when the checkpoint does not carry
-  policy class, observation, action, normalization, or control-rate metadata.
-- `SONIC_OBS_SPEC` and `SONIC_ACTION_SPEC`: optional explicit layout specs.
-- `EVAL_BACKEND`: `reference` by default, or `container` for an external
-  evaluator.
-- `EPISODES`: rollout count for eval.
+- `checkpoint_uri`: trained SONIC checkpoint. `s3://` URIs are downloaded by the
+  tool before export; local paths are used as-is.
+- `onnx_uri`: where the export stage writes the ONNX. Its sidecar metadata and any
+  `<name>.onnx.data` external weights are published next to it, and the eval stage
+  reads exactly this URI.
+- `eval_uri`: where the eval stage writes `eval.json`.
+- `episodes`: rollout count for eval. `env`: reference env (`smoke` by default).
+- `--config` / `--obs-spec` / `--action-spec` and the container backend are CLI/SDK
+  options that the toolRef argv does not carry yet (a pinned `spec_gap`); use
+  `npa workbench sonic export|eval` directly for those.
 
 ## Outputs
 
@@ -137,14 +142,19 @@ you want the supported built-in evaluator.
 
 ## Troubleshooting
 
-- `metadata sidecar missing`: keep `SONIC_METADATA=sidecar`, or pass the sidecar
-  path explicitly to eval if using a custom export.
-- `checkpoint not found`: confirm `POLICY_CKPT` is visible from the SkyPilot task
-  and that S3 credentials are present.
-- `ONNX parity check failed`: rerun with `SONIC_VERIFY=0` only to isolate the
-  eval path; keep verification enabled for production exports.
-- `container eval failed`: validate `CONTAINER_IMAGE` and the three container
-  path variables. The container must write the result JSON before exiting.
+- `metadata sidecar missing`: the export stage writes `<stem>.metadata.json` next
+  to the ONNX and the eval stage stages both; if you point `--onnx` at an ONNX you
+  produced elsewhere, publish its sidecar alongside it.
+- `checkpoint not found`: confirm `config.checkpoint_uri` exists and that
+  `--secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY` were passed,
+  so the pod can read it.
+- `observation dimension is required`: the checkpoint's policy exposes no
+  `obs_dim`/`observation_dim`; pass `--obs-spec` on the CLI, or export from a
+  policy that carries the attribute.
+- the stage SUCCEEDS but `eval.json` is missing: check that the toolRef passes
+  `--output <uri> --output-format json` and not `--output json` — that exact
+  conflation silently wrote the result inside the pod (EVIDENCE §R5), and
+  `test_tool_catalog_argv.py` now guards it.
 - S3 upload/download errors: use
   `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud` and confirm bucket
   permissions with `aws s3 ls --endpoint-url "$AWS_ENDPOINT_URL"`.

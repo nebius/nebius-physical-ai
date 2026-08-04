@@ -1,6 +1,6 @@
 ---
 name: real-components
-description: Use when authoring or reviewing an NPA workbench pipeline/blueprint that advertises specific components (Cosmos Transfer, FiftyOne, VLM eval, etc.) — ensure every advertised stage invokes the REAL component, not an echo/manifest stub masquerading as real work.
+description: Use when authoring or reviewing an NPA workbench pipeline/blueprint that advertises specific components (Cosmos Transfer, Cosmos Evaluator, Cosmos Curator, FiftyOne, VLM eval, etc.) — ensure every advertised stage invokes the REAL component, not an echo/manifest stub masquerading as real work.
 ---
 
 # Real Components As Advertised
@@ -27,8 +27,8 @@ For each `toolRef`, inspect its argv in
 - `argv[0] == "echo"` → **stub** (e.g. `workbench.fiftyone.launch_app`,
   `workbench.sim2real.finalize`).
 - a Python one-liner that writes `"status": "contract_ready"` or a fixed
-  `write_decision` → **stub / demo** (e.g. `workbench.cosmos2.transfer`
-  manifest mode, `workbench.sim2real.write_decision`).
+  `write_decision` → **stub / demo** (e.g.
+  `workbench.sim2real.write_decision`).
 - invokes a real CLI (`npa workbench <tool> ...` with real flags) or a real
   module function → **real**.
 
@@ -36,7 +36,6 @@ Known stub toolRefs (do NOT advertise as real output):
 
 | Stub | Real replacement |
 | --- | --- |
-| `workbench.cosmos2.transfer` (manifest only) | `workbench.cosmos2.transfer_execute` (`--execute`; real GPU model + uploads video/frames to S3) |
 | `workbench.fiftyone.launch_app` (echo) | real `npa workbench fiftyone load-dataset`, or a real `run.shell` curation function |
 | `workbench.sim2real.finalize` / `write_decision` (echo/demo) | real `run.shell` module fns (e.g. `npa.workflows.data_factory_stages.finalize` / `grade_gate`) |
 
@@ -45,16 +44,53 @@ command or import a real, tested module (e.g.
 `npa.workflows.data_factory_stages`, `npa.workflows.data_factory_viz`). Put the
 logic in a tested module, not inline.
 
+`workbench.cosmos2.transfer_execute` is the real Config-Gen-aware execution
+toolRef used by the Data Factory and the standalone procedural-input smoke.
+`workbench.cosmos2.transfer_conditioned_execute` is the real input-conditioned
+execution toolRef for workflows that do not carry a Config-Gen manifest. Both
+include `--execute` and `--condition-on-input`, so a missing runtime or input
+video fails closed. The direct `workbench.cosmos2.transfer` / `npa workbench
+cosmos2 transfer` surface retains reference/local augmentation behavior and must
+not be used by an advertised real Cosmos stage.
+
+## Name the real project, or run it
+
+Advertising a *named third-party component* is a stronger claim than advertising
+"real work": it says that project's code produced the artifact. Two ways to
+honour it, both acceptable, and the difference must be visible in the artifact:
+
+1. **Run upstream's code.** Preferred. Import upstream from a checkout baked into
+   the tool's image and call its own classes (e.g. the `cosmos-curate` stage
+   drives upstream's `CuratorStage` objects directly), or invoke upstream's
+   documented CLI in upstream's container.
+2. **Implement upstream's published algorithm or protocol**, cite it, and tag the
+   artifact with which engine produced the number (e.g. the evaluator's
+   hallucination check records `engine: cosmos-evaluator-upstream` vs
+   `cosmos-evaluator-npa-port`, and the two agree to ~1e-3 on the same input).
+
+What is never acceptable: a stage named after a project that neither runs it nor
+implements it. When upstream cannot run in an environment, record
+`engine: unavailable` **with the reason** (see
+`npa workbench cosmos-curate engine`) rather than emitting a plausible-looking
+report. Attribution belongs in a NOTICE file — see
+`skills/NOTICE-NVIDIA-COSMOS-OSS` for the level of specificity expected: which
+upstream modules run, which are reimplemented, and where NPA substitutes its own
+endpoint.
+
 ## Reference implementation
 
 `physical-ai-data-factory.yaml` uses only real components: Token Factory VLM
-caption, `cosmos2.transfer_execute` (real Cosmos Transfer 2.5 on GPU), `vlm_eval`
-attribute verification, and real `run.shell` module functions for config-gen,
-grade gate, curation, and finalize. `build_run_rrd` writes a real Rerun `.rrd`.
+caption, `cosmos2.transfer_execute` (real Cosmos Transfer 2.5 on GPU),
+`cosmos_evaluator.evaluate` (real NVIDIA Cosmos Evaluator hallucination +
+attribute-verification checks), `cosmos_curate.curate` (real NVIDIA Cosmos Curator
+stages), and real `run.shell` module functions for config-gen, grade gate,
+FiftyOne review, and finalize. `build_run_rrd` writes a real Rerun `.rrd`.
 
 ## Enforced by
 
 `npa/tests/orchestration/npa_workflow/test_real_components.py` fails if the
 blueprint uses a known-stub toolRef, if a `run.shell` stage isn't a real
-command/module call, or if the augment stage isn't `cosmos2.transfer_execute`.
-Live-infra verification is a priority (`skills/atomic/testing-conventions`).
+command/module call, if the augment stage isn't `cosmos2.transfer_execute`, if the
+grade loop stops grading with Cosmos Evaluator, or if curation stops running
+Cosmos Curator before FiftyOne review. Live-infra verification is a priority
+(`skills/atomic/testing-conventions`).

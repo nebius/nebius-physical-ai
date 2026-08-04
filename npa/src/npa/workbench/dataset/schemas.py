@@ -203,6 +203,11 @@ class QueryRequest(BaseModel):
     min_quality: float | None = None
     limit: int = Field(DEFAULT_QUERY_LIMIT, ge=1)
     lancedb_endpoint: str = ""
+    #: Which index to read. Ingest writes one table per dataset id; a query that does not name
+    #: it reads whatever the service defaults to, which live returned 0 records against a table
+    #: that demonstrably held matching rows (EVIDENCE.md §R41).
+    lance_table: str = ""
+    lance_uri: str = ""
 
     @field_validator("input_uri")
     @classmethod

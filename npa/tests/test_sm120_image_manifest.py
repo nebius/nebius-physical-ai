@@ -14,14 +14,17 @@ def test_sm120_image_manifest_has_required_images() -> None:
 
     images = {(item["name"], item["tag"]): item for item in manifest["images"]}
     expected = {
-        ("npa-base", "cuda13-b300-sm80-sm90-sm120-latest"),
-        ("npa-genesis", "0.4.6-sm80-sm90-sm120-latest"),
-        ("npa-envgen", "0.1.1"),
-        ("npa-reference-policy", "0.1.1"),
-        ("npa-loop-eval", "0.1.0"),
-        ("npa-lerobot-vlm-rl", "0.1.0"),
-        ("npa-cosmos3-reason", "3.0.0"),
-        ("npa-sonic", "0.1.2-k8s-runtime"),
+        ("npa-base", "cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"),
+        (
+            "npa-genesis",
+            "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+        ),
+        ("npa-envgen", "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
+        ("npa-reference-policy", "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
+        ("npa-loop-eval", "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
+        ("npa-lerobot-vlm-rl", "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
+        ("npa-cosmos3-reason", "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
+        ("npa-sonic", "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"),
     }
 
     assert set(images) == expected

@@ -16,10 +16,9 @@ scene and robot specs. Every step writes local artifacts and, when
 > **Naming: `sim2real` vs `sim-to-real`.** Two related surfaces exist and the
 > spelling is the disambiguator. **`sim2real`** (this directory,
 > `npa workbench sim2real …`, `runbook.yaml`) is the canonical staged
-> VLM-to-RL loop described above. **`sim-to-real`** (hyphenated:
-> `skypilot/sim-to-real-loop.yaml`, `skypilot/sim-to-real-pipeline.yaml`, the
-> H100 quickstart cookbook) is the older standalone training pipeline. If you
-> are unsure which you want, start here — this is the maintained loop.
+> VLM-to-RL loop described above. **`sim-to-real`** (hyphenated) was the older standalone
+> training pipeline; it is retired, because it ran `npa.workflows.sim_to_real real-loop`,
+> which raises a `DeprecationWarning` pointing here. There is now one loop, not two.
 
 Canonical operator routing after CLI namespace cleanup: use
 `npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
@@ -69,13 +68,13 @@ export AWS_ENDPOINT_URL=<default-platform-s3-endpoint>
 # Non-default S3-compatible endpoints supported but untested.
 
 # 3. Single LeRobot trainer image override. Leave unset to use the reference image.
-export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:0.1.1
+export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 
 # 4. Reference image defaults. Override only if you have a newer pushed image.
-export AUGMENT_IMAGE=<registry>/npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z
-export POLICY_IMAGE=<registry>/npa-reference-policy:0.1.2
-export VLM_IMAGE=<registry>/npa-cosmos3-reason:3.0.1-genuine-sm120
-export EVAL_IMAGE=<registry>/npa-loop-eval:0.1.3-genuine-sm120
+export AUGMENT_IMAGE=<registry>/npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z
+export POLICY_IMAGE=<registry>/npa-reference-policy:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+export VLM_IMAGE=<registry>/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+export EVAL_IMAGE=<registry>/npa-loop-eval:cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 
 # 5. Demo scale. Increase these for larger production runs.
 export INNER_ITERATIONS=2
@@ -145,12 +144,12 @@ reports/sim2real.rrd
 - Python 3.11 or newer and this package installed in `npa/.venv`.
 - A Kubernetes GPU cluster with schedulable RTX PRO 6000 class `sm_120` GPUs.
 - Pushed reference images:
-  - `npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z`
-  - `npa-envgen:0.1.2`
-  - `npa-reference-policy:0.1.2`
-  - `npa-cosmos3-reason:3.0.1-genuine-sm120`
-  - `npa-lerobot-vlm-rl:0.1.1`
-  - `npa-loop-eval:0.1.3-genuine-sm120`
+  - `npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z`
+  - `npa-envgen:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z`
+  - `npa-reference-policy:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z`
+  - `npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z`
+  - `npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z`
+  - `npa-loop-eval:cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z`
 - Gated model repository access accepted where required by the VLM image.
   Self-hosted dual VLM defaults: `nvidia/Cosmos-Reason2-8B` (Reason2) and
   `nvidia/Cosmos-Reason2-2B` (Reason3 sibling). Accept both on Hugging Face before launch.
@@ -174,7 +173,7 @@ npa workbench health sim2real \
   --s3-endpoint <your-s3-compatible-endpoint> \
   --trigger-dataset-uri s3://<bucket>/sim2real-triggers/<run-id>/lerobot-pusht/ \
   --assets-uri s3://<bucket>/sim2real-assets/pusht/ \
-  --policy-image <registry>/npa-reference-policy:0.1.2
+  --policy-image <registry>/npa-reference-policy:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 ```
 
 Use `--checks config,coherence` for an infra-free static check, `--json` for
@@ -269,7 +268,7 @@ YAML
 #
 #   npa workbench sim2real materialize \
 #     --run-id my-run \
-#     --image cr.<region>.nebius.cloud/<your-registry-id>/npa-lerobot-vlm-rl:0.1.1 \
+#     --image cr.<region>.nebius.cloud/<your-registry-id>/npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z \
 #     --env NPA_SIM2REAL_BUCKET=<bucket> \
 #     --env AWS_ENDPOINT_URL=<your-s3-compatible-endpoint> \
 #     -o /tmp/sim2real-job.yaml

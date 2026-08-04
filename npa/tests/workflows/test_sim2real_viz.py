@@ -26,7 +26,9 @@ class _FakeRerun:
 
     def __init__(self) -> None:
         self.logged: list[tuple[str, str]] = []
+        self.logged_times: list[tuple[str, str, float]] = []
         self.times: list[float] = []
+        self.current_time = 0.0
         self.saved_path: Path | None = None
         self.disconnected = False
 
@@ -62,10 +64,13 @@ class _FakeRerun:
         return None
 
     def set_time_seconds(self, timeline: str, seconds: float, recording: Any = None) -> None:
+        self.current_time = float(seconds)
         self.times.append(float(seconds))
 
     def log(self, entity_path: str, archetype: dict[str, Any], recording: Any = None) -> None:
-        self.logged.append((entity_path, archetype.get("kind", "?")))
+        kind = archetype.get("kind", "?")
+        self.logged.append((entity_path, kind))
+        self.logged_times.append((entity_path, kind, self.current_time))
 
     def disconnect(self, recording: Any = None) -> None:
         self.disconnected = True
@@ -221,6 +226,228 @@ def test_emit_raises_when_no_content(monkeypatch, tmp_path: Path) -> None:
         )
 
 
+def test_emit_mcap_roundtrip_camera_signal_critique(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    out = tmp_path / "reports" / "sim2real.mcap"
+    result = viz_module.emit_sim2real_mcap(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=out,
+    )
+
+    assert result.status == "written"
+    assert out.is_file() and out.stat().st_size > 0
+    # 2 rollouts x 3 frames of raw .ppm camera dumps, all transcoded to PNG, plus
+    # the first rollout's 3 frames mirrored onto the primary /camera topic (this run
+    # has no held-out episodes, which would otherwise own that topic).
+    assert result.camera_message_count == 9
+    assert result.scalar_message_count > 0
+    assert result.log_message_count > 0
+
+    with open(out, "rb") as fh:
+        reader = make_reader(fh)
+        summary = reader.get_summary()
+        topics = {channel.topic for channel in summary.channels.values()}
+        schema_names = {schema.name for schema in summary.schemas.values()}
+        first_camera = next(
+            json.loads(message.data)
+            for _schema, channel, message in reader.iter_messages()
+            if channel.topic.endswith("/camera")
+        )
+
+    assert any(topic.endswith("/camera") for topic in topics)
+    # The embedded viewer's default layout binds its Image panel to this one
+    # well-known topic, so it must be populated even without held-out episodes.
+    assert viz_module.MCAP_PRIMARY_CAMERA_TOPIC in topics
+    assert "/signal/reward" in topics
+    assert "/signal/advantage" in topics
+    assert "/signal/reward_trend" in topics
+    assert "/heldout/scores" in topics
+    assert "/heldout/success_rate" in topics
+    assert any(topic.endswith("/critique") for topic in topics)
+    assert "foxglove.CompressedImage" in schema_names
+    assert "foxglove.Log" in schema_names
+    assert "npa.sim2real.Scalar" in schema_names
+    # Raw .ppm rollout frames are transcoded to browser-decodable PNG.
+    assert first_camera["format"] == "png"
+
+
+def _write_pointcloud_npz(tmp_path: Path, env_id: str = "env-0001", frames: int = 3) -> None:
+    import numpy as np
+
+    root = tmp_path / "eval" / "heldout" / "renders" / viz_module.POINTCLOUD_SUBDIR / env_id
+    root.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(3)
+    for i in range(frames):
+        xyz = rng.uniform(-0.5, 0.5, size=(500, 3)).astype("float32")
+        rgb = rng.integers(0, 256, size=(500, 3), dtype="uint8")
+        np.savez_compressed(root / f"cloud-{i:04d}.npz", xyz=xyz, rgb=rgb)
+
+
+def test_emit_mcap_primary_camera_prefers_heldout_over_rollout_mirror(tmp_path: Path) -> None:
+    """When held-out episodes exist they own the primary camera topic outright.
+
+    The rollout fallback exists only for runs without held-out cameras; if both
+    wrote to it the panel would interleave two unrelated, misaligned streams.
+    """
+
+    pytest.importorskip("mcap")
+
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    renders_dir = tmp_path / "eval" / "heldout" / "renders" / "heldout-0000"
+    _write_test_png(renders_dir / "camera-000.png", red=40, green=120, blue=200)
+    _write_test_png(renders_dir / "camera-001.png", red=50, green=130, blue=210)
+    heldout_report["render_manifest"] = {
+        "schema": "npa.sim2real.heldout_renders.v1",
+        "sim_backend": "isaac",
+        "episodes": [
+            {"env_id": "heldout-0000", "frames": ["camera-000.png", "camera-001.png"]}
+        ],
+    }
+
+    result = viz_module.emit_sim2real_mcap(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=tmp_path / "reports" / "heldout.mcap",
+    )
+
+    assert result.channel_counts[viz_module.MCAP_PRIMARY_CAMERA_TOPIC] == 2
+
+
+def test_pointcloud_message_packs_xyz_and_rgba() -> None:
+    """The cloud must carry an opaque ``alpha`` channel alongside red/green/blue.
+
+    The viewer only offers its ``rgba-fields`` colour mode when all four colour
+    fields are declared. Without alpha that mode is unavailable and the 3D panel
+    re-colours the cloud with a fallback colormap, losing the captured RGB.
+    """
+
+    import base64
+
+    import numpy as np
+
+    from npa.workbench.lichtblick import (
+        _POINTCLOUD_ALPHA_OPAQUE,
+        _POINTCLOUD_POINT_STRIDE,
+        pointcloud_message,
+    )
+
+    xyz = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype="float32")
+    rgb = np.array([[10, 20, 30], [40, 50, 60]], dtype="uint8")
+    msg = pointcloud_message(xyz, rgb, stamp_ns=500_000_000, frame_id="sim2real")
+    assert msg["point_stride"] == _POINTCLOUD_POINT_STRIDE
+    assert [f["name"] for f in msg["fields"]] == [
+        "x",
+        "y",
+        "z",
+        "red",
+        "green",
+        "blue",
+        "alpha",
+    ]
+    # Declared offsets must match the packed layout the viewer will read.
+    assert {f["name"]: f["offset"] for f in msg["fields"]}["alpha"] == 15
+    raw = base64.b64decode(msg["data"])
+    assert len(raw) == 2 * _POINTCLOUD_POINT_STRIDE
+    # First point: xyz float32, then rgb uint8, then an opaque alpha.
+    assert np.frombuffer(raw[0:12], dtype="<f4").tolist() == [1.0, 2.0, 3.0]
+    assert list(raw[12:15]) == [10, 20, 30]
+    assert raw[15] == _POINTCLOUD_ALPHA_OPAQUE
+    # Every point is opaque, not just the first.
+    assert list(raw[_POINTCLOUD_POINT_STRIDE + 12 : 2 * _POINTCLOUD_POINT_STRIDE]) == [
+        40,
+        50,
+        60,
+        _POINTCLOUD_ALPHA_OPAQUE,
+    ]
+
+
+def test_heldout_pointcloud_frames_reads_npz(tmp_path: Path) -> None:
+    _write_pointcloud_npz(tmp_path, frames=3)
+    frames = viz_module._heldout_pointcloud_frames(tmp_path)
+    assert len(frames) == 3
+    xyz, rgb = frames[0]
+    assert xyz.shape[1] == 3 and rgb.shape[1] == 3
+    assert xyz.dtype.name == "float32" and rgb.dtype.name == "uint8"
+
+
+def test_emit_mcap_includes_pointclouds(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    _write_pointcloud_npz(tmp_path, frames=4)
+    out = tmp_path / "reports" / "sim2real.mcap"
+    result = viz_module.emit_sim2real_mcap(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=out,
+    )
+    assert result.pointcloud_message_count == 4
+    # A coordinate transform must accompany the point cloud so a Foxglove-compatible
+    # 3D panel has a defined frame to place it in (otherwise nothing renders).
+    assert result.transform_message_count >= 1
+    with open(out, "rb") as fh:
+        reader = make_reader(fh)
+        summary = reader.get_summary()
+        topics = {channel.topic for channel in summary.channels.values()}
+        schema_names = {schema.name for schema in summary.schemas.values()}
+    assert "/heldout/points" in topics
+    assert "foxglove.PointCloud" in schema_names
+    assert "/tf" in topics
+    assert "foxglove.FrameTransform" in schema_names
+
+
+def test_emit_mcap_raises_when_mcap_unavailable(monkeypatch, tmp_path: Path) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+
+    def _raise() -> Any:
+        raise viz_module.McapUnavailableError("mcap is not installed")
+
+    monkeypatch.setattr(viz_module, "_import_mcap", _raise)
+
+    with pytest.raises(viz_module.McapUnavailableError):
+        viz_module.emit_sim2real_mcap(
+            local_dir=tmp_path,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+            output_mcap=tmp_path / "reports" / "sim2real.mcap",
+        )
+
+
+def test_emit_mcap_raises_when_no_content(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    with pytest.raises(Sim2RealVizError):
+        viz_module.emit_sim2real_mcap(
+            local_dir=tmp_path,
+            inner_evidence={"iterations": [], "reward_trend": []},
+            heldout_report={"per_env": []},
+            output_mcap=tmp_path / "reports" / "empty.mcap",
+        )
+
+
+def test_emit_rejects_synthetic_descriptor_only_recording(monkeypatch, tmp_path: Path) -> None:
+    _write_summary_artifacts(tmp_path)
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+
+    with pytest.raises(Sim2RealVizError, match="no real rollout frames"):
+        emit_sim2real_rerun(
+            local_dir=tmp_path,
+            inner_evidence={"iterations": [], "reward_trend": []},
+            heldout_report={"per_env": []},
+            output_rrd=tmp_path / "reports" / "sim2real.rrd",
+        )
+
+    assert any(entity.startswith("synthetic/") for entity, _kind in fake.logged)
+
+
 def _write_test_png(path: Path, *, red: int, green: int, blue: int) -> None:
     import struct
     import zlib
@@ -249,6 +476,306 @@ def _write_test_png(path: Path, *, red: int, green: int, blue: int) -> None:
     path.write_bytes(png)
 
 
+def _write_summary_artifacts(tmp_path: Path) -> None:
+    (tmp_path / "reports").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "reports" / "sim2real-report.json").write_text(
+        json.dumps({"run_id": "s2r-test", "status": "completed"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "outer_loop").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "outer_loop" / "decision.json").write_text(
+        json.dumps(
+            {
+                "decision": "promote_checkpoint",
+                "success_rate": 1.0,
+                "threshold": 0.5,
+                "checkpoint_uri": "s3://bucket/run/model_latest.pt",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "augment" / "frames").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "augment" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "executed",
+                "mode": "descriptor_stub",
+                "frame_count": 2,
+                "image": "npa-cosmos2-transfer:test",
+                "input_uri": "s3://bucket/input",
+                "output_uri": "s3://bucket/augment",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "augment" / "frames" / "index.json").write_text(
+        json.dumps({"frame_count": 2, "frames": [{"frame_id": "frame-00000"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "envs" / "manifest").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "envs" / "manifest" / "split-manifest.json").write_text(
+        json.dumps({"raw_count": 10, "train_count": 8, "heldout_count": 2, "disjoint": True, "seed": 42}),
+        encoding="utf-8",
+    )
+    (tmp_path / "tokens").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tokens" / "manifest.json").write_text(
+        json.dumps({"train_env_count": 8, "heldout_env_count": 2}),
+        encoding="utf-8",
+    )
+    env_sample = {
+        "env_id": "env-00006",
+        "physics": {"friction": 0.58, "lighting_lux": 700},
+        "scene": {
+            "simready_asset": "simready://warehouse/tabletop_v1",
+            "augmented_frame_uri": "s3://bucket/augment/frame-00006.png",
+        },
+    }
+    for rel in ("envs/train/envs.jsonl", "envs/heldout/envs.jsonl"):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(env_sample) + "\n", encoding="utf-8")
+
+
+def _gradient_rgb(width: int = 48, height: int = 32) -> Any:
+    import numpy as np
+
+    ys, xs = np.mgrid[0:height, 0:width]
+    r = (xs * 255 // max(1, width - 1)).astype("uint8")
+    g = (ys * 255 // max(1, height - 1)).astype("uint8")
+    b = ((xs + ys) * 255 // max(1, width + height - 2)).astype("uint8")
+    return np.dstack([r, g, b]).astype("uint8")
+
+
+def test_decode_png_applies_row_filters(tmp_path: Path) -> None:
+    """Regression: renders use Sub/Up/Paeth filters; ignoring them yields noise."""
+    import io
+
+    import numpy as np
+
+    Image = pytest.importorskip("PIL.Image")
+
+    arr = _gradient_rgb()
+    # Pillow chooses adaptive per-row filters (not all-zero) for a gradient.
+    buffer = io.BytesIO()
+    Image.fromarray(arr, "RGB").save(buffer, format="PNG")
+    data = buffer.getvalue()
+
+    # Confirm the encoder actually used non-zero filters, otherwise the test is moot.
+    import struct
+    import zlib
+
+    idx = 8
+    width = height = 0
+    idat = bytearray()
+    while idx + 8 <= len(data):
+        length = struct.unpack("!I", data[idx : idx + 4])[0]
+        ctype = data[idx + 4 : idx + 8]
+        chunk = data[idx + 8 : idx + 8 + length]
+        idx += 12 + length
+        if ctype == b"IHDR":
+            width, height = struct.unpack("!II", chunk[:8])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    raw = zlib.decompress(bytes(idat))
+    stride = width * 3 + 1
+    filters = {raw[row * stride] for row in range(height)}
+    assert filters - {0}, "expected Pillow to use non-zero row filters"
+
+    # Manual fallback decoder must reconstruct the exact pixels (not noise).
+    decoded = viz_module._decode_png_bytes(data)
+    assert decoded is not None
+    assert decoded.shape == arr.shape
+    assert np.array_equal(decoded, arr)
+
+    # Public reader (Pillow fast path) must also match.
+    png_path = tmp_path / "gradient.png"
+    png_path.write_bytes(data)
+    via_reader = viz_module._read_png(png_path)
+    assert via_reader is not None
+    assert np.array_equal(via_reader, arr)
+
+
+def _encode_png_with_filter(pixels, filter_type: int) -> bytes:
+    """Encode an 8-bit RGB PNG forcing every scanline onto ``filter_type``.
+
+    Pillow picks row filters adaptively, so it cannot be told to exercise a
+    specific one. The fallback decoder has a separate branch per filter, and
+    Average/Paeth are the hand-written recurrences, so each needs direct coverage.
+    """
+
+    import struct
+    import zlib
+
+    height, width, channels = pixels.shape
+    assert channels == 3
+    raw = bytearray()
+    prev = [0] * (width * channels)
+    for y in range(height):
+        cur = [int(v) for v in pixels[y].reshape(-1)]
+        line = bytearray()
+        for i, value in enumerate(cur):
+            left = cur[i - channels] if i >= channels else 0
+            up = prev[i]
+            up_left = prev[i - channels] if i >= channels else 0
+            if filter_type == 0:
+                pred = 0
+            elif filter_type == 1:
+                pred = left
+            elif filter_type == 2:
+                pred = up
+            elif filter_type == 3:
+                pred = (left + up) // 2
+            else:
+                pred = viz_module._paeth(left, up, up_left)
+            line.append((value - pred) & 0xFF)
+        raw.append(filter_type)
+        raw.extend(line)
+        prev = cur
+
+    def _chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack("!I", len(payload))
+            + tag
+            + payload
+            + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(bytes(raw)))
+        + _chunk(b"IEND", b"")
+    )
+
+
+def _write_filtered_rgb_png(path: Path, pixels: Any, filter_types: list[int]) -> None:
+    import struct
+    import zlib
+
+    height, width, channels = pixels.shape
+    assert channels == 3
+    raw = bytearray()
+    previous = [0] * (width * channels)
+    for row_index in range(height):
+        row = [int(value) for value in pixels[row_index].reshape(-1)]
+        filter_type = filter_types[row_index % len(filter_types)]
+        encoded = bytearray()
+        for byte_index, value in enumerate(row):
+            left = row[byte_index - channels] if byte_index >= channels else 0
+            up = previous[byte_index]
+            upper_left = previous[byte_index - channels] if byte_index >= channels else 0
+            if filter_type == 0:
+                predictor = 0
+            elif filter_type == 1:
+                predictor = left
+            elif filter_type == 2:
+                predictor = up
+            elif filter_type == 3:
+                predictor = (left + up) // 2
+            elif filter_type == 4:
+                predictor = viz_module._paeth(left, up, upper_left)
+            else:
+                raise AssertionError(filter_type)
+            encoded.append((value - predictor) & 0xFF)
+        raw.append(filter_type)
+        raw.extend(encoded)
+        previous = row
+
+    def _chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack("!I", len(payload))
+            + tag
+            + payload
+            + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + _chunk(b"IEND", b"")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
+
+
+def _noisy_rgb(width: int = 24, height: int = 18):
+    """Deterministic high-frequency image.
+
+    A smooth gradient is a degenerate case for Paeth: with ``left`` and
+    ``up_left`` equal along an axis-aligned ramp, the predictor picks ``up``
+    whether or not ``up_left`` is read, so a decoder that ignored ``up_left``
+    would still decode a gradient perfectly. Noise makes every term matter.
+    """
+
+    import numpy as np
+
+    rng = np.random.default_rng(20260731)
+    return rng.integers(0, 256, size=(height, width, 3), dtype="uint8")
+
+
+@pytest.mark.parametrize("filter_type", [0, 1, 2, 3, 4])
+@pytest.mark.parametrize("image", ["gradient", "noise"])
+def test_decode_png_matches_pillow_for_every_row_filter(filter_type: int, image: str) -> None:
+    """Each filter branch must reconstruct exactly what Pillow does."""
+
+    import io
+
+    import numpy as np
+
+    Image = pytest.importorskip("PIL.Image")
+
+    expected = _gradient_rgb() if image == "gradient" else _noisy_rgb()
+    data = _encode_png_with_filter(expected, filter_type)
+
+    # Cross-check the hand-rolled encoder itself, so a bug there cannot make the
+    # decoder look correct against a wrong reference.
+    with Image.open(io.BytesIO(data)) as image:
+        via_pillow = np.asarray(image.convert("RGB"), dtype="uint8")
+    assert np.array_equal(via_pillow, expected), f"filter {filter_type}: encoder is wrong"
+
+    decoded = viz_module._decode_png_bytes(data)
+    assert decoded is not None
+    assert decoded.dtype == np.uint8
+    assert np.array_equal(decoded, expected), f"filter {filter_type}: fallback decode differs"
+
+
+def test_decode_png_matches_pillow_on_filter0(tmp_path: Path) -> None:
+    import numpy as np
+
+    _write_test_png(tmp_path / "solid.png", red=12, green=200, blue=77)
+    decoded = viz_module._read_png(tmp_path / "solid.png")
+    assert decoded is not None
+    assert decoded.shape == (64, 64, 3)
+    assert np.array_equal(decoded[0, 0], np.array([12, 200, 77], dtype="uint8"))
+    assert int(decoded.mean()) == int(np.array([12, 200, 77]).mean())
+
+
+def test_read_png_reconstructs_filtered_truecolor_rows(monkeypatch, tmp_path: Path) -> None:
+    import numpy as np
+
+    monkeypatch.setattr(viz_module, "_read_png_with_pillow", lambda _path: None)
+    pixels = np.array(
+        [
+            [[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            [[11, 21, 31], [45, 55, 65], [76, 86, 96], [111, 121, 131]],
+            [[12, 22, 32], [47, 57, 67], [81, 91, 101], [118, 128, 138]],
+            [[13, 23, 33], [49, 59, 69], [88, 98, 108], [125, 135, 145]],
+            [[14, 24, 34], [51, 61, 71], [95, 105, 115], [132, 142, 152]],
+        ],
+        dtype=np.uint8,
+    )
+    path = tmp_path / "filtered.png"
+    _write_filtered_rgb_png(path, pixels, [0, 1, 2, 3, 4])
+
+    decoded = viz_module._read_png(path)
+
+    assert decoded is not None
+    assert np.array_equal(decoded, pixels)
+
+
 def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> None:
     actions_dir = tmp_path / "actions"
     rollouts = generate_action_rollouts(actions_dir, count=1, steps_per_rollout=2, seed=3, quality=0.5)
@@ -271,6 +798,7 @@ def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> 
 
 def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_path: Path) -> None:
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    _write_summary_artifacts(tmp_path)
     renders_dir = tmp_path / "eval" / "heldout" / "renders" / "heldout-0000"
     _write_test_png(renders_dir / "camera-000.png", red=40, green=120, blue=200)
     _write_test_png(renders_dir / "camera-001.png", red=50, green=130, blue=210)
@@ -302,12 +830,56 @@ def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_
     assert result.frame_count == 0
     assert "heldout/camera/heldout-0000/camera" in entities
     assert kinds["heldout/camera/heldout-0000/camera"] == "image"
+    assert ("camera", "image", 0.0) in fake.logged_times
+    assert not any(entity.startswith("world/franka") for entity in entities)
     assert not any(
         entity.startswith("rollouts/iter_01/rollout-") and entity.endswith("/camera")
         for entity in entities
     )
     assert "signal/reward_trend" in entities
     assert "heldout/success_rate" in entities
+    assert "summary/run_success" in entities
+    assert "summary/augmentation" in entities
+    assert "summary/artifacts" in entities
+    assert result.synthetic_frame_count > 0
+    assert any(entity.startswith("synthetic/dataset/train/") for entity in entities)
+    assert any(entity.startswith("synthetic/dataset/heldout/") for entity in entities)
+    assert any(entity.startswith("synthetic/augmentation/") for entity in entities)
+    assert "synthetic/preview" in entities
+    visual_index = tmp_path / "reports" / "sim2real-visual-index.json"
+    assert visual_index.is_file()
+    index = json.loads(visual_index.read_text(encoding="utf-8"))
+    assert index["success"]["decision"] == "promote_checkpoint"
+    assert index["augmentation"]["frame_count"] == 2
+    assert index["dataset"]["heldout_count"] == 2
+    assert index["synthetic"]["dataset_sample_count"] == 2
+    assert index["synthetic"]["dataset_descriptor_preview_count"] >= 2
+    assert index["synthetic"]["augmentation_sample_count"] == 1
+
+
+def test_emit_logs_augmentation_previews_from_manifest_without_frame_index(
+    monkeypatch, tmp_path: Path
+) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    _write_summary_artifacts(tmp_path)
+    (tmp_path / "augment" / "frames" / "index.json").unlink()
+
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+    result = emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=tmp_path / "reports" / "sim2real.rrd",
+    )
+
+    entities = [entity for entity, _kind in fake.logged]
+    assert result.synthetic_frame_count > 0
+    assert any(entity.startswith("synthetic/augmentation/frame-") for entity in entities)
+    index = json.loads((tmp_path / "reports" / "sim2real-visual-index.json").read_text(encoding="utf-8"))
+    assert index["augmentation"]["frame_count"] == 2
+    assert index["synthetic"]["augmentation_sample_count"] == 2
+    assert index["synthetic"]["augmentation_descriptor_preview_count"] == 2
 
 
 def test_heldout_render_step_indices_samples_evenly() -> None:
@@ -409,7 +981,12 @@ def test_build_blueprint_one_2d_view_per_heldout_env() -> None:
     viz_module._build_blueprint(
         rrb, heldout_env_ids=["env-00006", "env-00009", "env-00018"]
     )
-    assert any(v["kind"] == "Spatial3DView" and v["origin"] == "world" for v in rrb.views)
+    assert rrb.views[0] == {
+        "kind": "Spatial2DView",
+        "origin": "camera",
+        "name": "Isaac held-out simulation camera",
+    }
+    assert not any(v["kind"] == "Spatial3DView" and v["origin"] == "world" for v in rrb.views)
     heldout_origins = [
         v["origin"] for v in rrb.views
         if v["kind"] == "Spatial2DView" and v["origin"].startswith("heldout/camera/")
@@ -428,6 +1005,20 @@ def test_build_blueprint_without_env_ids_keeps_single_camera_view() -> None:
     assert not any(
         v["origin"].startswith("heldout/camera/") for v in rrb.views
     )
+
+
+def test_build_blueprint_with_synthetic_view() -> None:
+    rrb = _RecordingRRB()
+    viz_module._build_blueprint(
+        rrb,
+        heldout_env_ids=["env-00006"],
+        has_synthetic_data=True,
+    )
+    origins = [view["origin"] for view in rrb.views if view["kind"] == "Spatial2DView"]
+    assert "synthetic/preview" in origins
+    assert "synthetic/dataset/train" in origins
+    assert "synthetic/dataset/heldout" in origins
+    assert "synthetic/augmentation" in origins
 
 
 def test_log_heldout_cameras_time_aligns_envs() -> None:

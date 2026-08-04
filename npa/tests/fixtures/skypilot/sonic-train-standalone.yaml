@@ -1,0 +1,155 @@
+# Standalone SONIC training workflow.
+#
+# Operator-provided parameters:
+# - POLICY_IMAGE: image containing the SONIC /entrypoint.sh runtime. Use the
+#   manifest variant selected by SONIC_GPU_TYPE and SONIC_IMAGE_VARIANT.
+# - SONIC_PAYLOAD_MODE: direct runs inside POLICY_IMAGE; docker runs POLICY_IMAGE
+#   from SkyPilot's default VM runtime.
+# - AWS_PROFILE: profile name for S3-compatible storage access.
+# - SONIC_DOCKER_GPU_REQUEST: Docker --gpus request, or an NVIDIA CDI device
+#   such as nvidia.com/gpu=all for nested Docker sidecars.
+# - S3_ENDPOINT_URL: S3-compatible endpoint for artifact writes.
+# - S3_BUCKET: destination bucket name, without s3://.
+name: sonic-train-standalone
+execution: serial
+---
+name: sonic-train
+resources:
+  cloud: nebius
+  accelerators: L40S:1
+  cpus: 16
+  memory: 64
+envs:
+  # NVIDIA licence acceptance for the runtime-fetched Isaac Sim / Isaac Lab.
+  # Empty on purpose: these images ship no Isaac and REFUSE to fetch it (exit 78) unless
+  # the operator has accepted NVIDIA's terms, and hardcoding "YES" here would be us
+  # accepting on their behalf. Supply it at launch, e.g.
+  #   sky launch ... --env OMNI_KIT_ACCEPT_EULA=YES --env ISAACSIM_ACCEPT_EULA=YES
+  # See npa/docker/workbench/common/isaac_bootstrap.sh.
+  OMNI_KIT_ACCEPT_EULA: ""
+  ISAACSIM_ACCEPT_EULA: ""
+  POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
+  SONIC_PAYLOAD_MODE: "docker"
+  SONIC_GPU_TYPE: "l40s"
+  SONIC_DOCKER_GPU_REQUEST: "all"
+  SONIC_DOCKER_DRIVER_CAPABILITIES: "all"
+  SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
+  AWS_PROFILE: "nebius"
+  S3_ENDPOINT_URL: ""
+  S3_BUCKET: "example-bucket"
+  NPA_PIPELINE_RUN_ID: "sonic-train"
+  SONIC_CHECKPOINT: "nvidia/GEAR-SONIC:sonic_release/last.pt"
+  SONIC_DATA_PATH: ""
+  SONIC_SAMPLE_DATA: "1"
+  SONIC_EMBODIMENT: "unitree-g1"
+  SONIC_NUM_ENVS: "16"
+  SONIC_HEADLESS: "1"
+  SONIC_MAX_ITERATIONS: "5"
+  SONIC_OUTPUT_PREFIX: "sonic-train/sonic-train-smoke/"
+  NPA_TRAINING_OVERRIDES_JSON: "[]"
+  NPA_TRAINING_WANDB_ENABLED: "0"
+  NPA_TRAINING_WANDB_PROJECT: ""
+  NPA_TRAINING_WANDB_RUN_NAME: ""
+  WANDB_MODE: "disabled"
+setup: |
+  set -euo pipefail
+  docker_login_if_configured() {
+    local username="${SKYPILOT_DOCKER_USERNAME:-}"
+    local password="${SKYPILOT_DOCKER_PASSWORD:-}"
+    local server="${SKYPILOT_DOCKER_SERVER:-}"
+    if [ -z "${username}${password}${server}" ]; then
+      return 0
+    fi
+    if [ -z "${username}" ] || [ -z "${password}" ] || [ -z "${server}" ]; then
+      echo "Docker registry auth requires SKYPILOT_DOCKER_USERNAME, SKYPILOT_DOCKER_PASSWORD, and SKYPILOT_DOCKER_SERVER" >&2
+      exit 2
+    fi
+    printf '%s\n' "${password}" | docker login "${server}" --username "${username}" --password-stdin >/dev/null
+  }
+  if [ "${SONIC_PAYLOAD_MODE}" = "docker" ]; then
+    command -v docker >/dev/null 2>&1 || {
+      echo "SONIC_PAYLOAD_MODE=docker requires docker in the SkyPilot runtime" >&2
+      exit 2
+    }
+    docker_login_if_configured
+    if [[ "${SONIC_DOCKER_GPU_REQUEST}" == nvidia.com/* ]] && ! command -v nvidia-ctk >/dev/null 2>&1; then
+      echo "SONIC_DOCKER_GPU_REQUEST=${SONIC_DOCKER_GPU_REQUEST} requires nvidia-ctk in the SkyPilot runtime" >&2
+      echo "Install nvidia-container-toolkit or use a runtime image that includes it before launching the docker payload." >&2
+      exit 2
+    fi
+    docker pull "${POLICY_IMAGE}"
+  elif [ ! -x /entrypoint.sh ]; then
+    echo "The selected POLICY_IMAGE must provide the SONIC /entrypoint.sh runtime" >&2
+    exit 2
+  fi
+run: |
+  set -euo pipefail
+  if [ -z "${S3_ENDPOINT_URL}" ]; then
+    echo "S3_ENDPOINT_URL must be provided by the operator" >&2
+    exit 2
+  fi
+  if [ "${S3_BUCKET}" = "example-bucket" ]; then
+    echo "S3_BUCKET must be provided by the operator" >&2
+    exit 2
+  fi
+
+  export AWS_PROFILE="${AWS_PROFILE:-nebius}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL}}"
+  export S3_ENDPOINT_URL="${S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL}}"
+  export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
+  output_path="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
+  export NPA_OUTPUT_PATH="${output_path}"
+  export NPA_LOCAL_OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-output}"
+  export SONIC_CHECKPOINT="${SONIC_CHECKPOINT}"
+  export SONIC_DATA_PATH="${SONIC_DATA_PATH}"
+  export SONIC_SAMPLE_DATA="${SONIC_SAMPLE_DATA}"
+  export SONIC_EMBODIMENT="${SONIC_EMBODIMENT}"
+  export SONIC_NUM_ENVS="${SONIC_NUM_ENVS}"
+  export SONIC_HEADLESS="${SONIC_HEADLESS}"
+  export SONIC_MAX_ITERATIONS="${SONIC_MAX_ITERATIONS}"
+
+  printf 'SONIC_WORKFLOW_IMAGE policy_image=%s gpu_type=%s image_variant=%s\n' \
+    "${POLICY_IMAGE}" "${SONIC_GPU_TYPE}" "${SONIC_IMAGE_VARIANT}"
+
+  if [ "${SONIC_PAYLOAD_MODE}" = "docker" ]; then
+    docker_gpu_args=()
+    if [ -n "${SONIC_DOCKER_GPU_REQUEST}" ]; then
+      if [[ "${SONIC_DOCKER_GPU_REQUEST}" == nvidia.com/* ]]; then
+        command -v nvidia-ctk >/dev/null 2>&1 || {
+          echo "SONIC_DOCKER_GPU_REQUEST=${SONIC_DOCKER_GPU_REQUEST} requires nvidia-ctk in the SkyPilot runtime" >&2
+          exit 2
+        }
+        sudo mkdir -p /etc/cdi
+        sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+        docker_gpu_args=(
+          --runtime=nvidia
+          -e "NVIDIA_VISIBLE_DEVICES=${SONIC_DOCKER_GPU_REQUEST}"
+          -e "NVIDIA_DRIVER_CAPABILITIES=${SONIC_DOCKER_DRIVER_CAPABILITIES}"
+        )
+      else
+        docker_gpu_args=(--gpus "${SONIC_DOCKER_GPU_REQUEST}")
+      fi
+    fi
+    docker run --rm "${docker_gpu_args[@]}" --ipc=host --network=host \
+      -e AWS_ACCESS_KEY_ID \
+      -e AWS_SECRET_ACCESS_KEY \
+      -e AWS_PROFILE \
+      -e AWS_ENDPOINT_URL \
+      -e S3_ENDPOINT_URL \
+      -e NEBIUS_S3_ENDPOINT \
+      -e NPA_OUTPUT_PATH \
+      -e NPA_LOCAL_OUTPUT_DIR \
+      -e SONIC_CHECKPOINT \
+      -e SONIC_DATA_PATH \
+      -e SONIC_SAMPLE_DATA \
+      -e SONIC_EMBODIMENT \
+      -e SONIC_NUM_ENVS \
+      -e SONIC_HEADLESS \
+      -e SONIC_MAX_ITERATIONS \
+      -e NPA_TRAINING_OVERRIDES_JSON \
+      -e NPA_TRAINING_OVERRIDES \
+      -e WANDB_MODE \
+      "${POLICY_IMAGE}" train
+  else
+    /entrypoint.sh train
+  fi

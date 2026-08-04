@@ -1,0 +1,101 @@
+# OSS dependency closure for NVIDIA Isaac Sim / Isaac Lab, BAKED at build time.
+#
+# Everything here is freely redistributable and comes from PyPI. It is baked precisely so
+# the run-time NVIDIA fetch can use `pip install --no-deps --require-hashes`: with the
+# closure already present, pip resolves nothing at run time, so every byte it downloads
+# is pinned to a sha256 this repo reviewed (see isaac-nvidia-wheels.txt).
+#
+# Contents:
+#   1. isaaclab 2.3.2.post1's own Requires-Dist, minus torch/torchvision/torchaudio
+#      (installed separately from the CUDA-matched PyTorch index by
+#      install_isaac_runtime_base.sh), plus its `all` extra.
+#   2. Packages Isaac Sim's own extensions import but do not declare. Found empirically
+#      on an RTX PRO 6000 pod, not guessed: a real
+#      `scripts/reinforcement_learning/rsl_rl/train.py` run died on
+#      `isaacsim.core.utils.numpy.rotations -> from scipy.spatial.transform import
+#      Rotation`, which took isaaclab_tasks's extension startup down with it. These
+#      previously came for free from the nvcr.io Isaac base image.
+#
+# Deliberately NOT here:
+#   usd-core  - Kit bundles its own pxr; a second USD on sys.path is asking for trouble,
+#               and a real run confirmed it is not needed.
+#   pandas, imageio-ffmpeg - nothing on the exercised paths imports them.
+#
+# numpy is pinned <2 because isaaclab declares `numpy<2` and gear_sonic pins
+# numpy==1.26.4; torch 2.9 is compatible with either, so the stricter pin wins. (torch
+# pulls numpy 2.x in first, so expect pip to uninstall it and install 1.26.4 - that is
+# the intended outcome, not a mistake.)
+#
+# EXPECTED, BENIGN pip output: "wheel 0.47.0 requires packaging>=24.0, but you have
+# packaging 23.2 which is incompatible." `packaging<24` is isaaclab's own declared
+# constraint and `wheel` is only a build-time tool, so nothing at run time is affected.
+# Do not "fix" it by relaxing the pin: that would put us out of step with what isaaclab
+# says it supports, to silence a warning about a package Isaac never imports. Verified on
+# an RTX PRO 6000 pod: a real rsl_rl training run completes with this exact warning
+# present.
+
+# --- isaaclab 2.3.2.post1 Requires-Dist -------------------------------------------
+numpy==1.26.4
+onnx>=1.18.0
+prettytable==3.3.0
+toml
+hidapi==0.14.0.post2
+gymnasium==1.2.0
+trimesh
+pyglet<2
+transformers
+einops
+warp-lang
+pillow==11.3.0
+starlette==0.45.3
+pytest
+pytest-mock
+junitparser
+flatdict==4.0.0
+flaky
+protobuf!=5.26.0,>=4.25.8
+hydra-core
+h5py
+tensorboard
+moviepy
+packaging<24
+numba
+
+# --- isaaclab[all] ----------------------------------------------------------------
+stable-baselines3>=2.6
+tqdm
+rich
+skrl>=1.4.3
+rsl-rl-lib==3.0.1
+onnxscript>=0.5
+
+# --- undeclared imports inside Isaac Sim / Isaac Lab ------------------------------
+# Each of these was found by running the real
+# scripts/reinforcement_learning/rsl_rl/train.py on an RTX PRO 6000 pod and reading the
+# traceback, not by guessing. They used to arrive for free with the nvcr.io Isaac base
+# image, which is why nothing in the wheels declares them. Every one of them broke a
+# Kit extension startup, which is a confusing failure mode: Kit logs the ImportError and
+# carries on, so the run dies later somewhere unrelated.
+#
+# isaacsim.core.utils.numpy.rotations -> from scipy.spatial.transform import Rotation
+#   (took isaaclab_tasks's extension startup down with it)
+scipy==1.15.3
+# isaaclab.envs -> .ui -> widgets.image_plot -> from matplotlib import cm
+#   directly on train.py's import path (train.py:87 `from isaaclab.envs import ...`)
+matplotlib
+# isaaclab_assets.sensors.gelsight -> isaaclab_contrib ... visuotactile_render -> import cv2
+#   (breaks the isaaclab_assets extension). Headless build: no GUI libs in a container.
+opencv-python-headless
+# omni.replicator.core -> from botocore.exceptions import ClientError, NoCredentialsError
+#   Found on an RTX PRO 6000 pod: the extension fails to start with "No module named
+#   'botocore'". Non-fatal for headless training (the isaac-lab golden eval passes 6/6
+#   without it) but replicator IS the synthetic-data-generation path, e.g.
+#   isaac-lab-cosmos-sdg-burst-smoke.yaml, so a workflow that needs it would fail later
+#   and somewhere confusing. boto3 pulls botocore and the workbench uses boto3 everywhere
+#   already.
+boto3
+# Kit tooling and rsl_rl's git-provenance logging
+PyYAML>=6.0
+GitPython>=3.1.50
+psutil
+requests

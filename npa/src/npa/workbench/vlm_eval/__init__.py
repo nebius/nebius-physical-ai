@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 from itertools import product
@@ -18,11 +18,13 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 import httpx
 import numpy as np
 from PIL import Image
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
@@ -34,6 +36,14 @@ DEFAULT_ENDPOINT_URL = "http://127.0.0.1:8000/v1"
 DEFAULT_FRAME_SELECTION = "keyframes"
 DEFAULT_MAX_FRAMES = 4
 DEFAULT_TIMEOUT_S = 120.0
+# A self-hosted vLLM server cold-starts and loads weights for minutes; the eval
+# client must wait for it to become reachable instead of failing on the first
+# connection-refused. Override with NPA_VLM_READY_TIMEOUT_S.
+DEFAULT_READY_TIMEOUT_S = 600.0
+READY_TIMEOUT_ENV = "NPA_VLM_READY_TIMEOUT_S"
+#: Set by a job that starts its own vLLM server, so the eval client requests the
+#: model that server actually loaded rather than ``DEFAULT_MODEL``.
+SELF_HOSTED_MODEL_ENV = "NPA_VLM_SELF_HOSTED_MODEL"
 DEFAULT_API_KEY_ENV = "VLM_EVAL_API_KEY"
 DEFAULT_RUBRIC = (
     "Score whether the rollout completes the requested physical task. "
@@ -42,6 +52,9 @@ DEFAULT_RUBRIC = (
     "or ambiguous outcomes."
 )
 RESULT_FILENAME = "vlm_eval_stub.json"
+#: The aggregate report a rollout-SET evaluation writes. Named for compatibility with
+#: the retired sim-to-real-loop.yaml, whose readers key off this filename.
+LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
@@ -180,8 +193,13 @@ __all__ = [
     "VlmStructuredResponse",
     "benchmark_result_uri_for",
     "benchmark_vlm_eval",
+    "VlmLoopRollout",
+    "aggregate_loop_report",
+    "discover_rollouts",
+    "evaluate_rollout_set",
     "evaluate_stub",
     "evaluate_vlm",
+    "loop_report_uri_for",
     "load_benchmark_dataset",
     "parse_structured_response",
     "result_uri_for",
@@ -208,6 +226,12 @@ def benchmark_vlm_eval(
 ) -> VlmBenchmarkReport:
     """Run a labeled VLM-eval sweep and rank configs by label agreement."""
 
+    # Resolve the packaged sample fixture from its install location so callers
+    # (and the npa.workflow twin) get a working default regardless of CWD. A
+    # repo-relative path does not exist inside a rendered job; the ``sample``/
+    # ``default`` sentinels (and empty) map to the packaged fixture.
+    if dataset.strip().lower() in {"", "sample", "default"}:
+        dataset = str(DEFAULT_SAMPLE_BENCHMARK_PATH)
     benchmark_dataset = load_benchmark_dataset(dataset, default_task=task)
     threshold_values = _normalize_thresholds(thresholds)
     model_values = _normalize_strings(models, label="models")
@@ -385,6 +409,11 @@ def evaluate_vlm(
         )
 
     effective_model = model or DEFAULT_MODEL
+    if backend == "self-hosted" and effective_model == DEFAULT_MODEL:
+        # The job that started the vLLM server records which model it serves, so
+        # the client asks for that one instead of the 7B default (a mismatch is a
+        # 404 from the server). See `_vllm_serve_preamble` in the workflow render.
+        effective_model = os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
     if backend == "api" and effective_model == DEFAULT_MODEL:
         # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
         # Factory API does not serve it (requests 404); use the vision model
@@ -534,6 +563,187 @@ def result_uri_for(output_path: str) -> str:
     if output_path.endswith(".json"):
         return output_path
     return output_path.rstrip("/") + f"/{RESULT_FILENAME}"
+
+
+def loop_report_uri_for(output_path: str) -> str:
+    """Return the aggregate task-success report URI for an output prefix."""
+
+    if output_path.endswith(".json"):
+        return output_path
+    return output_path.rstrip("/") + f"/{LOOP_REPORT_FILENAME}"
+
+
+def discover_rollouts(input_path: str) -> list[str]:
+    """Return one URI per rollout under ``input_path``, or the prefix itself.
+
+    Mirrors the retired ``sim-to-real-loop.yaml``: it listed the immediate child
+    directories of the rollout prefix and fell back to treating the prefix as a single
+    rollout when there were none. ``evaluate_vlm`` scores *one* rollout — it discovers
+    frames recursively, so pointing it at a prefix of many rollouts would blend them into
+    one score. That is why the set has to be enumerated here.
+    """
+
+    if not input_path.strip():
+        raise VlmEvalError("--input-path is required")
+    if input_path.startswith("s3://"):
+        return _discover_object_rollouts(input_path)
+
+    root = Path(input_path)
+    if not root.exists():
+        raise VlmEvalError(f"rollout input not found: {input_path}")
+    children = sorted(child for child in root.iterdir() if child.is_dir())
+    return [str(child) for child in children] or [str(root)]
+
+
+def _discover_object_rollouts(input_path: str) -> list[str]:
+    from npa.clients.storage import StorageClient
+
+    base = input_path.rstrip("/") + "/"
+    parsed = urlparse(base)
+    bucket, prefix = parsed.netloc, parsed.path.lstrip("/")
+    client = StorageClient.from_environment()
+    # A "directory" in object storage is a common prefix; the delimiter listing is the
+    # object-store equivalent of `find -mindepth 1 -maxdepth 1 -type d`.
+    paginator = client.s3.get_paginator("list_objects_v2")
+    names: list[str] = []
+    saw_object = False
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
+        for common in page.get("CommonPrefixes") or ():
+            child = str(common.get("Prefix") or "")
+            if child and child != prefix:
+                names.append(f"s3://{bucket}/{child}")
+        saw_object = saw_object or bool(page.get("Contents"))
+    if names:
+        return sorted(names)
+    if not saw_object:
+        raise VlmEvalError(f"rollout input contains no objects: {input_path}")
+    return [base]
+
+
+@dataclass(frozen=True)
+class VlmLoopRollout:
+    """One rollout's contribution to the aggregate report."""
+
+    rollout_id: str
+    success: bool
+    score: float
+    rationale: str
+    status: str
+    frame_count: int
+    result_uri: str
+
+
+def evaluate_rollout_set(
+    *,
+    input_path: str,
+    output_path: str,
+    task: str = "sim-to-real",
+    backend: str = DEFAULT_BACKEND,
+    model: str = DEFAULT_MODEL,
+    success_threshold: float = 0.8,
+    frame_selection: str = DEFAULT_FRAME_SELECTION,
+    max_frames: int = DEFAULT_MAX_FRAMES,
+    endpoint_url: str = "",
+    api_key_env: str = DEFAULT_API_KEY_ENV,
+    rubric: str = DEFAULT_RUBRIC,
+    rubric_path: str = "",
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    storage_client: "StorageClient | None" = None,
+) -> dict[str, Any]:
+    """Score every rollout under a prefix and return the aggregate task-success report.
+
+    This is the capability the retired ``sim-to-real-loop.yaml`` implemented in ~80 lines of
+    bash and `jq`, and that ``tests/workbench/test_vlm_eval_loop_e2e.py`` re-implemented in
+    Python: score each rollout, write one result per rollout, then aggregate into a coarse
+    ``task_success`` gate. Field names and the gate rule (``mean_score >=
+    success_threshold``) are kept identical so existing readers of the report keep working.
+    """
+
+    started_at = time.monotonic()
+    rollouts: list[VlmLoopRollout] = []
+    for rollout_uri in discover_rollouts(input_path):
+        rollout_id = _rollout_id_for(rollout_uri)
+        result = evaluate_vlm(
+            input_path=rollout_uri,
+            output_path=_join_uri(output_path.rstrip("/") + "/", f"rollouts/{rollout_id}/"),
+            task=task,
+            backend=backend,
+            model=model,
+            success_threshold=success_threshold,
+            frame_selection=frame_selection,
+            max_frames=max_frames,
+            endpoint_url=endpoint_url,
+            api_key_env=api_key_env,
+            rubric=rubric,
+            rubric_path=rubric_path,
+            timeout_s=timeout_s,
+        )
+        written = write_result(
+            asdict(result), result_uri=result.result_uri, storage_client=storage_client
+        )
+        rollouts.append(
+            VlmLoopRollout(
+                rollout_id=rollout_id,
+                success=bool(result.passed),
+                score=float(result.score),
+                rationale=result.rationale,
+                status=result.status,
+                frame_count=result.frame_count,
+                result_uri=written,
+            )
+        )
+
+    report = aggregate_loop_report(
+        rollouts,
+        model=model,
+        frame_selection=_normalize_frame_selection(frame_selection),
+        success_threshold=success_threshold,
+        output_dir=output_path,
+    )
+    report["latency_s"] = round(time.monotonic() - started_at, 3)
+    report["report_uri"] = write_result(
+        report,
+        result_uri=loop_report_uri_for(output_path),
+        storage_client=storage_client,
+    )
+    return report
+
+
+def aggregate_loop_report(
+    rollouts: Sequence[VlmLoopRollout],
+    *,
+    model: str,
+    frame_selection: str,
+    success_threshold: float,
+    output_dir: str,
+) -> dict[str, Any]:
+    """Aggregate per-rollout results exactly as the retired template's `jq -s` did."""
+
+    total = len(rollouts)
+    passed = sum(1 for rollout in rollouts if rollout.success)
+    mean_score = (sum(rollout.score for rollout in rollouts) / total) if total else 0.0
+    return {
+        "status": "completed",
+        "model": model,
+        "frame_selection": frame_selection,
+        "success_threshold": success_threshold,
+        "output_dir": output_dir,
+        "total_rollouts": total,
+        "passed_rollouts": passed,
+        "success_rate": (passed / total) if total else 0.0,
+        "mean_score": mean_score,
+        # The coarse gate is the MEAN score, not the pass rate — same as the template.
+        "task_success": mean_score >= success_threshold,
+        "rollouts": [asdict(rollout) for rollout in rollouts],
+    }
+
+
+def _rollout_id_for(rollout_uri: str) -> str:
+    """Return the last path segment of a rollout URI (``basename`` for object stores)."""
+
+    trimmed = rollout_uri.rstrip("/")
+    segment = trimmed.rsplit("/", 1)[-1] if "/" in trimmed else trimmed
+    return segment or "rollout"
 
 
 def write_result(
@@ -1056,6 +1266,17 @@ def _build_prompt(
     )
 
 
+def _ready_timeout_s() -> float:
+    raw = os.environ.get(READY_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_READY_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_READY_TIMEOUT_S
+    return value if value > 0 else DEFAULT_READY_TIMEOUT_S
+
+
 def _call_openai_compatible(
     *,
     backend: str,
@@ -1088,21 +1309,62 @@ def _call_openai_compatible(
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
     }
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            response = client.post(url, headers=headers, json=request)
-            response.raise_for_status()
-            data = response.json()
-    except httpx.HTTPError as exc:
-        raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise VlmEvalError("VLM backend returned non-JSON response") from exc
+    data = _post_with_readiness_retry(
+        url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
+    )
 
     try:
         message = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmEvalError("VLM backend response missing choices[0].message.content") from exc
     return parse_structured_response(str(message))
+
+
+def _post_with_readiness_retry(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    backend: str,
+    timeout_s: float,
+) -> Any:
+    """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
+
+    A self-hosted vLLM server started alongside the eval job needs minutes to
+    load weights; retry transient connection failures with backoff up to the
+    readiness deadline so a cold start is a bounded wait, not an instant
+    connection-refused. Hosted (``api``) backends are expected to be up and fail
+    fast. This lives in the request path so callers that stub
+    ``_call_openai_compatible`` in tests never incur the wait.
+    """
+
+    is_self_hosted = backend == "self-hosted"
+    ready_timeout = _ready_timeout_s()
+    deadline = time.monotonic() + (ready_timeout if is_self_hosted else 0.0)
+    delay = 2.0
+    last_conn_error = ""
+    while True:
+        try:
+            with httpx.Client(timeout=timeout_s) as client:
+                response = client.post(url, headers=headers, json=request)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            last_conn_error = str(exc) or exc.__class__.__name__
+            if is_self_hosted and time.monotonic() < deadline:
+                time.sleep(delay)
+                delay = min(delay * 1.5, 15.0)
+                continue
+            if is_self_hosted:
+                raise VlmEvalError(
+                    f"VLM backend not ready at {url} after {ready_timeout:.0f}s "
+                    f"(last: {last_conn_error})"
+                ) from exc
+            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise VlmEvalError("VLM backend returned non-JSON response") from exc
 
 
 def _resolve_endpoint_url(*, backend: str, endpoint_url: str) -> str:

@@ -53,6 +53,14 @@ npa/docker/workbench/lerobot/build.sh --all-versions
 npa/docker/workbench/lerobot/build.sh --version 0.6.0
 ```
 
+The datacenter-Blackwell variant is `npa/docker/workbench/lerobot/Dockerfile.b300`.
+LeRobot 0.5.1 requires Python 3.12, so this variant adds a dedicated
+`/opt/lerobot/venv` with torch 2.9/cu130 and the matching torchcodec 0.8 line;
+it does not reuse npa-base's Python 3.11 venv for the policy workload. The base
+venv remains available at `/opt/npa/venv` for the baked architecture and kernel
+validators. Keep both checks in hardware validation: validate the inherited
+CUDA base, then run a real ACT training step from the LeRobot venv.
+
 ## Data Contract
 
 Input format is `LeRobotDataset` in Hugging Face format. Use the SimToLeRobot adapter to convert Genesis or other simulation outputs.

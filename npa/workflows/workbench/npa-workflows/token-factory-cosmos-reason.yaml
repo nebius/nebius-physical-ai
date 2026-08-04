@@ -4,7 +4,6 @@ kind: Workflow
 metadata:
   name: token-factory-cosmos-reason
   description: Reason over scene frames with Token Factory Cosmos reasoner (zero-GPU).
-  skypilotTwin: npa/src/npa/workflows/skypilot/token-factory-cosmos-reason.yaml
 
 config:
   bucket: example-bucket
@@ -27,6 +26,6 @@ states:
     toolRef: workbench.token_factory.reason
     resources: cpu
     outputs:
-      - uri: "{{config.plan_uri}}plan.json"
+      - uri: "{{config.plan_uri}}scene_reasoning.json"
         schema: npa.token_factory.plan.v1
     terminal: true

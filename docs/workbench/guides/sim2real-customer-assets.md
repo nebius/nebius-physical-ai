@@ -180,7 +180,7 @@ The policy container receives `NPA_SIM2REAL_TRAIN_ENVS_URI` (the **workflow-gene
 train shard, not the trigger dataset). Override the image at submit:
 
 ```bash
-export POLICY_IMAGE="<registry>/npa-reference-policy:0.1.2"
+export POLICY_IMAGE="<registry>/npa-reference-policy:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Optional shell swap:
 export BYO_POLICY_COMMAND='your-policy-rollout-hook.sh'
 ```

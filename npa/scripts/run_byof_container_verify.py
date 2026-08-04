@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from npa.workflows.byof.live import resolve_byof_profile_path
 from npa.clients.project_credentials import storage_env_for_project
 from npa.orchestration.skypilot import submit_workflow, workflow_status
 from npa.orchestration.skypilot._bin import (
@@ -36,10 +37,32 @@ DEFAULT_YAML = (
     / "src"
     / "npa"
     / "workflows"
-    / "skypilot"
+    / "byof"
+    / "profiles"
     / "byof-container-smoke-rtxpro.yaml"
 )
 DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
+
+
+#: Credentials every BYOF resource profile needs, because each one uploads its summary
+#: and artifacts to S3. Forwarded as SkyPilot task secrets (never written into the
+#: rendered YAML). Without this a run provisions, pulls the image, executes the profile
+#: and then dies at the upload with
+#: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
+DEFAULT_SECRET_ENVS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+
+
+def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
+    """Return the secret env names to forward to SkyPilot.
+
+    Explicit ``--secret-env`` wins; otherwise forward the S3 credentials when they are
+    present in the environment. Names with no value are dropped, since SkyPilot rejects
+    a secret it cannot resolve.
+    """
+
+    names = list(explicit or DEFAULT_SECRET_ENVS)
+    return [name for name in dict.fromkeys(names) if os.environ.get(name)]
+
 
 
 def _normalize_s3_bucket(value: str) -> str:
@@ -186,7 +209,11 @@ def _resolved_storage_env() -> dict[str, str]:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--yaml", dest="yaml_path", type=Path, default=DEFAULT_YAML)
+    # `resolve_byof_profile_path` also accepts a bare packaged profile NAME, which is what
+    # an npa.workflow spec must pass: a stage runs in a pod with no repo checkout.
+    parser.add_argument(
+        "--yaml", dest="yaml_path", type=resolve_byof_profile_path, default=DEFAULT_YAML
+    )
     parser.add_argument("--run-id", default="")
     parser.add_argument("--image", default="")
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
@@ -198,6 +225,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--config-path", default="")
     parser.add_argument("--infra", default=os.environ.get("NPA_BYOF_INFRA", ""))
     parser.add_argument("--sky-bin", default="")
+    parser.add_argument(
+        "--secret-env",
+        action="append",
+        default=None,
+        help=(
+            "Env var name to forward as a SkyPilot task secret (repeatable). "
+            "Defaults to the S3 credentials the profile needs for its uploads."
+        ),
+    )
     parser.add_argument("--submit-timeout", type=int, default=600)
     parser.add_argument("--wait-timeout", type=int, default=3600)
     parser.add_argument("--poll-interval", type=int, default=30)
@@ -286,6 +322,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     config_path=config_path,
                     sky_bin=sky_bin,
                     infra=infra,
+                    secret_envs=resolve_secret_envs(args.secret_env),
                     timeout=args.submit_timeout,
                 )
                 config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None

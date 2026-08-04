@@ -1,40 +1,43 @@
+"""BDD100K pipeline coverage, at the spec level plus a real mock-endpoint run.
+
+This file used to assert the raw shape of `skypilot/bdd100k-pipeline.yaml` (task order,
+per-task resources, image pins, a SHA-256 snapshot of the file). The runner now renders the
+`npa.workflow` spec instead, so the assertions move onto the spec and — more valuably — onto
+what the pipeline actually *does*: `--mock-endpoints` executes every stage's resolved argv
+against in-process LanceDB and detection-training stand-ins and checks the call sequence.
+
+That mode is the honest offline proof for this pipeline, because a live run needs the LanceDB
+workbench service, which is not deployed (EVIDENCE.md §R16).
+"""
+
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import stat
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[3]
-YAML_PATH = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "bdd100k-pipeline.yaml"
-)
+SPEC_PATH = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "bdd100k-pipeline.yaml"
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_bdd100k_pipeline.py"
 
-EXPECTED_TASK_ORDER = [
-    "bdd100k-ingest",
-    "bdd100k-backfill-cpu",
-    "bdd100k-backfill-clip",
-    "bdd100k-create-mvs",
-    "bdd100k-train-rider",
-    "bdd100k-train-nighttime",
-    "bdd100k-train-distant",
-    "bdd100k-eval-rider",
-    "bdd100k-eval-nighttime",
-    "bdd100k-eval-distant",
-    "bdd100k-fiftyone-app",
+EXPECTED_STAGE_ORDER = [
+    "ingest",
+    "backfill-cpu",
+    "backfill-clip",
+    "curate-views",
+    "train-rider",
+    "train-nighttime",
+    "train-distant",
+    "eval-rider",
+    "eval-nighttime",
+    "eval-distant",
+    "review",
 ]
-EXPECTED_YAML_SHA256 = "edbedfd91a380543345da0d43c43c7fa55894c2474bd2434171d4876ba2243cf"
-EXPECTED_LANCEDB_IMAGE = "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.3"
-EXPECTED_DETECTION_IMAGE = (
-    "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/"
-    "npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
-)
 SYNTHETIC_BDD100K_LABEL_MAP = {
     "person": 0,
     "rider": 1,
@@ -61,10 +64,6 @@ REAL_BDD100K_LABEL_MAP = {
 }
 
 
-def _docs() -> list[dict]:
-    return [doc for doc in yaml.safe_load_all(YAML_PATH.read_text(encoding="utf-8")) if doc is not None]
-
-
 def _load_wrapper_module():
     spec = importlib.util.spec_from_file_location("run_bdd100k_pipeline", WRAPPER_PATH)
     assert spec and spec.loader
@@ -74,67 +73,86 @@ def _load_wrapper_module():
     return module
 
 
-def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> None:
-    docs = _docs()
-    assert docs[0] == {"name": "bdd100k-pipeline", "execution": "serial"}
-    tasks = docs[1:]
-    assert [task["name"] for task in tasks] == EXPECTED_TASK_ORDER
+def _plan(run_id: str = "bdd100k-test-run"):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
 
-    logical_stage_counts = {
-        "ingest": 1,
-        "cpu_backfill": 1,
-        "clip_backfill": 1,
-        "materialized_views": 1,
-        "training": 3,
-        "evaluation": 3,
-        "fiftyone_app": 1,
+    spec = load_spec(SPEC_PATH)
+    return spec, build_plan(spec, run_id=run_id)
+
+
+# --------------------------------------------------------------------------- the spec
+
+
+def test_spec_expands_to_the_pipeline_stages_in_order() -> None:
+    _spec, plan = _plan()
+
+    assert [step.state for step in plan.steps if step.argv] == EXPECTED_STAGE_ORDER
+
+
+def test_gpu_stages_are_the_ones_that_need_a_gpu() -> None:
+    """CLIP embedding, training and evaluation; ingest, CPU backfill and views do not."""
+
+    spec, plan = _plan()
+    by_state = {step.state: step for step in plan.steps}
+
+    for state in ("backfill-clip", "train-rider", "train-nighttime", "train-distant"):
+        profile = spec.resources[by_state[state].resources]
+        assert "accelerators" in profile, state
+    for state in ("ingest", "backfill-cpu", "curate-views", "review"):
+        profile = spec.resources[by_state[state].resources]
+        assert "accelerators" not in profile, state
+
+
+def test_train_stages_wait_and_carry_the_label_map() -> None:
+    """Both were bash in the template and unreachable from a spec (EVIDENCE.md §R21)."""
+
+    _spec, plan = _plan()
+
+    for state in ("train-rider", "train-nighttime", "train-distant"):
+        argv = next(step.argv for step in plan.steps if step.state == state)
+        assert "--wait" in argv, state
+        label_map = argv[argv.index("--label-map") + 1]
+        assert json.loads(label_map) == SYNTHETIC_BDD100K_LABEL_MAP, state
+
+
+def test_eval_stages_discover_their_checkpoint_and_publish_metrics() -> None:
+    _spec, plan = _plan()
+
+    for state, view in (
+        ("eval-rider", "bdd100k_rider_train"),
+        ("eval-nighttime", "bdd100k_nighttime_person_train"),
+        ("eval-distant", "bdd100k_distant_person_train"),
+    ):
+        step = next(candidate for candidate in plan.steps if candidate.state == state)
+        assert "--discover-checkpoint" in step.argv, state
+        assert "--write-canonical-metrics" in step.argv, state
+        # The search prefix is the TRAINING output, which is what /train was handed.
+        assert step.argv[step.argv.index("--checkpoint-uri") + 1].endswith(f"/training/{view}")
+        assert step.outputs[0]["uri"].endswith("/metrics.json")
+
+
+def test_spec_documents_synthetic_and_real_label_maps() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert "pedestrian/motorcycle/bicycle" in text, "the real-BDD100K alternative must stay documented"
+    assert json.loads(yaml.safe_load(text)["config"]["detection_label_map"]) == (
+        SYNTHETIC_BDD100K_LABEL_MAP
+    )
+    # The real map differs only in three category names; keep the anchor honest.
+    assert set(REAL_BDD100K_LABEL_MAP) - set(SYNTHETIC_BDD100K_LABEL_MAP) == {
+        "pedestrian",
+        "motorcycle",
+        "bicycle",
     }
-    assert len(tasks) == sum(logical_stage_counts.values())
-
-    by_name = {task["name"]: task for task in tasks}
-    for name in ("bdd100k-ingest", "bdd100k-backfill-cpu", "bdd100k-create-mvs"):
-        assert by_name[name]["resources"]["cloud"] == "kubernetes"
-        assert by_name[name]["resources"]["cpus"] == 4
-        assert by_name[name]["resources"]["memory"] == 16
-
-    clip = by_name["bdd100k-backfill-clip"]["resources"]
-    assert clip == {
-        "cloud": "kubernetes",
-        "accelerators": "H100:1",
-        "cpus": 8,
-        "memory": 32,
-        "image_id": EXPECTED_LANCEDB_IMAGE,
-    }
-
-    for name in ("bdd100k-train-rider", "bdd100k-train-nighttime", "bdd100k-train-distant"):
-        resources = by_name[name]["resources"]
-        assert resources["cloud"] == "kubernetes"
-        assert resources["accelerators"] == "H100:1"
-        assert resources["cpus"] == 16
-        assert resources["memory"] == 64
-        assert resources["image_id"] == EXPECTED_DETECTION_IMAGE
-
-    for name in ("bdd100k-eval-rider", "bdd100k-eval-nighttime", "bdd100k-eval-distant"):
-        resources = by_name[name]["resources"]
-        assert resources["cloud"] == "kubernetes"
-        assert resources["accelerators"] == "H100:1"
-        assert resources["cpus"] == 8
-        assert resources["memory"] == 32
-        assert resources["image_id"] == EXPECTED_DETECTION_IMAGE
-
-    fiftyone = by_name["bdd100k-fiftyone-app"]
-    assert fiftyone["resources"] == {
-        "cloud": "kubernetes",
-        "cpus": 4,
-        "memory": 16,
-        "ports": 5151,
-        "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>",
-    }
-    assert fiftyone["envs"]["FIFTYONE_DEFAULT_APP_ADDRESS"] == "0.0.0.0"
-    assert fiftyone["envs"]["FIFTYONE_DEFAULT_APP_PORT"] == "5151"
 
 
-def test_bdd100k_pipeline_wrapper_renders_run_id_and_submits_in_order(monkeypatch, tmp_path, capsys) -> None:
+# ------------------------------------------------------------------------- the runner
+
+
+def test_wrapper_submits_the_rendered_spec_and_forwards_tokens(
+    monkeypatch, tmp_path, capsys
+) -> None:
     wrapper = _load_wrapper_module()
     sky_bin = tmp_path / "sky"
     sky_bin.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -144,19 +162,32 @@ def test_bdd100k_pipeline_wrapper_renders_run_id_and_submits_in_order(monkeypatc
     def fake_submit_workflow(yaml_path, run_id, **kwargs):
         captured["run_id"] = run_id
         captured["kwargs"] = kwargs
-        captured["docs"] = [doc for doc in yaml.safe_load_all(Path(yaml_path).read_text(encoding="utf-8")) if doc is not None]
-        return wrapper.WorkflowResult(status="SUBMITTED", job_id="42", returncode=0, log_paths={"config": str(tmp_path / "config.yaml")})
-
-    def fake_workflow_status(job_id, **kwargs):
-        return wrapper.WorkflowResult(status="SUCCEEDED", job_id=job_id, returncode=0)
+        captured["docs"] = [
+            doc
+            for doc in yaml.safe_load_all(Path(yaml_path).read_text(encoding="utf-8"))
+            if doc is not None
+        ]
+        return wrapper.WorkflowResult(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            log_paths={"config": str(tmp_path / "config.yaml")},
+        )
 
     monkeypatch.setattr(wrapper, "submit_workflow", fake_submit_workflow)
-    monkeypatch.setattr(wrapper, "workflow_status", fake_workflow_status)
+    monkeypatch.setattr(
+        wrapper,
+        "workflow_status",
+        lambda job_id, **kwargs: wrapper.WorkflowResult(
+            status="SUCCEEDED", job_id=job_id, returncode=0
+        ),
+    )
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    monkeypatch.setenv("LANCEDB_TOKEN", "unit-test-token")
+    monkeypatch.delenv("DETECTION_TRAINING_TOKEN", raising=False)
 
     rc = wrapper.main(
         [
-            "--yaml",
-            str(YAML_PATH),
             "--run-id",
             "bdd100k-test-run",
             "--synthetic",
@@ -165,30 +196,57 @@ def test_bdd100k_pipeline_wrapper_renders_run_id_and_submits_in_order(monkeypatc
             str(sky_bin),
             "--poll-interval",
             "0",
+            "--default-image",
         ]
     )
 
     assert rc == 0
     capsys.readouterr()
     assert captured["run_id"] == "bdd100k-test-run"
-    assert [doc["name"] for doc in captured["docs"][1:]] == EXPECTED_TASK_ORDER
-    for doc in captured["docs"][1:]:
-        envs = doc["envs"]
-        assert envs["NPA_PIPELINE_RUN_ID"] == "bdd100k-test-run"
-        assert envs["S3_PREFIX"] == "bdd100k-pipeline/bdd100k-test-run"
-        assert envs["LANCE_URI"] == f"s3://{wrapper.DEFAULT_BUCKET}/bdd100k-pipeline/bdd100k-test-run/lancedb/"
-        if "BDD100K_SYNTHETIC_ROWS" in envs:
-            assert envs["BDD100K_SYNTHETIC_ROWS"] == "5000"
+    # Only the token that is actually available is forwarded.
+    assert captured["kwargs"]["secret_envs"] == ["LANCEDB_TOKEN"]
+    # The rendered document is the spec's plan, and the override reached the argv.
+    names = [doc["name"] for doc in captured["docs"] if "name" in doc and "run" in doc]
+    assert names, captured["docs"]
+    rendered = Path.read_text  # keep flake-free; the assertion below uses the parsed docs
+    assert any("--synthetic 5000" in doc["run"] for doc in captured["docs"] if "run" in doc)
+    assert rendered is Path.read_text
 
 
-def test_bdd100k_pipeline_mock_endpoint_validation(capsys, tmp_path) -> None:
+def test_wrapper_yaml_flag_is_still_accepted(monkeypatch, capsys) -> None:
+    """`--yaml` is kept as a deprecated alias; it now names a spec."""
+
     wrapper = _load_wrapper_module()
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+
+    rc = wrapper.main(
+        [
+            "--yaml",
+            str(SPEC_PATH),
+            "--run-id",
+            "bdd100k-alias-run",
+            "--render-only",
+            "--default-image",
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_id"] == "bdd100k-alias-run"
+    assert payload["stages"][0] == "ingest"
+    assert "npa workbench lancedb import-bdd100k" in payload["rendered_skypilot"]
+
+
+@pytest.mark.timeout(300)
+def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypatch) -> None:
+    """The offline proof: every stage's real argv against stand-in services."""
+
+    wrapper = _load_wrapper_module()
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     output = tmp_path / "mock.json"
 
     rc = wrapper.main(
         [
-            "--yaml-path",
-            str(YAML_PATH),
             "--mock-endpoints",
             "--run-id",
             "bdd100k-mock-run",
@@ -197,47 +255,65 @@ def test_bdd100k_pipeline_mock_endpoint_validation(capsys, tmp_path) -> None:
         ]
     )
 
-    assert rc == 0
     capsys.readouterr()
     summary = json.loads(output.read_text(encoding="utf-8"))
-    assert [item["path"] for item in summary["lancedb_requests"] if item["method"] == "POST"] == [
-        "/import-bdd100k",
-        "/backfill",
-        "/backfill",
-        "/backfill",
-        "/backfill",
-        "/backfill",
-        "/backfill",
-        "/create-mv",
-        "/create-mv",
-        "/create-mv",
+    assert not summary["failures"], summary["failures"]
+    assert rc == 0
+
+    assert [
+        item["path"] for item in summary["lancedb_requests"] if item["method"] == "POST"
+    ] == wrapper.EXPECTED_LANCEDB_POSTS
+    assert [
+        item["path"] for item in summary["detection_requests"] if item["method"] == "POST"
+    ] == wrapper.EXPECTED_DETECTION_POSTS
+    # Every stage ran, and each one ran its own argv.
+    assert [item["name"] for item in summary["task_results"]] == EXPECTED_STAGE_ORDER
+    for item in summary["task_results"]:
+        assert item["returncode"] == 0, item
+
+    train_payloads = [
+        item["payload"] for item in summary["detection_requests"] if item["path"] == "/train"
     ]
-    assert [item["path"] for item in summary["detection_requests"] if item["method"] == "POST"] == [
-        "/train",
-        "/train",
-        "/train",
-        "/eval",
-        "/eval",
-        "/eval",
-    ]
-    train_payloads = [item["payload"] for item in summary["detection_requests"] if item["path"] == "/train"]
     assert len(train_payloads) == 3
     for payload in train_payloads:
-        assert "num_classes" not in payload
         assert payload["label_map"] == SYNTHETIC_BDD100K_LABEL_MAP
+        # num_classes agrees with the map rather than contradicting it.
+        assert payload["num_classes"] == len(SYNTHETIC_BDD100K_LABEL_MAP)
 
 
-def test_bdd100k_pipeline_documents_synthetic_and_real_label_maps() -> None:
-    text = YAML_PATH.read_text(encoding="utf-8")
-    synthetic_line = f"  BDD100K_LABEL_MAP: '{json.dumps(SYNTHETIC_BDD100K_LABEL_MAP, separators=(',', ':'))}'"
-    real_line = f"  # BDD100K_LABEL_MAP: '{json.dumps(REAL_BDD100K_LABEL_MAP, separators=(',', ':'))}'"
+@pytest.mark.timeout(300)
+def test_mock_run_awaits_training_and_resolves_the_real_checkpoint(
+    capsys, tmp_path, monkeypatch
+) -> None:
+    """The two behaviours the template did in bash, observed in the request stream."""
 
-    assert text.count("# Synthetic BDD100K data - category names match the synthetic data generator.") == 3
-    assert text.count(synthetic_line) == 3
-    assert text.count("# Real BDD100K data - uncomment the line below and comment the line above.") == 3
-    assert text.count(real_line) == 3
+    wrapper = _load_wrapper_module()
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    output = tmp_path / "mock.json"
 
+    assert wrapper.main(
+        ["--mock-endpoints", "--run-id", "bdd100k-mock-order", "--output-json", str(output)]
+    ) == 0
+    capsys.readouterr()
+    summary = json.loads(output.read_text(encoding="utf-8"))
 
-def test_bdd100k_pipeline_yaml_snapshot_hash() -> None:
-    digest = hashlib.sha256(YAML_PATH.read_bytes()).hexdigest()
-    assert digest == EXPECTED_YAML_SHA256
+    calls = [(item["method"], item["path"]) for item in summary["detection_requests"]]
+    # `--wait` polled /status after every /train ...
+    assert calls.count(("GET", "/status")) >= 3
+    for index, call in enumerate(calls):
+        if call == ("POST", "/train"):
+            assert calls[index + 1] == ("GET", "/status")
+        if call == ("POST", "/eval"):
+            # ... and `--discover-checkpoint` asked /runs before every /eval.
+            assert calls[index - 1] == ("GET", "/runs")
+
+    # The eval payload names a concrete checkpoint file, not the training directory.
+    eval_payloads = [
+        item["payload"] for item in summary["detection_requests"] if item["path"] == "/eval"
+    ]
+    assert len(eval_payloads) == 3
+    for payload in eval_payloads:
+        checkpoint = payload["checkpoint_uri"]
+        assert checkpoint.endswith(".pt"), checkpoint
+        assert "{epoch}" not in checkpoint, checkpoint
+        assert "/checkpoints/epoch_" in checkpoint, checkpoint

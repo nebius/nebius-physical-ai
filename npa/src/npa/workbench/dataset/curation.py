@@ -172,6 +172,8 @@ def query_dataset(request: QueryRequest) -> QueryResponse:
             lancedb_endpoint=request.lancedb_endpoint,
             filter_predicate=filter_predicate,
             limit=request.limit,
+            table=request.lance_table,
+            lance_uri=request.lance_uri,
         )
         return QueryResponse(
             backend="lancedb",

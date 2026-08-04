@@ -91,23 +91,14 @@ while true; do
     FAILED=1
   fi
 
-  echo "--- [8/8] skypilot YAML parse (all files) ---"
+  echo "--- [8/8] retired SkyPilot catalog absence ---"
   if ! "${PY}" - <<'PY'; then
 from pathlib import Path
-import yaml
 
 root = Path("npa/src/npa/workflows/skypilot")
-failed = []
-for path in sorted(root.glob("*.yaml")):
-    try:
-        docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d is not None]
-        if not docs or not docs[0].get("name"):
-            failed.append(path.name)
-    except Exception as exc:
-        failed.append(f"{path.name}: {exc}")
-if failed:
-    raise SystemExit("parse failures: " + ", ".join(failed))
-print(f"skypilot parse OK ({len(list(root.glob('*.yaml')))} files)")
+if root.exists():
+    raise SystemExit(f"retired SkyPilot catalog came back: {root}")
+print("retired SkyPilot catalog absent")
 PY
     FAILED=1
   fi

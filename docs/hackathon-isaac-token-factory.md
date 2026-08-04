@@ -45,7 +45,7 @@ Full sequence: `docs/assets/hackathon/isaac-franka-lift-cube/frame_00.png` …
 ```
 
 SkyPilot YAML:
-[`npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml`](../../npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml)
+[`npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml`](../npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml)
 
 ---
 
@@ -139,34 +139,30 @@ Then run Path A or B on the output folder / S3 prefix.
 
 ## Path D — Full SkyPilot workflow (GPU capture + Token Factory)
 
-1. Replace `<your-registry-id>`, bucket, and run id in the YAML `envs:` block
-   (SkyPilot 0.12.2 does not interpolate `${VAR}` in `envs:` — edit literals before launch).
-2. Bootstrap SkyPilot if needed: `npa skypilot bootstrap`.
-3. Launch:
+This is an `npa.workflow` spec now, so there is no YAML to edit before launching: the bucket and
+run id come from the command line and the images are resolved for you.
 
-```bash
-sky jobs launch \
-  --secret NEBIUS_TOKEN_FACTORY_KEY \
-  --secret AWS_ACCESS_KEY_ID \
-  --secret AWS_SECRET_ACCESS_KEY \
-  npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml
-```
-
-**Stage 1** (`isaac-franka-capture`): L40S + `npa-isaac-lab` image → PNGs in
-`SCENE_URI`.
-
-**Stage 2** (`token-factory-reason`): CPU + `npa-cosmos` image →
-`scene_reasoning.json` in `PLAN_URI`.
-
-Or use the workflow submit wrapper:
+1. Bootstrap SkyPilot if needed: `npa skypilot bootstrap`.
+2. Submit:
 
 ```bash
 npa workbench workflow submit \
-  npa/src/npa/workflows/skypilot/isaac-franka-capture-reason.yaml \
+  npa/workflows/workbench/npa-workflows/isaac-franka-capture-reason.yaml \
   --run-id hackathon-franka-001 \
-  --var SCENE_URI=s3://YOUR_BUCKET/hackathon/hackathon-franka-001/isaac-franka/scene/ \
-  --var PLAN_URI=s3://YOUR_BUCKET/hackathon/hackathon-franka-001/isaac-franka/reasoning/
+  --var bucket=YOUR_BUCKET \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
+
+**Stage 1** (`capture`): L40S + `npa-isaac-lab` image → PNGs and
+`isaac_capture_summary.json` under `scene/`.
+
+**Stage 2** (`reason`): CPU, zero GPU → `scene_reasoning.json` under `reasoning/`.
+
+To frame a different task, pass `--var isaac_task=…` with `--var camera_eye`/`camera_target`
+style overrides in the spec's `config:`; the defaults frame a tabletop manipulator at the
+environment origin.
 
 ---
 

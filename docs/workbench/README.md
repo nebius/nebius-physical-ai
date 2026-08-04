@@ -15,13 +15,11 @@ workflows, and operational runbooks.
 | [../../npa/workflows/workbench/npa-workflows/README.md](../../npa/workflows/workbench/npa-workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
 | [oss-solution-catalog.md](oss-solution-catalog.md) | OSS Physical AI registry candidates with pinned refs, cloud-fit notes, and E2E gates |
 | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) | How to call any Workbench tool through the CLI, SDK, and SkyPilot YAML against the same service |
-| [sim-to-real-quickstart.md](sim-to-real-quickstart.md) | One-command H100 sim-to-real proof run with checkpoint, metric, S3 artifacts, and teardown |
 | [../quickstart.md](../quickstart.md) | Full `npa` CLI quickstart |
 | [../cli/README.md](../cli/README.md) | CLI command reference index |
 | [../cli-errors.md](../cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |
 | [../sdk/errors.md](../sdk/errors.md) | Typed exceptions for programmatic SDK consumers and agents |
 | [cookbooks/README.md](cookbooks/README.md) | Reproducibility cookbooks for specific workloads |
-| [cookbooks/sim-to-real-pipeline.md](cookbooks/sim-to-real-pipeline.md) | Raw YAML, CLI wrapper, SDK, and BYO contract details for the sim-to-real pipeline |
 | [cookbooks/vlm-eval-loop-runbook.md](cookbooks/vlm-eval-loop-runbook.md) | Sim-to-real VLM-eval loop: self-hosted VLM serving, rollout scoring, and task-success reporting |
 | [cookbooks/lerobot-gpu-benchmarks.md](cookbooks/lerobot-gpu-benchmarks.md) | Reproducing the May 2026 LeRobot GPU benchmark research |
 | [troubleshooting/known-footguns.md](troubleshooting/known-footguns.md) | Known Workbench operational footguns and mitigations |
@@ -38,7 +36,7 @@ workflows, and operational runbooks.
 | Anyone choosing between CLI, SDK, and YAML | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) |
 | Partner onboarding an OSS repo | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) |
 | Engineer packaging or hardening a container | [container-packaging.md](container-packaging.md) |
-| Customer running the first H100 sim-to-real proof | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) |
+| Customer running the first H100 sim-to-real proof | [guides/sim2real-workflow.md](guides/sim2real-workflow.md) |
 | Operator reproducing a workload | [cookbooks/README.md](cookbooks/README.md) |
 | SDK integrator or agent author | [../sdk/errors.md](../sdk/errors.md) |
 | Internal engineer triaging a failure | [../cli-errors.md](../cli-errors.md) |

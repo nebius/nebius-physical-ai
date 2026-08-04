@@ -71,22 +71,13 @@ fi
 default_version() {
   cd "$NPA_ROOT"
   python3 - <<'PY'
+import json
 from pathlib import Path
-import re
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    text = Path("pyproject.toml").read_text()
-    section = text.split("[tool.npa.supported-tools]", 1)[1]
-    match = re.search(r'^lerobot\s*=\s*"([^"]+)"', section, re.MULTILINE)
-    if not match:
-        raise SystemExit("Could not find [tool.npa.supported-tools].lerobot")
-    print(match.group(1))
-else:
-    with Path("pyproject.toml").open("rb") as handle:
-        data = tomllib.load(handle)
-    print(data["tool"]["npa"]["supported-tools"]["lerobot"])
+manifest = json.loads(
+    Path("src/npa/deploy/lerobot_version_manifest.json").read_text(encoding="utf-8")
+)
+print(manifest["default_version"])
 PY
 }
 

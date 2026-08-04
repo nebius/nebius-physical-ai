@@ -515,39 +515,50 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _pipeline_command(config: TriggerConfig, *, run_id: str) -> list[str]:
-    script = _pipeline_runner_script()
-    yaml_path = config.pipeline_yaml or str(_default_pipeline_yaml())
+    """Build the submit the watcher runs when new data lands.
+
+    This used to shell out to ``scripts/run_sim_to_real_pipeline.py``, which rendered the raw
+    ``sim-to-real-pipeline.yaml`` by editing its documents in place and whose stage ran
+    ``npa.workflows.sim_to_real real-loop`` — a module that raises a ``DeprecationWarning``
+    pointing at the staged sim2real engine. Watching a bucket is not deprecated, so the watcher
+    stays; what it launches is now the npa.workflow spec for the staged loop, submitted the same
+    way an operator would submit it by hand.
+    """
+
+    spec = config.pipeline_yaml or str(_default_pipeline_spec())
     command = [
-        sys.executable,
-        str(script),
-        "--yaml",
-        yaml_path,
+        "npa",
+        "workbench",
+        "workflow",
+        "submit",
+        spec,
         "--run-id",
         run_id,
-        "--bucket",
-        config.effective_pipeline_bucket,
-        "--s3-endpoint",
-        config.s3_endpoint,
-        "--input-data-uri",
-        config.input_data_uri,
-        "--gpu",
-        config.gpu,
-        "--gpu-failover",
-        config.gpu_failover,
-        "--task-cloud",
-        config.task_cloud,
+        "--var",
+        f"bucket={config.effective_pipeline_bucket}",
         "--controller-backend",
         config.controller_backend,
         "--submit-timeout",
         str(config.submit_timeout),
+        "--output-format",
+        "json",
     ]
+    if config.input_data_uri:
+        # The spec's stage 1 reads the trigger prefix; that is the whole point of the watch.
+        command.extend(["--var", f"trigger_uri={config.input_data_uri}"])
     pipeline_prefix = _pipeline_prefix(config, run_id=run_id)
     if pipeline_prefix:
-        command.extend(["--s3-prefix", pipeline_prefix])
+        command.extend(["--var", f"prefix={pipeline_prefix}"])
     if config.sky_bin:
         command.extend(["--sky-bin", config.sky_bin])
     if config.pipeline_render_only:
-        command.append("--render-only")
+        # `validate-spec` is the submit path's dry run: it resolves every config token and
+        # builds the plan without launching anything.
+        command[3] = "validate-spec"
+        for flag in ("--controller-backend", "--submit-timeout", "--sky-bin"):
+            while flag in command:
+                index = command.index(flag)
+                del command[index : index + 2]
     return command
 
 
@@ -557,20 +568,17 @@ def _pipeline_prefix(config: TriggerConfig, *, run_id: str) -> str:
     return config.pipeline_s3_prefix.format(run_id=run_id).strip("/")
 
 
-def _pipeline_runner_script() -> Path:
+#: The npa.workflow spec the watcher launches: the staged VLM-to-RL loop.
+DEFAULT_PIPELINE_SPEC = "sim2real-vlm-rl.yaml"
+
+
+def _default_pipeline_spec() -> Path:
+    """Resolve the shipped spec, from a checkout or an installed wheel alike."""
+
     root = Path(__file__).resolve().parents[3]
-    script = root / "scripts" / "run_sim_to_real_pipeline.py"
-    if not script.exists():
-        raise SimToRealTriggerError(f"sim-to-real pipeline runner not found: {script}")
-    return script
-
-
-def _default_pipeline_yaml() -> Path:
-    # Internal SkyPilot template, resolved package-relative (works from a repo
-    # checkout and an installed wheel alike).
-    path = Path(__file__).resolve().parent / "skypilot" / "sim-to-real-pipeline.yaml"
+    path = root / "workflows" / "workbench" / "npa-workflows" / DEFAULT_PIPELINE_SPEC
     if not path.exists():
-        raise SimToRealTriggerError(f"sim-to-real pipeline YAML not found: {path}")
+        raise SimToRealTriggerError(f"sim2real workflow spec not found: {path}")
     return path
 
 

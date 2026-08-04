@@ -39,20 +39,56 @@ def index_in_lancedb(
     return {"indexed": True, "backend": "lancedb", "table": table, **data}
 
 
+#: Facets that are thresholds or metadata about the query, not equality predicates on a row.
+_NON_EQUALITY_FACETS = frozenset({"quality_metric", "min_quality"})
+
+
+def equality_facets(filter_predicate: dict[str, Any]) -> dict[str, Any]:
+    """Return only the facets that are equality predicates on an actual column.
+
+    The caller builds a predicate with every facet it knows about, including the ones left
+    unset. Sending those verbatim asks the index for `modality = '' AND min_quality = 'None'`,
+    which matches nothing — live, a query returned 0 records from a table that held three rows
+    matching its event and location (EVIDENCE.md §R41).
+    """
+
+    return {
+        key: value
+        for key, value in filter_predicate.items()
+        if key not in _NON_EQUALITY_FACETS and value not in ("", None)
+    }
+
+
 def query_lancedb(
     *,
     lancedb_endpoint: str,
     filter_predicate: dict[str, Any],
     limit: int,
+    table: str = "",
+    lance_uri: str = "",
     token_env: str = "LANCEDB_TOKEN",
     timeout: float = 60.0,
 ) -> list[dict[str, Any]]:
     """Query the LanceDB-backed index by the given facet predicate."""
-    payload = {"filter": filter_predicate, "limit": limit}
+    payload: dict[str, Any] = {"filter": equality_facets(filter_predicate), "limit": limit}
+    if table:
+        payload["table"] = table
+    if lance_uri:
+        payload["lance_uri"] = lance_uri
     data = _post(lancedb_endpoint, "/query", payload=payload, token_env=token_env, timeout=timeout)
     records = data.get("records", [])
     if not isinstance(records, list):
         raise DatasetIntegrationError("LanceDB query returned an unexpected response")
+    threshold = filter_predicate.get("min_quality")
+    if threshold is not None:
+        # A threshold is not an equality predicate, so it is applied here rather than pushed
+        # into a facet API that has no operators.
+        metric = str(filter_predicate.get("quality_metric") or "completeness")
+        records = [
+            record
+            for record in records
+            if isinstance(record.get(metric), (int, float)) and record[metric] >= float(threshold)
+        ]
     return records
 
 

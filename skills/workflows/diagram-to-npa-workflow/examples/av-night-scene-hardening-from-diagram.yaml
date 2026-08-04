@@ -41,6 +41,14 @@ config:
   train_epochs: "10"
   train_batch_size: "8"
   train_learning_rate: "0.005"
+  # The train stages poll /status until the run finishes; without the wait, eval would
+  # run against a checkpoint that does not exist yet.
+  train_poll_seconds: "30"
+  train_timeout_seconds: "21600"
+  # Category -> index map for the synthetic BDD100K generator.
+  detection_label_map: >-
+    {"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic
+    light":8,"traffic sign":9}
 
   lancedb_endpoint: http://npa-lancedb.workbench.svc.cluster.local:8686
   detection_endpoint: http://npa-detection-training.workbench.svc.cluster.local:8790
@@ -55,8 +63,8 @@ config:
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lancedb/"
   nighttime_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/nighttime"
   distant_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/distant"
-  nighttime_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/nighttime"
-  distant_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/distant"
+  nighttime_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/nighttime/"
+  distant_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/distant/"
 
 resources:
   cpu:

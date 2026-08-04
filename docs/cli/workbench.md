@@ -13,17 +13,22 @@ Commands
 lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
-cosmos3  Cosmos3 reasoning workflow contracts.
+cosmos3  Cosmos3 omni-model generation and reasoning workflow contracts.
+cosmos-curate  NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips.
+cosmos-evaluator  NVIDIA Cosmos Evaluator: hallucination + attribute-verification grading of augmented video.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
+foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
 isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
+nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. Requires an RT-core GPU
+    (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab locomotion policy evaluation for SONIC workflows.
+lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
-scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable
-Isaac Lab RL backend; deterministic default).
+scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
 dataset  Dataset-of-record: ingest, validate, curate, and query production sensor data.
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
 vlm-eval  VLM evaluation for sim-to-real pipeline gating.
@@ -47,16 +52,21 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
-| `cosmos3` | Cosmos3 reasoning workflow contracts. |
+| `cosmos3` | Cosmos3 omni-model generation and reasoning workflow contracts. |
+| `cosmos-curate` | NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips. |
+| `cosmos-evaluator` | NVIDIA Cosmos Evaluator: hallucination + attribute-verification grading of augmented video. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
+| `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
 | `isaac-lab` | Isaac Lab simulation workbench deployment, training, and evaluation. |
+| `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. Requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
+| `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
-| `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable |
+| `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default). |
 | `dataset` | Dataset-of-record: ingest, validate, curate, and query production sensor data. |
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
 | `vlm-eval` | VLM evaluation for sim-to-real pipeline gating. |

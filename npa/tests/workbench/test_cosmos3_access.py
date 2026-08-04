@@ -21,7 +21,15 @@ from npa.workbench.cosmos.cosmos3 import (
 
 ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_ROOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
-INFERENCE_YAML = SKYPILOT_ROOT / "cosmos3-text-to-image-inference.yaml"
+SPEC_YAML = (
+    Path(__file__).resolve().parents[3]
+    / "npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml"
+)
+# The raw template is retired; its spec is the surface (EVIDENCE.md §R43).
+SPEC_YAML = (
+    Path(__file__).resolve().parents[3]
+    / "npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml"
+)
 SKILL_ROOT = ROOT / "skills"
 SKILL_INDEX = SKILL_ROOT / "index.yaml"
 
@@ -183,41 +191,29 @@ def test_cosmos3_fetch_can_clone_source_without_checkpoint(
     assert [call[0][0] for call in calls] == ["git", "git"]
 
 
-def test_cosmos3_inference_yaml_defaults_to_public_cosmos3_and_allows_s3() -> None:
-    docs = [
-        doc
-        for doc in yaml.safe_load_all(INFERENCE_YAML.read_text(encoding="utf-8"))
-        if doc
-    ]
+def test_cosmos3_text_to_image_spec_defaults_to_the_public_framework_and_model() -> None:
+    """The template's `envs:` were its contract; the spec's `config:` is.
 
-    assert len(docs) == 1
-    doc = docs[0]
-    envs = doc["envs"]
-    rendered = INFERENCE_YAML.read_text(encoding="utf-8")
-    assert doc["name"] == "cosmos3-text-to-image-inference"
-    assert "image_id" not in doc["resources"]
-    assert envs["NPA_COSMOS3_SOURCE_REPO"] == DEFAULT_COSMOS3_SOURCE_REPO
-    assert envs["NPA_COSMOS3_MODEL_ID"] == DEFAULT_COSMOS3_MODEL_ID
-    assert (
-        "python -m cosmos_framework.scripts.inference"
-        in envs["NPA_COSMOS3_INFER_COMMAND"]
-    )
-    assert "--checkpoint-path Cosmos3-Nano" in envs["NPA_COSMOS3_INFER_COMMAND"]
-    assert envs["NPA_COSMOS3_NO_GUARDRAILS"] == ""
-    assert (
-        "${NPA_COSMOS3_NO_GUARDRAILS:+--no-guardrails}"
-        in envs["NPA_COSMOS3_INFER_COMMAND"]
-    )
-    assert "--no-guardrails \\" not in envs["NPA_COSMOS3_INFER_COMMAND"]
-    assert "npa workbench cosmos fetch" not in doc["run"]
-    assert "git clone --depth 1" in doc["run"]
-    assert "huggingface-cli download" in doc["run"]
-    assert envs["NPA_COSMOS3_CACHE"].startswith("/tmp/")
-    assert envs["NPA_COSMOS3_OUTPUT_DIR"].startswith("/tmp/")
-    assert envs["NPA_COSMOS3_OUTPUT_IMAGE"].startswith("/tmp/")
-    assert "NPA_COSMOS3_OUTPUT_S3_URI" in rendered
-    assert "NPA_COSMOS3_SOURCE_REPO" in rendered
-    assert "NPA_COSMOS3_MODEL_ID" in rendered
+    Live proof that the spec runs: job 320 generated a 960x960 image from the default prompt
+    (EVIDENCE.md §R43). What the template expressed as a hundred lines of bash in an env var is
+    `npa workbench cosmos3 text-to-image`, so this asserts the reachable knobs rather than the
+    text of a script.
+    """
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(SPEC_YAML)
+    config = spec.config
+    assert config["cosmos_source_repo"] == DEFAULT_COSMOS3_SOURCE_REPO
+    assert config["cosmos_model_id"] == DEFAULT_COSMOS3_MODEL_ID
+
+    argv = next(step.argv for step in build_plan(spec, run_id="t2i").steps if step.argv)
+    assert argv[:4] == ["npa", "workbench", "cosmos3", "text-to-image"]
+    assert argv[argv.index("--checkpoint-name") + 1] == "Cosmos3-Nano"
+    # Guardrails default off, as the template's NPA_COSMOS3_NO_GUARDRAILS did: they pull further
+    # gated weights.
+    assert "--no-guardrails" in argv
 
 
 def test_cosmos3_agent_skills_are_discoverable_and_well_formed() -> None:

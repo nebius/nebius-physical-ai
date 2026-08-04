@@ -17,6 +17,13 @@ import typer
 from npa.clients.config import resolve_container_registry
 from npa.clients.credentials import load_credentials
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
+from npa.workbench.detection_training.artifacts import (
+    EVAL_METRICS_FILENAME,
+    DetectionTrainingArtifactError,
+    assert_eval_metrics,
+    discover_checkpoint_uri,
+    eval_result_uri_for,
+)
 from npa.workbench.detection_training.schemas import (
     DEFAULT_LANCE_URI,
     DEFAULT_PORT,
@@ -36,9 +43,16 @@ app = typer.Typer(
 DEFAULT_IMAGE = container_image_for_tool("detection-training", registry=DEFAULT_CONTAINER_REGISTRY)
 DEFAULT_NAME = "npa-detection-training"
 DEFAULT_NAMESPACE = "default"
+#: `--gpu-type` shorthand -> the `node.kubernetes.io/instance-type` label to select on.
+#: RTX PRO 6000 is here because it is what the workbench's own GPU cluster runs: without it a
+#: deploy defaulted to an l40s selector no node carries, the pod stayed Unschedulable, and the
+#: only symptom was `rollout status` timing out with nothing said about node labels
+#: (EVIDENCE.md §R46). `--node-selector-value` still overrides for anything not listed.
 GPU_NODE_SELECTORS = {
     "h100": "gpu-h100-sxm",
     "l40s": "gpu-l40s-d",
+    "rtx6000": "gpu-rtx6000",
+    "rtxpro6000": "gpu-rtx6000",
 }
 
 
@@ -61,7 +75,14 @@ def emit(payload: dict[str, Any], *, output: OutputFormat, text: str | None = No
 
 def deploy_cmd(
     project: str = typer.Option("", "--project", "-p", help="Project alias used to resolve container_registry."),
-    cluster_name: str = typer.Option("npa-workbench-eu-north1", "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
+    cluster_name: str = typer.Option(
+        "",
+        "--cluster-name",
+        help=(
+            "NPA cluster profile whose cached kubeconfig to use. Empty (the default) uses the "
+            "ambient kubeconfig, i.e. the cluster `kubectl` is already pointed at."
+        ),
+    ),
     kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
     image: str = typer.Option("", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."),
     name: str = typer.Option(DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."),
@@ -103,7 +124,11 @@ def deploy_cmd(
 
     selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(gpu_type.strip().lower())
     if not selector_value:
-        fail("--gpu-type must be h100 or l40s unless --node-selector-value is provided")
+        fail(
+            "--gpu-type must be one of "
+            + ", ".join(sorted(GPU_NODE_SELECTORS))
+            + " unless --node-selector-value is provided"
+        )
     resolved_image = image.strip() or container_image_for_tool(
         "detection-training",
         registry=resolve_container_registry(project or None),
@@ -155,6 +180,105 @@ def deploy_cmd(
     )
 
 
+#: Statuses `/status` reports when a run is over.
+TRAINING_DONE = "completed"
+TRAINING_FAILED = "failed"
+
+
+def parse_label_map(raw: str) -> dict[str, int] | None:
+    """Parse ``--label-map`` from JSON or ``name=index`` pairs.
+
+    The BDD100K pipeline template passed a full category map in its request body
+    (``BDD100K_LABEL_MAP``), but ``label_map`` had no CLI flag and is not an accepted
+    ``--override`` key, so the field was unreachable from the CLI — and therefore from any
+    npa.workflow spec. Both spellings are accepted because the template's value is JSON
+    while ``a=0,b=1`` is friendlier to type.
+    """
+
+    text = raw.strip()
+    if not text:
+        return None
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            fail(f"--label-map is not valid JSON: {exc}")
+            return None  # pragma: no cover - fail() raises
+        if not isinstance(parsed, dict):
+            fail("--label-map JSON must be an object of category -> index")
+        pairs = list(parsed.items())
+    else:
+        pairs = []
+        for chunk in text.split(","):
+            name, sep, index = chunk.partition("=")
+            if not sep or not name.strip():
+                fail(f"--label-map entry must be name=index, got {chunk!r}")
+            pairs.append((name.strip(), index.strip()))
+
+    label_map: dict[str, int] = {}
+    for name, index in pairs:
+        try:
+            label_map[str(name)] = int(index)
+        except (TypeError, ValueError):
+            fail(f"--label-map index for {name!r} must be an integer, got {index!r}")
+    return label_map
+
+
+def wait_for_training_run(
+    run_id: str,
+    *,
+    endpoint: str,
+    token_env: str,
+    poll_seconds: float,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Poll ``/status`` until the run completes, mirroring the retired template's loop.
+
+    The BDD100K pipeline's train task POSTed ``/train`` and then polled ``/status`` in bash
+    until ``completed``, failing on ``failed`` or timeout and finally asserting that every
+    epoch ran and a checkpoint pattern was produced. Without that wait, ``train`` returns
+    while training is still running and the next stage evaluates a checkpoint that does not
+    exist yet — so the wait has to live in the tool, where a spec can reach it.
+    """
+
+    import time
+
+    if not run_id:
+        fail("service did not return a run_id to wait for")
+    deadline = time.monotonic() + max(timeout_seconds, 0.0)
+    while True:
+        status_payload = request_json(
+            "GET",
+            endpoint,
+            "/status",
+            params={"run_id": run_id},
+            token_env=token_env,
+            timeout=30.0,
+        )
+        status = str(status_payload.get("status") or "").strip().lower()
+        if status == TRAINING_DONE:
+            _assert_training_run_is_complete(status_payload)
+            return status_payload
+        if status == TRAINING_FAILED:
+            typer.echo(json.dumps(status_payload, indent=2, sort_keys=True), err=True)
+            fail(f"detection-training run {run_id} failed")
+        if time.monotonic() >= deadline:
+            typer.echo(json.dumps(status_payload, indent=2, sort_keys=True), err=True)
+            fail(f"detection-training run {run_id} did not complete within {timeout_seconds:g}s")
+        time.sleep(max(poll_seconds, 0.0))
+
+
+def _assert_training_run_is_complete(payload: dict[str, Any]) -> None:
+    """The template's closing `jq -e` assertion: all epochs ran and a checkpoint exists."""
+
+    completed = payload.get("epochs_completed")
+    total = payload.get("total_epochs")
+    if completed != total:
+        fail(f"training reported completed after {completed}/{total} epochs")
+    if not str(payload.get("checkpoint_uri_pattern") or "").strip():
+        fail("training completed without a checkpoint_uri_pattern")
+
+
 def train_cmd(
     view: str = typer.Option(..., "--view", help="Lance materialized view name."),
     output_uri: str = typer.Option("", "--output-uri", "--output-path", help="S3/local output URI."),
@@ -174,6 +298,11 @@ def train_cmd(
     checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
     checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     num_classes: int = typer.Option(10, "--num-classes", help="Detector class count."),
+    label_map: str = typer.Option(
+        "",
+        "--label-map",
+        help='Category-to-index map as JSON ({"person":0,...}) or "person=0,rider=1".',
+    ),
     epochs: int = typer.Option(10, "--epochs", help="Training epochs."),
     batch_size: int = typer.Option(8, "--batch-size", help="Training batch size."),
     learning_rate: float = typer.Option(0.005, "--learning-rate", help="SGD learning rate."),
@@ -181,6 +310,15 @@ def train_cmd(
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
+    wait: bool = typer.Option(
+        False,
+        "--wait/--no-wait",
+        help="Poll /status until the run completes, and fail if it does not.",
+    ),
+    poll_seconds: float = typer.Option(30.0, "--poll-seconds", help="Interval between --wait polls."),
+    timeout_seconds: float = typer.Option(
+        21600.0, "--timeout-seconds", help="Give up waiting after this many seconds."
+    ),
     output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
 ) -> None:
     """Start a detection-training run."""
@@ -207,13 +345,23 @@ def train_cmd(
         ),
         checkpoint_s3=checkpoint_s3,
         num_classes=num_classes,
+        label_map=parse_label_map(label_map),
         epochs=epochs,
         batch_size=batch_size,
         learning_rate=learning_rate,
         validation_filter_sql=validation_filter_sql or None,
     ).model_dump(mode="json")
     if service:
-        result = request_json("POST", resolve_endpoint(endpoint), "/train", payload=payload, token_env=token_env, timeout=60.0)
+        resolved_endpoint = resolve_endpoint(endpoint)
+        result = request_json("POST", resolved_endpoint, "/train", payload=payload, token_env=token_env, timeout=60.0)
+        if wait:
+            result = wait_for_training_run(
+                str(result.get("run_id") or ""),
+                endpoint=resolved_endpoint,
+                token_env=token_env,
+                poll_seconds=poll_seconds,
+                timeout_seconds=timeout_seconds,
+            )
     else:
         from npa.sdk.workbench.detection_training import train
 
@@ -222,29 +370,115 @@ def train_cmd(
 
 
 def eval_cmd(
-    checkpoint_uri: str = typer.Option(..., "--checkpoint-uri", help="Checkpoint S3/local URI."),
+    checkpoint_uri: str = typer.Option(
+        "",
+        "--checkpoint-uri",
+        help=(
+            "Checkpoint S3/local URI. With --discover-checkpoint this is the training "
+            "OUTPUT prefix to search instead."
+        ),
+    ),
     eval_view: str = typer.Option(..., "--eval-view", help="Lance materialized view to evaluate."),
     output_uri: str = typer.Option(..., "--output-uri", "--output-path", help="S3/local output URI."),
     lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."),
+    discover_checkpoint: bool = typer.Option(
+        False,
+        "--discover-checkpoint/--no-discover-checkpoint",
+        help=(
+            "Resolve the checkpoint from the last completed /runs entry under "
+            "--checkpoint-uri, substituting the trained epoch count."
+        ),
+    ),
+    label_map: str = typer.Option(
+        "",
+        "--label-map",
+        help=(
+            "Category name -> class index, as JSON or name=index pairs. Required whenever the "
+            "dataset stores string categories, which BDD100K does. `train` (the vehicle) is a "
+            "real category name, and without a map it reaches int() and raises "
+            "\"invalid literal for int() with base 10: 'train'\"."
+        ),
+    ),
+    write_canonical_metrics: bool = typer.Option(
+        False,
+        "--write-canonical-metrics/--no-write-canonical-metrics",
+        help="Publish the eval response to <output-uri>/metrics.json.",
+    ),
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
     output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
 ) -> None:
     """Evaluate a detection-training checkpoint."""
+    if not checkpoint_uri.strip():
+        fail("--checkpoint-uri is required (with --discover-checkpoint it is the search prefix)")
+    resolved_endpoint = resolve_endpoint(endpoint) if service else ""
+    if discover_checkpoint:
+        if not service:
+            fail("--discover-checkpoint queries /runs, so it requires --service")
+        checkpoint_uri = resolve_checkpoint_from_runs(
+            checkpoint_uri, endpoint=resolved_endpoint, token_env=token_env
+        )
     payload = EvalRequest(
         checkpoint_uri=checkpoint_uri,
         eval_view=eval_view,
         lance_uri=lance_uri,
         output_uri=output_uri,
+        # Eval must read labels the same way training wrote them; EvalRequest has carried this
+        # field all along with no CLI flag to fill it (EVIDENCE.md §R46).
+        label_map=parse_label_map(label_map),
     ).model_dump(mode="json")
     if service:
-        result = request_json("POST", resolve_endpoint(endpoint), "/eval", payload=payload, token_env=token_env, timeout=900.0)
+        result = request_json("POST", resolved_endpoint, "/eval", payload=payload, token_env=token_env, timeout=900.0)
+        # The template closed with a `jq -e` numeric check: a service can answer 200 with a
+        # null mAP and the stage would otherwise report success on an unusable report.
+        try:
+            assert_eval_metrics(result)
+        except DetectionTrainingArtifactError as exc:
+            typer.echo(json.dumps(result, indent=2, sort_keys=True), err=True)
+            fail(str(exc))
     else:
         from npa.sdk.workbench.detection_training import eval as sdk_eval
 
         result = sdk_eval(**payload).model_dump(mode="json")
+    if write_canonical_metrics:
+        result["metrics_uri"] = write_eval_metrics(result, output_uri=output_uri)
     emit(result, output=output, text=f"mAP: {result.get('mAP')}\neval_run_id: {result.get('eval_run_id')}")
+
+
+def resolve_checkpoint_from_runs(output_uri: str, *, endpoint: str, token_env: str) -> str:
+    """Ask ``/runs`` for the checkpoint the last completed run under ``output_uri`` wrote."""
+
+    runs_payload = request_json("GET", endpoint, "/runs", token_env=token_env, timeout=60.0)
+    runs = runs_payload.get("runs")
+    if not isinstance(runs, list):
+        fail(f"/runs did not return a runs list: {runs_payload!r}")
+    try:
+        return discover_checkpoint_uri(runs, output_uri=output_uri)
+    except DetectionTrainingArtifactError as exc:
+        typer.echo(json.dumps(runs_payload, indent=2, sort_keys=True), err=True)
+        fail(str(exc))
+        raise  # pragma: no cover - fail() raises
+
+
+def write_eval_metrics(payload: dict[str, Any], *, output_uri: str) -> str:
+    """Publish the eval response as the canonical ``metrics.json`` for this output prefix."""
+
+    import tempfile
+
+    target = eval_result_uri_for(output_uri)
+    body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if target.startswith("s3://"):
+        from npa.clients.storage import StorageClient
+
+        with tempfile.TemporaryDirectory(prefix="npa-detection-eval-") as tmp:
+            local = Path(tmp) / EVAL_METRICS_FILENAME
+            local.write_text(body, encoding="utf-8")
+            return StorageClient.from_environment().upload_file(str(local), target)
+    path = Path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return str(path)
 
 
 def status_cmd(
@@ -291,7 +525,14 @@ def list_cmd(
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    cluster_name: str = typer.Option("npa-workbench-eu-north1", "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
+    cluster_name: str = typer.Option(
+        "",
+        "--cluster-name",
+        help=(
+            "NPA cluster profile whose cached kubeconfig to use. Empty (the default) uses the "
+            "ambient kubeconfig, i.e. the cluster `kubectl` is already pointed at."
+        ),
+    ),
     kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
     namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace for local listing."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
@@ -476,9 +717,25 @@ def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env
 
 
 def _ensure_image_pull_secret(*, image: str, secret_name: str, namespace: str, kubeconfig: str) -> None:
+    """Put a usable pull secret in the namespace, minting one rather than copying a stale file.
+
+    `~/.docker/config.json` holds whatever token the operator last logged in with, and Nebius IAM
+    tokens expire — so a deploy that copies it can leave a Deployment whose kubelet gets
+    `401 Unauthorized` on its next restart. Minting is what the LanceDB deploy learned to do
+    (EVIDENCE.md §R41); doing it the same way here means one answer to the same question.
+    """
+
     registry = _image_registry(image)
     if not registry:
         return
+    from npa.workbench.service_kubernetes import ServiceKubernetesError, ensure_registry_secret
+
+    try:
+        ensure_registry_secret(secret_name, namespace, registry)
+        return
+    except ServiceKubernetesError:
+        # No mintable IAM identity here; fall back to whatever the operator is logged in as.
+        pass
     docker_config = _docker_auth_config(registry)
     payload = {
         "apiVersion": "v1",
@@ -594,6 +851,16 @@ def _kubectl(
 
 
 def _resolve_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
+    """Which kubeconfig to talk to, in order of explicitness.
+
+    `--cluster-name` used to DEFAULT to a specific profile, so every deploy quietly targeted
+    whichever cluster that cached kubeconfig pointed at — not the one the operator's `kubectl`
+    was on. Live, that produced the least helpful failure available: `kubectl apply` reported
+    "deployment configured", `rollout status` timed out, and the deployment was in no namespace
+    of the cluster being inspected, because it had been created on a different one
+    (EVIDENCE.md §R46).
+    """
+
     if kubeconfig.strip():
         return kubeconfig.strip()
     if not cluster_name.strip():

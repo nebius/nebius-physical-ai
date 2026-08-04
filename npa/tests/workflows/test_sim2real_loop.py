@@ -46,11 +46,15 @@ SIM2REAL_ACTIONS = (
 SIM2REAL_ENVGEN_SPLIT = (
     ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim2real-envgen-split.yaml"
 )
+# The raw cosmos2-transfer template is retired; its spec is the surface, and unlike the
+# template it runs the real model (EVIDENCE.md §R38).
 COSMOS2_TRANSFER = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "cosmos2-transfer.yaml"
+    ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "cosmos2-transfer.yaml"
 )
+# The raw cosmos3-reason template is retired; its npa.workflow spec is the surface
+# (both run the same manifest builder — EVIDENCE §R2).
 COSMOS3_REASON = (
-    ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "cosmos3-reason.yaml"
+    ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "cosmos3-reason.yaml"
 )
 
 
@@ -197,7 +201,7 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     )
     assert augment["stage"] == "cosmos2-transfer"
     assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
-    assert augment.get("image") == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
+    assert augment.get("image") == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
     )
@@ -1210,12 +1214,14 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
     monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
 
-    assert default_augment_image() == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
+    assert default_augment_image() == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
 
     config = build_config_from_env(run_id="sim2real-images")
 
-    assert config.augment_image == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
-    assert config.vlm_image == "npa-cosmos3-reason:3.0.1-genuine-sm120"
+    assert config.augment_image == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
+    assert config.vlm_image == (
+        "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
     assert "cosmos3" not in config.augment_image
 
 
@@ -1227,10 +1233,11 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
 
     assert (
         config.augment_image
-        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
+        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert (
-        config.vlm_image == "registry.example/workbench/npa-cosmos3-reason:3.0.1-genuine-sm120"
+        config.vlm_image
+        == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
 
 
@@ -2015,6 +2022,36 @@ def test_full_loop_writes_rerun_recording_by_default(tmp_path: Path) -> None:
     assert rrd.exists() and rrd.stat().st_size > 0
     components = {c["name"]: c for c in report["components"]}
     assert components["stage_14_rerun_viz"]["tier"] == "WORKS"
+    # The finalize stage natively emits a Lichtblick/Foxglove MCAP of the same
+    # rollout data alongside the .rrd (NPA_SIM2REAL_MCAP default on).
+    mcap_info = viz["mcap"]
+    assert mcap_info["status"] == "written"
+    assert mcap_info["camera_message_count"] > 0
+    mcap = tmp_path / "reports" / "sim2real.mcap"
+    assert mcap.exists() and mcap.stat().st_size > 0
+    assert components["stage_14_rerun_viz"]["artifacts"].get("mcap") == str(mcap)
+
+
+def test_full_loop_mcap_disabled_toggle(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_MCAP", "0")
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-mcap-off",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+
+    report = run_full_loop(config)
+
+    assert report["visualization"]["mcap"]["status"] == "disabled"
+    assert not (tmp_path / "reports" / "sim2real.mcap").exists()
 
 
 def test_full_loop_rerun_disabled_toggle(tmp_path: Path) -> None:
@@ -2108,27 +2145,81 @@ def test_vlm_signal_update_result_from_dict_defaults_and_required() -> None:
         )
 
 
-def test_sim2real_component_workflows_target_rtx_pro_6000() -> None:
-    actions = [
-        doc
-        for doc in yaml.safe_load_all(SIM2REAL_ACTIONS.read_text(encoding="utf-8"))
-        if doc is not None
-    ]
-    envgen = [
-        doc
-        for doc in yaml.safe_load_all(SIM2REAL_ENVGEN_SPLIT.read_text(encoding="utf-8"))
-        if doc is not None
-    ]
+def test_action_conditioning_is_a_stage_of_the_envgen_spec_and_is_cpu() -> None:
+    """`sim2real-actions.yaml` retired into the envgen spec's fourth stage.
 
-    assert actions[0]["resources"]["accelerators"] == "RTXPRO6000:1"
-    assert envgen[0]["resources"]["accelerators"] == "RTXPRO6000:1"
+    The template pinned `RTXPRO6000:1` and `image_id: docker:${POLICY_IMAGE}`; the shipped
+    generator uses neither — it writes reference actions on CPU and records `--policy-image` as
+    provenance. It also took its train slice from an operator-supplied `NPA_TRAIN_ENVS_URI`,
+    which is precisely what `split` had just written. Live proof: job
+    `npa-wf-multi-sim2real-envgen-shards-d5c752f1`, whose actions-summary.json records
+    `input_train_uri` equal to the split stage's own output (EVIDENCE.md §R36).
+    """
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(
+        ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real-envgen-shards.yaml"
+    )
+    plan = build_plan(spec, run_id="envgen-actions-test")
+
+    actions = next(step for step in plan.steps if step.state == "actions")
+    assert actions.tool_ref == "workbench.sim2real_envgen.actions"
+    assert "accelerators" not in spec.resources[actions.resources]
+    # The stage conditions what split wrote, not a split of its own.
+    assert actions.argv[actions.argv.index("--train-envs-uri") + 1].endswith(
+        "/envs/train/envs.jsonl"
+    )
+    assert actions.argv[actions.argv.index("--policy-image") + 1]
+
+
+def test_the_retired_actions_template_is_gone() -> None:
+    assert not SIM2REAL_ACTIONS.exists(), "sim2real-actions.yaml came back"
+
+
+def test_envgen_shard_fan_out_is_cpu_and_declares_its_shards() -> None:
+    """`sim2real-envgen-split.yaml` retired; its twin is a CPU parallel group.
+
+    The template asked for `RTXPRO6000:1`, but shard generation writes a catalog of
+    environment descriptors — it never renders — so the twin is CPU. Live proof: jobs 223/224
+    (EVIDENCE.md §R27) with `max_concurrent_observed: 2` and a barrier whose split manifest
+    saw all 64 envs, 32 from each shard.
+    """
+
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(
+        ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real-envgen-shards.yaml"
+    )
+    plan = build_plan(spec, run_id="envgen-shards-test")
+
+    for profile in spec.resources.values():
+        assert "accelerators" not in profile, profile
+    shard_steps = [step for step in plan.steps if step.state.startswith("shard-")]
+    assert [step.state for step in shard_steps] == ["shard-0", "shard-1"]
+    # Each member differs only in its shard index, and every one names --run-id, which the
+    # module requires and the toolRef used to omit.
+    indices = [step.argv[step.argv.index("--shard-index") + 1] for step in shard_steps]
+    assert indices == ["0", "1"]
+    for step in shard_steps:
+        assert "--run-id" in step.argv
+        assert step.argv[step.argv.index("--shard-count") + 1] == "2"
+    split = next(step for step in plan.steps if step.state == "split")
+    assert split.tool_ref == "workbench.sim2real_envgen.split"
+    assert split.outputs[0]["uri"].endswith("/envs/manifest/split-manifest.json")
+
+
+def test_the_retired_envgen_template_is_gone() -> None:
+    assert not SIM2REAL_ENVGEN_SPLIT.exists(), "sim2real-envgen-split.yaml came back"
 
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     transfer = cosmos2.transfer(
         input_uri="s3://bucket/input/",
         output_uri="s3://bucket/augment/",
-        image="npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z",
+        image="npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z",
     )
     reason = cosmos3.reason(
         input_uri="s3://bucket/rollouts/",
@@ -2138,7 +2229,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
 
     assert transfer["schema"] == "npa.cosmos2.transfer.v1"
     assert reason["schema"] == "npa.cosmos3.reason.v1"
-    assert transfer["image"] == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
+    assert transfer["image"] == "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     assert reason["image"] == "npa-cosmos3-reason:3.0.0"
     assert transfer["image"] != reason["image"]
     assert "cosmos3" not in transfer["image"]

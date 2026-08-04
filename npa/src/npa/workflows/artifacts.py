@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
 import mimetypes
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any, Callable
@@ -42,6 +43,9 @@ except Exception:  # pragma: no cover - embedded backend fallback
         return value
 
 _RERUN_EXTENSIONS = {".rrd"}
+# Recording formats the embedded MCAP viewers open directly. MCAP is the
+# canonical one; Lichtblick/Foxglove also read ROS 1 bags, ROS 2 db3 and PX4 ulog.
+_MCAP_EXTENSIONS = {".mcap", ".bag", ".db3", ".ulg", ".ulog"}
 _VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
 # Browser-native image formats an <img> tag can render directly.
 _WEB_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -56,15 +60,31 @@ _IMAGE_EXTENSIONS = _WEB_IMAGE_EXTENSIONS | _NON_WEB_IMAGE_EXTENSIONS
 def needs_image_transcode(name: str) -> bool:
     """True when ``name`` is an image a browser cannot render natively (→ PNG)."""
     return Path(str(name or "")).suffix.lower() in _NON_WEB_IMAGE_EXTENSIONS
+# 3D scene/asset artifacts. Deliberately DOWNLOAD-ONLY: no browser renders USDZ
+# or PLY, and the agent ships no 3D-asset viewer, so offering them as an inline
+# preview would produce a broken pane. Stating the set explicitly (rather than
+# letting them fall through the mimetypes guesses below) pins that decision and
+# keeps a future `mimetypes` addition -- e.g. a `model/vnd.usdz+zip` entry -- from
+# silently reclassifying a NuRec reconstruction. A run stays viewable through its
+# `.rrd` / `.png` / `.mp4` / `.json` artifacts.
+_MODEL_EXTENSIONS = {".usdz", ".usd", ".usda", ".usdc", ".ply", ".obj", ".glb", ".gltf"}
+
+
+def is_model_artifact(name: str) -> bool:
+    """True when ``name`` is a 3D scene/asset artifact offered as a download."""
+    return Path(str(name or "")).suffix.lower() in _MODEL_EXTENSIONS
+
+
 _JSON_EXTENSIONS = {".json"}
 _TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
 _RENDER_ORDER = {
     "rerun": 0,
-    "video": 1,
-    "image": 2,
-    "json": 3,
-    "text": 4,
-    "download": 5,
+    "mcap": 1,
+    "video": 2,
+    "image": 3,
+    "json": 4,
+    "text": 5,
+    "download": 6,
 }
 
 
@@ -101,11 +121,15 @@ class RunSummary:
     artifact_count: int
     has_viewable: bool
     bucket: str = ""
+    # When the run STARTED (its id-encoded submit time, or the earliest artifact
+    # write as a fallback) — distinct from last_modified (newest artifact write).
+    started_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "last_modified": self.last_modified,
+            "started_at": self.started_at,
             "artifact_count": self.artifact_count,
             "has_viewable": self.has_viewable,
             "bucket": self.bucket,
@@ -162,10 +186,14 @@ def render_hint_for_object(*, key: str, content_type: str = "") -> str:
     ext = Path(key).suffix.lower()
     if ext in _RERUN_EXTENSIONS:
         return "rerun"
+    if ext in _MCAP_EXTENSIONS:
+        return "mcap"
     if ext in _VIDEO_EXTENSIONS:
         return "video"
     if ext in _IMAGE_EXTENSIONS:
         return "image"
+    if ext in _MODEL_EXTENSIONS:
+        return "download"
     if ext in _JSON_EXTENSIONS:
         return "json"
     if ext in _TEXT_EXTENSIONS:
@@ -193,7 +221,7 @@ def render_hint_for_object(*, key: str, content_type: str = "") -> str:
 
 
 def is_inline_render(render: str) -> bool:
-    return render in {"rerun", "video", "image", "json", "text"}
+    return render in {"rerun", "mcap", "video", "image", "json", "text"}
 
 
 def artifact_media_type(filename: str) -> str:
@@ -206,6 +234,9 @@ def artifact_media_type(filename: str) -> str:
     name = str(filename or "").strip()
     suffix = Path(name).suffix.lower()
     explicit = {
+        # MCAP has no registered IANA type; Foxglove selects its reader from the
+        # URL extension, and octet-stream keeps byte-range streaming intact.
+        ".mcap": "application/octet-stream",
         ".mp4": "video/mp4",
         ".webm": "video/webm",
         ".mov": "video/quicktime",
@@ -214,6 +245,13 @@ def artifact_media_type(filename: str) -> str:
         ".jpeg": "image/jpeg",
         ".gif": "image/gif",
         ".webp": "image/webp",
+        # PIL-only image types are transcoded to PNG by the agent before serving.
+        ".ppm": "image/png",
+        ".pgm": "image/png",
+        ".pnm": "image/png",
+        ".bmp": "image/png",
+        ".tif": "image/png",
+        ".tiff": "image/png",
         ".json": "application/json",
         ".txt": "text/plain; charset=utf-8",
         ".log": "text/plain; charset=utf-8",
@@ -262,13 +300,16 @@ def list_runs(
                 render = render_hint_for_object(key=key)
                 current = summary.setdefault(
                     run_id,
-                    {"artifact_count": 0, "last_modified": "", "has_viewable": False},
+                    {"artifact_count": 0, "last_modified": "", "earliest": "", "has_viewable": False},
                 )
                 current["artifact_count"] = int(current["artifact_count"]) + 1
                 current["has_viewable"] = bool(current["has_viewable"] or render != "download")
                 ts = _to_iso8601(item.get("LastModified"))
-                if ts and ts > str(current["last_modified"]):
-                    current["last_modified"] = ts
+                if ts:
+                    if ts > str(current["last_modified"]):
+                        current["last_modified"] = ts
+                    if not current["earliest"] or ts < str(current["earliest"]):
+                        current["earliest"] = ts
     except (ClientError, BotoCoreError) as exc:
         raise ArtifactDiscoveryError(f"failed to list runs from s3://{bucket}/{normalized_prefix}: {exc}") from exc
 
@@ -276,6 +317,7 @@ def list_runs(
         RunSummary(
             run_id=run_id,
             last_modified=str(payload["last_modified"]),
+            started_at=_run_started_at(run_id, str(payload.get("earliest") or "")),
             artifact_count=int(payload["artifact_count"]),
             has_viewable=bool(payload["has_viewable"]),
         )
@@ -862,6 +904,79 @@ def _run_id_for_key(key: str, normalized_prefix: str) -> str:
         return ""
     first_segment = remainder.split("/", 1)[0].strip()
     return first_segment
+
+
+# Run ids commonly embed the run's start time, e.g. ``s2r-real-0725t222636z``
+# (MMDD + t + HHMMSS + z, year omitted) or ``...20260725T222636Z`` (full date).
+# Match a date (8-digit YYYYMMDD or 4-digit MMDD) + 6-digit HHMMSS, with an
+# optional ``t``/``-``/``_`` separator, not glued to surrounding digits.
+_RUN_ID_TS_RE = re.compile(r"(?<![0-9])(\d{8}|\d{4})[tT_-]?(\d{6})(?![0-9])")
+
+
+def _parse_run_id_timestamps(run_id: str, *, year_hint: int | None = None) -> list[str]:
+    """Best-effort extract every start time encoded in a run id.
+
+    Returns ISO-8601 UTC strings (possibly several — a run id may contain more
+    than one timestamp-like token; :func:`_run_started_at` picks the right one).
+    For the year-less ``MMDD`` form the year comes from ``year_hint`` (typically
+    the earliest artifact's year) or the current UTC year; the prior year is also
+    offered so a run that started late in December with its first artifact in
+    January (or a hint one year off) still resolves.
+    """
+    out: list[str] = []
+    for match in _RUN_ID_TS_RE.finditer(str(run_id or "")):
+        date_part, time_part = match.group(1), match.group(2)
+        try:
+            hour, minute, second = int(time_part[0:2]), int(time_part[2:4]), int(time_part[4:6])
+            if len(date_part) == 8:
+                candidate_years = [int(date_part[0:4])]
+                month, day = int(date_part[4:6]), int(date_part[6:8])
+            else:
+                base_year = int(year_hint or datetime.now(timezone.utc).year)
+                candidate_years = [base_year, base_year - 1]
+                month, day = int(date_part[0:2]), int(date_part[2:4])
+        except ValueError:
+            continue
+        for year in candidate_years:
+            try:
+                dt = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            out.append(dt.isoformat())
+    return out
+
+
+def _run_started_at(run_id: str, earliest_iso: str) -> str:
+    """Resolve when a run started: the id-encoded submit time when trustworthy,
+    else the earliest artifact write.
+
+    A run's start precedes its first artifact write, so an id-encoded time is
+    accepted only when it is at/just-before the earliest object (within a few
+    days). Among several id-encoded candidates, the latest one satisfying that
+    constraint is chosen — this ignores red-herring timestamps elsewhere in the
+    id and unrelated digit runs that would parse to a bogus far-off date, while
+    still yielding an exact start for delayed-upload runs.
+    """
+    earliest = str(earliest_iso or "")
+    year_hint = int(earliest[0:4]) if earliest[0:4].isdigit() else None
+    candidates = _parse_run_id_timestamps(run_id, year_hint=year_hint)
+    if not candidates:
+        return earliest
+    if not earliest:
+        # No artifact time to corroborate against; use the first-encoded time.
+        return candidates[0]
+    window_seconds = 3 * 24 * 3600
+    best = ""
+    for candidate in candidates:
+        if candidate > earliest:
+            continue
+        try:
+            gap = (datetime.fromisoformat(earliest) - datetime.fromisoformat(candidate)).total_seconds()
+        except ValueError:
+            gap = 0.0
+        if gap <= window_seconds and candidate > best:
+            best = candidate
+    return best or earliest
 
 
 def _to_iso8601(value: Any) -> str:

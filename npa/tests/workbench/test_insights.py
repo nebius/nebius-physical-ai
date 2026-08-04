@@ -22,6 +22,7 @@ from npa.workbench.insights.schemas import (
     DashboardRequest,
     IngestRunRequest,
     LineageRequest,
+    MetricRecord,
     QueryRequest,
     RecordRequest,
 )
@@ -289,6 +290,55 @@ def test_ingest_run_skips_cpu_only_run_manifest(tmp_path: Path) -> None:
     # ingest, so the run raises rather than inventing a value.
     with pytest.raises(InsightsStoreError):
         ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+
+
+def test_ingest_run_skips_a_planned_only_run_manifest(tmp_path: Path) -> None:
+    """A planned run never touched a GPU, so it must not report a GPU count.
+
+    `run-spec --persist-state` without `--execute` writes a manifest that carries the
+    full resource profile with status "planned"; ingesting it would attribute
+    accelerators to a run that never ran.
+    """
+    run = tmp_path / "run"
+    (run / "npa-workflow").mkdir(parents=True)
+    (run / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "hardening-with-insights",
+                "run_id": "planned-only",
+                "status": "planned",
+                "steps": [
+                    {"state": "generate", "status": "planned", "resources_profile": {"accelerators": "RTXPRO6000:4"}}
+                ],
+            }
+        )
+    )
+    with pytest.raises(InsightsStoreError):
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+
+
+def test_ingest_run_accepts_a_submitted_run_manifest(tmp_path: Path) -> None:
+    """A submitted run did request the hardware, so its GPU count is real."""
+    run = tmp_path / "run"
+    (run / "npa-workflow").mkdir(parents=True)
+    (run / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "hardening-with-insights",
+                "run_id": "submitted-run",
+                "status": "submitted",
+                "steps": [
+                    {"state": "retrain", "status": "submitted", "resources_profile": {"accelerators": "RTXPRO6000:2"}}
+                ],
+            }
+        )
+    )
+    store = str(tmp_path / "store")
+    ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store))
+    gpus = [r for r in read_records(store) if r["metric_name"] == "gpus"]
+    assert [r["value"] for r in gpus] == [2.0]
 
 
 def test_query_filters_by_accelerator_label(tmp_path: Path) -> None:
@@ -568,3 +618,168 @@ def test_cli_and_sdk_do_not_import_heavy_ml_dependencies_at_module_level() -> No
         assert "import torch" not in source
         assert "import lancedb" not in source
         assert "import fiftyone" not in source
+
+
+# ── Concurrent-writer safety for the append-only store ───────────────────────
+# Live evidence: two insights-smoke runs ingesting into the same store at the same
+# time each reported success ("recorded_count": 14, "total_records": 31), but only
+# the later writer's rows survived -- the earlier run's 14 records were silently
+# dropped by read-modify-write, and its next stage failed with
+# "no metrics recorded for base run: <run-id>".
+
+
+def test_concurrent_appends_do_not_lose_rows(tmp_path: Path) -> None:
+    from npa.workbench.insights.storage import append_jsonl_uri, read_jsonl_store
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    # Interleave two writers the way two pods do: both observe the same starting
+    # state, then both append.
+    before_a = read_jsonl_store(uri)
+    before_b = read_jsonl_store(uri)
+    assert before_a == before_b == []
+    append_jsonl_uri(uri, [{"run_id": "run-a", "metric_name": "m", "value": 1}])
+    append_jsonl_uri(uri, [{"run_id": "run-b", "metric_name": "m", "value": 2}])
+
+    rows = read_jsonl_store(uri)
+    assert {row["run_id"] for row in rows} == {"run-a", "run-b"}
+    assert len(rows) == 2
+
+
+def test_append_returns_the_full_store_total(tmp_path: Path) -> None:
+    from npa.workbench.insights.storage import append_jsonl_uri
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    assert append_jsonl_uri(uri, [{"a": 1}]) == 1
+    assert append_jsonl_uri(uri, [{"a": 2}, {"a": 3}]) == 3
+    assert append_jsonl_uri(uri, []) == 3
+
+
+def test_store_reads_legacy_single_object_plus_shards(tmp_path: Path) -> None:
+    """Stores written before sharding must keep reading correctly."""
+    from npa.workbench.insights.storage import append_jsonl_uri, read_jsonl_store
+
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    legacy = store_dir / "records.jsonl"
+    legacy.write_text(json.dumps({"run_id": "legacy", "value": 0}) + "\n")
+
+    append_jsonl_uri(str(legacy), [{"run_id": "new", "value": 1}])
+    rows = read_jsonl_store(str(legacy))
+    assert [row["run_id"] for row in rows] == ["legacy", "new"]
+
+
+def test_ingest_run_twice_concurrently_keeps_both_runs(tmp_path: Path) -> None:
+    """End-to-end guard: two ingests into one store keep both runs queryable."""
+    store = str(tmp_path / "store")
+    for run_id in ("run-one", "run-two"):
+        run = tmp_path / run_id
+        (run / "npa-workflow").mkdir(parents=True)
+        (run / "npa-workflow" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "npa.workflow.run.v1",
+                    "workflow": "wf",
+                    "run_id": run_id,
+                    "status": "submitted",
+                    "steps": [{"state": "s", "status": "submitted", "resources_profile": {"accelerators": "H100:2"}}],
+                }
+            )
+        )
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store, workflow="wf"))
+
+    records = read_records(store)
+    assert {r["run_id"] for r in records} == {"run-one", "run-two"}
+
+
+def test_failed_check_count_increase_is_a_regression(tmp_path: Path) -> None:
+    """More failed checks is worse; the hint list must not call it an improvement."""
+    store = str(tmp_path / "store")
+    for run_id, failed in (("base", 0.0), ("cand", 2.0)):
+        record_metrics(
+            RecordRequest(
+                output_uri=store,
+                records=[
+                    MetricRecord(run_id=run_id, metric_name="failed_check_count", value=failed, tool="dataset"),
+                ],
+            )
+        )
+    response = compare_runs(CompareRequest(input_uri=store, base_run="base", candidate_run="cand"))
+    assert response.regressed == ["failed_check_count"]
+    assert response.improved == []
+
+
+# ── Review follow-ups: store scaling, hint precision, planned-only diagnostics ──
+
+
+def test_append_does_not_reread_the_store_when_the_total_is_known(tmp_path: Path, monkeypatch) -> None:
+    """The sharded layout must not re-list + re-GET every shard just for telemetry."""
+    from npa.workbench.insights import storage as st
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    st.append_jsonl_uri(uri, [{"a": 1}])
+
+    calls = {"n": 0}
+    real = st.read_jsonl_store
+
+    def _counting(target: str):
+        calls["n"] += 1
+        return real(target)
+
+    monkeypatch.setattr(st, "read_jsonl_store", _counting)
+    assert st.append_jsonl_uri(uri, [{"a": 2}, {"a": 3}], previous_total=1) == 3
+    assert calls["n"] == 0, "a known previous total must make the new total arithmetic"
+    # Without the hint the count is still exact, by reading the store back.
+    assert st.append_jsonl_uri(uri, [{"a": 4}]) == 4
+
+
+def test_persist_totals_stay_exact_across_appends(tmp_path: Path) -> None:
+    store = str(tmp_path / "store")
+    first = record_metrics(
+        RecordRequest(output_uri=store, records=[MetricRecord(run_id="r1", metric_name="m", value=1.0)])
+    )
+    second = record_metrics(
+        RecordRequest(output_uri=store, records=[MetricRecord(run_id="r2", metric_name="m", value=2.0)])
+    )
+    assert (first.total_records, second.total_records) == (1, 2)
+    assert len(read_records(store)) == 2
+
+
+def test_failsafe_style_metric_is_not_flipped_to_lower_is_better(tmp_path: Path) -> None:
+    """A bare "fail" substring would silently invert a higher-is-better metric."""
+    from npa.workbench.insights.analytics import _is_lower_better
+
+    assert _is_lower_better("failed_check_count", []) is True
+    assert _is_lower_better("failure_rate", []) is True
+    assert _is_lower_better("fail_count", []) is True
+    assert _is_lower_better("failsafe_score", []) is False
+    assert _is_lower_better("success_rate", []) is False
+
+
+def test_planned_only_prefix_explains_why_nothing_was_ingested(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    (run / "npa-workflow").mkdir(parents=True)
+    (run / "npa-workflow" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "wf",
+                "run_id": "planned-only",
+                "status": "planned",
+                "steps": [{"state": "s", "status": "planned", "resources_profile": {"accelerators": "H100:8"}}],
+            }
+        )
+    )
+    with pytest.raises(InsightsStoreError) as excinfo:
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+    message = str(excinfo.value)
+    assert "planned" in message
+    assert "never executed" in message
+
+
+def test_shards_are_read_in_write_order(tmp_path: Path) -> None:
+    from npa.workbench.insights.storage import append_jsonl_uri, read_jsonl_store
+
+    uri = str(tmp_path / "store" / "records.jsonl")
+    for index in range(12):
+        append_jsonl_uri(uri, [{"seq": index}], previous_total=index)
+    assert [row["seq"] for row in read_jsonl_store(uri)] == list(range(12))

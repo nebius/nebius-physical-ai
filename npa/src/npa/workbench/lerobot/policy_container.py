@@ -22,6 +22,10 @@ from npa.workbench.training_config import (
     upload_checkpoint_path,
     wandb_overrides,
 )
+from npa.workflows.lerobot_dataset import (
+    DEFAULT_PUBLIC_LEROBOT_REPO,
+    DEFAULT_PUBLIC_LEROBOT_REVISION,
+)
 from npa.workbench.lerobot.version_compat import (
     eval_checkpoint_arg,
     train_env_eval_arg,
@@ -439,7 +443,8 @@ def run_lerobot_training(
     if proc.returncode != 0 or checkpoint is None or validation is None:
         raise PolicyContainerError(
             f"lerobot-train failed or did not produce loadable real weights "
-            f"(exit={proc.returncode}, checkpoint={checkpoint}, log={log})"
+            f"(exit={proc.returncode}, checkpoint={checkpoint}, log={log})\n"
+            f"{_tail_training_log(log)}"
         )
     upload_checkpoint_path(checkpoint, config)
     return LeRobotTrainingResult(
@@ -535,7 +540,8 @@ def run_lerobot_eval(
     if proc.returncode != 0 or not eval_info_path.exists():
         raise PolicyContainerError(
             f"lerobot-eval failed or did not produce eval_info.json "
-            f"(exit={proc.returncode}, eval_info={eval_info_path}, log={log})"
+            f"(exit={proc.returncode}, eval_info={eval_info_path}, log={log})\n"
+            f"{_tail_training_log(log)}"
         )
     metrics = json.loads(eval_info_path.read_text(encoding="utf-8"))
     overall = metrics.get("overall", {}) if isinstance(metrics, dict) else {}
@@ -1045,7 +1051,122 @@ def create_app() -> Any:
     return app
 
 
-def main(argv: list[str] | None = None) -> int:
+def _tail_training_log(log: Path | str, *, lines: int = 60) -> str:
+    """Return the tail of the training log, for a failure message that leaves the pod.
+
+    Naming the log path is useless once the pod is gone: the message travelled to the operator
+    while `/tmp/lerobot_output.train.log` did not (live job 252, where `lerobot-train` exited 1
+    and the reason was unreachable). The tail travels with the exception.
+    """
+
+    try:
+        with open(log, encoding="utf-8", errors="replace") as handle:
+            captured = handle.readlines()[-lines:]
+    except OSError as exc:
+        return f"(could not read {log}: {exc})"
+    if not captured:
+        return f"(training log {log} is empty)"
+    return f"--- last {len(captured)} lines of {log} ---\n" + "".join(captured)
+
+
+def _materialize_train_dataset(args: argparse.Namespace) -> Path:
+    """Fetch the training dataset into this stage's own filesystem.
+
+    A workflow stage is its own pod, so "download the dataset first" cannot be a separate
+    stage — there is no shared disk. `lerobot-train` resolves a repo id itself; this makes the
+    same thing reachable when training is driven through this module, reusing the already-tested
+    `materialize_lerobot_dataset` (local path / `s3://` / `hf://datasets/<id>` / bare repo id).
+    """
+
+    from npa.workflows.lerobot_dataset import LeRobotDatasetError, materialize_lerobot_dataset
+
+    source = (args.dataset_source or "").strip() or (args.dataset_repo_id or "").strip()
+    if not source or source == "local/lerobot-dataset":
+        raise PolicyContainerError(
+            "--data-path, --dataset-path or a real --dataset-source/--dataset-repo-id is required"
+        )
+    try:
+        dataset = materialize_lerobot_dataset(
+            source,
+            Path(args.dataset_cache_dir),
+            repo_id=(args.dataset_repo_id or DEFAULT_PUBLIC_LEROBOT_REPO),
+            revision=args.dataset_revision,
+        )
+    except LeRobotDatasetError as exc:
+        raise PolicyContainerError(f"could not materialize dataset {source!r}: {exc}") from exc
+    if not (dataset / "meta" / "info.json").exists():
+        raise PolicyContainerError(
+            f"materialized dataset is missing meta/info.json: {dataset} (source {source!r})"
+        )
+    print(f"NPA_LEROBOT_DATASET_READY {dataset}", flush=True)
+    return dataset
+
+
+def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
+    """Resolve --checkpoint-path to a local checkpoint directory.
+
+    `run_lerobot_eval` validates real weights on disk, but a stage's pod starts empty and the
+    retired templates pointed at a *public Hugging Face policy* (`lerobot/diffusion_pusht`). A
+    local path is used as-is; anything else is fetched first.
+    """
+
+    given = Path(args.checkpoint_path)
+    if given.exists():
+        return given
+
+    raw = str(args.checkpoint_path).strip()
+    cache = Path(args.checkpoint_cache_dir)
+    cache.mkdir(parents=True, exist_ok=True)
+    if raw.startswith("s3://"):
+        from npa.clients.storage import StorageClient
+
+        target = cache / raw.rstrip("/").rsplit("/", 1)[-1]
+        StorageClient.from_environment().download_directory(raw, str(target))
+        print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
+        return target
+
+    repo_id = raw[len("hf://") :] if raw.startswith("hf://") else raw
+    if "/" not in repo_id:
+        raise PolicyContainerError(
+            f"--checkpoint-path {raw!r} is neither a local path, an s3:// prefix, nor a "
+            "Hugging Face repo id (owner/name)"
+        )
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:  # pragma: no cover - guarded by the stage's requirements
+        raise PolicyContainerError(
+            f"huggingface_hub is required to fetch the policy {repo_id!r}"
+        ) from exc
+    target = Path(snapshot_download(repo_id=repo_id, local_dir=cache / repo_id.replace("/", "__")))
+    print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
+    return target
+
+
+def upload_run_artifacts(output_dir: str | Path, artifacts_uri: str) -> str:
+    """Upload a training run's whole output tree, not just its checkpoint.
+
+    `--checkpoint-s3-uri` publishes the weights; a stage that *reads the run* — a triage
+    report, a sweep ranking — needs the configs, logs and metrics beside them. The retired
+    `tokenfactory-train-triage.yaml` did this with a trailing inline-python `rglob` upload,
+    which is exactly the kind of glue a `toolRef` argv cannot carry.
+    """
+
+    if not artifacts_uri.strip():
+        return ""
+    from npa.clients.storage import StorageClient
+
+    return StorageClient.from_environment().upload_directory(str(output_dir), artifacts_uri)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Return this module's CLI parser.
+
+    Exposed separately from :func:`main` so a catalog ``toolRef`` argv that runs this
+    module can be checked against the real parser offline — see
+    ``npa/tests/guardrails/test_module_toolref_argv.py``, which was added after a
+    ``python -m`` toolRef shipped without a required option.
+    """
+
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     import_cmd = subparsers.add_parser("check-import", help="Import LeRobot and LeRobotDataset.")
@@ -1053,6 +1174,13 @@ def main(argv: list[str] | None = None) -> int:
     train_cmd = subparsers.add_parser("train", help="Run real LeRobot policy training.")
     train_cmd.add_argument("--dataset-path", type=Path, default=None)
     train_cmd.add_argument("--dataset-repo-id", default="local/lerobot-dataset")
+    # run_lerobot_training needs a LOCAL dataset root (it asserts meta/info.json), and
+    # workflow stages do not share a filesystem, so a stage has to materialise its own
+    # dataset. --dataset-source accepts a local path, an s3:// prefix, `hf://datasets/<id>`
+    # or a bare Hugging Face repo id; empty falls back to --dataset-repo-id.
+    train_cmd.add_argument("--dataset-source", default="")
+    train_cmd.add_argument("--dataset-revision", default=DEFAULT_PUBLIC_LEROBOT_REVISION)
+    train_cmd.add_argument("--dataset-cache-dir", type=Path, default=Path("/tmp/npa-lerobot-dataset"))
     train_cmd.add_argument("--output-dir", type=Path, required=True)
     train_cmd.add_argument("--steps", type=int, required=True)
     train_cmd.add_argument("--policy-type", default=DEFAULT_POLICY_TYPE)
@@ -1069,11 +1197,19 @@ def main(argv: list[str] | None = None) -> int:
     train_cmd.add_argument("--wandb-run-name", default="")
     train_cmd.add_argument("--wandb-mode", default="offline")
     train_cmd.add_argument("--checkpoint-s3-uri", default="")
+    # --checkpoint-s3-uri uploads only the checkpoint. A downstream stage that reads the
+    # RUN (configs, logs, metrics) needs the whole output tree, which the retired
+    # tokenfactory-train-triage template uploaded with a trailing inline-python block.
+    train_cmd.add_argument("--artifacts-s3-uri", default="")
     train_cmd.add_argument("--checkpoint-s3-endpoint-url", default="")
     train_cmd.add_argument("--checkpoint-s3-access-key-id", default="")
     train_cmd.add_argument("--checkpoint-s3-secret-access-key", default="")
     eval_cmd = subparsers.add_parser("eval", help="Run measured LeRobot rollout eval.")
-    eval_cmd.add_argument("--checkpoint-path", type=Path, required=True)
+    # NOT type=Path: the value may be an s3:// URI or a Hugging Face id, and Path()
+    # collapses the double slash to "s3:/…", which then looks like a repo id
+    # (live job 259: HFValidationError on "s3:/bucket/…"). _materialize_eval_checkpoint
+    # converts once it knows what the value is.
+    eval_cmd.add_argument("--checkpoint-path", required=True)
     eval_cmd.add_argument("--output-dir", type=Path, required=True)
     eval_cmd.add_argument("--env-type", default="pusht")
     eval_cmd.add_argument("--env-task", default="")
@@ -1081,6 +1217,11 @@ def main(argv: list[str] | None = None) -> int:
     eval_cmd.add_argument("--device", default=os.environ.get("LEROBOT_POLICY_DEVICE", "cuda"))
     eval_cmd.add_argument("--log-path", type=Path, default=None)
     eval_cmd.add_argument("--timeout-seconds", type=int, default=DEFAULT_EVAL_TIMEOUT_SECONDS)
+    # A stage has no shared filesystem, so --checkpoint-path may name something remote: an
+    # `hf://` / bare Hugging Face model id (the retired templates used
+    # `lerobot/diffusion_pusht`) or an s3:// prefix. It is materialised locally first.
+    eval_cmd.add_argument("--checkpoint-cache-dir", type=Path, default=Path("/tmp/npa-lerobot-policy"))
+    eval_cmd.add_argument("--rollouts-s3-uri", default="")
     validate_cmd = subparsers.add_parser("validate-checkpoint", help="Assert a checkpoint has loadable weights.")
     validate_cmd.add_argument("--checkpoint-path", type=Path, required=True)
     feedback_cmd = subparsers.add_parser("feedback-step", help="Run one feedback trainer-hook step.")
@@ -1096,7 +1237,11 @@ def main(argv: list[str] | None = None) -> int:
     serve_cmd = subparsers.add_parser("serve", help="Run the FastAPI policy container.")
     serve_cmd.add_argument("--host", default=os.environ.get("NPA_POLICY_HOST", "0.0.0.0"))
     serve_cmd.add_argument("--port", type=int, default=int(os.environ.get("NPA_POLICY_PORT", "8080")))
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     if args.command == "check-import":
         print(json.dumps(assert_lerobot_importable().to_dict(), indent=2, sort_keys=True))
@@ -1119,7 +1264,7 @@ def main(argv: list[str] | None = None) -> int:
             raise PolicyContainerError(str(exc)) from exc
         dataset_path = training_config.data_path or args.dataset_path
         if not dataset_path:
-            raise PolicyContainerError("--data-path or --dataset-path is required")
+            dataset_path = _materialize_train_dataset(args)
         result = run_lerobot_training(
             dataset_path=dataset_path,
             dataset_repo_id=args.dataset_repo_id,
@@ -1134,11 +1279,16 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=args.timeout_seconds,
             training_config=training_config,
         )
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        payload = result.to_dict()
+        if args.artifacts_s3_uri.strip():
+            payload["artifacts_uri"] = upload_run_artifacts(
+                result.output_dir, args.artifacts_s3_uri
+            )
+        print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if args.command == "eval":
         result = run_lerobot_eval(
-            checkpoint_path=args.checkpoint_path,
+            checkpoint_path=_materialize_eval_checkpoint(args),
             output_dir=args.output_dir,
             env_type=args.env_type,
             env_task=args.env_task,
@@ -1147,7 +1297,12 @@ def main(argv: list[str] | None = None) -> int:
             log_path=args.log_path,
             timeout_seconds=args.timeout_seconds,
         )
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        eval_payload = result.to_dict()
+        if args.rollouts_s3_uri.strip():
+            eval_payload["rollouts_uri"] = upload_run_artifacts(
+                result.output_dir, args.rollouts_s3_uri
+            )
+        print(json.dumps(eval_payload, indent=2, sort_keys=True))
         return 0
     if args.command == "validate-checkpoint":
         result = validate_lerobot_checkpoint(args.checkpoint_path)

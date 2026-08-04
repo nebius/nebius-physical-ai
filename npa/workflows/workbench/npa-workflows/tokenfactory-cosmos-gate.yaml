@@ -20,6 +20,7 @@ config:
   # Cosmos transfer reads trigger_uri; same scene prefix as reason-scene output.
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
   decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json"
@@ -40,21 +41,21 @@ states:
     toolRef: workbench.token_factory.reason
     resources: gpu
     outputs:
-      - uri: "{{config.plan_uri}}plan.json"
+      - uri: "{{config.plan_uri}}scene_reasoning.json"
         schema: npa.token_factory.plan.v1
     next: augment-scene
 
   augment-scene:
     description: Cosmos Transfer augment driven by the scene plan.
     needs: [reason-scene]
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.token_factory.scene.v1
     outputs:
-      - uri: "{{config.augment_uri}}manifest.json"
-        schema: npa.sim2real.augment.v1
+      - uri: "{{config.augment_manifest_uri}}"
+        schema: npa.cosmos2.transfer.v1
     next: refine
 
   refine:
@@ -76,7 +77,7 @@ states:
       - uri: "{{config.rollouts_uri}}"
         schema: npa.workbench.rollout_set.v1
     outputs:
-      - uri: "{{config.scores_uri}}report.json"
+      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
         schema: npa.workbench.vlm_eval.report.v1
 
   quality-gate:

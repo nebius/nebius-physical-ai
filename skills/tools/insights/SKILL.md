@@ -25,6 +25,12 @@ The store is an **append-only index on S3** under a configurable prefix
 
 - `records.jsonl` — metric records (`npa.insights.metric_record.v1`).
 - `edges.jsonl` — lineage edges (`npa.insights.lineage_edge.v1`).
+- `records.d/` and `edges.d/` — immutable append shards, one object per write.
+
+Every append writes a **new shard object**; readers concatenate the base object
+(legacy stores) plus all shards. Never rewrite a whole JSONL object to append:
+object storage has no native append, so read-modify-write silently drops rows
+when two writers overlap (both read N, both write N + their own).
 
 Do NOT introduce a database service or hardcode a metadata backend. Reuse the
 **LanceDB** tool as the optional query index (HTTP seam in `integrations.py`),
@@ -101,7 +107,20 @@ toolRefs: `workbench.insights.record`, `workbench.insights.ingest_run`,
 
 ## Known issues
 
-- Object storage has no native append; the JSONL store is read-then-rewritten on
-  each write. It stays logically append-only (records are never mutated).
+- Object storage has no native append, so each write lands in its own immutable
+  shard under `records.d/` / `edges.d/` and reads concatenate base + shards. This
+  is what makes concurrent ingests safe; a store is never rewritten in place.
+- **Reader version skew:** a reader older than sharding sees only the base object
+  and silently reports a truncated store (e.g. an agent VM answering "no runs
+  found" for runs that did ingest). Re-bootstrap deployed agents
+  (`npa agent bootstrap --project <alias> --name agent`) after upgrading the
+  store writers.
 - `compare` needs both run ids present in the store; comparing a run to itself
-  reports every metric as unchanged (useful as a smoke self-check).
+  reports every metric as unchanged (useful as a smoke self-check). A `compare`
+  that fails with `no metrics recorded for base run` right after a successful
+  ingest means the base run's rows are missing from the store, not that the run
+  never ingested — check for rows dropped by a writer that rewrote the object.
+- A `gpus` metric only exists when an ingested `npa.workflow.run.v1` manifest has
+  a step whose `resources_profile.accelerators` parses to >= 1, and manifests with
+  status `planned` are skipped. CPU-only and never-executed runs therefore report
+  no GPU count at all rather than a fabricated zero.
