@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "npa"
-_AGENT_GLOB = "cli/agent*.py"
 _INSIGHTS_DIR = _SRC / "workbench" / "insights"
 
 # Demo run names that were only ever seeded into an S3 store / used as test
@@ -21,7 +20,14 @@ _SEEDED_RUN_NAMES = ("candidate-4gpu", "hardened-4gpu", "baseline-2gpu", "run-4g
 
 
 def _agent_sources() -> list[Path]:
-    return sorted((_SRC / "cli").glob("agent*.py"))
+    # Scan both historical CLI modules/shims and the shipped backend package.
+    # Moving logic out of cli/ must never move it out of this guard's scope.
+    return sorted(
+        [
+            *(_SRC / "cli").glob("agent*.py"),
+            *(_SRC / "agent_backend").glob("*.py"),
+        ]
+    )
 
 
 def _insights_sources() -> list[Path]:

@@ -190,10 +190,23 @@ disabled, chat falls through to the existing cheap-LLM path exactly as today.
 - `test_agent_eval_scorecard.py` — asserts a competitive bar and emits a
   scorecard artifact (`success_rate`, `avg_steps`, `avg_tokens`) to
   `npa/tests/agent_eval/_artifacts/scorecard.json`.
+- `policy.py` — independently pins the ten scenario identities and digest,
+  requires 1.0 success, and caps average steps/tokens at the defended policy;
+  editing the reviewable baseline alone cannot weaken this ratchet.
+- The negative control injects a deterministic broken router into the real
+  harness. It produces 6/10 successful scenarios (0.6) and the real regression
+  gate rejects its generated scorecard; no degraded dictionary is synthesized.
 - Fully mocked by default (0 tokens, CI-safe); a live variant is gated behind
   `NPA_AGENT_CHAT_LIVE=1` with the cheapest pinned model (Tier-2 convention).
 
 Rollback: test-only; delete the directory.
+
+Empty read-only observations are intentionally context-sensitive. A standalone
+query that finds zero matching runs now terminates immediately with the honest
+answer "no runs found" and remains a valid query; discovery that is required by
+a later compare/dashboard step still triggers changed-strategy replanning.
+Errors and exact repeats retain the bounded rejection behavior. This is an
+intentional action-loop behavior change, not a byte-for-byte migration claim.
 
 ## Phase F — quantitative viewer eval + cross-run memory
 
@@ -215,9 +228,11 @@ route, removable without touching existing paths.
 Introduce an importable package `npa/src/npa/agent_backend/` that is *shipped* to
 the VM (its files uploaded next to `backend.py`, imported via `sys.path`) instead
 of string-substituted. Migrate the new B–F modules there incrementally, keeping
-the embed mechanism working for everything not yet migrated. Behavior stays
-byte-for-byte; the rendered-backend compile check and the full agent suite stay
-green at every commit; migration proceeds in small reversible commits.
+the embed mechanism working for everything not yet migrated. Public import and
+deployment contracts stay stable; intentional behavior changes are documented
+and tested rather than described as byte-for-byte preservation. The
+rendered-backend compile check and the full agent suite stay green at every
+commit; migration proceeds in small reversible commits.
 
 **Implemented (pilot):** `agent_memory` is the first module migrated. Its logic
 lives in `npa/src/npa/agent_backend/memory.py`; `npa/src/npa/cli/agent_memory.py`
@@ -229,12 +244,13 @@ agent_backend.memory import RunMemory, JsonFileStore, InMemoryStore` instead of
 inlining the class. A dedicated test compiles the shipped module and asserts
 `backend.py` no longer inlines it.
 
-**Mechanism for the remaining modules (actions, sim2real_loop, semantic_router):**
-each follows the same pilot pattern — `git mv` into `agent_backend/`, add a
-`cli/agent_*.py` shim, swap the embed placeholder for a ship heredoc +
-`from agent_backend.<mod> import …`, and add a shipped-module compile check.
-This is preferable to `import *` because the module keeps its own globals (no
-backend-namespace symbol collisions such as the shared `STOP_ERROR`).
+**Implemented:** `actions`, `sim2real_loop`, and `semantic_router` now follow the
+same pilot pattern: their logic lives under `agent_backend/`, each historical
+`cli/agent_*.py` path is a thin re-export shim, and the bootstrap ships each full
+module through a dedicated heredoc before importing only the names `backend.py`
+uses. Per-module compile checks and a real rendered-backend import check defend
+the package boundary. Keeping module globals isolated avoids backend-namespace
+collisions such as the shared `STOP_ERROR` constant.
 
 **Rollback:** re-embedding a shipped module is mechanical — restore its
 `_embedded_*` reader + `_AGENT_*_EMBED` placeholder and drop the ship heredoc.

@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import html
 import time
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from .integrations import query_metrics_in_lancedb
 from .schemas import (
+    COST_BASIS_LABEL,
+    CURRENCY_LABEL,
     LOWER_IS_BETTER_HINTS,
+    METRIC_KIND_LABEL,
+    SCORE_NAME_LABEL,
+    STEP_LABEL,
     CompareRequest,
     CompareResponse,
     DashboardGroup,
@@ -47,6 +53,11 @@ def _facets(request: QueryRequest) -> dict[str, Any]:
         "model_version": request.model_version,
         "metric_name": request.metric_name,
         "accelerator": request.accelerator,
+        "metric_kind": request.metric_kind,
+        "step": request.step,
+        "currency": request.currency,
+        "cost_basis": request.cost_basis,
+        "score_name": request.score_name,
         "time_start": request.time_start,
         "time_end": request.time_end,
         "threshold_metric": request.threshold_metric,
@@ -72,6 +83,15 @@ def _matches(record: dict[str, Any], request: QueryRequest) -> bool:
         labels.get("accelerators", "")
     ).lower():
         return False
+    for requested, label in (
+        (request.metric_kind, METRIC_KIND_LABEL),
+        (request.step, STEP_LABEL),
+        (request.currency, CURRENCY_LABEL),
+        (request.cost_basis, COST_BASIS_LABEL),
+        (request.score_name, SCORE_NAME_LABEL),
+    ):
+        if requested and str(labels.get(label, "")) != requested:
+            return False
     if request.dataset_version and request.dataset_version not in (
         lineage.get("dataset_version", ""),
         record.get("artifact_version", ""),
@@ -119,58 +139,118 @@ def _is_lower_better(metric_name: str, overrides: list[str]) -> bool:
     return any(hint in lowered for hint in LOWER_IS_BETTER_HINTS)
 
 
-def _run_metric_map(records: list[dict[str, Any]], run_id: str) -> dict[str, float]:
-    """Latest value per metric for a run (by timestamp, then order)."""
-    latest: dict[str, tuple[str, float]] = {}
+@dataclass(frozen=True)
+class _MetricSample:
+    metric_name: str
+    value: float
+    dimensions: dict[str, str]
+
+
+def _metric_dimensions(record: dict[str, Any]) -> dict[str, str]:
+    """Return comparison dimensions for newly extracted observed signals."""
+    labels = record.get("labels") or {}
+    dimensions = {
+        key: str(labels[key])
+        for key in (
+            METRIC_KIND_LABEL,
+            STEP_LABEL,
+            CURRENCY_LABEL,
+            COST_BASIS_LABEL,
+            SCORE_NAME_LABEL,
+        )
+        if labels.get(key) not in (None, "")
+    }
+    if dimensions:
+        for key in ("tool", "stage"):
+            if record.get(key) not in (None, ""):
+                dimensions[key] = str(record[key])
+    return dimensions
+
+
+def _metric_identity(metric_name: str, dimensions: dict[str, str]) -> str:
+    if not dimensions:
+        return metric_name
+    suffix = ",".join(f"{key}={dimensions[key]}" for key in sorted(dimensions))
+    return f"{metric_name}[{suffix}]"
+
+
+def _run_metric_samples(
+    records: list[dict[str, Any]], run_id: str
+) -> dict[str, _MetricSample]:
+    """Latest value per metric/dimension identity for a run."""
+    latest: dict[str, tuple[str, _MetricSample]] = {}
     for index, record in enumerate(records):
         if record.get("run_id") != run_id:
             continue
         name = str(record.get("metric_name", ""))
+        dimensions = _metric_dimensions(record)
+        identity = _metric_identity(name, dimensions)
         stamp = f"{record.get('timestamp', '')}:{index:08d}"
-        value = float(record.get("value", 0.0))
-        if name not in latest or stamp >= latest[name][0]:
-            latest[name] = (stamp, value)
-    return {name: value for name, (_, value) in latest.items()}
+        sample = _MetricSample(
+            metric_name=name,
+            value=float(record.get("value", 0.0)),
+            dimensions=dimensions,
+        )
+        if identity not in latest or stamp >= latest[identity][0]:
+            latest[identity] = (stamp, sample)
+    return {identity: sample for identity, (_, sample) in latest.items()}
+
+
+def _run_metric_map(records: list[dict[str, Any]], run_id: str) -> dict[str, float]:
+    """Latest value per metric/dimension identity for dashboard rollups."""
+    return {
+        identity: sample.value
+        for identity, sample in _run_metric_samples(records, run_id).items()
+    }
 
 
 def compare_runs(request: CompareRequest) -> CompareResponse:
     """Compare a metric set between two run ids; flag regressed/improved."""
     records = read_records(request.input_uri)
-    base = _run_metric_map(records, request.base_run)
-    candidate = _run_metric_map(records, request.candidate_run)
+    base = _run_metric_samples(records, request.base_run)
+    candidate = _run_metric_samples(records, request.candidate_run)
     if not base:
         raise InsightsQueryError(f"no metrics recorded for base run: {request.base_run}")
     if not candidate:
         raise InsightsQueryError(f"no metrics recorded for candidate run: {request.candidate_run}")
 
-    names = request.metric_names or sorted(set(base) & set(candidate))
-    if not names:
+    identities = sorted(set(base) & set(candidate))
+    if request.metric_names:
+        requested = set(request.metric_names)
+        identities = [
+            identity
+            for identity in identities
+            if identity in requested or base[identity].metric_name in requested
+        ]
+    if not identities:
         raise InsightsQueryError("no shared metrics between the two runs to compare")
 
     deltas: list[MetricDelta] = []
     improved: list[str] = []
     regressed: list[str] = []
     unchanged: list[str] = []
-    for name in names:
-        if name not in base or name not in candidate:
-            continue
-        base_value = base[name]
-        candidate_value = candidate[name]
+    for identity in identities:
+        base_sample = base[identity]
+        candidate_sample = candidate[identity]
+        name = base_sample.metric_name
+        base_value = base_sample.value
+        candidate_value = candidate_sample.value
         delta = round(candidate_value - base_value, 6)
         pct = round((delta / base_value) * 100, 4) if base_value else None
         lower_better = _is_lower_better(name, request.lower_is_better)
         if delta == 0:
             status = "unchanged"
-            unchanged.append(name)
+            unchanged.append(identity)
         elif (delta < 0) == lower_better:
             status = "improved"
-            improved.append(name)
+            improved.append(identity)
         else:
             status = "regressed"
-            regressed.append(name)
+            regressed.append(identity)
         deltas.append(
             MetricDelta(
                 metric_name=name,
+                dimensions=base_sample.dimensions,
                 base_value=base_value,
                 candidate_value=candidate_value,
                 delta=delta,
@@ -289,7 +369,16 @@ def _latest_run(records: list[dict[str, Any]]) -> str:
 def _group(records: list[dict[str, Any]], group_by: str) -> list[DashboardGroup]:
     buckets: dict[str, list[tuple[str, float]]] = {}
     for index, record in enumerate(records):
-        key = str(record.get(group_by, "")) or "(none)"
+        if group_by in {
+            METRIC_KIND_LABEL,
+            STEP_LABEL,
+            CURRENCY_LABEL,
+            COST_BASIS_LABEL,
+            SCORE_NAME_LABEL,
+        }:
+            key = str((record.get("labels") or {}).get(group_by, "")) or "(none)"
+        else:
+            key = str(record.get(group_by, "")) or "(none)"
         stamp = f"{record.get('timestamp', '')}:{index:08d}"
         buckets.setdefault(key, []).append((stamp, float(record.get("value", 0.0))))
     groups: list[DashboardGroup] = []

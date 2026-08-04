@@ -134,6 +134,60 @@ def test_confirmation_gate_executes_with_matching_token():
     assert "sim2real_submit" in result["tools_used"]
 
 
+def test_matching_confirmation_authorizes_only_one_attempt_per_loop():
+    submitted = {"count": 0}
+
+    def _submit(args):
+        submitted["count"] += 1
+        return {"run_id": args.get("run_id"), "submit_mode": "agent-local"}
+
+    planner = _scripted_planner(
+        [{"tool": "sim2real_submit", "args": {"run_id": "only-once"}}]
+    )
+    digest = A.action_digest(
+        {"tool": "sim2real_submit", "args": {"run_id": "only-once"}}
+    )
+    result = A.run_action_loop(
+        "Use sim2real_submit exactly once for only-once.",
+        tools={"sim2real_submit": _submit},
+        model_call=planner,
+        confirm_token="tok",
+        session_token="tok",
+        confirm_digest=digest,
+        max_steps=6,
+    )
+
+    assert submitted["count"] == 1
+    assert result["stopped_reason"] == A.STOP_MAX_STEPS
+    assert all(step.get("phase") != "call" for step in result["steps"][1:])
+
+
+def test_confirmed_pending_action_executes_directly_without_replanning():
+    submitted = []
+    action = {"tool": "sim2real_submit", "args": {"run_id": "bound-run"}}
+
+    def _planner_must_not_run(*_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("a confirmed action must not be replanned")
+
+    result = A.run_action_loop(
+        "Use sim2real_submit once for bound-run.",
+        tools={
+            "sim2real_submit": lambda args: submitted.append(args)
+            or {"run_id": args["run_id"], "submit_mode": "agent-local"}
+        },
+        model_call=_planner_must_not_run,
+        confirm_token="token",
+        session_token="token",
+        confirm_digest=A.action_digest(action),
+        confirmed_action={**action, "digest": A.action_digest(action)},
+    )
+
+    assert submitted == [{"run_id": "bound-run"}]
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == ["sim2real_submit"]
+    assert len(result["steps"]) == 1
+
+
 def test_confirmation_gate_rejects_mismatched_token():
     assert not A.confirmation_ok("a", "b")
     assert not A.confirmation_ok("", "b")
@@ -184,7 +238,8 @@ def test_confirm_token_bound_to_action_digest():
 
 
 def test_max_steps_guard_stops_loop():
-    # Planner keeps calling a read-only tool forever; guard must stop it.
+    # Planner keeps calling a read-only tool forever; the first call succeeds and
+    # repeats are rejected until the hard guard stops the loop.
     planner = _scripted_planner([{ "tool": "health", "args": {}}])
     tools = {"health": lambda args: {"ok": True}}
     result = A.run_action_loop(
@@ -192,7 +247,63 @@ def test_max_steps_guard_stops_loop():
     )
     assert result["stopped_reason"] == A.STOP_MAX_STEPS
     call_steps = [s for s in result["steps"] if s.get("phase") == "call"]
-    assert len(call_steps) == 3
+    assert len(call_steps) == 1
+    assert [s.get("replan_reason") for s in result["steps"][1:]] == [
+        "already_completed",
+        "already_completed",
+    ]
+
+
+def test_explicitly_requested_tools_must_run_before_final_answer():
+    planner = _scripted_planner(
+        [
+            {"final": "too early"},
+            {"tool": "insights_query", "args": {}},
+            {"final": "still too early"},
+            {"tool": "artifacts_run", "args": {"run_id": "run-a"}},
+            {"final": "Both requested observations are complete for run-a."},
+        ]
+    )
+    result = A.run_action_loop(
+        "Call insights_query and artifacts_run for run-a, then answer.",
+        tools={
+            "insights_query": lambda args: {"count": 1, "records": [{"run_id": "run-a"}]},
+            "artifacts_run": lambda args: {"run_id": args["run_id"], "artifacts": ["report"]},
+        },
+        model_call=planner,
+    )
+
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == ["insights_query", "artifacts_run"]
+    assert [
+        step.get("replan_reason")
+        for step in result["steps"]
+        if step.get("phase") == "replan"
+    ] == ["required_tools_remaining", "required_tools_remaining"]
+
+
+def test_action_args_are_allowlisted_before_digest_and_execution():
+    captured = []
+    planner = _scripted_planner(
+        [
+            {
+                "tool": "artifacts_runs",
+                "args": {"q": "run-a", "limit": 50, "invented": "digest-evasion"},
+            },
+            {"final": "found run-a"},
+        ]
+    )
+    result = A.run_action_loop(
+        "Use artifacts_runs for run-a.",
+        tools={"artifacts_runs": lambda args: captured.append(args) or {"runs": ["run-a"]}},
+        model_call=planner,
+    )
+
+    assert captured == [{"limit": 50, "q": "run-a"}]
+    assert result["steps"][0]["args"] == captured[0]
+    assert A.normalize_action_args(
+        "artifacts_runs", {"q": "run-a", "unknown": True}
+    ) == {"q": "run-a"}
 
 
 def test_planner_non_json_output_stops_gracefully():
@@ -210,21 +321,152 @@ def test_empty_goal_short_circuits():
     assert result["tokens"] == 0
 
 
-def test_tool_error_is_recorded_as_observation_and_loop_continues():
-    def _flaky(args):
-        raise RuntimeError("transient boom")
+def test_tool_error_replans_with_changed_arguments_and_recovers():
+    calls = []
+    planner_prompts = []
 
-    planner = _scripted_planner(
+    def _flaky(args):
+        calls.append(args)
+        if not args.get("prefix"):
+            raise RuntimeError("transient boom")
+        return {"count": 1, "runs": ["run-recovered"]}
+
+    decisions = iter(
         [
             {"tool": "artifacts_runs", "args": {}},
-            {"final": "handled the tool error"},
+            {"tool": "artifacts_runs", "args": {"prefix": "runs/"}},
+            {"final": "Recovered run: `run-recovered`."},
         ]
     )
+
+    def planner(messages, *, tier="cheap"):
+        planner_prompts.append(messages)
+        return _completion(next(decisions))
+
     tools = {"artifacts_runs": _flaky}
     result = A.run_action_loop("list runs", tools=tools, model_call=planner)
     call_step = result["steps"][0]
     assert call_step["status"] == "error"
     assert "boom" in json.dumps(call_step["observation"])
+    assert calls == [{}, {"prefix": "runs/"}]
+    assert "changed strategy" in planner_prompts[1][0]["content"]
+    assert result["replans"] == 1
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_replan_rejects_exact_failed_action_repeat():
+    calls = {"n": 0}
+
+    def _broken(args):
+        calls["n"] += 1
+        return {"ok": False, "error": "bad prefix"}
+
+    planner = _scripted_planner(
+        [
+            {"tool": "artifacts_runs", "args": {"prefix": "bad"}},
+            {"tool": "artifacts_runs", "args": {"prefix": "bad"}},
+            {"final": "Which artifact prefix should I search?"},
+        ]
+    )
+    result = A.run_action_loop(
+        "find the run", tools={"artifacts_runs": _broken}, model_call=planner
+    )
+
+    assert calls["n"] == 1
+    rejected = [step for step in result["steps"] if step.get("phase") == "replan"]
+    assert rejected[0]["replan_reason"] == "unchanged_strategy"
+    assert result["replans"] == 2
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_empty_observation_replans_with_an_alternate_tool():
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {"workflow": "missing"}},
+            {"tool": "insights_dashboard", "args": {"group_by": "workflow"}},
+            {"final": "No runs matched `missing`; the dashboard has 3 records."},
+        ]
+    )
+    result = A.run_action_loop(
+        "find runs or summarize what is available",
+        tools={
+            "insights_query": lambda args: {"count": 0, "records": []},
+            "insights_dashboard": lambda args: {
+                "total_records": 3,
+                "runs": ["run-a"],
+            },
+        },
+        model_call=planner,
+    )
+
+    assert result["steps"][0]["status"] == "empty"
+    assert result["steps"][0]["replan_reason"] == "empty_observation"
+    assert result["tools_used"] == ["insights_query", "insights_dashboard"]
+    assert result["replans"] == 1
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_standalone_empty_query_is_an_honest_terminal_observation():
+    planner_calls = {"n": 0}
+
+    def planner(messages, *, tier="cheap"):
+        planner_calls["n"] += 1
+        if planner_calls["n"] > 1:  # pragma: no cover - terminal empty must stop
+            raise AssertionError("terminal empty result spent another planner step")
+        return _completion(
+            {"tool": "insights_query", "args": {"workflow": "missing"}}
+        )
+
+    result = A.run_action_loop(
+        "Which runs match workflow missing?",
+        tools={"insights_query": lambda args: {"count": 0, "records": []}},
+        model_call=planner,
+    )
+
+    assert result["ok"] is True
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["reply"] == "No runs found (0 matching records in the store)."
+    assert result["replans"] == 0
+    assert result["steps"] == [
+        {
+            "step": 1,
+            "phase": "call",
+            "tool": "insights_query",
+            "args": {"workflow": "missing"},
+            "status": "empty",
+            "thought": "",
+            "observation": {"count": 0, "records": []},
+            "terminal_observation": True,
+        }
+    ]
+
+
+def test_intermediate_empty_query_recovers_with_changed_arguments():
+    calls = []
+
+    def query(args):
+        calls.append(args)
+        if not args.get("workflow"):
+            return {"count": 0, "records": []}
+        return {"count": 1, "records": [{"run_id": "run-a"}]}
+
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {}},
+            {"tool": "insights_query", "args": {"workflow": "wf"}},
+            {"final": "Found `run-a`; it is ready to compare."},
+        ]
+    )
+    result = A.run_action_loop(
+        "Discover a run, then compare it later.",
+        tools={"insights_query": query},
+        model_call=planner,
+    )
+
+    assert calls == [{}, {"workflow": "wf"}]
+    assert result["steps"][0]["replan_reason"] == "empty_observation"
+    assert result["steps"][1]["status"] == "ok"
+    assert result["replans"] == 1
     assert result["stopped_reason"] == A.STOP_DONE
 
 
@@ -239,6 +481,52 @@ def test_allowlist_contains_readonly_insights_tools():
         assert A.is_allowed(name)
         # Insights tools observe recorded metrics — read-only, no confirmation gate.
         assert not A.requires_confirmation(name)
+
+
+def test_loop_uses_readonly_run_memory_to_explain_regression():
+    assert A.is_allowed("memory_explain_regression")
+    assert not A.requires_confirmation("memory_explain_regression")
+
+    def _explain(args):
+        assert args == {"baseline_run": "run-a", "candidate_run": "run-b"}
+        return {
+            "ok": True,
+            "baseline_run": "run-a",
+            "candidate_run": "run-b",
+            "verdict": "regression",
+            "metric_evidence": [
+                {
+                    "field": "metrics.success_rate",
+                    "baseline": 0.85,
+                    "candidate": 0.55,
+                    "delta": -0.3,
+                }
+            ],
+        }
+
+    planner = _scripted_planner(
+        [
+            {
+                "tool": "memory_explain_regression",
+                "args": {"baseline_run": "run-a", "candidate_run": "run-b"},
+            },
+            {
+                "final": (
+                    "Stored metrics.success_rate was 0.85 for run-a and 0.55 for "
+                    "run-b; observed delta was -0.3."
+                )
+            },
+        ]
+    )
+    result = A.run_action_loop(
+        "why did run-b regress vs run-a",
+        tools={"memory_explain_regression": _explain},
+        model_call=planner,
+    )
+
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == ["memory_explain_regression"]
+    assert "-0.3" in result["reply"]
 
 
 def test_loop_uses_insights_query_to_answer_gpu_question():
@@ -298,6 +586,67 @@ def test_loop_uses_insights_compare_to_answer_regression_question():
     assert "collision_rate" in result["reply"]
 
 
+def test_loop_composes_discover_compare_and_dashboard_in_one_goal():
+    def _query(args):
+        assert args == {}
+        return {
+            "count": 2,
+            "records": [
+                {"run_id": "run-a", "metric_name": "loss", "value": 0.2},
+                {"run_id": "run-b", "metric_name": "loss", "value": 0.4},
+            ],
+        }
+
+    def _compare(args):
+        assert args == {
+            "base_run": "run-a",
+            "candidate_run": "run-b",
+            "metric_names": ["loss"],
+        }
+        return {"base_run": "run-a", "candidate_run": "run-b", "regressed": ["loss"]}
+
+    def _dashboard(args):
+        assert args == {"group_by": "metric_name", "latest_run": True}
+        return {"total_records": 2, "runs": ["run-a", "run-b"], "groups": {"loss": 2}}
+
+    planner = _scripted_planner(
+        [
+            {"tool": "insights_query", "args": {}},
+            {
+                "tool": "insights_compare",
+                "args": {
+                    "base_run": "run-a",
+                    "candidate_run": "run-b",
+                    "metric_names": ["loss"],
+                },
+            },
+            {
+                "tool": "insights_dashboard",
+                "args": {"group_by": "metric_name", "latest_run": True},
+            },
+            {"final": "`run-b` regressed on `loss`; dashboard total_records is 2."},
+        ]
+    )
+    result = A.run_action_loop(
+        "discover two runs, compare loss, and summarize the dashboard",
+        tools={
+            "insights_query": _query,
+            "insights_compare": _compare,
+            "insights_dashboard": _dashboard,
+        },
+        model_call=planner,
+    )
+
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert result["tools_used"] == [
+        "insights_query",
+        "insights_compare",
+        "insights_dashboard",
+    ]
+    assert result["replans"] == 0
+    assert "run-b" in result["reply"]
+
+
 def test_run_chat_action_loop_shapes_readonly_result():
     planner = _scripted_planner(
         [
@@ -338,8 +687,11 @@ def test_loop_authors_workflow_with_repair_then_pass():
 
     planner = _scripted_planner(
         [
-            {"tool": "workflow_author", "args": {"goal": "2 step cosmos"}},
-            {"tool": "workflow_author", "args": {"goal": "2 step cosmos"}},
+            {"tool": "workflow_author", "args": {"goal": "2 step cosmos", "steps": 2}},
+            {
+                "tool": "workflow_author",
+                "args": {"goal": "2 step cosmos with validated tool refs", "steps": 3},
+            },
             {"final": "Here is your workflow:\n```yaml\napiVersion: npa.workflow/v0.0.1\n```"},
         ]
     )
@@ -350,6 +702,31 @@ def test_loop_authors_workflow_with_repair_then_pass():
     )
     assert calls["n"] == 2
     assert "workflow_author" in result["tools_used"]
+    assert result["stopped_reason"] == A.STOP_DONE
+
+
+def test_workflow_author_receives_the_complete_operator_goal() -> None:
+    captured = []
+    operator_goal = (
+        "Use workflow_author for three stages: curate a dataset, train a policy, "
+        "then evaluate the policy."
+    )
+    planner = _scripted_planner(
+        [
+            {"tool": "workflow_author", "args": {"goal": "train then evaluate"}},
+            {"final": "authored all three stages"},
+        ]
+    )
+    result = A.run_action_loop(
+        operator_goal,
+        tools={
+            "workflow_author": lambda args: captured.append(args)
+            or {"ok": True, "runnable": True, "states": ["curate", "train", "evaluate"]}
+        },
+        model_call=planner,
+    )
+
+    assert captured[0]["goal"] == operator_goal
     assert result["stopped_reason"] == A.STOP_DONE
 
 
@@ -370,7 +747,7 @@ def test_loop_insights_empty_store_reports_no_fabrication():
     assert result["tools_used"] == ["insights_query"]
     blob = json.dumps(result["steps"])
     assert "candidate-4gpu" not in blob and "hardened-4gpu" not in blob
-    assert "no matching runs" in result["reply"].lower()
+    assert "no runs found" in result["reply"].lower()
 
 
 def test_normalize_threshold_op_accepts_common_aliases():
@@ -498,7 +875,7 @@ def test_planner_retries_once_on_unparseable_reply():
 
 
 def test_unparseable_plan_reports_empty_store_as_no_runs_found():
-    """An empty result set must be answered truthfully, never as a bare failure."""
+    """A terminal empty result must not spend a retry on unusable planner prose."""
     calls = {"n": 0}
 
     def _call(messages, *, tier="cheap"):
@@ -509,11 +886,11 @@ def test_unparseable_plan_reports_empty_store_as_no_runs_found():
 
     tools = {"insights_query": lambda args: {"backend": "jsonl", "count": 0, "records": []}}
     result = A.run_action_loop("which runs used 4 gpus", tools=tools, model_call=_call)
-    assert result["stopped_reason"] == A.STOP_NO_PLAN
-    assert "no runs found" in result["reply"]
+    assert result["stopped_reason"] == A.STOP_DONE
+    assert "no runs found" in result["reply"].lower()
     assert "insights_query" in result["tools_used"]
-    # The corrective re-ask is bounded to one extra call for the whole loop.
-    assert [s.get("retried") for s in result["steps"] if s.get("phase") == "plan"] == [True]
+    assert calls["n"] == 1
+    assert not [s for s in result["steps"] if s.get("phase") == "plan"]
 
 
 def test_summarize_observations_reports_only_what_tools_returned():

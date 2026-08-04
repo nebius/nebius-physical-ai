@@ -139,7 +139,14 @@ def _observation_is_empty(observation: Any) -> bool:
     if observation is None:
         return True
     if isinstance(observation, dict):
-        return len(observation) == 0
+        if len(observation) == 0:
+            return True
+        if observation.get("count") == 0 or observation.get("total_records") == 0:
+            return True
+        for field in ("records", "runs", "items", "artifacts"):
+            if field in observation and isinstance(observation.get(field), list) and not observation[field]:
+                return True
+        return False
     if isinstance(observation, (list, str)):
         return len(observation) == 0
     return False
@@ -177,7 +184,12 @@ def spans_from_action_loop(result: dict[str, Any]) -> list[Span]:
             "confirm": KIND_CONFIRM,
         }.get(phase, KIND_TOOL)
         status = str(step.get("status") or SPAN_OK)
-        span_status = SPAN_ERROR if status in {"error", "rejected"} else SPAN_OK
+        terminal_empty = bool(step.get("terminal_observation"))
+        span_status = (
+            SPAN_ERROR
+            if status in {"error", "rejected"}
+            else SPAN_WARN if status == "empty" and not terminal_empty else SPAN_OK
+        )
         observation = step.get("observation")
         attrs = {
             "phase": phase,
@@ -185,12 +197,15 @@ def spans_from_action_loop(result: dict[str, Any]) -> list[Span]:
             "tool": step.get("tool"),
             "arg_keys": sorted((step.get("args") or {}).keys()) if isinstance(step.get("args"), dict) else [],
             "status": status,
+            "terminal_observation": terminal_empty,
         }
         events: list[dict[str, Any]] = []
         if isinstance(observation, dict) and observation.get("truncated"):
             events.append({"name": "observation_truncated"})
-        if _observation_is_empty(observation) and phase == "call" and status == "ok":
-            events.append({"name": "empty_tool_result"})
+        if _observation_is_empty(observation) and phase == "call":
+            events.append(
+                {"name": "empty_terminal_result" if terminal_empty else "empty_tool_result"}
+            )
         spans.append(
             Span(
                 name=f"{phase}.{step.get('tool') or step.get('step')}",
@@ -275,7 +290,12 @@ def _silent_failures_for(trace: dict[str, Any], idx: int) -> list[dict[str, Any]
             findings.append(
                 {"trace_index": idx, "kind": "truncated_observation", "detail": f"step {step.get('step')} observation truncated"}
             )
-        if phase == "call" and status == "ok" and _observation_is_empty(observation):
+        if (
+            phase == "call"
+            and status in {"ok", "empty"}
+            and not step.get("terminal_observation")
+            and _observation_is_empty(observation)
+        ):
             findings.append(
                 {"trace_index": idx, "kind": "empty_tool_result", "detail": f"tool {step.get('tool')} returned empty result"}
             )

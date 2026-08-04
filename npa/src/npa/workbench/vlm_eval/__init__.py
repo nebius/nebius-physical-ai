@@ -1361,6 +1361,15 @@ def _post_with_readiness_retry(
                     f"(last: {last_conn_error})"
                 ) from exc
             raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+        except httpx.HTTPStatusError as exc:
+            # Include a bounded response body.  vLLM uses the same HTTP 404 for
+            # an unknown route and for an unknown served-model name; the status
+            # line alone made those materially different live failures
+            # indistinguishable.  Model-server errors do not contain our API
+            # key, but keep the diagnostic bounded before it reaches logs.
+            detail = exc.response.text.strip().replace("\n", " ")[:1000]
+            suffix = f" response={detail}" if detail else ""
+            raise VlmEvalError(f"VLM backend request failed: {exc}{suffix}") from exc
         except httpx.HTTPError as exc:
             raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
         except json.JSONDecodeError as exc:

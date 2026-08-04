@@ -88,7 +88,7 @@ def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     )
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     run = next(d["run"] for d in docs if "vlm-eval run" in d.get("run", ""))
-    assert "vllm.entrypoints.openai.api_server" in run
+    assert 'vllm serve "$npa_vlm_model"' in run
     assert "--served-model-name" in run
     assert "npa_vlm_pid=$!" in run  # backgrounded + trap-killed on exit
     # This branch's preamble also WAITS for readiness before the command runs, rather than
@@ -127,9 +127,9 @@ def test_vlm_eval_benchmark_starts_a_server_because_its_twin_scores_for_real() -
     )
     backend = str(spec.config.get("vlm_backend") or "").replace("_", "-")
     if backend == "self-hosted":
-        assert "vllm.entrypoints.openai.api_server" in rendered
+        assert "vllm serve" in rendered
     else:
-        assert "vllm.entrypoints.openai.api_server" not in rendered
+        assert "vllm serve" not in rendered
 
 
 def _unused_test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
@@ -138,7 +138,7 @@ def _unused_test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
     rendered = render_skypilot_yaml(
         spec, build_plan(spec, run_id="demo"), run_id="demo", options=SkypilotRenderOptions(materialize_registry_secrets=False)
     )
-    assert "vllm.entrypoints.openai.api_server" not in rendered
+    assert "vllm serve" not in rendered
 
 
 def test_normalize_resources_strips_gi_suffix() -> None:

@@ -12,6 +12,47 @@ OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH = (
     "skills/workflows/oss-solution-registry-onboard/SKILL.md"
 )
 
+
+def public_chat_session_payload(session: dict[str, Any]) -> dict[str, Any]:
+    """Return session metadata safe for unaudited public API responses.
+
+    ``memory_uri`` is an internal persistence locator and can contain bucket and
+    tenant identifiers. The UI only needs to know whether persistence succeeded,
+    never where it was written.
+    """
+    history = session.get("chat_history")
+    return {
+        "id": str(session.get("id") or ""),
+        "title": str(session.get("title") or "New chat"),
+        "created_at": str(session.get("created_at") or ""),
+        "updated_at": str(session.get("updated_at") or ""),
+        "message_count": len(history) if isinstance(history, list) else 0,
+        "memory_persisted": bool(session.get("memory_uri")),
+    }
+
+
+def goal_requests_catalog_composition(user_text: str) -> bool:
+    """Whether a workflow request asks for live-catalog semantic composition.
+
+    Generic/simple workflow requests are better served by the validated template
+    catalog. Composition is reserved for goals that name catalog/tool semantics
+    or express an ordered multi-stage data flow.
+    """
+    text = str(user_text or "").strip().lower()
+    if not text:
+        return False
+    if "workbench." in text or re.search(r"\btool\s*refs?\b", text):
+        return True
+    if "->" in text or "→" in text or re.search(r"\bthen\b", text):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:use|uses|using|compose|composes|composing)\b.{0,100}"
+            r"\b(?:tool|catalog|cosmos|dataset|curat|train|evaluat|insights|lerobot|isaac)\w*\b",
+            text,
+        )
+    )
+
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
     r"(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim(?:\s*[-_ ]?viz)))"

@@ -8,16 +8,22 @@ extracts their metrics + provenance without modifying the emitting tools.
 
 from __future__ import annotations
 
-import time
+import json
+from datetime import datetime, timezone
 from typing import Any
 
 from .integrations import index_metrics_in_lancedb
 from .schemas import (
     ACCELERATORS_LABEL,
+    COST_BASIS_LABEL,
+    CURRENCY_LABEL,
     EDGES_OBJECT,
     GPU_METRIC_NAME,
     METRIC_RECORD_SCHEMA,
+    METRIC_KIND_LABEL,
     RECORDS_OBJECT,
+    SCORE_NAME_LABEL,
+    STEP_LABEL,
     IngestedArtifact,
     IngestRunRequest,
     IngestRunResponse,
@@ -42,6 +48,21 @@ SCENARIO_ADVERSARIAL_SCHEMA = "npa.scenario_gen.adversarial_set.v1"
 # (not ``schema``); it carries per-step resource profiles we mine for GPU counts.
 WORKFLOW_RUN_SCHEMA = "npa.workflow.run.v1"
 
+# Known report shapes already emitted by NPA tools. Structural profiles below
+# cover the older schema-less detection/VLM artifacts without treating arbitrary
+# JSON as metrics.
+REPORT_PROFILES: dict[str, tuple[str, str]] = {
+    "npa.rl_sweep.variant_metrics.v1": ("isaac_lab", "sweep-train"),
+    "npa.sim2real.heldout_eval.v1": ("sim2real", "eval"),
+    "npa.sim2real.vlm_eval.v1": ("vlm_eval", "eval"),
+    "npa.rl.eval_report.v1": ("rl", "eval"),
+    "npa.workbench.vlm_eval.report.v1": ("vlm_eval", "eval"),
+    "npa.workbench.vlm_eval.benchmark.v1": ("vlm_eval", "benchmark"),
+}
+FORMAT_PROFILES: dict[str, tuple[str, str, str]] = {
+    "npa_sonic_eval_result_v1": ("npa_sonic_eval_result_v1", "sonic", "eval"),
+}
+
 
 class InsightsStoreError(RuntimeError):
     """Raised when recording or ingesting into the store fails."""
@@ -56,15 +77,72 @@ def edges_uri(store_uri: str) -> str:
 
 
 def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def read_records(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_store(records_uri(store_uri))
+    return _dedupe_rows(read_jsonl_store(records_uri(store_uri)), _record_identity)
 
 
 def read_edges(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_store(edges_uri(store_uri))
+    return _dedupe_rows(read_jsonl_store(edges_uri(store_uri)), _edge_identity)
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _record_identity(row: dict[str, Any]) -> tuple[Any, ...] | None:
+    """Stable logical identity for one metric observation.
+
+    Ingested rows use their real source artifact URI plus run/metric/dimensions;
+    regenerated timestamps and values do not create a second logical observation.
+    Explicit emissions without source provenance retain timestamp+value so two
+    measurements sharing a metric name are never collapsed.
+    """
+    artifact_uri = str(row.get("artifact_uri") or "")
+    base = (
+        str(row.get("run_id") or ""),
+        artifact_uri,
+        str(row.get("artifact_version") or ""),
+        str(row.get("metric_name") or ""),
+        str(row.get("workflow") or ""),
+        str(row.get("tool") or ""),
+        str(row.get("stage") or ""),
+        str(row.get("unit") or ""),
+        _canonical_json(row.get("labels") or {}),
+        _canonical_json(row.get("lineage") or {}),
+    )
+    if artifact_uri:
+        return ("provenance", *base)
+    timestamp = str(row.get("timestamp") or "")
+    if timestamp:
+        return ("emission", *base, timestamp, row.get("value"))
+    return None
+
+
+def _edge_identity(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(row.get("from_uri") or ""),
+        str(row.get("from_version") or ""),
+        str(row.get("to_uri") or ""),
+        str(row.get("to_version") or ""),
+        str(row.get("relation") or ""),
+        str(row.get("run_id") or ""),
+    )
+
+
+def _dedupe_rows(rows: list[dict[str, Any]], identity_fn: Any) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for row in rows:
+        identity = identity_fn(row)
+        if identity is not None and identity in seen:
+            continue
+        if identity is not None:
+            seen.add(identity)
+        deduped.append(row)
+    return deduped
 
 
 def _persist(
@@ -73,8 +151,8 @@ def _persist(
     edges: list[LineageEdge],
     *,
     lancedb_endpoint: str = "",
-) -> tuple[int, int]:
-    """Append records + edges to the store and return the new totals.
+) -> tuple[int, int, int, int]:
+    """Append unseen records/edges and return added counts plus new totals.
 
     The totals are read **once** before writing and then advanced arithmetically.
     Reading the whole store back after each write would re-list and re-GET every
@@ -90,18 +168,46 @@ def _persist(
         rec_rows.append(row)
     edge_rows = [edge.model_dump(mode="json") for edge in edges]
 
-    previous_records = len(read_records(store_uri))
-    previous_edges = len(read_edges(store_uri))
-    total_records = append_jsonl_uri(records_uri(store_uri), rec_rows, previous_total=previous_records)
-    total_edges = append_jsonl_uri(edges_uri(store_uri), edge_rows, previous_total=previous_edges)
+    existing_records = read_records(store_uri)
+    existing_edges = read_edges(store_uri)
+    existing_record_ids = {
+        identity
+        for row in existing_records
+        if (identity := _record_identity(row)) is not None
+    }
+    existing_edge_ids = {_edge_identity(row) for row in existing_edges}
+    filtered_records: list[dict[str, Any]] = []
+    for row in rec_rows:
+        identity = _record_identity(row)
+        if identity is not None and identity in existing_record_ids:
+            continue
+        if identity is not None:
+            existing_record_ids.add(identity)
+        filtered_records.append(row)
+    filtered_edges: list[dict[str, Any]] = []
+    for row in edge_rows:
+        identity = _edge_identity(row)
+        if identity in existing_edge_ids:
+            continue
+        existing_edge_ids.add(identity)
+        filtered_edges.append(row)
 
-    if rec_rows:
+    previous_records = len(existing_records)
+    previous_edges = len(existing_edges)
+    total_records = append_jsonl_uri(
+        records_uri(store_uri), filtered_records, previous_total=previous_records
+    )
+    total_edges = append_jsonl_uri(
+        edges_uri(store_uri), filtered_edges, previous_total=previous_edges
+    )
+
+    if filtered_records:
         index_metrics_in_lancedb(
-            rec_rows,
+            filtered_records,
             lancedb_endpoint=lancedb_endpoint,
             table="insights_metrics",
         )
-    return total_records, total_edges
+    return len(filtered_records), len(filtered_edges), total_records, total_edges
 
 
 def _load_record_payload(payload: Any) -> tuple[list[MetricRecord], list[LineageEdge]]:
@@ -143,7 +249,7 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
             if not record.run_id:
                 record.run_id = request.workflow_run
 
-    total_records, total_edges = _persist(
+    recorded_count, edge_count, total_records, total_edges = _persist(
         request.output_uri,
         records,
         edges,
@@ -153,8 +259,8 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
         store_uri=request.output_uri,
         records_uri=records_uri(request.output_uri),
         edges_uri=edges_uri(request.output_uri),
-        recorded_count=len(records),
-        edge_count=len(edges),
+        recorded_count=recorded_count,
+        edge_count=edge_count,
         total_records=total_records,
         total_edges=total_edges,
     )
@@ -216,7 +322,7 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
             f"no known manifest/report schemas found under run prefix: {request.input_uri}"
         )
 
-    total_records, total_edges = _persist(
+    recorded_count, edge_count, total_records, total_edges = _persist(
         request.output_uri,
         all_records,
         all_edges,
@@ -228,8 +334,8 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
         edges_uri=edges_uri(request.output_uri),
         scanned=scanned,
         ingested=ingested,
-        recorded_count=len(all_records),
-        edge_count=len(all_edges),
+        recorded_count=recorded_count,
+        edge_count=edge_count,
         total_records=total_records,
         total_edges=total_edges,
     )
@@ -275,12 +381,10 @@ def _extract(
     schema_id = str(payload.get("schema", ""))
     schema_version = str(payload.get("schema_version", ""))
     if schema_version == WORKFLOW_RUN_SCHEMA:
-        # Only counts as ingested when accelerator info is actually present; a
-        # CPU-only run manifest yields no metric and is skipped.
-        records = _extract_run_manifest(payload, source_uri, workflow, workflow_run)
-        if not records:
+        records, edges = _extract_run_manifest(payload, source_uri, workflow, workflow_run)
+        if not records and not edges:
             return [], [], None
-        return records, [], WORKFLOW_RUN_SCHEMA
+        return records, edges, WORKFLOW_RUN_SCHEMA
     if schema_id == DATASET_MANIFEST_SCHEMA:
         return (*_extract_dataset_manifest(payload, source_uri, workflow, workflow_run), schema_id)
     if schema_id == DATASET_VALIDATION_SCHEMA:
@@ -293,8 +397,23 @@ def _extract(
         if not isinstance(payload.get("scenarios"), list):
             return [], [], None
         return (*_extract_adversarial_set(payload, source_uri, workflow, workflow_run), schema_id)
-    if "decision" in payload and not schema_id:
-        return (*_extract_decision(payload, source_uri, workflow, workflow_run), "decision")
+    if "decision" in payload and (not schema_id or "decision" in schema_id):
+        decision_schema = schema_id or "decision"
+        return (*_extract_decision(payload, source_uri, workflow, workflow_run), decision_schema)
+    profile = _report_profile(payload, source_uri)
+    if profile is not None:
+        report_schema, tool, stage = profile
+        records, edges = _extract_observed_report(
+            payload,
+            source_uri,
+            workflow,
+            workflow_run,
+            tool=tool,
+            stage=stage,
+            schema_id=report_schema,
+        )
+        if records or edges:
+            return records, edges, report_schema
     return [], [], None
 
 
@@ -303,9 +422,324 @@ def _run_id(payload: dict[str, Any], workflow_run: str) -> str:
     return (
         workflow_run
         or str(payload.get("run_id") or "")
+        or str(payload.get("eval_run_id") or "")
         or str(lineage.get("workflow_run") or "")
         or "unknown"
     )
+
+
+def _report_profile(
+    payload: dict[str, Any], source_uri: str
+) -> tuple[str, str, str] | None:
+    schema_id = str(payload.get("schema") or "")
+    if schema_id in REPORT_PROFILES:
+        tool, stage = REPORT_PROFILES[schema_id]
+        return schema_id, tool, stage
+    format_id = str(payload.get("format") or "")
+    if format_id in FORMAT_PROFILES:
+        return FORMAT_PROFILES[format_id]
+    if (
+        isinstance(payload.get("epochs"), list)
+        and payload.get("run_id")
+        and payload.get("manifest_sha256")
+    ):
+        return "detection_training.metrics", "detection_training", "train"
+    if all(key in payload for key in ("mAP", "mAP_50", "mAP_75", "eval_run_id")):
+        return "detection_training.eval", "detection_training", "eval"
+    if all(key in payload for key in ("score", "success_threshold", "passed")):
+        return "vlm_eval.result", "vlm_eval", "eval"
+    if schema_id and ("billing" in schema_id or "resource_usage" in schema_id):
+        return schema_id, str(payload.get("tool") or "workflow"), str(
+            payload.get("stage") or "run"
+        )
+    # Older VLM aggregate reports have no schema but do carry this exact output
+    # contract. The filename alone is not enough to classify arbitrary JSON.
+    if all(key in payload for key in ("total_rollouts", "success_rate", "mean_score")):
+        return "vlm_eval.loop_report", "vlm_eval", "eval"
+    return None
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _is_curve_metric(name: str) -> bool:
+    lowered = name.lower()
+    return (
+        lowered in {"loss", "reward", "success_rate", "train_loss", "eval_loss"}
+        or lowered.endswith(("_loss", "_reward", "_success_rate"))
+    )
+
+
+def _is_duration(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith("_ms") or lowered in {
+        "duration",
+        "duration_s",
+        "duration_seconds",
+        "elapsed_s",
+        "elapsed_seconds",
+        "wall_clock_s",
+        "wall_clock_seconds",
+        "latency_s",
+    }
+
+
+def _is_throughput(name: str) -> bool:
+    lowered = name.lower()
+    return "throughput" in lowered or lowered.endswith(
+        ("_per_second", "_per_sec", "_per_s")
+    )
+
+
+def _is_cost(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in {
+        "billed_cost_usd",
+        "cost_usd",
+        "estimated_cost_usd",
+        "total_cost_usd",
+    }
+
+
+def _cost_basis(name: str, *, container: str, schema_id: str) -> str:
+    """Classify cost provenance without promoting estimates to billed values."""
+    lowered = name.lower()
+    if "estimated" in lowered:
+        return "estimated"
+    if container == "billing" or "billing" in schema_id.lower():
+        return "billed"
+    return "estimated"
+
+
+_EVAL_SCORE_NAMES = frozenset(
+    {
+        "accuracy",
+        "f1",
+        "f1_score",
+        "map",
+        "map_50",
+        "map_75",
+        "mean_reward",
+        "mean_score",
+        "precision",
+        "recall",
+        "reward",
+        "score",
+        "success_rate",
+    }
+)
+_COUNTER_NAMES = frozenset(
+    {
+        "epoch",
+        "epochs",
+        "global_step",
+        "iteration",
+        "num_samples",
+        "sample_count",
+        "samples",
+        "step",
+        "steps",
+        "token_count",
+        "tokens",
+        "train_steps",
+    }
+)
+
+
+def _is_counter(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in _COUNTER_NAMES or lowered.endswith(
+        ("_count", "_samples", "_steps", "_tokens")
+    )
+
+
+def _is_eval_score(name: str, *, container: str) -> bool:
+    lowered = name.lower()
+    return (
+        lowered in _EVAL_SCORE_NAMES
+        or lowered.endswith(
+            ("_accuracy", "_f1", "_precision", "_recall", "_return", "_reward", "_score", "_success_rate")
+        )
+    )
+
+
+def _metric_unit(name: str, kind: str) -> str:
+    if kind == "duration":
+        return "milliseconds" if name.lower().endswith("_ms") else "seconds"
+    if kind == "cost":
+        return "USD"
+    if kind == "throughput":
+        lowered = name.lower()
+        prefix = lowered.split("_per_", 1)[0]
+        return f"{prefix}/s" if prefix != lowered else "units/s"
+    return ""
+
+
+def _first_uri(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _observed_lineage(payload: dict[str, Any]) -> tuple[list[str], str]:
+    lineage = payload.get("lineage") if isinstance(payload.get("lineage"), dict) else {}
+    input_uris = [str(uri) for uri in lineage.get("input_uris", []) if uri]
+    for key in ("input_uri", "input_path", "dataset_uri", "data_path", "lance_uri"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip() and value.strip() not in input_uris:
+            input_uris.append(value.strip())
+    checkpoint_uri = _first_uri(
+        payload,
+        ("checkpoint_uri", "policy_checkpoint", "checkpoint_path", "model_uri"),
+    ) or str(lineage.get("checkpoint_uri") or "").strip()
+    policy = payload.get("policy")
+    if not checkpoint_uri and isinstance(policy, dict):
+        checkpoint_uri = _first_uri(policy, ("checkpoint_uri", "model_uri", "onnx_uri"))
+    return input_uris, checkpoint_uri
+
+
+def _extract_observed_report(
+    payload: dict[str, Any],
+    source_uri: str,
+    workflow: str,
+    workflow_run: str,
+    *,
+    tool: str,
+    stage: str,
+    schema_id: str,
+) -> tuple[list[MetricRecord], list[LineageEdge]]:
+    """Extract only numeric signals and URIs physically present in a known report."""
+    run_id = _run_id(payload, workflow_run)
+    resolved_tool = str(payload.get("tool") or tool)
+    resolved_stage = str(payload.get("stage") or stage)
+    input_uris, checkpoint_uri = _observed_lineage(payload)
+    ref = LineageRef(input_uris=input_uris, checkpoint_uri=checkpoint_uri)
+    records: list[MetricRecord] = []
+    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+
+    def emit(name: str, value: Any, kind: str, labels: dict[str, str] | None = None) -> None:
+        if not _is_number(value):
+            return
+        resolved_labels = {METRIC_KIND_LABEL: kind, **(labels or {})}
+        identity = (name, tuple(sorted(resolved_labels.items())))
+        if identity in seen:
+            return
+        seen.add(identity)
+        records.append(
+            _metric(
+                run_id=run_id,
+                workflow=workflow,
+                tool=resolved_tool,
+                stage=resolved_stage,
+                name=name,
+                value=float(value),
+                unit=_metric_unit(name, kind),
+                labels=resolved_labels,
+                lineage=ref,
+                artifact_uri=source_uri,
+            )
+        )
+
+    for curve_name in ("epochs", "history", "training_curve", "eval_curve"):
+        curve = payload.get(curve_name)
+        if not isinstance(curve, list):
+            continue
+        curve_kind = "eval_curve" if "eval" in curve_name else "training_curve"
+        for index, point in enumerate(curve, start=1):
+            if not isinstance(point, dict):
+                continue
+            step = point.get("step", point.get("epoch", point.get("iteration", index)))
+            for name, value in point.items():
+                if not _is_number(value):
+                    continue
+                if _is_duration(name):
+                    emit(name, value, "duration", {STEP_LABEL: str(step)})
+                elif _is_throughput(name):
+                    emit(name, value, "throughput", {STEP_LABEL: str(step)})
+                elif _is_curve_metric(name):
+                    emit(name, value, curve_kind, {STEP_LABEL: str(step)})
+
+    billing_context = (
+        "billing" in schema_id
+        or "resource_usage" in schema_id
+        or isinstance(payload.get("billing"), dict)
+        or isinstance(payload.get("resource_usage"), dict)
+    )
+    # Authoritative nested containers win over root placeholders. ``emit`` keeps
+    # the first metric/dimension identity, so this order is the precedence rule.
+    containers: list[tuple[str, dict[str, Any]]] = []
+    for key in ("metrics", "success_summary", "billing", "resource_usage"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            containers.append((key, value))
+    containers.append(("root", payload))
+
+    stage_kind = f"{stage} {resolved_stage}".lower()
+    eval_stage = "eval" in stage_kind or "benchmark" in stage_kind
+    train_stage = "train" in stage_kind
+    for container_name, values in containers:
+        for name, value in values.items():
+            if not _is_number(value):
+                continue
+            if _is_duration(name):
+                emit(name, value, "duration")
+            elif _is_throughput(name):
+                emit(name, value, "throughput")
+            elif _is_cost(name) and billing_context:
+                emit(
+                    name,
+                    value,
+                    "cost",
+                    {
+                        CURRENCY_LABEL: "USD",
+                        COST_BASIS_LABEL: _cost_basis(
+                            name, container=container_name, schema_id=schema_id
+                        ),
+                    },
+                )
+            elif eval_stage and _is_eval_score(name, container=container_name):
+                emit(name, value, "eval_score", {SCORE_NAME_LABEL: name})
+            elif eval_stage and _is_counter(name):
+                emit(name, value, "counter")
+            elif train_stage and _is_curve_metric(name):
+                emit(name, value, "training_metric")
+
+    edges: list[LineageEdge] = []
+    if eval_stage:
+        if checkpoint_uri:
+            edges.append(
+                LineageEdge(
+                    from_uri=checkpoint_uri,
+                    to_uri=source_uri,
+                    relation="evaluated_on",
+                    run_id=run_id,
+                )
+            )
+        edges.extend(
+            LineageEdge(
+                from_uri=input_uri,
+                to_uri=source_uri,
+                relation="evaluated_on",
+                run_id=run_id,
+            )
+            for input_uri in input_uris
+            if input_uri != checkpoint_uri
+        )
+    elif train_stage and input_uris:
+        target_uri = checkpoint_uri or source_uri
+        edges.extend(
+            LineageEdge(
+                from_uri=input_uri,
+                to_uri=target_uri,
+                relation="produced_from",
+                run_id=run_id,
+            )
+            for input_uri in input_uris
+        )
+    return records, edges
 
 
 def _extract_dataset_manifest(
@@ -406,20 +840,20 @@ def _parse_accelerators(spec: str) -> tuple[str, int]:
 
 def _extract_run_manifest(
     payload: dict[str, Any], source_uri: str, workflow: str, workflow_run: str
-) -> list[MetricRecord]:
-    """Extract per-run GPU count from an ``npa.workflow.run.v1`` manifest.
+) -> tuple[list[MetricRecord], list[LineageEdge]]:
+    """Extract observed resource/runtime signals from a workflow run manifest.
 
     Reads each step's ``resources_profile.accelerators`` (already produced by the
     workflow interpreter/planner) and records the peak accelerator count for the
-    run. Non-invasive and value-honest: emits nothing when no step declares an
-    accelerator, so CPU-only runs are never labeled with a fabricated GPU count.
+    run. Duration, throughput, curve, and billing signals follow the same rule:
+    only values physically present in the manifest or step records are emitted.
     """
     # A run that was only *planned* never touched an accelerator, so reporting a GPU
     # count for it would be a fabrication: `run-spec --persist-state` without
     # `--execute` writes a manifest with the full resource profile and status
     # "planned". Submitted/running/completed/failed runs did request the hardware.
     if str(payload.get("status") or "").strip().lower() == "planned":
-        return []
+        return [], []
     run_id = str(payload.get("run_id") or workflow_run or "unknown")
     resolved_workflow = workflow or str(payload.get("workflow") or "")
     steps = payload.get("steps") or []
@@ -436,22 +870,53 @@ def _extract_run_manifest(
         max_gpus = max(max_gpus, count)
         if acc_type and acc_type not in accel_types:
             accel_types.append(acc_type)
-    if max_gpus <= 0:
-        return []
-    labels = {ACCELERATORS_LABEL: ",".join(accel_types)} if accel_types else {}
-    return [
-        _metric(
-            run_id=run_id,
-            workflow=resolved_workflow,
-            tool="workflow",
-            stage="run",
-            name=GPU_METRIC_NAME,
-            value=float(max_gpus),
-            unit="gpus",
-            labels=labels,
-            artifact_uri=source_uri,
+    records: list[MetricRecord] = []
+    edges: list[LineageEdge] = []
+    if max_gpus > 0:
+        labels = {ACCELERATORS_LABEL: ",".join(accel_types)} if accel_types else {}
+        records.append(
+            _metric(
+                run_id=run_id,
+                workflow=resolved_workflow,
+                tool="workflow",
+                stage="run",
+                name=GPU_METRIC_NAME,
+                value=float(max_gpus),
+                unit="gpus",
+                labels=labels,
+                artifact_uri=source_uri,
+            )
         )
-    ]
+
+    observed, observed_edges = _extract_observed_report(
+        payload,
+        source_uri,
+        resolved_workflow,
+        workflow_run,
+        tool="workflow",
+        stage="run",
+        schema_id=WORKFLOW_RUN_SCHEMA,
+    )
+    records.extend(observed)
+    edges.extend(observed_edges)
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_payload = {**step, "run_id": run_id}
+        step_tool = str(step.get("tool_ref") or "workflow")
+        step_stage = str(step.get("state") or step.get("stage") or "run")
+        step_records, step_edges = _extract_observed_report(
+            step_payload,
+            source_uri,
+            resolved_workflow,
+            workflow_run,
+            tool=step_tool,
+            stage=step_stage,
+            schema_id=WORKFLOW_RUN_SCHEMA,
+        )
+        records.extend(step_records)
+        edges.extend(step_edges)
+    return records, edges
 
 
 def _extract_decision(
@@ -473,4 +938,30 @@ def _extract_decision(
         labels={"decision": decision},
         artifact_uri=source_uri,
     )
-    return [metric], []
+    checkpoint_uri = _first_uri(
+        payload, ("checkpoint_uri", "policy_checkpoint", "checkpoint_path")
+    )
+    eval_uri = _first_uri(
+        payload,
+        ("eval_report_uri", "heldout_report_uri", "evaluation_uri", "report_uri"),
+    )
+    edges: list[LineageEdge] = []
+    if checkpoint_uri and eval_uri:
+        edges.append(
+            LineageEdge(
+                from_uri=checkpoint_uri,
+                to_uri=eval_uri,
+                relation="evaluated_on",
+                run_id=run_id,
+            )
+        )
+    if eval_uri:
+        edges.append(
+            LineageEdge(
+                from_uri=eval_uri,
+                to_uri=source_uri,
+                relation="derived_from",
+                run_id=run_id,
+            )
+        )
+    return [metric], edges

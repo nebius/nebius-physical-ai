@@ -138,6 +138,13 @@ def query_cmd(
     model_version: str = typer.Option("", "--model-version", help="Filter by model/checkpoint version."),
     metric_name: str = typer.Option("", "--metric-name", help="Filter by metric name."),
     accelerator: str = typer.Option("", "--accelerator", help="Filter by accelerator label (e.g. RTXPRO6000)."),
+    metric_kind: str = typer.Option("", "--metric-kind", help="Filter by observed-signal kind."),
+    step: str = typer.Option("", "--step", help="Filter a curve by step/epoch/iteration label."),
+    currency: str = typer.Option("", "--currency", help="Filter cost metrics by currency label."),
+    cost_basis: str = typer.Option(
+        "", "--cost-basis", help="Filter cost metrics by estimated|billed provenance."
+    ),
+    score_name: str = typer.Option("", "--score-name", help="Filter per-tool evaluation scores by score label."),
     time_start: str = typer.Option("", "--time-start", help="ISO timestamp lower bound (inclusive)."),
     time_end: str = typer.Option("", "--time-end", help="ISO timestamp upper bound (inclusive)."),
     threshold_metric: str = typer.Option("", "--threshold-metric", help="Metric name the threshold predicate applies to."),
@@ -162,6 +169,11 @@ def query_cmd(
             "model_version": model_version,
             "metric_name": metric_name,
             "accelerator": accelerator,
+            "metric_kind": metric_kind,
+            "step": step,
+            "currency": currency,
+            "cost_basis": cost_basis,
+            "score_name": score_name,
             "time_start": time_start,
             "time_end": time_end,
             "threshold_metric": threshold_metric,
@@ -185,6 +197,11 @@ def query_cmd(
             model_version=model_version,
             metric_name=metric_name,
             accelerator=accelerator,
+            metric_kind=metric_kind,
+            step=step,
+            currency=currency,
+            cost_basis=cost_basis,
+            score_name=score_name,
             time_start=time_start,
             time_end=time_end,
             threshold_metric=threshold_metric,
@@ -266,7 +283,14 @@ def dashboard_cmd(
     input_path: str = typer.Option(..., "--input-path", "--input-uri", help="S3 URI prefix of the insights store."),
     output_path: str = typer.Option("", "--output-path", "--output-uri", help="Optional S3 URI to write a static HTML report."),
     workflow: str = typer.Option("", "--workflow", help="Restrict to a workflow name."),
-    group_by: str = typer.Option("metric_name", "--group-by", help="metric_name|tool|stage|workflow."),
+    group_by: str = typer.Option(
+        "metric_name",
+        "--group-by",
+        help=(
+            "metric_name|tool|stage|workflow|metric_kind|step|currency|"
+            "cost_basis|score_name."
+        ),
+    ),
     latest_run: str = typer.Option("", "--latest-run", help="Explicit latest run id for the rollup."),
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Insights service endpoint."),

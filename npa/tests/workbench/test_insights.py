@@ -397,6 +397,399 @@ def test_ingest_run_skips_unknown_schema(tmp_path: Path) -> None:
     assert len(response.ingested) == 1
 
 
+def _write_signal_run(
+    run_dir: Path,
+    *,
+    run_id: str,
+    success_rate: float,
+    cost_usd: float,
+) -> dict[str, str]:
+    """Write representative artifacts that existing NPA tools already emit."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_uri = f"s3://artifacts/{run_id}/policy.pt"
+
+    train_dir = run_dir / "detection-training"
+    train_dir.mkdir()
+    (train_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "manifest_sha256": "observed-manifest-digest",
+                "status": "completed",
+                "epochs": [
+                    {"epoch": 1, "train_loss": 0.8, "reward": 0.2},
+                    {"epoch": 2, "train_loss": 0.4, "reward": 0.6},
+                ],
+            }
+        )
+    )
+
+    sweep_uri = run_dir / "sweep" / "metrics.json"
+    sweep_uri.parent.mkdir()
+    sweep_uri.write_text(
+        json.dumps(
+            {
+                "schema": "npa.rl_sweep.variant_metrics.v1",
+                "run_id": run_id,
+                "tool": "isaac_lab",
+                "stage": "sweep-train",
+                "status": "success",
+                "duration_seconds": 31.5,
+                "mean_reward": 0.6,
+                "checkpoint_uri": checkpoint_uri,
+            }
+        )
+    )
+
+    eval_uri = run_dir / "eval" / "report.json"
+    eval_uri.parent.mkdir()
+    eval_uri.write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.heldout_eval.v1",
+                "run_id": run_id,
+                "tool": "isaac_lab",
+                "stage": "eval",
+                "status": "completed",
+                "success_rate": success_rate,
+                "policy_checkpoint": checkpoint_uri,
+                "metrics": {"accuracy": success_rate, "steps_per_second": 128.0},
+            }
+        )
+    )
+
+    billing_uri = run_dir / "resources" / "billing.json"
+    billing_uri.parent.mkdir()
+    billing_uri.write_text(
+        json.dumps(
+            {
+                "schema": "npa.workflow.billing.v1",
+                "run_id": run_id,
+                "tool": "workflow",
+                "stage": "run",
+                "billing": {"cost_usd": cost_usd},
+            }
+        )
+    )
+
+    gate_uri = run_dir / "gate" / "decision.json"
+    gate_uri.parent.mkdir()
+    gate_uri.write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.threshold_decision.v1",
+                "run_id": run_id,
+                "decision": "promote_checkpoint",
+                "success_rate": success_rate,
+                "checkpoint_uri": checkpoint_uri,
+                "eval_report_uri": str(eval_uri),
+            }
+        )
+    )
+
+    sparse_uri = run_dir / "sparse" / "metrics.json"
+    sparse_uri.parent.mkdir()
+    sparse_uri.write_text(
+        json.dumps(
+            {
+                "schema": "npa.rl_sweep.variant_metrics.v1",
+                "run_id": run_id,
+                "status": "completed",
+                "message": "no observed metrics were written",
+            }
+        )
+    )
+    return {
+        "checkpoint": checkpoint_uri,
+        "eval": str(eval_uri),
+        "gate": str(gate_uri),
+        "sparse": str(sparse_uri),
+    }
+
+
+def test_ingest_run_extracts_observed_curves_runtime_cost_and_lineage(tmp_path: Path) -> None:
+    paths = _write_signal_run(
+        tmp_path / "run-rich", run_id="run-rich", success_rate=0.82, cost_usd=12.75
+    )
+    store = str(tmp_path / "store")
+    response = ingest_run(
+        IngestRunRequest(input_uri=str(tmp_path / "run-rich"), output_uri=store)
+    )
+
+    records = read_records(store)
+    names = {row["metric_name"] for row in records}
+    assert {"train_loss", "reward", "mean_reward", "duration_seconds"} <= names
+    assert {"success_rate", "accuracy", "steps_per_second", "cost_usd"} <= names
+
+    step_two_loss = next(
+        row
+        for row in records
+        if row["metric_name"] == "train_loss" and row["labels"].get("step") == "2"
+    )
+    assert step_two_loss["value"] == 0.4
+    assert step_two_loss["labels"]["metric_kind"] == "training_curve"
+
+    cost = next(row for row in records if row["metric_name"] == "cost_usd")
+    assert cost["value"] == 12.75
+    assert cost["unit"] == "USD"
+    assert cost["labels"] == {
+        "cost_basis": "billed",
+        "currency": "USD",
+        "metric_kind": "cost",
+    }
+
+    assert not any(row["artifact_uri"] == paths["sparse"] for row in records)
+    assert paths["sparse"] not in {artifact.uri for artifact in response.ingested}
+
+    edges = read_edges(store)
+    triples = {(edge["from_uri"], edge["to_uri"], edge["relation"]) for edge in edges}
+    assert (paths["checkpoint"], paths["eval"], "evaluated_on") in triples
+    assert (paths["eval"], paths["gate"], "derived_from") in triples
+
+
+def test_new_signal_facets_compare_and_dashboard_preserve_dimensions(tmp_path: Path) -> None:
+    store = str(tmp_path / "store")
+    _write_signal_run(tmp_path / "run-a", run_id="run-a", success_rate=0.82, cost_usd=12.75)
+    _write_signal_run(tmp_path / "run-b", run_id="run-b", success_rate=0.76, cost_usd=10.25)
+    ingest_run(IngestRunRequest(input_uri=str(tmp_path / "run-a"), output_uri=store))
+    ingest_run(IngestRunRequest(input_uri=str(tmp_path / "run-b"), output_uri=store))
+
+    curves = query_metrics(
+        QueryRequest(input_uri=store, metric_kind="training_curve", step="2")
+    )
+    assert curves.count == 4
+    assert curves.facets["metric_kind"] == "training_curve"
+    assert curves.facets["step"] == "2"
+
+    scores = query_metrics(
+        QueryRequest(input_uri=store, score_name="success_rate", tool="isaac_lab")
+    )
+    assert {row["run_id"] for row in scores.records} == {"run-a", "run-b"}
+    assert all(row["labels"]["metric_kind"] == "eval_score" for row in scores.records)
+
+    costs = query_metrics(QueryRequest(input_uri=store, currency="USD"))
+    assert [row["metric_name"] for row in costs.records] == ["cost_usd", "cost_usd"]
+
+    comparison = compare_runs(
+        CompareRequest(input_uri=store, base_run="run-a", candidate_run="run-b")
+    )
+    step_deltas = [
+        item for item in comparison.metrics if item.metric_name == "train_loss"
+    ]
+    assert {item.dimensions["step"] for item in step_deltas} == {"1", "2"}
+    success = next(
+        item for item in comparison.metrics if item.metric_name == "success_rate"
+    )
+    assert success.dimensions["tool"] == "isaac_lab"
+    assert success.status == "regressed"
+
+    dashboard = build_dashboard(
+        DashboardRequest(input_uri=store, group_by="metric_kind")
+    )
+    assert {group.key for group in dashboard.groups} >= {
+        "training_curve",
+        "training_metric",
+        "eval_score",
+        "duration",
+        "throughput",
+        "cost",
+    }
+
+
+def test_eval_metadata_is_typed_as_counter_or_duration_not_score(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "eval.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.heldout_eval.v1",
+                "run_id": "eval-taxonomy",
+                "stage": "eval",
+                "score": 0.0,
+                "metrics": {
+                    "score": 0.91,
+                    "success_rate": 0.8,
+                    "num_samples": 40,
+                    "epoch": 3,
+                    "latency_ms": 12.5,
+                    "random_seed": 17,
+                },
+            }
+        )
+    )
+    store = str(tmp_path / "store")
+
+    ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store))
+    records = read_records(store)
+    by_name = {row["metric_name"]: row for row in records}
+
+    assert by_name["score"]["value"] == 0.91
+    assert by_name["score"]["labels"]["metric_kind"] == "eval_score"
+    assert by_name["success_rate"]["labels"]["metric_kind"] == "eval_score"
+    assert by_name["num_samples"]["labels"]["metric_kind"] == "counter"
+    assert by_name["epoch"]["labels"]["metric_kind"] == "counter"
+    assert by_name["latency_ms"]["labels"]["metric_kind"] == "duration"
+    assert by_name["latency_ms"]["unit"] == "milliseconds"
+    assert "random_seed" not in by_name
+
+
+def test_cost_basis_survives_ingest_query_compare_dashboard_sdk_service_cli(
+    tmp_path: Path,
+) -> None:
+    from typer.testing import CliRunner
+
+    from npa.cli.workbench.insights import app as insights_app
+    from npa.sdk.workbench.insights import query as sdk_query
+    from npa.workbench.insights.service import create_app
+
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "billing.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.workflow.billing.v1",
+                "run_id": "cost-run",
+                "billing": {"cost_usd": 4.0},
+            }
+        )
+    )
+    (run / "usage.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.workflow.resource_usage.v1",
+                "run_id": "cost-run",
+                "resource_usage": {"estimated_cost_usd": 2.5},
+            }
+        )
+    )
+    store = str(tmp_path / "store")
+    ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store))
+
+    costs = query_metrics(QueryRequest(input_uri=store, currency="USD"))
+    assert {(row["metric_name"], row["labels"]["cost_basis"]) for row in costs.records} == {
+        ("cost_usd", "billed"),
+        ("estimated_cost_usd", "estimated"),
+    }
+    assert query_metrics(QueryRequest(input_uri=store, cost_basis="billed")).count == 1
+    assert sdk_query(input_uri=store, cost_basis="estimated").count == 1
+
+    client = TestClient(create_app(auth_mode="none"))
+    response = client.get(
+        "/query", params={"input_uri": store, "cost_basis": "billed"}
+    )
+    assert response.status_code == 200
+    assert response.json()["records"][0]["labels"]["cost_basis"] == "billed"
+
+    cli = CliRunner().invoke(
+        insights_app,
+        ["query", "--input-path", store, "--cost-basis", "estimated"],
+    )
+    assert cli.exit_code == 0, cli.output
+    assert json.loads(cli.output)["count"] == 1
+
+    dashboard = build_dashboard(DashboardRequest(input_uri=store, group_by="cost_basis"))
+    assert {(group.key, group.count) for group in dashboard.groups} == {
+        ("billed", 1),
+        ("estimated", 1),
+    }
+
+
+def test_sparse_observed_report_emits_no_new_signal(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "metrics.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.rl_sweep.variant_metrics.v1",
+                "run_id": "sparse",
+                "status": "completed",
+            }
+        )
+    )
+    with pytest.raises(InsightsStoreError, match="no known manifest/report schemas"):
+        ingest_run(IngestRunRequest(input_uri=str(run), output_uri=str(tmp_path / "store")))
+
+
+def test_new_signal_facets_thread_through_service_sdk_and_cli(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from npa.cli.workbench.insights import app as insights_app
+    from npa.sdk.workbench.insights import query as sdk_query
+    from npa.workbench.insights.service import create_app
+
+    store = str(tmp_path / "store")
+    record_metrics(
+        RecordRequest(
+            output_uri=store,
+            records=[
+                _metric(
+                    "r1",
+                    "success_rate",
+                    0.8,
+                    tool="sim",
+                    stage="eval",
+                    labels={"metric_kind": "eval_score", "score_name": "success_rate"},
+                ),
+                _metric(
+                    "r2",
+                    "success_rate",
+                    0.9,
+                    tool="sim",
+                    stage="eval",
+                    labels={"metric_kind": "eval_score", "score_name": "success_rate"},
+                ),
+            ],
+        )
+    )
+
+    sdk_result = sdk_query(
+        input_uri=store, metric_kind="eval_score", score_name="success_rate"
+    )
+    assert sdk_result.count == 2
+
+    service_result = TestClient(create_app(auth_mode="none")).get(
+        "/query",
+        params={
+            "input_uri": store,
+            "metric_kind": "eval_score",
+            "score_name": "success_rate",
+        },
+    )
+    assert service_result.status_code == 200
+    assert service_result.json()["count"] == 2
+
+    runner = CliRunner()
+    query_result = runner.invoke(
+        insights_app,
+        [
+            "query",
+            "--input-path",
+            store,
+            "--metric-kind",
+            "eval_score",
+            "--score-name",
+            "success_rate",
+        ],
+    )
+    assert query_result.exit_code == 0, query_result.output
+    assert json.loads(query_result.output)["count"] == 2
+
+    compare_result = runner.invoke(
+        insights_app,
+        ["compare", "--input-path", store, "--base-run", "r1", "--candidate-run", "r2"],
+    )
+    assert compare_result.exit_code == 0, compare_result.output
+    dimensions = json.loads(compare_result.output)["metrics"][0]["dimensions"]
+    assert dimensions["score_name"] == "success_rate"
+
+    dashboard_result = runner.invoke(
+        insights_app,
+        ["dashboard", "--input-path", store, "--group-by", "metric_kind"],
+    )
+    assert dashboard_result.exit_code == 0, dashboard_result.output
+    assert json.loads(dashboard_result.output)["groups"][0]["key"] == "eval_score"
+
+
 # ---------------------------------------------------------------------------
 # query
 # ---------------------------------------------------------------------------
@@ -666,6 +1059,102 @@ def test_store_reads_legacy_single_object_plus_shards(tmp_path: Path) -> None:
     append_jsonl_uri(str(legacy), [{"run_id": "new", "value": 1}])
     rows = read_jsonl_store(str(legacy))
     assert [row["run_id"] for row in rows] == ["legacy", "new"]
+
+
+def test_reader_deduplicates_existing_duplicate_metric_and_edge_shards(tmp_path: Path) -> None:
+    from npa.workbench.insights.storage import append_jsonl_uri
+    from npa.workbench.insights.store import edges_uri, records_uri
+
+    store = str(tmp_path / "store")
+    row = {
+        "schema": "npa.insights.metric_record.v1",
+        "run_id": "legacy-duplicate",
+        "metric_name": "success_rate",
+        "value": 0.8,
+        "workflow": "wf",
+        "tool": "eval",
+        "stage": "eval",
+        "unit": "",
+        "labels": {"metric_kind": "eval_score", "score_name": "success_rate"},
+        "lineage": {},
+        "artifact_uri": "s3://artifacts/legacy/report.json",
+        "artifact_version": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+    }
+    edge = {
+        "from_uri": "s3://artifacts/input",
+        "to_uri": "s3://artifacts/legacy/report.json",
+        "relation": "evaluated_on",
+        "from_version": "",
+        "to_version": "",
+        "run_id": "legacy-duplicate",
+    }
+    append_jsonl_uri(records_uri(store), [row])
+    append_jsonl_uri(records_uri(store), [row])
+    append_jsonl_uri(edges_uri(store), [edge])
+    append_jsonl_uri(edges_uri(store), [edge])
+
+    assert read_records(store) == [row]
+    assert read_edges(store) == [edge]
+    dashboard = build_dashboard(DashboardRequest(input_uri=store))
+    assert dashboard.total_records == 1
+    assert dashboard.groups[0].count == 1
+
+
+def test_repeated_ingest_is_logically_idempotent(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    _write_signal_run(run, run_id="same-run", success_rate=0.8, cost_usd=3.0)
+    store = str(tmp_path / "store")
+
+    first = ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store))
+    first_records = read_records(store)
+    first_edges = read_edges(store)
+    second = ingest_run(IngestRunRequest(input_uri=str(run), output_uri=store))
+
+    assert first.recorded_count == len(first_records)
+    assert first.edge_count == len(first_edges)
+    assert second.recorded_count == 0
+    assert second.edge_count == 0
+    assert read_records(store) == first_records
+    assert read_edges(store) == first_edges
+    dashboard = build_dashboard(DashboardRequest(input_uri=store, group_by="metric_name"))
+    assert dashboard.total_records == len(first_records)
+    assert sum(group.count for group in dashboard.groups) == len(first_records)
+
+
+def test_concurrent_distinct_append_shards_preserve_same_named_observations(
+    tmp_path: Path,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from npa.workbench.insights.storage import append_jsonl_uri
+    from npa.workbench.insights.store import records_uri
+
+    store = str(tmp_path / "store")
+    rows = [
+        {
+            "run_id": f"run-{index}",
+            "metric_name": "success_rate",
+            "value": index / 20,
+            "labels": {"metric_kind": "eval_score"},
+            "lineage": {},
+            "artifact_uri": f"s3://artifacts/run-{index}/report.json",
+        }
+        for index in range(20)
+    ]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(
+            pool.map(
+                lambda row: append_jsonl_uri(
+                    records_uri(store), [row], previous_total=0
+                ),
+                rows,
+            )
+        )
+
+    records = read_records(store)
+    assert len(records) == 20
+    assert {row["run_id"] for row in records} == {f"run-{index}" for index in range(20)}
 
 
 def test_ingest_run_twice_concurrently_keeps_both_runs(tmp_path: Path) -> None:

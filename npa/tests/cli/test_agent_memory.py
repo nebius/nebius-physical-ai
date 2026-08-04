@@ -98,6 +98,131 @@ def test_explain_regression_is_grounded_text():
     assert "delta_success_rate" in text
 
 
+def test_explain_regression_uses_stored_metrics_and_config_changes():
+    mem = M.RunMemory(M.InMemoryStore())
+    mem.record_run(
+        "run-a",
+        {
+            "metrics": {"success_rate": 0.85, "loss": 0.2, "reward": 0.7},
+            "config": {"learning_rate": 0.001, "batch_size": 32},
+        },
+        source="insights",
+    )
+    mem.record_run(
+        "run-b",
+        {
+            "metrics": {"success_rate": 0.55, "loss": 0.4, "reward": 0.3},
+            "config": {"learning_rate": 0.01, "batch_size": 32},
+        },
+        source="insights",
+    )
+
+    result = mem.explain_regression_data("run-b", "run-a")
+
+    assert result["ok"] is True
+    assert result["verdict"] == "regression"
+    evidence = {item["field"]: item for item in result["metric_evidence"]}
+    assert evidence["metrics.success_rate"] == {
+        "field": "metrics.success_rate",
+        "metric": "success_rate",
+        "baseline": 0.85,
+        "candidate": 0.55,
+        "delta": -0.3,
+        "category": "outcome",
+        "direction": "higher_is_better",
+        "assessment": "regressed",
+    }
+    assert evidence["metrics.loss"]["assessment"] == "regressed"
+    assert evidence["metrics.reward"]["assessment"] == "regressed"
+    assert result["config_changes"] == [
+        {"field": "config.learning_rate", "baseline": 0.001, "candidate": 0.01}
+    ]
+    assert result["sources"] == {"baseline": "insights", "candidate": "insights"}
+    assert "correlation only" in result["explanation"]
+
+
+def test_counter_only_changes_are_neutral_context() -> None:
+    mem = M.RunMemory(M.InMemoryStore())
+    mem.record_run(
+        "base",
+        {"metrics": {"train_steps": 100, "tokens": 200, "epochs": 2, "samples": 500}},
+    )
+    mem.record_run(
+        "candidate",
+        {"metrics": {"train_steps": 200, "tokens": 400, "epochs": 3, "samples": 900}},
+    )
+
+    result = mem.explain_regression_data("candidate", "base")
+
+    assert result["verdict"] == "no_quality_change"
+    assert {item["category"] for item in result["metric_evidence"]} == {"counter"}
+    assert {item["assessment"] for item in result["metric_evidence"]} == {"neutral"}
+
+
+def test_efficiency_only_change_is_reported_without_quality_regression() -> None:
+    mem = M.RunMemory(M.InMemoryStore())
+    mem.record_run("base", {"metrics": {"duration_seconds": 10.0, "cost_usd": 2.0}})
+    mem.record_run("candidate", {"metrics": {"duration_seconds": 15.0, "cost_usd": 3.0}})
+
+    result = mem.explain_regression_data("candidate", "base")
+
+    assert result["verdict"] == "no_quality_change"
+    assert {item["category"] for item in result["metric_evidence"]} == {"efficiency"}
+    assert {item["assessment"] for item in result["metric_evidence"]} == {
+        "less_efficient"
+    }
+
+
+def test_ambiguous_success_steps_is_not_lower_is_better() -> None:
+    from npa.agent_backend import memory as memory_impl
+
+    assert memory_impl._metric_taxonomy("metrics.success_steps") == ("counter", "neutral")
+    assert memory_impl._metric_direction("metrics.success_steps") == "neutral"
+
+
+def test_metric_aliases_and_repeated_success_rate_are_deduplicated() -> None:
+    mem = M.RunMemory(M.InMemoryStore())
+    mem.record_run(
+        "base",
+        {
+            "success_rate": 0.8,
+            "metrics": {"success_rate": 0.8},
+            "created_at": 100,
+            "timestamp": 100,
+        },
+    )
+    mem.record_run(
+        "candidate",
+        {
+            "success_rate": 0.6,
+            "metrics": {"success_rate": 0.6},
+            "created_at": 200,
+            "timestamp": 200,
+        },
+    )
+
+    result = mem.explain_regression_data("candidate", "base")
+
+    assert [item["metric"] for item in result["metric_evidence"]].count("success_rate") == 1
+    assert [item["metric"] for item in result["metric_evidence"]].count("timestamp") == 1
+    success = next(item for item in result["metric_evidence"] if item["metric"] == "success_rate")
+    assert success["field"] == "metrics.success_rate"
+    timestamp = next(item for item in result["metric_evidence"] if item["metric"] == "timestamp")
+    assert timestamp["category"] == "counter"
+    assert timestamp["assessment"] == "neutral"
+
+
+def test_explain_regression_empty_memory_degrades_gracefully():
+    mem = M.RunMemory(M.InMemoryStore())
+    result = mem.explain_regression_data("run-b", "run-a")
+
+    assert result["ok"] is False
+    assert "run-a" in result["error"] and "run-b" in result["error"]
+    text = mem.explain_regression("run-b", "run-a")
+    assert "cannot compare" in text.lower()
+    assert "success_rate" not in text
+
+
 def test_run_id_path_traversal_is_contained(tmp_path):
     base = tmp_path / "memory"
     store = M.JsonFileStore(str(base))
