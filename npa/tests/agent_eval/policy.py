@@ -59,4 +59,3 @@ def scorecard_policy_violations(
             f"{prefix}avg_tokens={scorecard.get('avg_tokens')} is above policy={MAX_AVG_TOKENS}"
         )
     return violations
-

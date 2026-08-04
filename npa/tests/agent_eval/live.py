@@ -53,4 +53,3 @@ def post_agent_action(
     if not isinstance(result, dict):
         raise AssertionError("live agent response was not a JSON object")
     return result
-
