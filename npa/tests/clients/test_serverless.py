@@ -795,6 +795,21 @@ def test_create_job_adds_nebius_registry_auth(monkeypatch, caplog) -> None:
     assert "--registry-password" in args
 
 
+def test_serverless_api_calls_honor_configured_nebius_profile(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _job_json())
+
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "npa-mk8s")
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    _create_job(client)
+
+    assert calls[0][:5] == ["nebius", "--profile", "npa-mk8s", "ai", "job"]
+
+
 def test_create_endpoint_adds_nebius_registry_auth(monkeypatch) -> None:
     calls: list[list[str]] = []
 

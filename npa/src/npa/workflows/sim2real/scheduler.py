@@ -262,7 +262,7 @@ def _exec_outer_iteration(ctx: SchedulerContext, node: NodeSpec) -> None:
     start = ctx.state.next_outer_iteration
     for outer_iteration in range(start, max_iterations + 1):
         ctx.state = workflow.run_outer_iteration(outer_iteration=outer_iteration)
-        if until(ctx.state):
+        if getattr(workflow.config, "early_exit", True) and until(ctx.state):
             break
 
 

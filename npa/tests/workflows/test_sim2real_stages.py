@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from npa.workflows.sim2real_loop import Sim2RealLoopConfig, run_preamble
 from npa.workflows.sim2real_stages import (
     DEFAULT_ENV_COUNT,
@@ -15,6 +17,7 @@ from npa.workflows.sim2real_stages import (
     resolve_augment_frame_count,
     run_augment_stage,
     run_envgen_split_stage,
+    Sim2RealStageError,
 )
 
 
@@ -102,7 +105,7 @@ def test_augment_stage_mirrors_k8s_frame_descriptors(monkeypatch, tmp_path: Path
         return {
             "manifest": {
                 "status": "executed",
-                "mode": "descriptor_stub",
+                "mode": "cosmos_transfer2.5_gpu",
                 "frame_count": 2,
                 "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
             },
@@ -164,7 +167,7 @@ def test_augment_stage_keeps_working_when_frame_mirror_lags(monkeypatch, tmp_pat
         return {
             "manifest": {
                 "status": "executed",
-                "mode": "descriptor_stub",
+                "mode": "cosmos_transfer2.5_gpu",
                 "frame_count": 2,
                 "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
             },
@@ -199,6 +202,38 @@ def test_augment_stage_keeps_working_when_frame_mirror_lags(monkeypatch, tmp_pat
     assert "falls back to manifest descriptors" in result["component"]["evidence"]
     warning = json.loads((tmp_path / "augment" / "frames" / "mirror-warning.json").read_text())
     assert warning["status"] == "mirror_unavailable"
+
+
+def test_augment_stage_rejects_descriptor_stub_from_qualified_image(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_component(config, *, input_uri, output_uri, local_dir):
+        return {
+            "manifest": {
+                "status": "executed",
+                "mode": "descriptor_stub",
+                "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+            },
+            "augmented_frames_uri": f"{output_uri.rstrip('/')}/frames/",
+        }
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.engine.run_cosmos2_transfer_component",
+        fake_component,
+    )
+    config = Sim2RealLoopConfig(
+        run_id="reject-stub",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        trigger_dataset_uri="s3://bucket/triggers/pusht/",
+        augment_image=(
+            "cr.eu-north1.nebius.cloud/example-registry-id/"
+            "npa-cosmos2-transfer:2.5.0"
+        ),
+    )
+
+    with pytest.raises(Sim2RealStageError, match="did not emit real GPU provenance"):
+        run_augment_stage(config, tmp_path)
 
 
 def test_envgen_split_stage_launches_indexed_shards_when_image_ready(

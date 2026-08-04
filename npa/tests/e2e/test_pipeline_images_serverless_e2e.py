@@ -1,4 +1,4 @@
-"""Serverless e2e for renamed pipeline images (envgen, reference-policy, loop-eval).
+"""Real-GPU serverless E2E for Sim2Real component images.
 
 These tests submit real Nebius Serverless Jobs in the published container
 images and assert capability markers in job logs — not import/--help smokes.
@@ -23,10 +23,29 @@ from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
 from npa.smoke.manifest import container
 from npa.smoke.serverless_runner import submit_golden_eval
 
-PIPELINE_TOOLS = ("envgen", "reference-policy", "loop-eval")
+PIPELINE_TOOLS = (
+    "cosmos2-transfer",
+    "cosmos3-reason",
+    "envgen",
+    "reference-policy",
+    "loop-eval",
+)
 
 # Log substrings that prove the functional golden eval ran inside the container.
 CAPABILITY_LOG_MARKERS: dict[str, tuple[str, ...]] = {
+    # Stage 3: the real Cosmos Transfer model runs multiple diffusion steps and
+    # emits a guarded, non-trivial output video. The first marker comes from the
+    # real inference implementation and the second is the published image's
+    # capability PASS marker (including its non-zero byte count).
+    "cosmos2-transfer": (
+        "Generated video saved to outputs/golden-eval/robot_depth.mp4",
+        "[PASS] cosmos-transfer2.5 generated outputs/golden-eval/robot_depth.mp4",
+    ),
+    # Stage 8: the same Cosmos-Reason VLM implementation used by the engine
+    # consumes image frames and emits a structured score/success judgment.
+    "cosmos3-reason": (
+        "[PASS] cosmos-reason judged rollout",
+    ),
     "envgen": (
         "[PASS] raw env generation",
         "[PASS] genesis cuda step",
@@ -42,7 +61,7 @@ CAPABILITY_LOG_MARKERS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-pytestmark = pytest.mark.e2e_serverless
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_serverless]
 
 
 @pytest.fixture(autouse=True)
@@ -76,8 +95,10 @@ def test_pipeline_image_serverless_capability_e2e(tool: str) -> None:
     """Run the container functional golden eval on Nebius Serverless and read logs."""
 
     project_id = os.environ["NPA_E2E_SERVERLESS_PROJECT"]
-    gpu = os.environ.get(f"NPA_E2E_{tool.upper().replace('-', '_')}_GPU") or os.environ.get(
-        "NPA_E2E_PIPELINE_GPU", "h100"
+    gpu = (
+        os.environ.get(f"NPA_E2E_{tool.upper().replace('-', '_')}_GPU")
+        or os.environ.get("NPA_E2E_PIPELINE_GPU")
+        or os.environ.get("NPA_E2E_SERVERLESS_GPU_TYPE")
     )
     timeout = os.environ.get("NPA_E2E_PIPELINE_TIMEOUT", "45m")
     poll_ceiling = float(os.environ.get("NPA_E2E_PIPELINE_POLL_CEILING_S", "3600"))

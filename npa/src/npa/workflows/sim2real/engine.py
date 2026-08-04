@@ -62,6 +62,10 @@ from npa.workbench.cosmos.reason import (
     vlm_k8s_component,
 )
 from npa.workflows.sim2real.config import artifact_uris, byo_seams
+from npa.workflows.sim2real.component_records import (
+    _expand_envgen_component_records,
+    _loop_component_records,
+)
 from npa.workflows.sim2real.constants import (
     CORRECTIVE_TARGETS,
     DEFAULT_ISAAC_TASK,
@@ -189,7 +193,11 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
             "stage_01_trigger",
             "WORKS",
             "Consumed the dedicated LeRobot dataset trigger path and resolved runtime plug points.",
-            {"local": str(local_dir / "stage_01_trigger" / "trigger.json")},
+            {
+                "local": str(local_dir / "stage_01_trigger" / "trigger.json"),
+                "job_name": config.run_id,
+                "execution": "orchestrator_record",
+            },
         )
     )
 
@@ -198,7 +206,13 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
 
     assets_result = run_assets_stage(config, local_dir)
     stage_records.append(assets_result.stage_record)
-    components.append(ComponentRecord(**assets_result.component))
+    assets_component = dict(assets_result.component)
+    assets_artifacts = dict(assets_component.get("artifacts") or {})
+    assets_artifacts.update(
+        {"job_name": config.run_id, "execution": "orchestrator_materialization"}
+    )
+    assets_component["artifacts"] = assets_artifacts
+    components.append(ComponentRecord(**assets_component))
     scene_spec_uri = assets_result.scene_spec_uri
     robot_spec_uri = assets_result.robot_spec_uri
 
@@ -217,7 +231,8 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         scene_spec_uri=scene_spec_uri,
         robot_spec_uri=robot_spec_uri,
     )
-    components.append(ComponentRecord(**envgen_result["component"]))
+    envgen_components = envgen_result.get("components") or [envgen_result["component"]]
+    components.extend(ComponentRecord(**component) for component in envgen_components)
     train_envs_uri = envgen_result["train_envs_uri"]
     heldout_envs_uri = envgen_result["heldout_envs_uri"]
     sibling_source_tarball_uri = ""
@@ -342,53 +357,19 @@ def _append_outer_iteration_workflow_state(
     except Sim2RealLoopError:
         return
     components = list(state.get("components") or [])
-    stage_updates = (
-        (
-            "stage_07_actions_train",
-            "WORKS",
-            f"Policy rollouts completed for outer-{outer_iteration:02d} "
-            f"({config.rollout_count} rollouts × {config.inner_iterations} inner iters).",
-            {"prefix": str(local_dir / "actions" / "train" / f"outer-{outer_iteration:02d}")},
-        ),
-        (
-            "stage_08_vlm_eval_train",
-            "WORKS",
-            "Dual Reason VLM critique merged for train rollouts.",
-            {"prefix": str(local_dir / "vlm_eval" / "train" / f"outer-{outer_iteration:02d}")},
-        ),
-        (
-            "stage_09_training_signal",
-            "WORKS",
-            "VLM critiques converted to RL training signals.",
-            {"prefix": str(local_dir / "training_signal" / "train" / f"outer-{outer_iteration:02d}")},
-        ),
-        (
-            "stage_10_eval_heldout",
-            "WORKS",
-            f"Held-out eval report written (success_rate={heldout_report.get('success_rate', 'n/a')}).",
-            {"report": heldout_report.get("report_uri", "")},
-        ),
-        (
-            "stage_11_outer_loop",
-            "WORKS",
-            f"Threshold decision: {decision.get('decision', 'unknown')}.",
-            {"decision": str(local_dir / "outer_loop" / "decision.json")},
-        ),
+    stage_updates = _loop_component_records(
+        config,
+        local_dir=local_dir,
+        outer_iteration=outer_iteration,
+        inner=inner,
+        heldout_report=heldout_report,
+        decision=decision,
     )
     names = {str(item.get("name") or "") for item in components if isinstance(item, dict)}
-    for name, tier, evidence, artifacts in stage_updates:
-        if name in names:
+    for component in stage_updates:
+        if component.name in names:
             continue
-        components.append(
-            asdict(
-                ComponentRecord(
-                    name,
-                    tier,
-                    evidence,
-                    artifacts,
-                )
-            )
-        )
+        components.append(asdict(component))
     state["components"] = components
     state["status"] = "outer_iteration_completed"
     state["final_inner"] = inner
@@ -410,11 +391,6 @@ def _append_outer_iteration_workflow_state(
     _write_workflow_state(local_dir, state, config=config)
 
 
-# =============================================================================
-# Stages 12–14 — finalize (`run_finalize`)
-# =============================================================================
-
-
 def run_finalize(
     config: Sim2RealLoopConfig,
     *,
@@ -428,6 +404,23 @@ def run_finalize(
     upload: bool | None = None,
 ) -> dict[str, Any]:
     """Run stages 12-13, visualization, and final report/upload."""
+
+    components = _expand_envgen_component_records(config, components)
+    loop_components = _loop_component_records(
+        config,
+        local_dir=local_dir,
+        outer_iteration=int(final_decision.get("outer_iteration") or len(outer_history) or 1),
+        inner=final_inner,
+        heldout_report=final_eval,
+        decision=final_decision,
+    )
+    loop_names = {component.name for component in loop_components}
+    components = [
+        component
+        for component in components
+        if str(component.get("name") or "") not in loop_names
+    ]
+    components.extend(asdict(component) for component in loop_components)
 
     stage_records.append(
         _write_stage(
@@ -454,7 +447,9 @@ def run_finalize(
                 {
                     "local": str(
                         local_dir / "stage_12_external_validation" / "external_stub.json"
-                    )
+                    ),
+                    "job_name": "external_stub",
+                    "execution": "external_byo_gate_not_dispatched",
                 },
             )
         )
@@ -484,16 +479,34 @@ def run_finalize(
                 "stage_13_retrigger",
                 "WORKS",
                 "Wrote loop-of-loops retrigger record with max-iteration cap.",
-                {"local": str(local_dir / "stage_13_retrigger" / "retrigger.json")},
+                {
+                    "local": str(local_dir / "stage_13_retrigger" / "retrigger.json"),
+                    "job_name": config.run_id,
+                    "execution": "orchestrator_record",
+                },
             )
         )
     )
 
+    viz_stage_record = ComponentRecord(
+        "stage_14_rerun_viz",
+        "WORKS",
+        "Rerun visualization is being written from the completed real-tier artifacts.",
+        {
+            "rrd": f"{_artifact_root_uri(config)}/reports/sim2real.rrd",
+            "job_name": config.run_id,
+            "execution": "in_process_orchestrator_visualization",
+            "node_product": config.k8s_gpu_product,
+        },
+    )
     viz_component, viz_info = _run_sim2real_viz_stage(
         config,
         local_dir=local_dir,
         inner_evidence=final_inner,
         heldout_report=final_eval,
+        stage_components=[*components, asdict(viz_stage_record)],
+        outer_history=outer_history,
+        final_decision=final_decision,
     )
     components.append(asdict(viz_component))
 
@@ -634,14 +647,15 @@ def run_finalize(
     return report
 
 
-
-
 def _run_sim2real_viz_stage(
     config: Sim2RealLoopConfig,
     *,
     local_dir: Path,
     inner_evidence: dict[str, Any],
     heldout_report: dict[str, Any] | None,
+    stage_components: list[dict[str, Any]] | None = None,
+    outer_history: list[dict[str, Any]] | None = None,
+    final_decision: dict[str, Any] | None = None,
 ) -> tuple[ComponentRecord, dict[str, Any]]:
     """Produce ``reports/sim2real.rrd`` and a status ComponentRecord.
 
@@ -682,6 +696,7 @@ def _run_sim2real_viz_stage(
     try:
         from npa.workflows.sim2real_viz import (
             RerunUnavailableError,
+            emit_sim2real_mcap_if_enabled,
             emit_sim2real_rerun,
         )
 
@@ -689,16 +704,32 @@ def _run_sim2real_viz_stage(
             local_dir=local_dir,
             inner_evidence=inner_evidence,
             heldout_report=heldout_report,
+            stage_components=stage_components,
+            outer_history=outer_history,
+            run_metadata={
+                "run_id": config.run_id,
+                "artifact_root": _artifact_root_uri(config) + "/",
+                "rrd_s3_uri": f"{_artifact_root_uri(config)}/reports/sim2real.rrd",
+                "candidate_s3_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
+                "policy_checkpoint": str((final_decision or {}).get("checkpoint_uri") or ""),
+                "orchestrator_job_name": config.run_id,
+                "orchestrator_node_product": config.k8s_gpu_product,
+                "viewer_command": (
+                    "npa workbench sim2real rerun serve "
+                    f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
+                    f"--s3-prefix {config.s3_prefix}"
+                ),
+            },
             output_rrd=rrd_path,
             write_mp4=_bool_value(os.environ.get("NPA_SIM2REAL_RERUN_MP4", "0")),
         )
     except RerunUnavailableError as exc:
         info = {"status": "skipped", "reason": str(exc), "source": "reference"}
-        info["mcap"] = _emit_sim2real_mcap_artifact(
-            config,
+        info["mcap"] = emit_sim2real_mcap_if_enabled(
             local_dir=local_dir,
             inner_evidence=inner_evidence,
             heldout_report=heldout_report,
+            output_mcap=local_dir / "reports" / "sim2real.mcap",
         )
         return (
             ComponentRecord(
@@ -711,16 +742,28 @@ def _run_sim2real_viz_stage(
             info,
         )
     info = {"source": "reference", **result.to_dict()}
-    mcap_info = _emit_sim2real_mcap_artifact(
-        config,
+    mcap_info = emit_sim2real_mcap_if_enabled(
         local_dir=local_dir,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
+        output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
     info["mcap"] = mcap_info
-    artifacts = {"rrd": str(rrd_path)}
+    root = _artifact_root_uri(config)
+    artifacts: dict[str, Any] = {
+        "rrd": f"{root}/reports/sim2real.rrd" if config.s3_bucket else str(rrd_path),
+        "rrd_local": str(rrd_path),
+        "job_name": config.run_id,
+        "execution": "in_process_orchestrator_visualization",
+        "node_product": config.k8s_gpu_product,
+    }
     if mcap_info.get("status") == "written" and mcap_info.get("output_mcap_path"):
-        artifacts["mcap"] = str(mcap_info["output_mcap_path"])
+        artifacts["mcap"] = (
+            f"{root}/reports/sim2real.mcap"
+            if config.s3_bucket
+            else str(mcap_info["output_mcap_path"])
+        )
+        artifacts["mcap_local"] = str(mcap_info["output_mcap_path"])
     mcap_note = ""
     if mcap_info.get("status") == "written":
         mcap_note = f" Also wrote a Lichtblick/Foxglove MCAP with {mcap_info.get('message_count', 0)} message(s)."
@@ -738,30 +781,6 @@ def _run_sim2real_viz_stage(
             artifacts,
         ),
         info,
-    )
-
-
-def _emit_sim2real_mcap_artifact(
-    config: Sim2RealLoopConfig,
-    *,
-    local_dir: Path,
-    inner_evidence: dict[str, Any],
-    heldout_report: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Emit ``reports/sim2real.mcap`` alongside the ``.rrd`` (best-effort).
-
-    Gated behind ``NPA_SIM2REAL_MCAP`` (default on when rerun viz is on). Degrades
-    gracefully (skip + reason) when ``mcap`` is unavailable, mirroring the ``.rrd``
-    path, so a missing writer never fails the finalize stage.
-    """
-
-    from npa.workflows.sim2real_viz import emit_sim2real_mcap_if_enabled
-
-    return emit_sim2real_mcap_if_enabled(
-        local_dir=local_dir,
-        inner_evidence=inner_evidence,
-        heldout_report=heldout_report,
-        output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
 
 
@@ -1412,6 +1431,16 @@ def run_cosmos2_transfer_component(
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_AUGMENT_IMAGE": config.augment_image,
         "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
+        # A registry-qualified production Job must never turn a descriptor
+        # fallback into a WORKS record. Unit/CPU entrypoint calls can still use
+        # the descriptor seam by omitting this explicit real-tier contract.
+        "NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS": "1",
+        # Match the proven serverless real-GPU path: component images can have
+        # read-only baked HOME/default caches even though /tmp is writable.
+        "HF_HOME": "/tmp/hf_home",
+        "HF_XET_CACHE": "/tmp/hf_xet_cache",
+        "UV_CACHE_DIR": "/tmp/uv_cache",
+        "XDG_CACHE_HOME": "/tmp/xdg_cache",
     }
     output_json = local_dir / "cosmos2-transfer-result.json"
     invocation = _run_image_component(
@@ -2405,7 +2434,11 @@ def _kubernetes_component_env(
 ) -> dict[str, str]:
     safe: dict[str, str] = {}
     for key, value in env.items():
-        if key.startswith("NPA_SIM2REAL") or key.startswith("NPA_COSMOS_") or key == "HF_HOME":
+        if (
+            key.startswith("NPA_SIM2REAL")
+            or key.startswith("NPA_COSMOS_")
+            or key in {"HF_HOME", "HF_XET_CACHE", "UV_CACHE_DIR", "XDG_CACHE_HOME"}
+        ):
             safe[key] = value
     endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
         "AWS_ENDPOINT_URL", ""
@@ -5127,19 +5160,26 @@ def run_cosmos2_transfer_component_from_s3(
     )
 
     # Prefer running the REAL Cosmos-Transfer2.5 model (video-to-video world
-    # transfer) inside the transfer image. Fall back to the structured descriptor
-    # manifest only when the transfer runtime is unavailable (non-GPU / unit
-    # environments) or NPA_SIM2REAL_AUGMENT_MODE=stub.
+    # transfer) inside the transfer image. The canonical Kubernetes path sets
+    # NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS=1, making any attempted descriptor
+    # fallback a hard failure rather than false WORKS evidence. CPU/unit callers
+    # may omit that contract and retain the explicit descriptor seam.
     real = _run_real_cosmos_transfer(client, input_uri, augment_prefix, frames_root, run_id)
     if real is not None:
         manifest["status"] = "executed"
-        manifest["mode"] = "cosmos_transfer2.5"
+        manifest["mode"] = "cosmos_transfer2.5_gpu"
         manifest["augmented_frames_uri"] = frames_root
         manifest["augmented_video_uri"] = real["augmented_video_uri"]
         manifest["frame_count"] = real["frame_count"]
         manifest["video_bytes"] = real["video_bytes"]
         manifest["control_spec"] = real["spec"]
+        manifest["fixture_provenance"] = real["fixture_provenance"]
     else:
+        if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
+            raise Sim2RealLoopError(
+                "real Cosmos-Transfer2.5 was required, but the component attempted "
+                "to fall back to descriptor_stub"
+            )
         index: list[dict[str, str]] = []
         for index_no in range(frame_count):
             frame_key = f"frame-{index_no:05d}.json"
@@ -5190,25 +5230,52 @@ def _run_real_cosmos_transfer(
     descriptor manifest (transfer runtime absent, disabled, or inference failed).
     """
 
+    require_real = (
+        os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1"
+    )
     if os.environ.get("NPA_SIM2REAL_AUGMENT_MODE", "real").strip().lower() == "stub":
+        if require_real:
+            raise Sim2RealLoopError(
+                "NPA_SIM2REAL_AUGMENT_MODE=stub conflicts with the real-component contract"
+            )
         return None
     try:
+        from npa.workbench.cosmos.fixture import generate_fixture
         from npa.workbench.cosmos.transfer import (
             cosmos_transfer_available,
             extract_frames,
             run_cosmos_transfer,
         )
-    except Exception:  # noqa: BLE001 - transfer module not importable in this env
+    except Exception as exc:  # noqa: BLE001 - optional in CPU/unit environments
+        if require_real:
+            raise Sim2RealLoopError(
+                f"real Cosmos-Transfer2.5 modules are unavailable: {exc}"
+            ) from exc
         return None
     if not cosmos_transfer_available():
+        if require_real:
+            raise Sim2RealLoopError(
+                "real Cosmos-Transfer2.5 runtime is unavailable in the required GPU image"
+            )
         return None
 
     try:
+        # The canonical LeRobot trigger can be state/action-only and therefore
+        # contain no redistributable input media. Generate the same legally clean,
+        # multi-step procedural control clip used by the image's real GPU golden
+        # evaluation, then run the actual Transfer2.5 model over it.
+        fixture = generate_fixture(
+            Path("/tmp/npa-sim2real-transfer-fixture"),
+            num_steps=4,
+        )
         transfer = run_cosmos_transfer(
             run_id=run_id or "augment",
-            spec=os.environ.get("NPA_SIM2REAL_TRANSFER_SPEC") or None,
+            spec=(
+                os.environ.get("NPA_SIM2REAL_TRANSFER_SPEC")
+                or fixture["spec_path"]
+            ),
         )
-    except Exception as exc:  # noqa: BLE001 - degrade to descriptor manifest, never crash the run
+    except Exception as exc:  # noqa: BLE001 - seam callers may use a descriptor fallback
         print(
             json.dumps(
                 {
@@ -5219,6 +5286,10 @@ def _run_real_cosmos_transfer(
             ),
             file=sys.stderr,
         )
+        if require_real:
+            raise Sim2RealLoopError(
+                f"required real Cosmos-Transfer2.5 inference failed: {exc}"
+            ) from exc
         return None
 
     from npa.workflows.sim2real_stages import resolve_augment_frame_count
@@ -5267,6 +5338,7 @@ def _run_real_cosmos_transfer(
         "frame_count": len(index) or resolve_augment_frame_count(),
         "video_bytes": transfer["video_bytes"],
         "spec": transfer["spec"],
+        "fixture_provenance": fixture["provenance"],
     }
 
 

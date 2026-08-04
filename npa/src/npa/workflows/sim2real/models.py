@@ -99,6 +99,10 @@ class Sim2RealLoopConfig:
     vlm_reason3_model: str = DEFAULT_REASON3_MODEL
     vlm_dual_reason: bool = True
     threshold: float = DEFAULT_THRESHOLD
+    # Continue through every configured outer iteration even after a checkpoint
+    # clears the promotion threshold when false. Real qualification runs use this
+    # to prove the complete fixed-count loop rather than only its early-exit path.
+    early_exit: bool = True
     inner_iterations: int = DEFAULT_INNER_ITERATIONS
     outer_iterations: int = DEFAULT_OUTER_ITERATIONS
     loop_of_loops_iterations: int = DEFAULT_LOOP_OF_LOOPS_ITERATIONS
@@ -246,4 +250,3 @@ def default_isaac_image(*, registry: str | None = None) -> str:
     if registry or registry_from_env():
         return container_image_for_tool("isaac-lab", registry=registry)
     return f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
-

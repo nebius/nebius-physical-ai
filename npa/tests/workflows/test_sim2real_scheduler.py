@@ -35,9 +35,20 @@ from npa.workflows.sim2real.state import WorkflowState
 class _RecordingWorkflow(Sim2RealWorkflow):
     """Sim2RealWorkflow whose stage methods record calls instead of doing work."""
 
-    def __init__(self, local_dir: Path, *, outer_iterations: int, promote_after: int | None):
+    def __init__(
+        self,
+        local_dir: Path,
+        *,
+        outer_iterations: int,
+        promote_after: int | None,
+        early_exit: bool = True,
+    ):
         # Bypass the real __init__ (config.validate + output dir creation).
-        self.config = SimpleNamespace(outer_iterations=outer_iterations, inner_iterations=1)
+        self.config = SimpleNamespace(
+            outer_iterations=outer_iterations,
+            inner_iterations=1,
+            early_exit=early_exit,
+        )
         self._local_dir = local_dir
         self.calls: list[str] = []
         self._promote_after = promote_after
@@ -124,6 +135,30 @@ def test_dag_parity_with_run_staged(tmp_path, outer_iterations, promote_after):
 
     assert dag_wf.calls == staged_wf.calls
     assert dag_report["calls"] == staged_report["calls"]
+
+
+def test_fixed_count_mode_ignores_promote_for_both_runners(tmp_path):
+    staged_wf = _RecordingWorkflow(
+        tmp_path / "staged-fixed",
+        outer_iterations=3,
+        promote_after=1,
+        early_exit=False,
+    )
+    (tmp_path / "staged-fixed").mkdir()
+    staged_wf.run_staged()
+
+    dag_wf = _RecordingWorkflow(
+        tmp_path / "dag-fixed",
+        outer_iterations=3,
+        promote_after=1,
+        early_exit=False,
+    )
+    (tmp_path / "dag-fixed").mkdir()
+    run_dag(dag_wf, _shipped_outer_loop_spec())
+
+    expected = ["preamble", "outer:1", "outer:2", "outer:3", "finalize:upload=None"]
+    assert staged_wf.calls == expected
+    assert dag_wf.calls == expected
 
 
 # --------------------------------------------------------------------------- #

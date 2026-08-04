@@ -159,6 +159,9 @@ def emit_sim2real_rerun(
     local_dir: Path,
     inner_evidence: dict[str, Any],
     heldout_report: dict[str, Any] | None,
+    stage_components: list[dict[str, Any]] | None = None,
+    outer_history: list[dict[str, Any]] | None = None,
+    run_metadata: dict[str, Any] | None = None,
     output_rrd: Path | None = None,
     write_mp4: bool = False,
 ) -> Sim2RealVizResult:
@@ -252,6 +255,14 @@ def emit_sim2real_rerun(
         (heldout_report or {}).get("success_rate"),
         counts,
     )
+    _log_stage_progress(
+        rr,
+        recording,
+        stage_components=stage_components or [],
+        outer_history=outer_history or [],
+        run_metadata=run_metadata or {},
+        counts=counts,
+    )
     _log_vlm_critique_panel(rr, recording, critique_panel_rows, counts)
     _log_summary_documents(
         rr,
@@ -259,6 +270,8 @@ def emit_sim2real_rerun(
         local_dir=local_dir,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
+        stage_components=stage_components or [],
+        run_metadata=run_metadata or {},
         critique_panel_rows=critique_panel_rows,
         counts=counts,
     )
@@ -396,6 +409,8 @@ def _log_summary_documents(
     local_dir: Path,
     inner_evidence: dict[str, Any],
     heldout_report: dict[str, Any] | None,
+    stage_components: list[dict[str, Any]],
+    run_metadata: dict[str, Any],
     critique_panel_rows: list[str],
     counts: dict[str, int],
 ) -> None:
@@ -413,6 +428,10 @@ def _log_summary_documents(
     )
     documents = {
         "summary/run_success": _run_success_markdown(index),
+        "summary/stage_progress": _stage_progress_markdown(
+            stage_components, run_metadata=run_metadata
+        ),
+        "summary/policy_access": _policy_access_markdown(run_metadata),
         "summary/augmentation": _augmentation_markdown(index),
         "summary/artifacts": _artifacts_markdown(index),
     }
@@ -422,6 +441,194 @@ def _log_summary_documents(
             continue
         rr.log(entity, rr.TextDocument(body, media_type="text/markdown"), recording=recording)
         _bump(counts, entity)
+
+
+_CANONICAL_STAGE_COMPONENTS = {
+    1: "stage_01_trigger",
+    2: "stage_02_assets",
+    3: "stage_03_augment",
+    4: "stage_04_envs_raw",
+    5: "stage_05_envs_train",
+    6: "stage_06_tokens",
+    7: "stage_07_actions_train",
+    8: "stage_08_vlm_eval_train",
+    9: "stage_09_training_signal",
+    10: "stage_10_eval_heldout",
+    11: "stage_11_outer_loop",
+    12: "stage_12_external_validation",
+    13: "stage_13_retrigger",
+    14: "stage_14_rerun_viz",
+}
+
+
+def _log_stage_progress(
+    rr: Any,
+    recording: Any,
+    *,
+    stage_components: list[dict[str, Any]],
+    outer_history: list[dict[str, Any]],
+    run_metadata: dict[str, Any],
+    counts: dict[str, int],
+) -> None:
+    """Log the complete 14-stage proof and outer-loop checkpoint lineage."""
+
+    by_name = {
+        str(component.get("name") or ""): component
+        for component in stage_components
+        if isinstance(component, dict)
+    }
+    for stage, name in _CANONICAL_STAGE_COMPONENTS.items():
+        component = by_name.get(name, {})
+        tier = str(component.get("tier") or "UNKNOWN")
+        artifacts = dict(component.get("artifacts") or {})
+        job_name = str(artifacts.get("job_name") or "record-only")
+        gpu = artifacts.get("gpu_request")
+        gpu_product = (
+            str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
+        )
+        execution = str(artifacts.get("execution") or "")
+        node_product = str(artifacts.get("node_product") or "")
+        if stage == 14:
+            job_name = str(run_metadata.get("orchestrator_job_name") or job_name)
+            node_product = node_product or str(
+                run_metadata.get("orchestrator_node_product") or ""
+            )
+        gpu_proof = gpu_product or (
+            f"none; orchestrator node={node_product}" if node_product else "none (record/seam)"
+        )
+        artifact = _component_artifact_uri(artifacts)
+        _set_time(rr, recording, float(stage - 1))
+        scalar_entity = f"progress/stage_{stage:02d}/tier_works"
+        rr.log(
+            scalar_entity,
+            _scalar(rr, 1.0 if tier == "WORKS" else 0.0),
+            recording=recording,
+        )
+        _bump(counts, scalar_entity)
+        evidence_entity = f"progress/stage_{stage:02d}/evidence"
+        body = (
+            f"## Stage {stage}: `{name}`\n\n"
+            f"- Tier: `{tier}`\n"
+            f"- Job: `{job_name}`\n"
+            f"- GPU: `{gpu_proof}`\n"
+            f"- Execution: `{execution or 'record/seam'}`\n"
+            f"- Artifact: `{artifact or 'none'}`\n\n"
+            f"{str(component.get('evidence') or '')}"
+        )
+        rr.log(
+            evidence_entity,
+            rr.TextDocument(body, media_type="text/markdown"),
+            recording=recording,
+        )
+        _bump(counts, evidence_entity)
+
+    for index, entry in enumerate(outer_history, start=1):
+        decision = dict(entry.get("decision") or {})
+        _set_time(rr, recording, float(14 + index - 1))
+        entity = "progress/outer_loop/iteration"
+        rr.log(entity, _scalar(rr, float(index)), recording=recording)
+        _bump(counts, entity)
+        decision_entity = "progress/outer_loop/decision"
+        body = (
+            f"## Outer iteration {index}\n\n"
+            f"- Decision: `{decision.get('decision', 'unknown')}`\n"
+            f"- Success rate: `{decision.get('success_rate', 'n/a')}`\n"
+            f"- Checkpoint: `{entry.get('checkpoint_uri', '')}`\n"
+            f"- Resumed from: `{entry.get('resumed_from', '') or 'initial policy'}`"
+        )
+        rr.log(
+            decision_entity,
+            rr.TextDocument(body, media_type="text/markdown"),
+            recording=recording,
+        )
+        _bump(counts, decision_entity)
+
+
+def _stage_progress_markdown(
+    stage_components: list[dict[str, Any]], *, run_metadata: dict[str, Any]
+) -> str:
+    by_name = {
+        str(component.get("name") or ""): component
+        for component in stage_components
+        if isinstance(component, dict)
+    }
+    rows = [
+        "# 14-stage execution proof",
+        "",
+        "| Stage | Tier | Kubernetes Job | GPU | Artifact |",
+        "|---:|---|---|---|---|",
+    ]
+    for stage, name in _CANONICAL_STAGE_COMPONENTS.items():
+        component = by_name.get(name, {})
+        artifacts = dict(component.get("artifacts") or {})
+        gpu = artifacts.get("gpu_request")
+        gpu_product = (
+            str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
+        )
+        node_product = str(artifacts.get("node_product") or "")
+        job_name = str(artifacts.get("job_name") or "record-only")
+        if stage == 14:
+            job_name = str(run_metadata.get("orchestrator_job_name") or job_name)
+            node_product = node_product or str(
+                run_metadata.get("orchestrator_node_product") or ""
+            )
+        gpu_proof = gpu_product or (
+            f"none; orchestrator node={node_product}" if node_product else "none (record/seam)"
+        )
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    f"{stage} `{name}`",
+                    f"`{component.get('tier', 'UNKNOWN')}`",
+                    f"`{job_name}`",
+                    f"`{gpu_proof}`",
+                    f"`{_component_artifact_uri(artifacts) or 'none'}`",
+                ]
+            )
+            + " |"
+        )
+    rows.extend(
+        [
+            "",
+            "Stage 12 is intentionally an external real-world validation stub; its `SEAM` tier is the designed exception.",
+        ]
+    )
+    return "\n".join(rows)
+
+
+def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "# Deployable policy and viewer access",
+            "",
+            f"- Run: `{run_metadata.get('run_id', '')}`",
+            f"- Policy checkpoint: `{run_metadata.get('policy_checkpoint', '')}`",
+            f"- Candidate record: `{run_metadata.get('candidate_s3_uri', '')}`",
+            f"- Rerun recording: `{run_metadata.get('rrd_s3_uri', '')}`",
+            f"- Artifact root: `{run_metadata.get('artifact_root', '')}`",
+            f"- Viewer command: `{run_metadata.get('viewer_command', '')}`",
+        ]
+    )
+
+
+def _component_artifact_uri(artifacts: dict[str, Any]) -> str:
+    for key in (
+        "remote",
+        "report",
+        "checkpoint",
+        "rrd",
+        "decision",
+        "tokens",
+        "raw_envs",
+        "train_envs",
+        "prefix",
+        "local",
+    ):
+        value = artifacts.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _build_visual_index(
@@ -785,7 +992,13 @@ def _augmentation_visual_samples(
         seen.add(frame_id)
         json_path = frames_dir / f"{frame_id}.json"
         payload_path = json_path if json_path.is_file() else _local_artifact_path_from_uri(local_dir, str(record.get("uri") or ""))
-        payload = _read_json(payload_path) if payload_path is not None else {}
+        # Real Cosmos Transfer indexes point directly at PNG frames. Treat an
+        # indexed binary as the image source, never as descriptor JSON.
+        payload = (
+            _read_json(payload_path)
+            if payload_path is not None and payload_path.suffix.lower() == ".json"
+            else {}
+        )
         if not payload:
             payload = dict(record)
         image_path = frames_dir / f"{frame_id}.png"
@@ -1465,10 +1678,12 @@ def _build_blueprint(
     )
     summary_view = rrb.Vertical(
         rrb.TextDocumentView(origin="summary/run_success", name="Success"),
+        rrb.TextDocumentView(origin="summary/stage_progress", name="Stage proof"),
+        rrb.TextDocumentView(origin="summary/policy_access", name="Policy access"),
         rrb.TextDocumentView(origin="summary/augmentation", name="Augmented data"),
         rrb.TextDocumentView(origin="summary/artifacts", name="Artifacts"),
         rrb.TextDocumentView(origin="summary/vlm_critiques", name="VLM critiques"),
-        row_shares=[1.2, 1.1, 1.0, 1.0],
+        row_shares=[1.0, 1.5, 1.0, 1.0, 1.0, 1.0],
     )
     if has_heldout_cameras:
         columns = [left_column]

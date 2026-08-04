@@ -60,6 +60,11 @@ class Sim2RealWorkflow:
             # "send back for more RL" (stage 11B) compounds instead of restarting.
             resume_checkpoint_uri=state.last_checkpoint_uri,
         )
+        # ``run_single_outer_iteration`` persists the strict Stage 7–11
+        # ComponentRecords as each real component closes. Preserve those records
+        # when this typed state writes the rest of the iteration result.
+        persisted = WorkflowState.load(self._local_dir)
+        state.components = persisted.components
         state.final_inner = iteration["inner"]
         state.final_eval = iteration["heldout_report"]
         state.final_decision = iteration["decision"]
@@ -96,6 +101,8 @@ class Sim2RealWorkflow:
             upload=upload,
         )
         state.status = "completed"
+        state.components = list(report.get("components") or state.components)
+        state.stage_records = list(report.get("stage_records") or state.stage_records)
         state.report_path = str(self._local_dir / "reports" / "sim2real-report.json")
         state.save()
         from npa.workflows.sim2real.engine import (
@@ -120,7 +127,7 @@ class Sim2RealWorkflow:
         self.config = _config_from_workflow_state(self.config, state.to_payload())
         for outer_iteration in range(1, self.config.outer_iterations + 1):
             state = self.run_outer_iteration(outer_iteration=outer_iteration)
-            if state.should_promote():
+            if getattr(self.config, "early_exit", True) and state.should_promote():
                 break
         return self.run_finalize(upload=upload)
 
@@ -153,7 +160,7 @@ class Sim2RealWorkflow:
         start = state.next_outer_iteration
         for outer_iteration in range(start, self.config.outer_iterations + 1):
             state = self.run_outer_iteration(outer_iteration=outer_iteration)
-            if state.should_promote():
+            if getattr(self.config, "early_exit", True) and state.should_promote():
                 break
 
         if state.status != "completed":

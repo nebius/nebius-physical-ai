@@ -1,11 +1,14 @@
+# DEMO ONLY — stub-toolRef DSL example. This does not run the 14-stage engine.
+# The only canonical executable Sim2Real YAML is ../sim2real/runbook.yaml.
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
 metadata:
   name: sim2real-vlm-rl
   description: >
-    VLM-to-RL staged loop with fixed inner iterations and promote/loop-back gate.
-    Planning dynamic branches uses --assume-decision on the CLI.
+    DEMO ONLY: stub-toolRef VLM-to-RL graph used to exercise DSL loops and gates;
+    it is not the real 14-stage Sim2Real engine. Planning dynamic branches uses
+    --assume-decision on the CLI.
 
 config:
   bucket: example-bucket

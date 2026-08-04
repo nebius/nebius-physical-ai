@@ -127,7 +127,9 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
-          - npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/sim2real/runbook.yaml
   - name: review-checklist
     category: atomic
     when_to_use: "Code reviews and risk classification."
@@ -431,9 +433,9 @@ skills:
     when_to_use: "Design, review, or operate sim-to-real data, training, evaluation, and loop-control workflows."
     path: skills/workflows/sim-to-real/SKILL.md
     smoke:
-      - type: npa_workflow_yaml
+      - type: workflow_yaml
         paths:
-          - npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml
+          - npa/workflows/workbench/sim2real/runbook.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"

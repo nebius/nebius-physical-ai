@@ -92,13 +92,15 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `byof-openpi.yaml` | OSS registry: OpenPI pinned image + pi05 DROID config smoke |
 | `byof-droid-policy-learning.yaml` | OSS registry: DROID policy learning pinned image + RLDS config smoke |
 | `rl-policy-training-sim-success.yaml` | Isaac Lab RL train (partial) |
-| `sim2real-vlm-rl.yaml` | Demo loops; stub toolRefs (not the 14-stage engine) |
-| `sim2real-two-step.yaml` / `sim2real-two-step-agent.yaml` | Two-step sim2real demos |
-| `sim2real-gpu-cross-region-agent.yaml` | Cross-region GPU agent demo |
+| `sim2real-vlm-rl.yaml` | **DEMO ONLY** loops with stub toolRefs; never the 14-stage engine |
+| `sim2real-two-step.yaml` / `sim2real-two-step-agent.yaml` | **DEMO ONLY** two-state DSL fixtures |
+| `sim2real-gpu-cross-region-agent.yaml` | **DEMO ONLY** cross-region agent fixture |
+| `sim2real-envgen-shards.yaml` | **DEMO ONLY** isolated envgen fan-out fixture |
 
-The Sim2Real **14-stage engine** is a separate path under
-`npa/workflows/workbench/sim2real/` (`npa workbench workflow submit` detects the
-runbook and routes to direct K8s).
+The single canonical Sim2Real **14-stage engine** YAML is
+`npa/workflows/workbench/sim2real/runbook.yaml`. `npa workbench workflow submit`
+detects that exact file and routes it to direct Kubernetes; none of the demo
+specs above can take that route.
 
 ## Guide
 

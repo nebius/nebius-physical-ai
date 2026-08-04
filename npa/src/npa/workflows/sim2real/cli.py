@@ -162,6 +162,15 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         default=float(os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)),
     )
     parser.add_argument(
+        "--early-exit",
+        action=argparse.BooleanOptionalAction,
+        default=_bool_value(os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "1")),
+        help=(
+            "Stop after a checkpoint clears the promotion threshold (default on). "
+            "Use --no-early-exit for fixed-count qualification runs."
+        ),
+    )
+    parser.add_argument(
         "--inner-iterations", type=int, default=DEFAULT_INNER_ITERATIONS
     )
     parser.add_argument(
@@ -527,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
         vlm_reason3_model=args.vlm_reason3_model,
         vlm_dual_reason=args.vlm_dual_reason,
         threshold=args.threshold,
+        early_exit=args.early_exit,
         inner_iterations=args.inner_iterations,
         outer_iterations=args.outer_iterations,
         loop_of_loops_iterations=args.loop_of_loops_iterations,

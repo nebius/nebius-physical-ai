@@ -17,7 +17,11 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-from npa.clients.nebius_auth import NebiusTokenError, mint_nebius_iam_token
+from npa.clients.nebius_auth import (
+    NebiusTokenError,
+    mint_nebius_iam_token,
+    nebius_profile,
+)
 
 
 @dataclass
@@ -1001,7 +1005,11 @@ class ServerlessClient:
         env: Mapping[str, str] | None = None,
         wrap_timeout: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        full_args = [self._nebius_bin, *args]
+        full_args = [self._nebius_bin]
+        profile = nebius_profile()
+        if profile:
+            full_args.extend(["--profile", profile])
+        full_args.extend(args)
         logger.debug("Running Nebius CLI: %s", shlex.join(_redact_cli_args(full_args)))
         effective_timeout = timeout or self._timeout
         try:

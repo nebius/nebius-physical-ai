@@ -9,8 +9,9 @@ This workflow runs the full Sim2Real chain as one inspectable pipeline:
 
 `LeRobot dataset trigger -> augment -> env generation -> train/held-out split -> action rollouts -> VLM critique -> RL signal -> trainer update -> held-out eval -> promote or loop back -> external validation stub -> retrigger`.
 
-Steps 12 and 13 are documented external seams. Stage 2 materializes stock or BYO
-scene and robot specs. Every step writes local artifacts and, when
+Stage 12 is the one documented `external_stub` by design. Stage 13 writes the
+durable retrigger record and is not an external-validation substitute. Stage 2
+materializes stock or BYO scene and robot specs. Every step writes local artifacts and, when
 `--upload-artifacts` is set, uploads the run tree to S3.
 
 > **Naming: `sim2real` vs `sim-to-real`.** Two related surfaces exist and the
@@ -27,21 +28,6 @@ unavailable), `python -m npa.workflows.sim2real status <run-id> --watch` for liv
 progress, module CLI staged subcommands (`preamble`, `outer-iteration`,
 `finalize`) for manual progression, and `npa workbench health sim2real` for
 preflight checks. The SDK (`npa.sdk.workbench.sim2real`) mirrors run/status.
-
-Canonical operator routing after CLI namespace cleanup: use
-`npa workbench workflow submit` for cluster execution, module CLI staged
-subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
-and `npa workbench health sim2real` for preflight checks.
-
-Canonical operator routing after CLI namespace cleanup: use
-`npa workbench workflow submit` for cluster execution, module CLI staged
-subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
-and `npa workbench health sim2real` for preflight checks.
-
-Canonical operator routing after CLI namespace cleanup: use
-`npa workbench workflow submit` for cluster execution, module CLI staged
-subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
-and `npa workbench health sim2real` for preflight checks.
 
 ## Easy-Parameters Quickstart
 
@@ -201,6 +187,7 @@ config field. Set what you need; the rest fall back to reference defaults.
 | VLM image | `--vlm-image` | `vlm_image=` | `VLM_IMAGE` |
 | Eval image | `--eval-image` | `eval_image=` | `EVAL_IMAGE` |
 | Success threshold | `--threshold` | `threshold=` | `SUCCESS_THRESHOLD` |
+| Promotion early-exit | `--early-exit` / `--no-early-exit` | `early_exit=` | `NPA_SIM2REAL_EARLY_EXIT` |
 | Inner-loop cap | `--inner-iterations` | `inner_iterations=` | `INNER_ITERATIONS` |
 | Outer-loop cap | `--outer-iterations` | `outer_iterations=` | `OUTER_ITERATIONS` |
 | Loop-of-loops cap | `--loop-of-loops-iterations` | `loop_of_loops_iterations=` | `LOOP_OF_LOOPS_ITERATIONS` |
@@ -241,8 +228,8 @@ measured against.
 
 ## Run All Three Tiers
 
-Each tier is independently usable. The raw YAML runs without npa in the loop;
-the SDK and CLI wrap the same workflow without gating it.
+The runbook is the one canonical YAML. The SDK and CLI wrap the same staged
+engine without substituting a toolRef graph.
 
 Raw SkyPilot — `runbook.yaml` is materialized with literal defaults because
 SkyPilot 0.12.2 does **not** interpolate `${VAR}` inside the YAML `envs` block or
@@ -375,7 +362,9 @@ npa/.venv/bin/python -m npa.workflows.sim2real_loop inner-loop \
 10. Held-out eval: writes `eval/heldout/report.json`.
 11. Threshold gate: writes `outer_loop/decision.json`; when the threshold is
     met it writes `checkpoints/candidate/candidate.json`, otherwise
-    `outer_loop/loopback.json` points back to Stage 7.
+    `outer_loop/loopback.json` points back to Stage 7. The canonical qualification
+    runbook uses `--no-early-exit`, so it records this decision but still executes
+    every configured outer iteration.
 12. Real-robot validation: documented external stub at
     `stage_12_external_validation/external_stub.json`.
 13. Retrigger: writes `stage_13_retrigger/retrigger.json`, targeting Stage 1

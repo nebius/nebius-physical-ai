@@ -243,6 +243,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
                 "threshold", os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)
             )
         ),
+        early_exit=_bool_value(
+            overrides["early_exit"]
+            if "early_exit" in overrides
+            else os.environ.get("NPA_SIM2REAL_EARLY_EXIT", "1")
+        ),
         inner_iterations=int(
             overrides.get(
                 "inner_iterations",

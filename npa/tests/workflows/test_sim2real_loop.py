@@ -1284,6 +1284,7 @@ def test_raw_runbook_invokes_staged_flow_and_exposes_byo_envs() -> None:
     assert "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
     assert "--vlm-dual-reason" in task["run"]
+    assert "--no-early-exit" in task["run"]
     assert "--vlm-reason2-model" in task["run"]
     assert "--vlm-reason3-model" in task["run"]
     assert task["envs"]["VLM_REASON2_MODEL"] == "nvidia/Cosmos-Reason2-8B"
@@ -1373,6 +1374,91 @@ def test_workflow_runner_matches_full_loop(tmp_path: Path) -> None:
         "loop_back_to_inner_loop",
     }
     assert (runner_dir / "state" / "workflow_state.json").exists()
+    components = {item["name"] for item in report["components"]}
+    assert {
+        "stage_04_envs_raw",
+        "stage_05_envs_train",
+        "stage_06_tokens",
+        "stage_07_actions_train",
+        "stage_08_vlm_eval_train",
+        "stage_09_training_signal",
+        "stage_10_eval_heldout",
+        "stage_11_outer_loop",
+    }.issubset(components)
+    persisted = json.loads(
+        (runner_dir / "state" / "workflow_state.json").read_text(encoding="utf-8")
+    )
+    persisted_components = {item["name"] for item in persisted["components"]}
+    assert components.issubset(persisted_components)
+
+
+def test_loop_component_records_require_real_kubernetes_evidence(tmp_path: Path) -> None:
+    from npa.workflows.sim2real import engine as engine_module
+
+    action_dir = tmp_path / "actions" / "train" / "outer-01" / "iter-01"
+    rollout_dir = action_dir / "rollout-0000"
+    rollout_dir.mkdir(parents=True)
+    (rollout_dir / "manifest.json").write_text(
+        json.dumps({"source": "byo_isaac_policy_rollout"}), encoding="utf-8"
+    )
+    config = Sim2RealLoopConfig(
+        run_id="real-component-records",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        policy_image="registry.example.com/npa/policy:tag",
+        trainer_image="registry.example.com/npa/trainer:tag",
+        vlm_image="registry.example.com/npa/vlm:tag",
+        isaac_image="registry.example.com/npa/isaac:tag",
+        byo_policy_command="python3 -m policy",
+        byo_trainer_command="python3 -m trainer",
+        inner_iterations=1,
+        rollout_count=1,
+    )
+    inner = {
+        "iterations": [
+            {
+                "trainer_source": "byo_command",
+                "sample_vlm_eval": {
+                    "component_invocation": {"mode": "kubernetes_job_dual_reason"}
+                },
+                "update": {
+                    "backend": "isaac_rsl_rl_ppo",
+                    "checkpoint_path": "s3://bucket/run/model_latest.pt",
+                },
+            }
+        ],
+        "final_checkpoint_uri": "s3://bucket/run/model_latest.pt",
+    }
+    heldout = {
+        "status": "completed",
+        "sim_backend": "isaac",
+        "deployable_policy_eval": True,
+        "success_rate": 1.0,
+        "heldout_backend_image": config.isaac_image,
+        "component_invocation": {"returncode": 0},
+    }
+    decision = {"outer_iteration": 1, "decision": "promote_checkpoint"}
+
+    records = engine_module._loop_component_records(
+        config,
+        local_dir=tmp_path,
+        outer_iteration=1,
+        inner=inner,
+        heldout_report=heldout,
+        decision=decision,
+    )
+
+    assert [record.name for record in records] == [
+        "stage_07_actions_train",
+        "stage_08_vlm_eval_train",
+        "stage_09_training_signal",
+        "stage_10_eval_heldout",
+        "stage_11_outer_loop",
+    ]
+    assert {record.tier for record in records} == {"WORKS"}
+    assert records[0].artifacts["job_name"].startswith("s2r-byo-isaac-roll-")
+    assert records[2].artifacts["job_name"].startswith("s2r-byo-isaac-train-")
+    assert records[3].artifacts["job_name"].startswith("s2r-byo-isaac-eval-")
 
 
 def test_sim_backend_defaults_to_isaac_and_validates() -> None:
@@ -1397,6 +1483,19 @@ def test_build_config_from_env_reads_sim_backend(monkeypatch) -> None:
     assert config.sim_backend == "genesis"
     override = loop_module.build_config_from_env(run_id="ov", sim_backend="isaac")
     assert override.sim_backend == "isaac"
+
+
+def test_build_config_from_env_reads_fixed_count_mode(monkeypatch) -> None:
+    from npa.workflows.sim2real.config import build_config_from_env as build_package_config
+
+    monkeypatch.setenv("NPA_SIM2REAL_EARLY_EXIT", "0")
+    config = build_package_config(run_id="fixed-count")
+    override = build_package_config(
+        run_id="early-exit-override", early_exit=True
+    )
+
+    assert config.early_exit is False
+    assert override.early_exit is True
 
 
 def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None:
@@ -2434,6 +2533,46 @@ def test_cosmos2_transfer_component_uploads_result_json_to_explicit_uri(
     manifest_uploads = [uri for name, uri in uploads if name == "cosmos2-transfer-manifest.json"]
     assert manifest_uploads
     assert manifest_uploads[0].endswith("/augment/manifest.json")
+
+
+def test_cosmos2_transfer_component_real_contract_rejects_descriptor_fallback(
+    monkeypatch,
+) -> None:
+    import npa.workflows.sim2real.engine as engine_module
+
+    class FakeClient:
+        pass
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda: FakeClient(),
+    )
+    monkeypatch.setattr(engine_module, "_run_real_cosmos_transfer", lambda *args: None)
+    monkeypatch.setenv("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "1")
+
+    with pytest.raises(engine_module.Sim2RealLoopError, match="descriptor_stub"):
+        engine_module.run_cosmos2_transfer_component_from_s3(
+            input_uri="s3://bucket/trigger/",
+            output_uri="s3://bucket/run/augment/cosmos2-transfer-result.json",
+            augmented_frames_uri="s3://bucket/run/augment/frames/",
+        )
+
+
+def test_engine_kubernetes_component_env_forwards_writable_model_caches() -> None:
+    import npa.workflows.sim2real.engine as engine_module
+
+    cache_env = {
+        "HF_HOME": "/tmp/hf_home",
+        "HF_XET_CACHE": "/tmp/hf_xet_cache",
+        "UV_CACHE_DIR": "/tmp/uv_cache",
+        "XDG_CACHE_HOME": "/tmp/xdg_cache",
+    }
+    safe = engine_module._kubernetes_component_env(
+        cache_env,
+        Sim2RealLoopConfig(run_id="cache-env"),
+    )
+
+    assert {key: safe[key] for key in cache_env} == cache_env
 
 
 def test_byo_policy_rollout_passes_component(monkeypatch, tmp_path) -> None:

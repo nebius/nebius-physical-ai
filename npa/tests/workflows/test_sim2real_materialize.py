@@ -46,7 +46,10 @@ def test_manifest_is_a_runnable_job() -> None:
     assert container["image"] == IMAGE
     assert container["command"][0] == "/bin/bash"
     # setup + run travel together so the pod bootstraps npa before the loop.
-    assert "pip install -e ./npa" in container["command"][2]
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in container["command"][2]
+    assert "pip install --quiet --target /tmp/npa-bootstrap-uv" in container["command"][2]
+    assert 'pip install --user "uv' not in container["command"][2]
+    assert "pip install -e './npa[viz]'" in container["command"][2]
     assert "npa.workflows.sim2real run" in container["command"][2]
     assert pod["restartPolicy"] == "Never"
     assert manifest["spec"]["backoffLimit"] == 0
@@ -81,7 +84,7 @@ def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:
 def test_skip_setup_omits_bootstrap() -> None:
     job = _materialize(include_setup=False)
     script = job.manifest["spec"]["template"]["spec"]["containers"][0]["command"][2]
-    assert "pip install -e ./npa" not in script
+    assert "pip install -e './npa[viz]'" not in script
     assert "npa.workflows.sim2real run" in script
 
 

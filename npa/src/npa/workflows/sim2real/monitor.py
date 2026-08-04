@@ -74,7 +74,7 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
             _ArtifactRule(("envs/raw/raw-shard-00-of-01-summary.json",), "file"),
             _ArtifactRule(("envs/manifest/scene-spec.json",), "file"),
         ),
-        component_names=("stage_04_06_env_gen_split_tokens",),
+        component_names=("stage_04_envs_raw", "stage_04_06_env_gen_split_tokens"),
         stage_numbers=(4,),
     ),
     _StageMonitorSpec(
@@ -84,7 +84,7 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
             _ArtifactRule(("envs/train/",), "prefix"),
             _ArtifactRule(("envs/train/manifest.json",), "file"),
         ),
-        component_names=("stage_04_06_env_gen_split_tokens",),
+        component_names=("stage_05_envs_train", "stage_04_06_env_gen_split_tokens"),
         stage_numbers=(5,),
     ),
     _StageMonitorSpec(
@@ -96,7 +96,7 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
             _ArtifactRule(("envs/manifest/split-manifest.json",), "file"),
             _ArtifactRule(("envs/split-manifest.json",), "file"),
         ),
-        component_names=("stage_04_06_env_gen_split_tokens",),
+        component_names=("stage_06_tokens", "stage_04_06_env_gen_split_tokens"),
         stage_numbers=(6,),
     ),
     _StageMonitorSpec(
@@ -192,6 +192,8 @@ class OperatorConfig:
 def load_operator_config() -> OperatorConfig:
     """Read non-secret operator settings from ``~/.npa/config.yaml``."""
 
+    from npa.deploy.images import registry_from_env
+
     path = Path.home() / ".npa" / "config.yaml"
     if not path.exists():
         raise ValueError("missing ~/.npa/config.yaml — run: npa configure")
@@ -199,7 +201,16 @@ def load_operator_config() -> OperatorConfig:
     storage = cfg.get("storage") or {}
     bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/", 1)[0]
     endpoint = str(storage.get("endpoint_url") or DEFAULT_S3_ENDPOINT)
-    registry = str(storage.get("registry", cfg.get("registry", ""))).rstrip("/")
+    # ``container_registry`` / NPA_REGISTRY is the repository-wide canonical
+    # image source. ``storage.registry`` is a legacy operator-pack field and can
+    # legitimately point at a retired region; only use it as a compatibility
+    # fallback after the canonical settings.
+    registry = str(
+        registry_from_env()
+        or cfg.get("container_registry")
+        or storage.get("registry")
+        or cfg.get("registry", "")
+    ).rstrip("/")
     k8s_context = str(storage.get("k8s_context") or "")
     if not k8s_context:
         for proj in (cfg.get("projects") or {}).values():

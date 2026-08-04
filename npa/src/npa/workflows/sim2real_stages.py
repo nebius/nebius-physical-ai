@@ -92,6 +92,7 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
     input_uri = (config.trigger_dataset_uri or "").strip()
     if not input_uri:
         input_uri = f"local://{local_dir / 'stage_01_trigger' / 'trigger.json'}"
+    invocation: dict[str, Any] = {}
     if config.s3_bucket and k8s_image_ready(config.augment_image):
         output_uri = f"{artifact_output_uri(config)}/augment/"
         from npa.workflows.sim2real.engine import run_cosmos2_transfer_component
@@ -103,14 +104,21 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
             local_dir=augment_dir,
         )
         manifest = result["manifest"]
+        mode = str(manifest.get("mode") or "").strip()
+        if mode not in {"cosmos_transfer2.5", "cosmos_transfer2.5_gpu"}:
+            raise Sim2RealStageError(
+                "registry-qualified Cosmos Transfer stage did not emit real GPU "
+                f"provenance (mode={mode or 'missing'})"
+            )
         augmented_frames_uri = result["augmented_frames_uri"]
+        invocation = result.get("invocation") or {}
         mirrored = _mirror_augment_frames(augmented_frames_uri, augment_dir)
         tier = "WORKS"
         evidence = (
-            "Executed Cosmos Transfer 2.5 via sibling Kubernetes job and mirrored frame descriptors locally."
+            "Executed real Cosmos Transfer 2.5 via sibling Kubernetes GPU Job and mirrored generated frames locally."
             if mirrored
             else (
-                "Executed Cosmos Transfer 2.5 via sibling Kubernetes job; local frame mirror was unavailable, "
+                "Executed real Cosmos Transfer 2.5 via sibling Kubernetes GPU Job; local frame mirror was unavailable, "
                 "so final visualization falls back to manifest descriptors."
             )
         )
@@ -135,7 +143,16 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
             "name": "stage_03_augment",
             "tier": tier,
             "evidence": evidence,
-            "artifacts": {"local": str(augment_dir / "manifest.json")},
+            "artifacts": {
+                "local": str(augment_dir / "manifest.json"),
+                "remote": f"{artifact_output_uri(config)}/augment/manifest.json"
+                if config.s3_bucket
+                else "",
+                "job_name": str(invocation.get("job_name") or ""),
+                "image": str(invocation.get("image") or ""),
+                "image_digests": invocation.get("image_digests", []),
+                "gpu_request": invocation.get("gpu_request", {}),
+            },
         },
     }
 
@@ -180,10 +197,12 @@ def run_envgen_split_stage(
             shard_count=shard_count,
             scene_spec=scene,
         )
+        envgen_invocation: dict[str, Any] = {}
         if k8s_image_ready(config.envgen_image) and shard_count > 1:
             from npa.workflows.sim2real.engine import run_envgen_sharded_component
 
-            run_envgen_sharded_component(config, envgen=envgen)
+            envgen_result = run_envgen_sharded_component(config, envgen=envgen)
+            envgen_invocation = dict(envgen_result.get("invocation") or {})
             tier = "WORKS"
             evidence = (
                 f"Generated {env_count} raw envs across {shard_count} indexed GPU "
@@ -255,6 +274,56 @@ def run_envgen_split_stage(
                 "status": "ready",
             },
         )
+        envgen_invocation = {}
+
+    stage_04_job_artifacts: dict[str, Any] = {
+        "job_name": str(envgen_invocation.get("job_name") or ""),
+        "image": str(envgen_invocation.get("image") or ""),
+        "image_digests": envgen_invocation.get("image_digests", []),
+        "gpu_request": envgen_invocation.get("gpu_request", {}),
+    }
+    stage_components = [
+        {
+            "name": "stage_04_envs_raw",
+            "tier": tier,
+            "evidence": evidence,
+            "artifacts": {
+                "raw_envs": f"{artifact_output_uri(config)}/envs/raw/"
+                if config.s3_bucket
+                else str(env_root / "raw"),
+                **stage_04_job_artifacts,
+            },
+        },
+        {
+            "name": "stage_05_envs_train",
+            "tier": tier,
+            "evidence": (
+                f"Split the {env_count} generated environments into "
+                f"{train_count} train and {heldout_count} held-out records."
+            ),
+            "artifacts": {
+                "train_envs": train_envs_uri,
+                "heldout_envs": heldout_envs_uri,
+                "split_manifest": split_manifest_uri,
+                "job_name": config.run_id,
+                "execution": "orchestrator_record_from_stage_04_gpu_outputs",
+                "upstream_job_name": str(envgen_invocation.get("job_name") or ""),
+            },
+        },
+        {
+            "name": "stage_06_tokens",
+            "tier": tier,
+            "evidence": "Wrote the train/held-out token manifest from the generated environment catalog.",
+            "artifacts": {
+                "tokens": f"{artifact_output_uri(config)}/tokens/manifest.json"
+                if config.s3_bucket
+                else str(local_dir / "tokens" / "manifest.json"),
+                "job_name": config.run_id,
+                "execution": "orchestrator_record_from_stage_04_gpu_outputs",
+                "upstream_job_name": str(envgen_invocation.get("job_name") or ""),
+            },
+        },
+    ]
 
     return {
         "env_count": env_count,
@@ -263,6 +332,7 @@ def run_envgen_split_stage(
         "train_envs_uri": train_envs_uri,
         "heldout_envs_uri": heldout_envs_uri,
         "split_manifest_uri": split_manifest_uri,
+        "components": stage_components,
         "component": {
             "name": "stage_04_06_env_gen_split_tokens",
             "tier": tier,

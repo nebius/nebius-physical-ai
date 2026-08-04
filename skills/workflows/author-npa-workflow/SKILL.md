@@ -122,7 +122,7 @@ Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
 | --- | --- |
 | `vlm-eval-single.yaml` | Single-tool minimal |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool |
-| `sim2real-vlm-rl.yaml` | Nested loops + dynamic gate |
+| `sim2real-vlm-rl.yaml` | Demo-only stub-toolRef nested-loop fixture; not the 14-stage engine |
 | `bdd100k-pipeline.yaml` | AV failure-mode LanceDB → train → eval |
 | `av-night-scene-hardening.yaml` | AV night-scene fan-out — two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Cosmos Transfer 2.5 synthetic fan-out → Voxel51 (FiftyOne) curation |

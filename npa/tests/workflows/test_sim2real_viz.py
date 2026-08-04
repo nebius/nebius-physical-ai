@@ -148,12 +148,45 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
     fake = _FakeRerun()
     monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+    stage_components = [
+        {
+            "name": name,
+            "tier": "SEAM" if stage == 12 else "WORKS",
+            "evidence": f"stage {stage} evidence",
+            "artifacts": {
+                "job_name": f"s2r-stage-{stage:02d}" if stage in {3, 4, 7, 8, 9, 10} else "",
+                "gpu_request": {"product": "NVIDIA-RTX-PRO-6000"}
+                if stage in {3, 4, 7, 8, 9, 10, 14}
+                else {},
+                "remote": f"s3://bucket/run/stage-{stage:02d}.json",
+            },
+        }
+        for stage, name in viz_module._CANONICAL_STAGE_COMPONENTS.items()
+    ]
 
     rrd_path = tmp_path / "reports" / "sim2real.rrd"
     result = emit_sim2real_rerun(
         local_dir=tmp_path,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
+        stage_components=stage_components,
+        outer_history=[
+            {
+                "checkpoint_uri": "s3://bucket/run/model_latest.pt",
+                "resumed_from": "",
+                "decision": {"decision": "promote_checkpoint", "success_rate": 1.0},
+            }
+        ],
+        run_metadata={
+            "run_id": "run",
+            "policy_checkpoint": "s3://bucket/run/model_latest.pt",
+            "candidate_s3_uri": "s3://bucket/run/checkpoints/candidate/candidate.json",
+            "rrd_s3_uri": "s3://bucket/run/reports/sim2real.rrd",
+            "artifact_root": "s3://bucket/run/",
+            "viewer_command": "npa workbench sim2real rerun serve --run-id run",
+            "orchestrator_job_name": "run",
+            "orchestrator_node_product": "NVIDIA-RTX-PRO-6000",
+        },
         output_rrd=rrd_path,
     )
 
@@ -187,6 +220,14 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
     assert "heldout/success_rate" in entities
     assert "heldout/scores" in entities
     assert any(e.startswith("heldout/per_env/") for e in entities)
+    # Full stage/tier/Job/GPU proof and deployable-policy access are first-class
+    # viewer panels, with stage/outer-loop progress on the recording timeline.
+    assert "summary/stage_progress" in entities
+    assert "summary/policy_access" in entities
+    assert "progress/stage_01/tier_works" in entities
+    assert "progress/stage_14/evidence" in entities
+    assert "progress/outer_loop/iteration" in entities
+    assert "progress/outer_loop/decision" in entities
 
     counts = result.entity_counts
     assert counts["/signal/reward"] == 6
@@ -194,6 +235,9 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
     assert counts["/rollouts/iter_01/rollout-0000/actions/dim_00"] == 3
     assert counts["/heldout/scores"] == 2
     assert counts["/heldout/success_rate"] == 1
+    assert counts["/summary/stage_progress"] == 1
+    assert counts["/summary/policy_access"] == 1
+    assert counts["/progress/stage_12/tier_works"] == 1
 
 
 def test_emit_raises_when_rerun_unavailable(monkeypatch, tmp_path: Path) -> None:
@@ -474,6 +518,33 @@ def _write_test_png(path: Path, *, red: int, green: int, blue: int) -> None:
     png += _chunk(b"IEND", b"")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(png)
+
+
+def test_real_augmentation_png_index_is_not_decoded_as_json(tmp_path: Path) -> None:
+    frame = tmp_path / "augment" / "frames" / "frame-00000.png"
+    _write_test_png(frame, red=12, green=34, blue=56)
+    (frame.parent / "index.json").write_text(
+        json.dumps(
+            {
+                "frames": [
+                    {
+                        "frame_id": "frame-00000",
+                        "uri": "s3://bucket/run/augment/frames/frame-00000.png",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "augment" / "manifest.json").write_text("{}", encoding="utf-8")
+
+    samples = viz_module._augmentation_visual_samples(tmp_path)
+
+    assert len(samples) == 1
+    frame_id, payload, image = samples[0]
+    assert frame_id == "frame-00000"
+    assert payload["uri"].endswith("frame-00000.png")
+    assert image is not None
 
 
 def _write_summary_artifacts(tmp_path: Path) -> None:

@@ -1,8 +1,10 @@
-# Standalone Sim2Real VLM-to-RL staged runbook.
+# Canonical Sim2Real VLM-to-RL 14-stage runbook.
 #
-# This is the raw-SkyPilot tier of the three-tier example set. It is meant to be
-# read and run without npa in the loop. The SDK (sim2real.run) and
-# `npa workbench workflow submit` wrap the same workflow; they do not gate it.
+# This is the only YAML that drives the staged engine. `npa workbench workflow
+# submit` detects this exact file, materializes its task as a direct Kubernetes
+# Job, stages the current checkout for the pre-push run, and lets the engine fan
+# out its real `s2r-*` sibling Jobs. The similarly named npa.workflow files are
+# explicitly non-production DSL demos; they never route to this engine.
 #
 # ---------------------------------------------------------------------------
 # Trigger bucket & S3-compatible storage (operator checklist)
@@ -33,13 +35,12 @@
 #   2. Per-machine operator shell — ~/.npa/sim2real-operator.env (source before submit)
 #   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE`, or
 #      source an env overlay (e.g. quickstart.env) into the shell before submit
-#   4. Direct K8s submit — <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh reads
-#      S3_BUCKET + NPA_SIM2REAL_TRIGGER_DATASET_URI from the environment
+#   4. Direct K8s submit — `npa workbench workflow submit` resolves config,
+#      stages current source, materializes this task, and applies the Job.
 #
-# Seed stock trigger on a new bucket before first submit:
-#   <private-operator-pack>/sim2real-rtxpro/seed-stock-trigger.sh
-# Then set storage.sim2real_stock_trigger_uri to the destination prefix and run
-# sync-cluster-storage-secret.sh so cluster pods get AWS_ENDPOINT_URL + keys.
+# Seed a valid LeRobot trigger prefix before first submit, set
+# storage.sim2real_stock_trigger_uri to it, and ensure the cluster's
+# npa-storage-credentials secret carries AWS_ENDPOINT_URL plus HMAC keys.
 #
 # ---------------------------------------------------------------------------
 # Configuration reference (operator env, runbook, config.yaml)
@@ -56,10 +57,9 @@
 # CAMERAS_URI / ROBOT_SPEC_URI). Leave empty for stock Franka/tabletop smoke.
 # Trigger prefix may differ from artifact prefix on S3-compatible object stores — same bucket or not.
 #
-# Custom images: export registry-qualified refs before submit-k8s-staged-job.sh
-# or workflow submit. Unresolved AUGMENT_IMAGE / POLICY_IMAGE → reference
-# placeholder locally (SEAM tier). Rerun hosted serve defaults to
-# python:3.11-slim bootstrap; set NPA_RERUN_VIEWER_IMAGE for npa-rerun-viewer.
+# Custom images: pass registry-qualified refs to workflow submit. Direct-K8s
+# submit rejects unresolved real-component images rather than allowing a SEAM
+# fallback. Set NPA_RERUN_VIEWER_IMAGE to override the pinned Rerun image.
 #
 # SkyPilot 0.12.2 does NOT interpolate ${VAR} inside the YAML `envs` block or in
 # `image_id` at submission time. So every value below is a materialized literal,
@@ -67,11 +67,9 @@
 # override literals at submit time with `--env KEY=VALUE` / `--secret KEY`, and
 # edit `image_id` to point at their own registry.
 #
-# GPU-reaching path: raw `sky jobs launch` against this file is currently blocked
-# by the SkyPilot 0.12.2 pre-setup getcwd() bug. Reach GPUs with the in-repo
-# materializer until that is fixed upstream:
-#   npa workbench sim2real materialize --run-id <id> --image <trainer-image> \
-#     --env NPA_SIM2REAL_BUCKET=<bucket> -o job.yaml && kubectl apply -f job.yaml
+# GPU-reaching path:
+#   npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml \
+#     --run-id <id> --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://.../
 #
 # For Kubernetes clusters that require a service account, pass a SkyPilot config:
 #
@@ -106,11 +104,16 @@ envs:
   ASSETS_URI: ""
   SCENE_SPEC_URI: ""
   AUGMENT_IMAGE: ""
+  ENVGEN_IMAGE: ""
   POLICY_IMAGE: ""
   TRAINER_IMAGE: ""
   VLM_IMAGE: ""
+  VLM_REASON2_IMAGE: ""
+  VLM_REASON3_IMAGE: ""
   EVAL_IMAGE: ""
   ISAAC_IMAGE: ""
+  NPA_RERUN_VIEWER_IMAGE: ""
+  NPA_REGISTRY: ""
   NPA_SIM2REAL_SIM_BACKEND: "isaac"
   NPA_SIM2REAL_ISAAC_TASK: "Isaac-Lift-Cube-Franka-v0"
   # Gated HF weights: accept Cosmos-Reason2-8B, Cosmos-Reason2-2B, and
@@ -120,6 +123,8 @@ envs:
   VLM_REASON3_MODEL: "nvidia/Cosmos-Reason2-2B"
   NPA_SIM2REAL_VLM_DUAL_REASON: "1"
   SUCCESS_THRESHOLD: "0.50"
+  # Record the Stage 11 promotion decision, but run every configured outer pass.
+  NPA_SIM2REAL_EARLY_EXIT: "0"
   INNER_ITERATIONS: "3"
   OUTER_ITERATIONS: "2"
   NPA_ENV_COUNT: "10000"
@@ -151,6 +156,10 @@ envs:
   # delta attribution stays honest. A failing/empty/non-conforming command fails
   # the run; it never falls back.
   BYO_TRAINER_COMMAND: ""
+  # BYO_POLICY_COMMAND and BYO_EVAL_COMMAND are the real Isaac rollout/eval
+  # twins used with the PPO trainer. They follow the same fail-closed command
+  # contract: non-zero, missing, or malformed output fails the run.
+  BYO_POLICY_COMMAND: ""
   BYO_VLM_COMMAND: ""
   BYO_EVAL_COMMAND: ""
   # BYO_RERUN_COMMAND: optional shell command run instead of the in-process Rerun
@@ -174,8 +183,32 @@ envs:
   NPA_SIM2REAL_HELDOUT_EVAL_LIMIT: "0"
   NPA_SOURCE_REPO: ""
   NPA_SOURCE_REF: ""
+  # Direct-K8s submit uploads the current checkout here so the real run proves
+  # the unpushed implementation under test instead of whatever an image baked.
+  NPA_SIM2REAL_SOURCE_TARBALL_URI: ""
 setup: |
   set -euo pipefail
+  if [ -n "${NPA_SIM2REAL_SOURCE_TARBALL_URI:-}" ]; then
+    python3 -c "import boto3" 2>/dev/null || python3 -m pip install --quiet boto3 botocore
+    rm -rf /tmp/npa-orchestrator-source ./npa
+    mkdir -p /tmp/npa-orchestrator-source
+    python3 - "${NPA_SIM2REAL_SOURCE_TARBALL_URI}" <<'PY'
+  import os
+  import sys
+  import tarfile
+  import urllib.parse
+
+  import boto3
+
+  uri = urllib.parse.urlparse(sys.argv[1])
+  endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
+  archive = "/tmp/npa-orchestrator-source.tgz"
+  boto3.client("s3", endpoint_url=endpoint).download_file(uri.netloc, uri.path.lstrip("/"), archive)
+  with tarfile.open(archive) as source:
+      source.extractall("/tmp/npa-orchestrator-source")
+  PY
+    ln -s /tmp/npa-orchestrator-source/npa ./npa
+  fi
   if [ ! -f ./npa/pyproject.toml ]; then
     if [ -z "${NPA_SOURCE_REPO:-}" ]; then
       echo "ERROR: NPA_SOURCE_REPO is required when the source tree is not mounted." >&2
@@ -186,12 +219,18 @@ setup: |
     ln -s ./npa-source/npa ./npa
   fi
   export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
-  python3 -m pip install --user "uv>=0.9,<1"
-  export PATH="${HOME}/.local/bin:${PATH}"
+  # The orchestration image may already run inside a read-only virtualenv.
+  # Put the bootstrap executable in scratch space so neither user-site nor
+  # base-environment permissions affect a fresh canonical run.
+  rm -rf /tmp/npa-bootstrap-uv
+  python3 -m pip install --quiet --target /tmp/npa-bootstrap-uv "uv>=0.9,<1"
+  export PATH="/tmp/npa-bootstrap-uv/bin:${PATH}"
   uv python install 3.11
   uv venv --python 3.11 --seed ./npa/.venv
   ./npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
-  ./npa/.venv/bin/python -m pip install -e ./npa
+  # Stage 14 is required evidence, not an optional WARN in the canonical run:
+  # install the pinned Rerun SDK through the repository's viz extra.
+  ./npa/.venv/bin/python -m pip install -e './npa[viz]'
   if ! command -v kubectl >/dev/null 2>&1; then
     curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl"
     chmod +x /tmp/kubectl
@@ -224,6 +263,7 @@ run: |
     --assets-uri "${ASSETS_URI:-}"
     --scene-spec-uri "${SCENE_SPEC_URI:-}"
     --augment-image "${AUGMENT_IMAGE:-}"
+    --envgen-image "${ENVGEN_IMAGE:-}"
     --policy-image "${POLICY_IMAGE:-}"
     --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
     --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
@@ -234,8 +274,11 @@ run: |
     --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason2-8B}"
     --vlm-reason2-model "${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
     --vlm-reason3-model "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason2-2B}"
+    --vlm-reason2-image "${VLM_REASON2_IMAGE:-${VLM_IMAGE:-}}"
+    --vlm-reason3-image "${VLM_REASON3_IMAGE:-${VLM_IMAGE:-}}"
     --vlm-dual-reason
     --threshold "${SUCCESS_THRESHOLD:-0.50}"
+    --no-early-exit
     --inner-iterations "${INNER_ITERATIONS:-3}"
     --outer-iterations "${OUTER_ITERATIONS:-2}"
     --env-count "${NPA_ENV_COUNT:-10000}"
@@ -248,6 +291,7 @@ run: |
     --learning-rate "${LEARNING_RATE:-0.08}"
     --byo-signal-converter "${BYO_SIGNAL_CONVERTER:-}"
     --byo-trainer-command "${BYO_TRAINER_COMMAND:-}"
+    --byo-policy-command "${BYO_POLICY_COMMAND:-}"
     --byo-vlm-command "${BYO_VLM_COMMAND:-}"
     --byo-eval-command "${BYO_EVAL_COMMAND:-}"
     --byo-rerun-command "${BYO_RERUN_COMMAND:-}"

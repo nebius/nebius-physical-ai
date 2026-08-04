@@ -344,7 +344,7 @@ def submit_cmd(
     ),
 ) -> None:
     """Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller."""
-    from npa.orchestration.npa_workflow.detect import is_npa_workflow_spec
+    from npa.orchestration.npa_workflow.detect import detect_submit_format
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
@@ -365,12 +365,12 @@ def submit_cmd(
     resolved_run_id = run_id or _default_submit_run_id(yaml_path)
 
     from npa.workflows.sim2real.k8s_submit import (
-        is_sim2real_runbook,
         status_monitor_command,
         submit_sim2real_from_workflow_vars,
     )
 
-    if is_sim2real_runbook(yaml_path):
+    submit_format = detect_submit_format(yaml_path)
+    if submit_format == "sim2real_runbook":
         try:
             result = submit_sim2real_from_workflow_vars(
                 run_id=resolved_run_id,
@@ -378,6 +378,9 @@ def submit_cmd(
                 s3_bucket=s3_bucket,
                 s3_prefix=s3_prefix or "sim2real-b",
                 s3_endpoint=s3_endpoint,
+                registry=registry,
+                orchestrator_image=image,
+                plan_only=plan_only,
             )
         except (RuntimeError, ValueError, FileNotFoundError) as exc:
             _fail(str(exc))
@@ -399,11 +402,13 @@ def submit_cmd(
             typer.echo(f"job_id: {result.job_name}")
             typer.echo(f"k8s_context: {result.k8s_context}")
             typer.echo(f"run_prefix_uri: {result.run_prefix_uri}")
-            typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
+            typer.echo(f"manifest_path: {result.manifest_path}")
+            if result.status == "submitted":
+                typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
         return
 
     prepared_npa = None
-    if is_npa_workflow_spec(yaml_path):
+    if submit_format == "npa.workflow":
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
                 ensure_infra_present,
