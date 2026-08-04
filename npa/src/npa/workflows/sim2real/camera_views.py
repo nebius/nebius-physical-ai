@@ -25,7 +25,7 @@ class CameraViewSpec:
 
 def _camera_quaternion(
     *, yaw_degrees: float, pitch_degrees: float
-) -> tuple[float, ...]:
+) -> tuple[float, float, float, float]:
     """Return ``q_yaw * q_pitch`` as a normalized Isaac ``wxyz`` quaternion."""
 
     yaw = math.radians(yaw_degrees) / 2.0
