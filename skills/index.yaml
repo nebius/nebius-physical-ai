@@ -395,6 +395,19 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos3", "generate", "--help"]
         contains: "guardrails"
+  - name: contribute-workbench-image
+    category: workflows
+    when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, private registry validation, and incremental GHCR publication."
+    path: skills/workflows/contribute-workbench-image/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/contributing-a-containerized-solution.md
+      - type: file_exists
+        path: docs/workbench/container-packaging.md
+      - type: file_exists
+        path: npa/docker/workbench/packaging-contract.yaml
+      - type: file_exists
+        path: .github/workflows/publish-public-images.yml
   - name: cosmos3-npa-workflow
     category: workflows
     when_to_use: "Write, validate, or submit an npa.workflow/v0.0.1 YAML that runs Cosmos 3 generation (the declarative spec, not the SkyPilot template)."
