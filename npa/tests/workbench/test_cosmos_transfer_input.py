@@ -21,6 +21,16 @@ from npa.workbench.cosmos import transfer as tx
 runner = CliRunner()
 
 
+def _write_extractor_python(repo: Path, body: str) -> Path:
+    """Install a tiny executable used to exercise the real subprocess boundary."""
+
+    executable = repo / ".venv" / "bin" / "python"
+    executable.parent.mkdir(parents=True)
+    executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    executable.chmod(0o755)
+    return executable
+
+
 def _fake_env(monkeypatch, repo: Path):
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda r: Path("/usr/bin/python3"))
@@ -584,6 +594,66 @@ def test_frame_extraction_preserves_pyav_subprocess_failure(
     assert raised.value.__cause__ is cause
 
 
+def test_frame_extraction_subprocess_failure_raises_public_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "transfer-repo"
+    _write_extractor_python(
+        repo, "printf '%s\\n' 'av.error.InvalidDataError: broken stream' >&2; exit 23"
+    )
+    monkeypatch.setenv("COSMOS_TRANSFER_REPO", str(repo))
+
+    with pytest.raises(tx.FrameExtractionError, match="exit code 23.*broken stream"):
+        tx.extract_frames(str(tmp_path / "broken.mp4"), tmp_path / "frames")
+
+
+def test_frame_extraction_os_failure_raises_public_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "missing-runtime"
+    repo.mkdir()
+    monkeypatch.setenv("COSMOS_TRANSFER_REPO", str(repo))
+
+    with pytest.raises(tx.FrameExtractionError, match="could not start frame extraction"):
+        tx.extract_frames(str(tmp_path / "input.mp4"), tmp_path / "frames")
+
+
+def test_successful_zero_frame_decode_is_not_an_extraction_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "transfer-repo"
+    _write_extractor_python(repo, "exit 0")
+    monkeypatch.setenv("COSMOS_TRANSFER_REPO", str(repo))
+
+    assert tx.extract_frames(str(tmp_path / "empty.mp4"), tmp_path / "frames") == []
+
+
+def test_publish_transfer_clip_requires_frames_before_any_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "transfer-repo"
+    _write_extractor_python(repo, "exit 0")
+    monkeypatch.setenv("COSMOS_TRANSFER_REPO", str(repo))
+    video = tmp_path / "empty.mp4"
+    video.write_bytes(b"video-with-no-decodable-frames")
+    uploads: list[str] = []
+
+    class RecordingStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    with pytest.raises(RuntimeError, match="no frames could be extracted"):
+        tx.publish_transfer_clip(
+            {"video_path": str(video), "video_bytes": video.stat().st_size},
+            "s3://bucket/run/augment/",
+            require_frames=True,
+            storage_client=RecordingStorage(),
+        )
+
+    assert uploads == []
+
+
 def test_conditioned_execute_fails_closed_when_input_video_is_missing(monkeypatch) -> None:
     from typer.testing import CliRunner
 
@@ -794,3 +864,79 @@ def test_sim2real_engine_real_frame_index_uses_gpu_mode(
     assert result is not None
     index = json.loads(uploads["s3://bucket/run/frames/index.json"])
     assert index["mode"] == "cosmos_transfer2.5_gpu"
+
+
+def test_sim2real_engine_frame_extraction_failure_uses_descriptor_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from npa.workflows.sim2real import engine
+
+    video = tmp_path / "output.mp4"
+    video.write_bytes(b"video")
+    uploads: list[str] = []
+
+    class RecordingStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setattr(
+        tx,
+        "run_cosmos_transfer",
+        lambda **_kwargs: {
+            "video_path": str(video),
+            "video_bytes": video.stat().st_size,
+            "spec": "spec.json",
+        },
+    )
+
+    def fail_extraction(*_args, **_kwargs):
+        raise tx.FrameExtractionError("decoder subprocess failed")
+
+    monkeypatch.setattr(tx, "extract_frames", fail_extraction)
+
+    result = engine._run_real_cosmos_transfer(
+        RecordingStorage(),
+        "s3://bucket/input/",
+        "s3://bucket/run/",
+        "s3://bucket/run/frames/",
+        "fallback-test",
+    )
+
+    assert result is None
+    assert uploads == []
+    assert "frame_extraction_failed_fallback" in capsys.readouterr().err
+
+
+def test_sim2real_engine_does_not_swallow_unrelated_extraction_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.workflows.sim2real import engine
+
+    video = tmp_path / "output.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setattr(
+        tx,
+        "run_cosmos_transfer",
+        lambda **_kwargs: {
+            "video_path": str(video),
+            "video_bytes": video.stat().st_size,
+            "spec": "spec.json",
+        },
+    )
+
+    def programmer_error(*_args, **_kwargs):
+        raise AssertionError("unrelated bug")
+
+    monkeypatch.setattr(tx, "extract_frames", programmer_error)
+
+    with pytest.raises(AssertionError, match="unrelated bug"):
+        engine._run_real_cosmos_transfer(
+            object(),
+            "s3://bucket/input/",
+            "s3://bucket/run/",
+            "s3://bucket/run/frames/",
+            "error-test",
+        )

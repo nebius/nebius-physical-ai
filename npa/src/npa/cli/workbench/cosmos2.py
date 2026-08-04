@@ -15,8 +15,11 @@ from npa.workflows.cosmos_split import (
     write_manifest,
 )
 from npa.workbench.cosmos.transfer import (
+    REFERENCE_AUGMENT_MODE,
+    REFERENCE_AUGMENT_STATUS,
     TRANSFER_MANIFEST_FILENAME,
-    TRANSFER_MANIFEST_SCHEMA,
+    TRANSFER_MANIFEST_MODE,
+    TRANSFER_MANIFEST_STATUS,
     transfer_manifest_uri_for,
 )
 
@@ -38,8 +41,14 @@ def _publish_manifest(client: Any, payload: dict, output_uri: str) -> str:
 
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos2-") as tmp:
         local = Path(tmp) / MANIFEST_FILENAME
-        local.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        local.write_bytes(_manifest_bytes(payload))
         return client.upload_file(str(local), transfer_manifest_uri_for(output_uri))
+
+
+def _manifest_bytes(payload: dict) -> bytes:
+    """Return the canonical manifest serialization used by every backend."""
+
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def _publish_output_manifest(payload: dict, output_uri: str) -> str:
@@ -54,9 +63,7 @@ def _publish_output_manifest(payload: dict, output_uri: str) -> str:
     local_output = output_uri.removeprefix("local://").removeprefix("file://")
     manifest_path = Path(local_output) / MANIFEST_FILENAME
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    manifest_path.write_bytes(_manifest_bytes(payload))
     return manifest_uri
 
 
@@ -363,14 +370,15 @@ def transfer_cmd(
                         run_id=run_id,
                         clip_name=clip_name,
                         variables=combo,
+                        require_frames=True,
                     )
                 )
             manifest = write_run_manifest(
                 clips, output_uri, run_id=run_id, variant_parallelism=parallelism
             )
-            payload["status"] = "executed"
+            payload["status"] = TRANSFER_MANIFEST_STATUS
             payload["output_kind"] = "video"
-            payload["mode"] = "cosmos_transfer2.5_gpu"
+            payload["mode"] = TRANSFER_MANIFEST_MODE
             payload["augmented_video_uri"] = manifest["augmented_video_uri"]
             payload["augmented_videos"] = manifest["augmented_videos"]
             payload["frame_count"] = manifest["frame_count"]
@@ -400,7 +408,7 @@ def transfer_cmd(
                 control_weight=control_weight,
                 guidance=guidance,
             )
-            payload["status"] = "executed"
+            payload["status"] = TRANSFER_MANIFEST_STATUS
             payload["output_kind"] = "video"
             payload["output_video"] = transfer["video_path"]
             payload["video_bytes"] = transfer["video_bytes"]
@@ -424,28 +432,27 @@ def transfer_cmd(
                     frames_output_uri=output_uri,
                     require_frames=True,
                 )
-                payload["mode"] = "cosmos_transfer2.5_gpu"
+                payload["mode"] = TRANSFER_MANIFEST_MODE
                 payload["output_video"] = manifest["augmented_video_uri"]
                 payload["augmented_video_uri"] = manifest["augmented_video_uri"]
                 payload["augmented_frames_uri"] = manifest["augmented_frames_uri"]
                 payload["frame_count"] = manifest["frame_count"]
                 payload["manifest_uri"] = transfer_manifest_uri_for(output_uri)
             else:
-                payload["mode"] = "cosmos_transfer2.5_gpu"
+                payload["mode"] = TRANSFER_MANIFEST_MODE
                 payload["augmented_video_uri"] = transfer["video_path"]
                 payload["augmented_frames_uri"] = output_uri
     else:
         # No heavy model runtime: run a genuine reference augmentation that
         # writes real augmented image frames to output_uri (not a descriptor stub).
         augment = reference_augment_frames(input_uri, output_uri, run_id=run_id)
-        payload["status"] = "executed_reference"
-        payload["mode"] = "reference_augment"
+        payload["status"] = REFERENCE_AUGMENT_STATUS
+        payload["mode"] = REFERENCE_AUGMENT_MODE
         payload["output_kind"] = "frames"
         payload["augmented_frames_uri"] = augment["augmented_frames_uri"]
         payload["frames"] = augment["frames"]
         payload["frame_count"] = augment["frame_count"]
         payload["index_uri"] = augment["index_uri"]
-        payload["schema"] = TRANSFER_MANIFEST_SCHEMA
         payload["manifest_uri"] = transfer_manifest_uri_for(output_uri)
         _publish_output_manifest(payload, output_uri)
 

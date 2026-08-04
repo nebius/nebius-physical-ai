@@ -87,6 +87,7 @@ config:
   captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_original/"
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/manifest.json"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/"
   decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
@@ -187,7 +188,7 @@ states:
       - uri: "{{config.trigger_uri}}"
         schema: npa.data_factory.frames.v1
     outputs:
-      - uri: "{{config.augment_uri}}manifest.json"
+      - uri: "{{config.augment_manifest_uri}}"
         schema: npa.cosmos2.transfer.v1
 
   grade:

@@ -10,8 +10,7 @@ import typer
 from npa.workflows.sim2real_envgen import (
     EnvGenConfig,
     build_policy_image_contract,
-    build_scene_spec,
-    resolve_augmented_frames,
+    build_scene_spec_for_augmented_frames,
     write_action_conditioned_envs,
     write_raw_shard,
     write_split_manifest,
@@ -140,12 +139,9 @@ def _config(
     byo_mesh_uri: str = "",
     augmented_frames_uri: str = "",
 ) -> EnvGenConfig:
-    scene = resolve_augmented_frames(
-        build_scene_spec(
-            byo_mesh_uri=byo_mesh_uri,
-            augmented_frames_uri=augmented_frames_uri,
-        ),
-        augmented_frames_uri,
+    scene = build_scene_spec_for_augmented_frames(
+        byo_mesh_uri=byo_mesh_uri,
+        reference=augmented_frames_uri,
     )
     return EnvGenConfig(
         run_id=run_id,

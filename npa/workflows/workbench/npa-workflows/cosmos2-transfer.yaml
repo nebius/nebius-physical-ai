@@ -27,6 +27,7 @@ config:
   # empty, or video-free prefix fails CLI validation before inference starts.
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/augmented/manifest.json"
   # Optional Config-Gen manifest. The transfer input itself is always required and
   # is converted into an on-the-fly edge control; no upstream media is bundled.
   configs_uri: ""
@@ -62,6 +63,6 @@ states:
       - uri: "{{config.trigger_uri}}"
         schema: npa.sim2real.trigger_dataset.v1
     outputs:
-      - uri: "{{config.augment_uri}}manifest.json"
+      - uri: "{{config.augment_manifest_uri}}"
         schema: npa.cosmos2.transfer.v1
     terminal: true

@@ -75,11 +75,39 @@ def test_reference_fallback_reports_its_canonical_index_uri(tmp_path: Path) -> N
     assert Path(result["index_uri"]).is_file()
 
 
+def test_reference_fallback_preserves_local_scheme_for_index_and_frames(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    output = tmp_path / "output"
+    source.mkdir()
+    Image.new("RGB", (8, 8), color=(10, 20, 30)).save(source / "frame.png")
+    output_uri = f"local://{output}"
+
+    result = reference_augment_frames(
+        str(source), output_uri, run_id="fallback", variants_per_frame=1
+    )
+
+    assert result["augmented_frames_uri"] == output_uri
+    assert result["index_uri"] == f"{output_uri}/index.json"
+    assert [frame["uri"] for frame in result["frames"]] == [
+        f"{output_uri}/frame-00000.png"
+    ]
+    index = json.loads((output / "index.json").read_text(encoding="utf-8"))
+    assert [frame["uri"] for frame in index["frames"]] == [
+        f"{output_uri}/frame-00000.png"
+    ]
+
+
 def test_real_transfer_manifest_uri_is_canonical() -> None:
     assert TRANSFER_MANIFEST_FILENAME == "manifest.json"
     assert TRANSFER_MANIFEST_SCHEMA == "npa.cosmos2.transfer.v1"
     assert (
         transfer_manifest_uri_for("s3://bucket/run/augmented/")
+        == "s3://bucket/run/augmented/manifest.json"
+    )
+    assert (
+        transfer_manifest_uri_for("s3://bucket/run/augmented")
         == "s3://bucket/run/augmented/manifest.json"
     )
 
@@ -158,6 +186,8 @@ def test_cosmos2_transfer_cli_default_emits_real_frames(
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert index["schema"] == AUGMENTED_FRAMES_SCHEMA
     assert manifest["schema"] == TRANSFER_MANIFEST_SCHEMA
+    assert manifest["status"] == "executed_reference"
+    assert manifest["mode"] == "reference_augment"
     assert manifest["index_uri"] == str(out / "index.json")
     assert manifest["manifest_uri"] == str(out / "manifest.json")
     assert [frame["uri"] for frame in manifest["frames"]] == [

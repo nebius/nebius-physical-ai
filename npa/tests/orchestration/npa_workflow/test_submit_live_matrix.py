@@ -164,7 +164,7 @@ def test_two_step_real_augment_flows_into_envgen(name: str) -> None:
         == "workbench.cosmos2.transfer_conditioned_execute"
     )
     assert len(spec.states["envgen"].inputs) == 1
-    assert spec.states["envgen"].inputs[0].uri == "{{config.augment_uri}}manifest.json"
+    assert spec.states["envgen"].inputs[0].uri == "{{config.augment_manifest_uri}}"
     assert spec.states["envgen"].inputs[0].schema == "npa.cosmos2.transfer.v1"
 
     plan = build_plan(spec, run_id="data-flow-check")
@@ -175,7 +175,7 @@ def test_two_step_real_augment_flows_into_envgen(name: str) -> None:
 
     assert "--execute" in augment.argv
     assert "--condition-on-input" in augment.argv
-    assert consumed_uri == f"{augment_uri}manifest.json"
+    assert consumed_uri == f"{augment_uri.rstrip('/')}/manifest.json"
     assert envgen.inputs == [
         {"uri": consumed_uri, "schema": "npa.cosmos2.transfer.v1"}
     ]

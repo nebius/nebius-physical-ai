@@ -21,6 +21,7 @@ config:
 
   trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/manifest.json"
   raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
   # `npa.workflows.sim2real_envgen` takes the RUN ROOT and derives envs/raw,
   # envs/train, envs/heldout and envs/manifest under it; passing the raw prefix would
@@ -31,7 +32,7 @@ config:
   train_fraction: "0.8"
   envgen_seed: "42"
   # Envgen resolves this transfer manifest and cycles over its exact frames[].uri list.
-  augmented_frames_uri: "{{config.augment_uri}}manifest.json"
+  augmented_frames_uri: "{{config.augment_manifest_uri}}"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/"
   heldout_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json"
@@ -57,7 +58,7 @@ states:
       - uri: "{{config.trigger_uri}}"
         schema: npa.lerobot.dataset.v1
     outputs:
-      - uri: "{{config.augment_uri}}manifest.json"
+      - uri: "{{config.augment_manifest_uri}}"
         schema: npa.cosmos2.transfer.v1
     next: envgen
 
@@ -67,7 +68,7 @@ states:
     toolRef: workbench.sim2real_envgen.raw_shard
     resources: gpu
     inputs:
-      - uri: "{{config.augment_uri}}manifest.json"
+      - uri: "{{config.augment_manifest_uri}}"
         schema: npa.cosmos2.transfer.v1
     outputs:
       - uri: "{{config.raw_envs_uri}}raw-shard-00-summary.json"

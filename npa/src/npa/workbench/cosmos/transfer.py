@@ -41,8 +41,12 @@ DEFAULT_INPUT_CONTROL = "edge"
 # the appropriate helper so this cannot regress into another false success.
 TRANSFER_MANIFEST_FILENAME = "manifest.json"
 TRANSFER_MANIFEST_SCHEMA = "npa.cosmos2.transfer.v1"
+TRANSFER_MANIFEST_MODE = "cosmos_transfer2.5_gpu"
+TRANSFER_MANIFEST_STATUS = "executed"
 AUGMENTED_FRAMES_INDEX = "index.json"
 AUGMENTED_FRAMES_SCHEMA = "npa.sim2real.augmented_frames.v1"
+REFERENCE_AUGMENT_MODE = "reference_augment"
+REFERENCE_AUGMENT_STATUS = "executed_reference"
 # Neutral photoreal prompt used when the caller conditions on an input clip but
 # supplies no appearance prompt of its own.
 _DEFAULT_INPUT_PROMPT = (
@@ -392,7 +396,6 @@ def publish_transfer_clip(
         frames_output_uri.rstrip("/") + "/" if frames_output_uri else clip_base
     )
     video_uri = f"{clip_base}augmented_video.mp4"
-    client.upload_file(transfer["video_path"], video_uri)
 
     import json as _json
     import tempfile as _tempfile
@@ -415,6 +418,9 @@ def publish_transfer_clip(
                 f"{transfer['video_path']!r}; refusing to publish a manifest whose "
                 "augmented_frames_uri has no frame-NNNNN.png objects."
             )
+        # Validate the required frame contract before publishing any object. A
+        # zero-frame decode must not leave a plausible video-only success behind.
+        client.upload_file(transfer["video_path"], video_uri)
         for i, frame_path in enumerate(frames):
             key = f"frame-{i:05d}.png"
             client.upload_file(str(frame_path), f"{frames_base}{key}")
@@ -422,7 +428,7 @@ def publish_transfer_clip(
 
         clip_meta = {
             "schema": TRANSFER_MANIFEST_SCHEMA,
-            "mode": "cosmos_transfer2.5_gpu",
+            "mode": TRANSFER_MANIFEST_MODE,
             "clip": clip,
             "variables": variables or {},
             "prompt": str((variables or {}).get("prompt") or ""),
@@ -479,8 +485,8 @@ def write_run_manifest(
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {
         "schema": TRANSFER_MANIFEST_SCHEMA,
-        "mode": "cosmos_transfer2.5_gpu",
-        "status": "executed",
+        "mode": TRANSFER_MANIFEST_MODE,
+        "status": TRANSFER_MANIFEST_STATUS,
         "run_id": run_id,
         "clips": [c.get("clip", "") for c in clips],
         "variant_count": len(clips),
@@ -660,7 +666,10 @@ def reference_augment_frames(
             dest_dir = None
         else:
             dest_dir = Path(output_uri.replace("local://", "").replace("file://", ""))
-            frames_uri = str(dest_dir)
+            # Preserve an explicit local scheme in every returned frame URI so
+            # ``frames[].uri`` and ``index_uri`` use the same address space.
+            # Plain filesystem inputs remain plain paths for compatibility.
+            frames_uri = output_uri.rstrip("/")
 
         index: list[dict[str, Any]] = []
         frame_no = 0
@@ -692,7 +701,8 @@ def reference_augment_frames(
                 },
                 indent=2,
                 sort_keys=True,
-            ),
+            )
+            + "\n",
             encoding="utf-8",
         )
 
@@ -718,8 +728,12 @@ __all__ = [
     "AUGMENTED_FRAMES_INDEX",
     "AUGMENTED_FRAMES_SCHEMA",
     "FrameExtractionError",
+    "REFERENCE_AUGMENT_MODE",
+    "REFERENCE_AUGMENT_STATUS",
     "TRANSFER_MANIFEST_FILENAME",
+    "TRANSFER_MANIFEST_MODE",
     "TRANSFER_MANIFEST_SCHEMA",
+    "TRANSFER_MANIFEST_STATUS",
     "augmented_frames_index_uri_for",
     "cosmos_transfer_available",
     "cosmos_transfer_repo",

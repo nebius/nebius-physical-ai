@@ -170,7 +170,11 @@ def scene_spec_from_uri(uri: str) -> SceneSpec:
 def frame_uris_from_transfer_manifest(uri: str) -> tuple[str, ...]:
     """Load and validate the exact frame list a real Cosmos transfer published."""
 
-    from npa.workbench.cosmos.transfer import TRANSFER_MANIFEST_SCHEMA
+    from npa.workbench.cosmos.transfer import (
+        TRANSFER_MANIFEST_MODE,
+        TRANSFER_MANIFEST_SCHEMA,
+        TRANSFER_MANIFEST_STATUS,
+    )
 
     ref = str(uri or "").strip()
     if not ref:
@@ -182,12 +186,22 @@ def frame_uris_from_transfer_manifest(uri: str) -> tuple[str, ...]:
             StorageClient.from_environment().download_path(ref, str(local_path))
             payload = _read_json_object(local_path, source=ref)
     else:
-        local_ref = ref.removeprefix("file://")
+        local_ref = ref.removeprefix("file://").removeprefix("local://")
         payload = _read_json_object(Path(local_ref), source=ref)
 
     if payload.get("schema") != TRANSFER_MANIFEST_SCHEMA:
         raise Sim2RealEnvGenError(
             f"transfer manifest {ref!r} must use schema {TRANSFER_MANIFEST_SCHEMA!r}"
+        )
+    if payload.get("mode") != TRANSFER_MANIFEST_MODE:
+        raise Sim2RealEnvGenError(
+            f"transfer manifest {ref!r} must use real-transfer mode "
+            f"{TRANSFER_MANIFEST_MODE!r}"
+        )
+    if payload.get("status") != TRANSFER_MANIFEST_STATUS:
+        raise Sim2RealEnvGenError(
+            f"transfer manifest {ref!r} must have successful status "
+            f"{TRANSFER_MANIFEST_STATUS!r}"
         )
     frames = payload.get("frames")
     if not isinstance(frames, list) or not frames:
@@ -228,6 +242,29 @@ def resolve_augmented_frames(scene: SceneSpec, reference: str = "") -> SceneSpec
         augmented_frames_uri="",
         augmented_frames_manifest_uri=ref,
         augmented_frame_uris=frame_uris_from_transfer_manifest(ref),
+    )
+
+
+def build_scene_spec_for_augmented_frames(
+    *, byo_mesh_uri: str = "", reference: str = ""
+) -> SceneSpec:
+    """Build a scene and resolve one augment reference exactly once.
+
+    JSON references are manifests; all other non-empty references retain the
+    legacy frame-prefix contract. Keeping that classification here prevents CLI
+    adapters from first treating a manifest as a prefix and then deriving it a
+    second time.
+    """
+
+    ref = str(reference or "").strip()
+    manifest_ref = ref if ref.lower().endswith(".json") else ""
+    prefix_ref = ref if ref and not manifest_ref else ""
+    return resolve_augmented_frames(
+        build_scene_spec(
+            byo_mesh_uri=byo_mesh_uri,
+            augmented_frames_uri=prefix_ref,
+            augmented_frames_manifest_uri=manifest_ref,
+        )
     )
 
 
@@ -491,15 +528,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(build_policy_image_contract(train_envs_uri=args.train_envs_uri, output_uri=args.actions_uri, default_policy_image=args.policy_image), indent=2, sort_keys=True))
         return 0
 
-    scene = (
-        scene_spec_from_uri(args.scene_spec_uri)
-        if getattr(args, "scene_spec_uri", "").strip()
-        else build_scene_spec(
-            byo_mesh_uri=args.byo_mesh_uri,
-            augmented_frames_uri=args.augmented_frames_uri,
+    if getattr(args, "scene_spec_uri", "").strip():
+        scene = resolve_augmented_frames(
+            scene_spec_from_uri(args.scene_spec_uri), args.augmented_frames_uri
         )
-    )
-    scene = resolve_augmented_frames(scene, args.augmented_frames_uri)
+    else:
+        scene = build_scene_spec_for_augmented_frames(
+            byo_mesh_uri=args.byo_mesh_uri,
+            reference=args.augmented_frames_uri,
+        )
     config = EnvGenConfig(
         run_id=args.run_id,
         output_uri=args.output_uri,

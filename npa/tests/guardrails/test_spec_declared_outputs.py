@@ -224,6 +224,48 @@ def test_live_job_339_cosmos_output_regressions_remain_guarded() -> None:
     assert JOB_339_COSMOS_OUTPUT_LOCATIONS <= guarded
 
 
+@pytest.mark.parametrize(
+    "path",
+    tuple(
+        path
+        for path in _checked_specs()
+        if "augment_uri" in load_spec(path).config
+        and any(
+            state.tool_ref in TRANSFER_TOOLREFS
+            for state in load_spec(path).states.values()
+        )
+    ),
+    ids=lambda path: path.name,
+)
+def test_cosmos_declared_manifest_does_not_depend_on_trailing_prefix_slash(
+    path: Path,
+) -> None:
+    """Producer and declaration stay aligned if ``augment_uri`` loses ``/``."""
+
+    spec = load_spec(path)
+    assert "augment_manifest_uri" in spec.config
+    spec.config["augment_uri"] = str(spec.config["augment_uri"]).rstrip("/")
+    assume = (
+        "promote_checkpoint"
+        if any(state.transitions for state in spec.states.values())
+        else None
+    )
+    plan = build_plan(spec, run_id="no-trailing-slash", assume_decision=assume)
+    for step in plan.steps:
+        if step.tool_ref not in TRANSFER_TOOLREFS:
+            continue
+        output_prefix = step.argv[step.argv.index("--output-uri") + 1]
+        manifests = [
+            output
+            for output in step.outputs
+            if output["schema"] == "npa.cosmos2.transfer.v1"
+        ]
+        assert len(manifests) == 1
+        assert manifests[0]["uri"] == _resolve(
+            "npa.workbench.cosmos.transfer:transfer_manifest_uri_for"
+        )(output_prefix)
+
+
 def test_there_are_result_uri_stages_to_check() -> None:
     assert len(CASES) >= 5, f"expected several checkable stages, found {len(CASES)}"
 
