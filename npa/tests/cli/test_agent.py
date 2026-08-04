@@ -26,6 +26,26 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _successful_storage_probe(monkeypatch):
+    """Keep unrelated agent tests hermetic; storage failures override this."""
+
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
+
+
 def _agent_source() -> str:
     """Source of the agent deploy path: agent.py plus its sibling modules.
 
@@ -2219,8 +2239,81 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
         "ssh_public_key",
         "ssh_private_key",
         "ssh_egress",
+        "writable_s3",
         "token_factory",
     }
+
+
+def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+    )
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(
+            False,
+            "forbidden",
+            "S3 write probe was forbidden; the configured access key lacks data-plane permission.",
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--ssh-public-key-path",
+            str(tmp_path / "id_ed25519.pub"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "[FAIL] writable_s3" in result.output
+    assert "summary:" in result.output
+    assert "fail" in result.output
+
+
+def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import storage_validation
+
+    monkeypatch.setattr(
+        agent_module, "_resolve_project_alias", lambda value: value or "demo"
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_agent_record",
+        lambda *_args: {
+            "agent_url": "https://agent/",
+            "rerun_url": "https://agent/rerun/",
+            "auth_secret_path": str(tmp_path / "auth"),
+            "public_ip": "203.0.113.50",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_load_auth_secret", lambda _path: ("u", "p"))
+    monkeypatch.setattr(agent_module, "_health", lambda *_args, **_kwargs: (True, 200))
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("read-only status must not write a storage probe")
+        ),
+    )
+
+    result = runner.invoke(app, ["status", "--project", "demo", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["health"] is True
 
 
 def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:

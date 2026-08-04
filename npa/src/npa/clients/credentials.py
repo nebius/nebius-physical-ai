@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -402,11 +403,47 @@ def write_credentials_file(
     incoming = _prune_empty(dict(data))
     _separate_legacy_storage_ownership(existing, incoming)
     merged = _deep_merge(existing, incoming)
-    credentials_path.parent.mkdir(parents=True, exist_ok=True)
-    with credentials_path.open("w") as handle:
-        yaml.dump(merged, handle, default_flow_style=False, sort_keys=False)
-    credentials_path.chmod(0o600)
+    write_private_yaml(credentials_path, merged)
     return credentials_path
+
+
+def write_private_yaml(path: Path, data: Mapping[str, Any]) -> Path:
+    """Atomically write private YAML with owner-only file/directory modes.
+
+    The temporary file is created in the destination directory, flushed and
+    fsynced before ``os.replace``. A crash therefore leaves either the previous
+    complete document or the new complete document, never a truncated secret
+    file. The temporary file starts at 0600 and is removed on every failure.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:  # pragma: no cover - unusual filesystems (for example FAT)
+        pass
+    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp_path = Path(raw_tmp)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(
+                dict(data), handle, default_flow_style=False, sort_keys=False
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        path.chmod(0o600)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    return path
 
 
 def storage_endpoint_url(endpoint: str) -> str:

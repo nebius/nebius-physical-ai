@@ -33,6 +33,21 @@ def _stub_hf_model_access(monkeypatch):
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _ok)
 
+    from npa.clients import storage_setup, storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    probe = StorageProbeResult(
+        True,
+        "ok",
+        "Writable S3 verified with a cleaned write/delete probe.",
+        cleanup_attempted=True,
+        cleanup_succeeded=True,
+    )
+    monkeypatch.setattr(storage_setup, "probe_storage_write", lambda **_kwargs: probe)
+    monkeypatch.setattr(
+        storage_validation, "probe_storage_write", lambda **_kwargs: probe
+    )
+
 
 @pytest.mark.parametrize(
     ("args", "expected"),
@@ -999,6 +1014,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
         bucket_max_size_bytes=0,
         bucket_storage_class="standard",
         on_status=None,
+        on_resource_created=None,
     ):
         bootstrap_calls.append(
             {
@@ -1012,6 +1028,16 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
         )
         if on_status:
             on_status("Setting up S3 bucket...")
+        if on_resource_created:
+            on_resource_created(
+                "service_account",
+                {"id": "serviceaccount-storage", "name": "lerobot-training"},
+            )
+            on_resource_created("bucket", {"name": bucket_name})
+            on_resource_created(
+                "access_key",
+                {"id": "accesskey-storage", "name": "lerobot-access-key"},
+            )
         return {
             "nebius_api_key": "AKIAPROVISIONED",
             "nebius_secret_key": "provisioned-secret",
@@ -1113,6 +1139,7 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
         bucket_max_size_bytes=0,
         bucket_storage_class="standard",
         on_status=None,
+        on_resource_created=None,
     ):
         sizes.append(bucket_max_size_bytes)
         return {
@@ -1158,7 +1185,7 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
 
     def fake_bootstrap(project_id, tenant_id, region, *, bucket_name=None,
                        bucket_max_size_bytes=0, bucket_storage_class="standard",
-                       on_status=None):
+                       on_status=None, on_resource_created=None):
         return {
             "nebius_api_key": "AKIA",
             "nebius_secret_key": "secret",
@@ -1381,7 +1408,7 @@ def test_configure_rerun_can_reprovision_storage_when_declined(monkeypatch, tmp_
 
     def fake_bootstrap(project_id, tenant_id, region, *, bucket_name=None,
                        bucket_max_size_bytes=0, bucket_storage_class="standard",
-                       on_status=None):
+                       on_status=None, on_resource_created=None):
         calls.append({"bucket_name": bucket_name})
         return {
             "nebius_api_key": "AK_new",
@@ -1489,6 +1516,7 @@ def _bootstrap_capture(calls: list[dict]):
         bucket_max_size_bytes=0,
         bucket_storage_class="standard",
         on_status=None,
+        on_resource_created=None,
     ):
         calls.append(
             {
@@ -1544,6 +1572,11 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     assert result.exit_code == 0, result.output
     assert "Skip object storage for now and finish setup?" in result.output
     assert "Skipping object storage" in result.output
+    assert (
+        "Setup incomplete: writable object storage is not configured" in result.output
+    )
+    assert "provision-if-absent --project" in result.output
+    assert "Setup complete" not in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_tok"
     # No storage stanza (or empty) was written.

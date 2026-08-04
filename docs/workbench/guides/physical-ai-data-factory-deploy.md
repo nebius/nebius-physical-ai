@@ -65,6 +65,7 @@ needs no dataset: `seed_default_input=true` seeds eight captionable frames, and
 the GPU runner assembles those frames into the short clip that conditions Cosmos.
 
 ```bash
+set -eu
 set -o pipefail
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
@@ -84,7 +85,10 @@ REGISTRY="${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
 RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
 
 npa workbench health preflight
-npa provision-if-absent --project "$PROJECT"
+npa provision-if-absent --project "$PROJECT" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand
 npa skypilot bootstrap
 
 # Reload the kube context written by provision-if-absent, discover its actual
@@ -337,7 +341,10 @@ is missing (dry-run first):
 
 ```bash
 npa provision-if-absent --project <alias> --dry-run --output-format json
-npa provision-if-absent --project <alias>            # real
+npa provision-if-absent --project <alias> \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand          # real
 ```
 
 The default cluster it provisions is the small FTUE shape — **1× GPU node
@@ -348,6 +355,10 @@ shared `/mnt/data`, opt in via `deploy/cluster` tfvars/flags (see
 [`deploy/cluster/README.md`](../../../deploy/cluster/README.md): `gpu_nodes_count`
 / multi-GPU `gpu_nodes_preset` / `enable_gpu_cluster`, and `enable_filestore` or
 `existing_filestore`).
+
+The documented path uses on-demand nodes. If that capacity is unavailable,
+replace `--on-demand` with `--preemptible`; Nebius may reclaim a preemptible GPU
+node mid-stage, so rely on PAIDF's durable S3 manifests and resume the run.
 
 The container registry must be reachable for the workbench images. Point
 `NPA_REGISTRY` (or the project `registry_id`) at your registry, e.g.

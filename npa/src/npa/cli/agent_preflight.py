@@ -140,6 +140,52 @@ def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
     )
 
 
+def _agent_storage_result(project: str = "") -> CheckResult:
+    """Require and prove writable artifact storage for agent deployment."""
+
+    from npa.clients.config import (
+        ConfigError,
+        resolve_environment,
+        resolve_project_storage,
+    )
+    from npa.clients.storage_validation import probe_storage_write
+    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
+
+    try:
+        storage = resolve_project_storage(project or None)
+        environment = resolve_environment(project or None)
+    except ConfigError as exc:
+        return CheckResult(
+            name="writable_s3",
+            status=FAIL,
+            summary="Writable S3 configuration cannot be resolved for agent deploy.",
+            remedy=(
+                "Run `npa provision-if-absent --project <alias> --skip-k8s` "
+                "to reconcile storage before deploying the agent."
+            ),
+            details=(str(exc),),
+        )
+    probe = probe_storage_write(
+        bucket=storage.checkpoint_bucket,
+        endpoint_url=storage.endpoint_url,
+        access_key_id=storage.aws_access_key_id,
+        secret_access_key=storage.aws_secret_access_key,
+        region=str(getattr(environment, "region", "") or ""),
+        prefix="npa-agent/preflight",
+    )
+    if probe.ok:
+        return CheckResult(name="writable_s3", status=PASS, summary=probe.summary)
+    return CheckResult(
+        name="writable_s3",
+        status=FAIL,
+        summary=probe.summary,
+        remedy=(
+            "Run `npa provision-if-absent --project <alias> --skip-k8s`, then retry "
+            "`npa agent preflight`."
+        ),
+    )
+
+
 def _render_agent_checks(results: list[CheckResult], *, output_json: bool) -> bool:
     """Render agent preflight CheckResults; return True when any FAIL is present.
 

@@ -166,5 +166,5 @@ def _assert_configure_provision_dry_run(
     assert provision.exit_code == 0, provision.output
     payload = json.loads(provision.output)
     assert payload["status"] == "ok"
-    assert "s3:dry-run ensure bucket ci-bucket" in payload["actions"]
+    assert "s3:dry-run ensure writable bucket ci-bucket" in payload["actions"]
     assert "k8s:dry-run terraform apply deploy/cluster" in payload["actions"]

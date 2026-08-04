@@ -43,6 +43,7 @@ from npa.cli.agent_inventory import agent_list_cmd
 from npa.cli.agent_preflight import (
     _agent_hard_prereq_results,
     _agent_nebius_auth_result,
+    _agent_storage_result,
     _agent_token_factory_result,
     _render_agent_checks,
 )
@@ -8440,6 +8441,11 @@ def _health(
 
 @app.command("preflight")
 def preflight_cmd(
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Configured project alias whose writable S3 must be verified.",
+    ),
     ssh_public_key_path: str = typer.Option(
         "~/.ssh/id_ed25519.pub",
         "--ssh-public-key-path",
@@ -8462,6 +8468,7 @@ def preflight_cmd(
         results.append(_agent_public_ip_quota_result())
         results.append(_agent_compute_instance_quota_result())
     results.append(_agent_ssh_egress_result())
+    results.append(_agent_storage_result(project))
     results.append(_agent_token_factory_result())
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
@@ -8598,15 +8605,14 @@ def deploy_cmd(
         )
         env_region = real_region
 
-    # Fail fast on cheap, side-effect-free prerequisites BEFORE any cloud IAM
-    # side effects or Terraform apply: a missing terraform binary or SSH key
-    # otherwise surfaces mid-run (as a raw Terraform file() error or a late
-    # provisioner failure) after infrastructure has already been touched. Surface
-    # the Token Factory warning here too, rather than only after the VM exists.
+    # Fail before IAM/Terraform. Storage writes and removes one isolated probe;
+    # missing binaries, SSH, or writable storage otherwise surface after cloud
+    # changes. Surface the Token Factory warning before the VM exists too.
     # Resolve the deploy LLM creds once and thread them through to the VM
     # bootstrap below.
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     prereq_results = _agent_hard_prereq_results(ssh_public_key_path)
+    prereq_results.append(_agent_storage_result(project))
     tf_key_result = _agent_token_factory_result(tf_api_key)
     for result in prereq_results:
         if result.status == "FAIL":

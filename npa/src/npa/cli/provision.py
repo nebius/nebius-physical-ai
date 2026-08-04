@@ -43,6 +43,18 @@ def provision_if_absent_cmd(
         "--cpu-nodes",
         help="Number of CPU nodes, matching `npa cluster up`. -1 keeps the configured value.",
     ),
+    cpu_platform: str = typer.Option(
+        "", "--cpu-platform", help="CPU node platform, matching `npa cluster up`."
+    ),
+    cpu_preset: str = typer.Option(
+        "", "--cpu-preset", help="CPU node preset, matching `npa cluster up`."
+    ),
+    gpu_platform: str = typer.Option(
+        "", "--gpu-platform", help="GPU node platform, matching `npa cluster up`."
+    ),
+    gpu_preset: str = typer.Option(
+        "", "--gpu-preset", help="GPU node preset, matching `npa cluster up`."
+    ),
     preemptible: bool | None = typer.Option(
         None,
         "--preemptible/--on-demand",
@@ -70,6 +82,10 @@ def provision_if_absent_cmd(
         timeout=timeout,
         gpu_nodes=gpu_nodes,
         cpu_nodes=cpu_nodes,
+        cpu_platform=cpu_platform,
+        cpu_preset=cpu_preset,
+        gpu_platform=gpu_platform,
+        gpu_preset=gpu_preset,
         preemptible=preemptible,
     )
     payload = result.to_dict()

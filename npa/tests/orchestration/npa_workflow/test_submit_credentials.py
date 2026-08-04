@@ -47,7 +47,10 @@ def test_selected_project_endpoint_and_credentials_are_resolved(monkeypatch) -> 
         "AWS_SECRET_ACCESS_KEY": "project-sk",
         "HF_TOKEN": "configured-hf",
     }
+    assert context.access_key_id == "project-ak"
+    assert context.secret_access_key == "project-sk"
     assert "project-sk" not in repr(context)
+    assert "project-ak" not in repr(context)
 
 
 def test_explicit_environment_and_endpoint_take_precedence(monkeypatch) -> None:

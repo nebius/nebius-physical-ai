@@ -495,6 +495,12 @@ def submit_cmd(
                 plan_only=plan_only,
                 infra=infra,
                 self_provisions=deploy_if_absent and _spec_self_provisions(yaml_path),
+                requires_s3=_spec_requires_s3(yaml_path),
+                s3_endpoint=submit_credentials.endpoint_url,
+                s3_access_key_id=getattr(submit_credentials, "access_key_id", ""),
+                s3_secret_access_key=getattr(
+                    submit_credentials, "secret_access_key", ""
+                ),
             )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
@@ -1335,6 +1341,36 @@ def _spec_self_provisions(yaml_path: Path) -> bool:
         return False
 
 
+def _spec_requires_s3(yaml_path: Path) -> bool:
+    """Whether a workflow declares an S3 artifact/data contract.
+
+    This is intentionally spec-aware rather than a blanket submit requirement:
+    CPU/local or image-only workflows without S3 handoffs must remain usable
+    when object storage is not configured.
+    """
+
+    import yaml as _yaml
+
+    try:
+        document = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        return False
+
+    def _walk(value) -> bool:
+        if isinstance(value, dict):
+            return any(_walk(item) for item in value.values())
+        if isinstance(value, list):
+            return any(_walk(item) for item in value)
+        if not isinstance(value, str):
+            return False
+        normalized = value.strip().lower()
+        return normalized.startswith("s3://") or (
+            "s3://" in normalized and ("{bucket}" in normalized or "${" in normalized)
+        )
+
+    return _walk(document)
+
+
 def _submit_prerequisites(
     spec_config: dict,
     *,
@@ -1343,6 +1379,10 @@ def _submit_prerequisites(
     plan_only: bool,
     infra: str = "",
     self_provisions: bool = False,
+    requires_s3: bool = False,
+    s3_endpoint: str = "",
+    s3_access_key_id: str = "",
+    s3_secret_access_key: str = "",
 ) -> list[tuple[str, str]]:
     """Return ``[(missing, remedy)]`` for an npa.workflow submit.
 
@@ -1389,13 +1429,31 @@ def _submit_prerequisites(
         )
 
     bucket = str((spec_config or {}).get("bucket", "") or "")
-    if not plan_only and _is_placeholder_bucket(bucket):
+    if not plan_only and requires_s3 and _is_placeholder_bucket(bucket):
         missing.append(
             (
                 f"config.bucket is the spec placeholder {bucket or '<unset>'!r}",
                 "pass --var bucket=<your-bucket>",
             )
         )
+
+    if not plan_only and requires_s3 and not _is_placeholder_bucket(bucket):
+        from npa.clients.storage_validation import probe_storage_write
+
+        probe = probe_storage_write(
+            bucket=bucket,
+            endpoint_url=s3_endpoint,
+            access_key_id=s3_access_key_id,
+            secret_access_key=s3_secret_access_key,
+        )
+        if not probe.ok:
+            missing.append(
+                (
+                    f"writable S3 for this workflow ({probe.summary})",
+                    "run `npa provision-if-absent --project <alias> --skip-k8s`, "
+                    "then retry; the probe object is deleted before a successful preflight",
+                )
+            )
 
     # Catch an `--infra k8s/<context>` that names a context the kubeconfig does
     # not define, up front. Otherwise `sky jobs launch` fails late with a long

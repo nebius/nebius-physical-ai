@@ -34,9 +34,22 @@ def satisfied_preflight(mocker, monkeypatch):
     invocation covers the placeholder-bucket check.
     """
     import npa.orchestration.skypilot._bin as skybin
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
 
     mocker.patch.object(skybin, "resolve_sky_bin", lambda _bin: "/usr/bin/sky")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://rt-bucket/npa-src/npa")
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
 
 
 @pytest.fixture()

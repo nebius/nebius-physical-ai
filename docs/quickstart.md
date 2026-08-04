@@ -181,6 +181,19 @@ cannot) access — see [§4e](#4e-accept-and-verify-gated-model-access):
 npa configure
 ```
 
+Storage is committed only after a cleaned write/delete probe succeeds. If a
+provider step or the probe fails, configure prints **Setup incomplete**, keeps
+owner-only creation provenance in `~/.npa/credentials.yaml`, and prints the
+restart-safe recovery command:
+
+```bash
+npa provision-if-absent --project <PROJECT_ALIAS> --skip-k8s
+```
+
+That recovery reconciles storage before any cluster work. It rolls back only
+resources conclusively created by the failing invocation; reused, shared, or
+ownership-unproven resources are preserved.
+
 You do not need to run `nebius profile create` manually; the Nebius CLI binary
 must still be installed because `npa` invokes it internally.
 

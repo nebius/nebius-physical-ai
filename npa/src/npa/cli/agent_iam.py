@@ -18,6 +18,170 @@ from typing import Any, Callable
 StatusFn = Callable[[str], None]
 
 
+def _agent_iam_records() -> tuple[dict[str, Any], Any]:
+    """Load the owner-only agent IAM journal and return it with its path."""
+
+    import yaml
+
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    if not CREDENTIALS_PATH.exists():
+        return {}, CREDENTIALS_PATH
+    try:
+        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        data = {}
+    return (data if isinstance(data, dict) else {}), CREDENTIALS_PATH
+
+
+def record_agent_iam_resource(
+    project_id: str, kind: str, metadata: dict[str, str], *, status: str = "in_progress"
+) -> None:
+    """Atomically record exact agent IAM creation metadata."""
+
+    from datetime import datetime, timezone
+
+    from npa.clients.credentials import write_private_yaml
+
+    data, path = _agent_iam_records()
+    root = data.get("agent_iam")
+    root = dict(root) if isinstance(root, dict) else {"version": 1}
+    projects = root.get("projects")
+    projects = dict(projects) if isinstance(projects, dict) else {}
+    record = projects.get(project_id)
+    record = dict(record) if isinstance(record, dict) else {}
+    resources = record.get("resources")
+    resources = dict(resources) if isinstance(resources, dict) else {}
+    clean = {key: str(value or "").strip() for key, value in metadata.items() if value}
+    clean.update(
+        {
+            "created_by": "npa",
+            "project_id": project_id,
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+    )
+    if kind == "access_key":
+        keys = resources.get("access_keys")
+        keys = dict(keys) if isinstance(keys, dict) else {}
+        keys[clean["id"]] = clean
+        resources["access_keys"] = keys
+    elif kind == "service_account":
+        resources[kind] = clean
+    else:
+        raise ValueError(f"unsupported agent IAM resource kind: {kind}")
+    record.update({"status": status, "resources": resources})
+    projects[project_id] = record
+    root.update({"version": 1, "projects": projects})
+    data["agent_iam"] = root
+    write_private_yaml(path, data)
+
+
+def mark_agent_iam_status(project_id: str, status: str) -> None:
+    from npa.clients.credentials import write_private_yaml
+
+    data, path = _agent_iam_records()
+    root = data.get("agent_iam")
+    if not isinstance(root, dict):
+        return
+    projects = root.get("projects")
+    if not isinstance(projects, dict) or not isinstance(projects.get(project_id), dict):
+        return
+    projects[project_id]["status"] = status
+    write_private_yaml(path, data)
+
+
+def agent_iam_owned(project_id: str, account_id: str) -> bool:
+    data, _path = _agent_iam_records()
+    root = data.get("agent_iam")
+    projects = root.get("projects") if isinstance(root, dict) else None
+    record = projects.get(project_id) if isinstance(projects, dict) else None
+    resources = record.get("resources") if isinstance(record, dict) else None
+    account = resources.get("service_account") if isinstance(resources, dict) else None
+    return bool(
+        isinstance(account, dict)
+        and account.get("created_by") == "npa"
+        and account.get("project_id") == project_id
+        and account.get("name") == "npa-agent"
+        and account.get("id") == account_id
+    )
+
+
+def clear_agent_iam_record(project_id: str, account_id: str) -> bool:
+    """Remove the journal only when it names the exact deleted account."""
+
+    from npa.clients.credentials import write_private_yaml
+
+    data, path = _agent_iam_records()
+    root = data.get("agent_iam")
+    projects = root.get("projects") if isinstance(root, dict) else None
+    record = projects.get(project_id) if isinstance(projects, dict) else None
+    resources = record.get("resources") if isinstance(record, dict) else None
+    account = resources.get("service_account") if isinstance(resources, dict) else None
+    if (
+        not isinstance(root, dict)
+        or not isinstance(projects, dict)
+        or not isinstance(account, dict)
+        or account.get("id") != account_id
+    ):
+        return False
+    projects.pop(project_id, None)
+    if projects:
+        root["projects"] = projects
+        data["agent_iam"] = root
+    else:
+        data.pop("agent_iam", None)
+    write_private_yaml(path, data)
+    return True
+
+
+def remove_agent_iam_resource(project_id: str, kind: str, resource_id: str) -> bool:
+    """Forget one conclusively removed creation; return whether resources remain."""
+
+    from npa.clients.credentials import write_private_yaml
+
+    data, path = _agent_iam_records()
+    root = data.get("agent_iam")
+    projects = root.get("projects") if isinstance(root, dict) else None
+    record = projects.get(project_id) if isinstance(projects, dict) else None
+    resources = record.get("resources") if isinstance(record, dict) else None
+    if (
+        not isinstance(root, dict)
+        or not isinstance(projects, dict)
+        or not isinstance(record, dict)
+        or not isinstance(resources, dict)
+    ):
+        return False
+    resources = dict(resources)
+    if kind == "access_key":
+        keys = resources.get("access_keys")
+        keys = dict(keys) if isinstance(keys, dict) else {}
+        saved = keys.get(resource_id)
+        if isinstance(saved, dict) and saved.get("project_id") == project_id:
+            keys.pop(resource_id, None)
+        if keys:
+            resources["access_keys"] = keys
+        else:
+            resources.pop("access_keys", None)
+    elif kind == "service_account":
+        saved = resources.get("service_account")
+        if isinstance(saved, dict) and saved.get("id") == resource_id:
+            resources.pop("service_account", None)
+    else:
+        raise ValueError(f"unsupported agent IAM resource kind: {kind}")
+    if resources:
+        record["resources"] = resources
+        projects[project_id] = record
+    else:
+        projects.pop(project_id, None)
+    if projects:
+        root["projects"] = projects
+        data["agent_iam"] = root
+    else:
+        data.pop("agent_iam", None)
+    write_private_yaml(path, data)
+    return bool(resources)
+
+
 def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
     """Return the ``npa-agent`` service account and its access keys, if any.
 
@@ -46,9 +210,11 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             keys = []
     return {
+        "project_id": project_id,
         "service_account_id": sa_id,
         "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
         "access_keys": keys,
+        "owned_by_npa": agent_iam_owned(project_id, sa_id),
     }
 
 
@@ -75,6 +241,7 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
             on_status(f"Warning: could not delete service account {sa_id}: {exc}")
         else:
             deleted.append(f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})")
+            clear_agent_iam_record(str(leftovers.get("project_id", "") or ""), sa_id)
     for item in deleted:
         on_status(f"Deleted {item}.")
     return deleted
@@ -118,8 +285,14 @@ def report_agent_iam(
     if not leftovers.get("service_account_id"):
         return []
     last_agent = remaining_agents == 0
-    if purge and last_agent:
+    owned = bool(leftovers.get("owned_by_npa"))
+    if purge and last_agent and owned:
         return purge_agent_iam(leftovers, on_status=on_status)
+    if purge and last_agent and not owned:
+        on_status(
+            "Keeping the npa-agent service account: its familiar name is not proof "
+            "that NPA created it. No IAM resources were deleted."
+        )
     if purge and not last_agent:
         on_status(
             "Keeping the npa-agent service account: "
@@ -143,7 +316,7 @@ def format_iam_leftovers(leftovers: dict[str, Any], *, project_id: str, last_age
         + (f" and {len(keys)} access key(s)" if keys else "")
         + ".",
     ]
-    if last_agent:
+    if last_agent and leftovers.get("owned_by_npa"):
         lines.append(
             "  This project has no agents left, so nothing needs it. Remove it with "
             "`npa agent destroy --purge-iam` next time, or now:"
@@ -151,6 +324,11 @@ def format_iam_leftovers(leftovers: dict[str, Any], *, project_id: str, last_age
         for key_id in keys:
             lines.append(f"    nebius iam v2 access-key delete --id {key_id}")
         lines.append(f"    nebius iam service-account delete --id {sa_id}")
+    elif last_agent:
+        lines.append(
+            "  NPA has no creation provenance for this account. Verify ownership "
+            "and dependencies outside NPA before deleting it manually."
+        )
     else:
         lines.append(
             "  Other agents in this project still use it, so it was kept. "

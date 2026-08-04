@@ -529,18 +529,11 @@ def config_permissions_warning(path: Path | None = None) -> str:
 
 def write_config(data: dict[str, Any]) -> Path:
     """Deep-merge *data* into ``~/.npa/config.yaml`` and write."""
+    from npa.clients.credentials import write_private_yaml
+
     existing = _load_yaml()
     merged = _deep_merge(existing, data)
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w") as f:
-        yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
-    CONFIG_PATH.chmod(0o600)
-    # The directory holds credentials.yaml, per-agent auth.env secrets and
-    # cluster kubeconfigs, so keep it owner-only too.
-    try:
-        CONFIG_PATH.parent.chmod(0o700)
-    except OSError:  # pragma: no cover - unusual filesystems (e.g. mounted FAT)
-        pass
+    write_private_yaml(CONFIG_PATH, merged)
     return CONFIG_PATH
 
 
@@ -551,14 +544,9 @@ def _write_config_replace(data: dict[str, Any]) -> Path:
     remove a stanza (a deleted bucket's ``terraform_state``, an uninstalled
     SkyPilot ``sky_bin``, a forgotten project) rewrite the whole file instead.
     """
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-    CONFIG_PATH.chmod(0o600)
-    try:
-        CONFIG_PATH.parent.chmod(0o700)
-    except OSError:  # pragma: no cover - unusual filesystems (e.g. mounted FAT)
-        pass
+    from npa.clients.credentials import write_private_yaml
+
+    write_private_yaml(CONFIG_PATH, data)
     return CONFIG_PATH
 
 

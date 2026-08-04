@@ -555,6 +555,24 @@ def test_node_count_flag_overrides_tfvars_and_beats_it_with_var() -> None:
     assert tf_mod._node_count_var_args(tfvars, "gpu_nodes_count", 0) == ["-var", "gpu_nodes_count=0"]
 
 
+def test_node_shape_flags_override_tfvars_and_emit_explicit_vars() -> None:
+    tfvars = {
+        "cpu_nodes_platform": "old-cpu",
+        "gpu_nodes_preset": "old-gpu-preset",
+    }
+
+    tf_mod._apply_string_override(tfvars, "cpu_nodes_platform", "cpu-d3")
+    tf_mod._apply_string_override(tfvars, "gpu_nodes_preset", "1gpu-24vcpu-218gb")
+
+    assert tfvars["cpu_nodes_platform"] == "cpu-d3"
+    assert tfvars["gpu_nodes_preset"] == "1gpu-24vcpu-218gb"
+    assert tf_mod._string_var_args("gpu_nodes_platform", "gpu-rtx6000") == [
+        "-var",
+        "gpu_nodes_platform=gpu-rtx6000",
+    ]
+    assert tf_mod._string_var_args("gpu_nodes_platform", "") == []
+
+
 def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)

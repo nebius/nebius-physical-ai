@@ -19,6 +19,10 @@ Options
 --sky-smoke  --skip-sky-smoke  Run a SkyPilot GPU smoke task. [default: skip-sky-smoke]
 --gpu-nodes  <int>  Number of GPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1]
 --cpu-nodes  <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1]
+--cpu-platform  <str>  CPU node platform, matching `npa cluster up`.
+--cpu-preset  <str>  CPU node preset, matching `npa cluster up`.
+--gpu-platform  <str>  GPU node platform, matching `npa cluster up`.
+--gpu-preset  <str>  GPU node preset, matching `npa cluster up`.
 --preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. Often the only way to get several GPUs; a reclaim stops them mid-run.
 --dry-run  Resolve settings and print intended actions only.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
@@ -41,6 +45,10 @@ Options
 | `--sky-smoke` | --skip-sky-smoke  Run a SkyPilot GPU smoke task. [default: skip-sky-smoke] |
 | `--gpu-nodes` | <int>  Number of GPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1] |
 | `--cpu-nodes` | <int>  Number of CPU nodes, matching `npa cluster up`. -1 keeps the configured value. [default: -1] |
+| `--cpu-platform` | <str>  CPU node platform, matching `npa cluster up`. |
+| `--cpu-preset` | <str>  CPU node preset, matching `npa cluster up`. |
+| `--gpu-platform` | <str>  GPU node platform, matching `npa cluster up`. |
+| `--gpu-preset` | <str>  GPU node preset, matching `npa cluster up`. |
 | `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. Often the only way to get several GPUs; a reclaim stops them mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |

@@ -409,7 +409,9 @@ def _iam_stubs(monkeypatch, *, sa_id: str = "serviceaccount-agent", keys=("acces
     return deleted
 
 
-def test_agent_iam_leftovers_are_reported_with_the_delete_commands(monkeypatch) -> None:
+def test_agent_iam_leftovers_without_provenance_are_reported_but_protected(
+    monkeypatch,
+) -> None:
     from npa.cli.agent_iam import report_agent_iam
 
     _iam_stubs(monkeypatch)
@@ -423,14 +425,17 @@ def test_agent_iam_leftovers_are_reported_with_the_delete_commands(monkeypatch) 
     joined = "\n".join(lines)
     assert "serviceaccount-agent" in joined
     assert "1 access key(s)" in joined
-    assert "nebius iam v2 access-key delete --id accesskey-1" in joined
-    assert "nebius iam service-account delete --id serviceaccount-agent" in joined
+    assert "no creation provenance" in joined
+    assert "nebius iam v2 access-key delete" not in joined
+    assert "nebius iam service-account delete" not in joined
 
 
 def test_agent_iam_purge_deletes_keys_then_the_account(monkeypatch) -> None:
     from npa.cli.agent_iam import report_agent_iam
 
     deleted = _iam_stubs(monkeypatch, keys=("accesskey-1", "accesskey-2"))
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
     lines: list[str] = []
 
     reported = report_agent_iam(
@@ -490,9 +495,11 @@ def test_agent_destroy_keep_iam_names_the_delete_commands(monkeypatch, tmp_path:
 
     assert result.exit_code == 0, result.output
     assert "destroyed: prod/agent" in result.output
-    # The leftovers are named, with the commands that remove them.
+    # The leftovers are named, but an ownership-unproven familiar name is never
+    # turned into deletion instructions.
     assert "serviceaccount-agent" in result.output
-    assert "nebius iam service-account delete" in result.output
+    assert "no creation provenance" in result.output
+    assert "nebius iam service-account delete" not in result.output
 
 
 def test_agent_destroy_purge_iam_removes_the_account(monkeypatch, tmp_path: Path) -> None:
@@ -517,6 +524,8 @@ def test_agent_destroy_purge_iam_removes_the_account(monkeypatch, tmp_path: Path
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
     monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
     deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
 
     result = runner.invoke(
         app, ["agent", "destroy", "--project", "prod", "--yes", "--purge-iam"]

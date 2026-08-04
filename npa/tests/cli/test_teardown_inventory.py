@@ -434,6 +434,8 @@ def test_agent_destroy_purges_iam_by_default(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
     monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
     deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
 
     result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes"])
 
@@ -448,6 +450,7 @@ def test_agent_destroy_keep_iam_only_reports(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
     monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
     deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
 
     result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes", "--keep-iam"])
 
@@ -468,6 +471,8 @@ def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
     monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
     deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
 
     result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes"])
 

@@ -14,6 +14,8 @@ from npa.clients.credentials import load_credentials, shared_credential_env, sto
 class SubmitCredentialContext:
     endpoint_url: str = ""
     bucket: str = ""
+    access_key_id: str = field(default="", repr=False)
+    secret_access_key: str = field(default="", repr=False)
     secret_values: Mapping[str, str] = field(default_factory=dict, repr=False)
     missing: tuple[str, ...] = ()
 
@@ -85,6 +87,18 @@ def resolve_submit_credentials(
     return SubmitCredentialContext(
         endpoint_url=storage_endpoint_url(endpoint),
         bucket=bucket,
+        access_key_id=str(
+            env.get("AWS_ACCESS_KEY_ID")
+            or project_storage.aws_access_key_id
+            or configured.s3_access_key_id
+            or ""
+        ),
+        secret_access_key=str(
+            env.get("AWS_SECRET_ACCESS_KEY")
+            or project_storage.aws_secret_access_key
+            or configured.s3_secret_access_key
+            or ""
+        ),
         secret_values=resolved,
         missing=tuple(missing),
     )

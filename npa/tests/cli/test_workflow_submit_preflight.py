@@ -31,6 +31,20 @@ def _no_ambient_src(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
 
 
 def _submit(*args: str):
@@ -121,6 +135,81 @@ def test_skip_preflight_bypasses_the_checks(mocker) -> None:
 
     # Not the preflight error: the run got past it (and then failed later).
     assert "missing prerequisites" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("code", "summary"),
+    [
+        (
+            "missing_configuration",
+            "Writable S3 is not configured; missing AWS credentials.",
+        ),
+        ("bucket_unreachable", "S3 write probe could not find the configured bucket."),
+        ("forbidden", "S3 write probe was forbidden."),
+        ("cleanup_failed", "S3 probe cleanup failed; a temporary object remains."),
+    ],
+)
+def test_s3_workflow_requires_a_successful_cleaned_write_probe(
+    monkeypatch, code, summary
+) -> None:
+    from npa.cli.workbench.workflow import _submit_prerequisites
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(False, code, summary),
+    )
+
+    missing = _submit_prerequisites(
+        {"bucket": "real-bucket"},
+        sky_bin="/bin/true",
+        image="registry.example/npa-tool:v1",
+        plan_only=False,
+        requires_s3=True,
+        s3_endpoint="https://storage.example",
+        s3_access_key_id="access",
+        s3_secret_access_key="secret",
+    )
+
+    assert any(summary in item for item, _remedy in missing)
+    assert any("provision-if-absent" in remedy for _item, remedy in missing)
+
+
+def test_non_s3_workflow_does_not_probe_or_require_storage(monkeypatch) -> None:
+    from npa.cli.workbench.workflow import _submit_prerequisites
+    from npa.clients import storage_validation
+
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a non-S3 workflow must not probe storage")
+        ),
+    )
+
+    missing = _submit_prerequisites(
+        {},
+        sky_bin="/bin/true",
+        image="registry.example/npa-tool:v1",
+        plan_only=False,
+        requires_s3=False,
+    )
+
+    assert missing == []
+
+
+def test_storage_requirement_is_derived_from_the_workflow_contract(tmp_path) -> None:
+    from npa.cli.workbench.workflow import _spec_requires_s3
+
+    s3_spec = tmp_path / "s3.yaml"
+    s3_spec.write_text("config:\n  output: s3://{{config.bucket}}/results/\n")
+    local_spec = tmp_path / "local.yaml"
+    local_spec.write_text("config:\n  bucket: local-directory\n  output: /tmp/results\n")
+
+    assert _spec_requires_s3(s3_spec) is True
+    assert _spec_requires_s3(local_spec) is False
 
 
 def test_image_override_satisfies_the_npa_source_requirement(

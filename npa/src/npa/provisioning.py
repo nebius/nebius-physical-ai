@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 
 from npa.clients import config as config_module
 from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
-from npa.clients.nebius import ensure_bucket
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 
 
@@ -47,30 +46,92 @@ def provision_if_absent(
     timeout: int = 120,
     gpu_nodes: int = -1,
     cpu_nodes: int = -1,
+    cpu_platform: str = "",
+    cpu_preset: str = "",
+    gpu_platform: str = "",
+    gpu_preset: str = "",
     preemptible: bool | None = None,
 ) -> ProvisionIfAbsentResult:
-    """Ensure configured S3 and Kubernetes exist, without teardown or mutation."""
+    """Ensure configured S3 and Kubernetes exist without deleting resources."""
     alias, environment, storage, registry = _resolve_project_runtime(project)
     context = context_name.strip() or cluster_name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
     actions: list[str] = []
     warnings: list[str] = []
 
+    storage_ready = skip_s3
+    storage_bucket = storage.checkpoint_bucket
+    storage_endpoint = storage.endpoint_url
     if skip_s3:
         actions.append("s3:skipped")
     else:
-        bucket_name = _bucket_name(storage.checkpoint_bucket)
-        if not bucket_name:
-            warnings.append("s3 bucket is not configured")
-        elif not environment.project_id:
-            warnings.append("project_id is required to ensure S3")
-        elif dry_run:
-            actions.append(f"s3:dry-run ensure bucket {bucket_name}")
-        else:
-            ensure_bucket(environment.project_id, bucket_name)
-            actions.append(f"s3:ensured bucket {bucket_name}")
+        from npa.clients.nebius import bucket_name_for, redact_nebius_output
+        from npa.clients.storage_setup import provision_storage, storage_setup_record
+        from npa.clients.storage_validation import probe_storage_write
 
-    if skip_k8s:
+        bucket_name = _bucket_name(storage.checkpoint_bucket)
+        partial = (
+            storage_setup_record(environment.project_id)
+            if environment.project_id
+            else {}
+        )
+        bucket_name = bucket_name or str(partial.get("bucket_name", "") or "").strip()
+        if not bucket_name and environment.project_id and environment.tenant_id:
+            bucket_name = bucket_name_for(environment.tenant_id, environment.project_id)
+        if not environment.project_id:
+            warnings.append("project_id is required to ensure S3")
+        elif not environment.tenant_id:
+            warnings.append("tenant_id is required to ensure S3")
+        elif dry_run:
+            action = (
+                "reconcile"
+                if partial and partial.get("status") != "complete"
+                else "ensure"
+            )
+            actions.append(f"s3:dry-run {action} writable bucket {bucket_name}")
+            storage_ready = True
+        else:
+            probe = probe_storage_write(
+                bucket=storage.checkpoint_bucket,
+                endpoint_url=storage.endpoint_url,
+                access_key_id=storage.aws_access_key_id,
+                secret_access_key=storage.aws_secret_access_key,
+                region=environment.region,
+            )
+            if probe.ok:
+                storage_ready = True
+                actions.append(f"s3:verified writable bucket {bucket_name}")
+            else:
+                try:
+                    credentials, reconciled_probe = provision_storage(
+                        project_id=environment.project_id,
+                        tenant_id=environment.tenant_id,
+                        region=environment.region,
+                        bucket_name=bucket_name,
+                        project_alias=alias,
+                    )
+                except Exception as exc:  # noqa: BLE001 - return an actionable partial result
+                    warnings.append(
+                        "writable S3 reconciliation failed: "
+                        + redact_nebius_output(str(exc))
+                    )
+                    actions.append(
+                        "s3:partial; resume with `npa provision-if-absent"
+                        + (f" --project {alias}" if alias else "")
+                        + " --skip-k8s`"
+                    )
+                else:
+                    storage_ready = reconciled_probe.ok
+                    storage_bucket = f"s3://{credentials['s3_bucket'].strip().removeprefix('s3://').strip('/')}/"
+                    storage_endpoint = credentials["s3_endpoint"]
+                    # The transaction committed the newly validated credentials;
+                    # re-resolve so a following Terraform apply receives them.
+                    storage = config_module.resolve_project_storage(alias or None)
+                    actions.append(f"s3:reconciled writable bucket {bucket_name}")
+
+    if not storage_ready and not skip_s3:
+        actions.append("k8s:blocked until writable S3 is reconciled")
+    elif skip_k8s:
         actions.append("k8s:skipped")
     elif _has_cached_kubeconfig(context, kubeconfig_path):
         actions.append(f"k8s:reused kubeconfig {kubeconfig_path}")
@@ -84,6 +145,16 @@ def provision_if_absent(
                 if count >= 0
             ]
             + ([f"preemptible={str(bool(preemptible)).lower()}"] if preemptible is not None else [])
+            + [
+                f"{name}={value.strip()}"
+                for name, value in (
+                    ("cpu_platform", cpu_platform),
+                    ("cpu_preset", cpu_preset),
+                    ("gpu_platform", gpu_platform),
+                    ("gpu_preset", gpu_preset),
+                )
+                if value.strip()
+            ]
         )
         actions.append(
             f"k8s:dry-run terraform apply {terraform_dir or 'deploy/cluster'}"
@@ -108,21 +179,25 @@ def provision_if_absent(
                 capacity_block_group="",
                 gpu_nodes=gpu_nodes,
                 cpu_nodes=cpu_nodes,
+                cpu_platform=cpu_platform,
+                cpu_preset=cpu_preset,
+                gpu_platform=gpu_platform,
+                gpu_preset=gpu_preset,
                 preemptible=preemptible,
                 validation_timeout=60,
                 timeout=timeout,
             )
         actions.append(f"k8s:ensured terraform cluster {context}")
 
-    status = "ok" if not warnings else "partial"
+    status = "ok" if not warnings and (skip_s3 or storage_ready) else "partial"
     return ProvisionIfAbsentResult(
         status=status,
         project=alias,
         cluster_name=cluster_name,
         kubeconfig_path=str(kubeconfig_path),
         context_name=context,
-        storage_bucket=storage.checkpoint_bucket,
-        storage_endpoint=storage.endpoint_url,
+        storage_bucket=storage_bucket,
+        storage_endpoint=storage_endpoint,
         registry=registry,
         actions=actions,
         warnings=warnings,

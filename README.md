@@ -77,10 +77,15 @@ Nebius CLI, then run `npa configure` — it creates or reuses your Nebius CLI
 profile and writes `~/.npa/credentials.yaml` + `~/.npa/config.yaml`:
 
 ```bash
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
+  | NEBIUS_CLI_VERSION=0.12.254 bash
 export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc
 npa configure
 ```
+
+NPA is tested with Nebius CLI `0.12.254` (recommended) and `0.12.227`
+(compatible with a warning). Other versions are blocked before provider calls
+and the error prints the exact tested-version install command.
 
 `npa configure` prompts for optional model/inference tokens and links each
 one's setup guide inline. Create them step by step:
@@ -114,19 +119,71 @@ to go from a public dataset to a trained-and-evaluated policy on Nebius GPUs.
 
 ### The whole path, in order
 
-Running a workflow on Nebius GPUs needs a cluster, an orchestrator, and a copy of
-`npa` the workers can install. This is every step, once, on a fresh account:
+Running PAIDF on Nebius needs writable storage, the optional browser agent, a
+cluster, an orchestrator, and a copy of `npa` the workers can install. This
+restart-safe shell path uses only existing commands, stops at the first failed
+prerequisite, and defaults to on-demand capacity:
 
 ```bash
-set -o pipefail                                # or `| tee` hides a failing submit
-npa configure                                  # Nebius profile + ~/.npa files
-npa workbench health preflight                 # HF / NGC / S3 / Token Factory
-npa provision-if-absent --project <alias> --gpu-nodes 2   # bucket + GPU cluster if missing
-npa skypilot bootstrap                         # orchestrator (saves skypilot.sky_bin)
-npa workbench workflow preflight-images <spec.yaml>       # build/push anything missing
-npa workbench workflow stage-src --bucket <b>  # npa source for image-less steps
-npa workbench workflow submit <spec.yaml> --var bucket=<b> --infra k8s/<context> ...
+set -eu
+set -o pipefail
+PROJECT=<alias>
+CONTEXT=npa-cluster
+SPEC=npa/workflows/physical-ai-data-factory.yaml
+
+npa configure
+npa provision-if-absent --project "$PROJECT" --skip-k8s
+npa agent preflight --project "$PROJECT"
+npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1 \
+  || npa agent setup --project "$PROJECT" --name agent
+npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand
+npa skypilot bootstrap
+eval "$(npa configure --show --env)"
+BUCKET="$NPA_BUCKET"
+npa workbench workflow preflight-images "$SPEC"
+npa workbench workflow stage-src --bucket "$BUCKET"
+
+RUN_STATE="$HOME/.npa/paidf-first-run-id"
+if [ ! -s "$RUN_STATE" ]; then
+  mkdir -p "$(dirname "$RUN_STATE")"
+  date -u +paidf-first-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]' >"$RUN_STATE.tmp"
+  chmod 600 "$RUN_STATE.tmp" && mv "$RUN_STATE.tmp" "$RUN_STATE"
+fi
+RUN_ID="$(tr -d '\r\n' <"$RUN_STATE")"
+npa workbench workflow submit "$SPEC" --project "$PROJECT" \
+  --registry "${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}" \
+  --run-id "$RUN_ID" --runtime --resume --stage-src --var bucket="$BUCKET" \
+  --var seed_default_input=true --var n_augmentations=1 \
+  --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
+
+printf '%s\n' "Provisioned resources: writable S3 at $BUCKET (write/delete verified)."
+npa agent status --project "$PROJECT" --name agent
+npa cluster status --project "$PROJECT"
+npa workbench workflow status "$RUN_ID" --project "$PROJECT"
+printf '%s\n' \
+  "Running/cost-bearing when status says running: agent VM; 1 cpu-d3/8vcpu-32gb node; 1 gpu-rtx6000/1gpu-24vcpu-218gb node; active PAIDF jobs." \
+  "Absent: no resources beyond the storage, agent, cluster, and PAIDF state reported above were requested; absent resources remain absent." \
+  "This script performs no teardown. Exact teardown commands:" \
+  "Teardown (not run): npa workbench workflow cancel $RUN_ID --project $PROJECT" \
+  "Teardown (not run): npa agent destroy --project $PROJECT --name agent --yes" \
+  "Teardown (not run): npa cluster down --project $PROJECT --context $CONTEXT --force" \
+  "Teardown (not run): npa storage bucket delete --project $PROJECT --yes" \
+  "Teardown (not run, after bucket): npa storage service-account delete --project $PROJECT --yes"
 ```
+
+`provision-if-absent` now reconciles and write-probes S3 before it considers
+Kubernetes; interrupted configuration resumes from owner-only provenance in
+`~/.npa/credentials.yaml`. It never launches the cluster while required storage
+is missing. The command above asks for exactly one `cpu-d3` / `8vcpu-32gb` CPU
+node and one `gpu-rtx6000` / `1gpu-24vcpu-218gb` RTX PRO 6000 node. On-demand is
+the reliable default. If on-demand capacity is unavailable, rerun the same
+provision command with `--preemptible` instead of `--on-demand`; preemptible VMs
+can be reclaimed mid-run, so resume from durable S3 artifacts.
 
 **Easiest option: pull the OSS images from the public mirror instead of building them.**
 Every workbench image is published to `ghcr.io/nebius/nebius-physical-ai` and is
@@ -228,7 +285,7 @@ After `npa configure`, deploy interactively — no project/tenant ids to type,
 since it reuses the projects `configure` saved:
 
 ```bash
-npa agent preflight   # cheap prereq check (terraform, SSH key, Nebius auth)
+npa agent preflight   # includes a cleaned writable-S3 probe before any VM work
 npa agent setup       # pick a configured project → deploys the VM
 npa agent status --project <alias> --name agent
 ```

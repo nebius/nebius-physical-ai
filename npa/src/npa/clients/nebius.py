@@ -30,6 +30,12 @@ class NebiusError(Exception):
 # ── Low-level CLI runner ─────────────────────────────────────────────────
 
 _NEBIUS_VERSION_CHECKED = False
+_TESTED_NEBIUS_CLI_VERSIONS = frozenset({"0.12.227", "0.12.254"})
+_NEBIUS_CLI_INSTALL_URL = "https://storage.eu-north1.nebius.cloud/cli/install.sh"
+
+
+def _nebius_cli_install_remedy(version: str) -> str:
+    return f"curl -fsSL {_NEBIUS_CLI_INSTALL_URL} | NEBIUS_CLI_VERSION={version} bash"
 
 
 def _parse_cli_version(output: str) -> str | None:
@@ -44,7 +50,6 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
 
     if _NEBIUS_VERSION_CHECKED:
         return
-    _NEBIUS_VERSION_CHECKED = True
 
     try:
         expected = supported_tool_version("nebius-cli", __file__)
@@ -56,34 +61,40 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
             check=False,
         )
     except Exception as exc:
-        warnings.warn(
-            f"Could not check Nebius CLI version: {type(exc).__name__}: {exc}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        return
+        raise NebiusError(
+            "Could not check the Nebius CLI version. Reinstall the tested version: "
+            f"`{_nebius_cli_install_remedy(supported_tool_version('nebius-cli', __file__))}`"
+        ) from exc
 
     output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
     if result.returncode != 0:
-        warnings.warn(
-            f"Could not check Nebius CLI version (exit {result.returncode}): {output}",
-            RuntimeWarning,
-            stacklevel=2,
+        raise NebiusError(
+            f"Could not check the Nebius CLI version (exit {result.returncode}). "
+            "Reinstall the tested version: "
+            f"`{_nebius_cli_install_remedy(expected)}`"
         )
-        return
 
     actual = _parse_cli_version(output)
     if actual is None:
-        warnings.warn(
-            f"Could not parse Nebius CLI version from output: {output}",
-            RuntimeWarning,
-            stacklevel=2,
+        raise NebiusError(
+            "Could not parse the Nebius CLI version. Reinstall the tested version: "
+            f"`{_nebius_cli_install_remedy(expected)}`"
         )
-        return
 
+    tested = set(_TESTED_NEBIUS_CLI_VERSIONS)
+    tested.add(expected)
+    if actual not in tested:
+        supported = ", ".join(sorted(tested))
+        raise NebiusError(
+            f"Unsupported Nebius CLI {actual}; NPA has tested {supported}. "
+            f"Install {expected}: `{_nebius_cli_install_remedy(expected)}`"
+        )
+    _NEBIUS_VERSION_CHECKED = True
     if actual != expected:
         warnings.warn(
-            f"Nebius CLI version mismatch: expected {expected}; found {actual}",
+            f"Nebius CLI {actual} is tested-compatible, but {expected} is the "
+            f"recommended version. To align exactly: "
+            f"`{_nebius_cli_install_remedy(expected)}`",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -917,6 +928,41 @@ def _safe_access_key_field(value: str) -> str:
     return "" if field == "<no value>" else field
 
 
+_EMPTY_ACCESS_KEY_LIST_ERRORS = (
+    re.compile(r"\bitems\s+is\s+not\s+found\b", re.IGNORECASE),
+    re.compile(
+        r"(?:range|iterate).{0,80}\bitems\b.{0,80}\b(?:null|nil)\b", re.IGNORECASE
+    ),
+    re.compile(
+        r"\bitems\b.{0,80}\b(?:null|nil)\b.{0,80}(?:range|iterate)", re.IGNORECASE
+    ),
+)
+
+
+def _empty_access_key_list_error(message: str) -> bool:
+    """Whether JSONPath failed solely because an empty response omitted/null-ed items."""
+
+    safe = redact_nebius_output(str(message or ""))
+    lowered = safe.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "accessdenied",
+            "access denied",
+            "permissiondenied",
+            "permission denied",
+            "unauthenticated",
+            "unauthorized",
+            "forbidden",
+            "connection refused",
+            "deadline exceeded",
+            "timed out",
+        )
+    ):
+        return False
+    return any(pattern.search(safe) for pattern in _EMPTY_ACCESS_KEY_LIST_ERRORS)
+
+
 def _list_access_key_metadata(project_id: str) -> list[dict[str, Any]]:
     """Return a strict allowlist of access-key metadata from the Nebius CLI.
 
@@ -928,19 +974,29 @@ def _list_access_key_metadata(project_id: str) -> list[dict[str, Any]]:
 
     if not project_id:
         return []
-    output = _run(
-        [
-            "iam",
-            "v2",
-            "access-key",
-            "list",
-            "--parent-id",
-            project_id,
-            "--all",
-            "--format",
-            _ACCESS_KEY_LIST_JSONPATH,
-        ]
-    )
+    try:
+        output = _run(
+            [
+                "iam",
+                "v2",
+                "access-key",
+                "list",
+                "--parent-id",
+                project_id,
+                "--all",
+                "--format",
+                _ACCESS_KEY_LIST_JSONPATH,
+            ]
+        )
+    except NebiusError as exc:
+        # CLI 0.12.254 returns `{}` (or `items: null`) for an empty list and its
+        # kubectl-style JSONPath formatter exits non-zero before emitting rows.
+        # This narrow compatibility case is an empty inventory, not a provider
+        # failure. Every other error remains strict, and only allowlisted fields
+        # were requested from the CLI, so no secret-bearing JSON is captured.
+        if _empty_access_key_list_error(str(exc)):
+            return []
+        raise
     items: list[dict[str, Any]] = []
     for line in output.splitlines():
         if not line.strip():
@@ -1013,6 +1069,7 @@ def ensure_access_key(
     *,
     key_name: str = DEFAULT_ACCESS_KEY_NAME,
     description: str = "Access key for LeRobot S3 and API access",
+    on_created: Callable[[str, str], None] | None = None,
 ) -> tuple[str, str]:
     """Ensure an active access key exists, return (aws_access_key_id, aws_secret_access_key).
 
@@ -1053,6 +1110,8 @@ def ensure_access_key(
     new_key_id = create_data.get("metadata", {}).get("id", "")
     if not new_key_id:
         raise NebiusError("Access key creation did not return an ID")
+    if on_created:
+        on_created(str(new_key_id), create_name)
 
     # Fetch the AWS-compatible credentials.
     get_data = _run_json(["iam", "v2", "access-key", "get", "--id", new_key_id])
@@ -1154,6 +1213,7 @@ def ensure_bucket(
     *,
     max_size_bytes: int = 0,
     default_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
+    on_created: Callable[[str], None] | None = None,
 ) -> str:
     """Get or create an S3 bucket, return its name.
 
@@ -1192,6 +1252,8 @@ def ensure_bucket(
             f"{project_id}. Re-run `npa configure` and enter a different, "
             "unused bucket name."
         ) from exc
+    if on_created:
+        on_created(bucket_name)
     return bucket_name
 
 
@@ -1211,6 +1273,7 @@ def bootstrap_environment(
     service_account_description: str = "Service account for LeRobot training on Nebius",
     access_key_description: str = "Access key for LeRobot S3 and API access",
     on_status: Callable[[str], None] | None = None,
+    on_resource_created: Callable[[str, dict[str, str]], None] | None = None,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
 
@@ -1237,6 +1300,11 @@ def bootstrap_environment(
     def _record_created_service_account(account_id: str) -> None:
         nonlocal created_service_account_id
         created_service_account_id = account_id
+        if on_resource_created:
+            on_resource_created(
+                "service_account",
+                {"id": account_id, "name": service_account_name},
+            )
 
     sa_id = ensure_service_account(
         project_id,
@@ -1291,6 +1359,15 @@ def bootstrap_environment(
             bucket_name,
             max_size_bytes=bucket_max_size_bytes,
             default_storage_class=bucket_storage_class,
+            **(
+                {
+                    "on_created": lambda name: on_resource_created(
+                        "bucket", {"name": name}
+                    )
+                }
+                if on_resource_created
+                else {}
+            ),
         )
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
@@ -1314,6 +1391,16 @@ def bootstrap_environment(
             sa_id,
             key_name=access_key_name,
             description=access_key_description,
+            **(
+                {
+                    "on_created": lambda key_id, name: on_resource_created(
+                        "access_key",
+                        {"id": key_id, "name": name, "service_account_id": sa_id},
+                    )
+                }
+                if on_resource_created
+                else {}
+            ),
         )
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
@@ -1451,12 +1538,51 @@ def bootstrap_agent_environment(
     """
 
     on_status = kwargs.pop("on_status", None)
+    external_created = kwargs.pop("on_resource_created", None)
     bucket_name = kwargs.get("bucket_name")
     sa_id = get_service_account_id_by_name(project_id, AGENT_SERVICE_ACCOUNT_NAME)
     if sa_id and on_status:
         on_status(f"Reusing existing service account {AGENT_SERVICE_ACCOUNT_NAME!r}.")
+    created_this_attempt: list[tuple[str, dict[str, str]]] = []
+
+    def _record_agent_resource(kind: str, metadata: dict[str, str]) -> None:
+        from npa.cli.agent_iam import record_agent_iam_resource
+
+        created_this_attempt.append((kind, dict(metadata)))
+        record_agent_iam_resource(project_id, kind, metadata)
+        if external_created:
+            external_created(kind, metadata)
+
+    def _rollback_agent_resources() -> None:
+        """Roll back this invocation's exact resources and preserve failures."""
+
+        rollback_failed = False
+        journal_resources_remain = False
+        from npa.cli.agent_iam import mark_agent_iam_status, remove_agent_iam_resource
+
+        for kind, metadata in reversed(created_this_attempt):
+            try:
+                if kind == "access_key":
+                    delete_access_key(metadata.get("id", ""))
+                elif kind == "service_account":
+                    delete_service_account(metadata.get("id", ""))
+            except NebiusError as rollback_exc:
+                if not _is_not_found(str(rollback_exc)):
+                    rollback_failed = True
+                    continue
+            try:
+                journal_resources_remain = remove_agent_iam_resource(
+                    project_id, kind, metadata.get("id", "")
+                )
+            except Exception:  # noqa: BLE001 - provider rollback succeeded; retain journal
+                rollback_failed = True
+        if not created_this_attempt:
+            return
+        if rollback_failed or journal_resources_remain:
+            mark_agent_iam_status(project_id, "partial")
+
     try:
-        return bootstrap_environment(
+        result = bootstrap_environment(
             project_id,
             tenant_id,
             region,
@@ -1465,10 +1591,16 @@ def bootstrap_agent_environment(
             service_account_description="Long-lived service account for NPA agent VMs",
             access_key_description="Long-lived access key for NPA agent S3 and API access",
             on_status=on_status,
+            on_resource_created=_record_agent_resource,
             **kwargs,
         )
+        from npa.cli.agent_iam import mark_agent_iam_status
+
+        mark_agent_iam_status(project_id, "complete")
+        return result
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
+            _rollback_agent_resources()
             raise
         fallback = _saved_storage_credentials(
             project_id=project_id,
@@ -1478,7 +1610,11 @@ def bootstrap_agent_environment(
             service_account_id=sa_id or resolve_service_account_id(project_id),
         )
         if fallback is None:
+            _rollback_agent_resources()
             raise
+        from npa.cli.agent_iam import mark_agent_iam_status
+
+        mark_agent_iam_status(project_id, "complete")
         if on_status:
             on_status("Reusing saved object-storage credentials (npa-agent provisioning skipped).")
         return fallback

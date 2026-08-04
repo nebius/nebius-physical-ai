@@ -99,9 +99,15 @@ interpreter directly with `./.venv/bin/npa` without activating.
 
 ```bash
 # macOS / Linux (and inside WSL2)
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
+  | NEBIUS_CLI_VERSION=0.12.254 bash
 export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc to persist
 ```
+
+NPA's recommended/tested version is `0.12.254`; `0.12.227` is also tested and
+continues with a compatibility warning. Untested versions are blocked with an
+exact command to install the recommended version, so the install guide and the
+runtime parser contract cannot silently drift apart.
 
 `npa configure` creates or reuses a local profile for you (no manual
 `nebius profile create` step). See <https://docs.nebius.com/cli/install> for

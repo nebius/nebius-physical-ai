@@ -369,18 +369,18 @@ def test_nebius_requires_binary(mocker) -> None:
         nebius._require_nebius()
 
 
-def test_nebius_warns_once_on_cli_version_mismatch(mocker) -> None:
+def test_nebius_warns_once_on_tested_cli_version_mismatch(mocker) -> None:
     mocker.patch("shutil.which", return_value="/usr/bin/nebius")
-    mocker.patch("npa.clients.nebius.supported_tool_version", return_value="0.12.192")
+    mocker.patch("npa.clients.nebius.supported_tool_version", return_value="0.12.254")
     mocker.patch("npa.clients.nebius._NEBIUS_VERSION_CHECKED", False)
     run = mocker.patch(
         "subprocess.run",
         return_value=subprocess.CompletedProcess(
-            args=["nebius", "version"], returncode=0, stdout="0.13.0\n", stderr=""
+            args=["nebius", "version"], returncode=0, stdout="0.12.227\n", stderr=""
         ),
     )
 
-    with pytest.warns(RuntimeWarning, match="expected 0.12.192; found 0.13.0"):
+    with pytest.warns(RuntimeWarning, match="0.12.227 is tested-compatible"):
         assert nebius._require_nebius() == "/usr/bin/nebius"
 
     assert nebius._require_nebius() == "/usr/bin/nebius"
@@ -391,6 +391,39 @@ def test_nebius_warns_once_on_cli_version_mismatch(mocker) -> None:
         timeout=10,
         check=False,
     )
+
+
+def test_nebius_blocks_untested_cli_version_with_exact_remedy(mocker) -> None:
+    mocker.patch("shutil.which", return_value="/usr/bin/nebius")
+    mocker.patch("npa.clients.nebius._NEBIUS_VERSION_CHECKED", False)
+    mocker.patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["nebius", "version"], returncode=0, stdout="0.13.0\n", stderr=""
+        ),
+    )
+
+    with pytest.raises(NebiusError, match=r"Unsupported Nebius CLI 0\.13\.0") as caught:
+        nebius._require_nebius()
+
+    assert "NEBIUS_CLI_VERSION=0.12.254 bash" in str(caught.value)
+    assert nebius._NEBIUS_VERSION_CHECKED is False
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        subprocess.CompletedProcess(["nebius", "version"], 1, "", "failed"),
+        subprocess.CompletedProcess(["nebius", "version"], 0, "unknown", ""),
+    ],
+)
+def test_nebius_blocks_unverifiable_cli_version_with_remedy(mocker, result) -> None:
+    mocker.patch("shutil.which", return_value="/usr/bin/nebius")
+    mocker.patch("npa.clients.nebius._NEBIUS_VERSION_CHECKED", False)
+    mocker.patch("subprocess.run", return_value=result)
+
+    with pytest.raises(NebiusError, match="NEBIUS_CLI_VERSION=0.12.254"):
+        nebius._require_nebius()
 
 
 def test_nebius_run_json_and_token(mocker) -> None:
@@ -693,6 +726,58 @@ def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
     )
 
 
+@pytest.mark.parametrize(
+    "provider_message",
+    [
+        "jsonpath execution failed: items is not found",
+        "jsonpath: cannot range over items because it is null",
+        "jsonpath: cannot iterate items because it is nil",
+    ],
+    ids=["omitted-items", "null-items-range", "nil-items-iterate"],
+)
+def test_access_key_inventory_treats_missing_or_null_items_as_empty(
+    mocker, provider_message
+) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=NebiusError(
+            "nebius iam v2 access-key failed (exit 1):\n" + provider_message
+        ),
+    )
+
+    assert nebius._list_access_key_metadata("project-a") == []
+
+
+def test_access_key_inventory_treats_empty_formatter_output_as_empty(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run", return_value="")
+
+    assert nebius._list_access_key_metadata("project-a") == []
+
+
+def test_access_key_inventory_preserves_provider_failures(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=NebiusError("nebius iam v2 access-key failed: PermissionDenied"),
+    )
+
+    with pytest.raises(NebiusError, match="PermissionDenied"):
+        nebius._list_access_key_metadata("project-a")
+
+
+def test_access_key_inventory_does_not_swallow_provider_failure_with_items_text(
+    mocker,
+) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=NebiusError(
+            "nebius iam v2 access-key failed: PermissionDenied; items is not found"
+        ),
+    )
+
+    with pytest.raises(NebiusError, match="PermissionDenied"):
+        nebius._list_access_key_metadata("project-a")
+
+
 def test_nebius_error_redaction_keeps_access_key_canaries_out_of_all_outputs(
     mocker, capsys, caplog
 ) -> None:
@@ -885,6 +970,68 @@ def test_nebius_bootstrap_agent_environment_uses_npa_agent_sa(mocker) -> None:
     kwargs = bootstrap.call_args.kwargs
     assert kwargs["service_account_name"] == nebius.AGENT_SERVICE_ACCOUNT_NAME
     assert kwargs["access_key_name"] == nebius.AGENT_ACCESS_KEY_NAME
+
+
+def test_agent_bootstrap_records_successful_iam_creation_atomically(
+    tmp_path, monkeypatch, mocker
+) -> None:
+    import yaml
+
+    from npa.clients import credentials
+
+    path = tmp_path / ".npa" / "credentials.yaml"
+    monkeypatch.setattr(credentials, "CREDENTIALS_PATH", path)
+    mocker.patch("npa.clients.nebius.get_service_account_id_by_name", return_value=None)
+
+    def bootstrap(*_args, on_resource_created, **_kwargs):
+        on_resource_created(
+            "service_account", {"id": "serviceaccount-agent", "name": "npa-agent"}
+        )
+        on_resource_created(
+            "access_key", {"id": "accesskey-agent", "name": "npa-agent-key"}
+        )
+        return {"service_account_id": "serviceaccount-agent"}
+
+    mocker.patch("npa.clients.nebius.bootstrap_environment", side_effect=bootstrap)
+
+    nebius.bootstrap_agent_environment("project", "tenant", "eu-north1")
+
+    record = yaml.safe_load(path.read_text())["agent_iam"]["projects"]["project"]
+    assert record["status"] == "complete"
+    assert record["resources"]["service_account"]["id"] == "serviceaccount-agent"
+    assert "accesskey-agent" in record["resources"]["access_keys"]
+
+
+def test_agent_bootstrap_removes_a_rolled_back_key_on_a_reused_account(
+    tmp_path, monkeypatch, mocker
+) -> None:
+    import yaml
+
+    from npa.clients import credentials
+
+    path = tmp_path / ".npa" / "credentials.yaml"
+    monkeypatch.setattr(credentials, "CREDENTIALS_PATH", path)
+    mocker.patch(
+        "npa.clients.nebius.get_service_account_id_by_name",
+        return_value="serviceaccount-preexisting",
+    )
+
+    def bootstrap(*_args, on_resource_created, **_kwargs):
+        on_resource_created(
+            "access_key", {"id": "accesskey-new", "name": "npa-agent-key"}
+        )
+        raise NebiusError("provider failed after key creation")
+
+    mocker.patch("npa.clients.nebius.bootstrap_environment", side_effect=bootstrap)
+    delete_key = mocker.patch("npa.clients.nebius.delete_access_key")
+    delete_account = mocker.patch("npa.clients.nebius.delete_service_account")
+
+    with pytest.raises(NebiusError, match="provider failed"):
+        nebius.bootstrap_agent_environment("project", "tenant", "eu-north1")
+
+    delete_key.assert_called_once_with("accesskey-new")
+    delete_account.assert_not_called()
+    assert "agent_iam" not in (yaml.safe_load(path.read_text()) or {})
 
 
 def test_resolve_service_account_id_uses_saved_config(mocker) -> None:

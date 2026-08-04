@@ -460,10 +460,12 @@ def _provision_object_storage(
 
     try:
         typer.echo("Provisioning Nebius object storage (bucket + access key)...")
-        creds = nebius_client.bootstrap_environment(
-            project_id,
-            tenant_id,
-            region,
+        from npa.clients.storage_setup import provision_storage
+
+        creds, probe = provision_storage(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
             bucket_name=bucket_name,
             bucket_max_size_bytes=bucket_max_size_bytes,
             bucket_storage_class=bucket_storage_class,
@@ -502,12 +504,13 @@ def _provision_object_storage(
         return None
 
     bucket = _as_bucket_uri(creds.get("s3_bucket", ""))
-    typer.echo(f"  Provisioned bucket {bucket} and an S3 access key.")
+    typer.echo(f"  Provisioned bucket {bucket} and an S3 access key; {probe.summary}")
     payload: dict[str, str] = {
         "aws_access_key_id": access_key,
         "aws_secret_access_key": secret_key,
         "endpoint_url": creds.get("s3_endpoint", "") or _endpoint_for_region(region),
         "bucket": bucket,
+        "_validated": "true",
     }
     sa_id = creds.get("service_account_id", "").strip()
     if sa_id:
@@ -1144,14 +1147,34 @@ def _run_interactive_configure(
                 default="Y",
             )
             if keep.lower() in ("", "y", "yes"):
-                storage = {
+                candidate = {
                     "aws_access_key_id": existing_credentials.s3_access_key_id,
                     "aws_secret_access_key": existing_credentials.s3_secret_access_key,
                     "endpoint_url": existing_credentials.s3_endpoint
                     or _endpoint_for_region(region),
                     "bucket": existing_credentials.s3_bucket,
                 }
-                typer.echo("  Keeping existing object-storage credentials.")
+                from npa.clients.storage_validation import probe_storage_write
+
+                probe = probe_storage_write(
+                    bucket=candidate["bucket"],
+                    endpoint_url=candidate["endpoint_url"],
+                    access_key_id=candidate["aws_access_key_id"],
+                    secret_access_key=candidate["aws_secret_access_key"],
+                    region=region,
+                )
+                if probe.ok:
+                    candidate["_validated"] = "true"
+                    storage = candidate
+                    typer.echo(
+                        "  Keeping existing object-storage credentials; "
+                        + probe.summary
+                    )
+                else:
+                    typer.echo(
+                        "  Existing object storage is not usable: "
+                        f"{probe.summary} NPA will reconcile it now."
+                    )
         if storage is None:
             storage = _provision_object_storage(
                 nebius_client,
@@ -1205,6 +1228,27 @@ def _run_interactive_configure(
             ),
         }
 
+    # Manual credentials are never committed merely because all four strings
+    # were entered. A write/delete probe is the boundary between partial input
+    # and usable storage, and the temporary object is cleaned before success.
+    if storage and storage.get("_validated") != "true":
+        from npa.clients.storage_validation import probe_storage_write
+
+        probe = probe_storage_write(
+            bucket=storage.get("bucket", ""),
+            endpoint_url=storage.get("endpoint_url", ""),
+            access_key_id=storage.get("aws_access_key_id", ""),
+            secret_access_key=storage.get("aws_secret_access_key", ""),
+            region=region,
+        )
+        if probe.ok:
+            storage["_validated"] = "true"
+            typer.echo(f"  {probe.summary}")
+        else:
+            typer.echo(f"  Object storage remains incomplete: {probe.summary}")
+            storage = {}
+            provisioning_failed = True
+
     hf_token, token_factory_api_key, ngc_api_key = _prompt_setup_tokens(
         ask, existing_credentials, skip=preset_tokens or set()
     )
@@ -1228,7 +1272,9 @@ def _run_interactive_configure(
         "storage": {
             key: value
             for key, value in storage.items()
-            if not key.startswith("service_account_") and value
+            if not key.startswith("service_account_")
+            and not key.startswith("_")
+            and value
         },
     }
     if service_account_keys:
@@ -1346,7 +1392,23 @@ def _run_interactive_configure(
         )
 
     typer.echo(_model_access_note(hf_token, ngc_api_key))
-    typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
+    storage_complete = storage.get("_validated") == "true"
+    if storage_complete:
+        typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
+        return
+    if alias:
+        next_command = f"npa provision-if-absent --project {alias} --skip-k8s"
+    else:
+        next_command = "npa configure"
+    typer.echo(
+        "Setup incomplete: writable object storage is not configured. "
+        f"Any NPA-created partial-resource provenance is saved in {credentials_path}."
+    )
+    typer.echo(f"Resume safely with: `{next_command}`")
+    # The configuration that was entered is valid and deliberately retained for
+    # read-only/non-S3 modes. Do not label it complete; the downstream
+    # provision/deploy commands enforce writable storage and exit non-zero until
+    # the resumable prerequisite succeeds.
 
 
 def _probe_hf_repos_parallel(

@@ -85,6 +85,26 @@ def up_cmd(
         "--cpu-nodes",
         help="Number of CPU nodes (overrides tfvars/TF_VAR_cpu_nodes_count). -1 keeps the configured value.",
     ),
+    cpu_platform: str = typer.Option(
+        "",
+        "--cpu-platform",
+        help="CPU node platform (overrides tfvars/TF_VAR_cpu_nodes_platform).",
+    ),
+    cpu_preset: str = typer.Option(
+        "",
+        "--cpu-preset",
+        help="CPU node preset (overrides tfvars/TF_VAR_cpu_nodes_preset).",
+    ),
+    gpu_platform: str = typer.Option(
+        "",
+        "--gpu-platform",
+        help="GPU node platform (overrides tfvars/TF_VAR_gpu_nodes_platform).",
+    ),
+    gpu_preset: str = typer.Option(
+        "",
+        "--gpu-preset",
+        help="GPU node preset (overrides tfvars/TF_VAR_gpu_nodes_preset).",
+    ),
     preemptible: bool | None = typer.Option(
         None,
         "--preemptible/--on-demand",
@@ -123,6 +143,13 @@ def up_cmd(
     # TF_VAR_*. -1 means "leave the configured value alone".
     _apply_node_count_override(tfvars, "gpu_nodes_count", gpu_nodes)
     _apply_node_count_override(tfvars, "cpu_nodes_count", cpu_nodes)
+    for key, value in (
+        ("cpu_nodes_platform", cpu_platform),
+        ("cpu_nodes_preset", cpu_preset),
+        ("gpu_nodes_platform", gpu_platform),
+        ("gpu_nodes_preset", gpu_preset),
+    ):
+        _apply_string_override(tfvars, key, value)
     if preemptible is not None:
         tfvars["gpu_nodes_preemptible"] = bool(preemptible)
     _apply_project_tf_vars(env, project, tfvars)
@@ -149,6 +176,10 @@ def up_cmd(
         *_capacity_block_group_var_args(capacity_block_group),
         *_node_count_var_args(tfvars, "gpu_nodes_count", gpu_nodes),
         *_node_count_var_args(tfvars, "cpu_nodes_count", cpu_nodes),
+        *_string_var_args("cpu_nodes_platform", cpu_platform),
+        *_string_var_args("cpu_nodes_preset", cpu_preset),
+        *_string_var_args("gpu_nodes_platform", gpu_platform),
+        *_string_var_args("gpu_nodes_preset", gpu_preset),
         *(
             ["-var", f"gpu_nodes_preemptible={str(bool(preemptible)).lower()}"]
             if preemptible is not None
@@ -923,6 +954,21 @@ def _node_count_var_args(tfvars: dict[str, Any], key: str, value: int) -> list[s
     if value is not None and value >= 0:
         return ["-var", f"{key}={int(value)}"]
     return []
+
+
+def _apply_string_override(tfvars: dict[str, Any], key: str, value: str) -> None:
+    """Set a Terraform string variable from a non-empty CLI flag."""
+
+    cleaned = str(value or "").strip()
+    if cleaned:
+        tfvars[key] = cleaned
+
+
+def _string_var_args(key: str, value: str) -> list[str]:
+    """Return an explicit Terraform string override for a non-empty flag."""
+
+    cleaned = str(value or "").strip()
+    return ["-var", f"{key}={cleaned}"] if cleaned else []
 
 
 def _preflight_instance_count_quota(tfvars: dict[str, Any], env: dict[str, str]) -> None:
