@@ -8,12 +8,14 @@ extracts their metrics + provenance without modifying the emitting tools.
 
 from __future__ import annotations
 
-import time
+import json
+from datetime import datetime, timezone
 from typing import Any
 
 from .integrations import index_metrics_in_lancedb
 from .schemas import (
     ACCELERATORS_LABEL,
+    COST_BASIS_LABEL,
     CURRENCY_LABEL,
     EDGES_OBJECT,
     GPU_METRIC_NAME,
@@ -75,15 +77,72 @@ def edges_uri(store_uri: str) -> str:
 
 
 def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def read_records(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_store(records_uri(store_uri))
+    return _dedupe_rows(read_jsonl_store(records_uri(store_uri)), _record_identity)
 
 
 def read_edges(store_uri: str) -> list[dict[str, Any]]:
-    return read_jsonl_store(edges_uri(store_uri))
+    return _dedupe_rows(read_jsonl_store(edges_uri(store_uri)), _edge_identity)
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _record_identity(row: dict[str, Any]) -> tuple[Any, ...] | None:
+    """Stable logical identity for one metric observation.
+
+    Ingested rows use their real source artifact URI plus run/metric/dimensions;
+    regenerated timestamps and values do not create a second logical observation.
+    Explicit emissions without source provenance retain timestamp+value so two
+    measurements sharing a metric name are never collapsed.
+    """
+    artifact_uri = str(row.get("artifact_uri") or "")
+    base = (
+        str(row.get("run_id") or ""),
+        artifact_uri,
+        str(row.get("artifact_version") or ""),
+        str(row.get("metric_name") or ""),
+        str(row.get("workflow") or ""),
+        str(row.get("tool") or ""),
+        str(row.get("stage") or ""),
+        str(row.get("unit") or ""),
+        _canonical_json(row.get("labels") or {}),
+        _canonical_json(row.get("lineage") or {}),
+    )
+    if artifact_uri:
+        return ("provenance", *base)
+    timestamp = str(row.get("timestamp") or "")
+    if timestamp:
+        return ("emission", *base, timestamp, row.get("value"))
+    return None
+
+
+def _edge_identity(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(row.get("from_uri") or ""),
+        str(row.get("from_version") or ""),
+        str(row.get("to_uri") or ""),
+        str(row.get("to_version") or ""),
+        str(row.get("relation") or ""),
+        str(row.get("run_id") or ""),
+    )
+
+
+def _dedupe_rows(rows: list[dict[str, Any]], identity_fn: Any) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for row in rows:
+        identity = identity_fn(row)
+        if identity is not None and identity in seen:
+            continue
+        if identity is not None:
+            seen.add(identity)
+        deduped.append(row)
+    return deduped
 
 
 def _persist(
@@ -92,8 +151,8 @@ def _persist(
     edges: list[LineageEdge],
     *,
     lancedb_endpoint: str = "",
-) -> tuple[int, int]:
-    """Append records + edges to the store and return the new totals.
+) -> tuple[int, int, int, int]:
+    """Append unseen records/edges and return added counts plus new totals.
 
     The totals are read **once** before writing and then advanced arithmetically.
     Reading the whole store back after each write would re-list and re-GET every
@@ -109,18 +168,46 @@ def _persist(
         rec_rows.append(row)
     edge_rows = [edge.model_dump(mode="json") for edge in edges]
 
-    previous_records = len(read_records(store_uri))
-    previous_edges = len(read_edges(store_uri))
-    total_records = append_jsonl_uri(records_uri(store_uri), rec_rows, previous_total=previous_records)
-    total_edges = append_jsonl_uri(edges_uri(store_uri), edge_rows, previous_total=previous_edges)
+    existing_records = read_records(store_uri)
+    existing_edges = read_edges(store_uri)
+    existing_record_ids = {
+        identity
+        for row in existing_records
+        if (identity := _record_identity(row)) is not None
+    }
+    existing_edge_ids = {_edge_identity(row) for row in existing_edges}
+    filtered_records: list[dict[str, Any]] = []
+    for row in rec_rows:
+        identity = _record_identity(row)
+        if identity is not None and identity in existing_record_ids:
+            continue
+        if identity is not None:
+            existing_record_ids.add(identity)
+        filtered_records.append(row)
+    filtered_edges: list[dict[str, Any]] = []
+    for row in edge_rows:
+        identity = _edge_identity(row)
+        if identity in existing_edge_ids:
+            continue
+        existing_edge_ids.add(identity)
+        filtered_edges.append(row)
 
-    if rec_rows:
+    previous_records = len(existing_records)
+    previous_edges = len(existing_edges)
+    total_records = append_jsonl_uri(
+        records_uri(store_uri), filtered_records, previous_total=previous_records
+    )
+    total_edges = append_jsonl_uri(
+        edges_uri(store_uri), filtered_edges, previous_total=previous_edges
+    )
+
+    if filtered_records:
         index_metrics_in_lancedb(
-            rec_rows,
+            filtered_records,
             lancedb_endpoint=lancedb_endpoint,
             table="insights_metrics",
         )
-    return total_records, total_edges
+    return len(filtered_records), len(filtered_edges), total_records, total_edges
 
 
 def _load_record_payload(payload: Any) -> tuple[list[MetricRecord], list[LineageEdge]]:
@@ -162,7 +249,7 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
             if not record.run_id:
                 record.run_id = request.workflow_run
 
-    total_records, total_edges = _persist(
+    recorded_count, edge_count, total_records, total_edges = _persist(
         request.output_uri,
         records,
         edges,
@@ -172,8 +259,8 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
         store_uri=request.output_uri,
         records_uri=records_uri(request.output_uri),
         edges_uri=edges_uri(request.output_uri),
-        recorded_count=len(records),
-        edge_count=len(edges),
+        recorded_count=recorded_count,
+        edge_count=edge_count,
         total_records=total_records,
         total_edges=total_edges,
     )
@@ -235,7 +322,7 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
             f"no known manifest/report schemas found under run prefix: {request.input_uri}"
         )
 
-    total_records, total_edges = _persist(
+    recorded_count, edge_count, total_records, total_edges = _persist(
         request.output_uri,
         all_records,
         all_edges,
@@ -247,8 +334,8 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
         edges_uri=edges_uri(request.output_uri),
         scanned=scanned,
         ingested=ingested,
-        recorded_count=len(all_records),
-        edge_count=len(all_edges),
+        recorded_count=recorded_count,
+        edge_count=edge_count,
         total_records=total_records,
         total_edges=total_edges,
     )
@@ -386,7 +473,7 @@ def _is_curve_metric(name: str) -> bool:
 
 def _is_duration(name: str) -> bool:
     lowered = name.lower()
-    return lowered in {
+    return lowered.endswith("_ms") or lowered in {
         "duration",
         "duration_s",
         "duration_seconds",
@@ -407,25 +494,79 @@ def _is_throughput(name: str) -> bool:
 
 def _is_cost(name: str) -> bool:
     lowered = name.lower()
-    return lowered in {"cost_usd", "total_cost_usd", "estimated_cost_usd"}
+    return lowered in {
+        "billed_cost_usd",
+        "cost_usd",
+        "estimated_cost_usd",
+        "total_cost_usd",
+    }
+
+
+def _cost_basis(name: str, *, container: str, schema_id: str) -> str:
+    """Classify cost provenance without promoting estimates to billed values."""
+    lowered = name.lower()
+    if "estimated" in lowered:
+        return "estimated"
+    if container == "billing" or "billing" in schema_id.lower():
+        return "billed"
+    return "estimated"
+
+
+_EVAL_SCORE_NAMES = frozenset(
+    {
+        "accuracy",
+        "f1",
+        "f1_score",
+        "map",
+        "map_50",
+        "map_75",
+        "mean_reward",
+        "mean_score",
+        "precision",
+        "recall",
+        "reward",
+        "score",
+        "success_rate",
+    }
+)
+_COUNTER_NAMES = frozenset(
+    {
+        "epoch",
+        "epochs",
+        "global_step",
+        "iteration",
+        "num_samples",
+        "sample_count",
+        "samples",
+        "step",
+        "steps",
+        "token_count",
+        "tokens",
+        "train_steps",
+    }
+)
+
+
+def _is_counter(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in _COUNTER_NAMES or lowered.endswith(
+        ("_count", "_samples", "_steps", "_tokens")
+    )
 
 
 def _is_eval_score(name: str, *, container: str) -> bool:
     lowered = name.lower()
-    if container in {"metrics", "success_summary"}:
-        return True
     return (
-        lowered in {"map", "map_50", "map_75", "f1", "score", "mean_score"}
-        or "accuracy" in lowered
-        or "precision" in lowered
-        or "recall" in lowered
-        or lowered.endswith(("_score", "_rate", "_return", "_reward"))
+        lowered in _EVAL_SCORE_NAMES
+        or lowered.endswith(
+            ("_accuracy", "_f1", "_precision", "_recall", "_return", "_reward", "_score", "_success_rate")
+        )
     )
 
 
 def _metric_unit(name: str, kind: str) -> str:
     if kind == "duration":
-        return "seconds"
+        return "milliseconds" if name.lower().endswith("_ms") else "seconds"
     if kind == "cost":
         return "USD"
     if kind == "throughput":
@@ -527,11 +668,14 @@ def _extract_observed_report(
         or isinstance(payload.get("billing"), dict)
         or isinstance(payload.get("resource_usage"), dict)
     )
-    containers: list[tuple[str, dict[str, Any]]] = [("root", payload)]
+    # Authoritative nested containers win over root placeholders. ``emit`` keeps
+    # the first metric/dimension identity, so this order is the precedence rule.
+    containers: list[tuple[str, dict[str, Any]]] = []
     for key in ("metrics", "success_summary", "billing", "resource_usage"):
         value = payload.get(key)
         if isinstance(value, dict):
             containers.append((key, value))
+    containers.append(("root", payload))
 
     stage_kind = f"{stage} {resolved_stage}".lower()
     eval_stage = "eval" in stage_kind or "benchmark" in stage_kind
@@ -545,9 +689,21 @@ def _extract_observed_report(
             elif _is_throughput(name):
                 emit(name, value, "throughput")
             elif _is_cost(name) and billing_context:
-                emit(name, value, "cost", {CURRENCY_LABEL: "USD"})
+                emit(
+                    name,
+                    value,
+                    "cost",
+                    {
+                        CURRENCY_LABEL: "USD",
+                        COST_BASIS_LABEL: _cost_basis(
+                            name, container=container_name, schema_id=schema_id
+                        ),
+                    },
+                )
             elif eval_stage and _is_eval_score(name, container=container_name):
                 emit(name, value, "eval_score", {SCORE_NAME_LABEL: name})
+            elif eval_stage and _is_counter(name):
+                emit(name, value, "counter")
             elif train_stage and _is_curve_metric(name):
                 emit(name, value, "training_metric")
 

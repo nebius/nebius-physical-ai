@@ -22,6 +22,7 @@ ACCELERATORS_LABEL = "accelerators"
 METRIC_KIND_LABEL = "metric_kind"
 STEP_LABEL = "step"
 CURRENCY_LABEL = "currency"
+COST_BASIS_LABEL = "cost_basis"
 SCORE_NAME_LABEL = "score_name"
 
 # Append-only store layout under a configurable prefix on S3 (JSONL fallback).
@@ -260,6 +261,7 @@ class QueryRequest(BaseModel):
     metric_kind: str = ""
     step: str = ""
     currency: str = ""
+    cost_basis: Literal["", "estimated", "billed"] = ""
     score_name: str = ""
     time_start: str = ""
     time_end: str = ""
@@ -356,6 +358,7 @@ class DashboardRequest(BaseModel):
         "metric_kind",
         "step",
         "currency",
+        "cost_basis",
         "score_name",
     ] = "metric_name"
     latest_run: str = ""

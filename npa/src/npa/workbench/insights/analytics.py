@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .integrations import query_metrics_in_lancedb
 from .schemas import (
+    COST_BASIS_LABEL,
     CURRENCY_LABEL,
     LOWER_IS_BETTER_HINTS,
     METRIC_KIND_LABEL,
@@ -55,6 +56,7 @@ def _facets(request: QueryRequest) -> dict[str, Any]:
         "metric_kind": request.metric_kind,
         "step": request.step,
         "currency": request.currency,
+        "cost_basis": request.cost_basis,
         "score_name": request.score_name,
         "time_start": request.time_start,
         "time_end": request.time_end,
@@ -85,6 +87,7 @@ def _matches(record: dict[str, Any], request: QueryRequest) -> bool:
         (request.metric_kind, METRIC_KIND_LABEL),
         (request.step, STEP_LABEL),
         (request.currency, CURRENCY_LABEL),
+        (request.cost_basis, COST_BASIS_LABEL),
         (request.score_name, SCORE_NAME_LABEL),
     ):
         if requested and str(labels.get(label, "")) != requested:
@@ -148,7 +151,13 @@ def _metric_dimensions(record: dict[str, Any]) -> dict[str, str]:
     labels = record.get("labels") or {}
     dimensions = {
         key: str(labels[key])
-        for key in (METRIC_KIND_LABEL, STEP_LABEL, CURRENCY_LABEL, SCORE_NAME_LABEL)
+        for key in (
+            METRIC_KIND_LABEL,
+            STEP_LABEL,
+            CURRENCY_LABEL,
+            COST_BASIS_LABEL,
+            SCORE_NAME_LABEL,
+        )
         if labels.get(key) not in (None, "")
     }
     if dimensions:
@@ -360,7 +369,13 @@ def _latest_run(records: list[dict[str, Any]]) -> str:
 def _group(records: list[dict[str, Any]], group_by: str) -> list[DashboardGroup]:
     buckets: dict[str, list[tuple[str, float]]] = {}
     for index, record in enumerate(records):
-        if group_by in {METRIC_KIND_LABEL, STEP_LABEL, CURRENCY_LABEL, SCORE_NAME_LABEL}:
+        if group_by in {
+            METRIC_KIND_LABEL,
+            STEP_LABEL,
+            CURRENCY_LABEL,
+            COST_BASIS_LABEL,
+            SCORE_NAME_LABEL,
+        }:
             key = str((record.get("labels") or {}).get(group_by, "")) or "(none)"
         else:
             key = str(record.get(group_by, "")) or "(none)"
