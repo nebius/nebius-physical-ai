@@ -187,6 +187,15 @@ def _stage_orchestrator_source(
                 arcname="npa/pyproject.toml",
                 filter=_source_tarball_filter,
             )
+            for workflow_name in (
+                "sim2real.yaml",
+                "physical-ai-data-factory.yaml",
+            ):
+                archive.add(
+                    root / "npa" / "workflows" / workflow_name,
+                    arcname=f"npa/workflows/{workflow_name}",
+                    filter=_source_tarball_filter,
+                )
         destination = (
             f"s3://{bucket}/{prefix.strip('/')}/{run_id}/source/"
             f"orchestrator-{run_id}.tgz"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -221,8 +222,13 @@ def test_source_staging_retries_configured_hmac_after_stale_ambient_auth(
 
     root = tmp_path / "repo"
     (root / "npa" / "src").mkdir(parents=True)
+    (root / "npa" / "workflows").mkdir(parents=True)
     (root / "npa" / "src" / "module.py").write_text("VALUE = 1\n")
     (root / "npa" / "pyproject.toml").write_text("[project]\nname='npa'\n")
+    for workflow_name in ("sim2real.yaml", "physical-ai-data-factory.yaml"):
+        (root / "npa" / "workflows" / workflow_name).write_text(
+            f"name: {workflow_name}\n"
+        )
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ambient-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
     monkeypatch.setattr(
@@ -247,6 +253,12 @@ def test_source_staging_retries_configured_hmac_after_stale_ambient_auth(
 
         def upload_file(self, local_file, destination):
             assert Path(local_file).stat().st_size > 0
+            with tarfile.open(local_file) as archive:
+                names = set(archive.getnames())
+            assert {
+                "npa/workflows/sim2real.yaml",
+                "npa/workflows/physical-ai-data-factory.yaml",
+            } <= names
             attempts.append(self.access_key)
             if self.access_key == "ambient-key":
                 raise RuntimeError("AccessDenied")
