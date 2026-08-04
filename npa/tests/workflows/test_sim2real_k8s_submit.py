@@ -212,6 +212,58 @@ def test_unqualified_real_component_override_is_rejected(
         )
 
 
+def test_source_staging_retries_configured_hmac_after_stale_ambient_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.clients import credentials as credential_module
+    from npa.clients import storage as storage_module
+    from npa.workflows.sim2real import k8s_submit
+
+    root = tmp_path / "repo"
+    (root / "npa" / "src").mkdir(parents=True)
+    (root / "npa" / "src" / "module.py").write_text("VALUE = 1\n")
+    (root / "npa" / "pyproject.toml").write_text("[project]\nname='npa'\n")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ambient-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
+    monkeypatch.setattr(
+        credential_module,
+        "load_credentials",
+        lambda **kwargs: SimpleNamespace(
+            s3_access_key_id=(
+                "configured-key" if kwargs.get("environ") == {} else "ambient-key"
+            ),
+            s3_secret_access_key=(
+                "configured-secret"
+                if kwargs.get("environ") == {}
+                else "ambient-secret"
+            ),
+        ),
+    )
+    attempts: list[str] = []
+
+    class FakeStorageClient:
+        def __init__(self, **kwargs):
+            self.access_key = kwargs["aws_access_key_id"]
+
+        def upload_file(self, local_file, destination):
+            assert Path(local_file).stat().st_size > 0
+            attempts.append(self.access_key)
+            if self.access_key == "ambient-key":
+                raise RuntimeError("AccessDenied")
+            return destination
+
+    monkeypatch.setattr(storage_module, "StorageClient", FakeStorageClient)
+    destination = k8s_submit._stage_orchestrator_source(
+        root=root,
+        run_id="sim2real-auth-retry",
+        bucket="bucket",
+        prefix="sim2real-b",
+        endpoint="https://s3.example",
+    )
+    assert attempts == ["ambient-key", "configured-key"]
+    assert destination.endswith("orchestrator-sim2real-auth-retry.tgz")
+
+
 def test_workflow_var_aliases_route_to_runbook_env(monkeypatch: pytest.MonkeyPatch) -> None:
     from npa.workflows.sim2real import k8s_submit
 

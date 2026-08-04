@@ -251,6 +251,9 @@ On `ImagePullBackOff`/401, refresh the registry pull secret and delete only the
 failed run-scoped Job so the same documented submit can be repeated. On
 `Insufficient nvidia.com/gpu`, inspect Job events; the submitter will try every
 compatible RTX PRO 6000/L40S label before returning capacity exhaustion.
+If stale ambient `AWS_ACCESS_KEY_ID` values are denied during source staging,
+the submitter retries the HMAC pair in `~/.npa/credentials.yaml`; it never logs
+either credential value.
 
 ## Artifact and policy access
 

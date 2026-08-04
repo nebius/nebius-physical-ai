@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
@@ -167,6 +168,7 @@ def _stage_orchestrator_source(
     from npa.clients.storage import StorageClient
 
     credentials = load_credentials()
+    configured_credentials = load_credentials(environ={})
     access_key = os.environ.get("AWS_ACCESS_KEY_ID") or credentials.s3_access_key_id
     secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or credentials.s3_secret_access_key
     if not access_key or not secret_key:
@@ -189,12 +191,42 @@ def _stage_orchestrator_source(
             f"s3://{bucket}/{prefix.strip('/')}/{run_id}/source/"
             f"orchestrator-{run_id}.tgz"
         )
-        client = StorageClient(
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
+        credential_pairs = [(access_key, secret_key)]
+        configured_pair = (
+            configured_credentials.s3_access_key_id,
+            configured_credentials.s3_secret_access_key,
         )
-        return client.upload_file(str(tarball), destination)
+        if all(configured_pair) and configured_pair not in credential_pairs:
+            credential_pairs.append(configured_pair)
+        for attempt, (candidate_access, candidate_secret) in enumerate(
+            credential_pairs, start=1
+        ):
+            client = StorageClient(
+                endpoint_url=endpoint,
+                aws_access_key_id=candidate_access,
+                aws_secret_access_key=candidate_secret,
+            )
+            try:
+                return client.upload_file(str(tarball), destination)
+            except Exception as exc:
+                auth_failure = any(
+                    marker in str(exc).lower()
+                    for marker in (
+                        "accessdenied",
+                        "access denied",
+                        "invalidaccesskeyid",
+                        "signaturedoesnotmatch",
+                        "403 forbidden",
+                    )
+                )
+                if not auth_failure or attempt == len(credential_pairs):
+                    raise
+                print(
+                    "Sim2Real source staging: ambient S3 credentials were denied; "
+                    "retrying the configured ~/.npa credentials.",
+                    file=sys.stderr,
+                )
+        raise RuntimeError("unreachable Sim2Real source staging credential loop")
 
 
 def _apply_manifest(
