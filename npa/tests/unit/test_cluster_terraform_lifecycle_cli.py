@@ -153,6 +153,11 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
 
     assert result.exit_code == 0, result.output
     assert ["terraform", "init", "-lockfile=readonly"] in stream_calls
+    init_index = stream_calls.index(["terraform", "init", "-lockfile=readonly"])
+    isolated_data = Path(stream_envs[init_index]["TF_DATA_DIR"])
+    assert isolated_data != tf_dir / ".terraform"
+    assert not isolated_data.exists()
+    assert not (tf_dir / ".terraform").exists()
     # -var beats terraform.tfvars; TF_VAR_* does not, so the flag has to be passed
     # explicitly as well as exported.
     apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
@@ -576,6 +581,7 @@ def test_node_shape_flags_override_tfvars_and_emit_explicit_vars() -> None:
 def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
     stream_calls: list[list[str]] = []
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
@@ -623,10 +629,86 @@ def test_down_preview_uses_the_selected_npa_cluster_kubeconfig(
         lambda path, *, context="": observed.append((path, context)),
     )
 
-    result = runner.invoke(app, ["down", "--terraform-dir", str(tf_dir), "--force"])
+    result = runner.invoke(
+        app,
+        [
+            "down",
+            "--terraform-dir",
+            str(tf_dir),
+            "--kubeconfig",
+            str(saved_kubeconfig),
+            "--force",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert observed == [(saved_kubeconfig, "selected-cluster")]
+
+
+def test_down_with_no_cluster_is_a_true_local_noop(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text('cluster_name = "never-created"\n')
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("no-cluster teardown crossed an external boundary")
+
+    monkeypatch.setattr(tf_mod, "_require_bin", unexpected)
+    monkeypatch.setattr(tf_mod, "_terraform_env", unexpected)
+    monkeypatch.setattr(tf_mod, "_report_drain_blockers", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_stream", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_capture", unexpected)
+
+    result = runner.invoke(
+        app, ["down", "--terraform-dir", str(tf_dir), "--force"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Nothing to do" in result.output
+    assert "authentication" in result.output
+    assert "Kubernetes/RBAC" in result.output
+    assert not (tf_dir / ".terraform").exists()
+
+
+def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text("{}")
+    lock_file = tf_dir / ".terraform.lock.hcl"
+    original_lock = 'provider "example.invalid/test" {}\n'
+    lock_file.write_text(original_lock)
+    calls: list[list[str]] = []
+
+    def fake_stream(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["terraform", "init"]:
+            raise tf_mod.typer.BadParameter(
+                "the local package doesn't match any of the checksums previously recorded"
+            )
+        raise AssertionError(f"destroy must not run after checksum failure: {args}")
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda _binary: {})
+    monkeypatch.setattr(tf_mod, "_report_drain_blockers", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
+
+    result = runner.invoke(
+        app, ["down", "--terraform-dir", str(tf_dir), "--force"]
+    )
+
+    assert result.exit_code != 0
+    assert "checksum verification failed" in result.output
+    assert "will not" in result.output
+    assert "bypass verification" in result.output
+    assert "providers lock" in result.output
+    assert lock_file.read_text() == original_lock
+    assert not (tf_dir / ".terraform").exists()
+    assert all(call[:2] != ["terraform", "destroy"] for call in calls)
 
 
 def test_up_rejects_terraform_older_than_the_vendored_modules(monkeypatch, tmp_path: Path) -> None:

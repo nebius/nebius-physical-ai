@@ -56,14 +56,19 @@ npa cleanup --full --yes
 
 The storage service-account command is ownership-gated: it only deletes the
 exact `lerobot-training` identity whose successful create call NPA recorded for
-that project. Bucket credentials and storage IAM provenance have separate
+that project, either in committed `storage_iam` or the crash-safe setup journal
+written before the next provider step. Bucket credentials and storage IAM
+provenance have separate
 lifecycles: bucket deletion preserves the dedicated `storage_iam` record until
 the account is deleted or conclusively absent, while a familiar name or legacy
 saved ID remains evidence but is not proof of ownership. Agent bootstrap may
 change the generic `nebius.service_account_id` without changing this record.
 Plain `npa cleanup --yes` keeps credentials; `--full --yes` additionally removes
 the locally saved Hugging Face, Token Factory, and NGC entries and prunes only
-empty NPA-owned local state. It does not delete cloud resources.
+empty NPA-owned local state plus exactly validated NPA Terraform residue. It does
+not delete cloud resources, but full cleanup performs read-only storage-IAM
+verification. Verified deletion/absence exits 0; missing trustworthy ownership
+or provider/auth verification failure is partial cleanup and exits 2.
 
 ## Three-Tier Contract
 
@@ -104,6 +109,13 @@ empty NPA-owned local state. It does not delete cloud resources.
   explained and never masquerade as verified drain safety. Full-cluster deletion
   relaxes only the exact managed `kube-system` PDBs for `coredns`,
   `cilium-operator`, and `metrics-server`; user/unknown PDBs are never patched.
+- With no cluster state/inventory and no NPA kubeconfig, `npa cluster down` is a
+  no-op before binary lookup, authentication, Terraform init/provider download,
+  or Kubernetes/RBAC calls. Real apply/destroy uses marked ephemeral
+  `TF_DATA_DIR` scratch, never source `deploy/cluster/.terraform`, and keeps the
+  tracked lock read-only. Checksum mismatch is an actionable hard failure; verify
+  the provider source and reconcile with reviewed `terraform providers lock`
+  output rather than bypassing checksum verification.
 - On Nebius VMs with an attached service account, IAM token resolution can use
   service-account token sources (`/mnt/cloud-metadata/token` and IMDS) even
   when `~/.nebius/config.yaml` is absent. Keep this as fallback behavior, not a

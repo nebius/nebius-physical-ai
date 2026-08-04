@@ -1067,6 +1067,22 @@ def test_get_service_account_id_by_name_parses_id_from_permission_denied(mocker)
     )
 
 
+def test_strict_service_account_name_lookup_rejects_ambiguous_empty_success(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", return_value={})
+
+    with pytest.raises(NebiusError, match="presence or absence could not be established"):
+        nebius.get_service_account_id_by_name(
+            "project", "lerobot-training", strict=True
+        )
+
+
+def test_exact_service_account_verification_rejects_ambiguous_empty_success(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", return_value={})
+
+    with pytest.raises(NebiusError, match="no service-account ID"):
+        nebius.service_account_exists("serviceaccount-storage")
+
+
 def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius.bootstrap_environment",

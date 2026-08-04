@@ -52,6 +52,14 @@ def _seed_owned_account(
         }
     credentials_path.write_text(yaml.safe_dump(payload))
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "service_account_exists", lambda _account_id: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_id_by_name",
+        lambda _project_id, _name, **_kwargs: "serviceaccount-storage",
+    )
     return credentials_path
 
 
@@ -103,7 +111,7 @@ def test_storage_service_account_yes_deletes_keys_then_account_and_prunes_marker
     assert result.exit_code == 0, result.output
     assert deleted == ["accesskey-storage", "serviceaccount-storage"]
     assert "Deleted access key accesskey-storage" in result.output
-    assert "Deleted NPA-owned service account lerobot-training" in result.output
+    assert "Verified deletion: NPA-owned service account lerobot-training" in result.output
     assert not credentials_path.exists()
 
 
@@ -175,9 +183,9 @@ def test_storage_service_account_refuses_unowned_legacy_identity(monkeypatch, tm
         ["storage", "service-account", "delete", "--project", "prod", "--yes"],
     )
 
-    assert result.exit_code == 0, result.output
-    assert "No NPA-owned storage service account" in result.output
-    assert "not proof of ownership" in result.output
+    assert result.exit_code == 2, result.output
+    assert "No trustworthy NPA storage IAM ownership record" in result.output
+    assert "not ownership proof" in result.output
     assert deleted == []
     assert credentials_path.exists()
 
@@ -217,8 +225,8 @@ def test_bucket_delete_preserves_nonowned_identity_evidence_but_iam_delete_refus
         ["storage", "service-account", "delete", "--project", "prod", "--yes"],
     )
 
-    assert iam_result.exit_code == 0, iam_result.output
-    assert "not proof of ownership" in iam_result.output
+    assert iam_result.exit_code == 2, iam_result.output
+    assert "not ownership proof" in iam_result.output
     assert "serviceaccount-storage" in iam_result.output
     assert deleted == []
     assert credentials_path.exists()
@@ -311,7 +319,7 @@ def test_storage_service_account_rejects_mismatched_project_marker(monkeypatch, 
         ["storage", "service-account", "delete", "--project", "prod", "--yes"],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
     assert "does not match project" in result.output
     assert deleted == []
 
@@ -446,7 +454,7 @@ def test_storage_service_account_does_not_delete_when_key_inventory_fails(
     )
 
     assert result.exit_code != 0
-    assert "Could not inspect access keys" in result.output
+    assert "provider/auth verification failed while inspecting access keys" in result.output
     assert "nothing was deleted" in result.output
     assert deleted == []
     assert credentials_path.exists()
@@ -497,3 +505,125 @@ def test_storage_service_account_reports_local_marker_cleanup_failure(
     assert "service account is gone" in result.output
     assert "ownership record" in result.output
     assert credentials_path.exists()
+
+
+def test_failed_setup_journal_is_trusted_for_safe_recovery(
+    monkeypatch, tmp_path
+) -> None:
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    data = yaml.safe_load(credentials_path.read_text())
+    data.pop("storage_iam")
+    data.pop("nebius")
+    data["storage_setup"] = {
+        "version": 1,
+        "projects": {
+            "project-a": {
+                "status": "partial",
+                "phase": "rollback_incomplete",
+                "resources": {
+                    "service_account": {
+                        "id": "serviceaccount-storage",
+                        "name": "lerobot-training",
+                        "created_by": "npa",
+                        "project_id": "project-a",
+                        "attempt_id": "attempt-a",
+                    }
+                },
+            }
+        },
+    }
+    credentials_path.write_text(yaml.safe_dump(data))
+    deleted = _stub_iam(monkeypatch)
+
+    dry_run = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--dry-run"],
+    )
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "storage setup journal for project-a" in dry_run.output
+
+    deletion = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+    assert deletion.exit_code == 0, deletion.output
+    assert "Verified deletion" in deletion.output
+    assert deleted == ["accesskey-storage", "serviceaccount-storage"]
+    assert not credentials_path.exists()
+
+
+def test_missing_ownership_can_report_verified_absence(
+    monkeypatch, tmp_path
+) -> None:
+    credentials_path = _seed_owned_account(
+        monkeypatch, tmp_path, managed_by=""
+    )
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_id_by_name",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Verified absence" in result.output
+    assert credentials_path.exists()
+
+
+def test_missing_ownership_provider_failure_is_partial(
+    monkeypatch, tmp_path
+) -> None:
+    _seed_owned_account(monkeypatch, tmp_path, managed_by="")
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_id_by_name",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            nebius_module.NebiusError("Unauthenticated")
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 2
+    assert "provider/auth verification failed" in result.output
+    assert "nothing was deleted" in result.output
+
+
+def test_owned_account_provider_verification_failure_preserves_provenance(
+    monkeypatch, tmp_path
+) -> None:
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        nebius_module,
+        "service_account_exists",
+        lambda _account_id: (_ for _ in ()).throw(
+            nebius_module.NebiusError("PermissionDenied")
+        ),
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius_module, "delete_service_account", lambda account_id: deleted.append(account_id)
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 2
+    assert "provider/auth verification failed" in result.output
+    assert deleted == []
+    assert "storage_iam" in yaml.safe_load(credentials_path.read_text())

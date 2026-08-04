@@ -269,3 +269,167 @@ def test_cleanup_full_reports_a_credential_removal_failure(monkeypatch) -> None:
     assert "could not be removed" in result.output
     assert "full local cleanup was incomplete" in result.output
     assert credentials_module.CREDENTIALS_PATH.exists()
+
+
+def _seed_legacy_source_terraform_cache(
+    monkeypatch, tmp_path: Path
+) -> Path:
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    terraform_dir = repo / "deploy" / "cluster"
+    cache = terraform_dir / ".terraform" / "providers"
+    cache.mkdir(parents=True)
+    (cache / "provider").write_text("provider-bytes")
+    for name in ("main.tf", "versions.tf", ".terraform.lock.hcl"):
+        (terraform_dir / name).write_text("# test\n")
+    monkeypatch.chdir(repo)
+    return terraform_dir / ".terraform"
+
+
+def test_cleanup_full_removes_only_validated_source_terraform_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cache = _seed_legacy_source_terraform_cache(monkeypatch, tmp_path)
+
+    report = runner.invoke(app, ["cleanup", "--full", "--skip-jobs"])
+    assert report.exit_code == 0, report.output
+    assert "Legacy source-checkout Terraform cache" in report.output
+    assert cache.exists()
+
+    cleanup = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
+    )
+    assert cleanup.exit_code == 0, cleanup.output
+    assert not cache.exists()
+
+    subsequent = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
+    )
+    assert subsequent.exit_code == 0, subsequent.output
+    assert "No local NPA/SkyPilot residue" in subsequent.output
+
+
+def test_cleanup_failure_keeps_terraform_residue_visible_on_the_next_run(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cache = _seed_legacy_source_terraform_cache(monkeypatch, tmp_path)
+    from npa.cli.cluster import terraform_runtime
+
+    monkeypatch.setattr(
+        terraform_runtime,
+        "remove_terraform_residue",
+        lambda _item: "filesystem busy",
+    )
+
+    failed = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
+    )
+    assert failed.exit_code == 1, failed.output
+    assert "filesystem busy" in failed.output
+    assert cache.exists()
+
+    subsequent = runner.invoke(app, ["cleanup", "--full", "--skip-jobs"])
+    assert subsequent.exit_code == 0, subsequent.output
+    assert "Legacy source-checkout Terraform cache" in subsequent.output
+    assert "No local NPA/SkyPilot residue" not in subsequent.output
+
+
+def test_cleanup_full_reports_owned_storage_iam_as_partial(
+    monkeypatch,
+) -> None:
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "storage_iam": {
+                    "service_account_id": "serviceaccount-storage",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "npa",
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(
+        nebius_module, "service_account_exists", lambda _account_id: True
+    )
+
+    result = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "verified present" in result.output
+    assert "Full cleanup is partial" in result.output
+    assert credentials_module.CREDENTIALS_PATH.exists()
+
+
+def test_cleanup_full_distinguishes_provider_verification_failure(
+    monkeypatch,
+) -> None:
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "storage_iam": {
+                    "service_account_id": "serviceaccount-storage",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "npa",
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "service_account_exists",
+        lambda _account_id: (_ for _ in ()).throw(
+            nebius_module.NebiusError("Unauthenticated")
+        ),
+    )
+
+    result = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "provider/auth verification failure" in result.output
+    assert credentials_module.CREDENTIALS_PATH.exists()
+
+
+def test_cleanup_full_prunes_provenance_after_verified_absence(
+    monkeypatch,
+) -> None:
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "storage_iam": {
+                    "service_account_id": "serviceaccount-storage",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "npa",
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(
+        nebius_module, "service_account_exists", lambda _account_id: False
+    )
+
+    result = runner.invoke(
+        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "verified absence" in result.output
+    assert not credentials_module.CREDENTIALS_PATH.exists()

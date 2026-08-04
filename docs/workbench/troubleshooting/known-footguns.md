@@ -184,6 +184,35 @@ real deletion failure remains visible verbatim.
 
 Category for follow-up: platform.
 
+## No-Cluster Teardown Downloads Terraform Providers Into The Checkout
+
+Symptom: `npa cluster down --force` runs authentication and `terraform init` even
+though no cluster, Terraform resource state/inventory, or NPA kubeconfig exists;
+`deploy/cluster/.terraform` can grow by hundreds of MB. A later provider download
+may also fail against tracked lock-file checksums.
+
+Mitigation: the no-evidence path is now a clear no-op and crosses no Terraform,
+Nebius-auth, Kubernetes, or RBAC boundary. Real apply/destroy runs use an exact
+marked directory under `~/.npa/terraform-data/cluster/` as `TF_DATA_DIR` and
+remove it on every exit path. Interrupted apply records a non-secret lifecycle
+inventory immediately before apply, so a later down is not incorrectly skipped.
+`npa cleanup --full --yes` detects/removes marked scratch and the exact validated
+legacy source cache; a failed removal stays visible on the next report.
+
+Checksum verification is never disabled and runtime init uses
+`-lockfile=readonly`. On mismatch, verify the provider source/release and mirror,
+then reconcile in a clean reviewed checkout (replace the platform deliberately):
+
+```bash
+terraform -chdir=deploy/cluster providers lock -platform=linux_amd64
+git diff -- deploy/cluster/.terraform.lock.hcl
+```
+
+Do not delete the lock file or use an unverified provider package merely to make
+teardown proceed.
+
+Category for follow-up: platform.
+
 ## Teardown Is Seven Ordered Steps With No Single Entry Point
 
 Symptom: an environment looks torn down but still has a hung managed job, a local
@@ -201,18 +230,33 @@ runbook. `npa cleanup --yes` removes the local caches and clears
 `skypilot.sky_bin` from `config.yaml` (`--keep-sky` keeps `~/.sky`) while
 preserving credentials. The deliberately broader `npa cleanup --full --yes`
 also removes the locally saved Hugging Face, Token Factory, and NGC entries and
-prunes empty `config.yaml`, `clusters/`, and `~/.npa`; non-empty or unrelated
-data is preserved. Cleanup already owns the isolated SkyPilot venv, so there is
-no dead `npa skypilot uninstall` step afterwards.
+prunes empty `config.yaml`, `clusters/`, and `~/.npa`. It also removes only
+validated NPA Terraform scratch/legacy `deploy/cluster/.terraform` residue and
+performs a read-only storage-IAM verification; non-empty, unrelated, ambiguous,
+or symlinked paths are preserved. Cleanup already owns the isolated SkyPilot
+venv, so there is no dead `npa skypilot uninstall` step afterwards.
 
 Cloud IAM stays explicit. Configure records provenance only when its create call
-made `lerobot-training`; after bucket deletion,
+made `lerobot-training`, before the next fallible provider/configuration step.
+An interrupted or partially rolled-back setup keeps that non-secret journal for
+retry/teardown; access-key secrets are never journaled or requested by list
+inventory. After bucket deletion,
 `npa storage service-account delete --project <alias> --dry-run` shows the exact
 account/access keys and `--yes` removes them. An ID or familiar account name alone
 is not ownership proof, so legacy, reused, mismatched, and user-managed identities
 are left untouched. Bucket credentials and IAM provenance have separate lifecycle
 records: deleting the bucket cannot erase the `storage_iam` proof or a legacy ID,
 and agent bootstrap cannot replace the owned storage identity with `npa-agent`.
+Verified absence/deletion exits 0. No trustworthy ownership (including a matching
+name with no provenance) and provider/auth verification failures are
+operator-actionable partial cleanup and exit 2. Use the project ID if the alias
+was already forgotten:
+
+```bash
+npa storage service-account delete --project-id <project-id> --dry-run
+npa storage service-account delete --project-id <project-id> --yes
+npa cleanup --full --yes --project <alias>
+```
 
 Category for follow-up: platform.
 

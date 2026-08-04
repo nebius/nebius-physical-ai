@@ -366,12 +366,25 @@ the project entry → clear local state), and missing a step leaves a hung job,
 credential, or cache behind. Run `npa cleanup` for a report plus the exact
 runbook. Plain `npa cleanup --yes` keeps credentials; the explicit
 `npa cleanup --full --yes` scope also removes saved Hugging Face, Token Factory,
-and NGC credentials and prunes an empty `~/.npa` tree. Cloud resources remain
-separate: `npa storage service-account delete` removes `lerobot-training` only
-when configure recorded that NPA created that exact identity, and refuses
-legacy, reused, mismatched, or user-managed accounts. Bucket deletion removes
-only bucket credentials; the separate storage-IAM ownership record survives
-until that identity is deleted or confirmed absent.
+and NGC credentials, removes only exactly validated NPA Terraform caches, and
+prunes an empty `~/.npa` tree. It performs a read-only storage-IAM verification
+but never deletes cloud resources. Cloud deletion remains separate:
+`npa storage service-account delete` removes `lerobot-training` only when the
+successful create response is present in NPA's final ownership record or its
+crash-safe setup journal. A display-name match, legacy ID, reused account,
+conflicting record, or user-managed account is never enough. Bucket deletion
+removes only bucket credentials; storage-IAM provenance survives until the exact
+identity is deleted or verified absent.
+
+Storage IAM results are explicit: verified absence/deletion exits 0; missing
+trustworthy ownership or a provider/auth verification failure reports
+`Partial cleanup` and exits 2. Do not treat exit 2 as success. Recover with:
+
+```bash
+npa storage service-account delete --project-id <project-id> --dry-run
+npa storage service-account delete --project-id <project-id> --yes
+npa cleanup --full --yes --project <alias>
+```
 
 `npa cluster down` uses the kubeconfig saved for the selected NPA cluster and
 forces its credential plugin into non-interactive/no-browser mode for the
@@ -380,6 +393,16 @@ and API failures and still attempts Terraform destroy. For a full managed-cluste
 deletion it relaxes only the exact `kube-system` PDBs for the NPA system add-ons
 `coredns`, `cilium-operator`, and `metrics-server`; user and unknown PDBs remain
 protected and are named if they can delay the drain.
+
+When no cluster state/inventory and no NPA kubeconfig exist, `cluster down` is a
+true no-op: it does not authenticate, initialize Terraform, download providers,
+or call Kubernetes. Real Terraform runs place provider/module data in exact
+NPA-owned temporary scratch and remove it on success or failure, so they do not
+populate `deploy/cluster/.terraform`. `npa cleanup --full --yes` detects both a
+failed scratch cleanup and the legacy source-checkout cache. A provider checksum
+mismatch remains a hard failure: NPA keeps `.terraform.lock.hcl` read-only and
+prints a reviewed `terraform providers lock` reconciliation command rather than
+bypassing verification.
 
 For the full known-issues surface: [docs/workbench/troubleshooting/known-footguns.md](docs/workbench/troubleshooting/known-footguns.md)
 and the active operational backlog in [FIXME.md](FIXME.md).

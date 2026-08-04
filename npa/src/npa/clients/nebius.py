@@ -1452,8 +1452,17 @@ def resolve_service_account_id(
     return ""
 
 
-def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
-    """Return a service-account id when *name* exists, else ``None``."""
+def get_service_account_id_by_name(
+    project_id: str,
+    name: str,
+    *,
+    strict: bool = False,
+) -> str | None:
+    """Return a service-account id when *name* exists, else ``None``.
+
+    ``strict`` preserves provider/auth failures so teardown can distinguish an
+    account that is verified absent from one that could not be inspected.
+    """
 
     try:
         data = _run_json([
@@ -1463,6 +1472,10 @@ def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
         ])
     except NebiusError as exc:
         message = str(exc)
+        if strict:
+            if _is_not_found(message):
+                return None
+            raise
         sa_id = _resource_id_from_nebius_error(message, prefix="serviceaccount-")
         if sa_id:
             return sa_id
@@ -1471,8 +1484,47 @@ def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
         if _is_permission_denied(message):
             return None
         raise
-    sa_id = data.get("metadata", {}).get("id", "")
-    return str(sa_id).strip() or None
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    sa_id = metadata.get("id", "") if isinstance(metadata, dict) else ""
+    resolved = str(sa_id).strip()
+    if strict and not resolved:
+        raise NebiusError(
+            "Nebius returned no service-account ID while verifying the named "
+            "account; presence or absence could not be established"
+        )
+    return resolved or None
+
+
+def service_account_exists(service_account_id: str) -> bool:
+    """Verify whether an exact service-account ID exists.
+
+    Provider/auth errors are never collapsed into absence.
+    """
+
+    account_id = str(service_account_id or "").strip()
+    if not account_id:
+        return False
+    try:
+        data = _run_json(["iam", "service-account", "get", "--id", account_id])
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return False
+        raise
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    returned_id = str(
+        metadata.get("id", "") if isinstance(metadata, dict) else ""
+    ).strip()
+    if not returned_id:
+        raise NebiusError(
+            "Nebius returned no service-account ID while verifying the exact "
+            "NPA-owned account"
+        )
+    if returned_id != account_id:
+        raise NebiusError(
+            "Nebius returned a different service-account ID while verifying the "
+            "NPA-owned account"
+        )
+    return True
 
 
 def list_access_keys_for_service_account(

@@ -192,6 +192,66 @@ def test_failed_rollback_preserves_exact_resumable_provenance_without_secrets(
     assert canary not in str(caught.value)
 
 
+def test_failure_after_service_account_creation_keeps_cleanup_provenance_when_rollback_fails(
+    credentials_path, monkeypatch, mocker
+) -> None:
+    def bootstrap(*_args, on_resource_created, **_kwargs):
+        on_resource_created(
+            "service_account",
+            {"id": "serviceaccount-storage", "name": "lerobot-training"},
+        )
+        raise nebius.NebiusError("access-key configuration failed")
+
+    monkeypatch.setattr(nebius, "bootstrap_environment", bootstrap)
+    mocker.patch.object(
+        nebius,
+        "delete_service_account",
+        side_effect=nebius.NebiusError("PermissionDenied"),
+    )
+
+    with pytest.raises(nebius.NebiusError, match="access-key configuration failed"):
+        storage_setup.provision_storage(
+            project_id="project-a",
+            tenant_id="tenant-a",
+            region="eu-north1",
+            bucket_name="bucket-a",
+        )
+
+    record = storage_setup.storage_setup_record("project-a")
+    account = record["resources"]["service_account"]
+    assert record["status"] == "partial"
+    assert account["id"] == "serviceaccount-storage"
+    assert account["created_by"] == "npa"
+    assert account["project_id"] == "project-a"
+
+
+def test_creation_journal_serializes_only_non_secret_allowlisted_fields(
+    credentials_path,
+) -> None:
+    transaction = storage_setup.StorageSetupTransaction(
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        bucket_name="bucket-a",
+    )
+    transaction.begin()
+    transaction.record_created(
+        "access_key",
+        {
+            "id": "accesskey-a",
+            "name": "lerobot-access-key",
+            "service_account_id": "serviceaccount-a",
+            "secret": "NPA_SECRET_MUST_NOT_BE_SAVED",
+            "aws_secret_access_key": "NPA_AWS_SECRET_MUST_NOT_BE_SAVED",
+        },
+    )
+
+    raw = credentials_path.read_text()
+    assert "NPA_SECRET_MUST_NOT_BE_SAVED" not in raw
+    assert "NPA_AWS_SECRET_MUST_NOT_BE_SAVED" not in raw
+    assert "accesskey-a" in raw
+
+
 def test_preexisting_resources_are_never_rolled_back(
     credentials_path, monkeypatch, mocker
 ) -> None:

@@ -166,6 +166,9 @@ def test_down_reports_node_group_progress_while_destroying(monkeypatch, tmp_path
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text('cluster_name = "npa-cluster"\nparent_id = "p"\n')
+    # This test exercises an actual destroy, so provide the state evidence that
+    # distinguishes it from the required no-cluster fast path.
+    (tf_dir / "terraform.tfstate").write_text('{"version": 4, "resources": [{}]}\n')
     node_groups = json.dumps(
         {
             "items": [

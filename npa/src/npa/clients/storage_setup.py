@@ -140,8 +140,17 @@ class StorageSetupTransaction:
     def record_created(self, kind: str, metadata: dict[str, str]) -> None:
         """Persist ownership before allowing the next fallible provider step."""
 
+        allowlists = {
+            "service_account": {"id", "name"},
+            "bucket": {"id", "name"},
+            "access_key": {"id", "name", "service_account_id"},
+        }
+        if kind not in allowlists:
+            raise ValueError(f"unsupported storage resource kind: {kind}")
         clean = {
-            key: str(value or "").strip() for key, value in metadata.items() if value
+            key: str(metadata.get(key, "") or "").strip()
+            for key in allowlists[kind]
+            if metadata.get(key)
         }
         clean.update(
             {
@@ -151,6 +160,11 @@ class StorageSetupTransaction:
                 "created_at": _now(),
             }
         )
+        required = "name" if kind == "bucket" else "id"
+        if not clean.get(required):
+            raise ValueError(
+                f"created storage {kind} record is missing its {required}"
+            )
         self._created_this_attempt.append((kind, clean))
         record = storage_setup_record(self.project_id, path=self.credentials_path)
         resources = record.get("resources")
@@ -165,8 +179,6 @@ class StorageSetupTransaction:
             resources["access_keys"] = keys
         elif kind in {"bucket", "service_account"}:
             resources[kind] = clean
-        else:
-            raise ValueError(f"unsupported storage resource kind: {kind}")
         self._update_record(
             {
                 "status": "in_progress",

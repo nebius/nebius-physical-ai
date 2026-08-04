@@ -576,6 +576,7 @@ def test_down_reads_project_settings_from_npa_config(monkeypatch, tmp_path: Path
 
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)  # no terraform.tfvars at all
+    (tf_dir / "terraform.tfstate").write_text("{}")
     envs: list[dict[str, str]] = []
 
     def fake_stream(args, **kwargs):
@@ -672,6 +673,7 @@ def test_down_does_not_override_explicit_tfvars(monkeypatch, tmp_path: Path) -> 
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text('parent_id = "project-tfvars"\n')
+    (tf_dir / "terraform.tfstate").write_text("{}")
     envs: list[dict[str, str]] = []
 
     def fake_capture(args, **kwargs):

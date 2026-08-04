@@ -128,15 +128,15 @@ def up_cmd(
 ) -> None:
     """Create or update the Terraform-managed NPA Kubernetes cluster."""
 
+    from npa.cli.cluster.terraform_runtime import (
+        isolated_terraform_data_dir,
+        record_terraform_inventory,
+    )
+
     tf_dir = _resolve_terraform_dir(terraform_dir)
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
-    env = _terraform_env(nebius_bin)
-    _apply_capacity_block_group_env(env, capacity_block_group)
-
-    typer.echo(f"Terraform directory: {tf_dir}")
-    _preflight_terraform_version(terraform_bin)
     tfvars = _read_tfvars(tf_dir)
     # First-class node-count flags: a runbook can pick "agent XOR 2-GPU cluster"
     # under a tight compute.instance.count without editing tfvars or exporting
@@ -152,87 +152,106 @@ def up_cmd(
         _apply_string_override(tfvars, key, value)
     if preemptible is not None:
         tfvars["gpu_nodes_preemptible"] = bool(preemptible)
-    _apply_project_tf_vars(env, project, tfvars)
-    _guard_tfvars_iam_token(tf_dir, tfvars)
-    _run_stream(
-        [terraform_bin, "init", "-lockfile=readonly"],
-        cwd=tf_dir,
-        env=env,
-        timeout=600,
+    context = context_name.strip() or str(
+        tfvars.get("cluster_name") or "npa-cluster"
     )
-    _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
-    _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
-    _preflight_instance_count_quota(tfvars, env)
-    _preflight_filestore_quota(nebius_bin, tfvars, env)
-    _preflight_gpu_capacity(nebius_bin, tfvars, env)
 
-    apply_args = [
-        terraform_bin,
-        "apply",
-        "-auto-approve",
-        # -var beats terraform.tfvars, TF_VAR_* does not. Pass the flag value
-        # explicitly so `--capacity-block-group` is not silently dropped by a
-        # `capacity_block_group = ""` line in a checked-in tfvars file.
-        *_capacity_block_group_var_args(capacity_block_group),
-        *_node_count_var_args(tfvars, "gpu_nodes_count", gpu_nodes),
-        *_node_count_var_args(tfvars, "cpu_nodes_count", cpu_nodes),
-        *_string_var_args("cpu_nodes_platform", cpu_platform),
-        *_string_var_args("cpu_nodes_preset", cpu_preset),
-        *_string_var_args("gpu_nodes_platform", gpu_platform),
-        *_string_var_args("gpu_nodes_preset", gpu_preset),
-        *(
-            ["-var", f"gpu_nodes_preemptible={str(bool(preemptible)).lower()}"]
-            if preemptible is not None
-            else []
-        ),
-        *_ssh_public_key_var_args(tfvars, env),
-    ]
-    # Terraform prints only `Still creating...` while a node group retries, so a
-    # cloud-side failure (QuotaFailure, no capacity) is invisible for as long as
-    # the operator is willing to wait. Report node-group state alongside it, and
-    # cancel the apply when the platform reports a refusal retrying cannot fix.
-    watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
-    watcher.start()
-    try:
-        _run_stream(
-            apply_args,
-            cwd=tf_dir,
-            env=env,
-            timeout=timeout * 60,
-            cancel=lambda: watcher.fatal_reason,
+    with isolated_terraform_data_dir(tf_dir, context) as terraform_data:
+        env = _terraform_env(nebius_bin)
+        env["TF_DATA_DIR"] = str(terraform_data)
+        _apply_capacity_block_group_env(env, capacity_block_group)
+
+        typer.echo(f"Terraform directory: {tf_dir}")
+        typer.echo(f"Terraform data: isolated NPA scratch {terraform_data}")
+        _preflight_terraform_version(terraform_bin)
+        _apply_project_tf_vars(env, project, tfvars)
+        _guard_tfvars_iam_token(tf_dir, tfvars)
+        _terraform_init(terraform_bin, tf_dir, env)
+        _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
+        _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
+        _preflight_instance_count_quota(tfvars, env)
+        _preflight_filestore_quota(nebius_bin, tfvars, env)
+        _preflight_gpu_capacity(nebius_bin, tfvars, env)
+
+        apply_args = [
+            terraform_bin,
+            "apply",
+            "-auto-approve",
+            # -var beats terraform.tfvars, TF_VAR_* does not. Pass the flag value
+            # explicitly so `--capacity-block-group` is not silently dropped by a
+            # `capacity_block_group = ""` line in a checked-in tfvars file.
+            *_capacity_block_group_var_args(capacity_block_group),
+            *_node_count_var_args(tfvars, "gpu_nodes_count", gpu_nodes),
+            *_node_count_var_args(tfvars, "cpu_nodes_count", cpu_nodes),
+            *_string_var_args("cpu_nodes_platform", cpu_platform),
+            *_string_var_args("cpu_nodes_preset", cpu_preset),
+            *_string_var_args("gpu_nodes_platform", gpu_platform),
+            *_string_var_args("gpu_nodes_preset", gpu_preset),
+            *(
+                ["-var", f"gpu_nodes_preemptible={str(bool(preemptible)).lower()}"]
+                if preemptible is not None
+                else []
+            ),
+            *_ssh_public_key_var_args(tfvars, env),
+        ]
+        # Once apply starts, remote backend state may exist even if the process
+        # is interrupted before kubeconfig/cluster state is written.
+        record_terraform_inventory(context, tf_dir)
+        # Terraform prints only `Still creating...` while a node group retries, so a
+        # cloud-side failure (QuotaFailure, no capacity) is invisible for as long as
+        # the operator is willing to wait. Report node-group state alongside it, and
+        # cancel the apply when the platform reports a refusal retrying cannot fix.
+        watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
+        watcher.start()
+        try:
+            _run_stream(
+                apply_args,
+                cwd=tf_dir,
+                env=env,
+                timeout=timeout * 60,
+                cancel=lambda: watcher.fatal_reason,
+            )
+        except (
+            typer.BadParameter,
+            KeyboardInterrupt,
+            subprocess.TimeoutExpired,
+        ) as exc:
+            watcher.stop()
+            _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
+            raise
+        finally:
+            watcher.stop()
+        outputs = _terraform_outputs(terraform_bin, tf_dir, env)
+        cluster = _cluster_output(outputs)
+        cluster_id = str(cluster.get("id") or "")
+        cluster_name = str(
+            cluster.get("name") or tfvars.get("cluster_name") or "npa-cluster"
         )
-    except (typer.BadParameter, KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
-        watcher.stop()
-        _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
-        raise
-    finally:
-        watcher.stop()
-    outputs = _terraform_outputs(terraform_bin, tf_dir, env)
-    cluster = _cluster_output(outputs)
-    cluster_id = str(cluster.get("id") or "")
-    cluster_name = str(cluster.get("name") or tfvars.get("cluster_name") or "npa-cluster")
-    if not cluster_id:
-        raise typer.BadParameter("Terraform output kube_cluster.id is empty")
+        if not cluster_id:
+            raise typer.BadParameter("Terraform output kube_cluster.id is empty")
 
-    context = context_name.strip() or cluster_name
-    kubeconfig_path = kubeconfig or kubeconfig_file(context)
-    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
-    _save_terraform_cluster_state(tfvars, cluster, context, kubeconfig_path)
+        kubeconfig_path = kubeconfig or kubeconfig_file(context)
+        _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+        _save_terraform_cluster_state(tfvars, cluster, context, kubeconfig_path)
 
-    typer.echo(f"Cluster ID: {cluster_id}")
-    typer.echo(f"Cluster name: {cluster_name}")
-    typer.echo(f"Kubeconfig: {kubeconfig_path}")
+        typer.echo(f"Cluster ID: {cluster_id}")
+        typer.echo(f"Cluster name: {cluster_name}")
+        typer.echo(f"Kubeconfig: {kubeconfig_path}")
 
-    if validate:
-        validation = _validate_cluster(kubectl_bin, kubeconfig_path, tfvars, validation_timeout)
-        typer.echo(
-            "Validation: "
-            f"{validation['ready_nodes']} Ready nodes, "
-            f"{validation['total_gpus']} allocatable GPUs, "
-            f"default StorageClass {validation['default_storage_class']}"
-        )
-    if sky_smoke:
-        _run_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_gpus)
+        if validate:
+            validation = _validate_cluster(
+                kubectl_bin, kubeconfig_path, tfvars, validation_timeout
+            )
+            typer.echo(
+                "Validation: "
+                f"{validation['ready_nodes']} Ready nodes, "
+                f"{validation['total_gpus']} allocatable GPUs, "
+                f"default StorageClass {validation['default_storage_class']}"
+            )
+        if sky_smoke:
+            _run_skypilot_smoke(
+                kubeconfig_path, context, cluster_name, sky_gpus
+            )
 
 
 def down_cmd(
@@ -275,79 +294,101 @@ def down_cmd(
     subnet, and the local kubeconfig/state under ~/.npa/clusters/<context>/.
     (`npa cluster destroy` is the API-only path for a cluster Terraform does not
     manage; it leaves the network behind.)
+
+    With no Terraform resource state/inventory and no NPA kubeconfig, this is a
+    local no-op: it does not authenticate, initialize/download providers, inspect
+    Kubernetes/RBAC, or run destroy. Real teardown uses ephemeral NPA-owned
+    TF_DATA_DIR scratch and never populates deploy/cluster/.terraform.
     """
 
+    from npa.cli.cluster.terraform_runtime import (
+        has_destroy_evidence,
+        isolated_terraform_data_dir,
+    )
+
     tf_dir = _resolve_terraform_dir(terraform_dir)
-    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
-    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
-    env = _terraform_env(nebius_bin)
-    if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
-        raise typer.Exit(1)
-    _preflight_terraform_version(terraform_bin)
     tfvars = _read_tfvars(tf_dir)
-    _apply_project_tf_vars(env, project, tfvars)
-    _guard_tfvars_iam_token(tf_dir, tfvars)
-    # Prefer the kubeconfig NPA saved for this exact cluster/context instead of
-    # an unrelated ambient current-context. The preview rewrites only a temporary
-    # copy so its exec credential cannot launch browser authentication.
     preview_context = context_name.strip() or str(
         tfvars.get("cluster_name") or "npa-cluster"
     )
-    preview_kubeconfig = kubeconfig
-    preview_state_issue = None
-    if preview_kubeconfig is None:
-        from npa.cluster.exceptions import ClusterStateError
-        from npa.cluster.state import existing_kubeconfig
-
-        try:
-            preview_kubeconfig = existing_kubeconfig(preview_context)
-        except (OSError, ClusterStateError):
-            from npa.cluster.drain import DrainPreviewIssue
-
-            preview_state_issue = DrainPreviewIssue(
-                "kubeconfig",
-                "NPA's saved kubeconfig reference or cluster state could not be loaded",
-            )
-    # The node-group watcher below shows that the drain is progressing; this names
-    # *why* it is slow and safely relaxes only exact managed system add-ons.
-    if preview_state_issue is not None:
-        from npa.cluster.drain import describe_preview_unavailable
-
+    if not has_destroy_evidence(
+        tf_dir,
+        preview_context,
+        kubeconfig=kubeconfig,
+    ):
         typer.echo(
-            f"drain-preview: {describe_preview_unavailable(preview_state_issue)}",
-            err=True,
+            f"No Terraform-managed cluster is recorded for {preview_context!r}: "
+            "no Terraform resource state/inventory or NPA kubeconfig was found. "
+            "Nothing to do. Terraform init/provider downloads, Nebius "
+            "authentication, Kubernetes/RBAC calls, and destroy were not invoked."
         )
-    else:
-        _report_drain_blockers(preview_kubeconfig, context=preview_context)
-    _run_stream(
-        [terraform_bin, "init", "-lockfile=readonly"],
-        cwd=tf_dir,
-        env=env,
-        timeout=600,
-    )
-    # `Still destroying...` every 10s with no detail made a ~6-minute node-group
-    # drain look like a hang. Report node-group state while it happens.
-    watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
-    watcher.start()
-    try:
-        _run_stream(
-            [
-                terraform_bin,
-                "destroy",
-                "-auto-approve",
-                # Variable validation runs on destroy too, so the key has to resolve
-                # here as well — but a teardown must not be blocked by a machine that
-                # has no SSH key, since the value cannot affect what is destroyed.
-                *_ssh_public_key_var_args(tfvars, env, allow_placeholder=True),
-            ],
-            cwd=tf_dir,
-            env=env,
-            timeout=timeout * 60,
-        )
-    finally:
-        watcher.stop()
-    if not keep_local_state:
-        _clear_local_cluster_state(context_name.strip() or str(tfvars.get("cluster_name") or "npa-cluster"))
+        return
+
+    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
+        raise typer.Exit(1)
+    _preflight_terraform_version(terraform_bin)
+    # Prefer the kubeconfig NPA saved for this exact cluster/context instead of
+    # an unrelated ambient current-context. The preview rewrites only a temporary
+    # copy so its exec credential cannot launch browser authentication.
+    with isolated_terraform_data_dir(tf_dir, preview_context) as terraform_data:
+        env = _terraform_env(nebius_bin)
+        env["TF_DATA_DIR"] = str(terraform_data)
+        _apply_project_tf_vars(env, project, tfvars)
+        _guard_tfvars_iam_token(tf_dir, tfvars)
+        preview_kubeconfig = kubeconfig
+        preview_state_issue = None
+        if preview_kubeconfig is None:
+            from npa.cluster.exceptions import ClusterStateError
+            from npa.cluster.state import existing_kubeconfig
+
+            try:
+                preview_kubeconfig = existing_kubeconfig(preview_context)
+            except (OSError, ClusterStateError):
+                from npa.cluster.drain import DrainPreviewIssue
+
+                preview_state_issue = DrainPreviewIssue(
+                    "kubeconfig",
+                    "NPA's saved kubeconfig reference or cluster state could not be loaded",
+                )
+        # The node-group watcher below shows that the drain is progressing; this names
+        # *why* it is slow and safely relaxes only exact managed system add-ons.
+        if preview_state_issue is not None:
+            from npa.cluster.drain import describe_preview_unavailable
+
+            typer.echo(
+                f"drain-preview: {describe_preview_unavailable(preview_state_issue)}",
+                err=True,
+            )
+        else:
+            _report_drain_blockers(preview_kubeconfig, context=preview_context)
+        _terraform_init(terraform_bin, tf_dir, env)
+        # `Still destroying...` every 10s with no detail made a ~6-minute node-group
+        # drain look like a hang. Report node-group state while it happens.
+        watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
+        watcher.start()
+        try:
+            _run_stream(
+                [
+                    terraform_bin,
+                    "destroy",
+                    "-auto-approve",
+                    # Variable validation runs on destroy too, so the key has to resolve
+                    # here as well — but a teardown must not be blocked by a machine that
+                    # has no SSH key, since the value cannot affect what is destroyed.
+                    *_ssh_public_key_var_args(
+                        tfvars, env, allow_placeholder=True
+                    ),
+                ],
+                cwd=tf_dir,
+                env=env,
+                timeout=timeout * 60,
+            )
+        finally:
+            watcher.stop()
+        if not keep_local_state:
+            _clear_local_cluster_state(preview_context)
 
 
 def _clear_local_cluster_state(context: str) -> None:
@@ -641,6 +682,7 @@ def _run_stream(
     env: dict[str, str] | None = None,
     timeout: int | None = None,
     cancel: Callable[[], str] | None = None,
+    capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run *args*, streaming output.
 
@@ -649,9 +691,39 @@ def _run_stream(
     a graceful shutdown that still persists state) and the reason is raised.
     """
     if cancel is None:
-        result = subprocess.run(args, cwd=cwd, env=env, text=True, timeout=timeout, check=False)
+        result = subprocess.run(
+            args,
+            cwd=cwd,
+            env=env,
+            text=True,
+            timeout=timeout,
+            check=False,
+            stdout=subprocess.PIPE if capture_output else None,
+            stderr=subprocess.PIPE if capture_output else None,
+        )
+        safe_stdout = result.stdout or ""
+        safe_stderr = result.stderr or ""
+        if capture_output:
+            from npa.clients.nebius import redact_nebius_output
+
+            safe_stdout = redact_nebius_output(safe_stdout)
+            safe_stderr = redact_nebius_output(safe_stderr)
+        if capture_output and safe_stdout:
+            typer.echo(safe_stdout, nl=not safe_stdout.endswith("\n"))
+        if capture_output and safe_stderr:
+            typer.echo(
+                safe_stderr, err=True, nl=not safe_stderr.endswith("\n")
+            )
         if result.returncode != 0:
-            raise typer.BadParameter(f"Command failed ({result.returncode}): {' '.join(args)}")
+            detail = ""
+            if capture_output:
+                detail = "\n".join(
+                    part for part in (safe_stderr, safe_stdout) if part
+                ).strip()
+            suffix = f": {detail[-3000:]}" if detail else ""
+            raise typer.BadParameter(
+                f"Command failed ({result.returncode}): {' '.join(args)}{suffix}"
+            )
         return result
 
     reason = ""
@@ -722,6 +794,68 @@ def _run_capture(
         suffix = f": {detail}" if detail else ""
         raise typer.BadParameter(f"Command failed ({result.returncode}): {' '.join(args)}{suffix}")
     return result
+
+
+def _terraform_init(
+    terraform_bin: str,
+    terraform_dir: Path,
+    env: dict[str, str],
+) -> None:
+    """Initialize in isolated data while keeping the tracked lock immutable."""
+
+    lock_file = terraform_dir / ".terraform.lock.hcl"
+    try:
+        lock_before = lock_file.read_bytes()
+    except OSError:
+        lock_before = None
+    init_error: typer.BadParameter | None = None
+    try:
+        _run_stream(
+            [terraform_bin, "init", "-lockfile=readonly"],
+            cwd=terraform_dir,
+            env=env,
+            timeout=600,
+            capture_output=True,
+        )
+    except typer.BadParameter as exc:
+        init_error = exc
+    try:
+        lock_after = lock_file.read_bytes()
+    except OSError:
+        lock_after = None
+    if lock_before != lock_after:
+        raise typer.BadParameter(
+            f"Terraform changed {lock_file} despite -lockfile=readonly. NPA stopped "
+            "without running apply/destroy; restore and review the tracked lock file "
+            "before retrying."
+        )
+    if init_error is None:
+        return
+
+    detail = str(init_error)
+    lowered = detail.lower()
+    checksum_mismatch = any(
+        marker in lowered
+        for marker in (
+            "doesn't match any of the checksums",
+            "does not match any of the checksums",
+            "doesn't match the checksums",
+            "does not match the checksums",
+            "checksum mismatch",
+        )
+    )
+    if checksum_mismatch:
+        raise typer.BadParameter(
+            "Terraform provider checksum verification failed: the downloaded "
+            f"provider does not match the tracked checksums in {lock_file}. NPA "
+            "did not modify the lock file and will not bypass verification. Verify "
+            "the configured provider source/release and any network mirror, then "
+            "reconcile checksums in a clean reviewed checkout with `terraform "
+            f"-chdir={terraform_dir} providers lock -platform=<target-platform>`; "
+            "review the exact lock-file diff before committing and retrying. "
+            f"Terraform detail: {detail[-3000:]}"
+        )
+    raise typer.BadParameter(f"Terraform init failed: {detail[-3000:]}") from init_error
 
 
 def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
