@@ -3,7 +3,6 @@ from __future__ import annotations
 from io import BytesIO
 import json
 from pathlib import Path
-import subprocess
 from urllib.error import URLError
 from urllib.parse import urlparse
 
@@ -73,31 +72,47 @@ class FakeStorage:
         return str(target)
 
 
-@pytest.fixture(scope="module")
-def h264_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    path = tmp_path_factory.mktemp("paidf-input") / "capture.mp4"
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=blue:size=320x240:rate=10:duration=0.6",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
+@pytest.fixture
+def h264_video(tmp_path: Path) -> Path:
+    path = tmp_path / "capture.mp4"
+    path.write_bytes(b"hermetic-test-h264-mp4")
     return path
+
+
+@pytest.fixture
+def fake_media_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise PAIDF staging without depending on host FFmpeg packages."""
+
+    monkeypatch.setattr(dfi.shutil, "which", lambda name: f"/test-bin/{name}")
+
+    def fake_probe(path: Path) -> dict:
+        conditioning = path.name == "conditioning.mp4"
+        return {
+            "container": "mp4",
+            "codec": "h264",
+            "codec_profile": "High",
+            "width": 1280 if conditioning else 320,
+            "height": 720 if conditioning else 240,
+            "duration_seconds": 5.8125 if conditioning else 0.6,
+            "frame_rate": "16/1" if conditioning else "10/1",
+            "frame_count": 93 if conditioning else 6,
+            "pixel_format": "yuv420p",
+        }
+
+    def fake_derive(source: Path, output: Path) -> None:
+        output.write_bytes(b"derived-conditioning:" + source.read_bytes())
+
+    def fake_extract(_conditioning: Path, output_dir: Path) -> list[Path]:
+        frames = []
+        for index in range(1, dfi.CONDITIONING_FRAMES + 1):
+            frame = output_dir / f"conditioning-frame-{index:04d}.png"
+            frame.write_bytes(f"derived-frame-{index}".encode())
+            frames.append(frame)
+        return frames
+
+    monkeypatch.setattr(dfi, "probe_video", fake_probe)
+    monkeypatch.setattr(dfi, "_derive_conditioning", fake_derive)
+    monkeypatch.setattr(dfi, "_extract_conditioning_frames", fake_extract)
 
 
 def test_default_selection_is_pinned_real_starter() -> None:
@@ -157,7 +172,9 @@ def test_fixture_plan_is_explicit_and_synthetic() -> None:
     assert result.config_overrides()["seed_fixture"] == "true"
 
 
-def test_fixture_cannot_replace_committed_user_input(h264_video: Path) -> None:
+def test_fixture_cannot_replace_committed_user_input(
+    h264_video: Path, fake_media_pipeline: None
+) -> None:
     storage = FakeStorage()
     dfi.prepare_paidf_input(
         run_id="paidf-fixture-conflict",
@@ -203,7 +220,7 @@ def test_implicit_retry_reuses_committed_fixture_without_starter_fetch(
 
 
 def test_local_video_staging_records_lineage_and_is_idempotent(
-    h264_video: Path,
+    h264_video: Path, fake_media_pipeline: None
 ) -> None:
     storage = FakeStorage()
 
@@ -244,7 +261,9 @@ def test_local_video_staging_records_lineage_and_is_idempotent(
 
 
 def test_implicit_retry_reuses_user_source_without_fetch(
-    monkeypatch: pytest.MonkeyPatch, h264_video: Path
+    monkeypatch: pytest.MonkeyPatch,
+    h264_video: Path,
+    fake_media_pipeline: None,
 ) -> None:
     storage = FakeStorage()
     dfi.prepare_paidf_input(
@@ -270,7 +289,7 @@ def test_implicit_retry_reuses_user_source_without_fetch(
 
 
 def test_existing_run_rejects_different_explicit_source(
-    h264_video: Path, tmp_path: Path
+    h264_video: Path, tmp_path: Path, fake_media_pipeline: None
 ) -> None:
     storage = FakeStorage()
     dfi.prepare_paidf_input(
@@ -387,16 +406,40 @@ def test_fetch_fails_clearly_when_contract_requires_acceptance_or_token(
         )
 
 
-def test_invalid_media_fails_before_staging(tmp_path: Path) -> None:
+def test_invalid_media_fails_before_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     invalid = tmp_path / "invalid.mp4"
     invalid.write_text("not video", encoding="utf-8")
     storage = FakeStorage()
+    monkeypatch.setattr(dfi.shutil, "which", lambda name: f"/test-bin/{name}")
+
+    def reject_invalid(_path: Path) -> dict:
+        raise dfi.PaidfInputError("video validation failed: invalid test media")
+
+    monkeypatch.setattr(dfi, "probe_video", reject_invalid)
 
     with pytest.raises(dfi.PaidfInputError, match="video validation failed"):
         dfi.prepare_paidf_input(
             run_id="paidf-invalid",
             bucket="artifacts",
             input_video=invalid,
+            storage_client=storage,
+        )
+    assert storage.s3.uploads == []
+
+
+def test_missing_media_tools_fails_before_staging(
+    monkeypatch: pytest.MonkeyPatch, h264_video: Path
+) -> None:
+    storage = FakeStorage()
+    monkeypatch.setattr(dfi.shutil, "which", lambda _name: None)
+
+    with pytest.raises(dfi.PaidfInputError, match="ffprobe and ffmpeg are required"):
+        dfi.prepare_paidf_input(
+            run_id="paidf-missing-ffmpeg",
+            bucket="artifacts",
+            input_video=h264_video,
             storage_client=storage,
         )
     assert storage.s3.uploads == []
