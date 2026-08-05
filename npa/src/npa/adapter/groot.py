@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -1040,8 +1041,10 @@ def _render_lerobot_video_path(
     episode_row: dict[str, Any],
 ) -> Path | None:
     pattern = info.get("video_path") or LEROBOT_VIDEO_PATH_TPL
-    chunk_index = int(episode_row.get(f"videos/{feature_key}/chunk_index", 0) or 0)
-    file_index = int(episode_row.get(f"videos/{feature_key}/file_index", episode_index) or episode_index)
+    chunk_value = episode_row.get(f"videos/{feature_key}/chunk_index")
+    file_value = episode_row.get(f"videos/{feature_key}/file_index")
+    chunk_index = int(chunk_value) if chunk_value is not None else 0
+    file_index = int(file_value) if file_value is not None else episode_index
     candidates = [
         input_dir
         / pattern.format(
@@ -1060,6 +1063,80 @@ def _render_lerobot_video_path(
     return None
 
 
+def _episode_video_timestamps(
+    episode_row: dict[str, Any],
+    feature_key: str,
+) -> tuple[float, float] | None:
+    start = episode_row.get(f"videos/{feature_key}/from_timestamp")
+    end = episode_row.get(f"videos/{feature_key}/to_timestamp")
+    if start is None and end is None:
+        return None
+    if start is None or end is None:
+        raise GR00TAdapterError(
+            f"Incomplete video timestamps for {feature_key!r}: both from_timestamp "
+            "and to_timestamp are required"
+        )
+    start_value = float(start)
+    end_value = float(end)
+    if start_value < 0 or end_value <= start_value:
+        raise GR00TAdapterError(
+            f"Invalid video timestamps for {feature_key!r}: {start_value}..{end_value}"
+        )
+    return start_value, end_value
+
+
+def _split_consolidated_video(
+    src: Path,
+    dst: Path,
+    *,
+    start: float,
+    end: float,
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise GR00TAdapterError(
+            "ffmpeg is required to split consolidated LeRobot v3 video files"
+        )
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    partial = dst.with_suffix(".partial.mp4")
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-ss",
+        f"{start:.9f}",
+        "-i",
+        str(src),
+        "-t",
+        f"{end - start:.9f}",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-y",
+        str(partial),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        partial.unlink(missing_ok=True)
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise GR00TAdapterError(
+            f"Failed to split consolidated LeRobot video {src}: {detail}"
+        ) from exc
+    if not partial.is_file() or partial.stat().st_size == 0:
+        partial.unlink(missing_ok=True)
+        raise GR00TAdapterError(f"ffmpeg produced an empty episode video from {src}")
+    partial.replace(dst)
+
+
 def _copy_videos_lerobot_to_groot(
     input_dir: Path,
     output_dir: Path,
@@ -1072,21 +1149,43 @@ def _copy_videos_lerobot_to_groot(
     rows_by_episode = {int(row.get("episode_index", idx)): row for idx, row in enumerate(episode_rows)}
     episode_indices = sorted(rows_by_episode) or list(range(int(info.get("total_episodes", 0) or 0)))
     chunk_size = int(info.get("chunks_size", 1000) or 1000)
-    for episode_index in episode_indices:
-        episode_row = rows_by_episode.get(episode_index, {})
-        episode_chunk = episode_index // chunk_size
-        for meta in modality["video"].values():
-            original_key = meta["original_key"]
+    for meta in modality["video"].values():
+        original_key = meta["original_key"]
+        sources: dict[Path, list[tuple[int, dict[str, Any]]]] = {}
+        for episode_index in episode_indices:
+            episode_row = rows_by_episode.get(episode_index, {})
             src = _render_lerobot_video_path(input_dir, info, original_key, episode_index, episode_row)
             if src is None:
-                continue
-            dst = output_dir / GROOT_VIDEO_PATH_TPL.format(
-                episode_chunk=episode_chunk,
-                video_key=original_key,
-                episode_index=episode_index,
-            )
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+                raise GR00TAdapterError(
+                    f"Missing source video for {original_key!r}, episode {episode_index}"
+                )
+            sources.setdefault(src, []).append((episode_index, episode_row))
+
+        for src, source_episodes in sources.items():
+            shared_source = len(source_episodes) > 1
+            for episode_index, episode_row in source_episodes:
+                episode_chunk = episode_index // chunk_size
+                dst = output_dir / GROOT_VIDEO_PATH_TPL.format(
+                    episode_chunk=episode_chunk,
+                    video_key=original_key,
+                    episode_index=episode_index,
+                )
+                timestamps = _episode_video_timestamps(episode_row, original_key)
+                if shared_source:
+                    if timestamps is None:
+                        raise GR00TAdapterError(
+                            f"Shared source video {src} lacks episode timestamps for "
+                            f"{original_key!r}, episode {episode_index}"
+                        )
+                    _split_consolidated_video(
+                        src,
+                        dst,
+                        start=timestamps[0],
+                        end=timestamps[1],
+                    )
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
 
 def _copy_videos_groot_to_lerobot(input_dir: Path, output_dir: Path, info: dict[str, Any]) -> None:
