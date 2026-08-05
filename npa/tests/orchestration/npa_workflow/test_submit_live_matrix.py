@@ -163,6 +163,19 @@ def test_standalone_cosmos_case_exercises_conditioned_real_toolref() -> None:
     assert "--condition-on-input" in transfer.argv
 
 
+def test_groot_training_case_is_real_multi_gpu_coverage() -> None:
+    case = next(
+        case for case in SUBMIT_LIVE_MATRIX if case.spec == "groot-1-7-finetune.yaml"
+    )
+
+    assert case.tier == "multi"
+    assert not case.plan_only
+    assert case.image_tool == "groot"
+    assert ("gpu_count", "2") in case.config_vars
+    assert "real pinned GR00T N1.7" in case.notes
+    assert "torchrun --nproc_per_node=2" in case.notes
+
+
 @pytest.mark.parametrize(
     "name", ["sim2real-two-step.yaml", "sim2real-two-step-agent.yaml"]
 )

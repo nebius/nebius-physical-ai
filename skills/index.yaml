@@ -266,6 +266,12 @@ skills:
       - type: cli_help
         args: ["workbench", "groot", "convert", "--help"]
         contains: "output"
+      - type: cli_help
+        args: ["workbench", "groot", "finetune", "--help"]
+        contains: "runtime"
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml
   - name: isaac-lab
     category: tools
     when_to_use: "Isaac Lab RL simulation, deployment, SkyPilot workflows, or custom fork support."

@@ -1644,10 +1644,17 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps(result.__dict__, indent=2, sort_keys=True))
+        typer.echo(
+            json.dumps(
+                {**result.__dict__, "run_id": resolved_run_id},
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return
 
     typer.echo(f"status: {result.status}")
+    typer.echo(f"run_id: {resolved_run_id}")
     if result.job_id:
         typer.echo(f"job_id: {result.job_id}")
     if workflow_state is not None:
