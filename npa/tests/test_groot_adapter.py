@@ -358,6 +358,13 @@ def test_lerobot_to_groot_writes_modality_and_episode_parquets(
     assert modality["annotation"]["human.task_description"]["original_key"] == "task_index"
     assert (out / "data" / "chunk-000" / "episode_000000.parquet").exists()
     assert (out / "data" / "chunk-000" / "episode_000001.parquet").exists()
+    generated_config = out / "meta" / "npa_groot_modality_config.py"
+    assert generated_config.exists()
+    config_text = generated_config.read_text()
+    compile(config_text, str(generated_config), "exec")
+    assert config_text.count("ActionRepresentation.RELATIVE") == 1
+    assert config_text.count("ActionRepresentation.ABSOLUTE") == 1
+    assert 'embodiment_tag = EmbodimentTag.resolve("NEW_EMBODIMENT")' in config_text
     assert '"robot_embodiment": "NEW_EMBODIMENT"' in (
         out / "meta" / "npa_groot_adapter.json"
     ).read_text()
@@ -384,6 +391,8 @@ def test_lerobot_to_groot_detects_cartesian_actions_and_writes_config(
     generated_config = out / "meta" / "npa_groot_modality_config.py"
     assert generated_config.exists()
     config_text = generated_config.read_text()
+    compile(config_text, str(generated_config), "exec")
+    assert "ActionRepresentation.RELATIVE" not in config_text
     assert "ActionRepresentation.ABSOLUTE" in config_text
     assert 'embodiment_tag = EmbodimentTag.resolve("NEW_EMBODIMENT")' in config_text
 
