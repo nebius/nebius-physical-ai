@@ -709,16 +709,18 @@ def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(
     monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
 
     result = runner.invoke(
-        app, ["down", "--terraform-dir", str(tf_dir), "--force"]
+        app,
+        ["down", "--terraform-dir", str(tf_dir), "--force"],
+        terminal_width=80,
     )
 
     assert result.exit_code != 0
     # Rich may wrap between words according to the runner's terminal width;
     # assert the operator message rather than its presentation whitespace.
-    output = " ".join(result.output.split())
+    output = " ".join(result.output.replace("│", " ").split())
     assert "checksum verification failed" in output
-    assert "will not" in output
-    assert "bypass verification" in output
+    assert "did not modify the lock file" in output
+    assert "Checksum bypass is forbidden" in output
     assert "providers lock" in output
     assert lock_file.read_text() == original_lock
     assert not (tf_dir / ".terraform").exists()

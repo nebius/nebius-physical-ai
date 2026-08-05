@@ -868,7 +868,7 @@ def _terraform_init(
         raise typer.BadParameter(
             "Terraform provider checksum verification failed: the downloaded "
             f"provider does not match the tracked checksums in {lock_file}. NPA "
-            "did not modify the lock file and will not bypass verification. Verify "
+            "did not modify the lock file.\nChecksum bypass is forbidden. Verify "
             "the configured provider source/release and any network mirror, then "
             "reconcile checksums in a clean reviewed checkout with `terraform "
             f"-chdir={terraform_dir} providers lock -platform=<target-platform>`; "
