@@ -49,6 +49,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from npa.clients.storage import StorageClient
+from npa.workflows.sim2real.artifact_upload import (
+    _upload_final_report,
+    upload_run_artifacts,  # noqa: F401 - public engine import surface
+)
 from npa.workbench.cosmos.reason import (
     CosmosReasonError,
     merge_dual_reason_evaluations,
@@ -73,7 +77,6 @@ from npa.workflows.sim2real.constants import (
     SCHEMA_E2E_REPORT,
     SCHEMA_HELDOUT_REPORT,
     SCHEMA_RL_SIGNAL,
-    SCHEMA_THRESHOLD_DECISION,
     SCHEMA_VLM_EVAL,
     SIM_BACKEND_GENESIS,
     SIM_BACKEND_ISAAC,
@@ -84,6 +87,7 @@ from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
     Sim2RealLoopError,
 )
+from npa.workflows.sim2real.decision import threshold_decision
 from npa.workflows.sim2real.gpu_fallback import (
     GpuCapacityExhausted,
     GpuJobFailure,
@@ -108,6 +112,13 @@ from npa.workflows.sim2real.utils import (
     _write_json_artifact,
 )
 from npa.workflows.sim2real.viz_contract import visualization_run_metadata
+from npa.workflows.sim2real.workflow_state_io import (
+    _read_workflow_state,
+    _workflow_state_path,  # noqa: F401 - legacy engine import surface
+    _write_workflow_state,
+    emit_active_progress_rerun,  # noqa: F401 - imported by runner from engine
+    sync_workflow_state_to_s3,  # noqa: F401 - imported by runner from engine
+)
 
 # Isaac Sim app handle — closed only after held-out report upload.
 _ISAAC_SIMULATION_APP: Any = None
@@ -128,124 +139,6 @@ def _signal_training_imports():
     )
 
     return parse_vlm_signal_batch, run_vlm_signal_training_step
-
-
-# =============================================================================
-# Workflow state (cross-stage polling)
-# =============================================================================
-
-
-def _workflow_state_path(local_dir: Path) -> Path:
-    return local_dir / "state" / "workflow_state.json"
-
-
-def sync_workflow_state_to_s3(
-    config: Sim2RealLoopConfig, local_dir: Path
-) -> dict[str, Any] | None:
-    """Upload ``state/workflow_state.json`` for live ``workflow status`` polling."""
-
-    if not config.upload_artifacts or not config.s3_bucket:
-        return None
-    state_path = local_dir / "state" / "workflow_state.json"
-    if not state_path.is_file():
-        return None
-    destination = f"{_artifact_root_uri(config)}/state/workflow_state.json"
-    try:
-        client = _storage_client(config)
-        uri = client.upload_file(str(state_path), destination)
-    except Exception as exc:
-        return {"status": "blocked", "reason": str(exc)}
-    return {"status": "uploaded", "uri": uri}
-
-
-def emit_active_progress_rerun(
-    config: Sim2RealLoopConfig,
-    local_dir: Path,
-    state: dict[str, Any],
-) -> dict[str, Any]:
-    """Refresh a viewable progress recording while the real run is active."""
-
-    components = list(state.get("components") or [])
-    if not config.rerun_enabled or len(components) < 3:
-        return {"status": "not_ready", "stage_count": len(components)}
-    progress_path = local_dir / "reports" / "sim2real-progress.rrd"
-    progress_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        from npa.workflows.sim2real_viz import emit_sim2real_rerun
-
-        result = emit_sim2real_rerun(
-            local_dir=local_dir,
-            inner_evidence=dict(state.get("final_inner") or {}),
-            heldout_report=dict(state.get("final_eval") or {}) or None,
-            stage_components=components,
-            outer_history=list(state.get("outer_history") or []),
-            run_metadata=visualization_run_metadata(
-                config=config,
-                artifact_root=_artifact_root_uri(config),
-                policy_checkpoint=str(
-                    (state.get("final_decision") or {}).get("checkpoint_uri") or ""
-                ),
-                progress=True,
-            ),
-            output_rrd=progress_path,
-            write_mp4=False,
-            allow_progress_only=True,
-        )
-        if not progress_path.is_file() or progress_path.stat().st_size <= 0:
-            raise Sim2RealLoopError("active progress Rerun recording is empty")
-        progress: dict[str, Any] = {
-            "status": "written",
-            "local_path": str(progress_path),
-            "size_bytes": progress_path.stat().st_size,
-            "stage_count": len(components),
-            "recording": result.to_dict(),
-            "viewer_command": (
-                "npa workbench sim2real rerun serve "
-                f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
-                f"--s3-prefix {config.s3_prefix}"
-            ),
-        }
-        if config.upload_artifacts and config.s3_bucket:
-            progress["s3_uri"] = _storage_client(config).upload_file(
-                str(progress_path),
-                f"{_artifact_root_uri(config)}/reports/sim2real-progress.rrd",
-            )
-        _write_json_artifact(
-            local_dir / "reports" / "sim2real-progress.json", progress
-        )
-        return progress
-    except Exception as exc:  # noqa: BLE001 - progress must not mask real stages
-        progress = {
-            "status": "blocked",
-            "reason": str(exc),
-            "stage_count": len(components),
-        }
-        _write_json_artifact(
-            local_dir / "reports" / "sim2real-progress.json", progress
-        )
-        return progress
-
-
-def _write_workflow_state(
-    local_dir: Path,
-    payload: dict[str, Any],
-    *,
-    config: Sim2RealLoopConfig | None = None,
-) -> dict[str, Any]:
-    record = _write_json_artifact(_workflow_state_path(local_dir), payload)
-    if config is not None:
-        sync_workflow_state_to_s3(config, local_dir)
-    return record["payload"]
-
-
-def _read_workflow_state(local_dir: Path) -> dict[str, Any]:
-    path = _workflow_state_path(local_dir)
-    if not path.exists():
-        raise Sim2RealLoopError(f"workflow state file not found: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise Sim2RealLoopError("workflow state payload must be a JSON object")
-    return payload
 
 
 # =============================================================================
@@ -3485,153 +3378,6 @@ def _ensure_heldout_renders_for_viz(
         if manifest.get("episodes"):
             report["render_manifest"] = manifest
     return report
-
-
-# =============================================================================
-# Stage 11 — outer loop decision (`threshold_decision`)
-# =============================================================================
-
-
-def threshold_decision(
-    config: Sim2RealLoopConfig,
-    *,
-    local_dir: Path,
-    heldout_report: dict[str, Any],
-    outer_iteration: int,
-) -> dict[str, Any]:
-    """Apply Stage 11 threshold gate and write promote/loop-back artifacts."""
-
-    stage_started = time.monotonic()
-    success_rate = float(heldout_report["success_rate"])
-    promoted = success_rate >= config.threshold
-    checkpoint_dir = local_dir / "checkpoints" / "candidate"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    # When a BYO trainer produced a real policy checkpoint (surfaced by the heldout
-    # eval as policy_checkpoint), promote should reference those real weights and be
-    # deployable — not the reference-metadata stub.
-    real_checkpoint = str(heldout_report.get("policy_checkpoint") or "").strip()
-    is_real_policy = real_checkpoint.startswith("s3://") and real_checkpoint.endswith(".pt")
-    checkpoint_uri = real_checkpoint if is_real_policy else str(checkpoint_dir)
-    checkpoint_metadata: dict[str, Any] = {}
-    if is_real_policy:
-        with tempfile.TemporaryDirectory(prefix="npa-policy-proof-") as temporary:
-            local_checkpoint = Path(temporary) / Path(real_checkpoint).name
-            try:
-                _storage_client(config).download_file(
-                    real_checkpoint, str(local_checkpoint)
-                )
-                digest = hashlib.sha256(local_checkpoint.read_bytes()).hexdigest()
-                checkpoint_metadata = {
-                    "policy_checkpoint_identity": Path(real_checkpoint).name,
-                    "policy_checkpoint_sha256": digest,
-                    "policy_checkpoint_size_bytes": local_checkpoint.stat().st_size,
-                    "policy_download_command": (
-                        "aws s3 cp "
-                        f"{shlex.quote(real_checkpoint)} ./model.pt "
-                        ' --endpoint-url "$AWS_ENDPOINT_URL"'
-                    ),
-                    "policy_ui_action": (
-                        "Open Artifacts for this run, select the .pt checkpoint, "
-                        "and choose Download; the Rerun viewer links it but does not execute it."
-                    ),
-                }
-            except Exception as exc:
-                if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
-                    raise Sim2RealLoopError(
-                        f"deployable policy checkpoint could not be hashed: {exc}"
-                    ) from exc
-                checkpoint_metadata = {"policy_metadata_error": str(exc)}
-    decision = {
-        "schema": SCHEMA_THRESHOLD_DECISION,
-        "stage": 11,
-        "outer_iteration": outer_iteration,
-        "success_rate": round(success_rate, 6),
-        "threshold": config.threshold,
-        "decision": "promote_checkpoint" if promoted else "loop_back_to_inner_loop",
-        "checkpoint_uri": checkpoint_uri,
-        "max_outer_iterations": config.outer_iterations,
-        "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
-        "duration_s": round(time.monotonic() - stage_started, 3),
-    }
-    # Package real weights even below threshold; promotion remains a distinct
-    # quality decision so fixed-count runs never lose candidate access.
-    if promoted or is_real_policy:
-        _write_json_artifact(
-            checkpoint_dir / "candidate.json",
-            {
-                "schema": "npa.sim2real.candidate_checkpoint.v1",
-                "run_id": config.run_id,
-                "source": "isaac-rsl-rl-ppo" if is_real_policy else "vlm-rl-reference-update",
-                "deployable_policy": is_real_policy,
-                "policy_artifact_kind": (
-                    "isaac_rsl_rl_checkpoint" if is_real_policy else "reference_metadata"
-                ),
-                "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
-                **checkpoint_metadata,
-                "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
-                "heldout_success_rate": round(success_rate, 6),
-                "threshold": config.threshold,
-                "threshold_met": promoted,
-                "promotion_decision": "promote_checkpoint" if promoted else "loop_back_to_inner_loop",
-                "candidate_status": "promoted" if promoted else "below_threshold_deployable_candidate",
-                "evaluated_at": _utc_now(),
-                "promoted_at": _utc_now() if promoted else "",
-            },
-        )
-    else:
-        _write_json_artifact(
-            local_dir / "outer_loop" / "loopback.json",
-            {
-                "schema": "npa.sim2real.loopback.v1",
-                "from_stage": 11,
-                "to_stage": 7,
-                "reason": "heldout threshold not met",
-                "decision": decision,
-            },
-        )
-    path = local_dir / "outer_loop" / "decision.json"
-    _write_json_artifact(path, decision)
-    return {**decision, "decision_uri": str(path)}
-
-
-# =============================================================================
-# Artifact upload (post-finalize)
-# =============================================================================
-
-
-def _upload_final_report(config: Sim2RealLoopConfig, report_path: Path) -> dict[str, Any]:
-    """Upload the finalized E2E report after optional auto rerun serve metadata is written."""
-
-    if not config.s3_bucket or not report_path.exists():
-        return {"status": "skipped", "reason": "report or s3_bucket missing"}
-    try:
-        uri = f"{_artifact_root_uri(config)}/reports/sim2real-report.json"
-        _storage_client(config).upload_file(str(report_path), uri)
-    except Exception as exc:
-        return {
-            "status": "blocked",
-            "reason": f"report re-upload failed: {exc}",
-            "next_action": "CONTINUE",
-        }
-    return {"status": "uploaded", "uri": uri, "artifact": "sim2real-report.json"}
-
-
-def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
-    """Upload the run artifact tree to S3-compatible storage."""
-
-    if not config.s3_bucket:
-        return {"status": "skipped", "reason": "s3_bucket is not configured"}
-    try:
-        client = StorageClient.from_environment(endpoint_url=config.s3_endpoint)
-        destination = f"{_artifact_root_uri(config)}/"
-        uploaded = client.upload_directory(str(local_dir), destination)
-    except Exception as exc:
-        return {
-            "status": "blocked",
-            "reason": f"S3 upload failed: {exc}",
-            "next_action": "CONTINUE",
-        }
-    return {"status": "uploaded", "uri": uploaded}
 
 
 def run_vlm_eval_component_from_s3(

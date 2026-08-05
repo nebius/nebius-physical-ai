@@ -393,6 +393,7 @@ def submit_cmd(
             "run_prefix_uri": result.run_prefix_uri,
             "log_path": result.log_path,
             "manifest_path": result.manifest_path,
+            "manifest_sha256": result.manifest_sha256,
         }
         if output_format == OutputFormat.json:
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -402,7 +403,8 @@ def submit_cmd(
             typer.echo(f"job_id: {result.job_name}")
             typer.echo(f"k8s_context: {result.k8s_context}")
             typer.echo(f"run_prefix_uri: {result.run_prefix_uri}")
-            typer.echo(f"manifest_path: {result.manifest_path}")
+            typer.echo(f"manifest_path: {result.manifest_path} (cleaned)")
+            typer.echo(f"manifest_sha256: {result.manifest_sha256}")
             if result.status == "submitted":
                 typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
         return

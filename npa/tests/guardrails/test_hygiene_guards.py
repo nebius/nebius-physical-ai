@@ -191,7 +191,7 @@ def test_monolith_modules_do_not_grow() -> None:
     caps = {
         "npa/src/npa/cli/agent.py": 10_100,
         "npa/src/npa/workflows/sim2real_loop.py": 5_800,
-        "npa/src/npa/workflows/sim2real/engine.py": 5_600,
+        "npa/src/npa/workflows/sim2real/engine.py": 5_550,
         "npa/src/npa/cli/groot/__init__.py": 4_400,
         "npa/src/npa/cli/fiftyone/__init__.py": 4_250,
         "npa/src/npa/cli/cosmos/__init__.py": 4_050,

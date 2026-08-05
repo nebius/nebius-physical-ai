@@ -90,6 +90,61 @@ def test_isaac_excludes_h100_h200_and_datacenter_blackwell() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("product", "marker", "compatible"),
+    [
+        (RTX, "sm120", True),
+        (RTX, "compute120", True),
+        (RTX, "sm100", False),
+        (RTX, "sm103", False),
+        (RTX, "sm90", False),
+        (L40S, "sm80", True),
+        (L40S, "sm89", True),
+        (L40S, "compute80", True),
+        (L40S, "compute89", True),
+        (L40S, "sm90", False),
+        (L40S, "sm120", False),
+    ],
+)
+def test_rtx_pro_and_l40s_use_only_proven_architecture_markers(
+    product: str, marker: str, compatible: bool
+) -> None:
+    assert (
+        product_is_compatible(
+            product,
+            workload="cosmos_reason",
+            image=f"registry/reason:cuda-{marker}",
+        )
+        is compatible
+    )
+
+
+def test_architecture_markers_fail_closed_without_misreading_malformed_values() -> None:
+    assert product_is_compatible(
+        RTX,
+        workload="isaac",
+        image="registry/npa-isaac-lab:2.3.2",
+    )
+    assert not product_is_compatible(
+        RTX,
+        workload="cosmos_reason",
+        image="registry/reason:cuda-sm1200-sm100",
+    )
+    for malformed in ("cuda-sm120oops", "cuda-notsm120", "cuda-compute120beta"):
+        assert not product_is_compatible(
+            RTX,
+            workload="cosmos_reason",
+            image=f"registry/reason:{malformed}-sm100",
+        )
+    assert not product_is_compatible(
+        "not-a-real-gpu",
+        workload="isaac",
+        image="registry/isaac:cuda-sm120",
+    )
+    assert products_from_node_payload("not-json") == ()
+    assert products_from_node_payload({"items": [{"metadata": {"labels": {}}}]}) == ()
+
+
 def test_non_isaac_filter_honors_transfer_and_image_architecture() -> None:
     assert not product_is_compatible(
         B300, workload="cosmos_transfer", image="registry/transfer:2.5.1"
@@ -132,7 +187,15 @@ def test_non_isaac_filter_honors_model_and_operator_vram_requirements() -> None:
     )
 
 
-def test_unschedulable_detection_is_gpu_specific() -> None:
+@pytest.mark.parametrize(
+    "placement_message",
+    [
+        "0/2 nodes are available: 2 node(s) had untolerated taint.",
+        "0/2 nodes are available: 2 node(s) were unschedulable.",
+        "0/2 nodes are available: 2 node(s) had condition: NotReady.",
+    ],
+)
+def test_unschedulable_detection_is_gpu_specific(placement_message: str) -> None:
     pods = {
         "items": [
             {
@@ -150,25 +213,29 @@ def test_unschedulable_detection_is_gpu_specific() -> None:
     assert "Insufficient" in capacity_scheduling_reason(
         pod_payload=pods, gpu_resource="nvidia.com/gpu", product=RTX
     )
-    unrelated = {
+    placement_only = {
         "items": [
             {
                 "reason": "FailedScheduling",
-                "message": "0/2 nodes are available: 2 node(s) had untolerated taint.",
+                "message": placement_message,
             }
         ]
     }
     assert not capacity_scheduling_reason(
-        event_payload=unrelated, gpu_resource="nvidia.com/gpu", product=RTX
+        event_payload=placement_only, gpu_resource="nvidia.com/gpu", product=RTX
     )
 
 
 class _Scheduler:
-    def __init__(self, outcomes: dict[str, str]) -> None:
+    def __init__(
+        self, outcomes: dict[str, str], *, placement_message: str = ""
+    ) -> None:
         self.outcomes = outcomes
+        self.placement_message = placement_message
         self.current_product = ""
         self.current_job = ""
         self.applied_products: list[str] = []
+        self.commands: list[list[str]] = []
 
     def __call__(
         self,
@@ -178,6 +245,7 @@ class _Scheduler:
         timeout_s: int = 300,
     ) -> subprocess.CompletedProcess[str]:
         del timeout_s
+        self.commands.append(args)
         if args[:2] == ["get", "nodes"]:
             return subprocess.CompletedProcess(args, 0, _nodes(RTX, L40S, H100), "")
         if args[:2] == ["apply", "-f"]:
@@ -190,7 +258,7 @@ class _Scheduler:
             return subprocess.CompletedProcess(args, 0, "created", "")
         if args[:2] == ["get", "pods"]:
             outcome = self.outcomes.get(self.current_product, "success")
-            if outcome == "capacity":
+            if outcome in {"capacity", "placement_only"}:
                 payload = {
                     "items": [
                         {
@@ -198,7 +266,11 @@ class _Scheduler:
                                 "conditions": [
                                     {
                                         "reason": "Unschedulable",
-                                        "message": "0/1 nodes are available: 1 Insufficient nvidia.com/gpu.",
+                                        "message": (
+                                            "0/1 nodes are available: 1 Insufficient nvidia.com/gpu."
+                                            if outcome == "capacity"
+                                            else self.placement_message
+                                        ),
                                     }
                                 ]
                             }
@@ -237,6 +309,10 @@ class _Scheduler:
             if outcome == "runtime":
                 return subprocess.CompletedProcess(args, 1, "", "ImagePullBackOff")
             if outcome == "runtime_delayed":
+                return subprocess.CompletedProcess(
+                    args, 1, "", "timed out waiting for the condition"
+                )
+            if outcome == "placement_only":
                 return subprocess.CompletedProcess(
                     args, 1, "", "timed out waiting for the condition"
                 )
@@ -287,6 +363,17 @@ def test_capacity_retry_order_and_provenance(monkeypatch: pytest.MonkeyPatch) ->
         "unschedulable",
         "complete",
     ]
+    first_delete = next(
+        command for command in scheduler.commands if command[0] == "delete"
+    )
+    first_apply_index = next(
+        index
+        for index, command in enumerate(scheduler.commands)
+        if command[:2] == ["apply", "-f"]
+    )
+    assert scheduler.commands.index(first_delete) < first_apply_index
+    assert "--wait=true" in first_delete
+    assert "--timeout=120s" in first_delete
 
 
 def test_zero_timeout_waits_without_imposing_job_deadline(
@@ -331,6 +418,71 @@ def test_unrelated_runtime_failure_never_switches_product(
             timeout_s=10,
         )
     assert scheduler.applied_products == [RTX]
+
+
+@pytest.mark.parametrize(
+    "placement_message",
+    [
+        "0/2 nodes are available: 2 node(s) had untolerated taint.",
+        "0/2 nodes are available: 2 node(s) were unschedulable.",
+        "0/2 nodes are available: 2 node(s) had condition: NotReady.",
+    ],
+)
+def test_taint_cordon_or_notready_never_switches_gpu_product(
+    monkeypatch: pytest.MonkeyPatch, placement_message: str
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler(
+        {RTX: "placement_only", L40S: "success"},
+        placement_message=placement_message,
+    )
+    with pytest.raises(GpuJobFailure, match="refusing to change workload product"):
+        run_gpu_job_with_fallback(
+            kubectl=scheduler,
+            manifest_factory=_manifest,
+            base_job_name="s2r-placement-only",
+            namespace="default",
+            image="registry/image@sha256:abc123",
+            preferred_product=RTX,
+            explicit_candidates=(L40S,),
+            workload="isaac",
+            gpu_resource="nvidia.com/gpu",
+            gpu_count=1,
+            timeout_s=10,
+        )
+    assert scheduler.applied_products == [RTX]
+
+
+def test_stuck_same_name_job_deletion_fails_before_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+
+    def stuck_delete(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "delete":
+            return subprocess.CompletedProcess(
+                args, 1, "", "timed out waiting for the condition"
+            )
+        return scheduler(args, **kwargs)
+
+    with pytest.raises(GpuJobFailure, match="did not finish deleting before apply"):
+        run_gpu_job_with_fallback(
+            kubectl=stuck_delete,
+            manifest_factory=_manifest,
+            base_job_name="s2r-stuck-delete",
+            namespace="default",
+            image="registry/image@sha256:abc123",
+            preferred_product=RTX,
+            explicit_candidates=(),
+            workload="isaac",
+            gpu_resource="nvidia.com/gpu",
+            gpu_count=1,
+            timeout_s=10,
+        )
+    assert scheduler.applied_products == []
 
 
 def test_zero_timeout_detects_terminal_job_failure_without_product_fallback(

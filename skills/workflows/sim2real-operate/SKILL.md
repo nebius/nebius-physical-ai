@@ -67,6 +67,20 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
   concrete GPU capacity/selector evidence. Image pulls, credentials, model
   weights, container exits, and application failures fail on the selected
   product without retry.
+- **Taints, cordons, and NotReady nodes are not product-capacity evidence.** A
+  scheduling failure containing only those signals stays on the selected GPU
+  product and fails closed. Product fallback is allowed only when the same
+  scheduler evidence also names insufficient `nvidia.com/gpu` or a concrete
+  node-selector/affinity mismatch. This boundary prevents a fallback from
+  hiding a broken node pool or bypassing placement policy. Inspect `kubectl
+  describe node`, Job/Pod events, readiness, `spec.unschedulable`,
+  taints/tolerations, GPU Operator health, and the exact product label; remediate
+  and resubmit instead of widening retry behavior.
+- **Architecture markers are evidence, not marketing labels.** If an image tag
+  advertises architectures, RTX PRO 6000 requires `sm120` SASS or `compute120`
+  PTX. L40S accepts proven same-major `sm80`/`sm89` SASS or
+  `compute80`/`compute89` PTX, never `sm90` SASS. Isaac always keeps the
+  independent RT-core restriction and rejects H100/H200/B200/B300.
 - **Isaac Lab needs RT-core GPUs** (L40S / RTX PRO). H100/H200 are always
   filtered for Isaac. Selecting Genesis is an explicit backend choice
   (`NPA_SIM2REAL_SIM_BACKEND`), never an automatic failure fallback in the real

@@ -132,16 +132,27 @@ _TRANSFER_FAMILIES = frozenset({"rtx-pro-6000", "l40s", "h100", "h200", "b200"})
 _NON_ISAAC_FAMILIES = frozenset(
     {"rtx-pro-6000", "l40s", "h100", "h200", "b200", "b300"}
 )
+# Image tags are only architecture evidence when they spell out a SASS (``sm``)
+# or PTX (``compute``) target.  Keep these sets aligned with the measured
+# fatbin/PTX inventory in ``npa/docker/workbench/blackwell-dc-images.json``.
+# In particular, RTX PRO 6000 is CUDA major 12: an image that advertises any
+# architecture must explicitly carry sm_120 SASS or compute_120 PTX.  sm_100 /
+# sm_103 SASS is a different CUDA major and is never treated as portable to RTX.
 _ARCH_MARKERS = {
-    "rtx-pro-6000": ("sm120",),
-    # Repository CUDA images that support L40S commonly advertise their
-    # Ampere/Ada-compatible fatbin as sm80/sm90 rather than spelling out sm89.
-    "l40s": ("sm80", "sm89", "sm90"),
-    "h100": ("sm90",),
-    "h200": ("sm90",),
-    "b200": ("sm100",),
-    "b300": ("sm103",),
+    "rtx-pro-6000": frozenset({"sm120", "compute120"}),
+    # L40S (sm_89) may execute older same-major sm_80 SASS; sm_90 is a different
+    # CUDA major and must not qualify an otherwise L40S-incompatible image.
+    "l40s": frozenset({"sm80", "sm89", "compute80", "compute89"}),
+    "h100": frozenset({"sm90", "compute90"}),
+    "h200": frozenset({"sm90", "compute90"}),
+    "b200": frozenset({"sm100", "compute100"}),
+    # Repository packaging metadata proves sm_100 -> sm_103 same-major forward
+    # compatibility; the reverse is intentionally not claimed for B200 above.
+    "b300": frozenset({"sm100", "sm103", "compute100", "compute103"}),
 }
+_ARCH_MARKER_RE = re.compile(
+    r"(?<![a-z0-9])(?:sm|compute)[_-]?(?:80|89|90|100|103|120)(?![a-z0-9])"
+)
 _FAMILY_VRAM_GB = {
     "rtx-pro-6000": 96,
     "l40s": 48,
@@ -264,8 +275,11 @@ def product_is_compatible(
         return False
     if _FAMILY_VRAM_GB.get(family, 0) < minimum_vram_gb:
         return False
-    lowered_image = str(image or "").lower().replace("_", "").replace("-", "")
-    advertised = set(re.findall(r"sm(?:80|89|90|100|103|120)", lowered_image))
+    lowered_image = str(image or "").lower()
+    advertised = {
+        marker.replace("_", "").replace("-", "")
+        for marker in _ARCH_MARKER_RE.findall(lowered_image)
+    }
     if family in {"h100", "h200", "b200", "b300"} and not advertised:
         return False
     if not advertised:
@@ -445,6 +459,38 @@ def _pod_proof(payload: str) -> dict[str, Any]:
     }
 
 
+def _delete_job_and_wait(
+    kubectl: Kubectl,
+    *,
+    job_name: str,
+    namespace: str,
+    provenance: dict[str, Any],
+) -> None:
+    """Delete a same-name Job completely before another apply can race it."""
+
+    result = kubectl(
+        [
+            "delete",
+            "job",
+            job_name,
+            "-n",
+            namespace,
+            "--ignore-not-found=true",
+            "--wait=true",
+            "--timeout=120s",
+        ],
+        timeout_s=180,
+    )
+    if result.returncode == 0:
+        return
+    detail = " ".join(str(result.stderr or result.stdout or "").split())[:800]
+    raise GpuJobFailure(
+        f"Kubernetes Job {job_name} did not finish deleting before apply: "
+        f"{detail or 'kubectl delete returned no API detail'}",
+        provenance=provenance,
+    )
+
+
 def run_gpu_job_with_fallback(
     *,
     kubectl: Kubectl,
@@ -515,9 +561,11 @@ def run_gpu_job_with_fallback(
         attempt_started = time.monotonic()
         job_name = _attempt_job_name(base_job_name, index)
         manifest = manifest_factory(product, job_name)
-        kubectl(
-            ["delete", "job", job_name, "-n", namespace, "--ignore-not-found=true"],
-            timeout_s=120,
+        _delete_job_and_wait(
+            kubectl,
+            job_name=job_name,
+            namespace=namespace,
+            provenance=provenance,
         )
         apply = kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout_s=120)
         attempt: dict[str, Any] = {
@@ -590,17 +638,11 @@ def run_gpu_job_with_fallback(
                 scheduling_reason=capacity_reason,
                 duration_s=round(time.monotonic() - attempt_started, 3),
             )
-            kubectl(
-                [
-                    "delete",
-                    "job",
-                    job_name,
-                    "-n",
-                    namespace,
-                    "--ignore-not-found=true",
-                    "--wait=true",
-                ],
-                timeout_s=300,
+            _delete_job_and_wait(
+                kubectl,
+                job_name=job_name,
+                namespace=namespace,
+                provenance=provenance,
             )
             continue
 
@@ -654,14 +696,17 @@ def run_gpu_job_with_fallback(
                 timeout_s=120,
             )
             try:
-                status = (json.loads(counters.stdout or "{}").get("status") or {})
+                status = json.loads(counters.stdout or "{}").get("status") or {}
                 failed = int(status.get("failed") or 0)
             except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
                 failed = 0
             if failed:
                 break
             wait_text = str(wait.stderr or wait.stdout or "").lower()
-            if "timed out waiting" not in wait_text and "deadline exceeded" not in wait_text:
+            if (
+                "timed out waiting" not in wait_text
+                and "deadline exceeded" not in wait_text
+            ):
                 break
         pod_result = kubectl(
             [
@@ -719,17 +764,11 @@ def run_gpu_job_with_fallback(
                 scheduling_reason=capacity_reason,
                 duration_s=round(time.monotonic() - attempt_started, 3),
             )
-            kubectl(
-                [
-                    "delete",
-                    "job",
-                    job_name,
-                    "-n",
-                    namespace,
-                    "--ignore-not-found=true",
-                    "--wait=true",
-                ],
-                timeout_s=300,
+            _delete_job_and_wait(
+                kubectl,
+                job_name=job_name,
+                namespace=namespace,
+                provenance=provenance,
             )
             continue
         attempt.update(

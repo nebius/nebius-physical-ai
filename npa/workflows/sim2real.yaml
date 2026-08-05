@@ -51,7 +51,7 @@
 # | Artifact bucket vs trigger bucket | config.yaml, operator env, runbook NPA_SIM2REAL_* | NPA_SIM2REAL_BUCKET (alias S3_BUCKET), NPA_SIM2REAL_TRIGGER_DATASET_URI (alias TRIGGER_DATASET_URI), storage.bucket, storage.sim2real_stock_trigger_uri |
 # | External object-store bucket | endpoint + HMAC keys | AWS_ENDPOINT_URL, S3_ENDPOINT_URL, storage.endpoint_url, ~/.npa/credentials.yaml storage.aws_* |
 # | LeRobot custom/trigger dataset | trigger URI, dataset id | NPA_SIM2REAL_TRIGGER_DATASET_URI, NPA_SIM2REAL_TRIGGER_DATASET_ID (alias TRIGGER_DATASET_ID), default lerobot/pusht |
-# | Custom container images | operator env before submit | AUGMENT_IMAGE, ENVGEN_IMAGE, POLICY_IMAGE, VLM_IMAGE, EVAL_IMAGE, TRAINER_IMAGE, ISAAC_IMAGE, NPA_RERUN_VIEWER_IMAGE (alias NPA_SIM2REAL_RERUN_IMAGE) |
+# | Custom container images | operator env before submit | AUGMENT_IMAGE, ENVGEN_IMAGE, POLICY_IMAGE, TRAINER_IMAGE, VLM_IMAGE, VLM_REASON2_IMAGE, VLM_REASON3_IMAGE, EVAL_IMAGE, ISAAC_IMAGE, NPA_RERUN_VIEWER_IMAGE (alias NPA_SIM2REAL_RERUN_IMAGE) |
 #
 # Sim assets: Stage 2 reads ASSETS_URI and/or SCENE_SPEC_URI (and optional
 # CAMERAS_URI / ROBOT_SPEC_URI). Leave empty for stock Franka/tabletop smoke.
@@ -59,7 +59,11 @@
 #
 # Custom images: pass registry-qualified refs to workflow submit. Direct-K8s
 # submit rejects unresolved real-component images rather than allowing a SEAM
-# fallback. Set NPA_RERUN_VIEWER_IMAGE to override the pinned Rerun image.
+# fallback. Reason2/Reason3 overrides are independently qualified; overriding
+# VLM_IMAGE supplies both when their specific values are omitted. Set
+# NPA_RERUN_VIEWER_IMAGE (or its legacy alias) to override the pinned viewer.
+# The viewer is required only when both `NPA_SIM2REAL_RERUN` recording and
+# `NPA_SIM2REAL_RERUN_SERVE` auto-serve are enabled.
 #
 # Every value below is a materialized literal and the `run` block expands env
 # vars at container runtime. Operators override literals with repeated
@@ -206,6 +210,14 @@ envs:
   # filter this list to RT-core L40S / RTX PRO 6000 products. Retries require
   # concrete GPU Unschedulable/capacity evidence; runtime/image/credential
   # failures remain failures on the selected product.
+  # Taints, cordons, and NotReady nodes alone do NOT switch products. That
+  # placement state fails closed unless the scheduler also reports insufficient
+  # nvidia.com/gpu or a concrete product-selector/affinity mismatch. Inspect
+  # `kubectl describe node`, Job/Pod events, readiness, and tolerations; remediate
+  # the cluster state, then resubmit. Do not broaden this into a generic retry.
+  # If an image tag advertises CUDA architecture markers, RTX PRO 6000 requires
+  # sm120/compute120. L40S accepts proven same-major sm80/sm89 (or compute80/89),
+  # never incompatible sm90 SASS. Isaac still excludes H100/H200/B200/B300.
   NPA_SIM2REAL_K8S_GPU_CANDIDATES: "RTX PRO 6000,L40S"
   # Explicit operator acceptance is required by the Isaac image bootstrap.
   # Never hardcode YES here; pass both with --var after accepting the licenses.

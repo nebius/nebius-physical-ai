@@ -244,6 +244,39 @@ Isaac jobs reject non-RT products before apply. A fallback is attempted only
 after concrete Kubernetes capacity evidence; image, credential, and runtime
 failures stay attached to the selected product and fail closed.
 
+Direct Kubernetes submit validates `VLM_REASON2_IMAGE`, `VLM_REASON3_IMAGE`,
+and `NPA_RERUN_VIEWER_IMAGE` as registry-qualified real-path images before any
+Job is dispatched. A `VLM_IMAGE` override supplies both reason-image aliases
+unless they are set explicitly. The viewer image is optional when either
+`NPA_SIM2REAL_RERUN` recording or `NPA_SIM2REAL_RERUN_SERVE` auto-serve is
+disabled, and the registry pull-secret set follows the same effective guard.
+
+Architecture markers in an image tag are also fail-closed evidence. RTX PRO
+6000 (CUDA major 12) requires explicit `sm120` SASS or `compute120` PTX when a
+tag advertises architecture markers; `sm100`/`sm103` SASS is not portable to
+it. L40S (sm_89) accepts the repository-proven same-major `sm80`/`sm89` SASS or
+`compute80`/`compute89` PTX, but never `sm90` SASS. Version-only Isaac tags stay
+backward compatible because they make no architecture claim, while Isaac's
+separate RT-core filter still rejects H100, H200, B200, and B300.
+
+An untolerated taint, a cordoned node, or a NotReady node does **not** trigger a
+GPU-product fallback by itself. These conditions describe cluster placement or
+health, not proof that the selected GPU product lacks capacity. Switching
+products could hide a broken node pool or bypass an operator policy, so the
+workflow fails closed unless the same scheduler evidence also contains the
+narrow recognized signal: insufficient `nvidia.com/gpu` or a concrete
+product-selector/node-affinity mismatch. Inspect and remediate with:
+
+```bash
+kubectl get nodes -o wide
+kubectl describe node <node>
+kubectl -n default describe job <job>
+kubectl -n default get events --sort-by=.lastTimestamp
+```
+
+Check readiness, `spec.unschedulable`, taints/tolerations, GPU Operator health,
+and the exact `nvidia.com/gpu.product` label, then resubmit the same runbook.
+
 ## Monitor and diagnose
 
 ```bash
@@ -264,6 +297,9 @@ On `ImagePullBackOff`/401, refresh the registry pull secret and delete only the
 failed run-scoped Job so the same documented submit can be repeated. On
 `Insufficient nvidia.com/gpu`, inspect Job events; the submitter will try every
 compatible RTX PRO 6000/L40S label before returning capacity exhaustion.
+Taint-, cordon-, or NotReady-only scheduling events stop on the selected
+product; fix node health/schedulability or the required toleration rather than
+expecting the workload to move to another GPU family.
 If stale ambient `AWS_ACCESS_KEY_ID` values are denied during source staging,
 the submitter retries the HMAC pair in `~/.npa/credentials.yaml`; it never logs
 either credential value.

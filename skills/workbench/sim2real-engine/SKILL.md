@@ -17,6 +17,10 @@ K8s jobs (`s2r-*`).
 | File | Role |
 | --- | --- |
 | `npa/src/npa/workflows/sim2real/engine.py` | Stage glue, K8s siblings, inner/outer/finalize |
+| `npa/src/npa/workflows/sim2real/decision.py` | Stage 11 threshold gate and candidate packaging |
+| `npa/src/npa/workflows/sim2real/hashing.py` | Bounded-memory artifact/checkpoint SHA-256 |
+| `npa/src/npa/workflows/sim2real/workflow_state_io.py` | State persistence, S3 sync, and live progress evidence |
+| `npa/src/npa/workflows/sim2real/artifact_upload.py` | Post-finalize report and run-tree uploads |
 | `npa/src/npa/workflows/sim2real_stages.py` | Mandatory preamble stages 3–7 helpers |
 | `npa/src/npa/workflows/sim2real/monitor.py` | `_STAGE_SPECS` S3 marker rules for live status |
 | `npa/src/npa/workflows/sim2real/runner.py` | `Sim2RealWorkflow` orchestration CLI entry |

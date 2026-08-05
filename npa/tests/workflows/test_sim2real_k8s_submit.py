@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import stat
 import tarfile
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +33,25 @@ def _patch_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(k8s_submit, "resolve_kubeconfig", lambda _context: kubeconfig)
 
 
+def _capture_ephemeral_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    from npa.workflows.sim2real import k8s_submit
+
+    captured: dict[str, str] = {}
+    real = k8s_submit._secure_temporary_manifest
+
+    @contextmanager
+    def capture(**kwargs):
+        captured.update({key: str(value) for key, value in kwargs.items()})
+        with real(**kwargs) as path:
+            captured["path"] = str(path)
+            yield path
+
+    monkeypatch.setattr(k8s_submit, "_secure_temporary_manifest", capture)
+    return captured
+
+
 def test_operator_config_prefers_canonical_registry_over_legacy_storage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -56,7 +77,9 @@ storage:
     assert load_operator_config().registry == "registry.canonical.test/team"
 
 
-def test_is_sim2real_runbook_accepts_only_committed_canonical_file(tmp_path: Path) -> None:
+def test_is_sim2real_runbook_accepts_only_committed_canonical_file(
+    tmp_path: Path,
+) -> None:
     from npa.orchestration.npa_workflow.detect import detect_submit_format
     from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
     from npa.workflows.sim2real.materialize import default_runbook_path
@@ -79,6 +102,7 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     from npa.workflows.sim2real import k8s_submit
 
     _patch_operator(monkeypatch, tmp_path)
+    captured = _capture_ephemeral_manifest(monkeypatch)
     monkeypatch.setattr(
         k8s_submit,
         "_stage_orchestrator_source",
@@ -101,14 +125,16 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     )
 
     assert result.status == "planned"
-    manifest = yaml.safe_load(Path(result.manifest_path).read_text(encoding="utf-8"))
+    manifest = yaml.safe_load(captured["manifest_yaml"])
     container = manifest["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item["value"] for item in container["env"]}
     assert manifest["metadata"]["name"] == "sim2real-unit-plan"
     assert container["image"].startswith("registry.unit.test/team/")
     assert env["NPA_SIM2REAL_SOURCE_TARBALL_URI"].startswith("s3://unit-bucket/")
-    for key in k8s_submit._REQUIRED_REAL_IMAGE_ENVS:
+    for key in k8s_submit._required_real_image_envs(env):
         assert k8s_submit._registry_qualified(env[key]), (key, env[key])
+    assert not Path(result.manifest_path).exists()
+    assert len(result.manifest_sha256) == 64
 
 
 def test_submit_stages_source_refreshes_all_images_and_applies_job(
@@ -131,6 +157,7 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
         "ensure_registry_pull_secret_for_images",
         lambda *images, **_kwargs: refreshed.append(tuple(images)),
     )
+
     def fake_kubectl(args, **kwargs):
         if args[:2] == ["get", "nodes"]:
             stdout = json.dumps(
@@ -160,7 +187,9 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
                             "spec": {"nodeName": "rtx-node"},
                             "status": {
                                 "containerStatuses": [
-                                    {"imageID": "registry.unit.test/team/orchestrator@sha256:abc"}
+                                    {
+                                        "imageID": "registry.unit.test/team/orchestrator@sha256:abc"
+                                    }
                                 ]
                             },
                         }
@@ -188,10 +217,14 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
     assert result.status == "submitted"
     assert len(staged) == 1
     assert len(refreshed) == 1
-    assert len(refreshed[0]) >= len(k8s_submit._REQUIRED_REAL_IMAGE_ENVS)
+    expected_images, _ = k8s_submit._default_image_env("registry.unit.test/team")
+    required_names = k8s_submit._required_real_image_envs(expected_images)
+    assert set(refreshed[0][1:]) == {expected_images[name] for name in required_names}
     assert len(applied) == 1
     assert applied[0]["metadata"]["name"] == result.job_name
-    assert Path(result.manifest_path).name == f"{result.job_name}.yaml"
+    assert Path(result.manifest_path).name.startswith(f"{result.job_name}-")
+    assert not Path(result.manifest_path).exists()
+    assert len(result.manifest_sha256) == 64
 
 
 def test_unqualified_real_component_override_is_rejected(
@@ -201,7 +234,9 @@ def test_unqualified_real_component_override_is_rejected(
     from npa.workflows.sim2real import k8s_submit
 
     _patch_operator(monkeypatch, tmp_path)
-    with pytest.raises(ValueError, match="AUGMENT_IMAGE must be a registry-qualified image"):
+    with pytest.raises(
+        ValueError, match="AUGMENT_IMAGE must be a registry-qualified image"
+    ):
         k8s_submit.submit_sim2real_staged_job(
             run_id="unit-bad-image",
             env_overrides={
@@ -211,6 +246,143 @@ def test_unqualified_real_component_override_is_rejected(
             },
             plan_only=True,
         )
+
+
+@pytest.mark.parametrize(
+    "environment_variable",
+    ["VLM_REASON2_IMAGE", "VLM_REASON3_IMAGE", "NPA_RERUN_VIEWER_IMAGE"],
+)
+def test_new_real_path_image_guards_reject_unqualified_or_placeholder_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    environment_variable: str,
+) -> None:
+    from npa.workflows.sim2real import k8s_submit
+
+    _patch_operator(monkeypatch, tmp_path)
+    bad_image = (
+        "example.invalid/team/viewer:latest"
+        if environment_variable == "NPA_RERUN_VIEWER_IMAGE"
+        else "unqualified-image:latest"
+    )
+    with pytest.raises(ValueError, match=f"{environment_variable} must be"):
+        k8s_submit.submit_sim2real_staged_job(
+            run_id=f"unit-bad-{environment_variable.lower()}",
+            env_overrides={
+                environment_variable: bad_image,
+                "OMNI_KIT_ACCEPT_EULA": "YES",
+                "ISAACSIM_ACCEPT_EULA": "YES",
+            },
+            plan_only=True,
+        )
+
+
+def test_image_aliases_resolve_before_guarding_and_materialization(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workflows.sim2real import k8s_submit
+
+    _patch_operator(monkeypatch, tmp_path)
+    captured = _capture_ephemeral_manifest(monkeypatch)
+    vlm = "registry.valid.test/team/custom-reason:1"
+    viewer = "registry.valid.test/team/custom-viewer:2"
+
+    k8s_submit.submit_sim2real_staged_job(
+        run_id="unit-image-aliases",
+        env_overrides={
+            "VLM_IMAGE": vlm,
+            "NPA_SIM2REAL_RERUN_IMAGE": viewer,
+            "OMNI_KIT_ACCEPT_EULA": "YES",
+            "ISAACSIM_ACCEPT_EULA": "YES",
+        },
+        plan_only=True,
+    )
+
+    manifest = yaml.safe_load(captured["manifest_yaml"])
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"]}
+    assert env["VLM_IMAGE"] == vlm
+    assert env["VLM_REASON2_IMAGE"] == vlm
+    assert env["VLM_REASON3_IMAGE"] == vlm
+    assert env["NPA_RERUN_VIEWER_IMAGE"] == viewer
+
+
+def test_disabled_visualization_does_not_require_viewer_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workflows.sim2real import k8s_submit
+
+    _patch_operator(monkeypatch, tmp_path)
+    result = k8s_submit.submit_sim2real_staged_job(
+        run_id="unit-no-viewer",
+        env_overrides={
+            "NPA_SIM2REAL_RERUN": "0",
+            "NPA_RERUN_VIEWER_IMAGE": "not-qualified:latest",
+            "OMNI_KIT_ACCEPT_EULA": "YES",
+            "ISAACSIM_ACCEPT_EULA": "YES",
+        },
+        plan_only=True,
+    )
+    assert result.status == "planned"
+
+
+@pytest.mark.parametrize("name", ["NPA_SIM2REAL_RERUN", "NPA_SIM2REAL_RERUN_SERVE"])
+def test_visualization_toggle_must_be_boolean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    from npa.workflows.sim2real import k8s_submit
+
+    _patch_operator(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match=rf"{name} must be boolean"):
+        k8s_submit.submit_sim2real_staged_job(
+            run_id="unit-bad-viewer-toggle",
+            env_overrides={
+                name: "maybe",
+                "OMNI_KIT_ACCEPT_EULA": "YES",
+                "ISAACSIM_ACCEPT_EULA": "YES",
+            },
+            plan_only=True,
+        )
+
+
+def test_secure_manifest_is_unique_restrictive_and_cleaned(tmp_path: Path) -> None:
+    del tmp_path
+    from npa.workflows.sim2real.k8s_submit import _secure_temporary_manifest
+
+    paths: list[Path] = []
+    parents: list[Path] = []
+    for _ in range(2):
+        with _secure_temporary_manifest(
+            run_id="unit-secure",
+            job_name="sim2real-unit-secure",
+            manifest_yaml="apiVersion: batch/v1\n",
+        ) as path:
+            paths.append(path)
+            parents.append(path.parent)
+            assert path.is_file()
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+            assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+        assert not path.exists()
+        assert not path.parent.exists()
+    assert paths[0] != paths[1]
+    assert parents[0] != parents[1]
+
+
+def test_secure_manifest_cleanup_preserves_body_error() -> None:
+    from npa.workflows.sim2real.k8s_submit import _secure_temporary_manifest
+
+    manifest_path: Path | None = None
+    with pytest.raises(RuntimeError, match="body failed"):
+        with _secure_temporary_manifest(
+            run_id="unit-error",
+            job_name="sim2real-unit-error",
+            manifest_yaml="kind: Job\n",
+        ) as path:
+            manifest_path = path
+            raise RuntimeError("body failed")
+    assert manifest_path is not None
+    assert not manifest_path.exists()
+    assert not manifest_path.parent.exists()
 
 
 def test_source_staging_retries_configured_hmac_after_stale_ambient_auth(
@@ -239,9 +411,7 @@ def test_source_staging_retries_configured_hmac_after_stale_ambient_auth(
                 "configured-key" if kwargs.get("environ") == {} else "ambient-key"
             ),
             s3_secret_access_key=(
-                "configured-secret"
-                if kwargs.get("environ") == {}
-                else "ambient-secret"
+                "configured-secret" if kwargs.get("environ") == {} else "ambient-secret"
             ),
         ),
     )
@@ -276,7 +446,9 @@ def test_source_staging_retries_configured_hmac_after_stale_ambient_auth(
     assert destination.endswith("orchestrator-sim2real-auth-retry.tgz")
 
 
-def test_workflow_var_aliases_route_to_runbook_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_workflow_var_aliases_route_to_runbook_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.workflows.sim2real import k8s_submit
 
     captured: dict[str, object] = {}

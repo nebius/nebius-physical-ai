@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import subprocess
 import sys
 import tarfile
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from npa.deploy.images import container_image_for_tool
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX
@@ -30,6 +34,7 @@ class Sim2RealSubmitResult:
     status: str = "submitted"
     log_path: str = ""
     manifest_path: str = ""
+    manifest_sha256: str = ""
 
 
 _REQUIRED_REAL_IMAGE_ENVS = (
@@ -38,9 +43,13 @@ _REQUIRED_REAL_IMAGE_ENVS = (
     "POLICY_IMAGE",
     "TRAINER_IMAGE",
     "VLM_IMAGE",
+    "VLM_REASON2_IMAGE",
+    "VLM_REASON3_IMAGE",
     "EVAL_IMAGE",
     "ISAAC_IMAGE",
 )
+_RERUN_VIEWER_IMAGE_ENV = "NPA_RERUN_VIEWER_IMAGE"
+_PLACEHOLDER_IMAGE_MARKERS = ("example.invalid", "<your-registry-id>", "${")
 
 _REQUIRED_REAL_COMMAND_ENVS = (
     "BYO_POLICY_COMMAND",
@@ -59,10 +68,70 @@ def _repo_root() -> Path:
 
 def _registry_qualified(image: str) -> bool:
     ref = image.removeprefix("docker:").strip()
+    if not ref or any(marker in ref.lower() for marker in _PLACEHOLDER_IMAGE_MARKERS):
+        return False
     if "/" not in ref:
         return False
     host, leaf = ref.split("/", 1)
-    return bool(("." in host or ":" in host or host == "localhost") and (":" in leaf or "@" in leaf))
+    return bool(
+        ("." in host or ":" in host or host == "localhost")
+        and (":" in leaf or "@" in leaf)
+    )
+
+
+def _enabled(value: str, *, default: bool = False) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return default
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def _required_real_image_envs(values: dict[str, str]) -> tuple[str, ...]:
+    required = list(_REQUIRED_REAL_IMAGE_ENVS)
+    if _enabled(values.get("NPA_SIM2REAL_RERUN", ""), default=True) and _enabled(
+        values.get("NPA_SIM2REAL_RERUN_SERVE", ""), default=True
+    ):
+        required.append(_RERUN_VIEWER_IMAGE_ENV)
+    return tuple(required)
+
+
+def _resolve_image_overrides(overrides: dict[str, str]) -> dict[str, str]:
+    """Resolve image aliases before qualification and pull-secret collection."""
+
+    resolved = dict(overrides)
+    if "VLM_IMAGE" in overrides:
+        resolved.setdefault("VLM_REASON2_IMAGE", overrides["VLM_IMAGE"])
+        resolved.setdefault("VLM_REASON3_IMAGE", overrides["VLM_IMAGE"])
+    if (
+        "NPA_SIM2REAL_RERUN_IMAGE" in overrides
+        and _RERUN_VIEWER_IMAGE_ENV not in overrides
+    ):
+        resolved[_RERUN_VIEWER_IMAGE_ENV] = overrides["NPA_SIM2REAL_RERUN_IMAGE"]
+    return resolved
+
+
+@contextmanager
+def _secure_temporary_manifest(
+    *, run_id: str, job_name: str, manifest_yaml: str
+) -> Iterator[Path]:
+    """Write a mode-0600 run-scoped manifest and remove it on every exit path."""
+
+    run_slug = re.sub(r"[^a-zA-Z0-9-]+", "-", run_id).strip("-")[:32] or "run"
+    with tempfile.TemporaryDirectory(prefix=f"npa-sim2real-{run_slug}-") as temporary:
+        manifest_root = Path(temporary)
+        manifest_root.chmod(0o700)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f"{job_name}-",
+            suffix=".yaml",
+            dir=manifest_root,
+            delete=False,
+        ) as handle:
+            handle.write(manifest_yaml)
+            manifest_path = Path(handle.name)
+        manifest_path.chmod(0o600)
+        yield manifest_path
 
 
 def _validate_real_runtime_env(values: dict[str, str]) -> None:
@@ -108,9 +177,14 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
             "NPA_BYO_ISAAC_SUCCESS_DIST_M must be in [0.001, 10] metres, "
             f"got {distance}"
         )
-    early_exit = values.get("NPA_SIM2REAL_EARLY_EXIT", "0").strip().lower()
-    if early_exit not in {"", "0", "1", "false", "true", "no", "yes", "off", "on"}:
-        raise ValueError("NPA_SIM2REAL_EARLY_EXIT must be boolean")
+    boolean_values = {"", "0", "1", "false", "true", "no", "yes", "off", "on"}
+    for name in (
+        "NPA_SIM2REAL_EARLY_EXIT",
+        "NPA_SIM2REAL_RERUN",
+        "NPA_SIM2REAL_RERUN_SERVE",
+    ):
+        if values.get(name, "").strip().lower() not in boolean_values:
+            raise ValueError(f"{name} must be boolean")
     for name in _REQUIRED_REAL_COMMAND_ENVS:
         if not values.get(name, "").strip():
             raise ValueError(
@@ -127,12 +201,16 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
             )
 
 
-def _default_image_env(registry: str, *, orchestrator_image: str = "") -> tuple[dict[str, str], str]:
+def _default_image_env(
+    registry: str, *, orchestrator_image: str = ""
+) -> tuple[dict[str, str], str]:
     trainer = container_image_for_tool("lerobot-vlm-rl", registry=registry)
     vlm = container_image_for_tool("cosmos3-reason", registry=registry)
     images = {
         "NPA_REGISTRY": registry,
-        "AUGMENT_IMAGE": container_image_for_tool("cosmos2-transfer", registry=registry),
+        "AUGMENT_IMAGE": container_image_for_tool(
+            "cosmos2-transfer", registry=registry
+        ),
         "ENVGEN_IMAGE": container_image_for_tool("envgen", registry=registry),
         # Stage 7's real Isaac command and stage 9's PPO command both use the
         # trainer image as their NPA-capable parent before dispatching Isaac jobs.
@@ -143,7 +221,9 @@ def _default_image_env(registry: str, *, orchestrator_image: str = "") -> tuple[
         "VLM_REASON3_IMAGE": vlm,
         "EVAL_IMAGE": container_image_for_tool("loop-eval", registry=registry),
         "ISAAC_IMAGE": container_image_for_tool("isaac-lab", registry=registry),
-        "NPA_RERUN_VIEWER_IMAGE": container_image_for_tool("rerun-viewer", registry=registry),
+        "NPA_RERUN_VIEWER_IMAGE": container_image_for_tool(
+            "rerun-viewer", registry=registry
+        ),
     }
     return images, orchestrator_image.strip() or trainer
 
@@ -170,9 +250,13 @@ def _stage_orchestrator_source(
     credentials = load_credentials()
     configured_credentials = load_credentials(environ={})
     access_key = os.environ.get("AWS_ACCESS_KEY_ID") or credentials.s3_access_key_id
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or credentials.s3_secret_access_key
+    secret_key = (
+        os.environ.get("AWS_SECRET_ACCESS_KEY") or credentials.s3_secret_access_key
+    )
     if not access_key or not secret_key:
-        raise ValueError("S3 HMAC credentials are required to stage the Sim2Real source")
+        raise ValueError(
+            "S3 HMAC credentials are required to stage the Sim2Real source"
+        )
 
     with tempfile.TemporaryDirectory(prefix="npa-sim2real-submit-") as temporary:
         tarball = Path(temporary) / "npa-source.tgz"
@@ -334,7 +418,9 @@ def submit_sim2real_staged_job(
     if not resolved_registry:
         raise ValueError("storage.registry is not set in ~/.npa/config.yaml")
     if not _registry_qualified(f"{resolved_registry}/probe:tag"):
-        raise ValueError(f"Sim2Real registry must be qualified, got {resolved_registry!r}")
+        raise ValueError(
+            f"Sim2Real registry must be qualified, got {resolved_registry!r}"
+        )
 
     resolved_run_id = normalize_staged_run_id(run_id or os.environ.get("RUN_ID") or "")
     if not resolved_run_id:
@@ -344,7 +430,9 @@ def submit_sim2real_staged_job(
         resolved_registry,
         orchestrator_image=orchestrator_image,
     )
-    overrides = {str(key): str(value) for key, value in (env_overrides or {}).items()}
+    overrides = _resolve_image_overrides(
+        {str(key): str(value) for key, value in (env_overrides or {}).items()}
+    )
     image_env.update(overrides)
     image_env.update(
         {
@@ -368,11 +456,15 @@ def submit_sim2real_staged_job(
 
     runbook_env = {
         str(key): str(value)
-        for key, value in (load_runbook_task(default_runbook_path()).get("envs") or {}).items()
+        for key, value in (
+            load_runbook_task(default_runbook_path()).get("envs") or {}
+        ).items()
     }
-    _validate_real_runtime_env({**runbook_env, **image_env})
+    effective_env = {**runbook_env, **image_env}
+    _validate_real_runtime_env(effective_env)
 
-    for key in _REQUIRED_REAL_IMAGE_ENVS:
+    required_image_envs = _required_real_image_envs(effective_env)
+    for key in required_image_envs:
         if not _registry_qualified(image_env.get(key, "")):
             raise ValueError(
                 f"{key} must be a registry-qualified image for the real Kubernetes tier; "
@@ -408,26 +500,23 @@ def submit_sim2real_staged_job(
         env_overrides=image_env,
         namespace=namespace,
     )
-    manifest_root = Path("/tmp/sim2real-cluster")
-    manifest_root.mkdir(parents=True, exist_ok=True)
-    manifest_path = manifest_root / f"{materialized.job_name}.yaml"
-    manifest_path.write_text(materialized.to_yaml(), encoding="utf-8")
-    manifest_path.chmod(0o600)
-
     if not plan_only:
-        from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
+        from npa.workflows.sim2real.registry_auth import (
+            ensure_registry_pull_secret_for_images,
+        )
 
         ensure_registry_pull_secret_for_images(
             resolved_orchestrator,
-            *(image_env[key] for key in _REQUIRED_REAL_IMAGE_ENVS),
-            image_env["NPA_RERUN_VIEWER_IMAGE"],
+            *(image_env[key] for key in required_image_envs),
             namespace=namespace,
             kubeconfig=str(kubeconfig),
             k8s_context=context,
         )
         import yaml
 
-        def manifest_factory(product: str, candidate_job_name: str) -> dict[str, object]:
+        def manifest_factory(
+            product: str, candidate_job_name: str
+        ) -> dict[str, object]:
             candidate_env = dict(image_env)
             candidate_env["NPA_SIM2REAL_K8S_GPU_PRODUCT"] = product
             candidate = materialize_k8s_job(
@@ -441,13 +530,16 @@ def submit_sim2real_staged_job(
             payload["metadata"]["name"] = candidate_job_name
             return payload
 
-        def kubectl(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        def kubectl(
+            args: list[str], *, stdin: str | None = None, timeout_s: int = 300
+        ) -> subprocess.CompletedProcess[str]:
             return _direct_kubectl(
                 args,
                 kubeconfig=kubeconfig,
                 context=context,
                 namespace=namespace,
-                **kwargs,
+                stdin=stdin,
+                timeout_s=timeout_s,
             )
 
         placement = run_gpu_job_with_fallback(
@@ -462,7 +554,9 @@ def submit_sim2real_staged_job(
             ),
             explicit_candidates=image_env.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""),
             workload="isaac",
-            gpu_resource=image_env.get("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+            gpu_resource=image_env.get(
+                "NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"
+            ),
             gpu_count=1,
             timeout_s=60,
             wait_for_completion=False,
@@ -478,9 +572,21 @@ def submit_sim2real_staged_job(
         selected_payload = yaml.safe_load(materialized.to_yaml())
         selected_job_name = str(placement["job_name"])
         selected_payload["metadata"]["name"] = selected_job_name
-        manifest_path = manifest_root / f"{selected_job_name}.yaml"
-        manifest_path.write_text(yaml.safe_dump(selected_payload, sort_keys=False), encoding="utf-8")
-        manifest_path.chmod(0o600)
+        manifest_yaml = yaml.safe_dump(selected_payload, sort_keys=False)
+    else:
+        selected_job_name = materialized.job_name
+        manifest_yaml = materialized.to_yaml()
+
+    manifest_sha256 = hashlib.sha256(manifest_yaml.encode("utf-8")).hexdigest()
+    # The manifest is useful while diagnosing this call, but it can contain
+    # private registry/S3 coordinates. Return its path and digest as evidence
+    # after deterministic cleanup rather than retaining the YAML under /tmp.
+    with _secure_temporary_manifest(
+        run_id=resolved_run_id,
+        job_name=selected_job_name,
+        manifest_yaml=manifest_yaml,
+    ) as manifest_path:
+        ephemeral_manifest_path = str(manifest_path)
 
     prefix_uri = f"s3://{bucket}/{s3_prefix.rstrip('/')}/{resolved_run_id}/"
     return Sim2RealSubmitResult(
@@ -489,8 +595,9 @@ def submit_sim2real_staged_job(
         k8s_context=context,
         run_prefix_uri=prefix_uri,
         status="planned" if plan_only else "submitted",
-        log_path=f"/tmp/sim2real-cluster/{resolved_run_id}.log",
-        manifest_path=str(manifest_path),
+        log_path="",
+        manifest_path=ephemeral_manifest_path,
+        manifest_sha256=manifest_sha256,
     )
 
 
@@ -532,7 +639,11 @@ def submit_sim2real_from_workflow_vars(
             normalized[new] = normalized[old]
     bucket = normalized.get("NPA_SIM2REAL_BUCKET") or s3_bucket
     prefix = normalized.get("NPA_SIM2REAL_PREFIX") or s3_prefix or DEFAULT_PREFIX
-    endpoint = normalized.get("AWS_ENDPOINT_URL") or normalized.get("S3_ENDPOINT_URL") or s3_endpoint
+    endpoint = (
+        normalized.get("AWS_ENDPOINT_URL")
+        or normalized.get("S3_ENDPOINT_URL")
+        or s3_endpoint
+    )
     trigger_uri = (
         normalized.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
         or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")

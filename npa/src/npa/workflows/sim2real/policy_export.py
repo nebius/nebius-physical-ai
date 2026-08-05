@@ -559,14 +559,13 @@ def export_policy_onnx(
 def _checkpoint_provenance(
     ckpt_path: Path, checkpoint: Mapping[str, Any], *, source: str | None
 ) -> dict[str, Any]:
-    import hashlib
+    from npa.workflows.sim2real.hashing import sha256_file
 
-    digest = hashlib.sha256(ckpt_path.read_bytes()).hexdigest()
     train_iter = checkpoint.get("iter")
     return {
         "source": source or str(ckpt_path),
         "filename": ckpt_path.name,
         "size_bytes": ckpt_path.stat().st_size,
-        "sha256": digest,
+        "sha256": sha256_file(ckpt_path),
         "train_iter": int(train_iter) if isinstance(train_iter, int) else None,
     }
