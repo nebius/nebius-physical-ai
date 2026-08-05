@@ -39,7 +39,7 @@ repository files.
 The Nebius CLI is already authenticated. Configure NPA, deploy and verify the NPA
 agent, provision one CPU node and one on-demand RTX PRO 6000 GPU node (use
 preemptible only if needed), then run npa/workflows/physical-ai-data-factory.yaml
-end to end with seeded input and one augmentation.
+end to end with its verified real RoboPro starter input and one augmentation.
 
 Tenant: <tenant-id>
 Project: <project-id>
@@ -61,8 +61,9 @@ This is the complete clean-machine path to an input-conditioned demo run. It use
 exact shipped spec, the public GHCR mirror selected after configured environment
 loading, and the endpoint and secrets already stored by `npa
 configure`. No stored secret is printed or manually exported. The first run
-needs no dataset: `seed_default_input=true` seeds eight captionable frames, and
-the GPU runner assembles those frames into the short clip that conditions Cosmos.
+needs no user dataset: submit fetches and verifies the pinned RoboPro physical
+robot capture, derives the exact conditioning clip/frames, caches it, and stages
+it under the run prefix before any automatic GPU provisioning.
 
 ```bash
 set -eu
@@ -104,7 +105,7 @@ npa workbench workflow gpus --context "$KUBE_CONTEXT" --spec "$SPEC"
 npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --assume-decision promote_checkpoint \
-  --var bucket="$BUCKET" --var seed_default_input=true \
+  --var bucket="$BUCKET" \
   --var n_augmentations=1 --json
 
 # With GHCR this uses the Registry v2 anonymous token flow. With a configured
@@ -119,7 +120,7 @@ npa workbench workflow preflight-images "$SPEC" \
 npa workbench workflow submit "$SPEC" \
   --project "$PROJECT" --registry "$REGISTRY" \
   --run-id "$RUN_ID" --runtime --resume --auto-load \
-  --var bucket="$BUCKET" --var seed_default_input=true \
+  --var bucket="$BUCKET" \
   --var n_augmentations=1 \
   --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
@@ -176,10 +177,11 @@ times. The rendered augment task and NPA manifest/status retain the exact
 submit-time accelerator (for example
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`).
 
-For a first run with nothing staged, keep `--var seed_default_input=true` or the
-mandatory caption stage has no frames. For real data, upload PNG/JPEG frames to
-`s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input/` and omit that variable;
-the workflow uses those frames and never seeds over them.
+With no input selector, submit uses the verified real RoboPro starter described
+in the [PAIDF guide](physical-ai-data-factory.md#starter-input-authenticity-licensing-and-replacement).
+It prints whether the checksum-verified cache was hit or fetched and stages the
+source plus its derived conditioning artifacts at
+`s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input/`.
 
 Not sure what is still missing? `submit` checks first and prints everything at
 once:
@@ -195,29 +197,26 @@ Error: Cannot submit physical-ai-data-factory.yaml: missing prerequisites:
 Add `--plan-only` to render the SkyPilot YAML without launching. Do not bypass
 preflight on a first run: it is what keeps registry/auth/config failures local.
 
-Prefer to caption **real** frames? Stage them first (needs `ffmpeg` and the S3
-keys / `AWS_ENDPOINT_URL` from §2), then submit **without** the flag:
+Replace the starter with a local clip or one S3 object by adding exactly one
+selector to the complete submit command above:
 
 ```bash
-INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
-# Synthesize with no source asset, or swap for a real clip:
-#   ffmpeg -i my_clip.mp4 -vf fps=2 -frames:v 12 frame_%04d.png
-ffmpeg -f lavfi -i testsrc=size=1280x720:rate=1 -frames:v 12 frame_%04d.png
-aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
+# Local H.264 MP4 (NPA verifies and stages it)
+--input-video ./my-capture.mp4
 
-npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
-  --run-id "$RUN_ID" --var bucket="$BUCKET" --runtime --resume --auto-load \
-  --assume-decision promote_checkpoint \
-  --infra "k8s/$KUBE_CONTEXT" \
-  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+# One existing S3 object (not a prefix)
+--input-uri s3://source-bucket/captures/my-capture.mp4
+
+# Developers/tests only: geometric synthetic frames, explicitly labeled
+--seed-fixture
 ```
 
-Either way the frames satisfy the mandatory caption stage and condition real
-Cosmos inference: a staged video is used directly when present, otherwise the GPU
-runner assembles the frames into a temporary clip. `seed_default_input=true`
-never overwrites frames already staged under `input/`. Everything below is the
-full explanation.
+The selectors conflict by design. Local and S3 replacements are labeled
+“User-supplied input”; NPA does not claim they are captured or assign a media
+license. It validates MP4/H.264, positive dimensions/duration, normalizes the
+source to exactly 93 frames, extracts eight caption frames, records all digests
+and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
+`--condition-on-input`. `--seed-fixture` is never selected silently.
 
 ### If submit fails
 
@@ -234,7 +233,9 @@ full explanation.
 | `npa cluster status` shows a cluster RUNNING but lists a node group as `not RUNNING` | the control plane is up while that node group was never provisioned | the same quota/capacity fix; the cluster bills while it exists, so tear it down (`npa cluster down --force`) if you cannot get the nodes |
 | `Context <name> not found ... Available contexts: []` (from SkyPilot) | an older npa left `KUBECONFIG` unset for a cluster it had provisioned | upgrade npa: `submit --infra k8s/<context>` now prepends `~/.npa/clusters/<context>/kubeconfig` itself. For `kubectl`/bare `sky`, `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig` |
 | `provision-if-absent` failed on `~/.ssh/id_rsa.pub` | old default node-group key path | upgrade npa: `cluster up` now pins the first key that exists (`NPA_SSH_PUBLIC_KEY`, `id_ed25519.pub`, `id_rsa.pub`, `id_ecdsa.pub`) |
-| `No images found .../input/` | the caption stage ran with an empty `input/` | stage frames, or add `--var seed_default_input=true` |
+| `offline PAIDF cache miss` | `NPA_PAIDF_OFFLINE=1` forbids the starter fetch and the pinned asset is not cached | unset offline mode for one verified fetch, or populate the printed cache path with the exact pinned bytes |
+| `SHA-256 mismatch` | cached/downloaded/staged bytes do not match the committed source | do not bypass integrity; remove a corrupt cache entry or use a new run ID after fixing the source |
+| `unsupported video container/codec` | replacement media is not a decodable H.264 MP4 | transcode as the message shows before submitting; validation occurs before automatic provisioning |
 | `manifest_state: pending` with `resolution_source: durable_submission_receipt`, `canonical_paidf_s3_prefix`, or `managed_job` | the exact run exists, but artifact publication has not produced its final workflow manifest yet | keep using the NPA status/log/artifact commands; do not resubmit merely to make the manifest appear |
 | `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
 | `status: NOT_FOUND` with every applicable source listed as checked/absent | no receipt, exact canonical PAIDF object, exact managed job, or ordinary workflow manifest exists for that ID | verify the project alias/run ID; cancellation remains an idempotent no-op for this conclusively absent run |
@@ -526,76 +527,39 @@ npa workbench workflow plan-spec   "$SPEC" \
   --run-id demo --assume-decision promote_checkpoint --json
 ```
 
-### 4a. Stage input first (required — the run fails on empty `input/`)
+### 5a. Select the starter input
 
-The first stage, **annotate-original**, captions **image frames** from the run's
-`input/` prefix. Submit without staging frames and it fails fast with:
-
-```
-No images found in s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/input/
-```
-
-…and the later augment → grade → curate → visualize → finalize stages never run
-(only `configs/manifest.json` is written). Captioning needs real image files — **a
-`.mp4` alone is not enough** for `workbench.token_factory.caption`. The augment
-stage prefers a staged video but can assemble the caption frames into a temporary
-conditioning clip.
-
-> **Don't want to stage anything?** Submit with `--var seed_default_input=true`
-> and the `generate-configs` stage auto-seeds `input/` with a few default
-> synthetic frames (it never overwrites frames you staged yourself), so the run
-> completes end-to-end with no upload. Use the real-frame staging below when you
-> want the captions to describe actual footage.
-
-Pick one `RUN_ID` and reuse it for both staging and submit so the S3 prefix and
-`--run-id` match:
+Pick one `RUN_ID` and reuse it on retries. With no input selector, submit fetches
+the pinned RoboPro Aloha-Agilex physical capture, verifies its SHA-256, caches it,
+and stages `source.mp4`, the exact 93-frame `conditioning.mp4`, eight derived
+caption frames, and `provenance.json` under the canonical input prefix.
 
 ```bash
 BUCKET=<your-artifact-bucket>
 RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
 INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
-# The aws CLI uses the S3 keys + AWS_ENDPOINT_URL you exported in §2.
 ```
 
-**Minimum — 8–16 PNG/JPEG frames** (only the first `config.max_images`, default
-8, are captioned; `.png`/`.jpg`/`.jpeg`):
+No extra flag is the production starter path. To replace it, add exactly one of:
 
 ```bash
-aws s3 cp ./frames/ "$INPUT/" --recursive --exclude '*' --include '*.png'
+--input-video ./my-capture.mp4
+--input-uri s3://source-bucket/captures/my-capture.mp4
+--seed-fixture  # developers/tests only: explicitly synthetic geometry
 ```
 
-**Optional — a source clip.** Cosmos conditions on it directly when present;
-otherwise PAIDF encodes the staged frames as a short temporary clip:
+Local and S3 replacements must be decodable H.264 MP4s. Validation and staging
+happen before automatic provisioning. Conflicts, missing media, unsupported
+codec/container/shape, checksum mismatch, or an unavailable object fail with an
+actionable error and never fall back to shapes. `NPA_PAIDF_OFFLINE=1` permits
+only a verified cache hit. A committed run input is immutable, so a repeated
+submit reuses it and refuses a different source rather than overwriting data.
 
-```bash
-aws s3 cp ./video_0.mp4 "$INPUT/video_0.mp4"   # 720p–1080p H.264/H.265, 5–15 s
-```
+See the [starter provenance and licensing table](physical-ai-data-factory.md#starter-input-authenticity-licensing-and-replacement)
+for the immutable source URL, CC BY 4.0 attribution, exact digest/media facts,
+and the separate Cosmos source/model/media license boundaries.
 
-No dataset yet? Two hermetic ways to produce captionable conditioning frames for
-an end-to-end demo (needs `ffmpeg`), then upload them:
-
-```bash
-# (a) Extract frames from any short clip you have:
-ffmpeg -i video_0.mp4 -vf fps=2 -frames:v 12 frame_%04d.png
-
-# (b) …or synthesize frames with no source asset at all:
-ffmpeg -f lavfi -i testsrc=size=1280x720:rate=1 -frames:v 12 frame_%04d.png
-
-aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
-```
-
-Either way annotate-original gets real image files and Cosmos Transfer conditions
-on them after the GPU runner assembles a temporary clip. To preserve the exact
-motion of **your** footage, stage `video_0.mp4` alongside its caption frames;
-managed PAIDF augmentation automatically selects it.
-
-Confirm the frames landed before you submit:
-
-```bash
-aws s3 ls "$INPUT/"
-```
-
-### 4b. Submit a real run
+### 5b. Submit a real run
 
 Submit with the **same** `RUN_ID` (dynamic gate → pass `--assume-decision`):
 

@@ -257,7 +257,11 @@ def _materialize_input_clip(src: str, *, allow_frame_sequence: bool = False) -> 
         )
         if vids:
             keep_tmp = True
-            return vids[0]
+            # PAIDF prepares the exact normalized model input under this name.
+            return next(
+                (video for video in vids if Path(video).name == "conditioning.mp4"),
+                vids[0],
+            )
         if allow_frame_sequence:
             frames = sorted(
                 Path(f)
@@ -292,18 +296,22 @@ def _materialize_conditioning_input(
 def _persist_generated_conditioning_clip(local_input: str, input_uri: str) -> str:
     """Persist PAIDF's frame-derived clip so evaluation uses the exact source.
 
-    User-supplied videos already live below ``input_uri``.  Only the ephemeral
-    clip produced from PNG/JPEG frames needs publishing; without this object the
-    downstream hallucination check cannot compare the conditioned output to its
-    source and would otherwise grade on attributes alone.
+    Operator-side preparation already persists ``conditioning.mp4``. The legacy
+    fixture path still creates ``npa-paidf-conditioning.mp4`` in the worker and
+    needs it published. In both cases return the canonical URI so evaluation
+    records the exact clip Cosmos consumed.
     """
 
     path = Path(str(local_input or ""))
-    if path.name != "npa-paidf-conditioning.mp4" or not input_uri.startswith("s3://"):
+    if not input_uri.startswith("s3://"):
+        return ""
+    uri = input_uri.rstrip("/") + "/conditioning.mp4"
+    if path.name == "conditioning.mp4":
+        return uri
+    if path.name != "npa-paidf-conditioning.mp4":
         return ""
     from npa.clients.storage import StorageClient
 
-    uri = input_uri.rstrip("/") + "/conditioning.mp4"
     return StorageClient.from_environment().upload_file(str(path), uri)
 
 

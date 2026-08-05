@@ -198,7 +198,7 @@ def test_origin_when_source_frames_are_operator_provided() -> None:
     assert origin["original_present"] is True
     assert len(origin["original_inputs"]) == 2
     assert origin["original_inputs"][0]["kind"] == "image"
-    assert "operator-provided original/input data" in origin["summary"].lower()
+    assert "user-supplied input" in origin["summary"].lower()
     assert "input/clip0/frame-00000.png" in origin["summary"]
     assert origin["input_source"]["kind"] == "operator_provided"
 
@@ -222,7 +222,9 @@ def test_origin_truthfully_identifies_seeded_fixture_as_run_input() -> None:
         return {}
 
     origin = build_run_origin(keys, run_id=RUN, read_json=read_seeded)
-    assert origin["original_present"] is True
+    assert origin["original_present"] is False
+    assert origin["original_inputs"] == []
     assert origin["input_source"]["kind"] == "npa_seeded_fixture"
-    assert "npa-generated seeded input fixture" in origin["summary"].lower()
+    assert "synthetic seeded fixture" in origin["summary"].lower()
+    assert "not original real-world data" in origin["summary"].lower()
     assert "uploaded" not in origin["summary"].lower()

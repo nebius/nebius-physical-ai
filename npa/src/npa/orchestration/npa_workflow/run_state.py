@@ -44,6 +44,7 @@ class RunManifest:
     status: str = "planned"
     sky_job_id: str = ""
     steps: list[dict[str, Any]] = field(default_factory=list)
+    input_source: dict[str, Any] = field(default_factory=dict)
     updated_at: str = field(default_factory=utc_now)
     schema_version: str = RUN_SCHEMA_VERSION
 
@@ -58,6 +59,7 @@ class RunManifest:
             "sky_job_id": self.sky_job_id,
             "updated_at": self.updated_at,
             "steps": list(self.steps),
+            "input_source": dict(self.input_source),
         }
 
     @classmethod
@@ -70,6 +72,7 @@ class RunManifest:
             status=str(payload.get("status") or "planned"),
             sky_job_id=str(payload.get("sky_job_id") or ""),
             steps=[dict(item) for item in payload.get("steps") or [] if isinstance(item, dict)],
+            input_source=dict(payload.get("input_source") or {}),
             updated_at=str(payload.get("updated_at") or utc_now()),
             schema_version=str(payload.get("schema_version") or RUN_SCHEMA_VERSION),
         )
@@ -659,6 +662,7 @@ def persist_submitted_manifest(
         api_version=api_version,
         status=status,
         sky_job_id=sky_job_id,
+        input_source=input_source_from_config(config),
     )
     manifest.steps = plan_step_records(
         steps,
@@ -667,6 +671,26 @@ def persist_submitted_manifest(
     )
     store.write_manifest(manifest)
     return store.run_prefix_uri
+
+
+def input_source_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Project PAIDF's non-secret input contract into the durable run manifest."""
+
+    source_kind = str(config.get("input_source_kind") or "").strip()
+    if not source_kind:
+        return {}
+    return {
+        "source_kind": source_kind,
+        "input_origin": str(config.get("input_origin") or ""),
+        "input_origin_label": str(config.get("input_origin_label") or ""),
+        "authoritative_upstream_url": str(config.get("input_authoritative_url") or ""),
+        "immutable_revision": str(config.get("input_immutable_revision") or ""),
+        "asset_license": str(config.get("input_license") or ""),
+        "asset_attribution": str(config.get("input_attribution") or ""),
+        "sha256": str(config.get("input_sha256") or ""),
+        "staged_canonical_s3_uri": str(config.get("input_staged_uri") or ""),
+        "provenance_uri": str(config.get("input_provenance_uri") or ""),
+    }
 
 
 def store_for_config(

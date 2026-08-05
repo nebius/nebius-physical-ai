@@ -391,6 +391,27 @@ def submit_cmd(
             "an advanced opt-out."
         ),
     ),
+    input_video: Path | None = typer.Option(
+        None,
+        "--input-video",
+        help=(
+            "PAIDF only: replace the pinned starter with a local H.264 MP4. "
+            "The verified source and conditioning data are staged before provisioning."
+        ),
+    ),
+    input_uri: str = typer.Option(
+        "",
+        "--input-uri",
+        help="PAIDF only: replace the pinned starter with one readable s3://... MP4 object.",
+    ),
+    seed_fixture: bool = typer.Option(
+        False,
+        "--seed-fixture",
+        help=(
+            "PAIDF only: explicitly use repository-generated synthetic geometric "
+            "frames for development/tests; never selected by default."
+        ),
+    ),
     auto_load: bool = typer.Option(
         True,
         "--auto-load/--no-auto-load",
@@ -435,6 +456,29 @@ def submit_cmd(
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
 
     substitutions = _parse_submit_vars(var)
+    is_npa_spec = is_npa_workflow_spec(yaml_path)
+    is_paidf_spec = is_npa_spec and _is_paidf_workflow_spec(yaml_path)
+    legacy_fixture = _is_truthy_submit_value(
+        substitutions.get("seed_fixture")
+    ) or _is_truthy_submit_value(substitutions.get("seed_default_input"))
+    fixture_requested = seed_fixture or legacy_fixture
+    try:
+        from npa.workflows.data_factory_input import select_paidf_input
+
+        select_paidf_input(
+            input_video=input_video,
+            input_uri=input_uri,
+            seed_fixture=fixture_requested,
+        )
+    except RuntimeError as exc:
+        _fail(str(exc))
+        return
+    if (input_video is not None or input_uri.strip() or fixture_requested) and not is_paidf_spec:
+        _fail(
+            "--input-video, --input-uri, and --seed-fixture are supported only by "
+            "the physical-ai-data-factory workflow"
+        )
+        return
     materializer = _resolve_materializer(tool, yaml_path)
     resolved_run_id = run_id or _default_submit_run_id(yaml_path)
     from npa.orchestration.npa_workflow.run_resolution import validate_run_id
@@ -501,7 +545,7 @@ def submit_cmd(
         return
 
     prepared_npa = None
-    if is_npa_workflow_spec(yaml_path):
+    if is_npa_spec:
         # One prerequisite report instead of a sequence of one-at-a-time
         # failures spread over the render, the SkyPilot resolver and the
         # controller. Everything the operator still has to do is listed once,
@@ -591,6 +635,42 @@ def submit_cmd(
             if not staged_uri:
                 return
             os.environ["NPA_SRC_S3_URI"] = staged_uri
+        if is_paidf_spec:
+            from npa.workflows.data_factory_input import (
+                PaidfInputError,
+                plan_paidf_input,
+                prepare_paidf_input,
+            )
+
+            try:
+                if plan_only:
+                    prepared_input = plan_paidf_input(
+                        run_id=resolved_run_id,
+                        bucket=bucket_for_source,
+                        input_video=input_video,
+                        input_uri=input_uri,
+                        seed_fixture=fixture_requested,
+                    )
+                else:
+                    prepared_input = prepare_paidf_input(
+                        run_id=resolved_run_id,
+                        bucket=bucket_for_source,
+                        input_video=input_video,
+                        input_uri=input_uri,
+                        seed_fixture=fixture_requested,
+                        endpoint_url=s3_endpoint,
+                        aws_access_key_id=extra_env.get("AWS_ACCESS_KEY_ID", ""),
+                        aws_secret_access_key=extra_env.get("AWS_SECRET_ACCESS_KEY", ""),
+                        reporter=lambda message: typer.echo(message, err=True),
+                    )
+            except PaidfInputError as exc:
+                _fail(str(exc))
+                return
+            substitutions.update(prepared_input.config_overrides())
+            substitutions["seed_fixture"] = (
+                "true" if prepared_input.selection == "synthetic_fixture" else "false"
+            )
+            substitutions["seed_default_input"] = substitutions["seed_fixture"]
         _warn_placeholder_bucket(
             spec_config, quiet=output_format == OutputFormat.json
         )
@@ -1551,6 +1631,23 @@ def _npa_spec_config(yaml_path: Path, substitutions: dict[str, str]) -> dict:
     config = dict(spec.config)
     config.update(substitutions)
     return config
+
+
+def _is_paidf_workflow_spec(yaml_path: Path) -> bool:
+    """Identify the one workflow whose submit command owns starter preparation."""
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.run_state import PAIDF_WORKFLOW_NAME
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    try:
+        return load_spec(yaml_path).name == PAIDF_WORKFLOW_NAME
+    except NpaWorkflowError:
+        return False
+
+
+def _is_truthy_submit_value(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _stage_npa_src_for_submit(

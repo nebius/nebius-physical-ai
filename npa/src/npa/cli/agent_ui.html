@@ -1177,7 +1177,9 @@
         transition: box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease);
       }
       .voxel-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
-      .voxel-card[data-role="original_input"] { border-top: 4px solid #2563eb; }
+      .voxel-card[data-role="original_input"],
+      .voxel-card[data-role="source_input"] { border-top: 4px solid #2563eb; }
+      .voxel-card[data-role="synthetic_fixture"] { border-top: 4px solid #64748b; }
       .voxel-card[data-role="derived_conditioning"] { border-top: 4px solid #7c3aed; }
       .voxel-card[data-role="synthetic_augmented"] { border-top: 4px solid #d97706; }
       .voxel-thumb {
@@ -6097,10 +6099,12 @@
             '<span class="pill">multiply <strong>' + escapeHtml(String(summary.multiply_mode || "-")) + "</strong></span>" +
             '<span class="pill">grade <strong>' + escapeHtml(grade) + "</strong></span>" +
             '<span class="pill">decision <strong>' + escapeHtml(String(summary.grade_decision || "-")) + "</strong></span>" +
-            '<span class="pill">original/input <strong>' + escapeHtml(String(summary.original_input_count || summary.input_count || 0)) + "</strong></span>" +
+            '<span class="pill">source input <strong>' + escapeHtml(String(summary.source_input_count || summary.original_input_count || 0)) + "</strong></span>" +
             '<span class="pill">synthetic/augmented <strong>' + escapeHtml(String(summary.synthetic_augmented_count || summary.augmented_count || 0)) + "</strong></span>" +
             (summary.conditioning_count ? '<span class="pill">derived conditioning <strong>' + escapeHtml(String(summary.conditioning_count)) + "</strong></span>" : "") +
-            (source.description ? '<span class="pill">source <strong>' + escapeHtml(String(source.description)) + "</strong></span>" : "") +
+            (source.input_origin_label ? '<span class="pill">origin <strong>' + escapeHtml(String(source.input_origin_label)) + "</strong></span>" : "") +
+            (source.asset_license ? '<span class="pill">license <strong>' + escapeHtml(String(source.asset_license)) + "</strong></span>" : "") +
+            (source.sha256 ? '<span class="pill">sha256 <strong>' + escapeHtml(String(source.sha256).slice(0, 12)) + "…</strong></span>" : "") +
             (summary.curation_engine ? '<span class="pill">curation <strong>' + escapeHtml(String(summary.curation_engine)) + "</strong></span>" : "") +
             ((summary.curated_kept !== null && summary.curated_kept !== undefined) ? '<span class="pill">kept <strong>' + escapeHtml(String(summary.curated_kept)) + "</strong></span>" : "") +
             (summary.near_duplicate_count ? '<span class="pill">near-dupes <strong>' + escapeHtml(String(summary.near_duplicate_count)) + "</strong></span>" : "") +
@@ -6161,8 +6165,8 @@
           const tagHtml = Object.keys(tags).map((k) => '<span class="voxel-tag"><em>' + escapeHtml(k) + "</em> " + escapeHtml(String(tags[k])) + "</span>").join("");
           const caption = String((s && s.caption) || "");
           const group = String((s && s.group) || "");
-          const dataRole = String((s && s.data_role) || (group === "input" ? "original_input" : "synthetic_augmented"));
-          const roleLabel = String((s && s.data_role_label) || (group === "input" ? "Original / input data" : "Synthetic / augmented output"));
+          const dataRole = String((s && s.data_role) || (group === "source" ? "source_input" : (group === "conditioning" ? "derived_conditioning" : "synthetic_augmented")));
+          const roleLabel = String((s && s.data_role_label) || (group === "source" ? "Source input" : (group === "conditioning" ? "Derived conditioning data" : "Synthetic / augmented output")));
           const label = String((s && s.label) || (s && s.id) || ("sample " + i));
           // Prefer bucket-qualified s3:// URIs so thumbnails/view/download resolve
           // the correct bucket (runs may live in any accessible bucket).
@@ -6192,9 +6196,10 @@
             "</div></div></div>"
           );
         };
-        const original = samples.filter((s) => s && s.group === "input");
+        const sourceSamples = samples.filter((s) => s && (s.group === "source" || s.group === "input"));
+        const conditioning = samples.filter((s) => s && s.group === "conditioning");
         const augmented = samples.filter((s) => s && s.group === "augmented");
-        const other = samples.filter((s) => s && s.group !== "input" && s.group !== "augmented");
+        const other = samples.filter((s) => s && !["source", "input", "conditioning", "augmented"].includes(s.group));
         const groupSection = (title, note, rows, offset) => rows.length ? (
           '<section class="voxel-group"><h4>' + escapeHtml(title) + " (" + String(rows.length) + ")</h4>" +
           '<p class="voxel-group-note">' + escapeHtml(note) + '</p><div class="voxel-group-grid">' +
@@ -6202,18 +6207,24 @@
         ) : "";
         grid.innerHTML =
           groupSection(
-            "Original / input data",
-            String(source.description || "Source artifacts stored before augmentation") + (source.uri ? " — " + String(source.uri) : ""),
-            original,
+            String(source.input_origin_label || "Source input"),
+            "Source before conditioning. " + String(source.asset_attribution || source.description || "Authenticity and license are recorded in provenance") + (source.staged_canonical_s3_uri ? " — " + String(source.staged_canonical_s3_uri) : ""),
+            sourceSamples,
             0
           ) +
           groupSection(
-            "Synthetic / augmented data",
-            "Outputs generated from the input data by Cosmos Transfer; these are not originals.",
-            augmented,
-            original.length
+            "Derived conditioning data",
+            "Normalized 93-frame clip and caption frames derived from the source; this is the exact Cosmos conditioning path.",
+            conditioning,
+            sourceSamples.length
           ) +
-          groupSection("Other dataset artifacts", "Additional samples without a recognized provenance role.", other, original.length + augmented.length);
+          groupSection(
+            "Synthetic / augmented data",
+            "Variants generated from the conditioned source by Cosmos Transfer; these are not source captures.",
+            augmented,
+            sourceSamples.length + conditioning.length
+          ) +
+          groupSection("Other dataset artifacts", "Additional samples without a recognized provenance role.", other, sourceSamples.length + conditioning.length + augmented.length);
         for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-uri]")) {
           const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
           if (!uri) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }

@@ -125,6 +125,41 @@ def test_plan_only_skips_runtime_only_prerequisites(
     assert "example-bucket" in result.output
 
 
+def test_paidf_input_selectors_conflict_before_preflight() -> None:
+    result = _submit(
+        "--plan-only",
+        "--input-video",
+        "local.mp4",
+        "--input-uri",
+        "s3://source-bucket/input.mp4",
+    )
+
+    assert result.exit_code == 1
+    assert "options conflict" in result.output
+    assert "missing prerequisites" not in result.output
+
+
+def test_paidf_fixture_is_explicit_in_rendered_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+
+    result = _submit(
+        "--plan-only",
+        "--seed-fixture",
+        "--var",
+        "bucket=real-bucket",
+        "--output-format",
+        "json",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Synthetic seeded fixture" not in result.output  # metadata, not a fake stage
+    assert "generate_configs" in result.output
+    assert "'true'" in result.output
+    assert "--condition-on-input" in result.output
+
+
 def test_skip_preflight_bypasses_the_checks(mocker) -> None:
     mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow",

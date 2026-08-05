@@ -25,6 +25,9 @@ licenses:
     applies_to:
       - physical-ai-data-factory
       - neural-reconstruction
+  - path: skills/NOTICE-PAIDF-STARTER-MEDIA
+    applies_to:
+      - physical-ai-data-factory
 skills:
   - name: agent-development
     category: atomic

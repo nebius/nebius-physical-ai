@@ -1,0 +1,38 @@
+PAIDF starter-media notice
+==========================
+
+NPA does not bundle the PAIDF starter video in this repository or in a workbench
+container. The operator-side CLI fetches the exact object below at run preparation,
+verifies its SHA-256 digest, caches it, and stages it into the operator's run prefix.
+
+Dataset: RoboPro: 80-Task Bimanual Manipulation Demonstrations on Aloha-Agilex
+Author: Zhiyuan Li (2026)
+Official dataset: https://huggingface.co/datasets/Hoshipu/RoboPro
+Immutable revision: 90ec789bf4018eb9c0f75da9f69aab5c185f0fd0
+Asset: lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4
+Episode metadata: https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/meta/episodes.jsonl#L1
+SHA-256: caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+The upstream dataset card classifies RoboPro as expert teleoperation episodes
+recorded from three RGB cameras on an Aloha-Agilex robot. NPA labels this asset
+"Upstream real sample" and records every normalization/extraction step as a
+derivation. CC BY 4.0 permits sharing, adaptation, commercial, and hosted-service
+use without field-of-use restrictions, subject to attribution, a license link,
+and indication of modifications. It requires no click-through acceptance or token.
+
+License boundaries
+------------------
+
+* This notice covers only the starter media identified above. It does not change
+  the NPA source-code license, the Cosmos Transfer source-code license, or any
+  model/checkpoint license.
+* Cosmos Transfer source code is pinned separately and built under Apache-2.0.
+  Its model weights are fetched at runtime under the NVIDIA Open Model License.
+* The Cosmos repository's example media is excluded: its source-code license is
+  not an asset-level media grant and its files do not uniformly establish
+  real-capture provenance. See
+  npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md.
+* A user-supplied local or S3 video remains the user's responsibility. NPA records
+  it as "User-supplied input" and does not infer an authenticity or license claim.

@@ -155,11 +155,14 @@ def run_workflow(
             raise NpaWorkflowError(
                 "persist_state requires config.bucket to be set in the workflow spec"
             )
+    from npa.orchestration.npa_workflow.run_state import input_source_from_config
+
     manifest = RunManifest(
         workflow=spec.name,
         run_id=run_id,
         api_version=spec.api_version,
         status="running" if execute else "planned",
+        input_source=input_source_from_config(ctx.config),
     )
     if store is not None:
         try:

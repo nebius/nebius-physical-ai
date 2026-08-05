@@ -74,10 +74,10 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
     assert set(dataset["fields"]) == {"cloth_color", "lighting"}
 
     aug = [s for s in dataset["samples"] if s["group"] == "augmented"]
-    inp = [s for s in dataset["samples"] if s["group"] == "input"]
+    inp = [s for s in dataset["samples"] if s["group"] == "source"]
     assert len(aug) == 2 and len(inp) == 2
-    assert [sample["group"] for sample in dataset["samples"][:2]] == ["input", "input"]
-    assert all(sample["data_role"] == "original_input" for sample in inp)
+    assert [sample["group"] for sample in dataset["samples"][:2]] == ["source", "source"]
+    assert all(sample["data_role"] == "source_input" for sample in inp)
     assert all(sample["data_role"] == "synthetic_augmented" for sample in aug)
     assert dataset["review"]["real_fiftyone"] is False
     assert "FiftyOne did not run" in dataset["review"]["label"]
@@ -188,7 +188,7 @@ def test_build_fiftyone_dataset_surfaces_input_captions_video_and_visualization(
     # Visualization surfaced at the top level.
     assert len(dataset["visualization"]) == 2
 
-    inp = [s for s in dataset["samples"] if s["group"] == "input"]
+    inp = [s for s in dataset["samples"] if s["group"] == "source"]
     # Source video is now included as an input sample (with a poster + video_uri).
     videos = [s for s in inp if s["video_uri"]]
     assert len(videos) == 1
@@ -797,11 +797,101 @@ def test_dataset_exposes_seeded_source_and_derived_conditioning_clip() -> None:
     )
 
     assert dataset["source"]["kind"] == "npa_seeded_fixture"
-    assert dataset["samples"][0]["data_role"] == "derived_conditioning"
-    assert dataset["samples"][1]["data_role"] == "original_input"
+    assert dataset["samples"][0]["data_role"] == "synthetic_fixture"
+    assert dataset["samples"][1]["data_role"] == "derived_conditioning"
     assert dataset["summary"]["conditioning_count"] == 1
-    assert dataset["summary"]["original_input_count"] == 1
+    assert dataset["summary"]["source_input_count"] == 1
+    assert dataset["summary"]["original_input_count"] == 0
+    assert dataset["summary"]["fixture_count"] == 1
     assert dataset["review"]["label"] == "Artifact summary only — FiftyOne did not run"
+
+
+def test_dataset_preserves_real_source_conditioning_variant_lineage_and_labels() -> None:
+    run = "paidf-real"
+    base = f"physical-ai-data-factory/{run}"
+    keys = [
+        f"{base}/input/provenance.json",
+        f"{base}/input/source.mp4",
+        f"{base}/input/conditioning.mp4",
+        f"{base}/input/conditioning-frame-0001.png",
+        f"{base}/cosmos_augmented/aug-{run}/frame-00000.png",
+        f"{base}/cosmos_augmented/aug-{run}/metadata.json",
+        f"{base}/labeled_augmented/captions.json",
+        f"{base}/curation/report.json",
+    ]
+    source = {
+        "schema_version": "npa.paidf.input-provenance.v1",
+        "source_kind": "upstream_sample",
+        "input_origin": "actual_capture",
+        "input_origin_label": "Upstream real sample",
+        "authoritative_upstream_url": "https://official.example/dataset",
+        "immutable_revision": "a" * 40,
+        "asset_license": "CC-BY-4.0",
+        "asset_attribution": "Example author",
+        "sha256": "b" * 64,
+        "staged_canonical_s3_uri": f"s3://bucket/{base}/input/",
+        "cosmos_conditioning": {
+            "enabled": True,
+            "staged_uri": f"s3://bucket/{base}/input/conditioning.mp4",
+        },
+        "derivation": {"kind": "normalized_conditioning_clip"},
+    }
+    payloads = {
+        f"{base}/input/provenance.json": source,
+        f"{base}/cosmos_augmented/aug-{run}/metadata.json": {
+            "variables": {
+                "lighting": "warm lamp light",
+                "color_grade": "warm",
+                "prompt": "appearance only",
+            }
+        },
+        f"{base}/labeled_augmented/captions.json": {
+            "captions": [
+                {
+                    "image": f"aug-{run}/frame-00000.png",
+                    "caption": "robot variant under warm light",
+                }
+            ]
+        },
+        f"{base}/curation/report.json": {
+            "curation_engine": "fiftyone-brain",
+            "fiftyone": {
+                "samples": {
+                    f"aug-{run}": {
+                        "uniqueness": 0.8,
+                        "kept": True,
+                        "redundant": False,
+                    }
+                }
+            },
+        },
+    }
+
+    dataset = build_fiftyone_dataset(
+        keys,
+        run_id=run,
+        read_json=lambda key: payloads.get(key),
+        bucket="bucket",
+    )
+
+    assert [sample["group"] for sample in dataset["samples"]] == [
+        "source",
+        "conditioning",
+        "conditioning",
+        "augmented",
+    ]
+    assert dataset["source"] == source
+    assert dataset["samples"][0]["data_role_label"] == "Upstream real sample"
+    augmented = dataset["samples"][-1]
+    assert augmented["lineage"]["source_sha256"] == "b" * 64
+    assert augmented["lineage"]["conditioning_uri"].endswith("conditioning.mp4")
+    assert augmented["tags"] == {
+        "lighting": "warm lamp light",
+        "color_grade": "warm",
+    }
+    assert augmented["caption"] == "robot variant under warm light"
+    assert augmented["uniqueness"] == 0.8
+    assert augmented["curated"] is True
 
 
 def test_artifact_roles_and_run_relative_resolution_are_explicit() -> None:
@@ -835,7 +925,7 @@ def test_artifact_roles_and_run_relative_resolution_are_explicit() -> None:
         False,
     )
 
-    assert original.to_dict()["data_role"] == "original_input"
+    assert original.to_dict()["data_role"] == "source_input"
     assert augmented.to_dict()["data_role"] == "synthetic_augmented"
     assert artifact_data_role(report.key, run)["role"] == "pipeline_metadata"
     assert resolve_run_artifact(

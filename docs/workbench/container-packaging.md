@@ -461,6 +461,11 @@ direct service-to-service file coupling.
 - Cosmos Transfer 2.5 has an artifact-by-artifact redistribution record at
   `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`; its `public`
   classification is valid only after the registry-image audits named there pass.
+- PAIDF's CC-BY-4.0 RoboPro starter is not an image payload. The operator-side
+  CLI runtime-fetches the immutable object, verifies its SHA-256, and stages it
+  to the run. `skills/NOTICE-PAIDF-STARTER-MEDIA` records attribution and the
+  source/model/media license boundary; Cosmos repository example media remains
+  excluded because its asset-level rights and provenance are not uniform.
 
 - `docs/security/container-golden-evals.md` — usefulness + safety contract
 - `docs/security/image-reproducibility.md` — digests and tag families

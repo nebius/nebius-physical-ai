@@ -173,7 +173,7 @@ RUN_ID="$(tr -d '\r\n' <"$RUN_STATE")"
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" \
   --run-id "$RUN_ID" --runtime --resume --auto-load --var bucket="$BUCKET" \
-  --var seed_default_input=true --var n_augmentations=1 \
+  --var n_augmentations=1 \
   --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
@@ -256,7 +256,7 @@ RUN_ID="$(date -u +paidf-readme-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
 
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" --run-id "$RUN_ID" --runtime --resume --auto-load \
-  --var bucket="$BUCKET" --var seed_default_input=true \
+  --var bucket="$BUCKET" \
   --var n_augmentations=1 --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
@@ -274,6 +274,51 @@ npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage finaliz
 # Retry only that idempotent handoff, without relaunching stages, if it was partial:
 npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
 ```
+
+With no input flag, that command fetches the pinned **RoboPro Aloha-Agilex
+physical robot capture**, verifies SHA-256
+`caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198`, caches it
+under `~/.cache/npa/physical-ai-data-factory/` (override with
+`NPA_PAIDF_CACHE_DIR`), and stages it under the canonical
+`physical-ai-data-factory/$RUN_ID/input/` prefix. The exact source is RoboPro
+episode 000000, high camera, pinned to immutable dataset revision
+`90ec789bf4018eb9c0f75da9f69aab5c185f0fd0`: a 3.38-second 640×480 H.264 MP4
+recorded during expert Aloha-Agilex teleoperation. It is CC BY 4.0; attribution,
+license, immutable URL, size, media properties, and derivations are recorded in
+`input/provenance.json` and the workflow/config/final manifests. NPA fetches it
+at operator runtime and does not bundle the media.
+
+Replace only the submit command's input selector as needed; selectors are
+mutually exclusive and an explicit source always beats the default:
+
+```bash
+# Local H.264 MP4
+npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \
+  --runtime --resume --var bucket="$BUCKET" --input-video ./my-capture.mp4 \
+  --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT"
+
+# One S3 object (not a prefix)
+npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \
+  --runtime --resume --var bucket="$BUCKET" \
+  --input-uri s3://my-source-bucket/captures/run-42.mp4 \
+  --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT"
+
+# Developers/tests only: explicitly synthetic geometric frames
+npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \
+  --runtime --resume --var bucket="$BUCKET" --seed-fixture \
+  --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT"
+```
+
+Local/S3 videos are validated as decodable H.264 MP4 before image checks or
+automatic provisioning. NPA then creates the exact 93-frame conditioning clip
+and eight caption frames; Cosmos is invoked with mandatory
+`--condition-on-input` (equivalent to `NPA_COSMOS_CONDITION_ON_INPUT=1`). Cache
+hits and fetches are printed. `NPA_PAIDF_OFFLINE=1` requires a verified cache hit;
+an offline miss, fetch failure, unsupported video, or digest mismatch fails
+closed and never falls back to shapes. A run's committed source is immutable:
+retries repair/reuse derived artifacts but never replace a user source with the
+default. See [the PAIDF guide](docs/workbench/guides/physical-ai-data-factory.md#starter-input-authenticity-licensing-and-replacement)
+for the source-code/model/media license boundary and full provenance fields.
 
 JSON and text status identify every checked source. `manifest_state: pending`
 means the run was found from its owner-only receipt, exact partial S3 prefix, or

@@ -271,6 +271,40 @@ def test_persist_submitted_manifest_without_a_bucket_is_a_no_op() -> None:
     assert persist_submitted_manifest({}, run_id="r", workflow="w", steps=[]) == ""
 
 
+def test_paidf_input_provenance_survives_run_manifest_round_trip() -> None:
+    from npa.orchestration.npa_workflow.run_state import input_source_from_config
+
+    source = input_source_from_config(
+        {
+            "input_source_kind": "upstream_sample",
+            "input_origin": "actual_capture",
+            "input_origin_label": "Upstream real sample",
+            "input_authoritative_url": "https://official.example/dataset",
+            "input_immutable_revision": "a" * 40,
+            "input_license": "CC-BY-4.0",
+            "input_attribution": "Example author",
+            "input_sha256": "b" * 64,
+            "input_staged_uri": "s3://bucket/physical-ai-data-factory/run/input/",
+            "input_provenance_uri": (
+                "s3://bucket/physical-ai-data-factory/run/input/provenance.json"
+            ),
+        }
+    )
+    manifest = RunManifest(
+        workflow="physical-ai-data-factory",
+        run_id="run",
+        api_version="npa.workflow/v0.0.1",
+        input_source=source,
+    )
+
+    restored = RunManifest.from_dict(manifest.to_dict())
+
+    assert restored.input_source == source
+    assert restored.input_source["source_kind"] == "upstream_sample"
+    assert restored.input_source["sha256"] == "b" * 64
+    assert restored.input_source["staged_canonical_s3_uri"].endswith("/run/input/")
+
+
 def test_persist_submitted_manifest_passes_configured_storage_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

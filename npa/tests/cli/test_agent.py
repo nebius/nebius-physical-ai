@@ -1084,7 +1084,8 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert 'id="voxelGrid"' in source
     assert "Dataset &amp; provenance" in source
     assert "FiftyOne-style" not in source
-    assert "Original / input data" in source
+    assert "Source input" in source
+    assert "Derived conditioning data" in source
     assert "Synthetic / augmented data" in source
     assert "Artifact summary only — FiftyOne did not run" in source
     assert 'id="voxelReview"' in source

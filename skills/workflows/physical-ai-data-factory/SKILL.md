@@ -241,7 +241,7 @@ npa workbench workflow stage-src --bucket <bucket>   # or submit --stage-src
 # Render/submit on GPUs:
 npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
   --assume-decision promote_checkpoint --var bucket=<bucket> \
-  --var seed_default_input=true --var n_augmentations=1 \
+  --var n_augmentations=1 \
   --infra k8s/<context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
@@ -249,8 +249,10 @@ npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)
 
 The secret names above are resolved from the environment first and then the
 selected project's configured NPA credentials; operators do not re-export values
-already stored by `npa configure`. Omit `seed_default_input=true` after staging
-real PNG/JPEG frames under the run's `input/` prefix.
+already stored by `npa configure`. With no input selector, submit fetches,
+checksum-verifies, caches, normalizes, and stages the pinned real RoboPro starter.
+Use `--input-video` or `--input-uri` to replace it; use `--seed-fixture` only for
+explicitly synthetic developer/test input.
 The one-variant override keeps the first real run decisive; omit it for the
 spec's default two-variant multiply or raise it with the requested GPU count.
 
@@ -261,24 +263,16 @@ the command that fixes each. `--plan-only` skips the runtime-only checks;
 
 ## Key Operational Notes
 
-- **Stage captionable input frames BEFORE submit (most common first-run
-  failure).** `annotate-original` (the first stage) captions IMAGE frames from
-  `input/` and fails fast with `No images found …/input/` on an empty prefix, so
-  augment → curate → visualize never run (only `configs/manifest.json` is
-  written). Upload 8–16 PNG/JPEG frames (only the first `config.max_images`,
-  default 8, are captioned) to
-  `s3://<bucket>/physical-ai-data-factory/<run-id>/input/`. A `.mp4` alone is not
-  enough for captioning. When a video is present Cosmos conditions on it; for a
-  frame-only prefix PAIDF assembles the frames into an ephemeral clip before real
-  inference. To run with **no uploaded dataset at all**, submit
-  `--var seed_default_input=true`
-  (config field `seed_default_input`): `generate-configs` then seeds `input/`
-  with a few default synthetic frames when it is empty (never overwriting real
-  staged frames), so the same inputs drive captioning and real conditioned Cosmos
-  augmentation. Copy-paste staging +
-  `ffmpeg` extract/synthesize one-liners:
-  `docs/workbench/guides/physical-ai-data-factory-deploy.md` ("Stage input
-  first"). Consequently the Dataset & provenance tab and the full `reports/sim2real.rrd` Rerun
+- **Prepare a verified video before GPU work.** The submit path selects the
+  pinned RoboPro physical capture by default, or an explicit `--input-video` /
+  `--input-uri`; it validates H.264 MP4 media, verifies the default digest,
+  caches/reuses safely, stages `source.mp4`, and derives the exact
+  `conditioning.mp4` plus caption frames. `--seed-fixture` is the only synthetic
+  geometry path. Conflicts, offline cache misses, invalid media, or checksum
+  failures stop before automatic provisioning and never fall back. The catalog's
+  mandatory `--condition-on-input` makes the staged conditioning clip the real
+  Cosmos control. Consequently the Dataset & provenance tab and the full
+  `reports/sim2real.rrd` Rerun
   recording only appear once the run gets past annotate → augment → curate →
   visualize.
 Run either NVIDIA component on its own, against a run prefix or local files:
@@ -298,7 +292,7 @@ npa workbench cosmos-evaluator evaluate \
 # One check at a time (both take local paths).
 npa workbench cosmos-evaluator hallucination --original-video a.mp4 --augmented-video b.mp4
 npa workbench cosmos-evaluator attribute-verify --video b.mp4 \
-  --variables '{"cloth_color": "blue"}' --options '{"cloth_color": ["blue","red","white","green"]}'
+  --variables '{"color_grade": "warm"}' --options '{"color_grade": ["warm","cool","neutral"]}'
 
 # Curate one run's variants (writes the curator tree + cosmos_curator.json).
 npa workbench cosmos-curate curate-augmented \

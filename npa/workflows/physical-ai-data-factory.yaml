@@ -45,36 +45,25 @@ kind: Workflow
 # (GET /api/artifacts/runs?prefix=physical-ai-data-factory).
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# PREREQUISITE -- STAGE CAPTIONABLE INPUT FRAMES BEFORE YOU SUBMIT
+# STARTER INPUT -- PREPARED AND VERIFIED BEFORE GPU PROVISIONING
 # ─────────────────────────────────────────────────────────────────────────────
-# The first captioning stage, annotate-original, reads IMAGE frames from input/
-# (generate-configs runs before it). With an empty input/ it fails fast with
-# "No images found in .../input/" and the later
-# augment -> grade -> curate -> visualize -> finalize stages never run. So before
-# submit, upload frames to (run-id == the S3 prefix you submit with):
+# The operator-side submit command prepares input/ before image preflight or
+# provisioning. With no selector it fetches the pinned RoboPro physical capture;
+# --input-video and --input-uri replace it. The verified source is normalized to
+# a 93-frame H.264 conditioning clip and eight captionable frames under:
 #
 #     s3://{{config.bucket}}/physical-ai-data-factory/<run-id>/input/
 #
-#   REQUIRED: 8-16 PNG/JPEG frames (.png/.jpg/.jpeg). Only the first
-#             config.max_images (default 8) are captioned. A .mp4 ALONE IS NOT
-#             ENOUGH -- workbench.token_factory.caption needs image files.
-#   OPTIONAL: video_0.mp4 (720p-1080p, 5-15 s). When present, Cosmos Transfer
-#             conditions directly on it; otherwise PAIDF assembles the staged
-#             frames into a temporary conditioning clip inside the GPU runner.
-#   NO DATASET? Set config.seed_default_input: "true" (or
-#             --var seed_default_input=true) and the generate-configs stage seeds
-#             input/ with a few default synthetic frames automatically, so the run
-#             completes end-to-end without uploading anything. Those frames feed
-#             both captioning and the temporary conditioning clip. It never
-#             overwrites real staged frames.
+# --seed-fixture is the only path that generates geometric frames. It is explicit
+# synthetic developer/test data and never a production default or fallback.
 #
-# Every augment is input-conditioned: a staged video is preferred; a frame-only
-# PAIDF prefix is encoded as a short temporary clip. Edge/vis control is computed
-# on-the-fly, so geometry/motion comes from the run input. No upstream example
-# media is packaged or used as fallback.
+# Every augment is input-conditioned by input/conditioning.mp4 through the
+# catalog's mandatory --condition-on-input flag (equivalent to
+# NPA_COSMOS_CONDITION_ON_INPUT=1). No decorative fixed control or fallback media
+# is used.
 #
-# Copy-paste staging (aws s3 cp) + extract-from-mp4 / synthesize-frames one-liners:
-#   docs/workbench/guides/physical-ai-data-factory-deploy.md  ("Stage input first")
+# Copy-paste default/local/S3/fixture selectors and provenance details:
+#   docs/workbench/guides/physical-ai-data-factory-deploy.md  ("Select the starter input")
 # ─────────────────────────────────────────────────────────────────────────────
 
 metadata:
@@ -92,11 +81,9 @@ config:
   prefix: "physical-ai-data-factory/{{run.id}}"
 
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
-  # Set "true" to run with NO uploaded dataset: generate-configs seeds input/ with
-  # a few default synthetic frames for captioning; the GPU runner also assembles
-  # them into a short temporary conditioning clip. It never clobbers real frames
-  # already staged under input/. Submit override:
-  #   --var seed_default_input=true
+  # Synthetic geometry is an explicit developer/test opt-in via --seed-fixture.
+  # The old spelling remains false for already-explicit compatibility automation.
+  seed_fixture: "false"
   seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
   refinement_iterations: "2"      # max evaluate/validate passes before promote
@@ -153,6 +140,16 @@ config:
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+  input_provenance_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/provenance.json"
+  input_source_kind: ""
+  input_origin: ""
+  input_origin_label: ""
+  input_sha256: ""
+  input_license: ""
+  input_staged_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  input_authoritative_url: ""
+  input_immutable_revision: ""
+  input_attribution: ""
 
 resources:
   gpu:
@@ -192,28 +189,27 @@ states:
   generate-configs:
     description: >
       Stage 1 - Config Generation. Sample appearance-only augmentation variable
-      combinations (lighting / background / cloth_color / surface) and write a
+      combinations (lighting / background / color_grade / surface_finish) and write a
       per-run config manifest that drives the augment stage.
     resources: cpu
     run:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import generate_configs;
         generate_configs('{{config.configs_uri}}', '{{config.n_augmentations}}', '{{run.id}}',
-        '{{config.images_uri}}', '{{config.seed_default_input}}')"
+        '{{config.images_uri}}', '{{config.seed_default_input}}', '{{config.seed_fixture}}')"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
+      - uri: "{{config.input_provenance_uri}}"
+        schema: npa.paidf.input-provenance.v1
     next: annotate-original
 
   annotate-original:
     description: >
-      Stage 2a - Understand & Annotate. Dense-caption the source video frames with a
-      hosted Token Factory VLM (zero-GPU) to produce pseudo-labels for the originals.
-      REQUIRES image frames (.png/.jpg) staged under input/ BEFORE submit -- it
-      fails fast with "No images found in .../input/" on an empty prefix (see the
-      PREREQUISITE block at the top of this file). This runs even when the augment
-      stage assembles a conditioning clip from them when no video is staged, so
-      frames are always mandatory.
+      Stage 2a - Understand & Annotate. Dense-caption the derived conditioning
+      frames with a hosted Token Factory VLM (zero-GPU). The operator-side prepare
+      step extracts these from the verified source; fixture mode creates explicitly
+      synthetic frames. Missing input fails before provisioning or stage execution.
     needs: [generate-configs]
     toolRef: workbench.token_factory.caption
     resources: cpu
@@ -230,14 +226,13 @@ states:
       Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE inference per
       sampled appearance combo (config.n_augmentations), so N combos -> N scenario
       variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
-      Appearance-only: lighting, background, cloth_color, surface -- never scene
+      Appearance-only: lighting, background, color grade, surface finish -- never scene
       geometry.
-      Every managed variant conditions on trigger_uri (the run's input/ prefix),
-      preserving its geometry/motion while changing its appearance. A supported video
-      staged there is used directly; otherwise PAIDF assembles the PNG/JPEG inputs into
-      a temporary 93-frame clip inside the GPU runner. Missing or inaccessible
-      input fails closed before inference. No bundled upstream media is available
-      as a fallback.
+      Every managed variant conditions on the prepared 93-frame
+      input/conditioning.mp4 selected from trigger_uri, preserving geometry/motion
+      while changing appearance. The mandatory --condition-on-input catalog flag
+      prevents the staged source from being decorative. Missing or inaccessible
+      input fails closed; no bundled or geometric fallback is available.
       This is a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.

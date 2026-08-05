@@ -291,6 +291,28 @@ def test_materialize_input_clip_empty_s3_prefix_is_no_video(monkeypatch) -> None
     assert materialized_dirs and not materialized_dirs[0].exists()
 
 
+def test_materialize_paidf_prefix_prefers_prepared_conditioning_clip(
+    monkeypatch,
+) -> None:
+    from npa.clients.storage import StorageClient
+
+    class PreparedPrefixStorage:
+        def download_directory(self, _src: str, local_dir: str) -> str:
+            root = Path(local_dir)
+            (root / "source.mp4").write_bytes(b"source")
+            (root / "conditioning.mp4").write_bytes(b"conditioning")
+            return local_dir
+
+    monkeypatch.setattr(
+        StorageClient, "from_environment", lambda: PreparedPrefixStorage()
+    )
+
+    clip = cosmos2._materialize_input_clip("s3://test-bucket/prepared/")
+
+    assert Path(clip).name == "conditioning.mp4"
+    assert Path(clip).read_bytes() == b"conditioning"
+
+
 def test_materialize_paidf_frames_as_conditioning_clip(tmp_path: Path, monkeypatch) -> None:
     from npa.clients.storage import StorageClient
 
@@ -356,6 +378,24 @@ def test_generated_conditioning_clip_is_persisted_for_evaluator(tmp_path: Path, 
     assert cosmos2._persist_generated_conditioning_clip(
         str(tmp_path / "user-video.mp4"), "s3://bucket/run/input/"
     ) == ""
+
+
+def test_prepared_conditioning_clip_resolves_to_canonical_uri_without_reupload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from npa.clients.storage import StorageClient
+
+    clip = tmp_path / "conditioning.mp4"
+    clip.write_bytes(b"prepared")
+    monkeypatch.setattr(
+        StorageClient,
+        "from_environment",
+        lambda: (_ for _ in ()).throw(AssertionError("must not upload")),
+    )
+
+    assert cosmos2._persist_generated_conditioning_clip(
+        str(clip), "s3://bucket/physical-ai-data-factory/run/input/"
+    ) == "s3://bucket/physical-ai-data-factory/run/input/conditioning.mp4"
 
 
 def test_materialize_standalone_does_not_convert_frame_prefix(monkeypatch) -> None:

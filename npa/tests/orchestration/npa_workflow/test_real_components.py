@@ -89,8 +89,8 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     assert "--input-uri" in argv and "--output-uri" in argv
     assert spec["config"]["trigger_uri"] == spec["config"]["input_uri"]
     description = states["augment"]["description"].lower()
-    assert "supported video" in description
-    assert "no bundled upstream media" in description
+    assert "input/conditioning.mp4" in description
+    assert "no bundled or geometric fallback" in description
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:

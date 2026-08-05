@@ -173,7 +173,11 @@ images:
       CUDA build/runtime bases. Git LFS smudging is disabled; upstream assets, example media,
       checkpoints, caches, and Git metadata are removed and build-guarded. Gated
       NVIDIA Open Model License weights are fetched only at runtime with the
-      operator's HF_TOKEN into a mounted cache. The derived whole-container
+      operator's HF_TOKEN into a mounted cache. PAIDF's CC-BY-4.0 RoboPro starter
+      is likewise not baked into this or any image: the operator-side NPA CLI
+      fetches the immutable object, enforces its SHA-256, and stages it to the
+      run. The upstream Cosmos repository's ambiguously licensed example media
+      remains excluded. The derived whole-container
       distribution conditions and full artifact evidence are recorded in
       cosmos2-transfer/REDISTRIBUTION.md; built-byte scans are a release gate.
     redistribution: public

@@ -719,9 +719,12 @@ function installAgentApiMocks() {
   cy.intercept("GET", `/api/fiftyone/dataset/${DF_MOCK_RUN_ID}`, json({
     run_id: DF_MOCK_RUN_ID,
     source: {
-      kind: "operator_provided",
-      uri: `s3://mock/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/`,
-      description: "Operator-provided original/input data stored for this run",
+      source_kind: "user_supplied",
+      input_origin: "operator_supplied",
+      input_origin_label: "User-supplied input",
+      staged_canonical_s3_uri: `s3://mock/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/`,
+      asset_license: "operator-managed",
+      sha256: "b".repeat(64),
     },
     review: {
       engine: "fiftyone-brain",
@@ -731,7 +734,9 @@ function installAgentApiMocks() {
     },
     summary: {
       variant_count: 1,
-      original_input_count: 2,
+      source_input_count: 1,
+      original_input_count: 1,
+      conditioning_count: 1,
       synthetic_augmented_count: 1,
       curation_engine: "fiftyone-brain",
       curated_kept: 1,
@@ -740,12 +745,20 @@ function installAgentApiMocks() {
     visualization: [],
     samples: [
       {
-        id: "frame_00.png",
-        label: "frame_00.png",
-        group: "input",
-        data_role: "original_input",
-        data_role_label: "Original / input data",
-        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/frame_00.png`,
+        id: "source.mp4",
+        label: "source.mp4",
+        group: "source",
+        data_role: "source_input",
+        data_role_label: "User-supplied input",
+        video_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/source.mp4`,
+      },
+      {
+        id: "conditioning-frame-0001.png",
+        label: "conditioning-frame-0001.png",
+        group: "conditioning",
+        data_role: "derived_conditioning",
+        data_role_label: "Derived conditioning frame",
+        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/conditioning-frame-0001.png`,
       },
       {
         id: "aug0",

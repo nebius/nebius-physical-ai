@@ -72,13 +72,83 @@ where NPA substitutes its own endpoint.
 
 ### Input conditioning and its evaluation source
 
-`workbench.cosmos2.transfer_execute` fails closed unless its configured
-`trigger_uri` contains a readable source: either a supported video or PNG/JPEG
-frames. For frame-only/seeded runs PAIDF assembles a real conditioning clip,
-stores it as `input/conditioning.mp4`, and records that URI in the generated
-variant metadata. Cosmos Evaluator uses that same clip for hallucination scoring;
-an input-conditioned variant cannot pass on the attribute score alone when its
-source clip is missing. The bundled upstream sample is never a fallback.
+Before image checks or automatic provisioning, `workflow submit` validates and
+stages a source, normalizes it to an H.264/yuv420p 1280×720 clip of exactly 93
+frames at 16 fps, and extracts eight caption frames. The catalog always invokes
+`workbench.cosmos2.transfer_execute` with `--condition-on-input` (equivalent to
+`NPA_COSMOS_CONDITION_ON_INPUT=1`), and the resolver explicitly prefers
+`input/conditioning.mp4` over `source.mp4`. Cosmos Evaluator uses that same clip
+for hallucination scoring. Missing or invalid input therefore cannot turn into a
+decorative staged object or a fixed control example.
+
+### Starter input: authenticity, licensing, and replacement
+
+With no selector, PAIDF uses this pinned replaceable starter:
+
+| Field | Verified value |
+| --- | --- |
+| Dataset | [Hoshipu/RoboPro](https://huggingface.co/datasets/Hoshipu/RoboPro), “RoboPro: 80-Task Bimanual Manipulation Demonstrations on Aloha-Agilex,” Zhiyuan Li (2026) |
+| Immutable revision | `90ec789bf4018eb9c0f75da9f69aab5c185f0fd0` |
+| Asset | `lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4` ([pinned object](https://huggingface.co/datasets/Hoshipu/RoboPro/resolve/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4)) |
+| Authenticity | Actual physical capture: episode 000000 of expert teleoperation recorded from the high RGB camera on an Aloha-Agilex robot; [pinned episode metadata, line 1](https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/meta/episodes.jsonl#L1) says “reposition the bottle” |
+| Integrity | SHA-256 `caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198`; 607,681 bytes |
+| Media | MP4, H.264 High, 640×480, 50 fps, 169 frames, 3.38 s |
+| Media/dataset license | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode): sharing, adaptation, commercial redistribution, and hosted/service use are permitted with credit, license link, and modification notice; no field-of-use restriction, token, click-through, or special acceptance |
+| Delivery | Operator-side pinned runtime fetch; NPA does not commit or bake the binary |
+
+The machine-readable source of truth is
+`npa/src/npa/assets/paidf_starter_video.json`, with attribution in
+`skills/NOTICE-PAIDF-STARTER-MEDIA`. This media grant is separate from the NPA
+code license, Cosmos Transfer's Apache-2.0 **source-code** license, the NVIDIA
+Open Model License for runtime-fetched **weights**, and the operator's runtime
+use. We reviewed the official Cosmos Transfer repository at NPA's pinned revision
+`67d56b7d550a3911024a32dc23ae0bae5258e633`; its code license does not separately
+license every Git LFS media asset or establish that every sample is a real
+capture. Those media files are neither bundled nor silently fetched. See
+`npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`.
+
+Selection precedence is strict: one explicit local or S3 object wins; conflicting
+selectors fail; no selector chooses the starter; `--seed-fixture` is the only
+synthetic geometry path. User input is labeled “User-supplied input”—NPA does not
+invent an authenticity or license claim for it.
+
+```bash
+# Default: verified upstream real sample
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+  --var bucket="$BUCKET" --assume-decision promote_checkpoint
+
+# Replace with local media
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+  --var bucket="$BUCKET" --input-video ./capture.mp4 \
+  --assume-decision promote_checkpoint
+
+# Replace with one S3 object
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+  --var bucket="$BUCKET" --input-uri s3://source-bucket/path/capture.mp4 \
+  --assume-decision promote_checkpoint
+
+# Developers/tests only — explicitly synthetic
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+  --var bucket="$BUCKET" --seed-fixture --assume-decision promote_checkpoint
+```
+
+The default cache is `~/.cache/npa/physical-ai-data-factory/`; set
+`NPA_PAIDF_CACHE_DIR` to move it. Every hit is rechecked. Set
+`NPA_PAIDF_OFFLINE=1` to forbid a fetch: an absent or corrupt cache then fails
+with the expected path. Downloads use three bounded per-request attempts, an
+atomic cache write, and an inter-process lock. Checksum mismatch, unsupported
+container/codec/shape, inaccessible S3, or invalid local media fails closed—no
+fixture fallback.
+
+The source is committed last via `input/provenance.json`; `source.mp4`,
+`conditioning.mp4`, and `conditioning-frame-*.png` carry digests. A retry with
+the same run ID verifies and reuses the source, repairs deterministic derived
+objects if needed, and refuses a different explicit source. Provenance records
+`input_origin`, `source_kind`, authoritative URL/revision, license/attribution,
+SHA-256, canonical S3 URI, and source→conditioning→frame derivation. The durable
+workflow manifest, config/final reports, Rerun panel, and FiftyOne-backed dataset
+view surface the same labels: “Upstream real sample,” “User-supplied input,”
+“Synthetic seeded fixture,” “Derived conditioning clip,” and Cosmos variants.
 
 ## Runtime placement
 
@@ -201,24 +271,18 @@ absence from every applicable source. Runs found before their final manifest
 remain actionable with `manifest_state: pending` plus scheduler, active-stage,
 retry, heartbeat, failure, and log-command fields.
 
-> **Stage input frames first (required).** Before you submit, upload **PNG/JPEG
-> frames** (8–16; only the first `config.max_images`, default 8, are captioned) to
-> `s3://<bucket>/physical-ai-data-factory/<run-id>/input/`. The first stage,
-> `annotate-original`, captions image frames and **fails fast on an empty `input/`**
-> (`No images found …/input/`), so the later augment → grade → curate → visualize →
-> finalize stages never run. A `.mp4` alone is not enough for captioning. Cosmos
-> uses a staged `video_0.mp4` directly when present; for frame-only PAIDF input,
-> the GPU runner assembles those same frames into a temporary conditioning clip.
-> With no dataset, `--var seed_default_input=true` creates eight frames for both
-> stages. Copy-paste `aws s3 cp` staging plus `ffmpeg` extract/synthesize
-> one-liners are in the
-> [deploy runbook](physical-ai-data-factory-deploy.md) ("Stage input first").
+> **Input is prepared before GPU work.** With no selector, submit verifies and
+> stages the pinned real RoboPro starter. `--input-video` and `--input-uri`
+> replace it; `--seed-fixture` is the only geometric synthetic path. Every path
+> produces the exact conditioning clip and caption frames under the canonical
+> run prefix, with fail-closed integrity/media validation and provenance. See the
+> [deploy runbook](physical-ai-data-factory-deploy.md) (“Select the starter input”).
 
 ## S3 artifact layout (agent-viewable)
 
 ```
 s3://<bucket>/physical-ai-data-factory/<run-id>/
-  input/               # source clips (.mp4) + frames (.png)   -> video / image
+  input/               # source.mp4 + conditioning clip/frames + provenance
   configs/             # Stage 1 sampled augmentation manifest  -> json
   labeled_original/    # Stage 2a VLM captions                  -> json
   cosmos_augmented/    # Stage 2b augmented clips + metadata    -> video / json

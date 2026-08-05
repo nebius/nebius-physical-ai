@@ -170,10 +170,36 @@ def build_run_rrd(
         logged = 0
 
         input_root = local / "input"
+        input_provenance = _read_json(input_root / "provenance.json")
+        source_kind = (
+            str(input_provenance.get("source_kind") or "")
+            if isinstance(input_provenance, dict)
+            else ""
+        )
         for frame in _subsample(_image_files(input_root), RRD_MAX_FRAMES_PER_ENTITY):
             _set_frame(rr, rec, _frame_index(frame.stem))
-            _log_frame(rr, rec, f"input/{_input_entity(frame, input_root)}", _load_rgb(frame))
+            if frame.name.startswith("conditioning-frame-"):
+                entity = "conditioning/derived"
+            elif source_kind == "synthetic_fixture":
+                entity = "fixture/synthetic_seeded"
+            else:
+                entity = f"source/{_input_entity(frame, input_root)}"
+            _log_frame(rr, rec, entity, _load_rgb(frame))
             logged += 1
+
+        if isinstance(input_provenance, dict):
+            rr.log(
+                "provenance/input",
+                rr.TextDocument(
+                    _json_block(
+                        str(input_provenance.get("input_origin_label") or "Run input"),
+                        input_provenance,
+                    ),
+                    media_type="text/markdown",
+                ),
+                static=True,
+                recording=rec,
+            )
 
         aug_root = local / "cosmos_augmented"
         if aug_root.is_dir():
@@ -349,6 +375,16 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         docs["pipeline/1_scenarios"] = "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
         stage_log.append(f"configs: {len(combos)} scenario(s) sampled")
 
+    input_provenance = _read_json(local / "input" / "provenance.json")
+    if isinstance(input_provenance, dict):
+        label = str(input_provenance.get("input_origin_label") or "Run input")
+        docs["pipeline/0_input_provenance"] = _json_block(label, input_provenance)
+        stage_log.append(
+            "input: "
+            f"{label}, source_kind={input_provenance.get('source_kind', 'n/a')}, "
+            f"sha256={input_provenance.get('sha256') or 'fixture-generated'}"
+        )
+
     # Augment fan-out — how many Cosmos Transfer 2.5 variants were produced.
     aug = _read_json(local / "cosmos_augmented" / "manifest.json")
     if isinstance(aug, dict):
@@ -508,8 +544,9 @@ def _flatten_scalars(payload: Any, prefix: str = "") -> list[tuple[str, Any]]:
 
 _CAPTION_HEADERS = {
     "labeled_original": (
-        "## Original-frame captions — Token Factory VLM\n\n"
-        "_Descriptive per-frame labels of the SOURCE clip. This is captioning, "
+        "## Derived conditioning-frame captions — Token Factory VLM\n\n"
+        "_Descriptive labels of frames derived from the verified source (or the "
+        "explicit synthetic fixture). This is captioning, "
         "not the quality gate — see `pipeline/3_grade` for the attribute-verify / "
         "hallucination check (score + promote/loop_back decision)._\n\n"
     ),

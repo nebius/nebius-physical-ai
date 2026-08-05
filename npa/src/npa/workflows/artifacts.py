@@ -1071,22 +1071,28 @@ def resolve_run_artifact(
 
 
 def artifact_data_role(key: str, run_id: str = "") -> dict[str, str]:
-    """Classify an artifact's relationship to original and augmented data."""
+    """Classify an artifact without making an unsupported authenticity claim."""
 
     rel = _run_relative_key(str(key or ""), run_id).strip("/")
     stage, _, leaf = rel.partition("/")
     lower_leaf = leaf.lower()
     if stage == "input":
-        if lower_leaf.endswith("conditioning.mp4"):
+        if lower_leaf.endswith("conditioning.mp4") or lower_leaf.startswith("conditioning-frame-"):
             return {
                 "role": "derived_conditioning",
-                "label": "Derived conditioning clip",
-                "detail": "Generated from the run input frames for model conditioning; not an augmentation output.",
+                "label": "Derived conditioning clip/frame",
+                "detail": "Normalized or extracted from the run source for model conditioning; not an augmentation output.",
+            }
+        if lower_leaf.endswith("provenance.json"):
+            return {
+                "role": "input_provenance",
+                "label": "Input provenance",
+                "detail": "Authenticity, license, integrity, staged URI, and source-to-conditioning lineage.",
             }
         return {
-            "role": "original_input",
-            "label": "Original / input data",
-            "detail": "Source data supplied to this run before augmentation.",
+            "role": "source_input",
+            "label": "Source input",
+            "detail": "Source supplied to this run; consult provenance for real/user/fixture classification.",
         }
     if stage in {"cosmos_augmented", "labeled_augmented"}:
         return {
@@ -1096,9 +1102,9 @@ def artifact_data_role(key: str, run_id: str = "") -> dict[str, str]:
         }
     if stage == "labeled_original":
         return {
-            "role": "original_metadata",
-            "label": "Original-data labels",
-            "detail": "Metadata or labels derived from the original/input data.",
+            "role": "conditioning_metadata",
+            "label": "Input-derived labels",
+            "detail": "Labels derived from conditioning frames; not source media or augmentation output.",
         }
     return {
         "role": "pipeline_metadata",
@@ -1119,10 +1125,10 @@ def build_fiftyone_dataset(
     Pure logic (no I/O of its own): ``keys`` are the run's object keys and
     ``read_json(key)`` returns parsed JSON (or ``None``). Groups the augmented
     scenario variants (thumbnail + appearance-variable tags + augmented caption +
-    video) and the original input frames, then summarizes the grade + curation so
-    the agent can clearly separate original/input data from synthetic/augmented
-    output.  The payload also states whether real FiftyOne Brain curation ran;
-    this summary is never presented as FiftyOne when it did not.
+    video), source media, and derived conditioning data, then summarizes the grade
+    and curation so the agent can clearly separate source, conditioning, and
+    synthetic/augmented output. The payload also states whether real FiftyOne
+    Brain curation ran; this summary is never presented as FiftyOne when it did not.
     """
     by_clip: dict[str, dict[str, Any]] = {}
     input_frames: list[str] = []
@@ -1165,6 +1171,7 @@ def build_fiftyone_dataset(
     decision = read_json(json_rel.get("grade/decision.json", "")) or {}
     curation = read_json(json_rel.get("curation/report.json", "")) or {}
     config_manifest = read_json(json_rel.get("configs/manifest.json", "")) or {}
+    input_provenance = read_json(json_rel.get("input/provenance.json", "")) or {}
     aug_caps = read_json(json_rel.get("labeled_augmented/captions.json", "")) or {}
     cap_items = aug_caps.get("captions", []) if isinstance(aug_caps, dict) else []
     # Captions of the SOURCE frames from the annotate-original stage, so input
@@ -1193,7 +1200,11 @@ def build_fiftyone_dataset(
     fo_curation = curation.get("fiftyone", {}) if isinstance(curation, dict) else {}
     if not isinstance(fo_curation, dict):
         fo_curation = {}
-    fo_samples = fo_curation.get("samples", {}) if isinstance(fo_curation.get("samples"), dict) else {}
+    fo_samples = (
+        fo_curation.get("samples", {})
+        if isinstance(fo_curation.get("samples"), dict)
+        else {}
+    )
     # FiftyOne Brain 2D visualization (PCA) points, keyed by clip id.
     viz_points: dict[str, list[Any]] = {}
     fo_viz = fo_curation.get("visualization", [])
@@ -1208,18 +1219,23 @@ def build_fiftyone_dataset(
         k = str(key or "")
         return f"s3://{bkt}/{k}" if (bkt and k) else ""
 
-    input_source = (
-        config_manifest.get("input_source", {})
-        if isinstance(config_manifest, dict)
-        else {}
-    )
+    input_source = input_provenance if isinstance(input_provenance, dict) else {}
+    if not input_source:
+        input_source = (
+            config_manifest.get("input_source", {})
+            if isinstance(config_manifest, dict)
+            else {}
+        )
     if not isinstance(input_source, dict):
         input_source = {}
     if not input_source:
         seeded_count = int(config_manifest.get("seeded_default_input_frames") or 0)
         input_source = {
-            "kind": "npa_seeded_fixture" if seeded_count else "stored_run_input",
-            "uri": "",
+            "source_kind": "synthetic_fixture" if seeded_count else "user_supplied",
+            "input_origin_label": (
+                "Synthetic seeded fixture" if seeded_count else "User-supplied input"
+            ),
+            "staged_canonical_s3_uri": "",
             "frame_count": seeded_count or len(input_frames),
             "description": (
                 "NPA-generated seeded fixture used as this run's input"
@@ -1229,7 +1245,17 @@ def build_fiftyone_dataset(
         }
 
     augmented_samples: list[dict[str, Any]] = []
-    input_samples: list[dict[str, Any]] = []
+    source_samples: list[dict[str, Any]] = []
+    conditioning_samples: list[dict[str, Any]] = []
+    source_kind = str(input_source.get("source_kind") or input_source.get("kind") or "")
+    source_label = str(input_source.get("input_origin_label") or "")
+    if not source_label:
+        source_label = {
+            "upstream_sample": "Upstream real sample",
+            "user_supplied": "User-supplied input",
+            "synthetic_fixture": "Synthetic seeded fixture",
+            "npa_seeded_fixture": "Synthetic seeded fixture",
+        }.get(source_kind, "Source input")
     tag_keys: set[str] = set()
     for idx, clip in enumerate(sorted(by_clip)):
         entry = by_clip[clip]
@@ -1255,6 +1281,15 @@ def build_fiftyone_dataset(
                     "kind": "cosmos_transfer_output",
                     "derived_from": input_source,
                 },
+                "lineage": {
+                    "source_sha256": input_source.get("sha256"),
+                    "conditioning_uri": (
+                        (input_source.get("cosmos_conditioning") or {}).get("staged_uri")
+                        if isinstance(input_source.get("cosmos_conditioning"), dict)
+                        else ""
+                    ),
+                    "relation": "cosmos_transfer_variant_of_conditioned_source",
+                },
                 "id": clip,
                 "label": clip,
                 "thumbnail_key": thumbnail,
@@ -1276,52 +1311,79 @@ def build_fiftyone_dataset(
         vname = vkey.rsplit("/", 1)[-1]
         poster = sorted(input_frames)[0] if input_frames else ""
         is_conditioning = vname.lower().endswith("conditioning.mp4")
-        input_samples.append(
-            {
-                "group": "input",
-                "data_role": "derived_conditioning" if is_conditioning else "original_input",
-                "data_role_label": (
-                    "Derived conditioning clip" if is_conditioning else "Original / input data"
-                ),
-                "source": input_source,
-                "id": vname,
-                "label": vname,
-                "thumbnail_key": poster,
-                "thumbnail_uri": _uri(poster),
-                "video_key": vkey,
-                "video_uri": _uri(vkey),
-                "tags": {},
-                "prompt": "",
-                "caption": "",
-            }
-        )
+        sample = {
+            "group": "conditioning" if is_conditioning else "source",
+            "data_role": (
+                "derived_conditioning" if is_conditioning else "source_input"
+            ),
+            "data_role_label": (
+                "Derived conditioning clip" if is_conditioning else source_label
+            ),
+            "source": input_source,
+            "id": vname,
+            "label": vname,
+            "thumbnail_key": poster,
+            "thumbnail_uri": _uri(poster),
+            "video_key": vkey,
+            "video_uri": _uri(vkey),
+            "tags": {},
+            "prompt": "",
+            "caption": "",
+        }
+        (conditioning_samples if is_conditioning else source_samples).append(sample)
     for idx, key in enumerate(sorted(input_frames)[:12]):
         name = key.rsplit("/", 1)[-1]
-        input_samples.append(
-            {
-                "group": "input",
-                "data_role": "original_input",
-                "data_role_label": "Original / input data",
-                "source": input_source,
-                "id": name,
-                "label": name,
-                "caption": _orig_caption_for(name, idx),
-                "thumbnail_key": key,
-                "thumbnail_uri": _uri(key),
-                "video_key": "",
-                "video_uri": "",
-                "tags": {},
-                "prompt": "",
-            }
+        is_conditioning = name.lower().startswith("conditioning-frame-")
+        is_fixture = (
+            source_kind in {"synthetic_fixture", "npa_seeded_fixture"}
+            and not is_conditioning
         )
+        sample = {
+            "group": "conditioning" if is_conditioning else "source",
+            "data_role": (
+                "derived_conditioning"
+                if is_conditioning
+                else ("synthetic_fixture" if is_fixture else "source_input")
+            ),
+            "data_role_label": (
+                "Derived conditioning frame" if is_conditioning else source_label
+            ),
+            "source": input_source,
+            "id": name,
+            "label": name,
+            "caption": _orig_caption_for(name, idx),
+            "thumbnail_key": key,
+            "thumbnail_uri": _uri(key),
+            "video_key": "",
+            "video_uri": "",
+            "tags": {},
+            "prompt": "",
+        }
+        (conditioning_samples if is_conditioning else source_samples).append(sample)
 
     multiply = curation.get("multiply", {}) if isinstance(curation, dict) else {}
     if not isinstance(multiply, dict):
         multiply = {}
-    variant_count = multiply.get("variant_count") or curation.get("variant_count") or len(by_clip)
-    fo_brain = fo_curation.get("brain", {}) if isinstance(fo_curation.get("brain"), dict) else {}
-    fo_selection = fo_curation.get("selection", {}) if isinstance(fo_curation.get("selection"), dict) else {}
-    curation_engine = str(curation.get("curation_engine") or "") if isinstance(curation, dict) else ""
+    variant_count = (
+        multiply.get("variant_count")
+        or curation.get("variant_count")
+        or len(by_clip)
+    )
+    fo_brain = (
+        fo_curation.get("brain", {})
+        if isinstance(fo_curation.get("brain"), dict)
+        else {}
+    )
+    fo_selection = (
+        fo_curation.get("selection", {})
+        if isinstance(fo_curation.get("selection"), dict)
+        else {}
+    )
+    curation_engine = (
+        str(curation.get("curation_engine") or "")
+        if isinstance(curation, dict)
+        else ""
+    )
     review = {
         "engine": curation_engine,
         "real_fiftyone": curation_engine == "fiftyone-brain",
@@ -1339,15 +1401,26 @@ def build_fiftyone_dataset(
     summary = {
         "augmented_count": len(by_clip),
         "input_count": len(input_frames),
+        "source_input_count": len(source_samples),
+        # A synthetic fixture is a source input, but never "original" real data.
         "original_input_count": sum(
-            1 for sample in input_samples if sample.get("data_role") == "original_input"
+            1
+            for sample in source_samples
+            if sample.get("data_role") != "synthetic_fixture"
         ),
         "conditioning_count": sum(
-            1 for sample in input_samples if sample.get("data_role") == "derived_conditioning"
+            1
+            for sample in conditioning_samples
+            if sample.get("data_role") == "derived_conditioning"
+        ),
+        "fixture_count": sum(
+            1 for sample in source_samples if sample.get("data_role") == "synthetic_fixture"
         ),
         "synthetic_augmented_count": len(augmented_samples),
         "variant_count": int(variant_count or 0),
-        "multiply_mode": str(multiply.get("mode") or curation.get("multiply_mode") or ""),
+        "multiply_mode": str(
+            multiply.get("mode") or curation.get("multiply_mode") or ""
+        ),
         "grade_score": grade.get("score") if isinstance(grade, dict) else None,
         "grade_decision": str(decision.get("decision") or "") if isinstance(decision, dict) else "",
         # Real FiftyOne curation surface (empty when the curate stage ran
@@ -1362,13 +1435,16 @@ def build_fiftyone_dataset(
         ),
         "uniqueness": fo_brain.get("uniqueness", {}),
     }
-    visualization = fo_curation.get("visualization", []) if isinstance(fo_curation.get("visualization"), list) else []
+    visualization = (
+        fo_curation.get("visualization", [])
+        if isinstance(fo_curation.get("visualization"), list)
+        else []
+    )
     return {
         "fields": sorted(tag_keys),
         "summary": summary,
-        # Original/input data is deliberately first and separately identifiable;
-        # generated-looking output must never lead the dataset view.
-        "samples": input_samples + augmented_samples,
+        # Source, derived conditioning, and generated variants are separate groups.
+        "samples": source_samples + conditioning_samples + augmented_samples,
         "visualization": visualization,
         "source": input_source,
         "review": review,
