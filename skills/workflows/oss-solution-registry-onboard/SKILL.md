@@ -299,10 +299,13 @@ Pinned official source:
 `Wan-Video/Wan2.2@42bf4cfaa384bc21833865abc2f9e6c0e67233dc`; official
 TI2V-5B checkpoint:
 `Wan-AI/Wan2.2-TI2V-5B@921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
-The candidate uses one H100, native `wan.WanTI2V.generate`, and run-time model
-acquisition. No weights are baked.
+The candidate uses one RTX PRO 6000 Blackwell (`sm_120`), native
+`wan.WanTI2V.generate`, the official PyTorch 2.7.1 CUDA 12.8 wheel line with
+an explicit `sm_120` architecture check, and run-time model acquisition. No
+weights are baked, and the upstream native PyTorch SDPA fallback is used.
 
-Required pending-live hard-gate capabilities:
+Accepted live hard-gate capabilities, validated by
+`byof-wan22-e2e-20260805T191659Z` on one RTX PRO 6000 Blackwell (`sm_120`):
 
 - `wan2.2_ti2v_5b_text_to_video` (real 1280x704 MP4)
 - `wan2.2_decoded_mp4_validation` (decode all frames; dimensions/count/fps and
@@ -311,8 +314,9 @@ Required pending-live hard-gate capabilities:
 The primary artifact is `wan2_2_ti2v_5b_text_to_video.json`; the MP4 is
 `wan2_2_ti2v_5b.mp4`, and the actual pulled image emits
 `wan2_2_runtime_inventory.json` with installed package/license metadata and a
-baked-checkpoint scan. All three must be present in S3 after the pushed-image
-live test before either capability becomes accepted.
+baked-checkpoint scan. All three are present in S3 for the acceptance run; its
+900,289-byte H.264 MP4 decoded as 17 1280x704 frames at 24 fps and passed the
+non-uniform-content gates.
 
 Deferred: TI2V image-to-video until its own live input/output evidence; T2V and
 I2V A14B, S2V-14B, Animate-14B, and official training as separate contracts.

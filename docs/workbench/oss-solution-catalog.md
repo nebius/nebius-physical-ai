@@ -50,8 +50,8 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
 | Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
-| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **pending live** | Local pinned BYOF/workflow contract validates; no pushed-image H100 run or S3 evidence recorded |
-| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **pending live** | Smoke decodes every frame and enforces dimensions/count/fps/content checks; live artifact pending |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | `byof-wan22-e2e-20260805T191659Z`: pulled private candidate image; native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted** | Same run: 900,289-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
 
 ## Native Capabilities Per Container
 
@@ -134,13 +134,15 @@ Official Alibaba generative-video baseline, pinned to
 official `Wan-AI/Wan2.2-TI2V-5B` checkpoint pinned to
 `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`. Checkpoint and tokenizer files are
 fetched at run time; they are not baked into the BYOF image. The checked-in
-profile targets one H100 and the upstream PyTorch SDPA fallback. It makes no
-Blackwell/SM120 claim.
+profile targets one RTX PRO 6000 Blackwell (`sm_120`) and the upstream PyTorch
+SDPA fallback. The smoke fails unless the official CUDA 12.8 PyTorch wheel
+contains `sm_120`, the observed device is compute capability 12.0, and a native
+SDPA probe returns finite output.
 
 | Capability | Status | Upstream basis / NPA evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | pending live (local contract) | native `wan.WanTI2V.generate`, official 1280x704 TI2V-5B size, real MP4 output |
-| `wan2.2_decoded_mp4_validation` | pending live (local contract) | decode every frame; validate dimensions/count/fps/size and reject blank or uniform output |
+| `wan2.2_ti2v_5b_text_to_video` | accepted (live validated) | `byof-wan22-e2e-20260805T191659Z`: native `wan.WanTI2V.generate` at 1280x704 on RTX PRO 6000 Blackwell (`sm_120`) |
+| `wan2.2_decoded_mp4_validation` | accepted (live validated) | same run: all 17 frames decoded at 24 fps; 900,289 bytes, spatial stddev 48.8142, pixel range 255, mean temporal delta 0.8481 |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | official unified-model capability and a real optional S3-image code path exist, but no separate live input/output evidence |
 | `wan2.2_t2v_a14b` / `wan2.2_i2v_a14b` | deferred | separate MoE checkpoints and materially different GPU contract; not in this image gate |
 | `wan2.2_s2v_14b` | deferred | separate speech/audio inputs and checkpoint |
@@ -153,10 +155,11 @@ The primary JSON is `wan2_2_ti2v_5b_text_to_video.json`; the accompanying
 `wan2_2_ti2v_5b.mp4` is uploaded by the generic BYOF S3 runner and renders in
 the NPA agent's existing video viewer. `wan2_2_runtime_inventory.json` records
 the package/license metadata and baked-checkpoint scan from inside the pulled
-image. The local contract is not registry
-admission: the gated H100 E2E must build/push or select the exact registry
-image, run the real generator, retrieve the named JSON and MP4 from S3, decode
-the MP4 again, and verify the GPU topology.
+image. Capability acceptance was established by the gated RTX PRO E2E, which
+selected the exact scanned private-registry image, ran the real generator,
+retrieved the named JSON and MP4 from S3, decoded the MP4 again, and verified
+the GPU topology. This live capability result does not by itself authorize
+public image publication.
 
 Bellboy's episode/action boundary is a separate, honest workflow composition in
 `bellboy-wan2.2-e2e.yaml`; stock Wan records episode lineage and accepts only a

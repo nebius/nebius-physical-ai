@@ -44,10 +44,24 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert envs["BYOF_SOLUTION_NAME"] == "demo-solution"
     assert envs["BYOF_CAPABILITY_NAME"] == "demo-capability"
     assert envs["BYOF_SMOKE_ARTIFACT_NAME"] == "demo_artifact.json"
+    assert envs["BYOF_IMAGE"] == "registry.example/npa-byof:demo"
     assert envs["S3_OUTPUT_PREFIX"] == "s3://bucket/prefix/byof-demo/"
     assert envs["NPA_S3_BUCKET"] == "bucket"
     assert envs["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert envs["AWS_ACCESS_KEY_ID"] == "AKIA_TEST"
+    assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
+
+
+def test_render_workflow_normalizes_docker_image_for_summary(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
+    docs = module.render_workflow(
+        YAML_PATH,
+        run_id="byof-demo",
+        image="docker:registry.example/npa-byof:demo",
+    )
+    task = docs[1]
+    assert task["envs"]["BYOF_IMAGE"] == "registry.example/npa-byof:demo"
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
 
 

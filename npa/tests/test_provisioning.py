@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -87,3 +88,20 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert result.status == "ok"
     ensure_bucket.assert_called_once_with("project-1", "bucket")
     assert f"k8s:reused kubeconfig {kubeconfig}" in result.actions
+
+
+def test_runtime_env_forwards_requested_cluster_name(tmp_path: Path, monkeypatch) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    environment = config.EnvironmentConfig("project-1", "tenant-1", "eu-north1")
+    storage = config.StorageConfig("s3://bucket/", "https://storage.example")
+
+    with provisioning._runtime_env(
+        "proj",
+        environment,
+        storage,
+        "registry.example/proj",
+        "wan22-rtxpro-mk8s",
+    ):
+        assert os.environ["TF_VAR_cluster_name"] == "wan22-rtxpro-mk8s"
+
+    assert "TF_VAR_cluster_name" not in os.environ

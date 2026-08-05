@@ -78,7 +78,7 @@ def up_cmd(
 
     typer.echo(f"Terraform directory: {tf_dir}")
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
-    tfvars = _read_tfvars(tf_dir)
+    tfvars = _effective_tfvars(_read_tfvars(tf_dir), env)
     _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
     _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
     _preflight_filestore_quota(nebius_bin, tfvars, env)
@@ -264,6 +264,17 @@ def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
     return values
 
 
+def _effective_tfvars(tfvars: dict[str, Any], env: dict[str, str]) -> dict[str, Any]:
+    """Return Terraform inputs with lower-precedence ``TF_VAR_*`` values filled in."""
+    values = dict(tfvars)
+    for name, value in env.items():
+        if not name.startswith("TF_VAR_"):
+            continue
+        key = name.removeprefix("TF_VAR_")
+        values.setdefault(key, _parse_tfvar_scalar(value))
+    return values
+
+
 def _apply_capacity_block_group_env(env: dict[str, str], capacity_block_group: str) -> None:
     value = capacity_block_group.strip()
     if value:
@@ -362,7 +373,10 @@ def _preflight_filestore_quota(nebius_bin: str, tfvars: dict[str, Any], env: dic
 def _tfvar_value(tfvars: dict[str, Any], env: dict[str, str], key: str, default: Any) -> Any:
     if key in tfvars:
         return tfvars[key]
-    return env.get(f"TF_VAR_{key}", default)
+    value = env.get(f"TF_VAR_{key}")
+    if value is None:
+        return default
+    return _parse_tfvar_scalar(value)
 
 
 def _quota_allowance(
@@ -579,8 +593,11 @@ def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict
         if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
             default_sc = item.get("metadata", {}).get("name", "")
             break
-    if default_sc != "csi-mounted-fs-path-sc":
+    filestore_enabled = bool(tfvars.get("enable_filestore", True))
+    if filestore_enabled and default_sc != "csi-mounted-fs-path-sc":
         raise typer.BadParameter(f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}")
+    if not default_sc:
+        raise typer.BadParameter("Expected a default StorageClass, found none")
     return {
         "ready_nodes": ready_nodes,
         "gpu_nodes": gpu_node_count,

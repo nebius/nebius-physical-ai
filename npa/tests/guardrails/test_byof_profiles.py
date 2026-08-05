@@ -24,7 +24,7 @@ EXPECTED_PROFILES = frozenset(
     {
         "byof-container-smoke-rtxpro.yaml",
         "byof-datagen-rtxpro-smoke.yaml",
-        "byof-solution-smoke-h100-gpu.yaml",
+        "byof-solution-smoke-wan22-rtxpro-gpu.yaml",
         "byof-solution-smoke-rtxpro-2gpu.yaml",
         "byof-solution-smoke-rtxpro-gpu.yaml",
         "isaac-lab-rl-train.yaml",
@@ -49,6 +49,13 @@ def test_profile_set_is_pinned() -> None:
         "npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead. "
         f"expected {sorted(EXPECTED_PROFILES)}, found {sorted(on_disk)}"
     )
+
+
+def test_global_config_contains_only_skypilot_config_fields() -> None:
+    config = yaml.safe_load((PROFILES / GLOBAL_CONFIG).read_text(encoding="utf-8"))
+
+    assert set(config) == {"kubernetes"}
+    assert config["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"]
 
 
 @pytest.mark.parametrize("path", _task_profiles(), ids=lambda p: p.name)

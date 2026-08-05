@@ -165,9 +165,11 @@ def render_workflow(
                 continue
             envs[key] = value
         if image:
+            image_ref = image.removeprefix("docker:")
+            envs["BYOF_IMAGE"] = image_ref
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
-                resources["image_id"] = f"docker:{image}" if not image.startswith("docker:") else image
+                resources["image_id"] = f"docker:{image_ref}"
     return docs
 
 

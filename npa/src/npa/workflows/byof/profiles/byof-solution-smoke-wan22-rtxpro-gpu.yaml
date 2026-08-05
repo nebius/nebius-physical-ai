@@ -1,13 +1,13 @@
-# BYOF solution smoke on one Hopper H100. This profile is for tensor-only model
-# inference whose upstream path is documented on Hopper; it deliberately makes
-# no RTX PRO / sm_120 compatibility claim.
-name: byof-solution-smoke-h100-gpu
+# Wan 2.2 TI2V-5B solution smoke on one RTX PRO 6000 Blackwell. This dedicated
+# tensor-inference profile keeps the model's 16 CPU / 128 GiB / 200 GB floors
+# without weakening the smaller generic RTX PRO solution-smoke profile.
+name: byof-solution-smoke-wan22-rtxpro-gpu
 execution: serial
 ---
-name: byof-solution-smoke-h100
+name: byof-solution-smoke-wan22-rtxpro
 resources:
   cloud: kubernetes
-  accelerators: H100:1
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
   cpus: 16+
   memory: 128+
   disk_size: 200
@@ -19,6 +19,7 @@ envs:
   BYOF_SOLUTION_NAME: ""
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_IMAGE: ""
   NVIDIA_VISIBLE_DEVICES: "all"
   NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
@@ -70,8 +71,9 @@ run: |
   summary = {
       "status": "success" if int(os.environ.get("SMOKE_EXIT_CODE", "0")) == 0 else "failed",
       "tool": "byof",
-      "workload": "solution-smoke-h100",
+      "workload": "solution-smoke-wan22-rtxpro",
       "run_id": run_id,
+      "image": os.environ.get("BYOF_IMAGE", ""),
       "repo_root": os.environ["BYOF_REPO_ROOT"],
       "metadata": metadata,
       "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),

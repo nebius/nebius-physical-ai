@@ -172,7 +172,10 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
 
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["base_image"] == "ubuntu:22.04"
-    assert config["resource_profile_yaml"] == "byof-solution-smoke-h100-gpu"
+    assert (
+        config["resource_profile_yaml"]
+        == "byof-solution-smoke-wan22-rtxpro-gpu"
+    )
     assert config["wait_timeout"] == "0"
     assert "snapshot_download" not in build
     assert "Wan-AI/" not in build
@@ -184,7 +187,18 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     assert "python_packages" in smoke and "os_packages" in smoke
     assert "chmod -R a+rX /opt/byof/.venv /opt/byof" in build
     assert "flash_attn" not in build
+    assert "from .attention import attention as flash_attention" in build
+    assert "py_compile.compile('/opt/byof/wan/textimage2video.py', doraise=True)" in build
+    assert "from wan.textimage2video import WanTI2V" not in build
+    assert "torch.cuda.current_device" not in build
     assert "scaled_dot_product_attention" in smoke
+    assert '"sm_120" not in torch_cuda_arch_list' in smoke
+    assert 'devices[0]["compute_capability"] != [12, 0]' in smoke
+    assert '"driver_versions": driver_versions' in smoke
+    assert '"runtime_stack"' in smoke
+    assert "Wan RTX PRO baseline must use native PyTorch SDPA" in smoke
+    assert "wan_model.flash_attention is wan_attention.attention" in smoke
+    assert '"sdpa_source_binding": sdpa_source_binding' in smoke
     assert "generator.generate(" in smoke and "save_video(" in smoke
     assert "cv2.VideoCapture" in smoke
     assert "frames are temporally uniform" in smoke

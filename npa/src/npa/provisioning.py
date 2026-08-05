@@ -76,7 +76,7 @@ def provision_if_absent(
     elif dry_run:
         actions.append(f"k8s:dry-run terraform apply {terraform_dir or 'deploy/cluster'}")
     else:
-        with _runtime_env(alias, environment, storage, registry):
+        with _runtime_env(alias, environment, storage, registry, cluster_name):
             from npa.cli.cluster.terraform_lifecycle import up_cmd
 
             up_cmd(
@@ -140,6 +140,7 @@ def _runtime_env(
     environment: EnvironmentConfig,
     storage: StorageConfig,
     registry: str,
+    cluster_name: str,
 ) -> Iterator[None]:
     yml = config_module._load_yaml()
     registry_id = ""
@@ -165,6 +166,7 @@ def _runtime_env(
         "TF_VAR_parent_id": environment.project_id,
         "TF_VAR_tenant_id": environment.tenant_id,
         "TF_VAR_region": environment.region,
+        "TF_VAR_cluster_name": cluster_name,
     }
     previous = {key: os.environ.get(key) for key in values}
     try:

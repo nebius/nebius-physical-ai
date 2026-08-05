@@ -1,8 +1,8 @@
-"""Contract and gated live H100 E2E for the Wan 2.2 BYOF solution spec.
+"""Contract and gated live RTX PRO E2E for the Wan 2.2 BYOF solution spec.
 
 The always-on test plans/renders the checked-in spec. The live test builds and
 pushes the image from that spec's repo/ref/base/build command, launches its own
-H100 resource profile, then verifies the named JSON and directly decodes the
+RTX PRO 6000 resource profile, then verifies the named JSON and directly decodes the
 published MP4. No live capability is inferred from the local test.
 
 Live gates (all required):
@@ -10,6 +10,10 @@ Live gates (all required):
 * ``NPA_INTEGRATION_E2E=1``
 * ``NPA_BYOF_WAN22_LIVE_GPU=1``
 * normal NPA project, registry, Kubernetes, and S3 operator configuration
+
+After a build/push succeeds but pre-launch infrastructure validation fails,
+``NPA_BYOF_WAN22_REUSE_IMAGE`` may point at that exact immutable run tag so the
+retry exercises the pushed image without rebuilding it.
 """
 
 from __future__ import annotations
@@ -57,6 +61,28 @@ def _spec_config() -> dict[str, object]:
     config = _spec_payload().get("config")
     assert isinstance(config, dict)
     return config
+
+
+def _planned_byof_args(run_id: str) -> dict[str, str | bool]:
+    """Return the planner-rendered BYOF arguments for the checked-in spec."""
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+
+    steps = build_plan(load_spec(WAN_SPEC), run_id=run_id).to_dict().get("steps") or []
+    assert len(steps) == 1, steps
+    argv = [str(part) for part in (steps[0].get("argv") or [])]
+    assert argv[:4] == ["npa", "workbench", "byof", "run"], argv
+    result: dict[str, str | bool] = {}
+    index = 4
+    while index < len(argv):
+        flag = argv[index]
+        assert flag.startswith("--"), argv[index:]
+        if index + 1 == len(argv) or argv[index + 1].startswith("--"):
+            result[flag] = True
+            index += 1
+        else:
+            result[flag] = argv[index + 1]
+            index += 2
+    return result
 
 
 def _parse_last_json_blob(text: str) -> dict[str, object]:
@@ -139,7 +165,7 @@ def _decode_mp4(path: Path) -> dict[str, object]:
     return streams[0]
 
 
-def test_wan22_spec_plans_the_real_pinned_h100_workload() -> None:
+def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
     from npa.orchestration.npa_workflow import build_plan, load_spec
 
     spec = load_spec(WAN_SPEC)
@@ -155,21 +181,29 @@ def test_wan22_spec_plans_the_real_pinned_h100_workload() -> None:
     assert config["repo_url"] == "https://github.com/Wan-Video/Wan2.2.git"
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["base_image"] == "ubuntu:22.04"
-    assert config["resource_profile_yaml"] == "byof-solution-smoke-h100-gpu"
+    assert (
+        config["resource_profile_yaml"]
+        == "byof-solution-smoke-wan22-rtxpro-gpu"
+    )
     assert "--wait-timeout 0" in rendered
     assert "WanTI2V" in rendered and "generator.generate(" in rendered
     assert "cv2.VideoCapture" in rendered and "wan2_2_ti2v_5b.mp4" in rendered
+    assert str(config["prompt"]) in rendered
+    assert "{{config." not in rendered
     for capability in EXPECTED_CAPABILITIES:
         assert capability in rendered
 
     payload = _spec_payload()
     resources = payload["resources"]["gpu"]
-    assert resources["accelerators"] == "H100:1"
+    assert (
+        resources["accelerators"]
+        == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    )
     assert resources["disk_size"] == 200
     profile = PROFILE_DIR / f"{config['resource_profile_yaml']}.yaml"
     assert profile.is_file()
     profile_text = profile.read_text(encoding="utf-8")
-    assert "accelerators: H100:1" in profile_text
+    assert "accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in profile_text
     assert "disk_size: 200" in profile_text
     assert 'NVIDIA_DRIVER_CAPABILITIES: "compute,utility"' in profile_text
 
@@ -179,20 +213,29 @@ def test_wan22_spec_plans_the_real_pinned_h100_workload() -> None:
     or os.environ.get("NPA_BYOF_WAN22_LIVE_GPU") != "1",
     reason=(
         "Set NPA_INTEGRATION_E2E=1 and NPA_BYOF_WAN22_LIVE_GPU=1 to build, "
-        "push, and run the Wan 2.2 H100 smoke."
+        "push, and run the Wan 2.2 RTX PRO 6000 smoke."
     ),
 )
 @pytest.mark.e2e
-def test_wan22_live_h100_build_push_generate_and_decode(
+def test_wan22_live_rtxpro_build_push_generate_and_decode(
     e2e_project: str | None,
     tmp_path: Path,
 ) -> None:
     config = _spec_config()
     registry = resolve_container_registry(e2e_project)
     assert registry, "NPA container registry could not be resolved"
-    run_id = "byof-wan22-e2e-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    image = f"{registry.rstrip('/')}/npa-byof:{run_id}"
-    profile = PROFILE_DIR / f"{config['resource_profile_yaml']}.yaml"
+    reuse_image = os.environ.get("NPA_BYOF_WAN22_REUSE_IMAGE", "").strip()
+    if reuse_image:
+        assert reuse_image.startswith(registry.rstrip("/") + "/"), reuse_image
+        run_id = reuse_image.rsplit(":", 1)[-1]
+        assert run_id.startswith("byof-wan22-e2e-"), run_id
+    else:
+        run_id = "byof-wan22-e2e-" + datetime.now(timezone.utc).strftime(
+            "%Y%m%dT%H%M%SZ"
+        )
+    planned = _planned_byof_args(run_id)
+    image = reuse_image or f"{registry.rstrip('/')}/npa-byof:{run_id}"
+    profile = PROFILE_DIR / f"{planned['--yaml']}.yaml"
     out_bucket = live_bucket(e2e_project)
     output_root = f"s3://{out_bucket}/oss-solutions/wan2.2"
     key_prefix = f"oss-solutions/wan2.2/{run_id}/"
@@ -201,44 +244,46 @@ def test_wan22_live_h100_build_push_generate_and_decode(
         sys.executable,
         str(BYOF_RUNNER),
         "--repo-url",
-        str(config["repo_url"]),
+        str(planned["--repo-url"]),
         "--repo-ref",
-        str(config["repo_ref"]),
+        str(planned["--repo-ref"]),
         "--base-profile",
-        str(config["base_profile"]),
+        str(planned["--base-profile"]),
         "--base-image",
-        str(config["base_image"]),
+        str(planned["--base-image"]),
         "--build-command",
-        str(config["build_command"]),
+        str(planned["--build-command"]),
         "--project",
         e2e_project or "",
         "--image",
         image,
         "--workload",
-        str(config["workload"]),
+        str(planned["--workload"]),
         "--yaml",
         str(profile),
         "--smoke-command",
-        str(config["smoke_command"]),
+        str(planned["--smoke-command"]),
         "--solution-name",
-        str(config["solution_name"]),
+        str(planned["--solution-name"]),
         "--capability-name",
-        str(config["capability_name"]),
+        str(planned["--capability-name"]),
         "--smoke-artifact-name",
-        str(config["smoke_artifact_name"]),
+        str(planned["--smoke-artifact-name"]),
         "--run-id",
         run_id,
         "--output-root",
         output_root,
         "--wait-timeout",
-        str(config["wait_timeout"]),
+        str(planned["--wait-timeout"]),
         "--poll-interval",
-        str(config["poll_interval"]),
+        str(planned["--poll-interval"]),
         "--cleanup",
     ]
     config_path = skypilot_config_for_project(e2e_project)
     if config_path:
         cmd.extend(["--config-path", config_path])
+    if reuse_image:
+        cmd.extend(["--skip-build", "--skip-push"])
 
     env = dict(os.environ)
     env["NPA_E2E_PROJECT"] = e2e_project or env.get("NPA_E2E_PROJECT", "")
@@ -266,13 +311,16 @@ def test_wan22_live_h100_build_push_generate_and_decode(
     runner = _parse_last_json_blob(proc.stdout)
     assert runner["status"] == "ok"
     assert runner["image"] == image
-    assert runner["repo_ref"] == config["repo_ref"]
-    assert runner["build"] == {"ok": True, "pushed": True}
+    assert runner["repo_ref"] == planned["--repo-ref"]
+    if reuse_image:
+        assert runner["build"] == {"ok": True, "skipped": True}
+    else:
+        assert runner["build"] == {"ok": True, "pushed": True}
     assert image.startswith(registry.rstrip("/") + "/")
 
     s3 = _s3_client(e2e_project)
     summary = _read_s3_json(s3, out_bucket, key_prefix + "npa_byof_summary.json")
-    artifact_name = str(config["smoke_artifact_name"])
+    artifact_name = str(planned["--smoke-artifact-name"])
     artifact = _read_s3_json(s3, out_bucket, key_prefix + artifact_name)
     inventory = _read_s3_json(
         s3, out_bucket, key_prefix + "wan2_2_runtime_inventory.json"
@@ -282,12 +330,14 @@ def test_wan22_live_h100_build_push_generate_and_decode(
     assert summary["capability_name"] == "wan2.2_ti2v_5b_text_to_video"
     assert summary["smoke_artifact_name"] == artifact_name
     assert summary["smoke_exit_code"] == 0
-    assert summary["metadata"]["repo"] == config["repo_url"]
-    assert summary["metadata"]["ref"] == config["repo_ref"]
+    assert summary["image"] == image
+    assert summary["metadata"]["repo"] == planned["--repo-url"]
+    assert summary["metadata"]["ref"] == planned["--repo-ref"]
 
     assert artifact["schema"] == "npa.workbench.byof.wan2_2_ti2v_5b.v1"
     assert artifact["solution"] == "wan2.2"
-    assert artifact["upstream_ref"] == config["repo_ref"]
+    assert artifact["upstream_ref"] == planned["--repo-ref"]
+    assert artifact["prompt"] == config["prompt"]
     assert artifact["model_ref"] == "921dbaf3f1674a56f47e83fb80a34bac8a8f203e"
     assert artifact["runtime_inventory_filename"] == "wan2_2_runtime_inventory.json"
     assert set(artifact["capabilities_exercised"]) == EXPECTED_CAPABILITIES
@@ -309,19 +359,32 @@ def test_wan22_live_h100_build_push_generate_and_decode(
     topology = artifact["device_topology"]
     assert topology["cuda_device_count"] == 1
     assert len(topology["devices"]) == 1
-    assert "H100" in topology["devices"][0]["name"].upper()
+    assert topology["devices"][0]["compute_capability"] == [12, 0]
+    assert "sm_120" in topology["torch_cuda_arch_list"]
+    assert topology["driver_versions"]
+    assert topology["flash_attention_installed"] is False
+    assert topology["sdpa_source_binding"] is True
+    assert topology["sdpa_probe"]["finite"] is True
     assert (
         topology["attention_backend"]
         == "torch.nn.functional.scaled_dot_product_attention"
     )
 
     assert inventory["schema"] == "npa.workbench.byof.wan2_2_runtime_inventory.v1"
-    assert inventory["source"]["ref"] == config["repo_ref"]
+    assert inventory["source"]["ref"] == planned["--repo-ref"]
     assert inventory["baked_runtime"]["non_root"] is True
     assert inventory["baked_runtime"]["uid"] != 0
     assert inventory["baked_runtime"]["venv_readable"] is True
     assert inventory["baked_runtime"]["interpreter_accessible"] is True
     assert inventory["baked_runtime"]["large_checkpoint_shaped_files"] == []
+    runtime_stack = inventory["runtime_stack"]
+    assert runtime_stack["devices"][0]["compute_capability"] == [12, 0]
+    assert "sm_120" in runtime_stack["torch_cuda_arch_list"]
+    assert runtime_stack["driver_versions"]
+    assert runtime_stack["torch_cuda"] == "12.8"
+    assert runtime_stack["flash_attention_installed"] is False
+    assert runtime_stack["sdpa_source_binding"] is True
+    assert runtime_stack["sdpa_probe"]["finite"] is True
     assert inventory["runtime_acquisition"]["weights_baked"] is False
     assert (
         inventory["runtime_acquisition"]["model"]["ref"]
@@ -332,7 +395,7 @@ def test_wan22_live_h100_build_push_generate_and_decode(
         for package in inventory["baked_runtime"]["python_packages"]
     }
     assert installed["wan"] == "2.2.0"
-    assert installed["torch"] == "2.7.1"
+    assert installed["torch"] == "2.7.1+cu128"
     assert inventory["baked_runtime"]["os_packages"]
 
     video_key = key_prefix + str(artifact["output_filename"])

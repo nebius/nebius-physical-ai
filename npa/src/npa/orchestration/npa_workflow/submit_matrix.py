@@ -647,7 +647,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         notes=(
             "BYOF Wan 2.2 TI2V-5B candidate. Plan-only in the shared matrix: "
-            "the real pushed-image H100 generation, decoded MP4, topology, and "
+            "the real pushed-image RTX PRO generation, decoded MP4, topology, and "
             "S3 evidence gate is test_byof_wan22_live_e2e.py."
         ),
     ),
@@ -659,7 +659,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes=(
             "Bellboy composition is plan-only in the shared matrix because it "
             "requires operator-owned train and heldout episode manifests plus "
-            "the separately gated real Wan H100 BYOF build."
+            "the separately gated real Wan RTX PRO BYOF build."
         ),
     ),
     SubmitLiveCase(

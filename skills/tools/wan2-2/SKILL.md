@@ -27,7 +27,8 @@ surfaces are involved.
   `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 - TI2V-5B is a stock generative-video model supporting text and image inputs.
 - The accepted-candidate hard gate is text-to-video plus decoded MP4
-  validation. It is pending live until a real H100 run is recorded.
+  validation. Run `byof-wan22-e2e-20260805T191659Z` satisfied it on a real RTX
+  PRO 6000 Blackwell (`sm_120`).
 - I2V, A14B, speech-to-video, Animate, and training are separate capabilities.
   Do not infer acceptance from the T2V smoke.
 - Stock Wan does not predict robot actions. Bellboy's action head and
@@ -45,9 +46,12 @@ source and dependencies but no checkpoint weights, credentials, customer data,
 or private code. The final runtime must remain non-root, with `/opt/byof` and
 its venv world-readable/executable.
 
-Route the checked-in baseline to one H100. It uses pinned CUDA 12.8 PyTorch and
-the upstream PyTorch SDPA fallback, not FlashAttention. Do not claim RTX PRO
-6000/SM120 support without a separate live run and compatibility evidence.
+Route the checked-in baseline to one RTX PRO 6000 Blackwell Server Edition
+(`sm_120`). It uses the official PyTorch 2.7.1 CUDA 12.8 wheel line, asserts
+that `torch.cuda.get_arch_list()` contains `sm_120`, and executes the upstream
+PyTorch SDPA fallback rather than FlashAttention. Record the observed device,
+compute capability, driver, CUDA, torch version, arch list, and a finite SDPA
+probe in both runtime evidence artifacts.
 
 The smoke must call the real native `wan.WanTI2V` generator and write:
 
@@ -87,19 +91,20 @@ checkpoint URI, action-prediction artifact, and held-out real-episode evaluator.
 
 ## Capability status
 
-| Capability | Status until new live evidence exists |
+| Capability | Status |
 | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | pending live; local contract present |
-| `wan2.2_decoded_mp4_validation` | pending live; local contract present |
+| `wan2.2_ti2v_5b_text_to_video` | accepted; live validated on RTX PRO 6000 Blackwell by `byof-wan22-e2e-20260805T191659Z` |
+| `wan2.2_decoded_mp4_validation` | accepted; same run decoded 17 1280x704 frames at 24 fps and passed non-uniform-content gates |
 | `wan2.2_ti2v_5b_image_to_video` | deferred |
 | A14B / S2V / Animate | deferred |
 | official TI2V fine-tuning | deferred; no pinned-source training entrypoint |
 | stock Wan action prediction | rejected as an upstream capability |
 | Bellboy private action prediction | deferred customer extension |
 
-Do not mark a capability accepted or registry-ready until the pushed image is
-pulled by the gated NPA/SkyPilot/Kubernetes E2E and the named JSON plus decoded
-MP4 evidence are present in S3.
+The accepted T2V/MP4 capabilities met the pushed-image
+NPA/SkyPilot/Kubernetes gate and have their named JSON, runtime inventory, and
+decoded MP4 evidence in S3. Do not infer acceptance for any deferred capability
+or treat capability acceptance alone as authorization for public publication.
 
 ## Licensing
 
@@ -131,5 +136,6 @@ npa/.venv/bin/python -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q
 ```
 
 The live test is `npa/tests/e2e/test_byof_wan22_live_e2e.py`. Run it only through
-its explicit operator gate and report pending live accurately when that gate is
-not configured.
+its explicit operator gate. The recorded acceptance run is
+`byof-wan22-e2e-20260805T191659Z`; future compatibility changes require fresh
+live evidence rather than inference from that run.

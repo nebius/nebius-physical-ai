@@ -54,9 +54,14 @@ config:
     "decord==0.6.0" "peft==0.17.0" "librosa==0.11.0"
     "dashscope==1.26.5" "boto3==1.39.11" &&
     /opt/byof/.venv/bin/python -m pip install --no-cache-dir --no-deps -e /opt/byof &&
+    sed -i
+    's/^from \.attention import flash_attention$/from .attention import attention as flash_attention/'
+    /opt/byof/wan/modules/model.py &&
+    grep -Fxq 'from .attention import attention as flash_attention'
+    /opt/byof/wan/modules/model.py &&
     chmod -R a+rX /opt/byof/.venv /opt/byof &&
     /opt/byof/.venv/bin/python -c
-    "import torch; from wan.textimage2video import WanTI2V; print(torch.__version__, WanTI2V.__name__)"
+    "import py_compile, torch; py_compile.compile('/opt/byof/wan/textimage2video.py', doraise=True); print(torch.__version__, torch.version.cuda)"
   workload: solution-smoke
   smoke_command: |
     set -euo pipefail
@@ -123,8 +128,54 @@ config:
                 "total_memory_bytes": properties.total_memory,
             }
         )
-    if not devices or "H100" not in devices[0]["name"].upper():
-        raise SystemExit(f"H100 profile resolved unexpected device: {devices}")
+    if device_count != 1 or devices[0]["compute_capability"] != [12, 0]:
+        raise SystemExit(
+            "Wan RTX PRO profile requires exactly one compute-capability 12.0 GPU: "
+            f"{devices}"
+        )
+    torch_cuda_arch_list = torch.cuda.get_arch_list()
+    if "sm_120" not in torch_cuda_arch_list:
+        raise SystemExit(
+            f"installed PyTorch wheel does not contain sm_120 support: {torch_cuda_arch_list}"
+        )
+    driver_query = subprocess.run(
+        ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    driver_versions = [line.strip() for line in driver_query.stdout.splitlines() if line.strip()]
+    if driver_query.returncode != 0 or len(driver_versions) != device_count:
+        raise SystemExit(
+            "cannot inventory NVIDIA driver for every CUDA device: "
+            f"returncode={driver_query.returncode}, stderr={driver_query.stderr.strip()}"
+        )
+    try:
+        import flash_attn  # type: ignore[import-not-found]  # noqa: F401
+    except ModuleNotFoundError:
+        flash_attn_installed = False
+    else:
+        flash_attn_installed = True
+    if flash_attn_installed:
+        raise SystemExit("Wan RTX PRO baseline must use native PyTorch SDPA, not FlashAttention")
+    wan_attention = importlib.import_module("wan.modules.attention")
+    wan_model = importlib.import_module("wan.modules.model")
+    sdpa_source_binding = wan_model.flash_attention is wan_attention.attention
+    if not sdpa_source_binding:
+        raise SystemExit(
+            "pinned Wan model.py is not bound to its native PyTorch SDPA wrapper"
+        )
+    q = torch.randn((1, 4, 32, 64), device="cuda", dtype=torch.bfloat16)
+    sdpa_probe = torch.nn.functional.scaled_dot_product_attention(q, q, q)
+    torch.cuda.synchronize()
+    sdpa_probe_result = {
+        "dtype": str(sdpa_probe.dtype),
+        "shape": list(sdpa_probe.shape),
+        "finite": bool(torch.isfinite(sdpa_probe).all().item()),
+    }
+    if not sdpa_probe_result["finite"]:
+        raise SystemExit(f"native PyTorch SDPA probe was non-finite: {sdpa_probe_result}")
+    del q, sdpa_probe
 
     python_packages = []
     for distribution in importlib.metadata.distributions():
@@ -176,6 +227,17 @@ config:
             "python_packages": sorted(python_packages, key=lambda item: item["name"].lower()),
             "os_packages": sorted(os_packages, key=lambda item: item["name"]),
             "large_checkpoint_shaped_files": baked_weight_candidates,
+        },
+        "runtime_stack": {
+            "devices": devices,
+            "driver_versions": driver_versions,
+            "torch": torch.__version__,
+            "torch_cuda": torch.version.cuda,
+            "torch_cuda_arch_list": torch_cuda_arch_list,
+            "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
+            "flash_attention_installed": flash_attn_installed,
+            "sdpa_source_binding": sdpa_source_binding,
+            "sdpa_probe": sdpa_probe_result,
         },
         "runtime_acquisition": {
             "model": {"id": MODEL_ID, "ref": MODEL_REF, "declared_license": "Apache-2.0"},
@@ -373,7 +435,12 @@ config:
             "devices": devices,
             "torch": torch.__version__,
             "torch_cuda": torch.version.cuda,
+            "torch_cuda_arch_list": torch_cuda_arch_list,
+            "driver_versions": driver_versions,
             "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
+            "flash_attention_installed": flash_attn_installed,
+            "sdpa_source_binding": sdpa_source_binding,
+            "sdpa_probe": sdpa_probe_result,
         },
         "runtime_versions": {
             name: importlib.metadata.version(name)
@@ -405,7 +472,7 @@ config:
   solution_name: "wan2.2"
   capability_name: "wan2.2_ti2v_5b_text_to_video"
   smoke_artifact_name: "wan2_2_ti2v_5b_text_to_video.json"
-  resource_profile_yaml: "byof-solution-smoke-h100-gpu"
+  resource_profile_yaml: "byof-solution-smoke-wan22-rtxpro-gpu"
   task: "ti2v-5B"
   iterations: 1
   num_envs: 1
@@ -426,7 +493,7 @@ resources:
     memory: 16Gi
   wan-gpu:
     cloud: kubernetes
-    accelerators: H100:1
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
     cpus: 16
     memory: 128Gi
     disk_size: 200
@@ -473,7 +540,8 @@ states:
   generate-stock-wan:
     description: >
       Build the pinned official source, fetch pinned TI2V-5B weights at run
-      time, generate and decode a real MP4 on H100, then publish every artifact.
+      time, generate and decode a real MP4 on RTX PRO 6000 Blackwell, then
+      publish every artifact.
       The episode manifest is recorded for lineage, not consumed as action
       conditioning by stock Wan.
     needs: [validate-episode-contract]

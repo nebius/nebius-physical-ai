@@ -297,6 +297,95 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
     assert ["terraform", "apply", "-auto-approve"] not in stream_calls
 
 
+def test_filestore_quota_preflight_respects_false_environment_value(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tf_mod,
+        "_quota_allowance",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled Filestore must not query quota")
+        ),
+    )
+
+    tf_mod._preflight_filestore_quota(
+        "nebius",
+        {},
+        {
+            "TF_VAR_enable_filestore": "false",
+            "TF_VAR_tenant_id": "tenant-a",
+            "TF_VAR_region": "region-a",
+        },
+    )
+
+
+def test_effective_tfvars_parse_environment_without_overriding_files() -> None:
+    values = tf_mod._effective_tfvars(
+        {"gpu_nodes_count": 2},
+        {
+            "TF_VAR_gpu_nodes_count": "1",
+            "TF_VAR_enable_filestore": "false",
+            "IGNORED": "value",
+        },
+    )
+
+    assert values == {"gpu_nodes_count": 2, "enable_filestore": False}
+
+
+def test_validate_cluster_accepts_compute_default_when_filestore_disabled(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    responses = {
+        ("get", "nodes"): {
+            "items": [
+                {
+                    "status": {
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                        "allocatable": {"nvidia.com/gpu": "1"},
+                    }
+                }
+            ]
+        },
+        ("get", "pods"): {
+            "items": [{"metadata": {"name": "gpu-operator"}, "status": {"phase": "Running"}}]
+        },
+        ("get", "storageclass"): {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "compute-csi-default-sc",
+                        "annotations": {
+                            "storageclass.kubernetes.io/is-default-class": "true"
+                        },
+                    }
+                }
+            ]
+        },
+    }
+
+    def fake_capture(args, **kwargs):
+        key = (args[1], args[2])
+        return _completed(json.dumps(responses[key]))
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = tf_mod._validate_cluster_once(
+        "kubectl",
+        tmp_path / "kubeconfig",
+        {
+            "gpu_nodes_count": 1,
+            "gpu_nodes_preset": "1gpu-24vcpu-218gb",
+            "enable_filestore": False,
+        },
+    )
+
+    assert result == {
+        "ready_nodes": 1,
+        "gpu_nodes": 1,
+        "total_gpus": 1,
+        "default_storage_class": "compute-csi-default-sc",
+    }
+
+
 def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)

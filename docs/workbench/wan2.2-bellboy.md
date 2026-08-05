@@ -72,17 +72,20 @@ remains deferred in the catalog until a separately recorded live run passes.
 
 ## GPU and runtime contract
 
-The checked-in route requests exactly one Kubernetes `H100` with at least 16
-CPU, 128 GiB host memory, and 200 GB scratch disk for the image, pinned
-checkpoint cache, and artifacts. The smoke fails closed if a different GPU
-product is scheduled. This is the low-risk Hopper path:
+The checked-in route requests exactly one Kubernetes
+`RTXPRO-6000-BLACKWELL-SERVER-EDITION` with at least 16 CPU, 128 GiB host
+memory, and 200 GB scratch disk for the image, pinned checkpoint cache, and
+artifacts. The smoke fails closed unless exactly one compute-capability 12.0
+device is scheduled. This is the explicit RTX PRO `sm_120` path:
 
-- PyTorch 2.7.1 CUDA 12.8 wheels are pinned.
+- The official PyTorch 2.7.1 CUDA 12.8 wheels are pinned; PyTorch 2.7 introduced
+  Blackwell support and CUDA 12.8 includes `sm_120` compiler support.
 - FlashAttention is not installed. The pinned native Wan attention module has a
   PyTorch scaled-dot-product-attention fallback, which is recorded in the
   evidence artifact.
-- No Blackwell/SM120 compatibility claim is made. In particular, the existing
-  one-GPU RTX PRO 6000 solution profile is not used.
+- The smoke asserts that PyTorch reports `sm_120` in its compiled architecture
+  list, inventories the observed GPU name/capability, driver, CUDA and torch
+  versions, and executes a finite native-SDPA probe before model acquisition.
 - The job has no artificial terminal wait deadline. Checkpoint acquisition and
   generation are allowed to reach their natural terminal state.
 
@@ -233,8 +236,8 @@ produces real action/task metrics.
 
 | Capability | Status | Evidence or blocker |
 | --- | --- | --- |
-| TI2V-5B text-to-video | pending live; local contract accepted | real native generation + decoded MP4 smoke is encoded; no live H100 run is recorded yet |
-| decoded MP4 validation | pending live; local contract accepted | every frame is decoded and conservative content checks are hard gates |
+| TI2V-5B text-to-video | accepted; live validated | `byof-wan22-e2e-20260805T191659Z`: real native generation at 1280x704 on one RTX PRO 6000 Blackwell (`sm_120`) |
+| decoded MP4 validation | accepted; live validated | same run: all 17 H.264 frames decoded at 24 fps; 900,289 bytes, spatial stddev 48.8142, pixel range 255, mean temporal delta 0.8481 |
 | TI2V-5B image-to-video | deferred | real optional S3-image code path exists, but has no separate live input/output evidence |
 | T2V-A14B / I2V-A14B | deferred | separate much larger models and GPU contracts; not exercised by the 5B image |
 | S2V-14B | deferred | separate speech/audio inputs and checkpoint; not exercised |
@@ -293,8 +296,9 @@ candidates do not belong in the first-class Workbench
 
 ## Failure modes
 
-- A non-H100 GPU fails before model acquisition; use the reviewed Hopper
-  profile rather than silently changing the claim.
+- A device other than one compute-capability 12.0 GPU, a PyTorch build without
+  `sm_120`, a missing driver inventory, or a failed native SDPA probe stops the
+  run before model acquisition.
 - Model/tokenizer revision lookup failure stops the run; mutable fallback refs
   are not used.
 - Missing S3 credentials or malformed `context_image_uri` stops I2V input
@@ -314,8 +318,9 @@ npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py 
 npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_wan22_live_e2e.py -q
 ```
 
-The E2E file always performs local spec/render checks. Its live H100 test is
+The E2E file always performs local spec/render checks. Its live RTX PRO test is
 gated by `NPA_INTEGRATION_E2E=1`, `NPA_BYOF_WAN22_LIVE_GPU=1`, normal NPA
 operator configuration, S3 credentials, and an explicitly supplied registry
-image/build destination. Until that test succeeds and its run/evidence is
-recorded, the catalog status remains pending live.
+image/build destination. Run `byof-wan22-e2e-20260805T191659Z` passed that gate,
+including exact image/ref provenance in the S3 summary and an independent full
+MP4 decode on the operator host.

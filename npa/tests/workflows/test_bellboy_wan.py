@@ -278,7 +278,11 @@ def test_bellboy_and_standalone_use_the_same_pinned_wan_workload() -> None:
     assert "snapshot_download" not in build
     assert "snapshot_download" in smoke
     assert "bellboy_private_action_prediction" in smoke
-    assert "H100" in smoke
+    assert 'devices[0]["compute_capability"] != [12, 0]' in smoke
+    assert '"sm_120" not in torch_cuda_arch_list' in smoke
+    assert '"driver_versions": driver_versions' in smoke
+    assert "from .attention import attention as flash_attention" in build
+    assert "wan_model.flash_attention is wan_attention.attention" in smoke
     assert "{{run.id}}" not in standalone["output_root"]
     for marker in (
         "wan.WanTI2V(",
