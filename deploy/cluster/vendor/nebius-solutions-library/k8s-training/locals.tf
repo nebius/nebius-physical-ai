@@ -4,7 +4,7 @@ locals {
   fileexists(var.ssh_public_key.path) ? file(var.ssh_public_key.path) : null)
 
   filestore = {
-    mount_tag  = "data"
+    mount_tag  = var.filestore_mount_tag
     mount_path = var.filestore_mount_path
   }
 

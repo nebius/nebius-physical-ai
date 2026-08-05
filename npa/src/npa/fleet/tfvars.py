@@ -95,8 +95,10 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
     # of creating one. Empty string routes to the create branch.
     lines.append(f"existing_filestore = {_tfstr(cluster.existing_filestore)}")
     lines.append(f"filestore_disk_size_gibibytes = {cluster.filestore_disk_size_gibibytes}")
+    lines.append(f"filestore_mount_path = {_tfstr(cluster.filestore_mount_path)}")
+    lines.append(f"filestore_mount_tag = {_tfstr(cluster.filestore_mount_tag)}")
     lines.append(
-        "filesystem_csi = { chart_version = \"0.1.5\", namespace = \"kube-system\", "
+        "filesystem_csi = { chart_version = \"0.1.6\", namespace = \"kube-system\", "
         "make_default_storage_class = true, previous_default_storage_class_name = "
         "\"compute-csi-default-sc\" }"
     )

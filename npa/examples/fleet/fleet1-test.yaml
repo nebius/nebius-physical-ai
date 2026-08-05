@@ -39,6 +39,8 @@ defaults:
   # CSI default StorageClass:
   # enable_filestore: true
   # filestore_disk_size_gibibytes: 1024
+  # filestore_mount_path: /mnt/data
+  # filestore_mount_tag: npa-shared-fs
 
 projects:
   - name: a   # -> project "fleet1-test-a"

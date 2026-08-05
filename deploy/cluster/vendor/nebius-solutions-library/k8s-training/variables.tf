@@ -83,6 +83,12 @@ variable "filestore_mount_path" {
   default     = "/mnt/data"
 }
 
+variable "filestore_mount_tag" {
+  description = "Stable virtiofs mount tag used by the node-group attachment and cloud-init."
+  type        = string
+  default     = "data"
+}
+
 # K8s access
 variable "ssh_user_name" {
   description = "SSH username."
@@ -430,7 +436,7 @@ variable "custom_driver" {
 variable "filesystem_csi" {
   description = "Configuration for Nebius Shared Filesystem CSI installation when a shared filesystem is present. Set previous_default_storage_class_name to an empty string to skip demoting another StorageClass."
   type = object({
-    chart_version                       = optional(string, "0.1.5")
+    chart_version                       = optional(string, "0.1.6")
     namespace                           = optional(string, "kube-system")
     make_default_storage_class          = optional(bool, true)
     previous_default_storage_class_name = optional(string, "compute-csi-default-sc")

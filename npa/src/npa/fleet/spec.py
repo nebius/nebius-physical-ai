@@ -91,6 +91,10 @@ class ClusterSpec:
     filestore_disk_size_gibibytes: int = 1024
     gpu_disk_size_gib: int = 1023
     subnet_id: str = ""
+    # Keep these explicit in the fleet contract: the filesystem attachment and
+    # cloud-init fstab entry must agree on one stable virtiofs tag and mount.
+    filestore_mount_path: str = "/mnt/data"
+    filestore_mount_tag: str = "data"
 
     def resolved_enable_gpu_cluster(self) -> bool:
         if self.enable_gpu_cluster is not None:
@@ -140,6 +144,18 @@ class ClusterSpec:
                 raise FleetSpecError(
                     f"cluster {self.name!r}: enable_gpu_cluster requires "
                     "'infiniband_fabric'"
+                )
+        if self.enable_filestore:
+            if not self.filestore_mount_path.startswith("/"):
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: filestore_mount_path must be absolute"
+                )
+            if not self.filestore_mount_tag or any(
+                ch.isspace() or ch == "," for ch in self.filestore_mount_tag
+            ):
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: filestore_mount_tag must be a non-empty "
+                    "value without whitespace or commas"
                 )
 
 
@@ -262,6 +278,8 @@ def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
         filestore_disk_size_gibibytes=int(data.get("filestore_disk_size_gibibytes", 1024)),
         gpu_disk_size_gib=int(data.get("gpu_disk_size_gib", 1023)),
         subnet_id=str(data.get("subnet_id", "") or ""),
+        filestore_mount_path=str(data.get("filestore_mount_path", "/mnt/data") or ""),
+        filestore_mount_tag=str(data.get("filestore_mount_tag", "data") or ""),
     )
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -151,6 +152,25 @@ def test_capacity_block_group_parses_on_gpu_pool_and_rejects_cpu_pool() -> None:
         cluster.validate()
 
 
+def test_filestore_mount_contract_parses_and_validates() -> None:
+    data = _base_mapping()
+    data["defaults"]["filestore_mount_path"] = "/mnt/data"
+    data["defaults"]["filestore_mount_tag"] = "npa-shared-fs"
+    cluster = spec_from_mapping(data).projects[0].clusters[0]
+    cluster.validate()
+    assert cluster.filestore_mount_path == "/mnt/data"
+    assert cluster.filestore_mount_tag == "npa-shared-fs"
+
+    cluster.filestore_mount_path = "mnt/data"
+    with pytest.raises(FleetSpecError, match="must be absolute"):
+        cluster.validate()
+
+    cluster.filestore_mount_path = "/mnt/data"
+    cluster.filestore_mount_tag = "bad tag"
+    with pytest.raises(FleetSpecError, match="without whitespace or commas"):
+        cluster.validate()
+
+
 def test_cluster_needs_at_least_one_node() -> None:
     cluster = ClusterSpec(name="empty")
     with pytest.raises(FleetSpecError, match="at least one CPU or GPU node"):
@@ -197,6 +217,9 @@ def test_render_tfvars_rtx_single_gpu() -> None:
     # existing_filestore must always be emitted as "" (the recipe defaults it to
     # null and branches on == "", so an unset value would read a phantom FS).
     assert 'existing_filestore = ""' in tf
+    assert 'filestore_mount_path = "/mnt/data"' in tf
+    assert 'filestore_mount_tag = "data"' in tf
+    assert 'filesystem_csi = { chart_version = "0.1.6"' in tf
     # loki has no recipe default and must be emitted, plus o11y stays off.
     assert "loki = { enabled = false" in tf
     assert "enable_grafana           = false" in tf
@@ -214,6 +237,23 @@ def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
     assert "enable_gpu_cluster = true" in tf
     assert 'infiniband_fabric = "us-central1-a"' in tf
     assert "gpu_nodes_fixed_count_per_group = 2" in tf
+
+
+def test_vendored_filestore_contract_matches_official_guide() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    recipe = repo_root / "deploy/cluster/vendor/nebius-solutions-library"
+    cloud_init = (recipe / "modules/cloud-init/k8s-cloud-init.tftpl").read_text()
+    main_tf = (recipe / "k8s-training/main.tf").read_text()
+    variables_tf = (recipe / "k8s-training/variables.tf").read_text()
+
+    assert (
+        '[ ${filestore_mount_tag}, ${filestore_mount_path}, virtiofs, '
+        '"defaults,nofail", 0, 2 ]' in cloud_init
+    )
+    assert main_tf.count("attach_mode = \"READ_WRITE\"") == 2
+    assert main_tf.count("mount_tag   = local.filestore.mount_tag") == 2
+    assert main_tf.count("filestore_mount_tag  = local.filestore.mount_tag") == 2
+    assert 'chart_version                       = optional(string, "0.1.6")' in variables_tf
 
 
 def test_render_tfvars_capacity_block_is_strict() -> None:
@@ -289,7 +329,12 @@ def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> 
         "capacityblockgroup-runtime-only"
     )
     plan = plan_fleet(spec_from_mapping(data))
-    assert plan["projects"][0]["clusters"][0]["gpu_reservation"] == "strict"
+    cluster_plan = plan["projects"][0]["clusters"][0]
+    assert cluster_plan["gpu_reservation"] == "strict"
+    assert cluster_plan["enable_filestore"] is True
+    assert cluster_plan["filestore_disk_size_gibibytes"] == 1024
+    assert cluster_plan["filestore_mount_path"] == "/mnt/data"
+    assert cluster_plan["filestore_mount_tag"] == "data"
     assert "capacityblockgroup-runtime-only" not in json.dumps(plan)
 
 

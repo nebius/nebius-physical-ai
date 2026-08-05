@@ -48,6 +48,9 @@ defaults:
     # Optional runtime-only ID; renders STRICT and never falls back to PAYG.
     capacity_block_group: ""
   enable_filestore: true
+  filestore_disk_size_gibibytes: 1024
+  filestore_mount_path: /mnt/data
+  filestore_mount_tag: npa-shared-fs
 projects:
   - name: a                  # -> project fleet1-test-a (identical profile)
   - name: b                  # -> project fleet1-test-b (identical profile)
@@ -207,6 +210,12 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   per cluster and consumes tenant `compute.filesystem.count` +
   `compute.filesystem.size.network-ssd` quota. Set `enable_filestore: false`
   (or raise quota) if the tenant is at its filesystem limit.
+- **Filesystem boot safety**: the filesystem is attached `READ_WRITE` to every
+  CPU and GPU node-group template with `filestore_mount_tag`, and cloud-init
+  persists the same tag at `filestore_mount_path` as virtiofs with
+  `defaults,nofail`. Nebius warns that omitting `nofail` can prevent a node from
+  booting after the filesystem is missing. The bundled CSI chart version is
+  `0.1.6`, matching the current official filesystem-over-CSI guide.
 - **Auto-created VPC on destroy**: when a target project has no subnet, deploy
   creates a `<cluster>-net` + `<cluster>-subnet`; `destroy` reclaims exactly
   those (subnet then network). A *reused* pre-existing subnet is left untouched,

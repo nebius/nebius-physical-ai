@@ -732,6 +732,10 @@ def plan_fleet(
                         else "on-demand"
                     ),
                     "enable_gpu_cluster": cluster.resolved_enable_gpu_cluster(),
+                    "enable_filestore": cluster.enable_filestore,
+                    "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
+                    "filestore_mount_path": cluster.filestore_mount_path,
+                    "filestore_mount_tag": cluster.filestore_mount_tag,
                     "k8s_version": cluster.k8s_version or "backend-default",
                 }
             )
