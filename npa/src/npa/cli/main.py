@@ -412,18 +412,27 @@ def _provision_object_storage(
     tenant_id: str,
     region: str,
     existing_bucket: str = "",
+    interactive: bool = True,
 ) -> dict[str, str] | None:
     """Auto-create the S3 bucket + access key for the project."""
     if not (project_id and tenant_id):
         return None
 
-    typer.echo(
-        "\nObject storage: enter a bucket name to reuse it (or create it if it "
-        "does not exist yet), or press Enter to use npa's default bucket for this "
-        "project. The default name is derived from your tenant + project, so it "
-        "is stable across runs and reused rather than duplicated."
-    )
-    bucket_name = ask("Object-storage bucket name", default=existing_bucket).strip()
+    if interactive:
+        typer.echo(
+            "\nObject storage: enter a bucket name to reuse it (or create it if it "
+            "does not exist yet), or press Enter to use npa's default bucket for this "
+            "project. The default name is derived from your tenant + project, so it "
+            "is stable across runs and reused rather than duplicated."
+        )
+        bucket_name = ask("Object-storage bucket name", default=existing_bucket).strip()
+    else:
+        bucket_name = str(existing_bucket or "").strip()
+        selected = bucket_name or nebius_client.bucket_name_for(tenant_id, project_id)
+        typer.echo(
+            "Object storage (non-interactive): selected "
+            f"'{selected}'; it will be reused if present or provisioned if absent."
+        )
     if not bucket_name:
         bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
         typer.echo(
@@ -1817,6 +1826,7 @@ def _run_known_project_configure(
             tenant_id=values["--tenant-id"],
             region=values["--region"],
             existing_bucket=_bucket_name_from_uri(existing.s3_bucket),
+            interactive=False,
         )
         if provisioned is None or provisioned.get("_validated") != "true":
             raise typer.BadParameter(

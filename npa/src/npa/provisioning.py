@@ -24,6 +24,7 @@ class ProvisionIfAbsentResult:
     storage_bucket: str = ""
     storage_endpoint: str = ""
     registry: str = ""
+    gpu_readiness: str = "not-requested"
     actions: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -51,6 +52,10 @@ def provision_if_absent(
     gpu_platform: str = "",
     gpu_preset: str = "",
     preemptible: bool | None = None,
+    accelerator: str = "",
+    gpu_readiness_timeout: float = 600.0,
+    gpu_readiness_poll_interval: float = 10.0,
+    sky_bin: str = "",
 ) -> ProvisionIfAbsentResult:
     """Ensure configured S3 and Kubernetes exist without deleting resources."""
     alias, environment, storage, registry = _resolve_project_runtime(project)
@@ -58,6 +63,8 @@ def provision_if_absent(
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
     actions: list[str] = []
     warnings: list[str] = []
+    k8s_ready = False
+    gpu_readiness = "not-requested"
 
     storage_ready = skip_s3
     storage_bucket = storage.checkpoint_bucket
@@ -135,6 +142,7 @@ def provision_if_absent(
         actions.append("k8s:skipped")
     elif _has_cached_kubeconfig(context, kubeconfig_path):
         actions.append(f"k8s:reused kubeconfig {kubeconfig_path}")
+        k8s_ready = True
     elif not environment.project_id or not environment.tenant_id:
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
     elif dry_run:
@@ -188,6 +196,41 @@ def provision_if_absent(
                 timeout=timeout,
             )
         actions.append(f"k8s:ensured terraform cluster {context}")
+        k8s_ready = True
+
+    requested_accelerator = str(accelerator or "").strip()
+    if requested_accelerator and k8s_ready and not skip_k8s and not dry_run:
+        from npa.orchestration.skypilot.k8s_gpu_catalog import (
+            KubernetesGpuCatalogError,
+            wait_for_kubernetes_accelerators,
+        )
+
+        previous_kubeconfig = os.environ.get("KUBECONFIG")
+        os.environ["KUBECONFIG"] = str(kubeconfig_path)
+        try:
+            wait_for_kubernetes_accelerators(
+                [requested_accelerator],
+                context=context,
+                sky_bin=sky_bin or None,
+                timeout=gpu_readiness_timeout,
+                poll_interval=gpu_readiness_poll_interval,
+                on_status=lambda message: actions.append(f"gpu:{message}"),
+            )
+        except (KubernetesGpuCatalogError, ValueError) as exc:
+            gpu_readiness = "timeout"
+            warnings.append(str(exc))
+            actions.append("gpu:capacity preserved; resume readiness without reprovisioning")
+        else:
+            gpu_readiness = "ready"
+            actions.append(f"gpu:SkyPilot ready for {requested_accelerator}")
+        finally:
+            if previous_kubeconfig is None:
+                os.environ.pop("KUBECONFIG", None)
+            else:
+                os.environ["KUBECONFIG"] = previous_kubeconfig
+    elif requested_accelerator and dry_run:
+        gpu_readiness = "dry-run"
+        actions.append(f"gpu:dry-run wait for SkyPilot {requested_accelerator}")
 
     status = "ok" if not warnings and (skip_s3 or storage_ready) else "partial"
     return ProvisionIfAbsentResult(
@@ -199,6 +242,7 @@ def provision_if_absent(
         storage_bucket=storage_bucket,
         storage_endpoint=storage_endpoint,
         registry=registry,
+        gpu_readiness=gpu_readiness,
         actions=actions,
         warnings=warnings,
     )

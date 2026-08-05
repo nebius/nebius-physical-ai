@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from io import BytesIO
+import json
 from pathlib import Path
 
 import pytest
@@ -10,11 +12,13 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.src_staging import (
     DEFAULT_SRC_PREFIX,
+    SOURCE_MANIFEST_NAME,
     SrcStagingError,
     find_npa_package_root,
     iter_source_files,
     resolve_src_uri_from_env,
     stage_npa_source,
+    verify_staged_source,
 )
 
 runner = CliRunner()
@@ -23,10 +27,21 @@ runner = CliRunner()
 class FakeStorageClient:
     def __init__(self) -> None:
         self.uploads: list[tuple[str, str]] = []
+        self.objects: dict[tuple[str, str], bytes] = {}
+        self.s3 = self
 
     def upload_file(self, local_file: str, bucket_uri: str) -> str:
         self.uploads.append((local_file, bucket_uri))
+        bucket, key = bucket_uri.removeprefix("s3://").split("/", 1)
+        self.objects[(bucket, key)] = Path(local_file).read_bytes()
         return bucket_uri
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, BytesIO]:
+        try:
+            body = self.objects[(Bucket, Key)]
+        except KeyError as exc:
+            raise RuntimeError("NoSuchKey") from exc
+        return {"Body": BytesIO(body)}
 
 
 def _fake_package(root: Path) -> Path:
@@ -66,12 +81,15 @@ def test_stage_npa_source_uploads_to_expected_uri(tmp_path: Path) -> None:
         on_status=status.append,
     )
 
-    assert uri == f"s3://my-bucket/{DEFAULT_SRC_PREFIX}/"
+    assert uri.startswith(f"s3://my-bucket/{DEFAULT_SRC_PREFIX}/")
+    fingerprint = uri.rstrip("/").rsplit("/", 1)[-1]
+    assert len(fingerprint) == 64
     destinations = {dest for _local, dest in client.uploads}
     assert destinations == {
-        "s3://my-bucket/npa-src/npa/pyproject.toml",
-        "s3://my-bucket/npa-src/npa/src/npa/__init__.py",
-        "s3://my-bucket/npa-src/npa/src/npa/cli.py",
+        f"{uri}pyproject.toml",
+        f"{uri}src/npa/__init__.py",
+        f"{uri}src/npa/cli.py",
+        f"{uri}{SOURCE_MANIFEST_NAME}",
     }
     assert any("staged 3 files" in line for line in status)
 
@@ -87,8 +105,26 @@ def test_stage_npa_source_normalizes_bucket_and_prefix(tmp_path: Path) -> None:
         client=client,
     )
 
-    assert uri == "s3://my-bucket/custom/src/"
-    assert all(dest.startswith("s3://my-bucket/custom/src/") for _l, dest in client.uploads)
+    assert uri.startswith("s3://my-bucket/custom/src/")
+    assert all(dest.startswith(uri) for _l, dest in client.uploads)
+
+
+def test_stage_npa_source_reuses_committed_content_address(tmp_path: Path) -> None:
+    root = _fake_package(tmp_path / "npa")
+    client = FakeStorageClient()
+
+    first = stage_npa_source(bucket="my-bucket", source_root=root, client=client)
+    first_uploads = list(client.uploads)
+    second = stage_npa_source(bucket="my-bucket", source_root=root, client=client)
+
+    assert second == first
+    assert client.uploads == first_uploads
+    manifest = json.loads(
+        client.objects[
+            ("my-bucket", f"{first.removeprefix('s3://my-bucket/')}{SOURCE_MANIFEST_NAME}")
+        ]
+    )
+    assert manifest["file_count"] == 3
 
 
 def test_iter_source_files_prefers_the_git_index(tmp_path: Path) -> None:
@@ -206,17 +242,43 @@ def test_resolve_src_uri_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_stage_src_command_prints_the_export_line(mocker) -> None:
     staged = mocker.patch(
         "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
-        return_value="s3://my-bucket/npa-src/npa/",
+        return_value="s3://unit-bucket/npa-src/npa/fingerprint/",
     )
 
     result = runner.invoke(
-        app, ["workbench", "workflow", "stage-src", "--bucket", "my-bucket"]
+        app, ["workbench", "workflow", "stage-src", "--bucket", "unit-bucket"]
     )
 
     assert result.exit_code == 0, result.output
-    assert "npa_src_s3_uri: s3://my-bucket/npa-src/npa/" in result.output
-    assert "export NPA_SRC_S3_URI=s3://my-bucket/npa-src/npa/" in result.output
-    assert staged.call_args.kwargs["bucket"] == "my-bucket"
+    assert "npa_src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in result.output
+    assert "export NPA_SRC_S3_URI=s3://unit-bucket/npa-src/npa/fingerprint/" in result.output
+    assert staged.call_args.kwargs["bucket"] == "unit-bucket"
+    from npa.clients.config import CONFIG_PATH
+
+    assert "src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in (
+        CONFIG_PATH.read_text(encoding="utf-8")
+    )
+
+
+def test_invalid_persisted_source_reports_exact_verification_and_restage() -> None:
+    class Denied:
+        s3 = None
+
+        def __init__(self) -> None:
+            self.s3 = self
+
+        def get_object(self, **_kwargs):  # noqa: ANN201
+            raise RuntimeError("AccessDenied for manifest")
+
+    uri = "s3://unit-bucket/npa-src/npa/" + "a" * 64 + "/"
+
+    with pytest.raises(SrcStagingError) as excinfo:
+        verify_staged_source(uri, client=Denied(), expected_fingerprint="a" * 64)
+
+    message = str(excinfo.value)
+    assert uri in message
+    assert "AccessDenied for manifest" in message
+    assert "npa workbench workflow stage-src --bucket unit-bucket" in message
 
 
 def test_stage_src_command_requires_a_bucket() -> None:
@@ -310,20 +372,20 @@ def test_stage_npa_source_uploads_in_parallel_without_losing_files(
 
     lock = threading.Lock()
 
-    class ThreadSafeClient:
+    class ThreadSafeClient(FakeStorageClient):
         def __init__(self) -> None:
-            self.uploads: list[str] = []
+            super().__init__()
 
         def upload_file(self, local_file: str, bucket_uri: str) -> str:
             with lock:
-                self.uploads.append(bucket_uri)
-            return bucket_uri
+                return super().upload_file(local_file, bucket_uri)
 
     client = ThreadSafeClient()
     stage_npa_source(bucket="b", source_root=root, client=client, max_workers=8)
 
-    assert len(client.uploads) == 51
-    assert len(set(client.uploads)) == 51
+    destinations = [destination for _local, destination in client.uploads]
+    assert len(destinations) == 52
+    assert len(set(destinations)) == 52
 
 
 def test_stage_npa_source_serial_mode(tmp_path: Path) -> None:
@@ -332,7 +394,7 @@ def test_stage_npa_source_serial_mode(tmp_path: Path) -> None:
 
     stage_npa_source(bucket="b", source_root=root, client=client, max_workers=1)
 
-    assert len(client.uploads) == 3
+    assert len(client.uploads) == 4
 
 
 def test_storage_client_falls_back_to_saved_credentials(

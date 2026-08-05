@@ -258,6 +258,79 @@ def test_verify_without_kubeconfig_inherits_ambient_env(
     assert captured["env"] is None
 
 
+def test_verify_kubernetes_mode_marks_nebius_profile_optional(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001
+        if cmd[-1] == "check":
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="Unable to create Nebius profile\nSetup completed\n",
+                stderr="",
+            )
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "verify",
+            "--path",
+            str(venv),
+            "--controller-backend",
+            "kubernetes",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["nebius_profile"] == "skipped_not_required"
+    assert "Unable to create" not in result.output
+
+
+def test_verify_nebius_mode_fails_required_profile_without_success_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001
+        if cmd[-1] == "check":
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="Unable to create Nebius profile\nSetup completed\n",
+                stderr="",
+            )
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "verify",
+            "--path",
+            str(venv),
+            "--controller-backend",
+            "nebius",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "status: failed" in result.output
+    assert "failed_required" in result.output
+    assert "Setup completed" not in result.output
+
+
 def test_verify_fails_clearly_on_missing_kubeconfig(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -16,7 +16,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-isaac-lab` | `isaac-lab/Dockerfile` | job shell |
 | `npa-cosmos` | `cosmos/Dockerfile` | job shell; server built but not default CMD |
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
-| `npa-fiftyone` | `fiftyone/Dockerfile` | job shell; `EXPOSE 5151` |
+| `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686` |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
@@ -36,8 +36,8 @@ Every Dockerfile must declare one of:
 | Tier | `kind` | ENTRYPOINT expectation | Examples |
 | --- | --- | --- | --- |
 | **Service** | `service` | Starts the HTTP service (or entrypoint that does) | lerobot, lancedb, detection-training, lerobot-policy |
-| **Job** | `job` | Runs a workflow/CLI module with explicit CMD | sonic, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
-| **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, fiftyone, cosmos, groot, retargeting |
+| **Job** | `job` | Runs a workflow/CLI module with explicit CMD or an exec-only command-passthrough entrypoint | sonic, fiftyone, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
+| **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, cosmos, groot, retargeting |
 
 Do not ship a service-capable image as `interactive` without documenting why
 (deploy path must override CMD). Prefer promoting Cosmos/GR00T to `service`

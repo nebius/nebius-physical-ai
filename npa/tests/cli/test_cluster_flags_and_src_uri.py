@@ -133,6 +133,31 @@ def test_an_exported_prefix_still_wins_over_config(
     assert resolve_src_s3_uri() == "s3://from-env/npa"
 
 
+def test_submit_source_resolver_honors_an_explicit_nondefault_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.workflow import _resolve_submit_src_s3_uri
+
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "first",
+                "projects": {
+                    "first": {"src_s3_uri": "s3://first/source"},
+                    "selected": {"src_s3_uri": "s3://selected/source"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("npa.clients.config.CONFIG_PATH", config_path)
+
+    assert _resolve_submit_src_s3_uri("selected") == "s3://selected/source"
+
+
 def test_an_unset_prefix_is_still_unset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

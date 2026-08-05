@@ -503,6 +503,33 @@ def resolve_workflow_src_s3_uri(project: str | None = None) -> str:
     return value.strip()
 
 
+def persist_workflow_src_s3_uri(uri: str, project: str | None = None) -> Path:
+    """Persist a verified, non-secret staged-source URI for future shells.
+
+    The URI contains no credentials.  An explicit project is honored; otherwise
+    the configured default (or sole project) is used.  Legacy single-project
+    configs retain a top-level value for compatibility.
+    """
+
+    value = str(uri or "").strip()
+    if not value.startswith("s3://"):
+        raise ConfigError(f"workflow source URI must use s3://, got {value or '<empty>'}")
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if isinstance(projects, dict) and projects:
+        alias = str(project or yml.get("default_project", "") or "").strip()
+        if not alias and len(projects) == 1:
+            alias = str(next(iter(projects)))
+        if not alias or alias not in projects:
+            available = ", ".join(str(item) for item in projects)
+            raise ConfigError(
+                "Cannot persist workflow source without a configured project alias. "
+                f"Pass --project (available: {available})."
+            )
+        return write_config({"projects": {alias: {"src_s3_uri": value}}})
+    return write_config({"src_s3_uri": value})
+
+
 # ── Read / write ─────────────────────────────────────────────────────────
 
 

@@ -162,7 +162,7 @@ NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/npa/ \
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
   --var bucket=<your-bucket> \
-  --stage-src \
+  --runtime --resume --auto-load \
   --assume-decision promote_checkpoint \
   --infra k8s/<your-kube-context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
@@ -172,15 +172,16 @@ npa workbench workflow submit "$SPEC" \
 
 `--var bucket=` points `config.bucket` at the artifact bucket your NPA agent
 reads; without it the run uses the spec's `example-bucket` placeholder.
-`--stage-src` publishes the local `npa` package to
-`s3://<your-bucket>/npa-src/npa/` so the CPU/Token-Factory steps (which run on
-SkyPilot's default image) can install it — equivalently, run
-`npa workbench workflow stage-src --bucket <your-bucket>` once and export
-`NPA_SRC_S3_URI`, or pin `--image`. Submit checks all of this up front and
-prints anything still missing in a single list; the
+Submit automatically fingerprints and publishes the local `npa` package to a
+content-addressed prefix below `s3://<your-bucket>/npa-src/npa/`, verifies the
+commit manifest, and persists the exact URI for later shells. Retries reuse it;
+`stage-src` remains an advanced explicit command, not a happy-path requirement.
+After successful PAIDF completion, `--auto-load` verifies the exact final Rerun
+URI through the configured agent; `workflow load-artifact <run-id>` retries only
+that optional handoff. Submit checks prerequisites up front and prints anything
+still missing in a single list; the
 [deploy runbook](physical-ai-data-factory-deploy.md) has the full ordered
-quickstart (`configure` → `provision-if-absent` → `skypilot bootstrap` →
-`stage-src` → submit).
+quickstart (`configure` → `skypilot bootstrap` → `provision-if-absent` → submit).
 
 > **Stage input frames first (required).** Before you submit, upload **PNG/JPEG
 > frames** (8–16; only the first `config.max_images`, default 8, are captioned) to

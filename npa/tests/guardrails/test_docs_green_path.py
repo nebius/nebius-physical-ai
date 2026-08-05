@@ -79,22 +79,20 @@ def _submit_blocks(path: Path) -> list[str]:
 
 
 @pytest.mark.parametrize("path", [PAIDF_GUIDE, PAIDF_DEPLOY])
-def test_documented_submits_can_install_npa_on_the_worker(path: Path) -> None:
-    """Every copy-paste submit must supply npa to image-less steps.
-
-    Without `--stage-src`, `NPA_SRC_S3_URI` or `--image`, the render aborts with
-    "planned step ... has no workbench image and NPA_SRC_S3_URI is unset".
-    """
+def test_documented_submits_use_restart_safe_automatic_source_staging(
+    path: Path,
+) -> None:
+    """The primary copy-paste path must not require a shell export between commands."""
     blocks = _submit_blocks(path)
     assert blocks, f"no submit example found in {path.relative_to(REPO_ROOT)}"
-    for block in blocks:
-        assert any(
-            marker in block
-            for marker in ("--stage-src", "NPA_SRC_S3_URI", "--image", "--plan-only")
-        ), (
-            f"{path.relative_to(REPO_ROOT)} has a `workflow submit` example with no "
-            "npa source for image-less steps:\n" + block
-        )
+    text = path.read_text(encoding="utf-8")
+    assert "automatic" in text.lower()
+    assert "content-addressed" in text
+    assert "persist" in text.lower()
+    primary = next(block for block in blocks if "--runtime" in block)
+    assert "--resume" in primary
+    assert "--stage-src" not in primary
+    assert "NPA_SRC_S3_URI=" not in primary
 
 
 @pytest.mark.parametrize("path", [PAIDF_GUIDE, PAIDF_DEPLOY])
@@ -114,7 +112,7 @@ def test_paidf_quickstart_is_a_complete_ordered_path() -> None:
     for required in (
         "npa skypilot bootstrap",
         "npa provision-if-absent",
-        "stage-src",
+        "Source staging is automatic",
         "--infra k8s/",
         "--secret-env NEBIUS_TOKEN_FACTORY_KEY",
     ):
@@ -127,7 +125,11 @@ def test_paidf_quickstart_is_a_complete_ordered_path() -> None:
 def test_paidf_quickstart_documents_failure_recovery() -> None:
     text = PAIDF_DEPLOY.read_text(encoding="utf-8")
     assert "If submit fails" in text
-    for symptom in ("NPA_SRC_S3_URI is unset", "sky-jobs-controller", "example-bucket"):
+    for symptom in (
+        "staged source verification failed",
+        "sky-jobs-controller",
+        "example-bucket",
+    ):
         assert symptom in text, f"missing recovery guidance for {symptom!r}"
 
 
@@ -138,7 +140,6 @@ def test_readme_documents_the_ordered_green_path() -> None:
         "npa workbench health preflight",
         "npa provision-if-absent",
         "npa skypilot bootstrap",
-        "npa workbench workflow stage-src",
         "npa workbench workflow submit",
     ]
     positions = []
@@ -155,9 +156,12 @@ def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> 
     text = README.read_text(encoding="utf-8")
     section = text.split("### The whole path, in order", 1)[1].split("```", 2)[1]
 
-    assert section.count("npa workbench workflow stage-src") == 1
+    assert "npa workbench workflow stage-src" not in section
     submit = section.split("npa workbench workflow submit", 1)[1]
     assert "--stage-src" not in submit
+    assert "--runtime" in submit
+    assert "--resume" in submit
+    assert "--auto-load" in submit
     configure_eval = section.index('eval "$(npa configure --show --env)"')
     public_override = section.index(
         "export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai"

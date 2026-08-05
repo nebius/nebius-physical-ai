@@ -223,8 +223,12 @@ images:
     redistribution: public
   fiftyone:
     dockerfile: fiftyone/Dockerfile
-    tier: interactive
+    tier: job
     ports: [5151]
+    notes: >-
+      Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
+      non-root ubuntu user (openssh-server, rsync, sudo, passwordless service
+      restart). The service deploy path supplies the FiftyOne App command.
     redistribution: public
   cosmos:
     dockerfile: cosmos/Dockerfile

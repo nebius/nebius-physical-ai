@@ -495,6 +495,7 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
             # are mocked out, so skip the submit preflight.
             "--skip-preflight",
             "--no-preflight-images",
+            "--no-resolve-accelerators",
         ],
     )
     assert result.exit_code == 0, result.output

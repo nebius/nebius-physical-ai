@@ -113,12 +113,12 @@ npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
 npa workbench workflow preflight-images "$SPEC" \
   --project "$PROJECT" --registry "$REGISTRY"
 
-# --stage-src publishes npa for image-less stages. Each --secret-env NAME is
-# resolved from the current environment first, then the selected project's NPA
-# credentials; a missing value fails here before controller setup.
+# Source staging is automatic, content-addressed, verified, and persisted. Each
+# --secret-env NAME is resolved from the current environment first, then the
+# selected project's NPA credentials; a missing value fails before setup.
 npa workbench workflow submit "$SPEC" \
   --project "$PROJECT" --registry "$REGISTRY" \
-  --run-id "$RUN_ID" --stage-src \
+  --run-id "$RUN_ID" --runtime --resume --auto-load \
   --var bucket="$BUCKET" --var seed_default_input=true \
   --var n_augmentations=1 \
   --assume-decision promote_checkpoint \
@@ -130,18 +130,7 @@ npa workbench workflow submit "$SPEC" \
 MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage augment
-
-# Load the final Rerun artifact through the run-relative API contract. This
-# intentionally exercises run_id + key + prefix instead of relying on an exact
-# URI. Never print the sourced auth values.
-AGENT_NAME=agent
-AGENT_PUBLIC_URL="$(npa agent status --project "$PROJECT" --name "$AGENT_NAME" --json \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["public_url"])')"
-source "$HOME/.npa/agents/$PROJECT/$AGENT_NAME/auth.env"
-curl -skS --fail-with-body -u "$AGENT_USER:$AGENT_PASSWORD" \
-  -H 'Content-Type: application/json' \
-  -d "{\"run_id\":\"$RUN_ID\",\"key\":\"reports/sim2real.rrd\",\"prefix\":\"physical-ai-data-factory\"}" \
-  "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
+npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT" # idempotent retry only
 ```
 
 For a pre-authenticated service-account/federation profile with known IDs, the
@@ -195,8 +184,6 @@ once:
 Error: Cannot submit physical-ai-data-factory.yaml: missing prerequisites:
   - SkyPilot CLI is not usable (...)
       fix: run `npa skypilot bootstrap` ...
-  - npa source for image-less steps (NPA_SRC_S3_URI is unset)
-      fix: pass --stage-src, or set NPA_SRC_S3_URI=..., or pin --image ...
   - config.bucket is the spec placeholder 'example-bucket'
       fix: pass --var bucket=<your-bucket>
 ```
@@ -215,7 +202,7 @@ ffmpeg -f lavfi -i testsrc=size=1280x720:rate=1 -frames:v 12 frame_%04d.png
 aws s3 cp . "$INPUT/" --recursive --exclude '*' --include 'frame_*.png'
 
 npa workbench workflow submit npa/workflows/physical-ai-data-factory.yaml \
-  --run-id "$RUN_ID" --var bucket="$BUCKET" --stage-src \
+  --run-id "$RUN_ID" --var bucket="$BUCKET" --runtime --resume --auto-load \
   --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
@@ -232,7 +219,7 @@ full explanation.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `missing prerequisites: ... NPA_SRC_S3_URI is unset` | image-less steps have no `npa` to install | `npa workbench workflow stage-src --bucket <b>`, or `submit --stage-src`, or pin `--image` |
+| `staged source verification failed: ...` | a supplied or persisted source URI is missing, inaccessible, or incomplete | Read the preserved provider error, then safely restage with `npa workbench workflow stage-src --bucket <b>` and retry the same submit/run ID. The command persists the replacement URI; it never stores S3 secrets. |
 | `missing prerequisites: ... SkyPilot CLI is not usable` | SkyPilot never bootstrapped, or only exported in a previous shell | `npa skypilot bootstrap` (persists `skypilot.sky_bin`) |
 | `missing prerequisites: ... config.bucket is the spec placeholder` | submitting against `example-bucket` | `--var bucket=<your-bucket>` |
 | `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | inspect with `npa skypilot status`, then (after all workflows are terminal) run `npa skypilot cleanup-controller --yes`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
@@ -611,7 +598,7 @@ npa workbench workflow submit "$SPEC" \
   --project "$PROJECT" \
   --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
-  --stage-src \
+  --runtime --resume --auto-load \
   --registry "$REGISTRY" \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \

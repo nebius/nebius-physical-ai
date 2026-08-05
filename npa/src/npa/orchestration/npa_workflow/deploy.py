@@ -124,6 +124,10 @@ def _default_provisioner() -> Provisioner:
         context_name: str,
         skip_s3: bool,
         dry_run: bool,
+        accelerator: str,
+        gpu_readiness_timeout: float,
+        gpu_readiness_poll_interval: float,
+        sky_bin: str,
     ) -> Any:
         return provision_if_absent(
             project=project,
@@ -131,6 +135,10 @@ def _default_provisioner() -> Provisioner:
             context_name=context_name,
             skip_s3=skip_s3,
             dry_run=dry_run,
+            accelerator=accelerator,
+            gpu_readiness_timeout=gpu_readiness_timeout,
+            gpu_readiness_poll_interval=gpu_readiness_poll_interval,
+            sky_bin=sky_bin,
         )
 
     return _provision
@@ -141,6 +149,9 @@ def ensure_infra_present(
     *,
     dry_run: bool = False,
     provisioner: Provisioner | None = None,
+    gpu_readiness_timeout: float = 600.0,
+    gpu_readiness_poll_interval: float = 10.0,
+    sky_bin: str = "",
 ) -> list[dict[str, Any]]:
     """Provision each unique target cluster that declares ``deployIfAbsent``.
 
@@ -166,6 +177,10 @@ def ensure_infra_present(
                 context_name=context,
                 skip_s3=target.skip_s3,
                 dry_run=dry_run,
+                accelerator=target.accelerators,
+                gpu_readiness_timeout=gpu_readiness_timeout,
+                gpu_readiness_poll_interval=gpu_readiness_poll_interval,
+                sky_bin=sky_bin,
             )
         except Exception as exc:  # noqa: BLE001 - surface as workflow error
             raise NpaWorkflowError(

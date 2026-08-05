@@ -19,6 +19,7 @@ def submit(
     require_controller_up: bool = False,
     image: str = "",
     skip_preflight: bool = False,
+    resolve_accelerators: bool = True,
     output_format: str = "text",
 ) -> None:
     """Submit a SkyPilot workflow YAML (e.g. a Token Factory + GPU combo).
@@ -31,6 +32,10 @@ def submit(
     ``skip_preflight`` mirrors the CLI's ``--skip-preflight``: it bypasses the
     prerequisite checks (SkyPilot CLI, npa source, placeholder bucket). Without it a
     Python caller had no way to submit a spec the CLI would let through.
+
+    ``resolve_accelerators=False`` is the explicit SDK equivalent of
+    ``--no-resolve-accelerators`` for hermetic rendering or an operator-supplied
+    accelerator override. Normal submits keep the SkyPilot readiness gate.
 
     ``image`` mirrors the CLI's ``--image``: an image reference for every stage, or ``"none"``
     to clear the specs' workbench image pins and run on SkyPilot's default image. Without it a
@@ -54,6 +59,7 @@ def submit(
         require_controller_up=require_controller_up,
         image=image,
         skip_preflight=skip_preflight,
+        resolve_accelerators=resolve_accelerators,
         output_format=OutputFormat(output_format),
     )
 

@@ -109,6 +109,44 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert f"k8s:reused kubeconfig {kubeconfig}" in result.actions
 
 
+def test_reused_cluster_still_waits_for_skypilot_gpu_readiness(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def wait(accelerators, **kwargs):  # noqa: ANN001, ANN202
+        seen["accelerators"] = accelerators
+        seen["context"] = kwargs["context"]
+        seen["kubeconfig"] = __import__("os").environ["KUBECONFIG"]
+        kwargs["on_status"]("Kubernetes allocatable=1; SkyPilot discovery=ready")
+        return {}
+
+    monkeypatch.setattr(k8s_gpu_catalog, "wait_for_kubernetes_accelerators", wait)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        accelerator="RTXPRO6000:1",
+        gpu_readiness_timeout=9,
+        gpu_readiness_poll_interval=0.1,
+    )
+
+    assert result.status == "ok"
+    assert result.gpu_readiness == "ready"
+    assert seen == {
+        "accelerators": ["RTXPRO6000:1"],
+        "context": "npa-cluster",
+        "kubeconfig": str(kubeconfig),
+    }
+    assert any("SkyPilot discovery=ready" in action for action in result.actions)
+
+
 def test_provision_if_absent_cli_exits_non_zero_on_a_partial_run(mocker) -> None:
     """Exiting 0 with warnings made the next submit the place the failure appeared."""
     from npa.cli.main import app

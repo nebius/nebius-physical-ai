@@ -65,6 +65,22 @@ def provision_if_absent_cmd(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Resolve settings and print intended actions only."),
     timeout: int = typer.Option(120, "--timeout", help="Terraform apply timeout in minutes."),
+    accelerator: str = typer.Option(
+        "",
+        "--accelerator",
+        help="Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness.",
+    ),
+    gpu_readiness_timeout: float = typer.Option(
+        600.0,
+        "--gpu-readiness-timeout",
+        help="Seconds to wait for SkyPilot GPU discovery without deleting capacity.",
+    ),
+    gpu_readiness_poll_interval: float = typer.Option(
+        10.0,
+        "--gpu-readiness-poll-interval",
+        help="Seconds between SkyPilot GPU discovery checks.",
+    ),
+    sky_bin: str = typer.Option("", "--sky-bin", help="Pinned SkyPilot executable."),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
 ) -> None:
     """Provision S3 and Kubernetes only when they are absent."""
@@ -87,6 +103,10 @@ def provision_if_absent_cmd(
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
         preemptible=preemptible,
+        accelerator=accelerator,
+        gpu_readiness_timeout=gpu_readiness_timeout,
+        gpu_readiness_poll_interval=gpu_readiness_poll_interval,
+        sky_bin=sky_bin,
     )
     payload = result.to_dict()
     if output_format == OutputFormat.json:
@@ -97,6 +117,7 @@ def provision_if_absent_cmd(
         typer.echo(f"cluster: {result.cluster_name}")
         typer.echo(f"kubeconfig: {result.kubeconfig_path}")
         typer.echo(f"storage: {result.storage_bucket}")
+        typer.echo(f"gpu_readiness: {result.gpu_readiness}")
         for action in result.actions:
             typer.echo(f"action: {action}")
         for warning in result.warnings:

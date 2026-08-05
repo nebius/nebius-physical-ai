@@ -15,6 +15,7 @@ run  Run a named workflow end-to-end.
 status  Check the status of a workflow run.
 logs  Show logs for a specific stage of a workflow run.
 artifacts  List durable S3 artifact URIs for a workflow run.
+load-artifact  Retry only the final artifact load; never relaunch workflow stages.
 list  List durable S3 workflow runs.
 cancel  Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops.
 teardown  Destroy both VMs from a distill workflow run.
@@ -43,6 +44,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `status` | Check the status of a workflow run. |
 | `logs` | Show logs for a specific stage of a workflow run. |
 | `artifacts` | List durable S3 artifact URIs for a workflow run. |
+| `load-artifact` | Retry only the final artifact load; never relaunch workflow stages. |
 | `list` | List durable S3 workflow runs. |
 | `cancel` | Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops. |
 | `teardown` | Destroy both VMs from a distill workflow run. |

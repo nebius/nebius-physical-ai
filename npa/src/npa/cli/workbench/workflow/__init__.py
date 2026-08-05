@@ -186,9 +186,12 @@ def submit_cmd(
         ),
     ),
     resume: bool = typer.Option(
-        False,
+        True,
         "--resume/--no-resume",
-        help="With --runtime: replay waves already recorded as succeeded for this run id.",
+        help=(
+            "With --runtime: replay waves already recorded as succeeded for this run id "
+            "(enabled by default for restart-safe submit)."
+        ),
     ),
     poll_seconds: int = typer.Option(
         30,
@@ -235,6 +238,16 @@ def submit_cmd(
             "onto the one the target cluster actually advertises, and fail fast when "
             "the requested per-task GPU count exceeds what one node can provide."
         ),
+    ),
+    gpu_readiness_timeout: float = typer.Option(
+        600.0,
+        "--gpu-readiness-timeout",
+        help="Seconds to wait for SkyPilot to discover the requested Kubernetes GPU.",
+    ),
+    gpu_readiness_poll_interval: float = typer.Option(
+        10.0,
+        "--gpu-readiness-poll-interval",
+        help="Seconds between SkyPilot GPU discovery checks.",
     ),
     deploy_if_absent: bool = typer.Option(
         True,
@@ -370,14 +383,24 @@ def submit_cmd(
         "--secret-env",
         help="Environment variable name to pass to SkyPilot as a secret.",
     ),
-    stage_src: bool = typer.Option(
-        False,
+    stage_src: bool | None = typer.Option(
+        None,
         "--stage-src/--no-stage-src",
         help=(
-            "Upload the local npa package to s3://<config.bucket>/npa-src/npa/ "
-            "and use it as NPA_SRC_S3_URI, so image-less steps (Token Factory "
-            "tools, run.shell) can install npa on the worker."
+            "Content-address and persist the local npa package for image-less steps. "
+            "The default is automatic when the spec needs source; --no-stage-src is "
+            "an advanced opt-out."
         ),
+    ),
+    auto_load: bool = typer.Option(
+        True,
+        "--auto-load/--no-auto-load",
+        help="After successful PAIDF runtime completion, load and verify the final Rerun artifact in the configured agent.",
+    ),
+    agent_name: str = typer.Option(
+        "",
+        "--agent-name",
+        help="Configured agent name for final-artifact auto-load (defaults to agent or the sole agent).",
     ),
     skip_preflight: bool = typer.Option(
         False,
@@ -395,7 +418,12 @@ def submit_cmd(
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
-    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError, submit_workflow
+    from npa.orchestration.skypilot.workflow import (
+        SkyPilotSubmitError,
+        WorkflowResult,
+        find_job_ids_by_name,
+        submit_workflow,
+    )
     from npa.orchestration.skypilot.workflow_state import (
         SECRET_ENV_NAMES,
         WorkflowStateError,
@@ -479,14 +507,28 @@ def submit_cmd(
         infra_context = _infra_kube_context(infra)
         if infra_context and not plan_only:
             _adopt_npa_kubeconfig(infra_context)
-        if stage_src:
-            staged_uri = _stage_npa_src_for_submit(
-                spec_config,
-                s3_bucket=s3_bucket,
-                s3_endpoint=s3_endpoint,
-                credential_values=extra_env,
-            )
-            os.environ["NPA_SRC_S3_URI"] = staged_uri
+        image_value_for_source = str(image or "").strip().lower()
+        image_pins_all_tasks = bool(image_value_for_source) and image_value_for_source not in {
+            "none",
+            "default",
+            "-",
+        }
+        bucket_for_source = str(s3_bucket or spec_config.get("bucket", "") or "").strip()
+        existing_source_uri = _resolve_submit_src_s3_uri(project)
+        if existing_source_uri:
+            # The renderer has a process/config resolver without a project
+            # parameter. Pin the explicitly selected project's URI for this
+            # invocation so a non-default project cannot inherit another
+            # project's source prefix.
+            os.environ["NPA_SRC_S3_URI"] = existing_source_uri
+        auto_stage_source = (
+            stage_src is None
+            and not plan_only
+            and not image_pins_all_tasks
+            and not existing_source_uri
+            and not _is_placeholder_bucket(bucket_for_source)
+        )
+        stage_source_planned = stage_src is True or auto_stage_source
         if not skip_preflight:
             missing = _submit_prerequisites(
                 spec_config,
@@ -501,10 +543,48 @@ def submit_cmd(
                 s3_secret_access_key=getattr(
                     submit_credentials, "secret_access_key", ""
                 ),
+                source_staging_planned=stage_source_planned,
             )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
+        existing_fingerprint = existing_source_uri.rstrip("/").rsplit("/", 1)[-1]
+        if (
+            not stage_source_planned
+            and not plan_only
+            and not image_pins_all_tasks
+            and re.fullmatch(r"[0-9a-f]{64}", existing_fingerprint)
+        ):
+            from npa.orchestration.npa_workflow.src_staging import (
+                _storage_client,
+                verify_staged_source,
+            )
+
+            try:
+                verify_staged_source(
+                    existing_source_uri,
+                    client=_storage_client(
+                        endpoint_url=s3_endpoint,
+                        aws_access_key_id=extra_env.get("AWS_ACCESS_KEY_ID", ""),
+                        aws_secret_access_key=extra_env.get("AWS_SECRET_ACCESS_KEY", ""),
+                    ),
+                    expected_fingerprint=existing_fingerprint,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _fail(str(exc))
+                return
+        if stage_source_planned:
+            staged_uri = _stage_npa_src_for_submit(
+                spec_config,
+                s3_bucket=s3_bucket,
+                s3_endpoint=s3_endpoint,
+                credential_values=extra_env,
+                project=project,
+                run_id=resolved_run_id,
+            )
+            if not staged_uri:
+                return
+            os.environ["NPA_SRC_S3_URI"] = staged_uri
         _warn_placeholder_bucket(
             spec_config, quiet=output_format == OutputFormat.json
         )
@@ -543,7 +623,13 @@ def submit_cmd(
             try:
                 deploy_targets = parse_deploy_targets(_load_deploy_spec(yaml_path))
                 if deploy_targets:
-                    for record in ensure_infra_present(deploy_targets, dry_run=plan_only):
+                    for record in ensure_infra_present(
+                        deploy_targets,
+                        dry_run=plan_only,
+                        gpu_readiness_timeout=gpu_readiness_timeout,
+                        gpu_readiness_poll_interval=gpu_readiness_poll_interval,
+                        sky_bin=sky_bin,
+                    ):
                         typer.echo(
                             "deployIfAbsent["
                             f"{record['profile']}]: {record['status']} "
@@ -592,6 +678,8 @@ def submit_cmd(
                 infra=infra,
                 sky_bin=sky_bin,
                 enabled=resolve_accelerators and not plan_only,
+                readiness_timeout=gpu_readiness_timeout,
+                readiness_poll_interval=gpu_readiness_poll_interval,
             ),
         )
 
@@ -615,6 +703,10 @@ def submit_cmd(
                 max_concurrency=max_concurrency,
                 resume=resume,
                 output_format=output_format,
+                project=project,
+                auto_load=auto_load,
+                agent_name=agent_name,
+                s3_endpoint=s3_endpoint,
             )
             return
 
@@ -763,19 +855,95 @@ def submit_cmd(
                 _fail(str(exc))
                 return
 
-        result = submit_workflow(
-            submitted_yaml_path,
-            resolved_run_id,
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-            sky_bin=sky_bin or None,
-            controller_backend=controller_backend.value,
-            infra=infra,
-            secret_envs=secret_env,
-            require_controller_up=require_controller_up,
-            extra_env=extra_env,
-            timeout=submit_timeout,
-        )
+        def _launch() -> WorkflowResult:
+            return submit_workflow(
+                submitted_yaml_path,
+                resolved_run_id,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin or None,
+                controller_backend=controller_backend.value,
+                infra=infra,
+                secret_envs=secret_env,
+                require_controller_up=require_controller_up,
+                extra_env=extra_env,
+                timeout=submit_timeout,
+            )
+
+        if prepared_npa is not None:
+            from npa.orchestration.npa_workflow.submission_state import (
+                load_submission_state,
+                submission_lock,
+                update_submission_state,
+            )
+
+            ledger_project = project or "default"
+            with submission_lock(ledger_project, resolved_run_id):
+                submission = load_submission_state(ledger_project, resolved_run_id)
+                launch_state = submission.get("launch")
+                launch_record = launch_state if isinstance(launch_state, dict) else {}
+                existing_job_id = str(launch_record.get("sky_job_id") or "")
+                if not existing_job_id and launch_record.get("status") == "launching":
+                    matches = find_job_ids_by_name(
+                        resolved_run_id,
+                        isolated_config_dir=isolated_config_dir,
+                        config_path=config_path,
+                        sky_bin=sky_bin or None,
+                    )
+                    existing_job_id = matches[0] if matches else ""
+                if existing_job_id:
+                    result = WorkflowResult(
+                        status="SUBMITTED",
+                        job_id=existing_job_id,
+                        log_paths={"resume": "existing managed job; no duplicate launch"},
+                    )
+                    update_submission_state(
+                        ledger_project,
+                        resolved_run_id,
+                        {
+                            "launch": {
+                                "status": "submitted",
+                                "sky_job_id": existing_job_id,
+                                "resumed": True,
+                            }
+                        },
+                        locked=True,
+                    )
+                    typer.echo(
+                        f"submit-resume: reusing managed job {existing_job_id}; no duplicate launch",
+                        err=True,
+                    )
+                else:
+                    update_submission_state(
+                        ledger_project,
+                        resolved_run_id,
+                        {"launch": {"status": "launching", "sky_job_id": ""}},
+                        locked=True,
+                    )
+                    try:
+                        result = _launch()
+                    except Exception:
+                        update_submission_state(
+                            ledger_project,
+                            resolved_run_id,
+                            {"launch": {"status": "failed", "sky_job_id": ""}},
+                            locked=True,
+                        )
+                        raise
+                    update_submission_state(
+                        ledger_project,
+                        resolved_run_id,
+                        {
+                            "launch": {
+                                "status": "submitted",
+                                "sky_job_id": result.job_id,
+                                "resumed": False,
+                            }
+                        },
+                        locked=True,
+                    )
+        else:
+            result = _launch()
         if workflow_state is not None and instrumented is not None:
             instrumented_manifest = write_manifest(
                 instrumented.manifest,
@@ -897,6 +1065,10 @@ def _run_npa_workflow_runtime(
     max_concurrency: int,
     resume: bool,
     output_format: "OutputFormat",
+    project: str = "",
+    auto_load: bool = True,
+    agent_name: str = "",
+    s3_endpoint: str = "",
 ) -> None:
     """Drive an npa.workflow spec through the runtime orchestrator tier."""
 
@@ -955,7 +1127,19 @@ def _run_npa_workflow_runtime(
             else:
                 os.environ[name] = previous
 
+    artifact_load: dict[str, object] | None = None
+    if report.status == "succeeded" and auto_load and report.workflow == "physical-ai-data-factory":
+        artifact_load = _load_paidf_artifact(
+            project=project,
+            run_id=run_id,
+            run_prefix_uri=report.run_prefix_uri,
+            s3_endpoint=s3_endpoint,
+            credential_values=secret_env_values,
+            agent_name=agent_name,
+        )
     payload = report.to_dict()
+    if artifact_load is not None:
+        payload["artifact_load"] = artifact_load
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -974,8 +1158,77 @@ def _run_npa_workflow_runtime(
             typer.echo(f"run_prefix_uri: {report.run_prefix_uri}")
         if report.error:
             typer.echo(f"error: {report.error}")
+        if artifact_load is not None:
+            typer.echo(f"artifact_load: {artifact_load.get('status')}")
+            if artifact_load.get("artifact_uri"):
+                typer.echo(f"artifact_uri: {artifact_load.get('artifact_uri')}")
+            if artifact_load.get("detail"):
+                typer.echo(f"artifact_load_detail: {artifact_load.get('detail')}")
+            if artifact_load.get("retry_command") and not artifact_load.get("verified"):
+                typer.echo(f"artifact_load_retry: {artifact_load.get('retry_command')}")
     if report.status != "succeeded":
         raise typer.Exit(1)
+
+
+def _load_paidf_artifact(
+    *,
+    project: str,
+    run_id: str,
+    run_prefix_uri: str,
+    s3_endpoint: str = "",
+    credential_values: dict[str, str] | None = None,
+    agent_name: str = "",
+) -> dict[str, object]:
+    """Run the optional post-success handoff without changing workflow success."""
+
+    from npa.orchestration.npa_workflow.artifact_load import (
+        load_final_artifact_into_agent,
+    )
+    from npa.orchestration.npa_workflow.src_staging import _storage_client
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    if not run_prefix_uri:
+        result: dict[str, object] = {
+            "status": "partial",
+            "detail": "workflow succeeded but its exact run prefix is unavailable",
+            "retry_command": (
+                f"npa workbench workflow load-artifact {run_id}"
+                + (f" --project {project}" if project else "")
+            ),
+            "verified": False,
+        }
+        update_submission_state(
+            project or "default", run_id, {"artifact_load": result}
+        )
+        return result
+    try:
+        client = _storage_client(
+            endpoint_url=s3_endpoint,
+            aws_access_key_id=(credential_values or {}).get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=(credential_values or {}).get("AWS_SECRET_ACCESS_KEY", ""),
+        )
+        return load_final_artifact_into_agent(
+            project=project,
+            run_id=run_id,
+            run_prefix_uri=run_prefix_uri,
+            storage_client=client,
+            agent_name=agent_name,
+        ).to_dict()
+    except Exception as exc:  # noqa: BLE001 - optional post-success operation
+        result = {
+            "status": "partial",
+            "detail": f"workflow succeeded; artifact load is incomplete: {exc}",
+            "retry_command": (
+                f"npa workbench workflow load-artifact {run_id}"
+                + (f" --project {project}" if project else "")
+                + (f" --agent-name {agent_name}" if agent_name else "")
+            ),
+            "verified": False,
+        }
+        update_submission_state(
+            project or "default", run_id, {"artifact_load": result}
+        )
+        return result
 
 
 def _default_submit_run_id(yaml_path: Path) -> str:
@@ -987,6 +1240,24 @@ def _is_nebius_registry_image(image: str) -> bool:
     value = str(image or "").removeprefix("docker:").strip()
     host = value.split("/", 1)[0] if "/" in value else ""
     return host.startswith("cr.") and host.endswith(".nebius.cloud")
+
+
+def _resolve_submit_src_s3_uri(project: str) -> str:
+    """Resolve source for the selected project, with explicit env precedence."""
+
+    value = (
+        os.environ.get("NPA_SRC_S3_URI")
+        or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
+        or ""
+    ).strip()
+    if value:
+        return value
+    try:
+        from npa.clients.config import resolve_workflow_src_s3_uri
+
+        return resolve_workflow_src_s3_uri(project or None)
+    except Exception:  # noqa: BLE001 - submit preflight reports an unset source
+        return ""
 
 
 def _resolve_submit_registry(registry: str, project: str) -> str:
@@ -1068,14 +1339,16 @@ def _resolve_submit_accelerators(
     infra: str,
     sky_bin: str,
     enabled: bool,
+    readiness_timeout: float = 600.0,
+    readiness_poll_interval: float = 10.0,
 ) -> dict[str, str]:
     """Map a spec's Kubernetes accelerators onto what the target cluster advertises.
 
     Returns a possibly empty remap keyed by the spec's own accelerator string. A
-    cluster that cannot be queried is not an error -- submit keeps the spec's
-    values, exactly as before. A cluster that *can* be queried and cannot satisfy
-    the request is fatal, so the run fails here rather than after the CPU stages
-    have already burned time.
+    Discovery is a readiness gate, not a best-effort rewrite: Kubernetes may
+    already report allocatable GPUs while SkyPilot still has an empty catalog.
+    Submission waits for the configured bounded interval and then fails without
+    deleting capacity.
     """
 
     if not enabled:
@@ -1090,9 +1363,8 @@ def _resolve_submit_accelerators(
         KubernetesGpuCatalogError,
         UnsatisfiableAcceleratorError,
         context_from_infra,
-        discover_kubernetes_gpu_catalog,
-        resolve_kubernetes_accelerator,
         spec_accelerators,
+        wait_for_kubernetes_accelerators,
     )
 
     try:
@@ -1104,23 +1376,25 @@ def _resolve_submit_accelerators(
 
     context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
     try:
-        catalog = discover_kubernetes_gpu_catalog(
-            context=context, sky_bin=sky_bin or None
+        resolutions = wait_for_kubernetes_accelerators(
+            requested,
+            context=context,
+            sky_bin=sky_bin or None,
+            timeout=readiness_timeout,
+            poll_interval=readiness_poll_interval,
+            on_status=lambda message: typer.echo(message, err=True),
         )
-    except (KubernetesGpuCatalogError, SkyPilotNotInstalledError) as exc:
-        typer.echo(
-            f"accelerator-resolve: skipped ({exc}); submitting the spec's accelerators as written",
-            err=True,
-        )
+    except (
+        KubernetesGpuCatalogError,
+        SkyPilotNotInstalledError,
+        UnsatisfiableAcceleratorError,
+        ValueError,
+    ) as exc:
+        _fail(f"accelerator readiness failed: {exc}")
         return {}
 
     overrides: dict[str, str] = {}
-    for accelerator in requested:
-        try:
-            resolution = resolve_kubernetes_accelerator(accelerator, catalog=catalog)
-        except UnsatisfiableAcceleratorError as exc:
-            _fail(str(exc))
-            return {}
+    for accelerator, resolution in resolutions.items():
         if resolution.remapped:
             overrides[accelerator] = resolution.resolved
         typer.echo(f"accelerator-resolve: {resolution.describe()}", err=True)
@@ -1211,9 +1485,16 @@ def _stage_npa_src_for_submit(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     credential_values: dict[str, str] | None = None,
+    project: str = "",
+    run_id: str = "workflow",
 ) -> str:
-    """Upload the local npa package and return the resulting NPA_SRC_S3_URI."""
+    """Upload once, then durably record the exact ``NPA_SRC_S3_URI``."""
+    from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
     from npa.orchestration.npa_workflow.src_staging import SrcStagingError, stage_npa_source
+    from npa.orchestration.npa_workflow.submission_state import (
+        submission_lock,
+        update_submission_state,
+    )
 
     bucket = str(s3_bucket or spec_config.get("bucket", "") or "").strip()
     if _is_placeholder_bucket(bucket):
@@ -1223,16 +1504,32 @@ def _stage_npa_src_for_submit(
         )
         return ""
     try:
-        return stage_npa_source(
-            bucket=bucket,
-            endpoint_url=s3_endpoint,
-            aws_access_key_id=(credential_values or {}).get("AWS_ACCESS_KEY_ID", ""),
-            aws_secret_access_key=(credential_values or {}).get(
-                "AWS_SECRET_ACCESS_KEY", ""
-            ),
-            on_status=lambda message: typer.echo(f"  {message}", err=True),
-        )
-    except SrcStagingError as exc:
+        with submission_lock(project or "default", run_id):
+            uri = stage_npa_source(
+                bucket=bucket,
+                endpoint_url=s3_endpoint,
+                aws_access_key_id=(credential_values or {}).get("AWS_ACCESS_KEY_ID", ""),
+                aws_secret_access_key=(credential_values or {}).get(
+                    "AWS_SECRET_ACCESS_KEY", ""
+                ),
+                on_status=lambda message: typer.echo(f"  {message}", err=True),
+            )
+            persist_workflow_src_s3_uri(uri, project or None)
+            fingerprint = uri.rstrip("/").rsplit("/", 1)[-1]
+            update_submission_state(
+                project or "default",
+                run_id,
+                {
+                    "source": {
+                        "status": "verified",
+                        "uri": uri,
+                        "fingerprint": fingerprint,
+                    }
+                },
+                locked=True,
+            )
+            return uri
+    except (ConfigError, SrcStagingError) as exc:
         _fail(str(exc))
         return ""
 
@@ -1383,6 +1680,7 @@ def _submit_prerequisites(
     s3_endpoint: str = "",
     s3_access_key_id: str = "",
     s3_secret_access_key: str = "",
+    source_staging_planned: bool = False,
 ) -> list[tuple[str, str]]:
     """Return ``[(missing, remedy)]`` for an npa.workflow submit.
 
@@ -1419,7 +1717,7 @@ def _submit_prerequisites(
     # every task to SkyPilot's default image, so it needs the source too.
     image_value = str(image or "").strip().lower()
     image_pins_tasks = bool(image_value) and image_value not in {"none", "default", "-"}
-    if not image_pins_tasks and not resolve_src_s3_uri():
+    if not image_pins_tasks and not resolve_src_s3_uri() and not source_staging_planned:
         missing.append(
             (
                 "npa source for image-less steps (NPA_SRC_S3_URI is unset)",
@@ -1693,8 +1991,13 @@ def _durable_workflow_status(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    startup_failure_threshold: int = 3,
 ) -> dict[str, object]:
-    from npa.orchestration.skypilot.workflow import workflow_status, workflow_task_statuses
+    from npa.orchestration.skypilot.workflow import (
+        workflow_controller_logs,
+        workflow_status,
+        workflow_task_statuses,
+    )
     from npa.orchestration.skypilot.workflow_state import (
         WorkflowStateError,
         put_json,
@@ -1719,12 +2022,14 @@ def _durable_workflow_status(
     if manifest.get("schema_version") == "npa.workflow.run.v1":
         from npa.orchestration.npa_workflow.run_state import (
             RunManifest,
+            build_actionable_run_status,
             reconcile_submitted_manifest,
         )
 
         run_manifest = RunManifest.from_dict(manifest)
         live_status = ""
         task_rows: list[dict[str, object]] = []
+        controller_output = ""
         diagnostics: list[str] = []
         if run_manifest.sky_job_id:
             try:
@@ -1741,6 +2046,22 @@ def _durable_workflow_status(
                 task_rows = workflow_task_statuses(
                     run_manifest.sky_job_id, sky_bin=_resolve_sky_bin(sky_bin)
                 )
+                if str(live_status or run_manifest.status).upper() not in {
+                    "SUCCEEDED",
+                    "CANCELLED",
+                } and not str(live_status or run_manifest.status).upper().startswith("FAILED"):
+                    controller_logs = workflow_controller_logs(
+                        run_manifest.sky_job_id,
+                        sky_bin=_resolve_sky_bin(sky_bin),
+                    )
+                    controller_output = "\n".join(
+                        item for item in (controller_logs.stdout, controller_logs.stderr) if item
+                    )
+                    if controller_logs.returncode != 0:
+                        diagnostics.append(
+                            "SkyPilot controller logs are unavailable; startup failure "
+                            f"classification is incomplete ({controller_output.strip() or 'no detail'})."
+                        )
             except Exception as exc:  # noqa: BLE001 - persisted status remains useful
                 diagnostics.append(
                     "SkyPilot controller status is unavailable; showing the last "
@@ -1749,42 +2070,29 @@ def _durable_workflow_status(
         reconcile_submitted_manifest(
             run_manifest, live_status=live_status, task_rows=task_rows
         )
-        if live_status or task_rows:
+        run_payload = build_actionable_run_status(
+            run_manifest,
+            live_status=live_status,
+            task_rows=task_rows,
+            controller_output=controller_output,
+            project=project or state.project,
+            failure_threshold=startup_failure_threshold,
+        )
+        if live_status or task_rows or controller_output:
             try:
                 put_json(state, "manifest.json", payload=run_manifest.to_dict())
             except Exception as exc:  # noqa: BLE001 - status remains readable
                 diagnostics.append(
                     f"Could not persist reconciled status to object storage: {exc}"
                 )
-        run_stages: dict[str, dict[str, object]] = {}
-        for index, step in enumerate(run_manifest.steps):
-            name = str(step.get("state") or f"step-{index}")
-            iteration = step.get("iteration")
-            key = f"{name}#{iteration}" if iteration is not None else name
-            if key in run_stages:
-                key = f"{key}@{index}"
-            profile = step.get("resources_profile") or {}
-            accelerator = (
-                str(profile.get("accelerators") or "")
-                if isinstance(profile, dict)
-                else ""
-            )
-            run_stages[key] = {
-                "state": str(step.get("status") or "SUBMITTED").upper(),
-                "workflow_state": name,
-                "requested_accelerators": accelerator,
-                "resources_profile": profile,
+        run_payload.update(
+            {
+                "run_id": run_manifest.run_id or _display_run_id(run_id),
+                "run_prefix_uri": run_manifest.run_prefix_uri
+                or state.uri.removesuffix("/npa-workflow"),
+                "manifest_uri": f"{state.uri.rstrip('/')}/manifest.json",
             }
-        run_payload: dict[str, object] = {
-            "run_id": run_manifest.run_id or _display_run_id(run_id),
-            "workflow_name": run_manifest.workflow,
-            "status": str(run_manifest.status or "SUBMITTED").upper(),
-            "live_status": live_status,
-            "sky_job_id": run_manifest.sky_job_id,
-            "run_prefix_uri": run_manifest.run_prefix_uri or state.uri.removesuffix("/npa-workflow"),
-            "manifest_uri": f"{state.uri.rstrip('/')}/manifest.json",
-            "stages": run_stages,
-        }
+        )
         if diagnostics:
             run_payload["diagnostics"] = diagnostics
         blockers = _stalled_job_blockers(
@@ -1992,6 +2300,13 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
         typer.echo(f"pod_reason: {result.get('pod_reason')}")
     if result.get("sky_job_id"):
         typer.echo(f"sky_job_id: {result.get('sky_job_id')}")
+    if result.get("active_stage_name"):
+        typer.echo(
+            f"active_stage: {result.get('active_stage_index')} "
+            f"{result.get('active_stage_name')}"
+        )
+    if result.get("last_heartbeat_at"):
+        typer.echo(f"last_heartbeat_at: {result.get('last_heartbeat_at')}")
     diagnostics = result.get("diagnostics")
     if isinstance(diagnostics, list):
         for diagnostic in diagnostics:
@@ -2029,6 +2344,19 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
             suffix_parts = [part for part in (tier, f"requested={accelerator}" if accelerator else "") if part]
             suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
             typer.echo(f"{stage}: {state}{suffix}")
+            if isinstance(info, dict) and "scheduler_state" in info:
+                typer.echo(
+                    f"  scheduler={info.get('scheduler_state') or 'UNKNOWN'} "
+                    f"task_id={info.get('task_id')} retries={info.get('retry_count', 0)} "
+                    f"last_progress={info.get('last_progress_at') or 'unknown'} "
+                    f"staleness_seconds={info.get('staleness_seconds')}"
+                )
+                if info.get("last_normalized_startup_failure"):
+                    typer.echo(
+                        f"  startup_failure={info.get('last_normalized_startup_failure')} "
+                        f"evidence={info.get('startup_failure_evidence')}"
+                    )
+                typer.echo(f"  logs: {info.get('log_command')}")
     siblings = result.get("sibling_jobs")
     if isinstance(siblings, list) and siblings:
         typer.echo("sibling_jobs:")
@@ -2178,6 +2506,11 @@ def status_cmd(
         "--interval",
         help="Watch refresh interval in seconds.",
     ),
+    startup_failure_threshold: int = typer.Option(
+        3,
+        "--startup-failure-threshold",
+        help="Identical deterministic controller failures required for FAILED_STARTUP.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output-format json."),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -2241,6 +2574,7 @@ def status_cmd(
                     s3_bucket=s3_bucket,
                     s3_endpoint=s3_endpoint,
                     sky_bin=sky_bin,
+                    startup_failure_threshold=startup_failure_threshold,
                 )
                 _emit_workflow_status(result, OutputFormat.json if json_output else output_format)
                 if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
@@ -2452,6 +2786,53 @@ def artifacts_cmd(
         return
     for uri in artifacts:
         typer.echo(uri)
+
+
+@app.command("load-artifact")
+def load_artifact_cmd(
+    run_id: str = typer.Argument(help="Successful PAIDF run ID or exact s3:// run prefix."),
+    project: str = typer.Option("", "--project", "-p", help="Configured project alias."),
+    agent_name: str = typer.Option("", "--agent-name", help="Configured agent name."),
+    workflow_s3_uri: str = typer.Option(
+        "", "--workflow-s3-uri", help="Exact durable npa-workflow prefix."
+    ),
+    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Retry only the final artifact load; never relaunch workflow stages."""
+
+    try:
+        status = _durable_workflow_status(
+            run_id,
+            project=project,
+            workflow_s3_uri=workflow_s3_uri,
+            s3_endpoint=s3_endpoint,
+        )
+        if str(status.get("status") or "").upper() != "SUCCEEDED":
+            raise RuntimeError(
+                "artifact auto-load is available after workflow success; current status is "
+                f"{status.get('status') or 'UNKNOWN'}"
+            )
+        result = _load_paidf_artifact(
+            project=project,
+            run_id=str(status.get("run_id") or _display_run_id(run_id)),
+            run_prefix_uri=str(status.get("run_prefix_uri") or ""),
+            s3_endpoint=s3_endpoint,
+            agent_name=agent_name,
+        )
+    except Exception as exc:
+        _fail(str(exc))
+        return
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"status: {result.get('status')}")
+        typer.echo(f"artifact_uri: {result.get('artifact_uri') or ''}")
+        typer.echo(f"verified: {str(bool(result.get('verified'))).lower()}")
+        if result.get("detail"):
+            typer.echo(f"detail: {result.get('detail')}")
+        if result.get("retry_command") and not result.get("verified"):
+            typer.echo(f"retry: {result.get('retry_command')}")
 
 
 @app.command("list")
@@ -2811,6 +3192,17 @@ def stage_src_cmd(
         "--endpoint",
         help="S3-compatible endpoint. Defaults to AWS_ENDPOINT_URL / NEBIUS_S3_ENDPOINT.",
     ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help="Project alias whose durable source setting should be updated.",
+    ),
+    run_id: str = typer.Option(
+        "staged-source",
+        "--run-id",
+        help="Submission ledger key used to make concurrent staging restart-safe.",
+    ),
 ) -> None:
     """Upload the local npa package to S3 for image-less workflow steps.
 
@@ -2820,11 +3212,7 @@ def stage_src_cmd(
     does not dead-end on "planned step ... has no workbench image and
     NPA_SRC_S3_URI is unset".
     """
-    from npa.orchestration.npa_workflow.src_staging import (
-        DEFAULT_SRC_PREFIX,
-        SrcStagingError,
-        stage_npa_source,
-    )
+    from npa.orchestration.npa_workflow.src_staging import DEFAULT_SRC_PREFIX
 
     target = bucket.strip()
     if not target:
@@ -2838,15 +3226,41 @@ def stage_src_cmd(
         )
         return
 
-    try:
-        uri = stage_npa_source(
-            bucket=target,
-            prefix=prefix or DEFAULT_SRC_PREFIX,
-            endpoint_url=endpoint,
-            on_status=lambda message: typer.echo(f"  {message}", err=True),
+    if prefix and prefix != DEFAULT_SRC_PREFIX:
+        # The shared helper intentionally uses the canonical prefix; preserve an
+        # explicit custom prefix for advanced callers while still persisting it.
+        from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
+        from npa.orchestration.npa_workflow.src_staging import (
+            SrcStagingError,
+            stage_npa_source,
         )
-    except SrcStagingError as exc:
-        _fail(str(exc))
+        from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+        try:
+            uri = stage_npa_source(
+                bucket=target,
+                prefix=prefix,
+                endpoint_url=endpoint,
+                on_status=lambda message: typer.echo(f"  {message}", err=True),
+            )
+            persist_workflow_src_s3_uri(uri, project or None)
+            update_submission_state(
+                project or "default",
+                run_id,
+                {"source": {"status": "verified", "uri": uri}},
+            )
+        except (ConfigError, SrcStagingError) as exc:
+            _fail(str(exc))
+            return
+    else:
+        uri = _stage_npa_src_for_submit(
+            {"bucket": target},
+            s3_bucket=target,
+            s3_endpoint=endpoint,
+            project=project,
+            run_id=run_id,
+        )
+    if not uri:
         return
 
     typer.echo(f"npa_src_s3_uri: {uri}")

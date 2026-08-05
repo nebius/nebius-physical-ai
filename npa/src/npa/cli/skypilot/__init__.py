@@ -346,6 +346,16 @@ def verify_cmd(
             "--kubeconfig is not given."
         ),
     ),
+    controller_backend: str = typer.Option(
+        "kubernetes",
+        "--controller-backend",
+        help="Controller backend: kubernetes (Nebius profile optional) or nebius (required).",
+    ),
+    output_format: str = typer.Option(
+        "text",
+        "--output-format",
+        help="Output format: text or json.",
+    ),
 ) -> None:
     """Run `sky check` against the isolated SkyPilot runtime."""
 
@@ -361,11 +371,54 @@ def verify_cmd(
 
     check_env = _verify_kube_env(kubeconfig=kubeconfig, cluster=cluster)
     result = _run_no_raise([str(state.sky_bin), "check"], env=check_env)
-    if result.stdout:
-        typer.echo(result.stdout.rstrip())
-    if result.stderr:
-        console.print(result.stderr.rstrip())
-    raise typer.Exit(result.returncode)
+    backend = controller_backend.strip().lower()
+    if backend not in {"kubernetes", "nebius"}:
+        _fail("--controller-backend must be kubernetes or nebius")
+        return
+    if output_format not in {"text", "json"}:
+        _fail("--output-format must be text or json")
+        return
+    combined_lines = [
+        line
+        for line in "\n".join((result.stdout or "", result.stderr or "")).splitlines()
+        if line.strip()
+    ]
+    profile_failure = any("unable to create nebius profile" in line.lower() for line in combined_lines)
+    required = backend == "nebius"
+    ok = result.returncode == 0 and not (profile_failure and required)
+    if profile_failure and not required:
+        profile_status = "skipped_not_required"
+        detail = "Nebius profile skipped; not required for Kubernetes-controller mode"
+    elif profile_failure:
+        profile_status = "failed_required"
+        detail = "Nebius profile creation failed and is required for Nebius-controller mode"
+    else:
+        profile_status = "available_or_not_reported"
+        detail = "Nebius profile failure was not reported"
+    filtered = [
+        line
+        for line in combined_lines
+        if "unable to create nebius profile" not in line.lower()
+        and not (profile_failure and required and "setup completed" in line.lower())
+    ]
+    payload = {
+        "status": "ok" if ok else "failed",
+        "controller_backend": backend,
+        "nebius_profile": profile_status,
+        "nebius_profile_detail": detail,
+        "sky_check_returncode": result.returncode,
+        "sky_check_output": filtered,
+    }
+    if output_format == "json":
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"status: {payload['status']}")
+        typer.echo(f"controller_backend: {backend}")
+        typer.echo(f"nebius_profile: {profile_status} ({detail})")
+        for line in filtered:
+            typer.echo(line)
+    if not ok:
+        raise typer.Exit(result.returncode or 1)
 
 
 def _verify_kube_env(

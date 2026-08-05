@@ -12,16 +12,24 @@ Nothing shipped that copy, so a first submit dead-ended on::
     is unset
 
 with no command to produce one. :func:`stage_npa_source` uploads the package
-tree to ``s3://<bucket>/<prefix>/`` and returns the URI to export.
+tree to a content-addressed ``s3://<bucket>/<prefix>/<sha256>/`` prefix.  A
+manifest written last is the commit marker, so an interrupted upload is never
+mistaken for a reusable source tree.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import hashlib
+import json
 import os
 from pathlib import Path
+import tempfile
 from typing import Any, Callable, Iterable
 
 DEFAULT_SRC_PREFIX = "npa-src/npa"
+SOURCE_MANIFEST_NAME = ".npa-source.json"
+SOURCE_MANIFEST_SCHEMA = "npa.source.v1"
 
 #: Directory names never worth uploading (virtualenvs, caches, build output).
 EXCLUDED_DIR_NAMES = frozenset(
@@ -53,6 +61,16 @@ SENSITIVE_NAMES = frozenset({".env", "auth.env", "credentials.yaml", "credential
 
 class SrcStagingError(RuntimeError):
     """Raised when the npa package source cannot be located or uploaded."""
+
+
+@dataclass(frozen=True)
+class SourceStageResult:
+    """A verified immutable source upload."""
+
+    uri: str
+    fingerprint: str
+    file_count: int
+    reused: bool
 
 
 def find_npa_package_root(start: Path | None = None) -> Path:
@@ -138,6 +156,74 @@ def iter_source_files(root: Path) -> Iterable[Path]:
         yield relative
 
 
+def source_fingerprint(root: Path, files: Iterable[Path] | None = None) -> str:
+    """Return a stable digest of paths, modes, and contents in the source tree."""
+
+    digest = hashlib.sha256()
+    for relative in files if files is not None else iter_source_files(root):
+        path = root / relative
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(b"x" if os.access(path, os.X_OK) else b"-")
+        digest.update(b"\0")
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _parse_s3_uri(uri: str) -> tuple[str, str]:
+    value = str(uri or "").strip()
+    if not value.startswith("s3://"):
+        raise SrcStagingError(f"Expected an s3:// source URI, got {value or '<empty>'}")
+    bucket_and_key = value.removeprefix("s3://").split("/", 1)
+    if len(bucket_and_key) != 2 or not all(bucket_and_key):
+        raise SrcStagingError(f"Expected s3://<bucket>/<prefix>, got {value}")
+    return bucket_and_key[0], bucket_and_key[1].rstrip("/")
+
+
+def verify_staged_source(
+    uri: str,
+    *,
+    client: Any,
+    expected_fingerprint: str = "",
+) -> dict[str, Any]:
+    """Read and validate the upload's commit manifest.
+
+    This intentionally verifies through S3 rather than trusting a local ledger:
+    a deleted object, wrong endpoint, or revoked permission must be actionable
+    before SkyPilot starts workers.
+    """
+
+    bucket, prefix = _parse_s3_uri(uri)
+    key = f"{prefix}/{SOURCE_MANIFEST_NAME}"
+    try:
+        response = client.s3.get_object(Bucket=bucket, Key=key)
+        body = response["Body"].read()
+        payload = json.loads(body.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - include the exact provider failure
+        raise SrcStagingError(
+            f"Source verification failed for {uri}: could not read s3://{bucket}/{key}: "
+            f"{exc}. Safely restage with `npa workbench workflow stage-src "
+            f"--bucket {bucket}`."
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("schema_version") != SOURCE_MANIFEST_SCHEMA:
+        raise SrcStagingError(
+            f"Source verification failed for {uri}: {SOURCE_MANIFEST_NAME} has an "
+            f"unsupported schema. Safely restage with `npa workbench workflow "
+            f"stage-src --bucket {bucket}`."
+        )
+    actual = str(payload.get("fingerprint", ""))
+    if expected_fingerprint and actual != expected_fingerprint:
+        raise SrcStagingError(
+            f"Source verification failed for {uri}: expected fingerprint "
+            f"{expected_fingerprint}, found {actual or '<missing>'}. Safely restage with "
+            f"`npa workbench workflow stage-src --bucket {bucket}`."
+        )
+    return payload
+
+
 def _storage_client(
     *,
     endpoint_url: str = "",
@@ -174,7 +260,7 @@ def _storage_client(
     )
 
 
-def stage_npa_source(
+def ensure_npa_source(
     *,
     bucket: str,
     prefix: str = DEFAULT_SRC_PREFIX,
@@ -185,8 +271,8 @@ def stage_npa_source(
     client: Any | None = None,
     on_status: Callable[[str], None] | None = None,
     max_workers: int = 8,
-) -> str:
-    """Upload the npa package tree and return the ``NPA_SRC_S3_URI`` to use.
+) -> SourceStageResult:
+    """Return a verified source prefix, uploading it exactly once when absent.
 
     *bucket* accepts ``name`` or ``s3://name`` (any trailing path is ignored in
     favor of *prefix*, so the destination is predictable).
@@ -204,7 +290,11 @@ def stage_npa_source(
     if not (root / "pyproject.toml").is_file():
         raise SrcStagingError(f"{root} does not look like the npa package (no pyproject.toml)")
 
-    destination = f"s3://{bucket_name}/{key_prefix}/"
+    files = list(iter_source_files(root))
+    if not files:
+        raise SrcStagingError(f"No source files found under {root}")
+    fingerprint = source_fingerprint(root, files)
+    destination = f"s3://{bucket_name}/{key_prefix}/{fingerprint}/"
     if client is None:
         try:
             client = _storage_client(
@@ -219,12 +309,24 @@ def stage_npa_source(
                 "--s3-endpoint / AWS_* env vars)."
             ) from exc
 
-    if on_status:
-        on_status(f"staging {root} -> {destination}")
-
-    files = list(iter_source_files(root))
-    if not files:
-        raise SrcStagingError(f"No source files found under {root}")
+    try:
+        verify_staged_source(
+            destination,
+            client=client,
+            expected_fingerprint=fingerprint,
+        )
+    except SrcStagingError as exc:
+        if on_status:
+            on_status(f"source cache miss ({exc}); staging {root} -> {destination}")
+    else:
+        if on_status:
+            on_status(f"reusing verified staged source {destination}")
+        return SourceStageResult(
+            uri=destination,
+            fingerprint=fingerprint,
+            file_count=len(files),
+            reused=True,
+        )
 
     # ~950 small objects: serial PUTs make this a minute-plus of latency, so
     # upload with a small pool. Order does not matter (the worker syncs the
@@ -245,16 +347,46 @@ def stage_npa_source(
         else:
             for relative in files:
                 _upload(relative)
-    except Exception as exc:  # noqa: BLE001 - surfaced as SrcStagingError
+        manifest = {
+            "schema_version": SOURCE_MANIFEST_SCHEMA,
+            "fingerprint": fingerprint,
+            "file_count": len(files),
+        }
+        descriptor, raw_manifest = tempfile.mkstemp(prefix="npa-source-", suffix=".json")
+        manifest_path = Path(raw_manifest)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(manifest, handle, sort_keys=True)
+                handle.write("\n")
+            client.upload_file(str(manifest_path), f"{destination}{SOURCE_MANIFEST_NAME}")
+        finally:
+            manifest_path.unlink(missing_ok=True)
+        verify_staged_source(
+            destination,
+            client=client,
+            expected_fingerprint=fingerprint,
+        )
+    except Exception as exc:  # noqa: BLE001 - normalized above for callers
         raise SrcStagingError(
-            f"Failed to stage the npa source to {destination}: {exc}. Check that the "
-            "bucket exists and that the S3 credentials from `npa configure` can write "
-            "to it."
+            f"Failed to stage the npa source to {destination}: {exc}. The incomplete "
+            "content-addressed prefix is safe to retry; no workflow will use it without "
+            f"{SOURCE_MANIFEST_NAME}."
         ) from exc
     uploaded = len(files)
     if on_status:
         on_status(f"staged {uploaded} files")
-    return destination
+    return SourceStageResult(
+        uri=destination,
+        fingerprint=fingerprint,
+        file_count=uploaded,
+        reused=False,
+    )
+
+
+def stage_npa_source(**kwargs: Any) -> str:
+    """Compatibility wrapper returning only the exact staged source URI."""
+
+    return ensure_npa_source(**kwargs).uri
 
 
 def resolve_src_uri_from_env() -> str:

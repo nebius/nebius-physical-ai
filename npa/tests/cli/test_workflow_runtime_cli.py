@@ -132,7 +132,7 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert options.retries == 2
     assert options.max_concurrency == 2
     assert options.cancel_on_timeout is False
-    assert options.resume is False
+    assert options.resume is True
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
     assert fake_runtime["render_options"].registry == "cr.example.invalid/reg"
@@ -283,7 +283,7 @@ def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch, sati
         submitted["content"] = Path(path).read_text(encoding="utf-8")
         return WorkflowResult(status="SUBMITTED", job_id="9", returncode=0)
 
-    mocker.patch(
+    submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow", side_effect=fake_submit
     )
 
@@ -308,6 +308,25 @@ def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch, sati
     # The parallel group is flattened into today's serial pipeline.
     assert "execution: serial" in str(submitted["content"])
     assert "caption-shard-c" in str(submitted["content"])
+
+    resumed = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "one-shot-1",
+            "--image",
+            "none",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    assert "no duplicate launch" in resumed.output
+    assert submit_mock.call_count == 1
 
 
 def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -> None:

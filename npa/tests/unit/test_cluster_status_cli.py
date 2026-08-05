@@ -95,6 +95,32 @@ def test_list_json_merges_remote_and_local(monkeypatch) -> None:
     assert payload[0]["name"] == "cluster-a"
     assert payload[0]["state"] == "READY"
     assert payload[0]["node_count"] == 1
+    assert payload[0]["region"] == "eu-north1"
+
+
+def test_remote_only_cluster_uses_inventory_region_then_explicit_unknown(monkeypatch) -> None:
+    remote = ClusterInfo(
+        id="mk8scluster-remote",
+        name="remote",
+        project_id="project-a",
+        status="READY",
+        raw={"spec": {"region_id": "me-west1"}},
+    )
+
+    class FakeClient:
+        def list_node_groups(self, _cluster_id):  # noqa: ANN201
+            return []
+
+    row = status_mod._row_for_cluster(FakeClient(), "remote", None, remote)
+    unknown = status_mod._row_for_cluster(
+        FakeClient(),
+        "unknown",
+        None,
+        ClusterInfo(id="id", name="unknown", project_id="project-a", raw={}),
+    )
+
+    assert row["region"] == "me-west1"
+    assert unknown["region"] == "unknown"
 
 
 def test_list_resolves_project_alias_like_up_and_down(monkeypatch) -> None:

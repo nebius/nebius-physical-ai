@@ -124,8 +124,11 @@ def test_an_explicit_env_override_is_left_alone(
     assert called is False
 
 
-def test_an_unreachable_cluster_does_not_block_submit(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
+def test_an_unreachable_cluster_times_out_without_deleting_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
 
@@ -134,12 +137,18 @@ def test_an_unreachable_cluster_does_not_block_submit(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    assert (
+    with pytest.raises(Exception) as excinfo:
         workflow_cli._resolve_submit_accelerators(
-            spec_path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            readiness_timeout=0.003,
+            readiness_poll_interval=0.001,
         )
-        == {}
-    )
+
+    assert excinfo.type.__name__ == "Exit"
+    assert "Capacity was left running" in capsys.readouterr().err
 
 
 def test_resolution_is_skipped_when_disabled(

@@ -141,6 +141,49 @@ def test_known_project_configure_requires_complete_identity_flags() -> None:
     assert "--project-alias" in result.output
 
 
+def test_noninteractive_storage_selection_never_prints_prompt_language(
+    monkeypatch, capsys
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.main import _provision_object_storage
+    from npa.clients.storage_validation import StorageProbeResult
+
+    fake_nebius = SimpleNamespace(
+        bucket_name_for=lambda _tenant, _project: "derived-bucket",
+        bucket_exists=lambda _project, _bucket: True,
+        NebiusError=RuntimeError,
+        is_permission_denied=lambda _message: False,
+    )
+    monkeypatch.setattr(
+        "npa.clients.storage_setup.provision_storage",
+        lambda **_kwargs: (
+            {
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "s3_bucket": "derived-bucket",
+                "s3_endpoint": "https://storage.invalid",
+            },
+            StorageProbeResult(True, "ok", "verified"),
+        ),
+    )
+
+    result = _provision_object_storage(
+        fake_nebius,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompted")),
+        project_id="project",
+        tenant_id="tenant",
+        region="eu-north1",
+        interactive=False,
+    )
+
+    output = capsys.readouterr().out
+    assert result is not None
+    assert "Object storage (non-interactive): selected 'derived-bucket'" in output
+    assert "enter a bucket name" not in output.lower()
+    assert "press Enter" not in output
+
+
 def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
     """The README verify step `npa --version` must be warning-clean.
 

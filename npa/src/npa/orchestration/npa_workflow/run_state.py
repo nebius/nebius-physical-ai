@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import re
 from typing import Any, Mapping, Sequence
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
@@ -309,6 +310,16 @@ _TASK_STATUS_MAP = {
     "PENDING": "PENDING",
 }
 
+TERMINAL_STEP_STATES = frozenset(
+    {"SUCCEEDED", "CANCELLED", "FAILED", "FAILED_SETUP", "FAILED_STARTUP", "BLOCKED"}
+)
+_DETERMINISTIC_STARTUP_PATTERNS = (
+    re.compile(r"container\s+not found.*ray-node|ray-node.*container\s+not found", re.IGNORECASE),
+    re.compile(r"ray-node.*(?:deleted|not found)", re.IGNORECASE),
+    re.compile(r"cannot exec in a deleted state", re.IGNORECASE),
+)
+NORMALIZED_DELETED_RAY_NODE = "ray-node container deleted before SkyPilot initialization"
+
 
 def reconcile_submitted_manifest(
     manifest: RunManifest,
@@ -318,6 +329,7 @@ def reconcile_submitted_manifest(
 ) -> RunManifest:
     """Merge SkyPilot outcomes into a submitted manifest without losing lineage."""
 
+    startup_terminal = str(manifest.status or "").upper() == "FAILED_STARTUP"
     rows_by_id = {
         int(row["task_id"]): row
         for row in task_rows
@@ -330,9 +342,24 @@ def reconcile_submitted_manifest(
         if row is not None:
             sky_status = str(row.get("status") or "").upper()
             if sky_status:
-                step["status"] = _TASK_STATUS_MAP.get(sky_status, sky_status)
+                reconciled_status = _TASK_STATUS_MAP.get(sky_status, sky_status)
+                if not (
+                    str(original.get("status") or "").upper() == "FAILED_STARTUP"
+                    and reconciled_status not in {"SUCCEEDED", "CANCELLED"}
+                ):
+                    step["status"] = reconciled_status
                 step["sky_status"] = sky_status
-            for field in ("task_id", "task_name", "submitted_at", "start_at", "end_at"):
+            for field in (
+                "task_id",
+                "task_name",
+                "submitted_at",
+                "start_at",
+                "end_at",
+                "retry_count",
+                "last_progress_at",
+                "last_updated_at",
+                "failure_reason",
+            ):
                 if row.get(field) not in (None, ""):
                     step[field] = row[field]
         reconciled.append(step)
@@ -360,7 +387,9 @@ def reconcile_submitted_manifest(
         )
         if first_incomplete is not None:
             first_incomplete["status"] = live
-    if live:
+    if startup_terminal and live not in {"SUCCEEDED", "CANCELLED"}:
+        manifest.status = "FAILED_STARTUP"
+    elif live:
         manifest.status = live
     elif reconciled:
         statuses = [str(step.get("status") or "").upper() for step in reconciled]
@@ -372,6 +401,186 @@ def reconcile_submitted_manifest(
             manifest.status = "RUNNING"
     manifest.steps = reconciled
     return manifest
+
+
+def _timestamp(value: object) -> datetime | None:
+    if value in (None, "", 0, 0.0):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value).strip()
+    try:
+        if text.replace(".", "", 1).isdigit():
+            return datetime.fromtimestamp(float(text), tz=timezone.utc)
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _iso(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def normalize_startup_failure(controller_output: str) -> tuple[str, int]:
+    """Return a stable startup-failure label and its evidence count."""
+
+    matches = sum(
+        1
+        for line in str(controller_output or "").splitlines()
+        if any(pattern.search(line) for pattern in _DETERMINISTIC_STARTUP_PATTERNS)
+    )
+    return (NORMALIZED_DELETED_RAY_NODE, matches) if matches else ("", 0)
+
+
+def build_actionable_run_status(
+    manifest: RunManifest,
+    *,
+    live_status: str = "",
+    task_rows: Sequence[Mapping[str, Any]] = (),
+    controller_output: str = "",
+    project: str = "",
+    failure_threshold: int = 3,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Project manifest + scheduler evidence into actionable stage status.
+
+    The S3 manifest remains the only durable workflow status.  This projection
+    enriches those same steps with scheduler fields and may terminalize a
+    repeated deterministic startup failure while retaining raw controller state.
+    """
+
+    if failure_threshold <= 0:
+        raise ValueError("startup failure threshold must be positive")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    rows = {
+        int(row["task_id"]): row
+        for row in task_rows
+        if str(row.get("task_id", "")).isdigit()
+    }
+    normalized_failure, failure_evidence = normalize_startup_failure(controller_output)
+    stages: dict[str, dict[str, Any]] = {}
+    active_key = ""
+    active_index: int | None = None
+    newest_progress: datetime | None = _timestamp(manifest.updated_at)
+    for index, step in enumerate(manifest.steps):
+        name = str(step.get("state") or f"step-{index}")
+        iteration = step.get("iteration")
+        key = f"{name}#{iteration}" if iteration is not None else name
+        if key in stages:
+            key = f"{key}@{index}"
+        row = rows.get(index, {})
+        raw_scheduler = str(row.get("status") or step.get("sky_status") or "").upper()
+        state = str(step.get("status") or "SUBMITTED").upper()
+        if raw_scheduler:
+            state = _TASK_STATUS_MAP.get(raw_scheduler, raw_scheduler)
+        retry_count = 0
+        for field_name in ("retry_count", "recovery_count", "num_restarts", "attempt"):
+            raw = row.get(field_name, step.get(field_name))
+            try:
+                retry_count = max(retry_count, int(raw or 0))
+            except (TypeError, ValueError):
+                continue
+        timestamps = [
+            value
+            for value in (
+                _timestamp(row.get("last_progress_at", step.get("last_progress_at"))),
+                _timestamp(row.get("last_updated_at", step.get("last_updated_at"))),
+                _timestamp(row.get("end_at", step.get("end_at"))),
+                _timestamp(row.get("start_at", step.get("start_at"))),
+                _timestamp(row.get("submitted_at", step.get("submitted_at"))),
+                _timestamp(manifest.updated_at),
+            )
+            if value is not None
+        ]
+        last_progress = max(timestamps) if timestamps else None
+        if last_progress and (newest_progress is None or last_progress > newest_progress):
+            newest_progress = last_progress
+        start = _timestamp(row.get("start_at", step.get("start_at"))) or _timestamp(
+            row.get("submitted_at", step.get("submitted_at"))
+        )
+        end = _timestamp(row.get("end_at", step.get("end_at"))) or current
+        log_command = (
+            f"npa workbench workflow logs {manifest.run_id} --stage {name}"
+            + (f" --project {project}" if project else "")
+        )
+        profile = step.get("resources_profile") or {}
+        stage_payload: dict[str, Any] = {
+            "index": index + 1,
+            "state": state,
+            "workflow_state": name,
+            "managed_job_id": manifest.sky_job_id,
+            "task_id": row.get("task_id", index),
+            "scheduler_state": raw_scheduler or state,
+            "raw_scheduler_state": raw_scheduler,
+            "retry_count": retry_count,
+            "last_progress_at": _iso(last_progress),
+            "elapsed_seconds": max(0, int((end - start).total_seconds())) if start else None,
+            "staleness_seconds": (
+                max(0, int((current - last_progress).total_seconds()))
+                if last_progress
+                else None
+            ),
+            "last_normalized_startup_failure": str(
+                step.get("last_normalized_startup_failure") or ""
+            ),
+            "startup_failure_evidence": int(step.get("startup_failure_evidence") or 0),
+            "log_command": log_command,
+            "requested_accelerators": (
+                str(profile.get("accelerators") or "") if isinstance(profile, dict) else ""
+            ),
+            "resources_profile": profile,
+        }
+        if active_index is None and state == "FAILED_STARTUP":
+            active_index = index + 1
+            active_key = key
+        elif active_index is None and state not in TERMINAL_STEP_STATES:
+            active_index = index + 1
+            active_key = key
+            if normalized_failure:
+                stage_payload["last_normalized_startup_failure"] = normalized_failure
+                stage_payload["startup_failure_evidence"] = failure_evidence
+                stage_payload["retry_count"] = max(retry_count, max(0, failure_evidence - 1))
+                if failure_evidence >= failure_threshold:
+                    state = "FAILED_STARTUP"
+                    stage_payload["state"] = state
+                    step["status"] = state
+                    step["last_normalized_startup_failure"] = normalized_failure
+                    step["startup_failure_evidence"] = failure_evidence
+                    manifest.status = "FAILED_STARTUP"
+        stages[key] = stage_payload
+
+    live = str(live_status or "").upper()
+    status = str(manifest.status or "SUBMITTED").upper()
+    if status != "FAILED_STARTUP":
+        active = stages.get(active_key, {})
+        scheduler = str(active.get("scheduler_state") or "").upper()
+        retries = int(active.get("retry_count") or 0)
+        if scheduler in {"PENDING", "STARTING"}:
+            status = "RETRYING" if retries else scheduler
+        elif live:
+            status = live
+        elif stages and all(str(item.get("state")) == "SUCCEEDED" for item in stages.values()):
+            status = "SUCCEEDED"
+    manifest.status = status
+    return {
+        "run_id": manifest.run_id,
+        "workflow_name": manifest.workflow,
+        "status": status,
+        "live_status": live,
+        "raw_controller_state": live,
+        "sky_job_id": manifest.sky_job_id,
+        "active_stage_name": str(stages.get(active_key, {}).get("workflow_state") or ""),
+        "active_stage_index": active_index,
+        "last_heartbeat_at": _iso(newest_progress),
+        "stages": stages,
+    }
 
 
 def plan_step_records(

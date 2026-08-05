@@ -154,14 +154,14 @@ npa provision-if-absent --project "$PROJECT" --skip-k8s
 npa agent preflight --project "$PROJECT"
 npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1 \
   || npa agent setup --project "$PROJECT" --name agent
+npa skypilot bootstrap
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
-  --gpu-preset 1gpu-24vcpu-218gb --on-demand
-npa skypilot bootstrap
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
+  --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900
 BUCKET="$NPA_BUCKET"
 npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
-npa workbench workflow stage-src --bucket "$BUCKET"
 
 RUN_STATE="$HOME/.npa/paidf-first-run-id"
 if [ ! -s "$RUN_STATE" ]; then
@@ -172,7 +172,7 @@ fi
 RUN_ID="$(tr -d '\r\n' <"$RUN_STATE")"
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" \
-  --run-id "$RUN_ID" --runtime --resume --var bucket="$BUCKET" \
+  --run-id "$RUN_ID" --runtime --resume --auto-load --var bucket="$BUCKET" \
   --var seed_default_input=true --var n_augmentations=1 \
   --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
@@ -196,7 +196,9 @@ printf '%s\n' \
 `provision-if-absent` now reconciles and write-probes S3 before it considers
 Kubernetes; interrupted configuration resumes from owner-only provenance in
 `~/.npa/credentials.yaml`. It never launches the cluster while required storage
-is missing. The command above asks for exactly one `cpu-d3` / `8vcpu-32gb` CPU
+is missing. Readiness is not reported until SkyPilot, not just Kubernetes, sees
+the requested accelerator; a timeout leaves the healthy capacity in place for
+the same command to resume. The command above asks for exactly one `cpu-d3` / `8vcpu-32gb` CPU
 node and one `gpu-rtx6000` / `1gpu-24vcpu-218gb` RTX PRO 6000 node. On-demand is
 the reliable default. If on-demand capacity is unavailable, rerun the same
 provision command with `--preemptible` instead of `--on-demand`; preemptible VMs
@@ -230,6 +232,9 @@ failed run at a time. `provision-if-absent` writes the cluster kubeconfig to
 `kubectl` in your shell needs `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig`
 (the command prints the line). Worked example end to end:
 [Physical AI Data Factory runbook](docs/workbench/guides/physical-ai-data-factory-deploy.md).
+For image-less stages, the same submit content-addresses the local source,
+persists its exact verified S3 URI, and reuses it after interruption; no shell
+`export` or separate `stage-src` command is part of the happy path.
 For the shortest agent-driven setup, [copy the exact PAIDF agent
 prompt](docs/workbench/guides/physical-ai-data-factory-deploy.md#run-paidf-with-a-coding-agent).
 
@@ -249,7 +254,7 @@ KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
 RUN_ID="$(date -u +paidf-readme-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
 
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
-  --registry "$REGISTRY" --run-id "$RUN_ID" --stage-src \
+  --registry "$REGISTRY" --run-id "$RUN_ID" --runtime --resume --auto-load \
   --var bucket="$BUCKET" --var seed_default_input=true \
   --var n_augmentations=1 --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
@@ -260,17 +265,9 @@ npa workbench workflow submit "$SPEC" --project "$PROJECT" \
 MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage finalize
-
-# Load the final recording using the run-relative artifact contract. The auth
-# file is sourced, never printed. The default deployed agent name is "agent".
-AGENT_NAME=agent
-AGENT_PUBLIC_URL="$(npa agent status --project "$PROJECT" --name "$AGENT_NAME" --json \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["public_url"])')"
-source "$HOME/.npa/agents/$PROJECT/$AGENT_NAME/auth.env"
-curl -skS --fail-with-body -u "$AGENT_USER:$AGENT_PASSWORD" \
-  -H 'Content-Type: application/json' \
-  -d "{\"run_id\":\"$RUN_ID\",\"key\":\"reports/sim2real.rrd\",\"prefix\":\"physical-ai-data-factory\"}" \
-  "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
+# `submit --runtime --auto-load` already posts and verifies the exact final URI.
+# Retry only that idempotent handoff, without relaunching stages, if it was partial:
+npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
 ```
 
 The dataset view groups **Original/input** separately from

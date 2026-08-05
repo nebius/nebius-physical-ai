@@ -346,6 +346,41 @@ def workflow_task_statuses(
     return parse_task_statuses(result.stdout, job_id)
 
 
+def workflow_controller_logs(
+    job_id: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess[str]:
+    """Fetch bounded managed-jobs controller evidence without following logs."""
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "logs",
+        "--controller",
+        str(job_id),
+        "--no-follow",
+    ]
+    return subprocess.run(
+        cmd,
+        env=sky_environment(runtime_config.isolated_config_dir),
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+
+
 def find_job_ids_by_name(
     job_name: str,
     *,
@@ -422,8 +457,7 @@ def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
         current_id = str(job.get("job_id") or job.get("id") or "")
         if current_id != str(job_id):
             continue
-        rows.append(
-            {
+        row = {
                 "job_id": current_id,
                 "task_id": job.get("task_id"),
                 "task_name": job.get("task_name") or job.get("job_name") or "",
@@ -437,7 +471,20 @@ def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
                 or job.get("current_cluster_name")
                 or "",
             }
-        )
+        # Preserve scheduler/recovery evidence without binding to one SkyPilot
+        # release's field spelling.  The actionable status projector consumes
+        # these normalized names and keeps the raw status separately.
+        for target, aliases in {
+            "retry_count": ("retry_count", "recovery_count", "num_restarts", "attempt"),
+            "last_progress_at": ("last_progress_at", "last_transition_at"),
+            "last_updated_at": ("last_updated_at", "updated_at"),
+            "failure_reason": ("failure_reason", "failure_message", "error"),
+        }.items():
+            for alias in aliases:
+                if job.get(alias) not in (None, ""):
+                    row[target] = job[alias]
+                    break
+        rows.append(row)
     rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
     return rows
 

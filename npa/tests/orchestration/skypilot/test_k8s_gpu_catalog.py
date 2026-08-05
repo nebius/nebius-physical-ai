@@ -13,6 +13,7 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     parse_kubernetes_gpu_catalog,
     resolve_kubernetes_accelerator,
     spec_accelerators,
+    wait_for_kubernetes_accelerators,
 )
 
 
@@ -205,6 +206,53 @@ def test_spec_accelerators_reads_only_kubernetes_profiles() -> None:
 def test_spec_accelerators_tolerates_a_missing_block() -> None:
     assert spec_accelerators(None) == []
     assert spec_accelerators({}) == []
+
+
+def test_readiness_waits_after_kubernetes_allocatable_until_skypilot_labels() -> None:
+    catalogs = iter(
+        [
+            KubernetesGpuCatalog(quantities_by_accelerator={}),
+            parse_kubernetes_gpu_catalog(SINGLE_GPU_OUTPUT, context="npa-cluster"),
+        ]
+    )
+    messages: list[str] = []
+    clock = iter([0.0, 0.0, 1.0, 1.0])
+
+    result = wait_for_kubernetes_accelerators(
+        ["RTXPRO6000:1"],
+        context="npa-cluster",
+        timeout=10,
+        poll_interval=1,
+        discover=lambda: next(catalogs),
+        allocatable=lambda: 1,
+        on_status=messages.append,
+        monotonic=lambda: next(clock),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert result["RTXPRO6000:1"].resolved.endswith(":1")
+    assert any("Kubernetes allocatable=1; SkyPilot discovery=pending" in item for item in messages)
+    assert messages[-1].startswith("GPU readiness: Kubernetes allocatable=1; SkyPilot discovery=ready")
+
+
+def test_readiness_timeout_is_clear_and_preserves_capacity() -> None:
+    times = iter([0.0, 0.0, 2.0])
+
+    with pytest.raises(KubernetesGpuCatalogError) as excinfo:
+        wait_for_kubernetes_accelerators(
+            ["RTXPRO6000:1"],
+            context="npa-cluster",
+            timeout=1,
+            poll_interval=1,
+            discover=lambda: KubernetesGpuCatalog(quantities_by_accelerator={}),
+            allocatable=lambda: 1,
+            monotonic=lambda: next(times),
+            sleeper=lambda _seconds: None,
+        )
+
+    message = str(excinfo.value)
+    assert "Kubernetes allocatable=1" in message
+    assert "Capacity was left running" in message
 
 
 @pytest.mark.parametrize(

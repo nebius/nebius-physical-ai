@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from npa.cluster.state import (
     load_cluster_state,
     save_cluster_state,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def status_cmd(
@@ -71,8 +74,15 @@ def _emit_status(
     if fmt not in {"table", "json"}:
         raise typer.BadParameter("--format must be table or json")
     try:
-        resolved_project_id = _resolve_project_for_status(project_id, project)
-        rows = _collect_rows(name=name, project_id=resolved_project_id, terraform_dir=terraform_dir)
+        resolved_project_id, configured_region = _resolve_environment_for_status(
+            project_id, project
+        )
+        rows = _collect_rows(
+            name=name,
+            project_id=resolved_project_id,
+            configured_region=configured_region,
+            terraform_dir=terraform_dir,
+        )
         if fmt == "json":
             typer.echo(json.dumps(rows, indent=2, sort_keys=True))
         else:
@@ -83,8 +93,22 @@ def _emit_status(
 
 
 def _resolve_project_for_status(explicit_project_id: str, project_alias: str = "") -> str:
+    return _resolve_environment_for_status(explicit_project_id, project_alias)[0]
+
+
+def _resolve_environment_for_status(
+    explicit_project_id: str, project_alias: str = ""
+) -> tuple[str, str]:
+    configured_region = ""
     if explicit_project_id.strip():
-        return explicit_project_id.strip()
+        try:
+            from npa.clients.config import resolve_environment
+
+            saved = resolve_environment(project_alias or None)
+            configured_region = str(getattr(saved, "region", "") or "")
+        except Exception:  # noqa: BLE001 - explicit project id is sufficient
+            logger.debug("Could not resolve configured region for explicit project id", exc_info=True)
+        return explicit_project_id.strip(), configured_region
     alias = (project_alias or "").strip()
     if alias:
         # Accept the same `--project <alias>` other cluster commands (up/down)
@@ -96,15 +120,30 @@ def _resolve_project_for_status(explicit_project_id: str, project_alias: str = "
         except Exception:  # noqa: BLE001 - a bad alias falls through to the config default
             saved = None
         resolved = str(getattr(saved, "project_id", "") or "")
+        configured_region = str(getattr(saved, "region", "") or "")
         if resolved:
-            return resolved
+            return resolved, configured_region
     try:
-        return resolve_project_id()
+        resolved = resolve_project_id()
     except ClusterConfigError:
-        return ""
+        resolved = ""
+    try:
+        from npa.clients.config import resolve_environment
+
+        saved = resolve_environment(None)
+        configured_region = configured_region or str(getattr(saved, "region", "") or "")
+    except Exception:  # noqa: BLE001 - explicit unknown fallback below
+        logger.debug("Could not resolve default configured region", exc_info=True)
+    return resolved, configured_region
 
 
-def _collect_rows(*, name: str, project_id: str, terraform_dir: Path | None = None) -> list[dict[str, Any]]:
+def _collect_rows(
+    *,
+    name: str,
+    project_id: str,
+    configured_region: str = "",
+    terraform_dir: Path | None = None,
+) -> list[dict[str, Any]]:
     client = MK8sClient(timeout=120, poll_interval=30.0)
     local_by_name = {state.name: state for state in list_local_clusters()}
     remote_by_name: dict[str, ClusterInfo] = {}
@@ -142,7 +181,13 @@ def _collect_rows(*, name: str, project_id: str, terraform_dir: Path | None = No
                 remote = client.get_cluster(local_state.cluster_id, project_id=local_state.project_id or project_id)
             except ClusterNotFoundError:
                 pass
-        row = _row_for_cluster(client, target_name, local_state, remote)
+        row = _row_for_cluster(
+            client,
+            target_name,
+            local_state,
+            remote,
+            configured_region=configured_region,
+        )
         if terraform_row is not None and terraform_row["name"] == target_name:
             row = _merge_terraform_row(row, terraform_row)
         rows.append(row)
@@ -214,6 +259,8 @@ def _row_for_cluster(
     name: str,
     local_state: ClusterState | None,
     remote: ClusterInfo | None,
+    *,
+    configured_region: str = "",
 ) -> dict[str, Any]:
     node_count = local_state.node_count if local_state else 0
     node_group_id = local_state.node_group_id if local_state else ""
@@ -244,7 +291,10 @@ def _row_for_cluster(
         "name": (remote.name if remote is not None and remote.name else name),
         "cluster_id": (remote.id if remote is not None else "") or (local_state.cluster_id if local_state else ""),
         "state": state,
-        "region": local_state.region if local_state else DEFAULT_REGION,
+        "region": _remote_region(remote)
+        or (local_state.region if local_state else "")
+        or configured_region
+        or "unknown",
         "node_count": node_count,
         "node_group_id": node_group_id,
         "endpoint": endpoint,
@@ -265,6 +315,31 @@ def _row_for_cluster(
             )
         )
     return row
+
+
+def _remote_region(remote: ClusterInfo | None) -> str:
+    """Read the provider inventory's region without assuming a default."""
+
+    if remote is None or not isinstance(remote.raw, dict):
+        return ""
+    raw = remote.raw
+    candidates = [
+        raw.get("region"),
+        raw.get("region_id"),
+        (raw.get("metadata") or {}).get("region")
+        if isinstance(raw.get("metadata"), dict)
+        else "",
+        (raw.get("metadata") or {}).get("region_id")
+        if isinstance(raw.get("metadata"), dict)
+        else "",
+        (raw.get("spec") or {}).get("region")
+        if isinstance(raw.get("spec"), dict)
+        else "",
+        (raw.get("spec") or {}).get("region_id")
+        if isinstance(raw.get("spec"), dict)
+        else "",
+    ]
+    return next((str(value).strip() for value in candidates if str(value or "").strip()), "")
 
 
 def _format_table(rows: list[dict[str, Any]]) -> str:
