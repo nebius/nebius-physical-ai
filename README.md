@@ -100,6 +100,19 @@ one's setup guide inline. Create them step by step:
 > `nebius config set tenant-id <id> && nebius config set parent-id <project-id>`.
 > Say **yes** to the object-storage prompt — the agent VM and the Physical AI
 > Data Factory both need an S3 bucket + access key.
+>
+> If you already know the IDs and have a valid non-interactive Nebius profile
+> or service-account credential active, skip the browser flow and tenant picker:
+>
+> ```bash
+> npa configure --no-interactive \
+>   --tenant-id "$TENANT_ID" --project-id "$PROJECT_ID" \
+>   --region "$REGION" --project-alias "$PROJECT_ALIAS"
+> ```
+>
+> This command takes no secret flags. It reuses health-verified configured S3
+> credentials without listing/rotating access keys, or provisions the default
+> bucket through the active profile when storage is absent.
 
 Full account/credential detail: [docs/quickstart.md](docs/quickstart.md).
 
@@ -127,11 +140,16 @@ prerequisite, and defaults to on-demand capacity:
 ```bash
 set -eu
 set -o pipefail
-PROJECT=<alias>
 CONTEXT=npa-cluster
 SPEC=npa/workflows/physical-ai-data-factory.yaml
 
 npa configure
+eval "$(npa configure --show --env)"
+PROJECT="$NPA_PROJECT_ALIAS"
+# Keep this public override after configure --env; eval may restore the saved
+# project registry.
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+REGISTRY="$NPA_REGISTRY"
 npa provision-if-absent --project "$PROJECT" --skip-k8s
 npa agent preflight --project "$PROJECT"
 npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1 \
@@ -141,9 +159,8 @@ npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
   --gpu-preset 1gpu-24vcpu-218gb --on-demand
 npa skypilot bootstrap
-eval "$(npa configure --show --env)"
 BUCKET="$NPA_BUCKET"
-npa workbench workflow preflight-images "$SPEC"
+npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 npa workbench workflow stage-src --bucket "$BUCKET"
 
 RUN_STATE="$HOME/.npa/paidf-first-run-id"
@@ -154,8 +171,8 @@ if [ ! -s "$RUN_STATE" ]; then
 fi
 RUN_ID="$(tr -d '\r\n' <"$RUN_STATE")"
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
-  --registry "${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}" \
-  --run-id "$RUN_ID" --runtime --resume --stage-src --var bucket="$BUCKET" \
+  --registry "$REGISTRY" \
+  --run-id "$RUN_ID" --runtime --resume --var bucket="$BUCKET" \
   --var seed_default_input=true --var n_augmentations=1 \
   --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
@@ -222,10 +239,12 @@ durable manifest from the run ID; `logs` below also shows its exact S3 location.
 
 ```bash
 eval "$(npa configure --show --env)"
+# Select the public mirror after eval so a saved project registry cannot replace it.
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 SPEC=npa/workflows/physical-ai-data-factory.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
-REGISTRY="${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
+REGISTRY="$NPA_REGISTRY"
 KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
 RUN_ID="$(date -u +paidf-readme-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
 

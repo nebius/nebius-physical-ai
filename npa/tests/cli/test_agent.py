@@ -73,6 +73,15 @@ def _successful_storage_probe(monkeypatch):
             cleanup_succeeded=True,
         ),
     )
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://configured-bucket/artifacts",
+            endpoint_url="https://storage.eu-north1.nebius.cloud",
+            aws_access_key_id="configured-access-key",
+            aws_secret_access_key="configured-secret-key",
+        ),
+    )
 
 
 def _agent_source() -> str:
@@ -285,12 +294,12 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monk
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="",
-            s3_endpoint="",
-            s3_access_key_id="",
-            s3_secret_access_key="",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="",
+            aws_access_key_id="",
+            aws_secret_access_key="",
         ),
     )
     bootstrap = {
@@ -311,12 +320,12 @@ def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(monke
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **kwargs: kwargs["bucket"] == "shared-bucket")
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="s3://shared-bucket/checkpoints/",
-            s3_endpoint="https://storage.us-central1.nebius.cloud",
-            s3_access_key_id="ak-shared",
-            s3_secret_access_key="sk-shared",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://shared-bucket/checkpoints/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="ak-shared",
+            aws_secret_access_key="sk-shared",
         ),
     )
     bootstrap = {
@@ -341,12 +350,12 @@ def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) ->
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="s3://shared-bucket/",
-            s3_endpoint="https://storage.us-central1.nebius.cloud",
-            s3_access_key_id="ak-shared",
-            s3_secret_access_key="sk-shared",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://shared-bucket/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="ak-shared",
+            aws_secret_access_key="sk-shared",
         ),
     )
     bootstrap = {
@@ -396,16 +405,16 @@ def test_resolve_deploy_storage_credentials_prefers_saved_project_state(monkeypa
 
 
 def test_resolve_deploy_storage_credentials_fails_without_writable_storage(monkeypatch) -> None:
-    from npa.cli.agent import _resolve_deploy_storage_credentials
+    from npa.cli.agent import AgentStorageCredentialError, _resolve_deploy_storage_credentials
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: False)
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
-        lambda **_kwargs: SimpleNamespace(
-            s3_bucket="s3://shared-bucket/",
-            s3_endpoint="https://storage.us-central1.nebius.cloud",
-            s3_access_key_id="ak-shared",
-            s3_secret_access_key="sk-shared",
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://shared-bucket/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="ak-shared",
+            aws_secret_access_key="sk-shared",
         ),
     )
     bootstrap = {
@@ -415,7 +424,7 @@ def test_resolve_deploy_storage_credentials_fails_without_writable_storage(monke
         "nebius_secret_key": "sk-boot",
     }
 
-    with pytest.raises(Exit):
+    with pytest.raises(AgentStorageCredentialError):
         _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
 
 
@@ -2220,6 +2229,48 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     assert "[PASS] token_factory" in result.output
 
 
+def test_agent_preflight_invokes_exact_deploy_storage_decision(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+    )
+    calls: list[dict] = []
+
+    def _resolve(**kwargs):
+        calls.append(dict(kwargs))
+        return {"s3_bucket": "configured-bucket"}
+
+    monkeypatch.setattr(agent_module, "_resolve_deploy_storage_credentials", _resolve)
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--project",
+            "dev",
+            "--ssh-public-key-path",
+            str(tmp_path / "id_ed25519.pub"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "region": "",
+            "project_alias": "dev",
+            "emit_status": False,
+        }
+    ]
+    assert "Deployment credential path selected" in result.output
+
+
 def test_agent_preflight_fails_on_missing_terraform_and_keys(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
@@ -2715,7 +2766,13 @@ def _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path):
             "ssh_key_path": str(tmp_path / "id_ed25519"),
         }
 
-    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", lambda *a, **k: creds)
+    def _bootstrap_environment(*_args, **kwargs):
+        calls["bootstrap_environment_kwargs"] = dict(kwargs)
+        return creds
+
+    monkeypatch.setattr(
+        "npa.clients.nebius.bootstrap_agent_environment", _bootstrap_environment
+    )
     monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
     monkeypatch.setattr("npa.clients.nebius.get_project_region", lambda _pid: "us-central1")
     monkeypatch.setattr("npa.cli.agent._resolve_deploy_storage_credentials", lambda **k: creds)
@@ -2756,6 +2813,13 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
     assert not any(
         "OptionInfo" in str(value) for value in merged_vars.values()
     ), f"OptionInfo leaked into terraform vars: {merged_vars}"
+    assert calls["bootstrap_environment_kwargs"]["reuse_storage_credentials"] == {
+        "service_account_id": "sa-agent",
+        "nebius_api_key": "ak-agent",
+        "nebius_secret_key": "sk-agent",
+        "s3_bucket": "npa-agent-state",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+    }
 
 
 def test_agent_setup_keeps_public_https_enabled(monkeypatch, tmp_path) -> None:

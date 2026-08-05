@@ -90,7 +90,7 @@ def _require_terraform() -> str:
     return tf
 
 
-def _tf_env() -> dict[str, str]:
+def _tf_env(terraform_dir: str | Path) -> dict[str, str]:
     """Return the subprocess env for terraform with a warm plugin cache.
 
     Also strips stale Nebius IAM tokens (_IAM_TOKEN_ENV_KEYS) so a fresh
@@ -100,13 +100,16 @@ def _tf_env() -> dict[str, str]:
     env = dict(os.environ)
     for key in _IAM_TOKEN_ENV_KEYS:
         env.pop(key, None)
-    if not env.get("TF_PLUGIN_CACHE_DIR"):
-        cache = _TF_PLUGIN_CACHE_DIR
-        try:
-            cache.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            return env
-        env["TF_PLUGIN_CACHE_DIR"] = str(cache)
+    from npa.terraform_lock import TerraformLockError, configure_plugin_cache
+
+    try:
+        configure_plugin_cache(
+            env,
+            terraform_dir,
+            default_root=_TF_PLUGIN_CACHE_DIR,
+        )
+    except (OSError, TerraformLockError) as exc:
+        raise ProvisionerError(f"Unsafe Terraform plugin cache configuration: {exc}") from exc
     return env
 
 
@@ -119,7 +122,11 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     tf = _require_terraform()
     cmd = [tf] + args
-    kwargs: dict[str, Any] = {"cwd": str(cwd), "text": True, "env": _tf_env()}
+    kwargs: dict[str, Any] = {
+        "cwd": str(cwd),
+        "text": True,
+        "env": _tf_env(cwd),
+    }
 
     if stream and args and args[0] == "destroy":
         return _run_destroy_stream(cmd, cwd=Path(cwd), env=kwargs["env"])
@@ -411,7 +418,15 @@ def init(
     failures (e.g. a real config error) raise immediately.
     """
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
-    args = ["init", "-input=false"]
+    from npa.terraform_lock import TerraformLockError, validate_provider_lock
+
+    try:
+        validate_provider_lock(tf_dir)
+    except TerraformLockError as exc:
+        raise ProvisionerError(f"Terraform provider-lock preflight failed: {exc}") from exc
+    lock_file = tf_dir / ".terraform.lock.hcl"
+    lock_before = lock_file.read_bytes()
+    args = ["init", "-input=false", "-lockfile=readonly"]
     if backend_config:
         args.append("-reconfigure")
         for key, value in backend_config.items():
@@ -420,8 +435,39 @@ def init(
     for attempt in range(1, max(1, retries) + 1):
         try:
             _run(args, cwd=tf_dir, capture=True)
+            lock_after = lock_file.read_bytes()
+            if lock_after != lock_before:
+                raise ProvisionerError(
+                    f"Terraform changed {lock_file} despite -lockfile=readonly. NPA "
+                    "stopped before apply; restore and review the tracked lock."
+                )
             return
         except ProvisionerError as exc:
+            try:
+                lock_after = lock_file.read_bytes()
+            except OSError:
+                lock_after = b""
+            if lock_after != lock_before:
+                raise ProvisionerError(
+                    f"Terraform changed {lock_file} despite -lockfile=readonly. NPA "
+                    "stopped before apply; restore and review the tracked lock."
+                ) from exc
+            lowered = str(exc).lower()
+            if any(
+                marker in lowered
+                for marker in (
+                    "doesn't match any of the checksums",
+                    "does not match any of the checksums",
+                    "checksum mismatch",
+                )
+            ):
+                raise ProvisionerError(
+                    "Terraform provider checksum verification failed. NPA kept "
+                    f"{lock_file} immutable and will not bypass verification. Verify "
+                    "the registry/mirror, then regenerate all supported platform hashes "
+                    f"with `terraform -chdir={tf_dir} providers lock -platform=...` "
+                    "in a clean reviewed checkout and inspect the exact diff."
+                ) from exc
             if attempt >= retries or not _looks_transient_init_failure(str(exc)):
                 raise
             sys.stderr.write(

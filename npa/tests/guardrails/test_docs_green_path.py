@@ -151,6 +151,37 @@ def test_readme_documents_the_ordered_green_path() -> None:
     )
 
 
+def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> None:
+    text = README.read_text(encoding="utf-8")
+    section = text.split("### The whole path, in order", 1)[1].split("```", 2)[1]
+
+    assert section.count("npa workbench workflow stage-src") == 1
+    submit = section.split("npa workbench workflow submit", 1)[1]
+    assert "--stage-src" not in submit
+    configure_eval = section.index('eval "$(npa configure --show --env)"')
+    public_override = section.index(
+        "export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai"
+    )
+    assert public_override > configure_eval
+
+
+def test_readme_documents_known_id_noninteractive_configure_without_secrets() -> None:
+    text = README.read_text(encoding="utf-8")
+    marker = "npa configure --no-interactive"
+    assert marker in text
+    command = text[text.index(marker) :].split("```", 1)[0]
+    for option in ("--tenant-id", "--project-id", "--region", "--project-alias"):
+        assert option in command
+    for forbidden in (
+        "--iam-token",
+        "--secret",
+        "--token-factory-key",
+        "--hf-token",
+        "--ngc-api-key",
+    ):
+        assert forbidden not in command
+
+
 def test_paidf_credentials_sample_uses_the_canonical_schema() -> None:
     """`npa configure` writes `tokens:`; the guide must not teach a dead shape."""
     text = PAIDF_DEPLOY.read_text(encoding="utf-8")

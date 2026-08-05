@@ -55,6 +55,15 @@ older binary fails to initialise the directory. `npa cluster up` /
 `NPA_TERRAFORM_BIN=/path/to/terraform` to use a newer binary without changing
 `PATH`.
 
+Provider checksums are tracked for `linux_amd64`, `linux_arm64`,
+`darwin_amd64`, and `darwin_arm64`. `npa cluster up/down` verifies the current
+platform and the SHA-bound coverage metadata before authentication or provider
+download, runs `terraform init -lockfile=readonly`, and keeps both `TF_DATA_DIR`
+and the platform-scoped plugin cache outside this source directory. A mismatch
+is a stop condition: regenerate intentionally with Terraform's `providers lock
+-platform=...` workflow in a clean checkout and review the diff; never remove
+the lock file or bypass checksum verification.
+
 Copy `terraform.tfvars.example` to `terraform.tfvars` and replace placeholders
 with local values. `terraform.tfvars` is ignored by git. The example ships the
 small default shape and shows the larger-cluster / Shared Filesystem opt-ins in

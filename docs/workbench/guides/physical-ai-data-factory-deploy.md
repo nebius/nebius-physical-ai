@@ -58,8 +58,8 @@ do not clean up until I ask.
 ## Quick start (copy-paste)
 
 This is the complete clean-machine path to an input-conditioned demo run. It uses the
-exact shipped spec, the public GHCR mirror unless your configured project names a
-different registry, and the endpoint and secrets already stored by `npa
+exact shipped spec, the public GHCR mirror selected after configured environment
+loading, and the endpoint and secrets already stored by `npa
 configure`. No stored secret is printed or manually exported. The first run
 needs no dataset: `seed_default_input=true` seeds eight captionable frames, and
 the GPU runner assembles those frames into the short clip that conditions Cosmos.
@@ -77,11 +77,14 @@ python -m pip install -e npa
 # S3 keys, Token Factory key, and optional HF/NGC tokens under ~/.npa/.
 npa configure
 eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
+# Force the public mirror after eval; configure --env may restore a saved
+# project registry.
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 
 SPEC=npa/workflows/physical-ai-data-factory.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
-REGISTRY="${NPA_REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
+REGISTRY="$NPA_REGISTRY"
 RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
 
 npa workbench health preflight
@@ -94,6 +97,8 @@ npa skypilot bootstrap
 # Reload the kube context written by provision-if-absent, discover its actual
 # accelerator spelling, and validate/plan with the real bucket.
 eval "$(npa configure --show --env)"
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+REGISTRY="$NPA_REGISTRY"
 KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --spec "$SPEC"
 npa workbench workflow validate-spec "$SPEC" --json
@@ -138,6 +143,18 @@ curl -skS --fail-with-body -u "$AGENT_USER:$AGENT_PASSWORD" \
   -d "{\"run_id\":\"$RUN_ID\",\"key\":\"reports/sim2real.rrd\",\"prefix\":\"physical-ai-data-factory\"}" \
   "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
 ```
+
+For a pre-authenticated service-account/federation profile with known IDs, the
+prompt-free equivalent is:
+
+```bash
+npa configure --no-interactive \
+  --tenant-id "$TENANT_ID" --project-id "$PROJECT_ID" \
+  --region "$REGION" --project-alias "$PROJECT_ALIAS"
+```
+
+Only non-secret IDs are arguments. Keep all credential material in the active
+Nebius profile and `~/.npa/credentials.yaml`, never shell history.
 
 The configured S3 endpoint is selected automatically; `--s3-endpoint` is only an
 explicit override. `NPA_REGISTRY` has the same precedence in `preflight-images`
@@ -227,6 +244,9 @@ full explanation.
 | `Context <name> not found ... Available contexts: []` (from SkyPilot) | an older npa left `KUBECONFIG` unset for a cluster it had provisioned | upgrade npa: `submit --infra k8s/<context>` now prepends `~/.npa/clusters/<context>/kubeconfig` itself. For `kubectl`/bare `sky`, `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig` |
 | `provision-if-absent` failed on `~/.ssh/id_rsa.pub` | old default node-group key path | upgrade npa: `cluster up` now pins the first key that exists (`NPA_SSH_PUBLIC_KEY`, `id_ed25519.pub`, `id_rsa.pub`, `id_ecdsa.pub`) |
 | `No images found .../input/` | the caption stage ran with an empty `input/` | stage frames, or add `--var seed_default_input=true` |
+| `status: NOT_SUBMITTED` with `submission_state: RESERVED_OR_PLANNED` or `STAGED` | the run ID/source was prepared, but no durable manifest or SkyPilot job was launched | retry `workflow submit ... --run-id <same-id>`; to inspect another launched run, pass its exact `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
+| provider package does not match lock checksums | the tracked lock lacks/cannot verify this operator package or a registry mirror/cache is inconsistent | upgrade NPA first. Maintainers regenerate with `terraform providers lock` for the recorded Linux/macOS platforms and review the lock diff; never delete the lock or bypass checksums |
+| agent setup reaches `access-key list` after configure already reports writable S3 | stale NPA version is redundantly reprovisioning storage credentials | upgrade NPA: setup/preflight now share the deployment credential decision and reuse the health-verified configured key without listing/creating/rotating access keys |
 
 ---
 

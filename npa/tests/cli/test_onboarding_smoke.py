@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -47,6 +48,97 @@ def test_setup_guidance_contains_no_raw_ip_address() -> None:
             "use a placeholder such as <your-byovm-host> instead."
         )
         assert "<your-byovm-host>" in result.output
+
+
+def test_known_project_configure_is_non_interactive_and_reuses_storage(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients.storage_validation import StorageProbeResult
+
+    config_path = tmp_path / ".npa" / "config.yaml"
+    credentials_path = tmp_path / ".npa" / "credentials.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    credentials_module.write_credentials_file(
+        {
+            "storage": {
+                "aws_access_key_id": "existing-access",
+                "aws_secret_access_key": "existing-secret",
+                "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                "bucket": "s3://existing-bucket/",
+            }
+        }
+    )
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr("npa.clients.nebius.set_profile_project", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "npa.clients.storage_validation.probe_storage_write",
+        lambda **kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
+
+    def _must_not_run(*_args, **_kwargs):
+        raise AssertionError("known-project configure must not discover, prompt, or provision")
+
+    monkeypatch.setattr("npa.cli.main._provision_object_storage", _must_not_run)
+    monkeypatch.setattr("npa.clients.nebius.list_tenants", _must_not_run)
+    monkeypatch.setattr("npa.clients.nebius.list_projects_in_tenant", _must_not_run)
+    monkeypatch.setattr("npa.clients.nebius._list_access_key_metadata", _must_not_run)
+    monkeypatch.setattr("npa.clients.nebius.ensure_access_key", _must_not_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--no-interactive",
+            "--tenant-id",
+            "tenant-known",
+            "--project-id",
+            "project-known",
+            "--region",
+            "eu-north1",
+            "--project-alias",
+            "paidf-prod",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Reusing health-verified" in result.output
+    assert "Setup complete" in result.output
+    saved = yaml.safe_load(config_path.read_text())
+    project = saved["projects"]["paidf-prod"]
+    assert saved["default_project"] == "paidf-prod"
+    assert project["project_id"] == "project-known"
+    assert project["tenant_id"] == "tenant-known"
+    assert project["region"] == "eu-north1"
+    assert project["container_registry"]
+
+
+def test_known_project_configure_requires_complete_identity_flags() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--no-interactive",
+            "--tenant-id",
+            "tenant-known",
+            "--project-id",
+            "project-known",
+        ],
+        env={"COLUMNS": "240"},
+    )
+
+    assert result.exit_code != 0
+    assert "requires all of --tenant-id" in result.output
+    assert "--region" in result.output
+    assert "--project-alias" in result.output
 
 
 def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:

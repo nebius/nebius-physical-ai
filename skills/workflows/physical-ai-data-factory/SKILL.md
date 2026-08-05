@@ -241,7 +241,7 @@ npa workbench workflow stage-src --bucket <bucket>   # or submit --stage-src
 # Render/submit on GPUs:
 npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
   --assume-decision promote_checkpoint --var bucket=<bucket> \
-  --var seed_default_input=true --var n_augmentations=1 --stage-src \
+  --var seed_default_input=true --var n_augmentations=1 \
   --infra k8s/<context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN

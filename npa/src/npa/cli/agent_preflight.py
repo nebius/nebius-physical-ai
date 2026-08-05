@@ -31,9 +31,35 @@ def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
 
     terraform = _terraform_binary()
     if terraform:
-        results.append(
-            CheckResult(name="terraform", status=PASS, summary=f"terraform found ({terraform}).")
-        )
+        from npa.deploy import provisioner
+        from npa.terraform_lock import TerraformLockError, validate_provider_lock
+
+        terraform_dir = Path(provisioner.__file__).parent / "terraform"
+        try:
+            target_platform = validate_provider_lock(terraform_dir)
+        except TerraformLockError as exc:
+            results.append(
+                CheckResult(
+                    name="terraform",
+                    status=FAIL,
+                    summary=(
+                        "Terraform is installed, but provider-lock compatibility "
+                        "failed before provisioning."
+                    ),
+                    remedy=str(exc),
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    name="terraform",
+                    status=PASS,
+                    summary=(
+                        f"terraform found ({terraform}); provider lock covers "
+                        f"{target_platform}."
+                    ),
+                )
+            )
     else:
         results.append(
             CheckResult(
@@ -140,21 +166,25 @@ def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
     )
 
 
-def _agent_storage_result(project: str = "") -> CheckResult:
-    """Require and prove writable artifact storage for agent deployment."""
+def _agent_storage_result(project: str = "", region: str = "") -> CheckResult:
+    """Exercise the exact writable-storage decision used by agent deployment."""
 
-    from npa.clients.config import (
-        ConfigError,
-        resolve_environment,
-        resolve_project_storage,
+    from npa.cli.agent import (
+        AgentStorageCredentialError,
+        _resolve_deploy_storage_credentials,
     )
-    from npa.clients.storage_validation import probe_storage_write
+    from npa.clients.config import resolve_environment
     from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
 
     try:
-        storage = resolve_project_storage(project or None)
         environment = resolve_environment(project or None)
-    except ConfigError as exc:
+        resolved_region = str(region or getattr(environment, "region", "") or "").strip()
+        credentials = _resolve_deploy_storage_credentials(
+            region=resolved_region,
+            project_alias=project,
+            emit_status=False,
+        )
+    except AgentStorageCredentialError as exc:
         return CheckResult(
             name="writable_s3",
             status=FAIL,
@@ -165,23 +195,23 @@ def _agent_storage_result(project: str = "") -> CheckResult:
             ),
             details=(str(exc),),
         )
-    probe = probe_storage_write(
-        bucket=storage.checkpoint_bucket,
-        endpoint_url=storage.endpoint_url,
-        access_key_id=storage.aws_access_key_id,
-        secret_access_key=storage.aws_secret_access_key,
-        region=str(getattr(environment, "region", "") or ""),
-        prefix="npa-agent/preflight",
-    )
-    if probe.ok:
-        return CheckResult(name="writable_s3", status=PASS, summary=probe.summary)
+    except Exception as exc:  # noqa: BLE001 - any provider probe failure is not ready
+        return CheckResult(
+            name="writable_s3",
+            status=FAIL,
+            summary="Writable S3 configuration cannot be resolved for agent deploy.",
+            remedy=(
+                "Run `npa provision-if-absent --project <alias> --skip-k8s` "
+                "to reconcile storage before deploying the agent."
+            ),
+            details=(str(exc),),
+        )
     return CheckResult(
         name="writable_s3",
-        status=FAIL,
-        summary=probe.summary,
-        remedy=(
-            "Run `npa provision-if-absent --project <alias> --skip-k8s`, then retry "
-            "`npa agent preflight`."
+        status=PASS,
+        summary=(
+            "Deployment credential path selected health-verified writable storage "
+            f"({credentials['s3_bucket']})."
         ),
     )
 

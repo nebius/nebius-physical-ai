@@ -477,6 +477,20 @@ def get_text(state: WorkflowS3Config, *parts: str) -> str:
     return response["Body"].read().decode("utf-8", errors="replace")
 
 
+def workflow_state_error_is_missing(exc: BaseException) -> bool:
+    """Return whether a read failure is an actual missing object, not auth/network."""
+
+    cause = exc.__cause__
+    if isinstance(cause, (FileNotFoundError, KeyError)):
+        return True
+    response = getattr(cause, "response", None)
+    if not isinstance(response, dict):
+        return False
+    error = response.get("Error")
+    code = str(error.get("Code") or "") if isinstance(error, dict) else ""
+    return code.lower() in {"404", "nosuchkey", "notfound", "no_such_key"}
+
+
 def tail_live_job_logs(
     *,
     sky_bin: str,

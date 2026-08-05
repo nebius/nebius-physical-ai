@@ -1702,6 +1702,185 @@ def _store_src_s3_uri(uri: str) -> None:
     typer.echo("Workflow submits now resolve NPA_SRC_S3_URI without re-exporting it.")
 
 
+def _run_known_project_configure(
+    *,
+    tenant_id: str,
+    project_id: str,
+    region: str,
+    project_alias: str,
+    container_registry: str,
+    provision: bool,
+) -> None:
+    """Configure a known project without profile creation, discovery, or prompts."""
+
+    import re
+
+    from npa.clients import nebius as nebius_client
+    from npa.clients.config import CONFIG_PATH, list_projects, write_config
+    from npa.clients.credentials import load_credentials, write_credentials_file
+
+    values = {
+        "--tenant-id": str(tenant_id or "").strip(),
+        "--project-id": str(project_id or "").strip(),
+        "--region": str(region or "").strip(),
+        "--project-alias": str(project_alias or "").strip(),
+    }
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise typer.BadParameter(
+            "Known-project non-interactive configure requires all of --tenant-id, "
+            "--project-id, --region, and --project-alias; missing "
+            + ", ".join(missing)
+        )
+    alias = values["--project-alias"]
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", alias):
+        raise typer.BadParameter(
+            "--project-alias must start with a letter or digit and contain only "
+            "letters, digits, '.', '_', or '-' (maximum 64 characters)"
+        )
+
+    # This path consumes existing local profile/credential material only. It
+    # never invokes profile creation or tenant/project discovery, so a valid
+    # federation/service-account profile cannot fall into a browser flow or a
+    # large tenant picker.
+    try:
+        nebius_client.get_iam_token()
+    except nebius_client.NebiusError as exc:
+        raise typer.BadParameter(
+            "The active Nebius CLI profile cannot authenticate non-interactively. "
+            "Activate or refresh a profile/service-account credential outside this "
+            f"command, then retry. Diagnostic: {exc}"
+        ) from exc
+
+    existing_projects = list_projects()
+    _warn_repointed_alias(alias, existing_projects.get(alias) or {}, values["--project-id"])
+    registry = str(container_registry or "").strip()
+    if not registry:
+        from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
+
+        registry = str(
+            (existing_projects.get(alias) or {}).get("container_registry")
+            or DEFAULT_CONTAINER_REGISTRY
+        )
+
+    existing = load_credentials(environ={})
+    storage: dict[str, str] = {}
+    existing_complete = bool(
+        existing.s3_access_key_id
+        and existing.s3_secret_access_key
+        and existing.s3_bucket
+    )
+    if existing_complete:
+        from npa.clients.storage_validation import probe_storage_write
+
+        probe = probe_storage_write(
+            bucket=existing.s3_bucket,
+            endpoint_url=existing.s3_endpoint or _endpoint_for_region(values["--region"]),
+            access_key_id=existing.s3_access_key_id,
+            secret_access_key=existing.s3_secret_access_key,
+            region=values["--region"],
+        )
+        if probe.ok:
+            storage = {
+                "aws_access_key_id": existing.s3_access_key_id,
+                "aws_secret_access_key": existing.s3_secret_access_key,
+                "endpoint_url": existing.s3_endpoint
+                or _endpoint_for_region(values["--region"]),
+                "bucket": existing.s3_bucket,
+                "_validated": "true",
+            }
+            typer.echo(
+                "Reusing health-verified configured object-storage credentials; "
+                "no access keys were listed, created, or rotated."
+            )
+        elif not provision:
+            raise typer.BadParameter(
+                f"Existing object-storage credentials are not writable: {probe.summary}"
+            )
+
+    if provision and not storage:
+        # Supply documented defaults programmatically; no prompt or secret argv
+        # is involved. The provisioner retains its safe parser, health probe,
+        # ownership journal, and partial-resource recovery semantics.
+        def _accept_default(_label: str, *, default: str = "", **_kwargs: Any) -> str:
+            return str(default or "")
+
+        provisioned = _provision_object_storage(
+            nebius_client,
+            _accept_default,
+            project_id=values["--project-id"],
+            tenant_id=values["--tenant-id"],
+            region=values["--region"],
+            existing_bucket=_bucket_name_from_uri(existing.s3_bucket),
+        )
+        if provisioned is None or provisioned.get("_validated") != "true":
+            raise typer.BadParameter(
+                "Non-interactive object-storage provisioning did not produce "
+                "health-verified credentials. Fix the reported IAM/storage error "
+                "and retry; no secret should be passed on the command line."
+            )
+        storage = provisioned
+
+    if storage:
+        service_account_keys = {
+            key: str(storage.get(key, "") or "").strip()
+            for key in (
+                "service_account_id",
+                "service_account_name",
+                "service_account_project_id",
+                "service_account_managed_by",
+            )
+            if str(storage.get(key, "") or "").strip()
+        }
+        credentials_payload: dict[str, object] = {
+            "storage": {
+                key: value
+                for key, value in storage.items()
+                if not key.startswith("service_account_")
+                and not key.startswith("_")
+                and value
+            }
+        }
+        account_id = service_account_keys.get("service_account_id", "")
+        if account_id:
+            credentials_payload["nebius"] = {"service_account_id": account_id}
+        if len(service_account_keys) == 4:
+            credentials_payload["storage_iam"] = service_account_keys
+        credentials_path = write_credentials_file(credentials_payload)
+        typer.echo(f"Wrote {credentials_path} (chmod 600).")
+
+    write_config(
+        {
+            "projects": {
+                alias: {
+                    "project_id": values["--project-id"],
+                    "tenant_id": values["--tenant-id"],
+                    "region": values["--region"],
+                    "container_registry": registry,
+                }
+            },
+            "default_project": alias,
+        }
+    )
+    if not nebius_client.set_profile_project(
+        values["--project-id"], values["--tenant-id"]
+    ):
+        typer.echo(
+            "Warning: the active Nebius CLI profile could not be rebound, but NPA "
+            "saved the explicit project/tenant IDs. Keep the intended profile active "
+            "for later provider commands.",
+            err=True,
+        )
+    typer.echo(f"Wrote {CONFIG_PATH} (project alias: {alias}, non-interactive).")
+    if storage:
+        typer.echo("Setup complete; writable object storage is health-verified.")
+    else:
+        typer.echo(
+            "Project setup complete without object storage (--no-provision). "
+            "Configure writable storage before agent or workflow submission."
+        )
+
+
 def _configure_impl(
     *,
     show: bool,
@@ -1713,6 +1892,11 @@ def _configure_impl(
     env_output: bool = False,
     forget_project: str = "",
     src_s3_uri: str = "",
+    tenant_id: str = "",
+    project_id: str = "",
+    region: str = "",
+    project_alias: str = "",
+    container_registry: str = "",
 ) -> None:
     if src_s3_uri.strip():
         _store_src_s3_uri(src_s3_uri.strip())
@@ -1743,6 +1927,22 @@ def _configure_impl(
         typer.echo(_configured_summary())
         typer.echo("")
         typer.echo(_SETUP_GUIDANCE)
+        return
+    known_project_values = (tenant_id, project_id, region, project_alias)
+    if any(str(value or "").strip() for value in known_project_values):
+        if interactive is True:
+            raise typer.BadParameter(
+                "Known-project flags select the non-interactive configure path; "
+                "use --no-interactive (or omit --interactive)."
+            )
+        _run_known_project_configure(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            region=region,
+            project_alias=project_alias,
+            container_registry=container_registry,
+            provision=provision,
+        )
         return
     # Token flags that were persisted above must not be re-prompted (an empty
     # piped Enter would otherwise wipe them); skip those in the interactive flow.
@@ -1870,6 +2070,31 @@ def configure(
             "re-exporting it in every shell (skips interactive setup)."
         ),
     ),
+    tenant_id: str = typer.Option(
+        "",
+        "--tenant-id",
+        help="Known Nebius tenant ID for prompt-free configure (requires the other known-project flags).",
+    ),
+    project_id: str = typer.Option(
+        "",
+        "--project-id",
+        help="Known Nebius project ID for prompt-free configure (requires the other known-project flags).",
+    ),
+    region: str = typer.Option(
+        "",
+        "--region",
+        help="Known Nebius project region for prompt-free configure.",
+    ),
+    project_alias: str = typer.Option(
+        "",
+        "--project-alias",
+        help="Local NPA alias to write for the known project (prompt-free configure).",
+    ),
+    container_registry: str = typer.Option(
+        "",
+        "--container-registry",
+        help="Optional non-secret registry override for prompt-free configure.",
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -1882,6 +2107,11 @@ def configure(
         env_output=env_output,
         forget_project=forget_project,
         src_s3_uri=src_s3_uri,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        region=region,
+        project_alias=project_alias,
+        container_registry=container_registry,
     )
 
 
@@ -1953,6 +2183,21 @@ def init(
             "re-exporting it in every shell (skips interactive setup)."
         ),
     ),
+    tenant_id: str = typer.Option(
+        "", "--tenant-id", help="Known Nebius tenant ID for prompt-free configure."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Known Nebius project ID for prompt-free configure."
+    ),
+    region: str = typer.Option(
+        "", "--region", help="Known Nebius project region for prompt-free configure."
+    ),
+    project_alias: str = typer.Option(
+        "", "--project-alias", help="Local NPA alias for prompt-free configure."
+    ),
+    container_registry: str = typer.Option(
+        "", "--container-registry", help="Optional non-secret registry override."
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
     _configure_impl(
@@ -1964,6 +2209,11 @@ def init(
         ngc_api_key=ngc_api_key,
         env_output=env_output,
         src_s3_uri=src_s3_uri,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        region=region,
+        project_alias=project_alias,
+        container_registry=container_registry,
     )
 
 

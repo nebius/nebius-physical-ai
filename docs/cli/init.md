@@ -20,6 +20,11 @@ Options
     --env)".
 --src-s3-uri  <str>  Persist the staged npa source prefix (s3://bucket/prefix/npa) in ~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without
     re-exporting it in every shell (skips interactive setup).
+--tenant-id  <str>  Known Nebius tenant ID for prompt-free configure.
+--project-id  <str>  Known Nebius project ID for prompt-free configure.
+--region  <str>  Known Nebius project region for prompt-free configure.
+--project-alias  <str>  Local NPA alias for prompt-free configure.
+--container-registry  <str>  Optional non-secret registry override.
 --help  Show this message and exit.
 ```
 
@@ -35,6 +40,11 @@ Options
 | `--ngc-api-key` | <str>  Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under ngc.api_key without prompting (for scripted setup). |
 | `--env` | Print the saved project/bucket/kube-context values as NPA_* shell assignments (no secrets) instead of prompting: eval "$(npa configure --show --env)". |
 | `--src-s3-uri` | <str>  Persist the staged npa source prefix (s3://bucket/prefix/npa) in ~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without re-exporting it in every shell (skips interactive setup). |
+| `--tenant-id` | <str>  Known Nebius tenant ID for prompt-free configure. |
+| `--project-id` | <str>  Known Nebius project ID for prompt-free configure. |
+| `--region` | <str>  Known Nebius project region for prompt-free configure. |
+| `--project-alias` | <str>  Local NPA alias for prompt-free configure. |
+| `--container-registry` | <str>  Optional non-secret registry override. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

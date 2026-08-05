@@ -591,6 +591,17 @@ def test_down_reads_project_settings_from_npa_config(monkeypatch, tmp_path: Path
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(
+        tf_mod, "_preflight_provider_lock", lambda *_args: "linux_amd64"
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.validate_provider_lock",
+        lambda *_args, **_kwargs: "linux_amd64",
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.configure_plugin_cache",
+        lambda *_args, **_kwargs: Path("/tmp/npa-test-terraform-cache"),
+    )
     monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
@@ -684,6 +695,17 @@ def test_down_does_not_override_explicit_tfvars(monkeypatch, tmp_path: Path) -> 
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(
+        tf_mod, "_preflight_provider_lock", lambda *_args: "linux_amd64"
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.validate_provider_lock",
+        lambda *_args, **_kwargs: "linux_amd64",
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.configure_plugin_cache",
+        lambda *_args, **_kwargs: Path("/tmp/npa-test-terraform-cache"),
+    )
     monkeypatch.setattr(
         tf_mod, "_run_stream", lambda args, **kwargs: envs.append(dict(kwargs.get("env") or {})) or _completed()
     )

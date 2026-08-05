@@ -55,6 +55,7 @@ from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_dest
 from npa.clients.config import (
     ConfigError,
     resolve_environment,
+    resolve_project_storage,
     resolve_ssh_config,
     resolve_terraform_state,
     write_config,
@@ -115,6 +116,10 @@ AGENT_UI_VERSION = "2026073001"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
+
+
+class AgentStorageCredentialError(RuntimeError):
+    """Configured/bootstrap storage cannot satisfy the deploy data-plane contract."""
 
 # Contract markers that must stay in the embedded agent UI/backend. verify-live,
 # smoke, and unit tests share this list so media-preview regressions cannot
@@ -953,63 +958,77 @@ def _storage_credentials_allow_writes(
     endpoint_url = str(endpoint or "").strip()
     if not endpoint_url:
         endpoint_url = f"https://storage.{str(region or '').strip() or 'eu-north1'}.nebius.cloud"
-    try:
-        import boto3
-    except Exception:
-        return False
-    client_kwargs = {
-        "endpoint_url": endpoint_url,
-        "aws_access_key_id": str(access_key or "").strip(),
-        "region_name": str(region or "").strip() or None,
-        "aws_" "secret_access_key": str(secret_key or "").strip(),
-    }
-    client = boto3.client("s3", **client_kwargs)
+    from npa.clients.storage_validation import probe_storage_write
+
     normalized_prefix = str(prefix or "").strip().strip("/")
-    probe_base = "/".join(part for part in (normalized_prefix, "npa-agent/probe") if part)
-    probe_key = f"{probe_base}/{secrets.token_hex(8)}.txt"
-    try:
-        client.list_objects_v2(Bucket=bucket_name, Prefix=(probe_base + "/") if probe_base else "", MaxKeys=1)
-        client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
-        client.delete_object(Bucket=bucket_name, Key=probe_key)
-        return True
-    except Exception:
-        return False
+    probe_prefix = "/".join(
+        part for part in (normalized_prefix, "npa-agent/preflight") if part
+    )
+    probe = probe_storage_write(
+        bucket=bucket_name,
+        endpoint_url=endpoint_url,
+        access_key_id=str(access_key or "").strip(),
+        secret_access_key=str(secret_key or "").strip(),
+        region=str(region or "").strip(),
+        prefix=probe_prefix,
+    )
+    return bool(probe.ok)
 
 
 def _resolve_deploy_storage_credentials(
     *,
     region: str,
-    bootstrap_creds: dict[str, str],
+    bootstrap_creds: dict[str, str] | None = None,
     project_alias: str = "",
+    emit_status: bool = True,
 ) -> dict[str, str]:
-    """Prefer configured artifact storage keys; fall back to bootstrap keys when needed."""
-    candidate = dict(bootstrap_creds)
-    from npa.clients.credentials import load_credentials
+    """Resolve the exact writable-storage credentials agent deploy will use.
 
-    shared = load_credentials(environ={})
-    shared_bucket = str(shared.s3_bucket or "").strip()
-    shared_prefix = ""
-    if shared_bucket.startswith("s3://"):
-        rest = shared_bucket[len("s3://"):]
-        shared_bucket, _sep, shared_prefix = rest.partition("/")
-        shared_prefix = shared_prefix.strip("/")
-    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
-    shared_access_key = str(shared.s3_access_key_id or "").strip()
-    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
-    if shared_bucket and _storage_credentials_allow_writes(
-        bucket=shared_bucket,
-        endpoint=shared_endpoint,
-        access_key=shared_access_key,
-        secret_key=shared_secret_key,
+    Configured project/shared credentials are evaluated first. This is the same
+    health-verified decision used by preflight, setup, fresh-setup, and refresh;
+    IAM access-key inventory is only reached later when no configured candidate
+    works and a caller explicitly supplies freshly bootstrapped credentials.
+    """
+
+    candidate = dict(bootstrap_creds or {})
+    project_name = str(project_alias or "").strip()
+    try:
+        configured = resolve_project_storage(project_name or None)
+    except ConfigError:
+        configured = None
+    configured_bucket = str(
+        getattr(configured, "checkpoint_bucket", "") or ""
+    ).strip()
+    configured_prefix = ""
+    if configured_bucket.startswith("s3://"):
+        rest = configured_bucket[len("s3://") :]
+        configured_bucket, _sep, configured_prefix = rest.partition("/")
+        configured_prefix = configured_prefix.strip("/")
+    configured_endpoint = str(
+        getattr(configured, "endpoint_url", "")
+        or f"https://storage.{region}.nebius.cloud"
+    ).strip()
+    configured_access_key = str(
+        getattr(configured, "aws_access_key_id", "") or ""
+    ).strip()
+    configured_secret_key = str(
+        getattr(configured, "aws_secret_access_key", "") or ""
+    ).strip()
+    if configured_bucket and _storage_credentials_allow_writes(
+        bucket=configured_bucket,
+        endpoint=configured_endpoint,
+        access_key=configured_access_key,
+        secret_key=configured_secret_key,
         region=region,
-        prefix=shared_prefix,
+        prefix=configured_prefix,
     ):
-        typer.echo("  Using shared configured artifact storage credentials for the agent.")
-        candidate["s3_bucket"] = shared_bucket
-        candidate["s3_prefix"] = shared_prefix
-        candidate["s3_endpoint"] = shared_endpoint
-        candidate["nebius_api_key"] = shared_access_key
-        candidate["nebius_secret_key"] = shared_secret_key
+        if emit_status:
+            typer.echo("  Using health-verified configured artifact storage credentials.")
+        candidate["s3_bucket"] = configured_bucket
+        candidate["s3_prefix"] = configured_prefix
+        candidate["s3_endpoint"] = configured_endpoint
+        candidate["nebius_api_key"] = configured_access_key
+        candidate["nebius_secret_key"] = configured_secret_key
         return candidate
 
     bucket = str(candidate.get("s3_bucket", "")).strip()
@@ -1025,7 +1044,6 @@ def _resolve_deploy_storage_credentials(
         prefix=str(candidate.get("s3_prefix", "")),
     ):
         return candidate
-    project_name = str(project_alias or "").strip()
     if project_name:
         try:
             saved_state = resolve_terraform_state(project_name)
@@ -1043,16 +1061,17 @@ def _resolve_deploy_storage_credentials(
                 secret_key=saved_secret_key,
                 region=region,
             ):
-                typer.echo(
-                    "  Bootstrap S3 key has no data-plane access; "
-                    "falling back to saved project terraform_state credentials."
-                )
+                if emit_status:
+                    typer.echo(
+                        "  Bootstrap S3 key has no data-plane access; falling back "
+                        "to saved project terraform_state credentials."
+                    )
                 candidate["s3_bucket"] = saved_bucket
                 candidate["s3_endpoint"] = saved_endpoint
                 candidate["nebius_api_key"] = saved_access_key
                 candidate["nebius_secret_key"] = saved_secret_key
                 return candidate
-    _fail(
+    raise AgentStorageCredentialError(
         "unable to verify writable S3 credentials for deploy; "
         "configure object-storage credentials with data-plane access before deploying the agent"
     )
@@ -8386,8 +8405,10 @@ def preflight_cmd(
     """Check Route C prerequisites before `npa agent deploy` / `fresh-setup`.
 
     Validates terraform, the SSH key pair, Nebius authentication, and the Token
-    Factory key with no cloud side effects, so late failures (which auto-roll-back
-    a freshly provisioned VM) surface up front. Exits non-zero on any FAIL.
+    Factory key with no cloud side effects. The Terraform check includes the
+    current-platform provider lock; the storage check executes the exact
+    health-verified credential selection deploy will reuse, without listing or
+    rotating IAM access keys. Exits non-zero on any FAIL.
     """
     results = list(_agent_hard_prereq_results(ssh_public_key_path))
     if not skip_nebius:
@@ -8564,19 +8585,19 @@ def deploy_cmd(
     from npa.clients.nebius import NebiusError, bootstrap_agent_environment, get_iam_token
 
     try:
+        configured_storage = _resolve_deploy_storage_credentials(
+            region=env_region,
+            project_alias=project,
+        )
         creds = bootstrap_agent_environment(
             env_project_id,
             env_tenant_id,
             env_region,
             on_status=lambda msg: typer.echo(f"  {msg}"),
-        )
-        creds = _resolve_deploy_storage_credentials(
-            region=env_region,
-            bootstrap_creds=creds,
-            project_alias=project,
+            reuse_storage_credentials=configured_storage,
         )
         iam_token = get_iam_token()
-    except NebiusError as exc:
+    except (AgentStorageCredentialError, NebiusError) as exc:
         _fail(f"Nebius bootstrap failed: {exc}")
 
     public_https = not no_public_https
@@ -9090,11 +9111,23 @@ def bootstrap_cmd(
 
         creds: dict[str, str] | None = None
         try:
+            try:
+                configured_storage = _resolve_deploy_storage_credentials(
+                    region=region,
+                    project_alias=project,
+                )
+            except AgentStorageCredentialError:
+                configured_storage = None
             creds = bootstrap_agent_environment(
                 project_id,
                 tenant_id,
                 region,
                 on_status=lambda msg: typer.echo(f"  {msg}"),
+                **(
+                    {"reuse_storage_credentials": configured_storage}
+                    if configured_storage is not None
+                    else {}
+                ),
             )
         except NebiusError as exc:
             typer.echo(
@@ -9105,7 +9138,11 @@ def bootstrap_cmd(
             creds = _creds_from_terraform_state(project, record)
         if creds is None:
             _fail("Nebius credential refresh failed and no terraform_state fallback is configured")
-        creds = _resolve_deploy_storage_credentials(region=region, bootstrap_creds=creds)
+        creds = _resolve_deploy_storage_credentials(
+            region=region,
+            bootstrap_creds=creds,
+            project_alias=project,
+        )
         agent_credentials = _agent_credentials_payload(creds)
         s3_bucket = agent_credentials["s3_bucket"]
         s3_prefix = agent_credentials.get("s3_prefix", "")

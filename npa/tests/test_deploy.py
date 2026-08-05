@@ -371,10 +371,13 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
         ),
     )
 
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     provisioner.init(tmp_path, backend_config={"access_key": "key"})
     assert run.call_args.args[0] == [
         "init",
         "-input=false",
+        "-lockfile=readonly",
         "-reconfigure",
         "-backend-config",
         "access_key=key",
@@ -393,6 +396,8 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
 def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker) -> None:
     monkeypatch.delenv("TF_PLUGIN_CACHE_DIR", raising=False)
     monkeypatch.setattr(provisioner, "_TF_PLUGIN_CACHE_DIR", tmp_path / "tf-cache")
+    module_dir = tmp_path / "module"
+    module_dir.mkdir()
     mocker.patch("shutil.which", return_value="/usr/bin/terraform")
     run = mocker.patch(
         "subprocess.run",
@@ -401,15 +406,18 @@ def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker
         ),
     )
 
-    provisioner._run(["init"], cwd=tmp_path, capture=True)
+    provisioner._run(["init"], cwd=module_dir, capture=True)
 
     env = run.call_args.kwargs["env"]
-    assert env["TF_PLUGIN_CACHE_DIR"] == str(tmp_path / "tf-cache")
-    assert (tmp_path / "tf-cache").is_dir()
+    assert env["TF_PLUGIN_CACHE_DIR"] == str(tmp_path / "tf-cache" / "linux_amd64")
+    assert (tmp_path / "tf-cache" / "linux_amd64").is_dir()
 
 
 def test_run_respects_preexisting_plugin_cache_env(tmp_path: Path, monkeypatch, mocker) -> None:
-    monkeypatch.setenv("TF_PLUGIN_CACHE_DIR", "/custom/cache")
+    module_dir = tmp_path / "module"
+    module_dir.mkdir()
+    cache_root = tmp_path / "custom-cache"
+    monkeypatch.setenv("TF_PLUGIN_CACHE_DIR", str(cache_root))
     mocker.patch("shutil.which", return_value="/usr/bin/terraform")
     run = mocker.patch(
         "subprocess.run",
@@ -418,12 +426,16 @@ def test_run_respects_preexisting_plugin_cache_env(tmp_path: Path, monkeypatch, 
         ),
     )
 
-    provisioner._run(["init"], cwd=tmp_path, capture=True)
+    provisioner._run(["init"], cwd=module_dir, capture=True)
 
-    assert run.call_args.kwargs["env"]["TF_PLUGIN_CACHE_DIR"] == "/custom/cache"
+    assert run.call_args.kwargs["env"]["TF_PLUGIN_CACHE_DIR"] == (
+        str(cache_root / "linux_amd64")
+    )
 
 
 def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     calls = {"n": 0}
 
     def fake_run(args, *, cwd, capture=False, stream=False):
@@ -446,6 +458,8 @@ def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None
 
 
 def test_init_does_not_retry_config_error(tmp_path: Path, mocker) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     def fake_run(args, *, cwd, capture=False, stream=False):
         raise ProvisionerError("terraform init failed (exit 1):\nInvalid provider configuration")
 
@@ -459,6 +473,8 @@ def test_init_does_not_retry_config_error(tmp_path: Path, mocker) -> None:
 
 
 def test_init_gives_up_after_retries(tmp_path: Path, mocker) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     def fake_run(args, *, cwd, capture=False, stream=False):
         raise ProvisionerError("could not connect to registry.terraform.io: i/o timeout")
 
@@ -469,6 +485,24 @@ def test_init_gives_up_after_retries(tmp_path: Path, mocker) -> None:
         provisioner.init(tmp_path, retries=3, backoff_seconds=0.01, sleep=slept.append)
 
     assert len(slept) == 2  # retried after attempts 1 and 2, then raised on 3
+
+
+def test_init_keeps_provider_lock_immutable(tmp_path: Path, mocker) -> None:
+    lock_file = tmp_path / ".terraform.lock.hcl"
+    lock_file.write_text("tracked-lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+
+    def mutate_lock(args, *, cwd, capture=False, stream=False):
+        assert "-lockfile=readonly" in args
+        lock_file.write_text("mutated-lock\n")
+        return subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="", stderr=""
+        )
+
+    mocker.patch("npa.deploy.provisioner._run", side_effect=mutate_lock)
+
+    with pytest.raises(ProvisionerError, match="changed.*despite -lockfile=readonly"):
+        provisioner.init(tmp_path)
 
 
 def test_apply_and_destroy_raise_on_nonzero(tmp_path: Path, mocker) -> None:

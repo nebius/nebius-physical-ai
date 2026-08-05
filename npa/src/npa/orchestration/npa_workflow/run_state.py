@@ -9,6 +9,25 @@ from typing import Any, Mapping, Sequence
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
+PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
+
+
+def paidf_artifact_prefix(run_id: str) -> str:
+    """Canonical PAIDF run prefix shared by submit/status/artifact consumers."""
+
+    return f"{PAIDF_WORKFLOW_NAME}/{str(run_id or '').strip()}".strip("/")
+
+
+def paidf_workflow_prefix(run_id: str) -> str:
+    """Canonical durable ``npa.workflow`` ledger prefix for one PAIDF run."""
+
+    return f"{paidf_artifact_prefix(run_id)}/npa-workflow"
+
+
+def is_paidf_run_id(run_id: str) -> bool:
+    """Whether an NPA-reserved run ID belongs to the PAIDF happy path."""
+
+    return str(run_id or "").strip().lower().startswith("paidf-")
 
 
 def utc_now() -> str:

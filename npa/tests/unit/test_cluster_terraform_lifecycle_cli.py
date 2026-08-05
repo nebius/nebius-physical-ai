@@ -27,6 +27,17 @@ def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
     key = tmp_path_factory.mktemp("ssh") / "id_ed25519.pub"
     key.write_text("ssh-ed25519 AAAAC3Nz test@example\n")
     monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(key))
+    monkeypatch.setattr(
+        tf_mod, "_preflight_provider_lock", lambda *_args: "linux_amd64"
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.validate_provider_lock",
+        lambda *_args, **_kwargs: "linux_amd64",
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.configure_plugin_cache",
+        lambda *_args, **_kwargs: Path("/tmp/npa-test-terraform-cache"),
+    )
     return key
 
 
@@ -702,10 +713,13 @@ def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(
     )
 
     assert result.exit_code != 0
-    assert "checksum verification failed" in result.output
-    assert "will not" in result.output
-    assert "bypass verification" in result.output
-    assert "providers lock" in result.output
+    # Rich may wrap between words according to the runner's terminal width;
+    # assert the operator message rather than its presentation whitespace.
+    output = " ".join(result.output.split())
+    assert "checksum verification failed" in output
+    assert "will not" in output
+    assert "bypass verification" in output
+    assert "providers lock" in output
     assert lock_file.read_text() == original_lock
     assert not (tf_dir / ".terraform").exists()
     assert all(call[:2] != ["terraform", "destroy"] for call in calls)

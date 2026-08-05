@@ -197,10 +197,29 @@ ownership-unproven resources are preserved.
 You do not need to run `nebius profile create` manually; the Nebius CLI binary
 must still be installed because `npa` invokes it internally.
 
-In non-interactive environments (CI, pipes), run `npa configure --interactive`
-in a real terminal, or `npa configure --show` for the file layout.
+With a valid non-interactive Nebius profile/service-account credential already
+active and the target IDs known, skip browser login, discovery, and tenant
+selection entirely:
+
+```bash
+npa configure --no-interactive \
+  --tenant-id "$YOUR_TENANT_ID" --project-id "$YOUR_PROJECT_ID" \
+  --region "$NEBIUS_REGION" --project-alias "$PROJECT_ALIAS"
+```
+
+These are non-secret identifiers; do not pass IAM, S3, Token Factory, HF, or NGC
+secrets on the command line. The command reuses existing storage only after the
+same cleaned write/delete probe deployment uses. If none is configured, it
+provisions the deterministic default bucket through the already-authenticated
+profile. Add `--no-provision` only when project-only setup is intentional.
 
 Gate: after interactive setup, `nebius iam get-access-token` exits successfully.
+
+`npa agent preflight`, `agent setup`, and `agent fresh-setup` share this exact
+storage decision. Once configure has health-verified the bucket/key, agent setup
+reuses it and provisions only the separately named VM service account; it does
+not list, create, or rotate object-storage access keys. If revalidation is ever
+needed, provider output stays field-allowlisted and secret-redacted.
 
 Keep these non-secret values handy for later workbench deploys:
 

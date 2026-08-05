@@ -694,10 +694,15 @@ def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
 ) -> None:
     run = mocker.patch(
         "npa.clients.nebius._run",
-        return_value=(
-            "accesskey-a\tlerobot-access-key\tserviceaccount-a\t\tACTIVE\t"
-            "1970-01-01T00:00:00Z"
-        ),
+        side_effect=[
+            "accesskey-a",
+            "accesskey-a",
+            "lerobot-access-key",
+            "serviceaccount-a",
+            NebiusError("service_account_id is not found"),
+            "ACTIVE",
+            "1970-01-01T00:00:00Z",
+        ],
     )
 
     items = nebius._list_access_key_metadata("project-a")
@@ -715,7 +720,7 @@ def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
             "status": {"state": "ACTIVE"},
         }
     ]
-    args = run.call_args.args[0]
+    args = run.call_args_list[0].args[0]
     assert args[:4] == ["iam", "v2", "access-key", "list"]
     assert "--all" in args
     output_format = args[args.index("--format") + 1]
@@ -724,6 +729,75 @@ def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
         field not in output_format.lower()
         for field in ("secret", "credential", "password", "private_key", "token")
     )
+    for call in run.call_args_list[1:]:
+        projection = call.args[0][call.args[0].index("--format") + 1]
+        assert projection.startswith("jsonpath={.")
+        assert all(
+            field not in projection.lower()
+            for field in ("secret", "credential", "password", "private_key", "token")
+        )
+
+
+def test_access_key_inventory_tolerates_mixed_unrelated_entries(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=[
+            "accesskey-unrelated\naccesskey-agent",
+            "accesskey-unrelated",
+            "unrelated",
+            NebiusError("id is not found"),
+            NebiusError("service_account_id is not found"),
+            "ACTIVE",
+            "",
+            "accesskey-agent",
+            "npa-agent-access-key",
+            "serviceaccount-agent",
+            NebiusError("service_account_id is not found"),
+            "ACTIVE",
+            "",
+        ],
+    )
+
+    items = nebius._list_access_key_metadata("project-a")
+
+    assert len(items) == 2
+    assert items[0]["spec"]["account"]["service_account"]["id"] == ""
+    assert items[1]["spec"]["account"]["service_account"]["id"] == (
+        "serviceaccount-agent"
+    )
+
+
+def test_access_key_inventory_rejects_conflicting_service_account_shapes(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=[
+            "accesskey-a",
+            "accesskey-a",
+            "key-a",
+            "serviceaccount-one",
+            "serviceaccount-two",
+        ],
+    )
+
+    with pytest.raises(NebiusError, match="conflicting service-account identities"):
+        nebius._list_access_key_metadata("project-a")
+
+
+def test_access_key_inventory_rejects_secret_bearing_scalar_response(mocker) -> None:
+    secret_value = "provider-sensitive-value"
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=[
+            "accesskey-a",
+            "accesskey-a",
+            json.dumps({"secret": secret_value}),
+        ],
+    )
+
+    with pytest.raises(NebiusError, match="potentially secret-bearing") as caught:
+        nebius._list_access_key_metadata("project-a")
+
+    assert secret_value not in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -749,7 +823,10 @@ def test_access_key_inventory_treats_missing_or_null_items_as_empty(
 
 
 def test_access_key_inventory_treats_empty_formatter_output_as_empty(mocker) -> None:
-    mocker.patch("npa.clients.nebius._run", return_value="")
+    mocker.patch(
+        "npa.clients.nebius._run",
+        return_value="\n<no value>\n",
+    )
 
     assert nebius._list_access_key_metadata("project-a") == []
 
@@ -970,6 +1047,45 @@ def test_nebius_bootstrap_agent_environment_uses_npa_agent_sa(mocker) -> None:
     kwargs = bootstrap.call_args.kwargs
     assert kwargs["service_account_name"] == nebius.AGENT_SERVICE_ACCOUNT_NAME
     assert kwargs["access_key_name"] == nebius.AGENT_ACCESS_KEY_NAME
+
+
+def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
+    mocker,
+) -> None:
+    verified_storage = {
+        "s3_bucket": "configured-bucket",
+        "s3_prefix": "artifacts",
+        "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        "nebius_api_key": "configured-access",
+        "nebius_secret_key": "configured-secret",
+    }
+    mocker.patch(
+        "npa.clients.nebius.get_service_account_id_by_name",
+        return_value="serviceaccount-agent",
+    )
+    service_account = mocker.patch(
+        "npa.clients.nebius.ensure_service_account",
+        return_value="serviceaccount-agent",
+    )
+    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam-token")
+    full_bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
+    list_keys = mocker.patch("npa.clients.nebius._list_access_key_metadata")
+    create_key = mocker.patch("npa.clients.nebius.ensure_access_key")
+
+    result = nebius.bootstrap_agent_environment(
+        "project",
+        "tenant",
+        "eu-north1",
+        reuse_storage_credentials=verified_storage,
+    )
+
+    assert result["service_account_id"] == "serviceaccount-agent"
+    assert result["nebius_api_key"] == "configured-access"
+    assert service_account.call_args.kwargs["allow_saved_fallback"] is False
+    full_bootstrap.assert_not_called()
+    list_keys.assert_not_called()
+    create_key.assert_not_called()
 
 
 def test_agent_bootstrap_records_successful_iam_creation_atomically(

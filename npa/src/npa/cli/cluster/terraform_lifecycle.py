@@ -137,6 +137,7 @@ def up_cmd(
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
+    _preflight_provider_lock(tf_dir)
     tfvars = _read_tfvars(tf_dir)
     # First-class node-count flags: a runbook can pick "agent XOR 2-GPU cluster"
     # under a tight compute.instance.count without editing tfvars or exporting
@@ -326,6 +327,7 @@ def down_cmd(
 
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    _preflight_provider_lock(tf_dir)
     if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
         raise typer.Exit(1)
     _preflight_terraform_version(terraform_bin)
@@ -803,6 +805,24 @@ def _terraform_init(
 ) -> None:
     """Initialize in isolated data while keeping the tracked lock immutable."""
 
+    from npa.terraform_lock import (
+        TerraformLockError,
+        configure_plugin_cache,
+        validate_provider_lock,
+    )
+
+    try:
+        validate_provider_lock(terraform_dir)
+        configure_plugin_cache(
+            env,
+            terraform_dir,
+            default_root=Path.home() / ".npa" / "terraform-plugin-cache",
+        )
+    except (OSError, TerraformLockError) as exc:
+        raise typer.BadParameter(
+            f"Terraform provider-lock/cache preflight failed: {exc}"
+        ) from exc
+
     lock_file = terraform_dir / ".terraform.lock.hcl"
     try:
         lock_before = lock_file.read_bytes()
@@ -856,6 +876,21 @@ def _terraform_init(
             f"Terraform detail: {detail[-3000:]}"
         )
     raise typer.BadParameter(f"Terraform init failed: {detail[-3000:]}") from init_error
+
+
+def _preflight_provider_lock(terraform_dir: Path) -> str:
+    """Fail before authentication/provisioning if this host lacks lock coverage."""
+
+    from npa.terraform_lock import TerraformLockError, validate_provider_lock
+
+    try:
+        target_platform = validate_provider_lock(terraform_dir)
+    except TerraformLockError as exc:
+        raise typer.BadParameter(
+            f"Terraform provider-lock preflight failed: {exc}"
+        ) from exc
+    typer.echo(f"Terraform provider lock: verified for {target_platform}")
+    return target_platform
 
 
 def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:

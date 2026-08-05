@@ -45,6 +45,17 @@ def _terraform_stubs(monkeypatch, *, streams: list[list[str]] | None = None, nod
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(
+        tf_mod, "_preflight_provider_lock", lambda *_args: "linux_amd64"
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.validate_provider_lock",
+        lambda *_args, **_kwargs: "linux_amd64",
+    )
+    monkeypatch.setattr(
+        "npa.terraform_lock.configure_plugin_cache",
+        lambda *_args, **_kwargs: Path("/tmp/npa-test-terraform-cache"),
+    )
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     calls = streams if streams is not None else []
     monkeypatch.setattr(

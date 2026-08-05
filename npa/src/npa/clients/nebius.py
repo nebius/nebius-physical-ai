@@ -815,6 +815,7 @@ def ensure_service_account(
     *,
     description: str = "Service account for LeRobot training on Nebius",
     on_created: Callable[[str], None] | None = None,
+    allow_saved_fallback: bool = True,
 ) -> str:
     """Get or create a service account, return its ID.
 
@@ -840,12 +841,17 @@ def ensure_service_account(
             return sa_id
         if _is_permission_denied(message):
             saved = _saved_service_account_id()
-            if saved:
+            if saved and allow_saved_fallback:
                 return saved
             raise NebiusError(
                 f"Cannot read or create service account {name!r}: {exc}. "
-                "Set NPA_SERVICE_ACCOUNT_ID or nebius.service_account_id in "
-                "~/.npa/credentials.yaml when IAM management is restricted."
+                + (
+                    "Set NPA_SERVICE_ACCOUNT_ID or nebius.service_account_id in "
+                    "~/.npa/credentials.yaml when IAM management is restricted."
+                    if allow_saved_fallback
+                    else "The named service-account identity could not be verified; "
+                    "a storage account cannot be substituted for the agent account."
+                )
             ) from exc
         if not _is_not_found(message):
             raise
@@ -859,7 +865,7 @@ def ensure_service_account(
             "--description", description,
         ])
     except NebiusError as exc:
-        if _is_permission_denied(str(exc)):
+        if _is_permission_denied(str(exc)) and allow_saved_fallback:
             saved = _saved_service_account_id()
             if saved:
                 return saved
@@ -907,25 +913,66 @@ def ensure_editors_membership(tenant_id: str, sa_id: str) -> None:
 # ── Access keys ──────────────────────────────────────────────────────────
 
 
-# Nebius CLI list JSON currently contains secret-bearing status fields. Request
-# only the identifiers/metadata NPA needs before the CLI writes anything to its
-# stdout pipe. The CLI uses kubectl's JSONPath implementation, whose range/text
-# syntax keeps one record per line without serializing the rest of each item.
+# Nebius CLI list JSON currently contains secret-bearing status fields. The list
+# call therefore projects *only* opaque resource IDs. Each ID is then inspected
+# with one scalar JSONPath projection per allowlisted field. Keeping optional
+# fields out of a shared range projection is important: the provider exits
+# non-zero when even one heterogeneous list item omits a projected field.
 _ACCESS_KEY_LIST_JSONPATH = (
     "jsonpath={range .items[*]}"
-    '{.metadata.id}{"\\t"}'
-    '{.metadata.name}{"\\t"}'
-    '{.spec.account.service_account.id}{"\\t"}'
-    '{.spec.account.service_account_id}{"\\t"}'
-    '{.status.state}{"\\t"}'
-    '{.spec.expires_at}{"\\n"}'
+    '{.metadata.id}{"\\n"}'
     "{end}"
 )
+
+_ACCESS_KEY_METADATA_FIELDS = {
+    "id": ".metadata.id",
+    "name": ".metadata.name",
+    "nested_service_account_id": ".spec.account.service_account.id",
+    "direct_service_account_id": ".spec.account.service_account_id",
+    "state": ".status.state",
+    "expires_at": ".spec.expires_at",
+}
+_ACCESS_KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 
 
 def _safe_access_key_field(value: str) -> str:
     field = str(value or "").strip()
     return "" if field == "<no value>" else field
+
+
+def _validate_access_key_scalar(
+    value: str,
+    *,
+    field_name: str,
+    identifier: bool = False,
+) -> str:
+    """Validate a single provider-projected access-key metadata scalar.
+
+    The original provider response is deliberately never included in errors.
+    Structured/multiline output means the CLI did not honor the scalar
+    allowlist and could contain credentials, so it is rejected at the command
+    boundary before any caller can log it.
+    """
+
+    scalar = _safe_access_key_field(value)
+    if not scalar:
+        return ""
+    if any(character in scalar for character in ("\n", "\r", "\t", "\x00")):
+        raise NebiusError(
+            f"Nebius returned malformed allowlisted access-key {field_name}; "
+            "the provider response was discarded"
+        )
+    if scalar[:1] in {"{", "["} or scalar[-1:] in {"}", "]"}:
+        raise NebiusError(
+            f"Nebius returned non-scalar allowlisted access-key {field_name}; "
+            "the potentially secret-bearing provider response was discarded"
+        )
+    if identifier and not _ACCESS_KEY_ID_RE.fullmatch(scalar):
+        raise NebiusError(
+            f"Nebius returned malformed allowlisted access-key {field_name}; "
+            "the provider response was discarded"
+        )
+    return scalar
 
 
 _EMPTY_ACCESS_KEY_LIST_ERRORS = (
@@ -963,6 +1010,76 @@ def _empty_access_key_list_error(message: str) -> bool:
     return any(pattern.search(safe) for pattern in _EMPTY_ACCESS_KEY_LIST_ERRORS)
 
 
+def _missing_access_key_field_error(message: str, jsonpath: str) -> bool:
+    """Whether a scalar projection failed solely because its optional field is absent."""
+
+    safe = redact_nebius_output(str(message or ""))
+    lowered = safe.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "accessdenied",
+            "access denied",
+            "permissiondenied",
+            "permission denied",
+            "unauthenticated",
+            "unauthorized",
+            "forbidden",
+            "connection refused",
+            "deadline exceeded",
+            "timed out",
+        )
+    ):
+        return False
+    leaf = re.escape(jsonpath.rsplit(".", 1)[-1])
+    return re.search(
+        rf"\b{leaf}\b.{{0,80}}\b(?:is\s+not\s+found|missing|null|nil|no\s+value)\b",
+        safe,
+        re.IGNORECASE,
+    ) is not None
+
+
+def _access_key_metadata_scalar(
+    key_id: str,
+    field_name: str,
+    *,
+    optional: bool,
+    identifier: bool = False,
+) -> str:
+    """Read one allowlisted scalar for one access-key resource."""
+
+    jsonpath = _ACCESS_KEY_METADATA_FIELDS[field_name]
+    try:
+        output = _run(
+            [
+                "iam",
+                "v2",
+                "access-key",
+                "get",
+                "--id",
+                key_id,
+                "--format",
+                f"jsonpath={{{jsonpath}}}",
+            ]
+        )
+    except NebiusError as exc:
+        if optional and _missing_access_key_field_error(str(exc), jsonpath):
+            return ""
+        raise NebiusError(
+            f"Unable to read allowlisted access-key {field_name} for {key_id}: {exc}"
+        ) from exc
+    value = _validate_access_key_scalar(
+        output,
+        field_name=field_name,
+        identifier=identifier,
+    )
+    if not optional and not value:
+        raise NebiusError(
+            f"Nebius returned no allowlisted access-key {field_name} for {key_id}"
+        )
+    return value
+
+
 def _list_access_key_metadata(project_id: str) -> list[dict[str, Any]]:
     """Return a strict allowlist of access-key metadata from the Nebius CLI.
 
@@ -997,19 +1114,60 @@ def _list_access_key_metadata(project_id: str) -> list[dict[str, Any]]:
         if _empty_access_key_list_error(str(exc)):
             return []
         raise
-    items: list[dict[str, Any]] = []
+    key_ids: list[str] = []
     for line in output.splitlines():
         if not line.strip():
             continue
-        fields = line.split("\t")
-        if len(fields) != 6:
-            raise NebiusError(
-                "Nebius returned malformed allowlisted access-key metadata; "
-                "the unparsed response was discarded"
-            )
-        key_id, name, nested_sa_id, direct_sa_id, state, expires_at = (
-            _safe_access_key_field(field) for field in fields
+        key_id = _validate_access_key_scalar(
+            line,
+            field_name="id",
+            identifier=True,
         )
+        # Some CLI builds render a null ranged item as ``<no value>`` instead
+        # of failing the JSONPath expression. It is still an empty inventory,
+        # not an access-key resource with an empty identity.
+        if not key_id:
+            continue
+        if key_id in key_ids:
+            raise NebiusError(
+                "Nebius returned duplicate allowlisted access-key IDs; "
+                "the ambiguous provider response was discarded"
+            )
+        key_ids.append(key_id)
+
+    items: list[dict[str, Any]] = []
+    for key_id in key_ids:
+        returned_id = _access_key_metadata_scalar(
+            key_id,
+            "id",
+            optional=False,
+            identifier=True,
+        )
+        if returned_id != key_id:
+            raise NebiusError(
+                "Nebius returned a different access-key ID while inspecting an "
+                "allowlisted resource; the ambiguous provider response was discarded"
+            )
+        name = _access_key_metadata_scalar(key_id, "name", optional=True)
+        nested_sa_id = _access_key_metadata_scalar(
+            key_id,
+            "nested_service_account_id",
+            optional=True,
+            identifier=True,
+        )
+        direct_sa_id = _access_key_metadata_scalar(
+            key_id,
+            "direct_service_account_id",
+            optional=True,
+            identifier=True,
+        )
+        if nested_sa_id and direct_sa_id and nested_sa_id != direct_sa_id:
+            raise NebiusError(
+                "Nebius returned conflicting service-account identities for an "
+                "access key; the ambiguous provider response was discarded"
+            )
+        state = _access_key_metadata_scalar(key_id, "state", optional=True)
+        expires_at = _access_key_metadata_scalar(key_id, "expires_at", optional=True)
         items.append(
             {
                 "metadata": {"id": key_id, "name": name},
@@ -1591,6 +1749,7 @@ def bootstrap_agent_environment(
 
     on_status = kwargs.pop("on_status", None)
     external_created = kwargs.pop("on_resource_created", None)
+    reuse_storage_credentials = kwargs.pop("reuse_storage_credentials", None)
     bucket_name = kwargs.get("bucket_name")
     sa_id = get_service_account_id_by_name(project_id, AGENT_SERVICE_ACCOUNT_NAME)
     if sa_id and on_status:
@@ -1634,18 +1793,61 @@ def bootstrap_agent_environment(
             mark_agent_iam_status(project_id, "partial")
 
     try:
-        result = bootstrap_environment(
-            project_id,
-            tenant_id,
-            region,
-            service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
-            access_key_name=AGENT_ACCESS_KEY_NAME,
-            service_account_description="Long-lived service account for NPA agent VMs",
-            access_key_description="Long-lived access key for NPA agent S3 and API access",
-            on_status=on_status,
-            on_resource_created=_record_agent_resource,
-            **kwargs,
-        )
+        if reuse_storage_credentials is not None:
+            # ``npa configure`` already proved these data-plane credentials can
+            # list/write/delete in the selected bucket. Agent provisioning only
+            # needs the VM-attached service-account identity now; do not revisit
+            # access-key inventory or create a second S3 key.
+            if on_status:
+                on_status("Reusing health-verified configured object-storage credentials.")
+                on_status("Setting up the VM-attached npa-agent service account...")
+
+            def _record_created_agent_account(account_id: str) -> None:
+                _record_agent_resource(
+                    "service_account",
+                    {"id": account_id, "name": AGENT_SERVICE_ACCOUNT_NAME},
+                )
+
+            sa_id = ensure_service_account(
+                project_id,
+                name=AGENT_SERVICE_ACCOUNT_NAME,
+                description="Long-lived service account for NPA agent VMs",
+                on_created=_record_created_agent_account,
+                allow_saved_fallback=False,
+            )
+            try:
+                ensure_editors_membership(tenant_id, sa_id)
+            except NebiusError as exc:
+                if not _is_permission_denied(str(exc)):
+                    raise
+                if on_status:
+                    on_status(
+                        "WARNING: could not add the npa-agent service account to the "
+                        "tenant 'editors' group. Ask a tenant admin to grant the "
+                        f"required role to {sa_id}, then retry."
+                    )
+            result = dict(reuse_storage_credentials)
+            result.update(
+                {
+                    "iam_token": get_iam_token(),
+                    "service_account_id": sa_id,
+                    "nebius_project_id": project_id,
+                    "nebius_region": region,
+                }
+            )
+        else:
+            result = bootstrap_environment(
+                project_id,
+                tenant_id,
+                region,
+                service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
+                access_key_name=AGENT_ACCESS_KEY_NAME,
+                service_account_description="Long-lived service account for NPA agent VMs",
+                access_key_description="Long-lived access key for NPA agent S3 and API access",
+                on_status=on_status,
+                on_resource_created=_record_agent_resource,
+                **kwargs,
+            )
         from npa.cli.agent_iam import mark_agent_iam_status
 
         mark_agent_iam_status(project_id, "complete")
@@ -1654,16 +1856,23 @@ def bootstrap_agent_environment(
         if not _is_permission_denied(str(exc)):
             _rollback_agent_resources()
             raise
-        fallback = _saved_storage_credentials(
-            project_id=project_id,
-            tenant_id=tenant_id,
-            region=region,
-            bucket_name=bucket_name,
-            service_account_id=sa_id or resolve_service_account_id(project_id),
+        fallback = (
+            dict(reuse_storage_credentials)
+            if reuse_storage_credentials is not None
+            else _saved_storage_credentials(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                region=region,
+                bucket_name=bucket_name,
+                service_account_id=sa_id or resolve_service_account_id(project_id),
+            )
         )
         if fallback is None:
             _rollback_agent_resources()
             raise
+        # Do not attach the configure/storage account as if it were the named
+        # npa-agent account. Preserve only a separately verified identity.
+        fallback["service_account_id"] = sa_id or ""
         from npa.cli.agent_iam import mark_agent_iam_status
 
         mark_agent_iam_status(project_id, "complete")

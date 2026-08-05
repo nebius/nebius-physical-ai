@@ -816,6 +816,125 @@ def test_status_discovers_paidf_manifest_from_project_and_run_id(monkeypatch) ->
     assert payload["manifest_uri"] == f"s3://bucket/{key}"
 
 
+@pytest.mark.parametrize(
+    ("staged_key", "expected_state"),
+    [
+        ("", "RESERVED_OR_PLANNED"),
+        (
+            "physical-ai-data-factory/paidf-never-launched/configs/input.json",
+            "STAGED",
+        ),
+    ],
+    ids=["planned", "staged"],
+)
+def test_paidf_status_reports_never_submitted_without_root_manifest_error(
+    monkeypatch,
+    staged_key: str,
+    expected_state: str,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists",
+        lambda *args, **kwargs: False,
+    )
+    if staged_key:
+        fake_s3.put_object(Bucket="bucket", Key=staged_key, Body=b"{}")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "paidf-never-launched",
+            "--project",
+            "test-rtx",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "NOT_SUBMITTED"
+    assert payload["submission_state"] == expected_state
+    assert payload["sky_job_id"] == ""
+    assert payload["manifest_uri"] == (
+        "s3://bucket/physical-ai-data-factory/paidf-never-launched/"
+        "npa-workflow/manifest.json"
+    )
+    diagnostic = " ".join(payload["diagnostics"])
+    assert "Submission did not launch" in diagnostic
+    assert "workflow submit" in diagnostic
+    assert "--workflow-s3-uri" in diagnostic
+    assert "s3://bucket/paidf-never-launched/manifest.json" not in diagnostic
+
+
+def test_ordinary_workflow_missing_manifest_remains_an_error(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists",
+        lambda *args, **kwargs: False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "s3://bucket/ordinary-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "NOT_SUBMITTED" not in result.output
+
+
+def test_paidf_never_submitted_preserves_exact_workflow_s3_uri(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    exact_uri = (
+        "s3://bucket/archive/physical-ai-data-factory/paidf-custom/"
+        "npa-workflow"
+    )
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key="archive/physical-ai-data-factory/paidf-custom/configs/input.json",
+        Body=b"{}",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "paidf-custom",
+            "--workflow-s3-uri",
+            exact_uri,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "NOT_SUBMITTED"
+    assert payload["submission_state"] == "STAGED"
+    assert payload["run_prefix_uri"] == exact_uri.removesuffix("/npa-workflow")
+    assert payload["manifest_uri"] == f"{exact_uri}/manifest.json"
+    assert exact_uri in " ".join(payload["diagnostics"])
+
+
 def test_workflow_list_ignores_component_and_staged_source_manifests(monkeypatch) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
