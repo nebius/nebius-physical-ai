@@ -1,4 +1,5 @@
-# npa-groot: NVIDIA Isaac-GR00T inference, with NVIDIA Isaac fetched at FIRST RUN.
+# npa-groot: NVIDIA Isaac-GR00T inference and fine-tuning, with NVIDIA Isaac
+# fetched at FIRST RUN.
 #
 # This image contains no NVIDIA Isaac Sim or Isaac Lab code. It used to bake
 # `isaaclab[isaacsim,all]` into /opt/isaac-lab/venv (then delete extscache to claw back
@@ -7,9 +8,9 @@
 # of /isaac-sim/python.sh, under the OPERATOR's own EULA acceptance; see
 # npa/docker/workbench/common/isaac_bootstrap.sh.
 #
-# GR00T inference itself is unaffected and needs no Isaac and no EULA acceptance: it runs
-# in GROOT_VENV (`python -m npa.smoke.test_groot_functional`). Only the Isaac Lab
-# simulation paths pay the first-run download.
+# GR00T inference and fine-tuning need no Isaac or EULA acceptance: they run in
+# GROOT_VENV (`python -m npa.smoke.test_groot_functional` covers inference). Only
+# the Isaac Lab simulation paths pay the first-run download.
 #
 # Digest pinned 2026-05-12. Tag: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 # To update: re-resolve via registry API and update digest below.

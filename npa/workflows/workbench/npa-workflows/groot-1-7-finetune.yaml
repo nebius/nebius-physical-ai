@@ -1,0 +1,55 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: groot-1-7-finetune
+  description: >
+    Fine-tune NVIDIA GR00T N1.7 on a GR00T-format LeRobot dataset. The selected
+    positive GPU count controls both the SkyPilot allocation and the upstream
+    single-node torchrun world size.
+
+config:
+  bucket: example-bucket
+  prefix: "groot-1-7-finetune/{{run.id}}"
+
+  # Reproducible GR00T N1.7 contract. The npa-groot:0.1.0 image also pins the
+  # Isaac-GR00T source revision checked by the finetune command at runtime.
+  base_model: nvidia/GR00T-N1.7-3B
+  robot_embodiment: NEW_EMBODIMENT
+
+  # Override both with `workflow submit --var gpu_type=... --var gpu_count=N`.
+  # gpu_count must resolve to a positive integer. global_batch_size follows it
+  # by default so every positive count satisfies GR00T's divisibility contract;
+  # operators may override it with any positive multiple of gpu_count.
+  gpu_type: H100
+  gpu_count: "1"
+  global_batch_size: "{{config.gpu_count}}"
+
+  data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/"
+  dataloader_num_workers: "8"
+  max_steps: "10000"
+  save_steps: "1000"
+  save_total_limit: "5"
+
+resources:
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: 32
+    memory: 200Gi
+
+initial: finetune
+
+states:
+  finetune:
+    description: Run the real pinned GR00T N1.7 trainer in this GPU stage.
+    toolRef: workbench.groot.finetune
+    resources: trainer-gpu
+    inputs:
+      - uri: "{{config.data_uri}}"
+        schema: nvidia.groot.lerobot.v2
+    outputs:
+      - uri: "{{config.checkpoint_uri}}npa_groot_finetune_manifest.json"
+        schema: npa.groot.finetune.v1
+    terminal: true

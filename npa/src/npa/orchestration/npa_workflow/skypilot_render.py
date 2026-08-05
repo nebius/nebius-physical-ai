@@ -55,7 +55,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # No NGC_API_KEY: `--runtime local` trains in the stage and pulls nothing from NGC, and
     # hinting a secret the cases do not carry skips the twins instead of running them (#238).
     "workbench.sonic": ("HF_TOKEN",),
-    "workbench.groot": ("HF_TOKEN", "NGC_API_KEY"),
+    # The pinned N1.7 base model is fetched from Hugging Face. The redistributable
+    # GR00T image contains no NGC payload and finetuning does not use NGC.
+    "workbench.groot": ("HF_TOKEN",),
 }
 
 # Optional dependency groups a toolRef's stage needs, declared as npa extras in

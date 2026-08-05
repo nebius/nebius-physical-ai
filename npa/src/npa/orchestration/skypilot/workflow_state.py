@@ -352,8 +352,9 @@ def list_runs(
             runs.append(
                 {
                     "run_id": manifest.get("run_id", run_prefix.rsplit("/", 1)[-1]),
-                    "workflow_name": manifest.get("workflow_name", ""),
-                    "run_prefix_uri": run_state.uri,
+                    "workflow_name": manifest.get("workflow_name")
+                    or manifest.get("workflow", ""),
+                    "run_prefix_uri": manifest.get("run_prefix_uri") or run_state.uri,
                     "updated_at": manifest.get("updated_at", ""),
                     "sky_job_id": manifest.get("sky_job_id", ""),
                 }
