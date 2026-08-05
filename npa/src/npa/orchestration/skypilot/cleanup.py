@@ -162,6 +162,62 @@ def cleanup_workflow(
     )
 
 
+def cleanup_launched_workflow(
+    job_id: str,
+    run_id: str,
+    *,
+    cluster: str = "",
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
+) -> CleanupResult:
+    """Cancel one manifest-proven managed job and best-effort tear down its cluster.
+
+    The shared jobs controller is deliberately never removed here.  This helper
+    uses the same pinned NPA SkyPilot resolver for dry-run/status/cancel paths and
+    continues safe cluster cleanup even when cancellation or draining reports an
+    error.
+    """
+
+    cleaned_job_id = str(job_id or "").strip()
+    cleaned_run_id = str(run_id or "").strip()
+    if not cleaned_job_id:
+        raise ValueError("A manifest-proven SkyPilot managed-job ID is required.")
+    if not cleaned_run_id or not _RUN_ID_ALLOWED_RE.fullmatch(cleaned_run_id):
+        raise InvalidRunIdError(
+            "run id must contain only letters, numbers, and hyphens for exact cleanup"
+        )
+    cleanup = _cancel_job(
+        cleaned_job_id,
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
+    )
+    drained, still_running = wait_for_jobs_terminal(
+        [cleaned_job_id],
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
+        timeout=job_drain_timeout,
+    )
+    if not drained:
+        cleanup.errors.append(
+            "managed job(s) "
+            + ", ".join(still_running)
+            + f" were still non-terminal {job_drain_timeout}s after cancel"
+        )
+    cleanup.extend(
+        sky_down(
+            cluster or cleaned_run_id,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+        )
+    )
+    return cleanup
+
+
 def cleanup_all_for_run(
     run_id: str,
     *,

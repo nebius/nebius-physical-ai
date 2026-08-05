@@ -47,7 +47,16 @@ Run project-scoped cloud deletion before forgetting the project, then use the
 explicit full local scope:
 
 ```bash
+npa workbench workflow cancel <run-id> --project <alias> --json
+npa agent destroy --project <alias> --name <name> --yes
+npa skypilot cleanup-controller --yes
+npa cluster down --project <alias> --force
 npa storage bucket delete --project <alias> --yes --wait
+npa storage service-account delete --project <alias> --dry-run
+# If ownership provenance is missing, verify and explicitly attest the exact ID:
+npa storage service-account reconcile --project <alias> --id <exact-id> --dry-run
+npa storage service-account reconcile --project <alias> --id <exact-id> \
+  --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
 npa configure --forget-project <alias>
@@ -63,6 +72,11 @@ lifecycles: bucket deletion preserves the dedicated `storage_iam` record until
 the account is deleted or conclusively absent, while a familiar name or legacy
 saved ID remains evidence but is not proof of ownership. Agent bootstrap may
 change the generic `nebius.service_account_id` without changing this record.
+For legacy NPA-created residue, `service-account reconcile` verifies the exact
+immutable ID, expected name, project, tenant, and selected profile, then stores
+non-secret operator/when/reason attestation. It never deletes the resource;
+the existing guarded `delete` command remains the only deletion path. Unresolved
+evidence is journaled in the project stanza and blocks project forgetting.
 Plain `npa cleanup --yes` keeps credentials; `--full --yes` additionally removes
 the locally saved Hugging Face, Token Factory, and NGC entries and prunes only
 empty NPA-owned local state plus exactly validated NPA Terraform residue. It does

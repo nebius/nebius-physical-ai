@@ -30,6 +30,22 @@ def _seed_residue() -> tuple[Path, Path, Path, Path]:
     return npa / "skypilot-venv", npa / "terraform-plugin-cache", home / ".sky", empty_alias
 
 
+def _seed_project_config() -> None:
+    from npa.clients import config as config_module
+
+    config_module.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config_module.CONFIG_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {"project_id": "project-a", "tenant_id": "tenant-a"}
+                },
+            }
+        )
+    )
+
+
 def test_cleanup_reports_residue_without_removing(monkeypatch) -> None:
     from npa.clients import config as config_module
 
@@ -95,7 +111,8 @@ def test_cleanup_iam_note_names_the_storage_service_account(monkeypatch) -> None
 
     assert result.exit_code == 0, result.output
     assert "serviceaccount-lerobot-training" in result.output
-    assert "nebius iam service-account delete" in result.output
+    assert "npa storage service-account reconcile" in result.output
+    assert "nebius iam service-account delete" not in result.output
 
 
 def test_cleanup_iam_note_prefers_owned_storage_lifecycle_record(monkeypatch) -> None:
@@ -250,7 +267,7 @@ def test_cleanup_never_suggests_invalid_nebius_yes_flag() -> None:
 
     assert result.exit_code == 0, result.output
     assert "nebius iam service-account delete --id <id> --yes" not in result.output
-    assert "nebius iam service-account delete --id <id>" in result.output
+    assert "npa storage service-account reconcile" in result.output
 
 
 def test_cleanup_full_reports_a_credential_removal_failure(monkeypatch) -> None:
@@ -340,6 +357,8 @@ def test_cleanup_full_reports_owned_storage_iam_as_partial(
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
 
+    _seed_project_config()
+
     credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     credentials_module.CREDENTIALS_PATH.write_text(
         yaml.safe_dump(
@@ -354,7 +373,11 @@ def test_cleanup_full_reports_owned_storage_iam_as_partial(
         )
     )
     monkeypatch.setattr(
-        nebius_module, "service_account_exists", lambda _account_id: True
+        nebius_module,
+        "get_service_account_identity",
+        lambda account_id, **_kwargs: nebius_module.ServiceAccountIdentity(
+            account_id, "lerobot-training", "project-a", "tenant-a", ""
+        ),
     )
 
     result = runner.invoke(
@@ -373,6 +396,8 @@ def test_cleanup_full_distinguishes_provider_verification_failure(
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
 
+    _seed_project_config()
+
     credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     credentials_module.CREDENTIALS_PATH.write_text(
         yaml.safe_dump(
@@ -388,8 +413,8 @@ def test_cleanup_full_distinguishes_provider_verification_failure(
     )
     monkeypatch.setattr(
         nebius_module,
-        "service_account_exists",
-        lambda _account_id: (_ for _ in ()).throw(
+        "get_service_account_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
             nebius_module.NebiusError("Unauthenticated")
         ),
     )
@@ -409,6 +434,8 @@ def test_cleanup_full_prunes_provenance_after_verified_absence(
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
 
+    _seed_project_config()
+
     credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     credentials_module.CREDENTIALS_PATH.write_text(
         yaml.safe_dump(
@@ -422,9 +449,7 @@ def test_cleanup_full_prunes_provenance_after_verified_absence(
             }
         )
     )
-    monkeypatch.setattr(
-        nebius_module, "service_account_exists", lambda _account_id: False
-    )
+    monkeypatch.setattr(nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None)
 
     result = runner.invoke(
         app, ["cleanup", "--full", "--yes", "--skip-jobs"]
@@ -433,3 +458,63 @@ def test_cleanup_full_prunes_provenance_after_verified_absence(
     assert result.exit_code == 0, result.output
     assert "verified absence" in result.output
     assert not credentials_module.CREDENTIALS_PATH.exists()
+
+
+def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
+    monkeypatch,
+) -> None:
+    import json
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    _seed_project_config()
+    credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    credentials_module.CREDENTIALS_PATH.write_text(
+        yaml.safe_dump(
+            {
+                "nebius": {"service_account_id": "serviceaccount-storage"},
+                "storage_iam": {
+                    "service_account_id": "serviceaccount-storage",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-a",
+                    "service_account_managed_by": "",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_identity",
+        lambda account_id, **_kwargs: nebius_module.ServiceAccountIdentity(
+            account_id, "lerobot-training", "project-a", "tenant-a", ""
+        ),
+    )
+
+    command = ["cleanup", "--full", "--yes", "--skip-jobs", "--json"]
+    first = runner.invoke(app, command)
+    second = runner.invoke(app, command)
+
+    assert first.exit_code == second.exit_code == 2
+    first_payload = json.loads(first.output)
+    second_payload = json.loads(second.output)
+    assert first_payload["result"] == second_payload["result"] == (
+        "locally_clean_cloud_iam_unresolved"
+    )
+    assert first_payload["iam_verification_required"] is True
+    assert second_payload["project_retained"] is True
+    config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
+    assert "prod" in config["projects"]
+    assert config["projects"]["prod"]["storage_iam_verification_required"][
+        "service_account_id"
+    ] == "serviceaccount-storage"
+
+    monkeypatch.setattr(
+        nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None
+    )
+    resolved = runner.invoke(app, command)
+    assert resolved.exit_code == 0, resolved.output
+    assert json.loads(resolved.output)["result"] == "fully_cleaned"
+    config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
+    assert "storage_iam_verification_required" not in config["projects"]["prod"]

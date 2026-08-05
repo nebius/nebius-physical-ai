@@ -235,7 +235,7 @@ full explanation.
 | `missing prerequisites: ... NPA_SRC_S3_URI is unset` | image-less steps have no `npa` to install | `npa workbench workflow stage-src --bucket <b>`, or `submit --stage-src`, or pin `--image` |
 | `missing prerequisites: ... SkyPilot CLI is not usable` | SkyPilot never bootstrapped, or only exported in a previous shell | `npa skypilot bootstrap` (persists `skypilot.sky_bin`) |
 | `missing prerequisites: ... config.bucket is the spec placeholder` | submitting against `example-bucket` | `--var bucket=<your-bucket>` |
-| `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | `sky status -r` (SkyPilot 0.12 rejects `sky status --all`), then `sky down sky-jobs-controller-<id>`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
+| `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | inspect with `npa skypilot status`, then (after all workflows are terminal) run `npa skypilot cleanup-controller --yes`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
 | `Kube context '<name>' ... is not available` | no cluster for that context: neither your kubeconfig nor `~/.npa/clusters/<name>/` has it | provision one (`npa provision-if-absent --project <alias>`, and read its warnings — it now exits non-zero when it could not) or point `KUBECONFIG` at the cluster you want; `kubectl config get-contexts` lists what is resolvable |
 | A cluster is RUNNING in the console but npa has no kubeconfig for it (interrupted provision) | `up` writes the kubeconfig only after apply finishes | `npa cluster kubeconfig --cluster-name <name> --project <alias>` adopts it (writes the kubeconfig + cluster state), or `npa cluster up` again to resume, or `npa cluster down --force` to remove it |
 | `GPU quota is insufficient ...` before apply | the tenant's `compute.instance.gpu.<model>` allowance cannot cover the node group | raise the quota, or use the preemptible pool the message reports (`gpu_nodes_preemptible = true`), or pick a smaller preset/another platform |
@@ -760,27 +760,38 @@ npa storage bucket list --project "$PROJECT"
 Then remove them:
 
 ```bash
-# 1. Agent VM, its network, local record, and the IAM the deploy created for it.
+# 1. Cancel the workflow. Planned/staged runs that never launched are a
+#    successful repeat-safe no-op.
+npa workbench workflow cancel <run-id> --project "$PROJECT" --json
+
+# 2. Agent VM, its network, local record, and the IAM the deploy created for it.
 npa agent destroy --project "$PROJECT" --name <agent-name> --yes
 
-# 2. Cluster. `down` owns everything the Terraform path created — cluster, VPC,
+# 3. Remove the shared jobs controller only after every NPA workflow is terminal.
+npa skypilot cleanup-controller --yes
+
+# 4. Cluster. `down` owns everything the Terraform path created — cluster, VPC,
 #    subnet — and clears ~/.npa/clusters/<context>/. It reads
 #    project/tenant/region from ~/.npa/config.yaml when tfvars omit them.
 npa cluster down --terraform-dir deploy/cluster --project "$PROJECT" --force
 
-# 3. Object storage. A versioned bucket cannot be deleted immediately, so this
+# 5. Object storage. A versioned bucket cannot be deleted immediately, so this
 #    schedules the purge, waits for completion, and drops the dead S3 keys.
 npa storage bucket delete --project "$PROJECT" --yes --wait
 
-# 4. Storage IAM. This deletes only the exact lerobot-training account whose
-#    create-time NPA ownership record matches this project. Inspect first if wanted:
+# 6. Storage IAM. Inspect first. If legacy state lacks ownership provenance,
+#    reconcile the exact immutable ID before returning to the guarded delete.
+npa storage service-account delete --project "$PROJECT" --dry-run
+npa storage service-account reconcile --project "$PROJECT" --id <exact-id> --dry-run
+npa storage service-account reconcile --project "$PROJECT" --id <exact-id> \
+  --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project "$PROJECT" --dry-run
 npa storage service-account delete --project "$PROJECT" --yes
 
-# 5. Remove the project stanza after every project-scoped cloud command has run.
+# 7. Remove the project only after IAM verification/deletion clears its marker.
 npa configure --forget-project "$PROJECT"
 
-# 6. Remove known shared-service credentials, caches, the SkyPilot venv/state,
+# 8. Remove known shared-service credentials, caches, the SkyPilot venv/state,
 #    and empty ~/.npa residue. Non-empty/unrelated local data is preserved.
 npa cleanup --full --yes
 ```
@@ -801,8 +812,8 @@ Notes:
 - **Agent IAM is removed by default.** `destroy` deletes the project's
   `npa-agent` service account and access keys once no agent is left in the project
   (other agents share it, so it is kept while any remain). A deploy that rolled
-  back still created them, which is why this is the default; `--keep-iam` reports
-  them with the `nebius iam …` commands instead.
+  back still created them, which is why this is the default; `--keep-iam` leaves
+  them explicitly for a later NPA agent teardown retry.
 - **Storage IAM deletion is ownership-gated.** Configure records provenance only
   when NPA's create call made `lerobot-training`. The storage service-account
   command refuses an ID-only legacy record, a mismatched project, or an account
@@ -810,8 +821,9 @@ Notes:
   is why bucket deletion comes first. Bucket cleanup never removes IAM evidence:
   the dedicated `storage_iam` ownership record remains until the account is
   deleted or confirmed absent, even if agent bootstrap changes the generic
-  `nebius.service_account_id`. Nebius CLI's raw
-  `nebius iam service-account delete --id <id>` command has no `--yes` flag.
+  `nebius.service_account_id`. Legacy recovery uses the NPA reconciliation
+  command above: it verifies exact provider scope, records operator-attested
+  non-secret provenance, and still requires the guarded NPA delete path.
 - **Do not inventory access keys as raw JSON.** The upstream list response may
   contain secret material. NPA cleanup uses CLI-side JSONPath field selection;
   for safe operator inventory use the filtered example in

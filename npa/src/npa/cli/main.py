@@ -1672,10 +1672,15 @@ def _configured_summary() -> str:
 
 def _forget_project(alias: str) -> None:
     """Remove a project stanza from ~/.npa/config.yaml (the configure inverse)."""
-    from npa.clients.config import forget_project
+    from npa.clients.config import ConfigError, forget_project
 
     cleaned = alias.strip()
-    if forget_project(cleaned):
+    try:
+        forgotten = forget_project(cleaned)
+    except ConfigError as exc:
+        typer.echo(f"Partial cleanup: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    if forgotten:
         typer.echo(
             f"Removed project '{cleaned}' (stanza + terraform_state) from "
             "~/.npa/config.yaml."

@@ -11,6 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 delete  Delete the storage service account only when NPA recorded creating it.
+reconcile  Reconcile a legacy NPA-created storage identity without weakening deletion guards.
 ```
 
 ## Options
@@ -24,6 +25,7 @@ delete  Delete the storage service account only when NPA recorded creating it.
 | Command | Description |
 | --- | --- |
 | `delete` | Delete the storage service account only when NPA recorded creating it. |
+| `reconcile` | Reconcile a legacy NPA-created storage identity without weakening deletion guards. |
 
 ## Examples
 

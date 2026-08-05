@@ -397,13 +397,34 @@ identity is deleted or verified absent.
 
 Storage IAM results are explicit: verified absence/deletion exits 0; missing
 trustworthy ownership or a provider/auth verification failure reports
-`Partial cleanup` and exits 2. Do not treat exit 2 as success. Recover with:
+`Partial cleanup` and exits 2. A project-scoped, non-secret
+`storage_iam_verification_required` journal keeps the exact candidate visible and
+blocks `--forget-project` until provider-verified absence or guarded deletion.
+Do not treat exit 2 as success. The complete NPA-only sequence is:
 
 ```bash
-npa storage service-account delete --project-id <project-id> --dry-run
-npa storage service-account delete --project-id <project-id> --yes
-npa cleanup --full --yes --project <alias>
+npa workbench workflow cancel <run-id> --project <alias> --json
+npa agent destroy --project <alias> --name <name> --yes
+npa skypilot cleanup-controller --yes
+npa cluster down --project <alias> --force
+npa storage bucket delete --project <alias> --yes --wait
+npa storage service-account delete --project <alias> --dry-run
+# Only when the previous command reports missing ownership provenance:
+npa storage service-account reconcile --project <alias> --id <exact-id> --dry-run
+npa storage service-account reconcile --project <alias> --id <exact-id> \
+  --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
+npa storage service-account delete --project <alias> --dry-run
+npa storage service-account delete --project <alias> --yes
+npa configure --forget-project <alias>
+npa cleanup --full --yes
 ```
+
+Reconciliation verifies the immutable ID, expected name, project, tenant, and
+selected CLI profile, then records a non-secret operator/when/reason attestation.
+It never deletes IAM itself and never treats the display name as ownership. The
+following `delete` still performs the existing access-key inventory and guarded
+delete. Both operations are restart-safe; repeated full cleanup remains partial
+while the provider state is unchanged.
 
 `npa cluster down` uses the kubeconfig saved for the selected NPA cluster and
 forces its credential plugin into non-interactive/no-browser mode for the

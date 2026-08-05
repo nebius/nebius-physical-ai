@@ -13,6 +13,7 @@ Commands
 bootstrap  Install SkyPilot into an isolated, idempotent virtualenv.
 uninstall  Remove the isolated SkyPilot venv and clear the saved sky binary.
 status  Report the isolated SkyPilot runtime status.
+cleanup-controller  Tear down NPA's shared jobs controller after its managed jobs drain.
 verify  Run `sky check` against the isolated SkyPilot runtime.
 ```
 
@@ -29,6 +30,7 @@ verify  Run `sky check` against the isolated SkyPilot runtime.
 | `bootstrap` | Install SkyPilot into an isolated, idempotent virtualenv. |
 | `uninstall` | Remove the isolated SkyPilot venv and clear the saved sky binary. |
 | `status` | Report the isolated SkyPilot runtime status. |
+| `cleanup-controller` | Tear down NPA's shared jobs controller after its managed jobs drain. |
 | `verify` | Run `sky check` against the isolated SkyPilot runtime. |
 
 ## Examples

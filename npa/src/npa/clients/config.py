@@ -42,6 +42,12 @@ APP_STATUS_INSTALLING = "installing"
 APP_STATUS_HEALTHY = "healthy"
 APP_STATUS_INSTALL_FAILED = "install_failed"
 
+# Non-secret, project-scoped evidence that cloud storage IAM still needs an
+# authoritative verification or guarded deletion.  Keeping this beside the
+# project stanza prevents a local cleanup pass from erasing the only remaining
+# route back to a legacy service account.
+STORAGE_IAM_RESIDUE_KEY = "storage_iam_verification_required"
+
 ENV_MAP = {
     "endpoint": "NPA_WORKBENCH_ENDPOINT",
     "endpoint_strategy": "NPA_ENDPOINT_STRATEGY",
@@ -605,6 +611,124 @@ def clear_skypilot_bin() -> bool:
     return True
 
 
+def storage_iam_residue(alias: str) -> dict[str, Any]:
+    """Return the non-secret unresolved storage-IAM marker for *alias*."""
+
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        return {}
+    projects = _load_yaml().get("projects")
+    project = projects.get(cleaned) if isinstance(projects, dict) else None
+    marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+    return dict(marker) if isinstance(marker, dict) else {}
+
+
+def storage_iam_residues() -> dict[str, dict[str, Any]]:
+    """Return every project alias with unresolved storage-IAM evidence."""
+
+    projects = _load_yaml().get("projects")
+    if not isinstance(projects, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for alias, project in projects.items():
+        marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+        if isinstance(marker, dict) and marker:
+            result[str(alias)] = dict(marker)
+    return result
+
+
+def project_alias_for_id(project_id: str) -> str:
+    """Return the unique configured alias for *project_id*, else ``""``."""
+
+    wanted = str(project_id or "").strip()
+    if not wanted:
+        return ""
+    projects = _load_yaml().get("projects")
+    if not isinstance(projects, dict):
+        return ""
+    aliases = [
+        str(alias)
+        for alias, project in projects.items()
+        if isinstance(project, dict)
+        and str(project.get("project_id", "") or "").strip() == wanted
+    ]
+    return aliases[0] if len(aliases) == 1 else ""
+
+
+def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, Any]:
+    """Persist non-secret unresolved IAM evidence, preserving prior facts.
+
+    A later provider/auth failure must not overwrite a prior positive presence
+    observation.  Callers therefore provide only fresh, allowlisted metadata;
+    this helper merges it into the existing journal and never deletes fields.
+    """
+
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        raise ConfigError("A configured project alias is required to save IAM residue.")
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if not isinstance(projects, dict) or cleaned not in projects:
+        raise ConfigError(
+            f"Project '{cleaned}' must remain configured while storage IAM is unresolved."
+        )
+    project = projects[cleaned]
+    if not isinstance(project, dict):
+        raise ConfigError(f"Project '{cleaned}' has an invalid configuration stanza.")
+    current = project.get(STORAGE_IAM_RESIDUE_KEY)
+    merged = dict(current) if isinstance(current, dict) else {}
+    status_rank = {
+        "verification_failed": 0,
+        "present_unverified_ownership": 1,
+        "present_owned": 2,
+        "reconciled_pending_delete": 3,
+    }
+    current_status = str(merged.get("status", "") or "")
+    incoming_status = str(evidence.get("status", "") or "")
+    for key, value in evidence.items():
+        if value not in (None, "", [], {}):
+            if (
+                key == "status"
+                and status_rank.get(incoming_status, -1)
+                < status_rank.get(current_status, -1)
+            ):
+                continue
+            merged[str(key)] = value
+    merged["schema_version"] = "npa.storage-iam-residue.v1"
+    project[STORAGE_IAM_RESIDUE_KEY] = merged
+    projects[cleaned] = project
+    yml["projects"] = projects
+    _write_config_replace(yml)
+    return merged
+
+
+def clear_storage_iam_residue(alias: str, *, account_id: str = "") -> bool:
+    """Clear a residue marker after provider-verified absence/deletion only."""
+
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        return False
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    project = projects.get(cleaned) if isinstance(projects, dict) else None
+    if not isinstance(project, dict):
+        return False
+    marker = project.get(STORAGE_IAM_RESIDUE_KEY)
+    if not isinstance(marker, dict):
+        return False
+    expected = str(account_id or "").strip()
+    recorded = str(marker.get("service_account_id", "") or "").strip()
+    if expected and recorded and recorded != expected:
+        raise ConfigError(
+            "Refusing to clear storage-IAM residue for a different service account."
+        )
+    project.pop(STORAGE_IAM_RESIDUE_KEY, None)
+    projects[cleaned] = project
+    yml["projects"] = projects
+    _write_config_replace(yml)
+    return True
+
+
 def forget_project(alias: str) -> bool:
     """Remove ``projects.<alias>`` (stanza + ``terraform_state``) from config.
 
@@ -619,6 +743,17 @@ def forget_project(alias: str) -> bool:
     projects = yml.get("projects")
     if not isinstance(projects, dict) or cleaned not in projects:
         return False
+    project = projects.get(cleaned)
+    marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+    if isinstance(marker, dict) and marker:
+        account_id = str(marker.get("service_account_id", "") or "").strip()
+        suffix = f" ({account_id})" if account_id else ""
+        raise ConfigError(
+            f"Project '{cleaned}' has unresolved storage IAM{suffix}. Reconcile it "
+            "with `npa storage service-account reconcile --project "
+            f"{cleaned} --dry-run`, complete guarded deletion/verification, then "
+            "retry forgetting the project."
+        )
     del projects[cleaned]
     yml["projects"] = projects
     if yml.get("default_project") == cleaned:

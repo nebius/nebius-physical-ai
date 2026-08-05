@@ -91,7 +91,8 @@ def test_cleanup_reports_iam_but_never_deletes_it(npa_home: Path) -> None:
     # `npa configure` provisions a service account that no destroy path removes,
     # but it is frequently shared, so npa must name it rather than delete it.
     assert "not removed" in result.output
-    assert "nebius iam service-account delete" in result.output
+    assert "npa storage service-account reconcile" in result.output
+    assert "nebius iam service-account delete" not in result.output
 
 
 def test_cleanup_names_a_managed_job_that_still_blocks_teardown(
@@ -112,8 +113,9 @@ def test_cleanup_prints_the_ordered_runbook(npa_home: Path) -> None:
     result = runner.invoke(app, ["cleanup", "--skip-jobs"])
 
     assert "Full teardown order" in result.output
-    for step in ("sky jobs cancel", "agent destroy", "cluster down"):
+    for step in ("workflow cancel", "agent destroy", "cluster down"):
         assert step in result.output
+    assert "npa skypilot cleanup-controller --yes" in result.output
 
 
 def test_cleanup_prints_the_runbook_when_it_finds_nothing(npa_home: Path) -> None:
@@ -680,12 +682,12 @@ def test_the_report_says_it_does_not_touch_the_cloud(npa_home: Path) -> None:
 
 
 def test_an_empty_managed_job_queue_is_not_presented_as_a_failure(npa_home: Path) -> None:
-    # `sky jobs cancel -a` raises ClusterNotUpError("No in-progress managed jobs")
-    # when no controller exists; the runbook says so rather than leaving an
-    # operator to wonder whether teardown already broke.
+    # The NPA-only sequence makes both workflow and controller cleanup explicit
+    # and repeat-safe instead of prescribing a raw global SkyPilot cancel.
     result = runner.invoke(app, ["cleanup", "--skip-jobs"])
 
-    assert "that is success" in result.output
+    assert "repeat-safe" in result.output
+    assert "sky jobs cancel" not in result.output
 
 
 def test_forgetting_the_last_project_leaves_no_dangling_default(

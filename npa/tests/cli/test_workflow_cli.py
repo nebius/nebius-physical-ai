@@ -39,12 +39,14 @@ def test_workflow_command_help(command: str) -> None:
 class FakeWorkflowS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
+        self.get_requests: list[tuple[str, str]] = []
 
     def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str = "") -> None:
         del ContentType
         self.objects[(Bucket, Key)] = Body if isinstance(Body, bytes) else str(Body).encode("utf-8")
 
     def get_object(self, *, Bucket: str, Key: str):
+        self.get_requests.append((Bucket, Key))
         return {"Body": BytesIO(self.objects[(Bucket, Key)])}
 
     def get_paginator(self, name: str):
@@ -875,6 +877,193 @@ def test_paidf_status_reports_never_submitted_without_root_manifest_error(
     assert "workflow submit" in diagnostic
     assert "--workflow-s3-uri" in diagnostic
     assert "s3://bucket/paidf-never-launched/manifest.json" not in diagnostic
+
+
+@pytest.mark.parametrize(
+    ("staged", "submission_state"),
+    [(False, "RESERVED_OR_PLANNED"), (True, "STAGED")],
+)
+def test_paidf_never_launched_cancel_is_repeat_safe_and_never_calls_skypilot(
+    monkeypatch, staged: bool, submission_state: str
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("never-launched cancel must not query SkyPilot")
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_launched_workflow",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("never-launched cancel must not clean cloud resources")
+        ),
+    )
+    if staged:
+        fake_s3.put_object(
+            Bucket="bucket",
+            Key="physical-ai-data-factory/paidf-never-launched/configs/input.json",
+            Body=b"{}",
+        )
+
+    command = [
+        "workbench",
+        "workflow",
+        "cancel",
+        "paidf-never-launched",
+        "--project",
+        "test-rtx",
+        "--json",
+    ]
+    first = runner.invoke(app, command)
+    second = runner.invoke(app, command)
+
+    assert first.exit_code == second.exit_code == 0
+    for result in (first, second):
+        payload = json.loads(result.output)
+        assert payload["outcome"] == "already_absent"
+        assert payload["launch_state"] == "not_launched"
+        assert payload["submission_state"] == submission_state
+        assert payload["cloud_calls"] is False
+    assert (
+        "bucket",
+        "physical-ai-data-factory/paidf-never-launched/npa-workflow/manifest.json",
+    ) in fake_s3.get_requests
+    assert ("bucket", "paidf-never-launched/manifest.json") not in fake_s3.get_requests
+
+
+def test_workflow_cancel_distinguishes_terminal_launched_run(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    manifest = {
+        "run_id": "ordinary-terminal",
+        "workflow_name": "ordinary",
+        "sky_job_id": "44",
+        "stages": {"train": {"name": "train"}},
+    }
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key="ordinary-terminal/manifest.json",
+        Body=json.dumps(manifest).encode(),
+    )
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key="ordinary-terminal/stages/train/status.json",
+        Body=json.dumps({"state": "SUCCEEDED"}).encode(),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *args, **kwargs: WorkflowResult(status="SUCCEEDED", job_id="44", returncode=0),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_launched_workflow",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("terminal run must not be cancelled again")
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "cancel", "s3://bucket/ordinary-terminal", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "terminal"
+    assert payload["status"] == "SUCCEEDED"
+    assert payload["cloud_calls"] is False
+
+
+def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    run_id = "paidf-launched-123"
+    key = f"{run_id}/npa-workflow/manifest.json"
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=key,
+        Body=json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "physical-ai-data-factory",
+                "run_id": run_id,
+                "api_version": "npa.workflow/v0.0.1",
+                "run_prefix_uri": f"s3://bucket/{run_id}",
+                "status": "submitted",
+                "sky_job_id": "55",
+                "steps": [{"state": "augment", "status": "running"}],
+            }
+        ).encode(),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *args, **kwargs: WorkflowResult(status="RUNNING", job_id="55", returncode=0),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        lambda *args, **kwargs: [{"task_id": 0, "task_name": "augment", "status": "RUNNING"}],
+    )
+    calls: list[tuple[str, str, str, object]] = []
+
+    def fake_cleanup(job_id, actual_run_id, *, cluster="", sky_bin=None):
+        calls.append((job_id, actual_run_id, cluster, sky_bin))
+        return SimpleNamespace(
+            ok=True,
+            resources_removed=[actual_run_id],
+            errors=[],
+            commands=[["pinned-sky", "jobs", "cancel", "--yes", job_id]],
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_launched_workflow", fake_cleanup
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "cancel",
+            f"s3://bucket/{key}",
+            "--sky-bin",
+            "/npa/pinned/sky",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "cancelled"
+    assert payload["cloud_calls"] is True
+    assert payload["errors"] == []
+    assert calls == [("55", run_id, "", "/npa/pinned/sky")]
+
+
+def test_ordinary_missing_workflow_cancel_is_verification_failure(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "cancel", "s3://bucket/ordinary-missing", "--json"],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "verification_failed"
+    assert payload["cloud_calls"] is False
 
 
 def test_ordinary_workflow_missing_manifest_remains_an_error(monkeypatch) -> None:

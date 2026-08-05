@@ -254,6 +254,74 @@ def status_cmd(
     typer.echo(f"sky_check: {summary}")
 
 
+@app.command("cleanup-controller")
+def cleanup_controller_cmd(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm teardown of the shared managed-jobs controller after workflows are terminal.",
+    ),
+    sky_bin: str = typer.Option(
+        "", "--sky-bin", help="Pinned NPA SkyPilot executable override."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Emit a machine-readable result."),
+) -> None:
+    """Tear down NPA's shared jobs controller after its managed jobs drain."""
+
+    if not yes:
+        message = (
+            "Plan only: verify all NPA workflows are terminal, then re-run `npa "
+            "skypilot cleanup-controller --yes`. No controller state was changed."
+        )
+        if output_json:
+            typer.echo(
+                json.dumps(
+                    {"outcome": "confirmation_required", "changed": False, "message": message},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            typer.echo(message)
+        raise typer.Exit(code=1)
+
+    from npa.orchestration.skypilot.cleanup import cleanup_jobs_controller
+
+    try:
+        result = cleanup_jobs_controller(sky_bin=sky_bin or None)
+    except (OSError, RuntimeError, ValueError) as exc:
+        payload = {
+            "outcome": "verification_failed",
+            "resources_removed": [],
+            "errors": [str(exc)],
+            "commands": [],
+        }
+    else:
+        payload = {
+            "outcome": "cleaned" if result.ok else "verification_failed",
+            "resources_removed": result.resources_removed,
+            "errors": result.errors,
+            "commands": result.commands,
+        }
+    if output_json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        if payload["resources_removed"]:
+            typer.echo(
+                "Removed SkyPilot controller state: "
+                + ", ".join(payload["resources_removed"])
+            )
+        elif payload["outcome"] == "cleaned":
+            typer.echo("SkyPilot jobs controller is already absent; nothing to remove.")
+        else:
+            typer.echo("SkyPilot controller state could not be verified; nothing was removed.")
+        for error in payload["errors"]:
+            typer.echo(f"Controller cleanup warning: {error}", err=True)
+    if payload["outcome"] == "verification_failed":
+        raise typer.Exit(code=2)
+
+
 @app.command("verify")
 def verify_cmd(
     path: Path | None = typer.Option(

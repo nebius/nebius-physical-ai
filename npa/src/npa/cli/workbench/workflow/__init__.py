@@ -1681,8 +1681,7 @@ def _resolve_sky_bin(sky_bin: str = "") -> str:
     resolved = sky_bin or shutil.which("sky") or ""
     if resolved:
         return resolved
-    env_value = str(Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky")
-    return env_value
+    return str(Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky")
 
 
 def _durable_workflow_status(
@@ -2516,39 +2515,85 @@ def cancel_cmd(
     cluster: str = typer.Option("", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
-    """Cancel a managed workflow job and explicitly tear down its cluster."""
+    """Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops."""
     try:
-        from npa.orchestration.skypilot.workflow_state import cancel_workflow_job, read_manifest
-
-        state = _resolve_monitor_state(
+        status = _durable_workflow_status(
             run_id,
             project=project,
             workflow_s3_uri=workflow_s3_uri,
             workflow_s3_prefix=workflow_s3_prefix,
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
+            sky_bin=sky_bin,
         )
-        manifest = read_manifest(state)
-        job_id = str(manifest.get("sky_job_id") or "")
-        if not job_id:
-            _fail("manifest does not contain a sky_job_id")
-            return
-        result = cancel_workflow_job(
-            sky_bin=_resolve_sky_bin(sky_bin),
-            job_id=job_id,
-            run_id=str(manifest.get("run_id") or _display_run_id(run_id)),
-            cluster=cluster,
-        )
+        normalized = str(status.get("status") or "").upper()
+        resolved_run_id = str(status.get("run_id") or _display_run_id(run_id))
+        job_id = str(status.get("sky_job_id") or "")
+        if normalized == "NOT_SUBMITTED":
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "already_absent",
+                "launch_state": "not_launched",
+                "submission_state": status.get("submission_state", "RESERVED_OR_PLANNED"),
+                "sky_job_id": "",
+                "cloud_calls": False,
+                "message": "The workflow never launched; no SkyPilot job or cluster exists.",
+            }
+        elif _workflow_status_is_terminal(normalized):
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "terminal",
+                "status": normalized,
+                "sky_job_id": job_id,
+                "cloud_calls": False,
+                "message": "The launched workflow is already terminal; no cancellation was issued.",
+            }
+        elif not job_id:
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "verification_failed",
+                "status": normalized or "UNKNOWN",
+                "sky_job_id": "",
+                "cloud_calls": False,
+                "message": "Durable state does not contain a manifest-proven SkyPilot job ID.",
+            }
+        else:
+            from npa.orchestration.skypilot.cleanup import cleanup_launched_workflow
+
+            cleanup = cleanup_launched_workflow(
+                job_id,
+                resolved_run_id,
+                cluster=cluster,
+                sky_bin=sky_bin or None,
+            )
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "cancelled" if cleanup.ok else "verification_failed",
+                "status": normalized or "SUBMITTED",
+                "sky_job_id": job_id,
+                "cloud_calls": True,
+                "resources_removed": cleanup.resources_removed,
+                "commands": cleanup.commands,
+                "errors": cleanup.errors,
+            }
     except Exception as exc:
-        _fail(str(exc))
-        return
+        result = {
+            "run_id": _display_run_id(run_id),
+            "outcome": "verification_failed",
+            "cloud_calls": False,
+            "message": str(exc),
+        }
     if json_output:
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
-        return
-    typer.echo(f"job_id: {result['job_id']}")
-    typer.echo(f"cluster: {result['cluster']}")
-    typer.echo(f"cancel_returncode: {result['cancel_returncode']}")
-    typer.echo(f"down_returncode: {result['down_returncode']}")
+    else:
+        typer.echo(f"run_id: {result['run_id']}")
+        typer.echo(f"outcome: {result['outcome']}")
+        if result.get("message"):
+            typer.echo(str(result["message"]))
+        for error in result.get("errors", []):
+            typer.echo(f"cleanup warning: {error}", err=True)
+    if result["outcome"] == "verification_failed":
+        raise typer.Exit(code=2)
 
 
 @app.command("teardown")

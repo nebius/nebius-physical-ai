@@ -16,7 +16,7 @@ status  Check the status of a workflow run.
 logs  Show logs for a specific stage of a workflow run.
 artifacts  List durable S3 artifact URIs for a workflow run.
 list  List durable S3 workflow runs.
-cancel  Cancel a managed workflow job and explicitly tear down its cluster.
+cancel  Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops.
 teardown  Destroy both VMs from a distill workflow run.
 distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
 stage-src  Upload the local npa package to S3 for image-less workflow steps.
@@ -44,7 +44,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `logs` | Show logs for a specific stage of a workflow run. |
 | `artifacts` | List durable S3 artifact URIs for a workflow run. |
 | `list` | List durable S3 workflow runs. |
-| `cancel` | Cancel a managed workflow job and explicitly tear down its cluster. |
+| `cancel` | Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops. |
 | `teardown` | Destroy both VMs from a distill workflow run. |
 | `distill` | Run expert distillation: L40S (Genesis) + H100 (LeRobot). |
 | `stage-src` | Upload the local npa package to S3 for image-less workflow steps. |

@@ -21,6 +21,7 @@ Options
 --project  <str>  Scope per-alias state and the --full read-only storage-IAM check to this NPA project alias.
 --skip-jobs  Do not query the SkyPilot managed-job queue.
 --sky-bin  <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.
+--json  Emit a machine-readable final cleanup result.
 --help  Show this message and exit.
 ```
 
@@ -34,6 +35,7 @@ Options
 | `--project` | <str>  Scope per-alias state and the --full read-only storage-IAM check to this NPA project alias. |
 | `--skip-jobs` | Do not query the SkyPilot managed-job queue. |
 | `--sky-bin` | <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution. |
+| `--json` | Emit a machine-readable final cleanup result. |
 | `--help` | Show this message and exit. |
 
 ## Subcommands

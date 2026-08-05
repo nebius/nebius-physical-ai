@@ -121,21 +121,22 @@ Mitigation: submit resolves the spec's accelerator against what the cluster
 advertises and remaps it automatically. Run
 `npa workbench workflow gpus --cluster <name>` to see the names yourself, and
 `--no-resolve-accelerators` to submit the spec's values verbatim.
-## `sky down` Refuses Right After `sky jobs cancel`
+## Controller Teardown Refuses Right After Workflow Cancel
 
-Symptom: `sky jobs cancel -a` succeeds, and an immediate `sky down` of the jobs
-controller fails with `NotSupportedError: In-progress managed jobs found. To avoid
-resource leakage, cancel all jobs first` — telling the operator to do what they
-just did.
+Symptom: `npa workbench workflow cancel <run-id> --project <alias>` succeeds,
+and immediate shared-controller teardown reports that managed jobs are still
+in progress.
 
 Root cause: `sky jobs cancel` returns as soon as cancellation is *scheduled*. The
 controller keeps reporting the job as `CANCELLING` for a while, and `sky down`
 refuses while any managed job is non-terminal.
 
-Mitigation: NPA's teardown now waits for cancelled jobs to reach a terminal state
-before running `sky down`, recognizes this specific error, and retries once the
-queue drains. If a job genuinely will not drain, teardown names the job ids and
-says to wait for `sky jobs queue --all` to show them terminal.
+Mitigation: NPA's per-run cancellation waits for the exact manifest-proven job
+and performs best-effort run-cluster cleanup without touching the shared
+controller. Once every workflow is terminal, run `npa skypilot
+cleanup-controller --yes`; it waits for the queue to drain and retries the
+specific controller refusal. Planned/staged runs that never launched report
+`already_absent` and remain repeat-safe without calling SkyPilot.
 
 Category for follow-up: platform.
 

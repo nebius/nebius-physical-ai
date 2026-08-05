@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -491,6 +492,49 @@ def test_skypilot_uninstall_is_idempotent_without_a_venv(tmp_path: Path) -> None
 
     assert result.exit_code == 0, result.output
     assert "No SkyPilot venv" in result.output
+
+
+def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[]),
+    )
+
+    plan = runner.invoke(app, ["skypilot", "cleanup-controller", "--json"])
+    assert plan.exit_code == 1
+    assert json.loads(plan.output)["outcome"] == "confirmation_required"
+    assert calls == []
+
+    cleanup = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "cleanup-controller",
+            "--yes",
+            "--sky-bin",
+            "/npa/pinned/sky",
+            "--json",
+        ],
+    )
+    assert cleanup.exit_code == 0, cleanup.output
+    assert json.loads(cleanup.output)["outcome"] == "cleaned"
+    assert calls == [{"sky_bin": "/npa/pinned/sky"}]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("controller unavailable")),
+    )
+    failed = runner.invoke(
+        app, ["skypilot", "cleanup-controller", "--yes", "--json"]
+    )
+    assert failed.exit_code == 2
+    assert json.loads(failed.output)["outcome"] == "verification_failed"
 
 
 def test_skypilot_uninstall_refuses_to_delete_the_npa_environment(

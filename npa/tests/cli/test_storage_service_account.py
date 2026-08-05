@@ -28,7 +28,9 @@ def _seed_owned_account(
         yaml.safe_dump(
             {
                 "default_project": "prod",
-                "projects": {"prod": {"project_id": "project-a"}},
+                "projects": {
+                    "prod": {"project_id": "project-a", "tenant_id": "tenant-a"}
+                },
             }
         )
     )
@@ -54,7 +56,17 @@ def _seed_owned_account(
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
     from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(nebius_module, "service_account_exists", lambda _account_id: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_identity",
+        lambda account_id, **_kwargs: nebius_module.ServiceAccountIdentity(
+            account_id=account_id,
+            name="lerobot-training",
+            project_id="project-a",
+            tenant_id="tenant-a",
+            profile="",
+        ),
+    )
     monkeypatch.setattr(
         nebius_module,
         "get_service_account_id_by_name",
@@ -369,6 +381,23 @@ def test_storage_service_account_list_not_found_reconciles_absent_account(
 
     credentials_path = _seed_owned_account(monkeypatch, tmp_path)
     deleted: list[str] = []
+    identities = iter(
+        [
+            nebius_module.ServiceAccountIdentity(
+                "serviceaccount-storage",
+                "lerobot-training",
+                "project-a",
+                "tenant-a",
+                "",
+            ),
+            None,
+        ]
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_identity",
+        lambda *_args, **_kwargs: next(identities),
+    )
     monkeypatch.setattr(
         nebius_module,
         "list_access_keys_for_service_account",
@@ -552,27 +581,25 @@ def test_failed_setup_journal_is_trusted_for_safe_recovery(
     assert not credentials_path.exists()
 
 
-def test_missing_ownership_can_report_verified_absence(
+def test_missing_ownership_exact_present_is_consistent_across_dry_run_and_yes(
     monkeypatch, tmp_path
 ) -> None:
     credentials_path = _seed_owned_account(
         monkeypatch, tmp_path, managed_by=""
     )
-    from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(
-        nebius_module,
-        "get_service_account_id_by_name",
-        lambda *_args, **_kwargs: None,
-    )
-
-    result = runner.invoke(
+    dry_run = runner.invoke(
         app,
-        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+        ["storage", "service-account", "delete", "--project", "prod", "--dry-run"],
+    )
+    result = runner.invoke(
+        app, ["storage", "service-account", "delete", "--project", "prod", "--yes"]
     )
 
-    assert result.exit_code == 0, result.output
-    assert "Verified absence" in result.output
+    assert dry_run.exit_code == result.exit_code == 2
+    assert "not ownership proof" in dry_run.output
+    assert "not ownership proof" in result.output
+    assert "Verified absence" not in dry_run.output + result.output
     assert credentials_path.exists()
 
 
@@ -584,7 +611,7 @@ def test_missing_ownership_provider_failure_is_partial(
 
     monkeypatch.setattr(
         nebius_module,
-        "get_service_account_id_by_name",
+        "get_service_account_identity",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             nebius_module.NebiusError("Unauthenticated")
         ),
@@ -608,8 +635,8 @@ def test_owned_account_provider_verification_failure_preserves_provenance(
 
     monkeypatch.setattr(
         nebius_module,
-        "service_account_exists",
-        lambda _account_id: (_ for _ in ()).throw(
+        "get_service_account_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
             nebius_module.NebiusError("PermissionDenied")
         ),
     )
@@ -627,3 +654,185 @@ def test_owned_account_provider_verification_failure_preserves_provenance(
     assert "provider/auth verification failed" in result.output
     assert deleted == []
     assert "storage_iam" in yaml.safe_load(credentials_path.read_text())
+
+
+def test_verified_absence_dry_run_does_not_remove_ownership_before_real_pass(
+    monkeypatch, tmp_path
+) -> None:
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None
+    )
+
+    dry_run = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--dry-run"],
+    )
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Verified absence" in dry_run.output
+    assert yaml.safe_load(credentials_path.read_text())["storage_iam"][
+        "service_account_managed_by"
+    ] == "npa"
+
+    real = runner.invoke(
+        app, ["storage", "service-account", "delete", "--project", "prod", "--yes"]
+    )
+    assert real.exit_code == 0, real.output
+    assert not credentials_path.exists()
+
+
+def test_reconcile_dry_run_and_explicit_attestation_feed_guarded_delete(
+    monkeypatch, tmp_path
+) -> None:
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path, managed_by="")
+    _stub_iam(monkeypatch)
+    from npa.clients import config as config_module
+
+    dry_run = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert dry_run.exit_code == 0, dry_run.output
+    plan = yaml.safe_load(dry_run.output)
+    assert plan["result"] == "reconciliation_planned"
+    assert plan["service_account_id"] == "serviceaccount-storage"
+    assert plan["will_delete"] is False
+    assert yaml.safe_load(credentials_path.read_text())["storage_iam"][
+        "service_account_managed_by"
+    ] == ""
+    config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
+    marker = config["projects"]["prod"]["storage_iam_verification_required"]
+    assert marker["status"] == "present_unverified_ownership"
+    assert marker["service_account_id"] == "serviceaccount-storage"
+
+    missing_attestation = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            "legacy NPA setup",
+            "--yes",
+        ],
+    )
+    assert missing_attestation.exit_code == 2
+
+    sensitive_reason = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            "hf_abcdefghijklmnop",
+            "--attest-npa-created",
+            "--yes",
+        ],
+    )
+    assert sensitive_reason.exit_code == 2
+    assert "credential material" in sensitive_reason.output
+    assert "hf_abcdefghijklmnop" not in sensitive_reason.output
+    assert "recovery" not in yaml.safe_load(credentials_path.read_text())["storage_iam"]
+
+    reconciled = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            "legacy NPA setup",
+            "--attested-by",
+            "operator@example",
+            "--attest-npa-created",
+            "--yes",
+        ],
+    )
+    assert reconciled.exit_code == 0, reconciled.output
+    journal = yaml.safe_load(credentials_path.read_text())["storage_iam"]
+    assert journal["service_account_managed_by"] == "npa-recovery-attested"
+    assert journal["recovery"]["attested_by"] == "operator@example"
+    assert journal["recovery"]["reason"] == "legacy NPA setup"
+    assert journal["recovery"]["provider_verified"] is True
+    assert "secret" not in yaml.safe_dump(journal).lower()
+
+    # Reconciliation is restart-safe, and the resulting journal is accepted by
+    # the existing guarded deletion plan rather than a parallel delete path.
+    repeated = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            "legacy NPA setup",
+            "--attested-by",
+            "operator@example",
+            "--attest-npa-created",
+            "--yes",
+        ],
+    )
+    assert repeated.exit_code == 0, repeated.output
+    delete_plan = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--dry-run"],
+    )
+    assert delete_plan.exit_code == 0, delete_plan.output
+    assert "NPA creation provenance" in delete_plan.output
+
+
+def test_unresolved_marker_blocks_project_forgetting_until_verified_absence(
+    monkeypatch, tmp_path
+) -> None:
+    _seed_owned_account(monkeypatch, tmp_path, managed_by="")
+    from npa.clients import nebius as nebius_module
+
+    partial = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--dry-run"],
+    )
+    assert partial.exit_code == 2
+    blocked = runner.invoke(app, ["configure", "--forget-project", "prod"])
+    assert blocked.exit_code == 2
+    assert "unresolved storage IAM" in blocked.output
+
+    monkeypatch.setattr(
+        nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None
+    )
+    absent = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--dry-run"],
+    )
+    assert absent.exit_code == 0, absent.output
+    forgotten = runner.invoke(app, ["configure", "--forget-project", "prod"])
+    assert forgotten.exit_code == 0, forgotten.output
+    assert "Removed project 'prod'" in forgotten.output

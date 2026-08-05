@@ -322,162 +322,124 @@ def _storage_iam_full_check(
     project: str,
     *,
     prune_verified_absence: bool,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, str]:
     """Return a truthful read-only IAM outcome and whether cleanup is partial."""
 
-    import yaml
-
     from npa.cli.storage import (
+        _observe_storage_iam,
+        _persist_storage_iam_observation,
         _remove_storage_service_account_record,
+        _resolve_storage_iam_context,
         _storage_service_account_record,
+        _untrusted_storage_account_ids,
     )
-    from npa.clients.config import ConfigError, resolve_environment
-    from npa.clients.credentials import CREDENTIALS_PATH
-    from npa.clients.nebius import (
-        DEFAULT_SERVICE_ACCOUNT_NAME,
-        NebiusError,
-        get_service_account_id_by_name,
-        service_account_exists,
-    )
+    from npa.clients.config import ConfigError, storage_iam_residues
 
-    record, ownership_note = _storage_service_account_record()
-    if record is not None:
+    aliases = [project] if project else list(storage_iam_residues())
+    if not aliases:
+        record, _note = _storage_service_account_record()
+        if record is None and not _untrusted_storage_account_ids():
+            return (
+                "Storage IAM: no saved identity evidence or unresolved project marker remains.",
+                False,
+                "fully_clean",
+            )
+        aliases = [""]
+
+    messages: list[str] = []
+    states: list[str] = []
+    partial = False
+    for alias in aliases:
         try:
-            present = service_account_exists(record.account_id)
-        except NebiusError as exc:
-            return (
-                "Storage IAM: provider/auth verification failure for exact "
-                f"NPA-owned account {record.account_id}; cleanup is partial and "
-                f"the ownership record was preserved: {exc}",
-                True,
+            context = _resolve_storage_iam_context(alias)
+            observation = _observe_storage_iam(context)
+            _persist_storage_iam_observation(observation)
+        except ConfigError as exc:
+            messages.append(
+                "Storage IAM: verification could not retain project evidence; "
+                f"cleanup is partial: {exc}"
             )
-        if present:
-            return (
-                "Storage IAM: verified present — NPA-owned service account "
-                f"{record.name} ({record.account_id}) remains. Delete its bucket, "
-                "then run `npa storage service-account delete --project-id "
-                f"{record.project_id} --yes`; local cleanup is partial until that "
-                "command reports verified deletion/absence.",
-                True,
+            states.append("partial_verification_failure")
+            partial = True
+            continue
+        if observation.outcome == "verification_failed":
+            messages.append(
+                "Storage IAM: provider/auth verification failure for project "
+                f"{context.alias or context.project_id}; cleanup is partial and "
+                f"the residue marker was preserved: {observation.detail}"
             )
-        if prune_verified_absence and not _remove_storage_service_account_record(
-            record.account_id
+            states.append("partial_verification_failure")
+            partial = True
+            continue
+        if observation.present:
+            command = (
+                f"npa storage service-account delete --project {context.alias} --dry-run"
+                if observation.ownership == "npa"
+                else "npa storage service-account reconcile --project "
+                f"{context.alias} --id {observation.account_id} --dry-run"
+            )
+            ownership = (
+                "guarded NPA ownership provenance is present"
+                if observation.ownership == "npa"
+                else "ownership is unresolved"
+            )
+            messages.append(
+                "Storage IAM: verified present — exact service account "
+                f"{observation.account_name} ({observation.account_id}) remains in "
+                f"{context.project_id}; {ownership}. It was left untouched and the "
+                f"project was preserved. Continue with `{command}`."
+            )
+            states.append("locally_clean_cloud_iam_unresolved")
+            partial = True
+            continue
+        record, _note = _storage_service_account_record()
+        if (
+            prune_verified_absence
+            and record is not None
+            and observation.account_id == record.account_id
+            and not _remove_storage_service_account_record(record.account_id)
         ):
-            return (
-                "Storage IAM: verified absence, but the stale local ownership "
-                "record could not be removed; fix ~/.npa permissions and retry.",
-                True,
+            messages.append(
+                "Storage IAM: verified absence, but stale local ownership provenance "
+                "could not be removed; fix ~/.npa permissions and retry."
             )
-        return (
-            "Storage IAM: verified absence — the exact NPA-owned service account "
-            f"{record.account_id} is not present."
-            + (
-                " Its stale ownership record was removed."
-                if prune_verified_absence
-                else ""
-            ),
-            False,
+            states.append("partial_local_cleanup")
+            partial = True
+            continue
+        messages.append(
+            "Storage IAM: verified absence — the exact identity is not present; "
+            "its unresolved project marker was cleared."
         )
+        states.append("fully_cleaned" if prune_verified_absence else "fully_clean")
 
-    evidence = False
-    try:
-        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        data = {}
-    if isinstance(data, dict):
-        nebius = data.get("nebius")
-        storage_iam = data.get("storage_iam")
-        setup = data.get("storage_setup")
-        setup_projects = setup.get("projects") if isinstance(setup, dict) else None
-        setup_account_evidence = any(
-            isinstance(project_record, dict)
-            and isinstance(project_record.get("resources"), dict)
-            and isinstance(
-                project_record.get("resources", {}).get("service_account"),
-                dict,
-            )
-            for project_record in (
-                setup_projects.values()
-                if isinstance(setup_projects, dict)
-                else ()
-            )
-        )
-        evidence = bool(
-            (isinstance(nebius, dict) and nebius.get("service_account_id"))
-            or isinstance(storage_iam, dict)
-            or setup_account_evidence
-        )
-
-    if not evidence and not project:
-        return (
-            "Storage IAM: no NPA creation provenance is present and no explicit "
-            "project requires verification.",
-            False,
-        )
-
-    resolved_project = ""
-    try:
-        environment = resolve_environment(project or None)
-    except ConfigError:
-        environment = None
-    resolved_project = str(
-        getattr(environment, "project_id", "") or ""
-    ).strip()
-    if not resolved_project:
-        if evidence:
-            return (
-                "Storage IAM: no trustworthy ownership record and no project ID "
-                "is available to verify absence. Restore/pass the project to `npa "
-                "storage service-account delete --project-id <id> --dry-run`; "
-                "cleanup is partial and no IAM identity was deleted. "
-                + ownership_note,
-                True,
-            )
-        return (
-            "Storage IAM: no NPA creation provenance is present and no configured "
-            "project requires verification.",
-            False,
-        )
-
-    try:
-        observed_id = get_service_account_id_by_name(
-            resolved_project,
-            DEFAULT_SERVICE_ACCOUNT_NAME,
-            strict=True,
-        )
-    except NebiusError as exc:
-        return (
-            "Storage IAM: provider/auth verification failure while checking "
-            f"{resolved_project}; cleanup is partial and nothing was deleted: {exc}",
-            True,
-        )
-    if observed_id is None:
-        return (
-            "Storage IAM: verified absence — no service account named "
-            f"{DEFAULT_SERVICE_ACCOUNT_NAME!r} exists in {resolved_project}.",
-            False,
-        )
-    return (
-        "Storage IAM: no trustworthy ownership record. Provider verification "
-        f"found {DEFAULT_SERVICE_ACCOUNT_NAME} ({observed_id}) in "
-        f"{resolved_project}, but its name is not ownership proof; it was left "
-        "untouched and cleanup is partial. Restore NPA provenance or use an "
-        "operator-controlled IAM verification/removal process.",
-        True,
+    status = (
+        "partial_verification_failure"
+        if "partial_verification_failure" in states
+        else "locally_clean_cloud_iam_unresolved"
+        if "locally_clean_cloud_iam_unresolved" in states
+        else "partial_local_cleanup"
+        if "partial_local_cleanup" in states
+        else "fully_cleaned"
+        if "fully_cleaned" in states
+        else "fully_clean"
     )
+    return "\n".join(messages), partial, status
 
 
 # Teardown is an ordered sequence and nothing checks the order. The step most
 # often missed is the first one: a managed job left non-terminal keeps the jobs
 # controller alive and makes `sky down` refuse.
 TEARDOWN_RUNBOOK = (
-    "sky jobs cancel -a  (then wait for `sky jobs queue --all` to show them terminal; "
-    "with no controller it errors 'No in-progress managed jobs' -- that is success)",
+    "npa workbench workflow cancel <run-id> --project <alias> --json  "
+    "(repeat-safe, including planned/staged runs)",
     "npa agent destroy --project <alias> --name <name> --yes",
+    "npa skypilot cleanup-controller --yes  (only after all NPA workflows are terminal)",
     "npa cluster down --force",
     "npa storage bucket delete --project <alias> --yes --wait",
-    "npa storage service-account delete --project <alias> --yes "
-    "(only when configure recorded that NPA created it)",
+    "npa storage service-account delete --project <alias> --dry-run",
+    "npa storage service-account reconcile --project <alias> --id <exact-id> --dry-run  "
+    "(only when ownership provenance is missing; attest explicitly before deletion)",
+    "npa storage service-account delete --project <alias> --yes",
     "npa configure --forget-project <alias>",
     # Cleanup checks managed jobs before removing the isolated SkyPilot venv;
     # running `skypilot uninstall` afterwards would only be a dead no-op.
@@ -533,7 +495,8 @@ def _iam_note() -> str:
     """A hint about cloud IAM leftovers npa deliberately does not delete."""
     generic = (
         "Cloud IAM (not removed): pre-existing service accounts are left in place; "
-        "remove one deliberately with `nebius iam service-account delete --id <id>`."
+        "inspect any NPA storage candidate with `npa storage service-account "
+        "reconcile --project <alias> --id <exact-id> --dry-run`."
     )
     try:
         import yaml
@@ -564,8 +527,9 @@ def _iam_note() -> str:
                 return (
                     f"Cloud IAM (not removed): the storage principal {sa_id} and any "
                     "pre-existing service accounts remain — deleting a shared SA can "
-                    "break other work. Remove one deliberately with "
-                    f"`nebius iam service-account delete --id {sa_id}`."
+                    "break other work. Verify the exact identity with `npa storage "
+                    "service-account reconcile --project <alias> "
+                    f"--id {sa_id} --dry-run`."
                 )
     except Exception:  # noqa: BLE001 - the note is best-effort
         return generic
@@ -615,6 +579,9 @@ def cleanup_cmd(
         "--sky-bin",
         help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.",
     ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit a machine-readable final cleanup result."
+    ),
 ) -> None:
     """Report (or with --yes remove) local NPA/SkyPilot residue left after teardown.
 
@@ -624,6 +591,7 @@ def cleanup_cmd(
     storage-IAM verification. Neither scope deletes cloud resources. Full cleanup
     exits 2 when IAM is present/unverified or provider verification fails.
     """
+    import json
     import shutil
 
     from npa.cli.cluster.terraform_runtime import (
@@ -631,6 +599,28 @@ def cleanup_cmd(
         remove_terraform_residue,
     )
     from npa.clients.config import clear_skypilot_bin
+
+    def emit(message: str = "", *, err: bool = False) -> None:
+        if not output_json:
+            typer.echo(message, err=err)
+
+    def emit_json(result: str, local_state: str, *, cleanup_failed: bool = False) -> None:
+        typer.echo(
+            json.dumps(
+                {
+                    "result": result,
+                    "local_state": local_state,
+                    "iam_state": iam_status,
+                    "iam_verification_required": iam_partial,
+                    "project_retained": iam_partial,
+                    "cleanup_failed": cleanup_failed,
+                    "removed_bytes": total if yes else 0,
+                    "iam_detail": iam_message,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
 
     npa_dir = Path.home() / ".npa"
     residue = _collect_residue(include_sky=include_sky)
@@ -640,13 +630,14 @@ def cleanup_cmd(
     full_empty_state = _full_empty_state(npa_dir) if full else []
     iam_message = ""
     iam_partial = False
+    iam_status = "not_checked"
     if full:
-        iam_message, iam_partial = _storage_iam_full_check(
+        iam_message, iam_partial, iam_status = _storage_iam_full_check(
             project,
             prune_verified_absence=yes,
         )
 
-    if not skip_jobs:
+    if not skip_jobs and not output_json:
         _report_managed_jobs(sky_bin)
 
     terraform_sizes = {item.path: _dir_size(item.path) for item in terraform_residue}
@@ -658,12 +649,18 @@ def cleanup_cmd(
         and not credential_labels
         and not full_empty_state
     ):
-        typer.echo("No local NPA/SkyPilot residue to clean up.")
-        typer.echo(iam_message or _iam_note())
-        if not yes:
-            _print_runbook()
+        if output_json:
+            emit_json(
+                iam_status if iam_partial else ("fully_cleaned" if yes else "fully_clean"),
+                "fully_clean",
+            )
+        else:
+            typer.echo("No local NPA/SkyPilot residue to clean up.")
+            typer.echo(iam_message or _iam_note())
+            if not yes:
+                _print_runbook()
         if iam_partial:
-            typer.echo(
+            emit(
                 "Full cleanup is partial because storage IAM was not verified absent/deleted.",
                 err=True,
             )
@@ -675,30 +672,33 @@ def cleanup_cmd(
         if full
         else "secret-free; your tokens/config are untouched"
     )
-    typer.echo(f"Local residue after teardown ({scope}):")
+    emit(f"Local residue after teardown ({scope}):")
     for item in residue:
-        typer.echo(f"  {item.label:<26} {_human(item.size):>8}  {item.path}")
+        emit(f"  {item.label:<26} {_human(item.size):>8}  {item.path}")
     for item in terraform_residue:
         suffix = f" ({item.reason}; will not remove)" if not item.removable else ""
-        typer.echo(
+        emit(
             f"  {item.label:<26} {_human(terraform_sizes[item.path]):>8}  "
             f"{item.path}{suffix}"
         )
     for empty in empty_dirs:
-        typer.echo(f"  {'empty state dir':<26} {'-':>8}  {empty}")
+        emit(f"  {'empty state dir':<26} {'-':>8}  {empty}")
     for label in credential_labels:
-        typer.echo(f"  {label:<26} {'saved':>8}")
+        emit(f"  {label:<26} {'saved':>8}")
     for path in full_empty_state:
-        typer.echo(f"  {'empty local state':<26} {'-':>8}  {path}")
+        emit(f"  {'empty local state':<26} {'-':>8}  {path}")
     if residue or terraform_residue:
-        typer.echo(f"  {'total':<26} {_human(total):>8}")
+        emit(f"  {'total':<26} {_human(total):>8}")
 
     if not yes:
-        typer.echo("")
+        emit("")
         rerun = "--full --yes" if full else "--yes"
-        typer.echo(f"Re-run with {rerun} to remove them (or --keep-sky to leave ~/.sky).")
-        typer.echo(iam_message or _iam_note())
-        _print_runbook()
+        emit(f"Re-run with {rerun} to remove them (or --keep-sky to leave ~/.sky).")
+        emit(iam_message or _iam_note())
+        if output_json:
+            emit_json(iam_status if iam_partial else "cleanup_planned", "residue_present")
+        else:
+            _print_runbook()
         if iam_partial:
             raise typer.Exit(code=2)
         return
@@ -710,30 +710,30 @@ def cleanup_cmd(
             shutil.rmtree(item.path)
         except OSError as exc:
             cleanup_failed = True
-            typer.echo(
+            emit(
                 f"Warning: could not remove {item.label} at {item.path}: {exc}",
                 err=True,
             )
             continue
-        typer.echo(f"Removed {item.label}: {item.path}")
+        emit(f"Removed {item.label}: {item.path}")
         if item.label == "SkyPilot venv":
             removed_bin = clear_skypilot_bin()
     for item in terraform_residue:
         problem = remove_terraform_residue(item)
         if problem:
             cleanup_failed = True
-            typer.echo(
+            emit(
                 f"Warning: could not remove {item.label} at {item.path}: {problem}",
                 err=True,
             )
         else:
-            typer.echo(f"Removed {item.label}: {item.path}")
+            emit(f"Removed {item.label}: {item.path}")
     if removed_bin:
-        typer.echo("Cleared skypilot.sky_bin from ~/.npa/config.yaml.")
+        emit("Cleared skypilot.sky_bin from ~/.npa/config.yaml.")
     for empty in empty_dirs:
         try:
             empty.rmdir()
-            typer.echo(f"Removed empty state dir: {empty}")
+            emit(f"Removed empty state dir: {empty}")
         except OSError:
             pass
     # Drop the now-empty agents/ and workbenches/ base dirs too in the narrow
@@ -750,12 +750,12 @@ def cleanup_cmd(
     if full:
         cleared_credentials = _clear_full_credentials()
         if cleared_credentials:
-            typer.echo(
+            emit(
                 "Removed locally stored " + ", ".join(cleared_credentials) + "."
             )
         if credential_labels and set(cleared_credentials) != set(credential_labels):
             cleanup_failed = True
-            typer.echo(
+            emit(
                 "Warning: one or more requested shared credentials could not be removed; "
                 "the credentials file was preserved for a safe retry.",
                 err=True,
@@ -763,33 +763,46 @@ def cleanup_cmd(
         pruned_state = _prune_full_empty_state(npa_dir)
         for label, path in pruned_state:
             if label == "empty NPA home":
-                typer.echo(f"Removed empty NPA home: {path}")
+                emit(f"Removed empty NPA home: {path}")
             else:
-                typer.echo(f"Removed {label}: {path}")
+                emit(f"Removed {label}: {path}")
     remaining_terraform = collect_terraform_residue()
     if remaining_terraform:
         cleanup_failed = True
-        typer.echo(
+        emit(
             "Warning: Terraform residue remains after cleanup: "
             + ", ".join(str(item.path) for item in remaining_terraform),
             err=True,
         )
-    typer.echo("")
+    emit("")
     if full and not cleanup_failed and not iam_partial:
-        typer.echo(
+        emit(
             f"Freed ~{_human(total)} of local caches. Known shared credentials and "
             "empty NPA-owned state were removed; non-empty/unrelated data was kept."
         )
     elif full:
-        typer.echo(
+        emit(
             f"Freed ~{_human(total)} of local caches, but full local cleanup was incomplete. "
             "Non-empty/unrelated data was kept; fix the warning above and retry."
         )
     else:
-        typer.echo(f"Freed ~{_human(total)} of local caches. Tokens and project config were kept.")
-    typer.echo(iam_message or _iam_note())
+        emit(f"Freed ~{_human(total)} of local caches. Tokens and project config were kept.")
+    emit(iam_message or _iam_note())
+    if output_json:
+        result = (
+            iam_status
+            if iam_partial
+            else "partial_local_cleanup"
+            if cleanup_failed
+            else "fully_cleaned"
+        )
+        emit_json(
+            result,
+            "partial_local_cleanup" if cleanup_failed else "fully_cleaned",
+            cleanup_failed=cleanup_failed,
+        )
     if iam_partial:
-        typer.echo(
+        emit(
             "Full cleanup is partial because storage IAM was not verified absent/deleted.",
             err=True,
         )

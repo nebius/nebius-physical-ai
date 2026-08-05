@@ -1199,6 +1199,68 @@ def test_exact_service_account_verification_rejects_ambiguous_empty_success(mock
         nebius.service_account_exists("serviceaccount-storage")
 
 
+def test_exact_service_account_identity_verifies_profile_project_and_tenant(mocker) -> None:
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json",
+        side_effect=[
+            {
+                "metadata": {
+                    "id": "serviceaccount-storage",
+                    "name": "lerobot-training",
+                    "parent_id": "project-a",
+                }
+            },
+            {"metadata": {"id": "project-a", "parent_id": "tenant-a"}},
+        ],
+    )
+
+    identity = nebius.get_service_account_identity(
+        "serviceaccount-storage",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        expected_name="lerobot-training",
+        profile="operator-profile",
+    )
+
+    assert identity == nebius.ServiceAccountIdentity(
+        "serviceaccount-storage",
+        "lerobot-training",
+        "project-a",
+        "tenant-a",
+        "operator-profile",
+    )
+    assert run_json.call_args_list[0].args[0][:2] == ["--profile", "operator-profile"]
+    assert run_json.call_args_list[1].args[0] == [
+        "--profile",
+        "operator-profile",
+        "iam",
+        "project",
+        "get",
+        "--id",
+        "project-a",
+    ]
+
+
+def test_exact_service_account_identity_never_treats_missing_scope_as_absence(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={
+            "metadata": {
+                "id": "serviceaccount-storage",
+                "name": "lerobot-training",
+            }
+        },
+    )
+
+    with pytest.raises(NebiusError, match="incomplete service-account identity"):
+        nebius.get_service_account_identity(
+            "serviceaccount-storage",
+            project_id="project-a",
+            tenant_id="tenant-a",
+            expected_name="lerobot-training",
+        )
+
+
 def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius.bootstrap_environment",

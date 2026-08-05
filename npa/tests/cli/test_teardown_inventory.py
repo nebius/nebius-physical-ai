@@ -470,7 +470,9 @@ def test_agent_destroy_keep_iam_only_reports(monkeypatch, tmp_path: Path) -> Non
 
     assert result.exit_code == 0, result.output
     assert deleted == []
-    assert "nebius iam service-account delete" in result.output
+    assert "npa agent destroy" in result.output
+    assert "--purge-iam --yes" in result.output
+    assert "nebius iam service-account delete" not in result.output
 
 
 def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) -> None:

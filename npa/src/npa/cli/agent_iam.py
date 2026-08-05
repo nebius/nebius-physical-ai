@@ -304,7 +304,7 @@ def report_agent_iam(
 
 
 def format_iam_leftovers(leftovers: dict[str, Any], *, project_id: str, last_agent: bool) -> list[str]:
-    """Return report lines naming what destroy did not delete, with commands."""
+    """Return report lines naming what destroy did not delete, with NPA guidance."""
     sa_id = str(leftovers.get("service_account_id", "") or "")
     if not sa_id:
         return []
@@ -318,16 +318,14 @@ def format_iam_leftovers(leftovers: dict[str, Any], *, project_id: str, last_age
     ]
     if last_agent and leftovers.get("owned_by_npa"):
         lines.append(
-            "  This project has no agents left, so nothing needs it. Remove it with "
-            "`npa agent destroy --purge-iam` next time, or now:"
+            "  This project has no agents left, so nothing needs it. Re-run the "
+            "same NPA teardown with explicit IAM cleanup: `npa agent destroy "
+            "--project <alias> --name <name> --purge-iam --yes`."
         )
-        for key_id in keys:
-            lines.append(f"    nebius iam v2 access-key delete --id {key_id}")
-        lines.append(f"    nebius iam service-account delete --id {sa_id}")
     elif last_agent:
         lines.append(
             "  NPA has no creation provenance for this account. Verify ownership "
-            "and dependencies outside NPA before deleting it manually."
+            "and dependencies without deleting it; do not bypass NPA's ownership guard."
         )
     else:
         lines.append(

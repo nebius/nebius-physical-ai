@@ -14,6 +14,7 @@ from npa.orchestration.skypilot.cleanup import (
     CleanupResult,
     InvalidRunIdError,
     cleanup_all_for_run,
+    cleanup_launched_workflow,
     cleanup_jobs_controller,
     cluster_name_patterns_for_run,
     run_tag,
@@ -120,6 +121,45 @@ def test_cleanup_all_for_run_matches_run_id_patterns(monkeypatch: pytest.MonkeyP
     assert not any(call.startswith("down:*") for call in calls)
     assert "sky-jobs-controller-abc123" not in result.resources_removed
     assert cluster_name_patterns_for_run(run_id)[0] == run_tag(run_id)
+
+
+def test_cleanup_launched_workflow_uses_exact_job_and_keeps_controller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        cleanup_module,
+        "_cancel_job",
+        lambda job_id, **_kwargs: calls.append(("cancel", job_id))
+        or CleanupResult(resources_removed=[f"job:{job_id}"]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "wait_for_jobs_terminal",
+        lambda job_ids, **_kwargs: (True, []),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster, **_kwargs: calls.append(("down", cluster))
+        or CleanupResult(resources_removed=[cluster]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "cleanup_jobs_controller",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("per-run cancel must keep the shared controller")
+        ),
+    )
+
+    result = cleanup_launched_workflow(
+        "73", "ordinary-run", cluster="ordinary-cluster", sky_bin=sky_bin
+    )
+
+    assert result.ok
+    assert calls == [("cancel", "73"), ("down", "ordinary-cluster")]
+    assert result.resources_removed == ["job:73", "ordinary-cluster"]
 
 
 def test_cluster_name_patterns_for_run_rejects_short_run_id() -> None:

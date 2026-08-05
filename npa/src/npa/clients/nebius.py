@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import warnings
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -25,6 +26,17 @@ from npa.smoke._versions import supported_tool_version
 
 class NebiusError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class ServiceAccountIdentity:
+    """Allowlisted provider identity used by guarded IAM reconciliation."""
+
+    account_id: str
+    name: str
+    project_id: str
+    tenant_id: str
+    profile: str
 
 
 # ── Low-level CLI runner ─────────────────────────────────────────────────
@@ -1080,7 +1092,9 @@ def _access_key_metadata_scalar(
     return value
 
 
-def _list_access_key_metadata(project_id: str) -> list[dict[str, Any]]:
+def _list_access_key_metadata(
+    project_id: str, *, profile: str | None = None
+) -> list[dict[str, Any]]:
     """Return a strict allowlist of access-key metadata from the Nebius CLI.
 
     Do not replace this with ``_run_json(... access-key list ...)``: the upstream
@@ -1092,8 +1106,10 @@ def _list_access_key_metadata(project_id: str) -> list[dict[str, Any]]:
     if not project_id:
         return []
     try:
+        profile_args, _resolved_profile = _iam_profile_args(profile)
         output = _run(
             [
+                *profile_args,
                 "iam",
                 "v2",
                 "access-key",
@@ -1615,6 +1631,7 @@ def get_service_account_id_by_name(
     name: str,
     *,
     strict: bool = False,
+    profile: str | None = None,
 ) -> str | None:
     """Return a service-account id when *name* exists, else ``None``.
 
@@ -1623,11 +1640,19 @@ def get_service_account_id_by_name(
     """
 
     try:
-        data = _run_json([
-            "iam", "service-account", "get-by-name",
-            "--parent-id", project_id,
-            "--name", name,
-        ])
+        profile_args, _resolved_profile = _iam_profile_args(profile)
+        data = _run_json(
+            [
+                *profile_args,
+                "iam",
+                "service-account",
+                "get-by-name",
+                "--parent-id",
+                project_id,
+                "--name",
+                name,
+            ]
+        )
     except NebiusError as exc:
         message = str(exc)
         if strict:
@@ -1651,6 +1676,116 @@ def get_service_account_id_by_name(
             "account; presence or absence could not be established"
         )
     return resolved or None
+
+
+def _iam_profile_args(profile: str | None = None) -> tuple[list[str], str]:
+    """Return global Nebius CLI profile args and the resolved profile label."""
+
+    from npa.clients.nebius_auth import nebius_profile
+
+    resolved = str(profile if profile is not None else nebius_profile()).strip()
+    return (["--profile", resolved] if resolved else []), resolved
+
+
+def get_service_account_identity(
+    service_account_id: str,
+    *,
+    project_id: str,
+    tenant_id: str = "",
+    expected_name: str = "",
+    profile: str | None = None,
+) -> ServiceAccountIdentity | None:
+    """Strictly verify one immutable service-account identity and its scope.
+
+    ``None`` means the provider authoritatively returned NotFound for the exact
+    ID.  Authentication errors, incomplete payloads, and scope/name mismatches
+    raise instead of being collapsed into absence.
+    """
+
+    account_id = str(service_account_id or "").strip()
+    expected_project = str(project_id or "").strip()
+    expected_tenant = str(tenant_id or "").strip()
+    wanted_name = str(expected_name or "").strip()
+    if not account_id or not expected_project:
+        raise NebiusError(
+            "Exact service-account ID and provider project ID are required for IAM verification"
+        )
+    profile_args, resolved_profile = _iam_profile_args(profile)
+    try:
+        data = _run_json(
+            [*profile_args, "iam", "service-account", "get", "--id", account_id]
+        )
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return None
+        raise
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    if not isinstance(metadata, dict):
+        raise NebiusError(
+            "Nebius returned no service-account metadata; presence or scope could not be verified"
+        )
+    returned_id = str(metadata.get("id", "") or "").strip()
+    returned_name = str(metadata.get("name", "") or "").strip()
+    returned_project = str(
+        metadata.get("parent_id", "") or metadata.get("parentId", "") or ""
+    ).strip()
+    if returned_id != account_id:
+        raise NebiusError(
+            "Nebius returned a different service-account ID while verifying the exact identity"
+        )
+    if not returned_name or not returned_project:
+        raise NebiusError(
+            "Nebius returned incomplete service-account identity fields; presence is not absence"
+        )
+    if returned_project != expected_project:
+        raise NebiusError(
+            f"Service account {account_id} belongs to project {returned_project}, not {expected_project}"
+        )
+    if wanted_name and returned_name != wanted_name:
+        raise NebiusError(
+            f"Service account {account_id} has name {returned_name!r}, not {wanted_name!r}"
+        )
+
+    try:
+        project_data = _run_json(
+            [*profile_args, "iam", "project", "get", "--id", expected_project]
+        )
+    except NebiusError as exc:
+        raise NebiusError(
+            f"Could not verify provider project scope for {account_id}: {exc}"
+        ) from exc
+    project_metadata = (
+        project_data.get("metadata") if isinstance(project_data, dict) else None
+    )
+    if not isinstance(project_metadata, dict):
+        raise NebiusError(
+            f"Nebius returned no project metadata while verifying {account_id}"
+        )
+    returned_project_id = str(project_metadata.get("id", "") or "").strip()
+    returned_tenant = str(
+        project_metadata.get("parent_id", "")
+        or project_metadata.get("parentId", "")
+        or ""
+    ).strip()
+    if returned_project_id != expected_project:
+        raise NebiusError(
+            "Nebius returned a different project while verifying service-account scope"
+        )
+    if expected_tenant and not returned_tenant:
+        raise NebiusError(
+            f"Nebius returned no tenant for project {expected_project}; scope is ambiguous"
+        )
+    if expected_tenant and returned_tenant != expected_tenant:
+        raise NebiusError(
+            f"Project {expected_project} belongs to tenant {returned_tenant}, not {expected_tenant}"
+        )
+    return ServiceAccountIdentity(
+        account_id=returned_id,
+        name=returned_name,
+        project_id=returned_project,
+        tenant_id=returned_tenant,
+        profile=resolved_profile,
+    )
 
 
 def service_account_exists(service_account_id: str) -> bool:
@@ -1686,7 +1821,11 @@ def service_account_exists(service_account_id: str) -> bool:
 
 
 def list_access_keys_for_service_account(
-    project_id: str, sa_id: str, *, strict: bool = False
+    project_id: str,
+    sa_id: str,
+    *,
+    strict: bool = False,
+    profile: str | None = None,
 ) -> list[dict[str, str]]:
     """Return ``[{"id", "name", "state"}]`` for every access key owned by *sa_id*.
 
@@ -1696,7 +1835,7 @@ def list_access_keys_for_service_account(
     if not project_id or not sa_id:
         return []
     try:
-        items = _list_access_key_metadata(project_id)
+        items = _list_access_key_metadata(project_id, profile=profile)
     except NebiusError:
         if strict:
             raise
@@ -1721,18 +1860,20 @@ def list_access_keys_for_service_account(
     return [key for key in keys if key["id"]]
 
 
-def delete_access_key(access_key_id: str) -> None:
+def delete_access_key(access_key_id: str, *, profile: str | None = None) -> None:
     """Delete an IAM access key by id."""
     if not access_key_id:
         return
-    _run(["iam", "v2", "access-key", "delete", "--id", access_key_id])
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    _run([*profile_args, "iam", "v2", "access-key", "delete", "--id", access_key_id])
 
 
-def delete_service_account(sa_id: str) -> None:
+def delete_service_account(sa_id: str, *, profile: str | None = None) -> None:
     """Delete a service account by id."""
     if not sa_id:
         return
-    _run(["iam", "service-account", "delete", "--id", sa_id])
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    _run([*profile_args, "iam", "service-account", "delete", "--id", sa_id])
 
 
 def bootstrap_agent_environment(
