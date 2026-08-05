@@ -328,9 +328,15 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
                 teardown_guard.mark_launched(config_path=config_path)
                 summary = {"run_id": run_id, "submit": result.__dict__, "outputs": outputs}
-                deadline = time.time() + max(args.wait_timeout, 0)
+                # A non-positive timeout means "wait until terminal". Long model
+                # downloads and video generation are normal solution-smoke work;
+                # callers must opt into a deadline instead of inheriting a hidden
+                # one-hour cap from the generic container verifier.
+                deadline = None if args.wait_timeout <= 0 else time.time() + args.wait_timeout
                 final = workflow_status(run_id, sky_bin=sky_bin)
-                while final.status not in TERMINAL_STATUSES and time.time() < deadline:
+                while final.status not in TERMINAL_STATUSES and (
+                    deadline is None or time.time() < deadline
+                ):
                     time.sleep(max(args.poll_interval, 1))
                     final = workflow_status(run_id, sky_bin=sky_bin)
                 summary["final"] = final.__dict__

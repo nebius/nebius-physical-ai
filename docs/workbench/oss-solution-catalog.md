@@ -22,6 +22,7 @@ unique and must be tested with its own upstream-named capabilities.
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `policy_config_materialization` | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
+| Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 
 ## Live capability results
 
@@ -49,6 +50,8 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
 | Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **pending live** | Local pinned BYOF/workflow contract validates; no pushed-image H100 run or S3 evidence recorded |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **pending live** | Smoke decodes every frame and enforces dimensions/count/fps/content checks; live artifact pending |
 
 ## Native Capabilities Per Container
 
@@ -123,6 +126,44 @@ run time. Actions parse to the real 27-binary / 121-categorical VPT layout that
 `train_dynamics.py` asserts. Dream fidelity scales with the tokenizer/dynamics
 training budget (`OD_TOK_STEPS`/`OD_DYN_STEPS`; upstream trains ~200k). LPIPS is
 left off (no HF download); FVD/I3D scoring (`eval_fvd.py`) remains a follow-up.
+
+### Alibaba Wan 2.2 TI2V-5B
+
+Official Alibaba generative-video baseline, pinned to
+`Wan-Video/Wan2.2@42bf4cfaa384bc21833865abc2f9e6c0e67233dc` with the
+official `Wan-AI/Wan2.2-TI2V-5B` checkpoint pinned to
+`921dbaf3f1674a56f47e83fb80a34bac8a8f203e`. Checkpoint and tokenizer files are
+fetched at run time; they are not baked into the BYOF image. The checked-in
+profile targets one H100 and the upstream PyTorch SDPA fallback. It makes no
+Blackwell/SM120 claim.
+
+| Capability | Status | Upstream basis / NPA evidence |
+| --- | --- | --- |
+| `wan2.2_ti2v_5b_text_to_video` | pending live (local contract) | native `wan.WanTI2V.generate`, official 1280x704 TI2V-5B size, real MP4 output |
+| `wan2.2_decoded_mp4_validation` | pending live (local contract) | decode every frame; validate dimensions/count/fps/size and reject blank or uniform output |
+| `wan2.2_ti2v_5b_image_to_video` | deferred | official unified-model capability and a real optional S3-image code path exist, but no separate live input/output evidence |
+| `wan2.2_t2v_a14b` / `wan2.2_i2v_a14b` | deferred | separate MoE checkpoints and materially different GPU contract; not in this image gate |
+| `wan2.2_s2v_14b` | deferred | separate speech/audio inputs and checkpoint |
+| `wan2.2_animate_14b` | deferred | separate character-animation inputs and checkpoint |
+| `wan2.2_fine_tuning` | deferred | pinned official source does not expose a TI2V training entrypoint |
+| `bellboy_private_action_prediction` as stock Wan | rejected | action prediction is not an upstream Wan 2.2 capability |
+| `bellboy_private_action_prediction` as customer BYOF | deferred | private repo/ref, entrypoint, checkpoint, action schema, data authorization, predictions artifact, and held-out evaluator are not supplied |
+
+The primary JSON is `wan2_2_ti2v_5b_text_to_video.json`; the accompanying
+`wan2_2_ti2v_5b.mp4` is uploaded by the generic BYOF S3 runner and renders in
+the NPA agent's existing video viewer. `wan2_2_runtime_inventory.json` records
+the package/license metadata and baked-checkpoint scan from inside the pulled
+image. The local contract is not registry
+admission: the gated H100 E2E must build/push or select the exact registry
+image, run the real generator, retrieve the named JSON and MP4 from S3, decode
+the MP4 again, and verify the GPU topology.
+
+Bellboy's episode/action boundary is a separate, honest workflow composition in
+`bellboy-wan2.2-e2e.yaml`; stock Wan records episode lineage and accepts only a
+prompt plus optional context image. It does not consume actions, train on the
+episodes, or emit action predictions. See
+[`wan2.2-bellboy.md`](wan2.2-bellboy.md) for the versioned S3 manifest,
+held-out-real evaluation boundary, licensing layers, and private-fork contract.
 
 ## First-class Workbench tools (not BYOF)
 

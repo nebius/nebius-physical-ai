@@ -641,6 +641,28 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "byof-wan2.2.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        notes=(
+            "BYOF Wan 2.2 TI2V-5B candidate. Plan-only in the shared matrix: "
+            "the real pushed-image H100 generation, decoded MP4, topology, and "
+            "S3 evidence gate is test_byof_wan22_live_e2e.py."
+        ),
+    ),
+    SubmitLiveCase(
+        "bellboy-wan2.2-e2e.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        notes=(
+            "Bellboy composition is plan-only in the shared matrix because it "
+            "requires operator-owned train and heldout episode manifests plus "
+            "the separately gated real Wan H100 BYOF build."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos-synth-fanout-curation.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),

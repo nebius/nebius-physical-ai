@@ -470,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--run-id",
                     args.run_id,
                     "--wait-timeout",
-                    str(min(args.wait_timeout, 3600)),
+                    str(args.wait_timeout),
                     "--poll-interval",
                     str(args.poll_interval),
                     "--repo-root",

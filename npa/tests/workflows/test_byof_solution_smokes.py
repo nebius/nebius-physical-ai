@@ -15,10 +15,11 @@ SOLUTION_SPECS = sorted(
     if path.name != "byof.yaml"
 )
 
-# Primary capability contracts for onboarded solutions (solution-specific ids).
+# Primary capability contracts for onboarded and pending-live solution candidates
+# (solution-specific ids; catalog status remains authoritative).
 # Keep in sync with skills/workflows/oss-solution-registry-onboard/SKILL.md
 # and docs/workbench/oss-solution-catalog.md.
-ACCEPTED_CAPABILITIES = {
+SOLUTION_CAPABILITY_CONTRACTS = {
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
@@ -83,6 +84,15 @@ ACCEPTED_CAPABILITIES = {
             "world_model_rerun_visualization",  # 3-stream Rerun .rrd artifact
         ],
     },
+    "wan2.2": {
+        "capability_name": "wan2.2_ti2v_5b_text_to_video",
+        "smoke_artifact_name": "wan2_2_ti2v_5b_text_to_video.json",
+        "spec": "byof-wan2.2.yaml",
+        "must_exercise": [
+            "wan2.2_ti2v_5b_text_to_video",
+            "wan2.2_decoded_mp4_validation",
+        ],
+    },
 }
 
 
@@ -118,12 +128,12 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
         assert "capabilities_exercised" in smoke, path.name
 
 
-def test_accepted_capability_contracts_match_specs() -> None:
+def test_solution_capability_contracts_match_specs() -> None:
     by_solution = {
         str(_load_config(path).get("solution_name")): path for path in SOLUTION_SPECS
     }
-    assert set(by_solution) == set(ACCEPTED_CAPABILITIES)
-    for solution, expected in ACCEPTED_CAPABILITIES.items():
+    assert set(by_solution) == set(SOLUTION_CAPABILITY_CONTRACTS)
+    for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
         path = by_solution[solution]
         config = _load_config(path)
         assert path.name == expected["spec"]
@@ -141,7 +151,7 @@ def test_registry_skill_is_solution_specific_not_taxonomy() -> None:
     assert "Do **not** force capabilities into a shared taxonomy" in text
     assert "Capability Testing Built Into Onboarding" in text
     assert "Capability Families (required taxonomy)" not in text
-    for solution, expected in ACCEPTED_CAPABILITIES.items():
+    for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
         assert expected["capability_name"] in text or expected["spec"] in text, solution
         assert f"byof-{solution}.yaml" in text or expected["spec"] in text
 
@@ -150,6 +160,50 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     text = CATALOG_PATH.read_text(encoding="utf-8")
     assert "Native Capabilities Per Container" in text
     assert "shared taxonomy" in text.lower() or "solution-specific" in text.lower()
-    for solution, expected in ACCEPTED_CAPABILITIES.items():
+    for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
         assert expected["capability_name"] in text, solution
         assert expected["smoke_artifact_name"] in text, solution
+
+
+def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-wan2.2.yaml")
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+    assert config["base_image"] == "ubuntu:22.04"
+    assert config["resource_profile_yaml"] == "byof-solution-smoke-h100-gpu"
+    assert config["wait_timeout"] == "0"
+    assert "snapshot_download" not in build
+    assert "Wan-AI/" not in build
+    assert "snapshot_download" in smoke
+    assert "921dbaf3f1674a56f47e83fb80a34bac8a8f203e" in smoke
+    assert '"weights_baked": False' in smoke
+    assert "wan2_2_runtime_inventory.json" in smoke
+    assert "large_checkpoint_shaped_files" in smoke
+    assert "python_packages" in smoke and "os_packages" in smoke
+    assert "chmod -R a+rX /opt/byof/.venv /opt/byof" in build
+    assert "flash_attn" not in build
+    assert "scaled_dot_product_attention" in smoke
+    assert "generator.generate(" in smoke and "save_video(" in smoke
+    assert "cv2.VideoCapture" in smoke
+    assert "frames are temporally uniform" in smoke
+    assert "wan2.2_ti2v_5b_image_to_video (pending separate live" in smoke
+    assert "Wan input mode and declared BYOF contract disagree" in smoke
+    assert "wan2_2_ti2v_5b_image_to_video.json" in smoke
+    assert '"bellboy_private_action_prediction"' in smoke
+    assert "action_prediction" not in str(config["capability_name"])
+
+
+def test_wan22_zero_wait_reaches_the_terminal_state_without_a_hidden_cap() -> None:
+    repo_runner = (ROOT / "npa" / "scripts" / "run_byof_repo.py").read_text(
+        encoding="utf-8"
+    )
+    verify_runner = (
+        ROOT / "npa" / "scripts" / "run_byof_container_verify.py"
+    ).read_text(encoding="utf-8")
+
+    assert "str(min(args.wait_timeout, 3600))" not in repo_runner
+    assert "str(args.wait_timeout)" in repo_runner
+    assert "None if args.wait_timeout <= 0" in verify_runner
+    assert "deadline is None or time.time() < deadline" in verify_runner

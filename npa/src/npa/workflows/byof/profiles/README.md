@@ -18,6 +18,7 @@ means editing the spec; picking a *pod shape* means picking a profile here.
 | `byof-datagen-rtxpro-smoke.yaml` | `datagen` smoke | RTX PRO, scripted LeIsaac datagen |
 | `byof-container-smoke-rtxpro.yaml` | `container-verify` / `solution-smoke` | CPU only |
 | `byof-solution-smoke-rtxpro-gpu.yaml` | `solution-smoke` needing CUDA/EGL/Vulkan | RTX PRO |
+| `byof-solution-smoke-h100-gpu.yaml` | tensor-only `solution-smoke` with Hopper-tested kernels | `H100:1` |
 | `skypilot-kubernetes-rtxpro.yaml` | *not a task* — SkyPilot **global config** (`--config`) setting `imagePullSecrets` | — |
 
 ## Why they are here and not in the SkyPilot catalog
