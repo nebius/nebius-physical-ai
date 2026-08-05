@@ -453,6 +453,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         image_tool="groot",
         config_vars=(
             ("gpu_count", "2"),
+            ("nccl_transport", "socket"),
             ("max_steps", "1"),
             ("dataloader_num_workers", "0"),
             ("save_steps", "1"),
@@ -461,8 +462,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes=(
             "Runs the real pinned GR00T N1.7 launch_finetune.py inside one "
             "two-GPU stage. The same gpu_count renders H100:2 and drives "
-            "torchrun --nproc_per_node=2; NPA_E2E_GROOT_DATASET_SRC supplies a "
-            "real GR00T-format LeRobot dataset."
+            "torchrun --nproc_per_node=2. The one-step live matrix uses the "
+            "socket NCCL compatibility transport; NPA_E2E_GROOT_DATASET_SRC "
+            "supplies a real GR00T-format LeRobot dataset."
         ),
     ),
     # --- Multi-stage GPU ---

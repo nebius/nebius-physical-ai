@@ -343,6 +343,11 @@ class FinetuneRuntime(str, Enum):
     local = "local"
 
 
+class NcclTransport(str, Enum):
+    auto = "auto"
+    socket = "socket"
+
+
 class InferenceMode(str, Enum):
     pytorch = "pytorch"
     tensorrt = "tensorrt"
@@ -1616,6 +1621,7 @@ def _build_finetune_command(
     endpoint_url: str,
     checkpoint_endpoint_url: str = "",
     run_id: str = "",
+    nccl_transport: str = NcclTransport.auto.value,
     max_steps: int | None = None,
     global_batch_size: int | None = None,
     dataloader_num_workers: int | None = None,
@@ -1665,6 +1671,13 @@ def _build_finetune_command(
         launcher = f"uv run torchrun --nproc_per_node={num_gpus} --master_port=29500 gr00t/experiment/launch_finetune.py"
     else:
         launcher = "uv run python gr00t/experiment/launch_finetune.py"
+    nccl_env = ""
+    if num_gpus > 1 and nccl_transport == NcclTransport.socket.value:
+        nccl_env = """\
+export NCCL_P2P_DISABLE=1
+export NCCL_SHM_DISABLE=1
+echo NPA_GROOT_NCCL_TRANSPORT socket
+"""
     train_args = ""
     if max_steps is not None:
         train_args += f" \\\n  --max-steps {max_steps}"
@@ -1699,7 +1712,7 @@ if [ "$actual_groot_ref" != {shlex.quote(GROOT_REPO_REF)} ]; then
   echo "ERROR: expected Isaac-GR00T ref {GROOT_REPO_REF}, got $actual_groot_ref" >&2
   exit 1
 fi
-{dataset_setup}{base_setup}{config_setup}modality_config_path={shlex.quote(resolved_config)}
+{nccl_env}{dataset_setup}{base_setup}{config_setup}modality_config_path={shlex.quote(resolved_config)}
 if [ -z "$modality_config_path" ] && [ -f {shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py ]; then
   modality_config_path={shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py
 fi
@@ -1729,6 +1742,7 @@ manifest = {{
     "base_model_revision": {model_revision!r},
     "robot_embodiment": {tag!r},
     "num_gpus": {num_gpus},
+    "nccl_transport": {nccl_transport!r},
     "global_batch_size": {global_batch_size!r},
     "max_steps": {max_steps!r},
     "data_path": {input_path!r},
@@ -3460,6 +3474,14 @@ def finetune_cmd(
     num_gpus: int = typer.Option(
         1, "--num-gpus", help="Number of GPUs for PyTorch fine-tuning."
     ),
+    nccl_transport: NcclTransport = typer.Option(
+        NcclTransport.auto,
+        "--nccl-transport",
+        help=(
+            "NCCL intra-node transport: auto uses NCCL topology selection; "
+            "socket disables P2P and SHM for compatibility diagnostics."
+        ),
+    ),
     config: str = typer.Option(
         "", "--config", help="Optional GR00T modality/training config path."
     ),
@@ -3565,6 +3587,7 @@ def finetune_cmd(
         endpoint_url=endpoint_url,
         checkpoint_endpoint_url=training_config.checkpoint_s3.endpoint_url,
         run_id=effective_run_id,
+        nccl_transport=nccl_transport.value,
         max_steps=max_steps,
         global_batch_size=global_batch_size,
         dataloader_num_workers=dataloader_num_workers,
@@ -3611,6 +3634,7 @@ def finetune_cmd(
         "groot_repo_ref": GROOT_REPO_REF,
         "robot_embodiment": tag,
         "num_gpus": num_gpus,
+        "nccl_transport": nccl_transport.value,
         "training_config": training_config.public_dict(),
         "duration_seconds": round(time.time() - start, 1),
     }

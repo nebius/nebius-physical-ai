@@ -24,6 +24,9 @@ config:
   gpu_type: H100
   gpu_count: "1"
   global_batch_size: "{{config.gpu_count}}"
+  # Keep NCCL's native transport selection by default. Use `socket` for a
+  # single-node compatibility fallback that disables NCCL P2P and SHM.
+  nccl_transport: auto
 
   data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
   checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/"

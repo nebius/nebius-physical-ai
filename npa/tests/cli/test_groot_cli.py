@@ -1315,6 +1315,7 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
         config="s3://bucket/configs/groot.yaml",
         endpoint_url="https://storage.example",
         run_id="groot-run-2gpu",
+        nccl_transport="socket",
         max_steps=2,
         global_batch_size=1,
         dataloader_num_workers=0,
@@ -1325,6 +1326,9 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     script = shlex.split(cmd)[2]
 
     assert "uv run torchrun --nproc_per_node=2" in cmd
+    assert "export NCCL_P2P_DISABLE=1" in cmd
+    assert "export NCCL_SHM_DISABLE=1" in cmd
+    assert "NPA_GROOT_NCCL_TRANSPORT socket" in cmd
     assert "gr00t/experiment/launch_finetune.py" in cmd
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B --revision 2fc962b973bccdd5d8ce4f67cc63b264d6886495" in cmd
     assert f"--base-model-path {GROOT_DATA_MOUNT}/models/nvidia--GR00T-N1.7-3B" in cmd
@@ -1343,6 +1347,7 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert f"expected Isaac-GR00T ref {GROOT_REPO_REF}" in cmd
     assert f'"groot_model_version": {GROOT_MODEL_VERSION!r}' in script
     assert '"run_id": \'groot-run-2gpu\'' in script
+    assert '"nccl_transport": \'socket\'' in script
     assert GROOT_FINETUNE_MANIFEST in cmd
     assert "upload_file" in cmd
 
@@ -1437,6 +1442,8 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
             "groot-run-2gpu",
             "--num-gpus",
             "2",
+            "--nccl-transport",
+            "socket",
             "--global-batch-size",
             "2",
             "--max-steps",
@@ -1451,12 +1458,15 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
     assert payload["runtime"] == "local"
     assert payload["run_id"] == "groot-run-2gpu"
     assert payload["num_gpus"] == 2
+    assert payload["nccl_transport"] == "socket"
     assert payload["groot_model_version"] == "1.7"
     assert payload["groot_runtime_version"] == GROOT_RUNTIME_VERSION
     assert payload["groot_repo_ref"] == GROOT_REPO_REF
     command = local.call_args.args[0]
     script = shlex.split(command)[2]
     assert "uv run torchrun --nproc_per_node=2" in command
+    assert "export NCCL_P2P_DISABLE=1" in command
+    assert "export NCCL_SHM_DISABLE=1" in command
     assert "--num-gpus 2" in command
     assert '"run_id": \'groot-run-2gpu\'' in script
     assert GROOT_FINETUNE_MANIFEST in command

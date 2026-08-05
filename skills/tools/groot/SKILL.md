@@ -96,6 +96,11 @@ simulation paths do.
   SSH-local route.
 - Known issue: output truncation at high step counts must be validated with
   artifacts, not subjective evaluation.
+- Multi-GPU fine-tuning defaults to NCCL's native transport selection. When a
+  clean two-rank collective proves that both P2P and SHM are unsafe on a
+  single-node host, use the workflow's `nccl_transport=socket` compatibility
+  fallback. It disables both transports, so do not use it speculatively on
+  healthy high-bandwidth hosts.
 
 ## Verify
 

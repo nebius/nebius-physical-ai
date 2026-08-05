@@ -20,6 +20,13 @@ checkpoints after successful training. It records those pins, the run ID,
 embodiment, GPU count, batch size, training steps, input dataset, and output
 URI.
 
+For single-node hosts where NCCL peer-to-peer and shared-memory transports are
+not viable, the workflow exposes `nccl_transport=socket`. This sets
+`NCCL_P2P_DISABLE=1` and `NCCL_SHM_DISABLE=1` inside the trainer and records the
+choice in the manifest. Keep the default `auto` on hosts whose native NCCL
+transport passes a collective smoke; the socket mode is a compatibility
+fallback and trades intra-node bandwidth for stability.
+
 ## Validate and inspect
 
 ```bash
@@ -77,6 +84,10 @@ npa workbench workflow submit "$SPEC" \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
+
+On RTX PRO 6000 Blackwell hosts where a minimal two-rank NCCL probe fails over
+both P2P and SHM, add `--var nccl_transport=socket`. Validate that fallback with
+a small collective before downloading the full model.
 
 `gpu_count` must be a positive integer. It controls the H100 allocation, the
 SkyPilot task resources, and the trainer world size. `global_batch_size`
