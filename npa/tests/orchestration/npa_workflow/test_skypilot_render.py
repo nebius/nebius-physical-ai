@@ -25,6 +25,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+from npa.orchestration.npa_workflow.submission_state import load_submission_state
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -506,6 +507,16 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     assert "execution: serial" in content
     assert "score-rollouts" in content
     assert "${" not in content
+    receipt = load_submission_state("default", "npa-submit-1")
+    assert receipt["launch"]["sky_job_id"] == "42"
+    assert receipt["workflow"]["name"] == "vlm-eval-single"
+    assert receipt["workflow"]["run_prefix_uri"] == (
+        "s3://example-bucket/runs/npa-submit-1/vlm-eval"
+    )
+    assert receipt["workflow"]["manifest_uri"].endswith(
+        "/npa-workflow/manifest.json"
+    )
+    assert receipt["workflow"]["steps"][0]["state"] == "score-rollouts"
 
 
 def test_workbench_workflow_submit_npa_plan_only(

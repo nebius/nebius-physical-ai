@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from npa.orchestration.npa_workflow.submission_state import (
+    inspect_submission_state,
     load_submission_state,
     submission_lock,
     submission_state_path,
@@ -59,3 +60,18 @@ def test_locked_update_supports_a_multi_step_transaction(
         update_submission_state("demo", "run-1", {"launch_state": "reserved"}, locked=True)
 
     assert load_submission_state("demo", "run-1")["launch_state"] == "reserved"
+
+
+def test_inspection_distinguishes_absent_and_corrupt_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert inspect_submission_state("demo", "run-1").outcome == "absent"
+
+    update_submission_state("demo", "run-1", {"launch": {"status": "launching"}})
+    assert inspect_submission_state("demo", "run-1").outcome == "found"
+
+    submission_state_path("demo", "run-1").write_text("not-json", encoding="utf-8")
+    inspected = inspect_submission_state("demo", "run-1")
+    assert inspected.outcome == "unavailable"
+    assert "invalid receipt JSON" in inspected.error

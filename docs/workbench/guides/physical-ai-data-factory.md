@@ -183,6 +183,24 @@ still missing in a single list; the
 [deploy runbook](physical-ai-data-factory-deploy.md) has the full ordered
 quickstart (`configure` → `skypilot bootstrap` → `provision-if-absent` → submit).
 
+Monitor an exact run using NPA alone:
+
+```bash
+npa workbench workflow status <run-id> --project <alias>
+# Explicit fallback; the final manifest itself may still be pending:
+npa workbench workflow status <run-id> --project <alias> \
+  --workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run-id>/npa-workflow
+```
+
+Status, logs, artifacts, and cancel share the same precedence: explicit URI,
+owner-only per-project/run submission receipt, exact canonical PAIDF prefix,
+exact pinned SkyPilot managed-job evidence, then the ordinary workflow layout.
+Text and JSON show each checked source. A provider/auth error is
+`VERIFICATION_UNAVAILABLE`, never “not found”; `NOT_FOUND` requires authoritative
+absence from every applicable source. Runs found before their final manifest
+remain actionable with `manifest_state: pending` plus scheduler, active-stage,
+retry, heartbeat, failure, and log-command fields.
+
 > **Stage input frames first (required).** Before you submit, upload **PNG/JPEG
 > frames** (8–16; only the first `config.max_images`, default 8, are captioned) to
 > `s3://<bucket>/physical-ai-data-factory/<run-id>/input/`. The first stage,

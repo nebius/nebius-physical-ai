@@ -6,7 +6,6 @@ from collections.abc import Mapping
 import json
 import os
 import re
-import shutil
 import tempfile
 import time
 from enum import Enum
@@ -438,6 +437,13 @@ def submit_cmd(
     substitutions = _parse_submit_vars(var)
     materializer = _resolve_materializer(tool, yaml_path)
     resolved_run_id = run_id or _default_submit_run_id(yaml_path)
+    from npa.orchestration.npa_workflow.run_resolution import validate_run_id
+
+    try:
+        resolved_run_id = validate_run_id(resolved_run_id)
+    except Exception as exc:
+        _fail(str(exc))
+        return
     from npa.orchestration.npa_workflow.submit_credentials import resolve_submit_credentials
 
     submit_credentials = resolve_submit_credentials(
@@ -879,6 +885,12 @@ def submit_cmd(
 
             ledger_project = project or "default"
             with submission_lock(ledger_project, resolved_run_id):
+                update_submission_state(
+                    ledger_project,
+                    resolved_run_id,
+                    {"workflow": _npa_submission_receipt(prepared_npa, resolved_run_id)},
+                    locked=True,
+                )
                 submission = load_submission_state(ledger_project, resolved_run_id)
                 launch_state = submission.get("launch")
                 launch_record = launch_state if isinstance(launch_state, dict) else {}
@@ -1045,6 +1057,48 @@ def _persist_npa_run_manifest(
         return ""
 
 
+def _npa_submission_receipt(prepared, run_id: str) -> dict[str, object]:
+    """Record the non-secret run contract before the managed launch side effect."""
+
+    return _workflow_submission_receipt(
+        prepared.spec,
+        prepared.plan.steps,
+        run_id,
+    )
+
+
+def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
+    """Build the shared non-secret receipt for runtime and single-job submits."""
+
+    from npa.orchestration.npa_workflow.run_state import (
+        PAIDF_WORKFLOW_NAME,
+        paidf_artifact_prefix,
+        plan_step_records,
+    )
+    from npa.orchestration.npa_workflow.runtime import _resolved_config
+
+    config = _resolved_config(spec, run_id)
+    bucket = str(config.get("bucket") or "").strip()
+    prefix = str(config.get("prefix") or run_id).strip("/")
+    if spec.name == PAIDF_WORKFLOW_NAME:
+        canonical = paidf_artifact_prefix(run_id)
+        if prefix != canonical:
+            raise RuntimeError(
+                "PAIDF run prefix must use the canonical contract "
+                f"{canonical!r}, got {prefix!r}"
+            )
+    run_prefix_uri = f"s3://{bucket}/{prefix}" if bucket and prefix else ""
+    return {
+        "name": spec.name,
+        "api_version": spec.api_version,
+        "run_prefix_uri": run_prefix_uri,
+        "manifest_uri": (
+            f"{run_prefix_uri}/npa-workflow/manifest.json" if run_prefix_uri else ""
+        ),
+        "steps": plan_step_records(steps),
+    }
+
+
 def _run_npa_workflow_runtime(
     yaml_path: Path,
     *,
@@ -1085,6 +1139,26 @@ def _run_npa_workflow_runtime(
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
+
+    from npa.orchestration.npa_workflow.runtime import plan_preview
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    try:
+        receipt_plan = plan_preview(
+            spec,
+            run_id=run_id,
+            assume_decision=(
+                assume_decision or str(spec.config.get("plan_assume_decision") or "")
+            ),
+        )
+        receipt_steps = receipt_plan.steps
+    except Exception:  # noqa: BLE001 - runtime remains the authoritative planner
+        receipt_steps = []
+    update_submission_state(
+        project or "default",
+        run_id,
+        {"workflow": _workflow_submission_receipt(spec, receipt_steps, run_id)},
+    )
 
     options = RuntimeOptions(
         poll_seconds=poll_seconds,
@@ -1824,93 +1898,22 @@ def _resolve_monitor_state(
     s3_bucket: str = "",
     s3_endpoint: str = "",
 ):
-    from npa.orchestration.skypilot.workflow_state import (
-        WorkflowS3Config,
-        WorkflowStateError,
-        discover_workflow_run_state,
-        is_durable_workflow_manifest,
-        read_manifest,
-        resolve_workflow_s3_config,
+    from npa.orchestration.npa_workflow.run_resolution import (
+        resolution_diagnostics,
+        resolve_run,
     )
 
-    exact_uri = workflow_s3_uri or (run_id if run_id.startswith("s3://") else "")
-    if exact_uri.rstrip("/").endswith("/manifest.json"):
-        exact_uri = exact_uri.rstrip("/").removesuffix("/manifest.json")
-    resolved_run_id = _display_run_id(run_id)
-    state = resolve_workflow_s3_config(
-        run_id=resolved_run_id,
-        project=project or None,
-        workflow_s3_uri=exact_uri,
-        workflow_s3_prefix=workflow_s3_prefix,
-        s3_bucket=s3_bucket,
-        s3_endpoint=s3_endpoint,
-    )
-    if exact_uri:
-        return state
-
-    # First retain the cheap/direct layout for legacy durable workflows.  If it
-    # is absent, discover the declarative workflow manifest below the selected
-    # project's bucket/prefix (PAIDF uses
-    # physical-ai-data-factory/<run>/npa-workflow/manifest.json).
-    try:
-        if is_durable_workflow_manifest(read_manifest(state)):
-            return state
-    except WorkflowStateError:
-        # The direct legacy location is optional; discovery below is the normal
-        # declarative-workflow path.
-        pass
-    parent = _resolve_monitor_parent_state(
+    resolution = resolve_run(
+        run_id,
         project=project,
+        workflow_s3_uri=workflow_s3_uri,
         workflow_s3_prefix=workflow_s3_prefix,
         s3_bucket=s3_bucket,
         s3_endpoint=s3_endpoint,
     )
-    from npa.orchestration.npa_workflow.run_state import (
-        is_paidf_run_id,
-        paidf_workflow_prefix,
-    )
-
-    # PAIDF has a stable product-owned layout. Probe it before enumerating the
-    # bucket so a least-privilege identity with GetObject but no ListBucket can
-    # still monitor a run by id.
-    paidf_suffix = paidf_workflow_prefix(resolved_run_id)
-    candidate_prefixes = []
-    if project and not workflow_s3_uri and not workflow_s3_prefix and not s3_bucket:
-        candidate_prefixes.append(paidf_suffix)
-    if parent.prefix.strip("/"):
-        candidate_prefixes.append(f"{parent.prefix.strip('/')}/{paidf_suffix}")
-    else:
-        candidate_prefixes.append(paidf_suffix)
-    paidf_candidates = []
-    for candidate_prefix in dict.fromkeys(candidate_prefixes):
-        paidf_state = WorkflowS3Config(
-            bucket=parent.bucket,
-            prefix=candidate_prefix,
-            endpoint_url=parent.endpoint_url,
-            aws_access_key_id=parent.aws_access_key_id,
-            aws_secret_access_key=parent.aws_secret_access_key,
-            project=parent.project,
-        )
-        paidf_candidates.append(paidf_state)
-        try:
-            paidf_manifest = read_manifest(paidf_state)
-            if (
-                is_durable_workflow_manifest(paidf_manifest)
-                and str(paidf_manifest.get("run_id") or "").strip() == resolved_run_id
-            ):
-                return paidf_state
-        except WorkflowStateError:
-            continue
-    # A reserved PAIDF id has a canonical nested ledger. If it is absent, keep
-    # that exact candidate so status can truthfully report NOT_SUBMITTED instead
-    # of falling back to a misleading root-level `<run>/manifest.json` error.
-    if is_paidf_run_id(resolved_run_id) and paidf_candidates:
-        return paidf_candidates[0]
-    discovered = discover_workflow_run_state(
-        state_parent=parent,
-        run_id=resolved_run_id,
-    )
-    return discovered or state
+    if resolution.state is not None:
+        return resolution.state
+    raise RuntimeError("\n".join(resolution_diagnostics(resolution)))
 
 
 def _resolve_monitor_parent_state(
@@ -1962,24 +1965,16 @@ def _resolve_monitor_parent_state(
 
 
 def _display_run_id(run_id: str) -> str:
-    if not run_id.startswith("s3://"):
-        return run_id
-    from npa.orchestration.skypilot.workflow_state import parse_s3_uri
+    from npa.orchestration.npa_workflow.run_resolution import run_id_from_locator
 
-    _bucket, prefix = parse_s3_uri(run_id)
-    parts = prefix.rstrip("/").split("/")
-    if parts and parts[-1] == "manifest.json":
-        parts.pop()
-    if parts and parts[-1] == "npa-workflow":
-        parts.pop()
-    return parts[-1] if parts else run_id
+    return run_id_from_locator(run_id)
 
 
 def _resolve_sky_bin(sky_bin: str = "") -> str:
-    resolved = sky_bin or shutil.which("sky") or ""
-    if resolved:
-        return resolved
-    return str(Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky")
+    from npa.orchestration.skypilot._bin import ensure_skypilot_version, resolve_config
+
+    config = resolve_config(sky_bin=sky_bin or None)
+    return str(ensure_skypilot_version(config.sky_bin))
 
 
 def _durable_workflow_status(
@@ -1998,27 +1993,57 @@ def _durable_workflow_status(
         workflow_status,
         workflow_task_statuses,
     )
-    from npa.orchestration.skypilot.workflow_state import (
-        WorkflowStateError,
-        put_json,
-        read_manifest,
-        read_stage_status,
+    from npa.orchestration.npa_workflow.run_resolution import (
+        resolution_diagnostics,
+        resolve_run,
     )
+    from npa.orchestration.skypilot.workflow_state import read_stage_status
 
-    state = _resolve_monitor_state(
+    resolution = resolve_run(
         run_id,
         project=project,
         workflow_s3_uri=workflow_s3_uri,
         workflow_s3_prefix=workflow_s3_prefix,
         s3_bucket=s3_bucket,
         s3_endpoint=s3_endpoint,
+        sky_bin=sky_bin,
     )
-    try:
-        manifest = read_manifest(state)
-    except WorkflowStateError as exc:
-        if _is_missing_paidf_submission(run_id, state, exc):
-            return _not_submitted_paidf_status(run_id, state)
-        raise
+    if not resolution.found:
+        return {
+            "run_id": resolution.run_id,
+            "workflow_name": resolution.workflow_name,
+            "status": (
+                "NOT_FOUND"
+                if resolution.conclusively_absent
+                else "VERIFICATION_UNAVAILABLE"
+            ),
+            "verification": (
+                "conclusively_absent"
+                if resolution.conclusively_absent
+                else "unavailable"
+            ),
+            "manifest_state": "absent" if resolution.conclusively_absent else "unknown",
+            "manifest_pending": False,
+            "resolution_source": "",
+            "resolution_checks": resolution.checks_payload(),
+            "live_status": "",
+            "sky_job_id": "",
+            "run_prefix_uri": resolution.run_prefix_uri,
+            "manifest_uri": resolution.manifest_uri,
+            "stages": {},
+            "diagnostics": resolution_diagnostics(resolution),
+        }
+
+    state = resolution.state
+    manifest = resolution.manifest
+    if manifest is None:
+        return _manifest_pending_status(
+            resolution,
+            project=project,
+            sky_bin=sky_bin,
+            startup_failure_threshold=startup_failure_threshold,
+        )
+    assert state is not None
     if manifest.get("schema_version") == "npa.workflow.run.v1":
         from npa.orchestration.npa_workflow.run_state import (
             RunManifest,
@@ -2027,6 +2052,8 @@ def _durable_workflow_status(
         )
 
         run_manifest = RunManifest.from_dict(manifest)
+        if not run_manifest.sky_job_id and resolution.job_id:
+            run_manifest.sky_job_id = resolution.job_id
         live_status = ""
         task_rows: list[dict[str, object]] = []
         controller_output = ""
@@ -2034,7 +2061,7 @@ def _durable_workflow_status(
         if run_manifest.sky_job_id:
             try:
                 live = workflow_status(
-                    run_manifest.sky_job_id, sky_bin=_resolve_sky_bin(sky_bin)
+                    run_manifest.sky_job_id, sky_bin=sky_bin or None
                 )
                 if live.error:
                     diagnostics.append(
@@ -2044,7 +2071,7 @@ def _durable_workflow_status(
                 else:
                     live_status = live.status
                 task_rows = workflow_task_statuses(
-                    run_manifest.sky_job_id, sky_bin=_resolve_sky_bin(sky_bin)
+                    run_manifest.sky_job_id, sky_bin=sky_bin or None
                 )
                 if str(live_status or run_manifest.status).upper() not in {
                     "SUCCEEDED",
@@ -2052,7 +2079,7 @@ def _durable_workflow_status(
                 } and not str(live_status or run_manifest.status).upper().startswith("FAILED"):
                     controller_logs = workflow_controller_logs(
                         run_manifest.sky_job_id,
-                        sky_bin=_resolve_sky_bin(sky_bin),
+                        sky_bin=sky_bin or None,
                     )
                     controller_output = "\n".join(
                         item for item in (controller_logs.stdout, controller_logs.stderr) if item
@@ -2078,19 +2105,17 @@ def _durable_workflow_status(
             project=project or state.project,
             failure_threshold=startup_failure_threshold,
         )
-        if live_status or task_rows or controller_output:
-            try:
-                put_json(state, "manifest.json", payload=run_manifest.to_dict())
-            except Exception as exc:  # noqa: BLE001 - status remains readable
-                diagnostics.append(
-                    f"Could not persist reconciled status to object storage: {exc}"
-                )
         run_payload.update(
             {
                 "run_id": run_manifest.run_id or _display_run_id(run_id),
                 "run_prefix_uri": run_manifest.run_prefix_uri
                 or state.uri.removesuffix("/npa-workflow"),
                 "manifest_uri": f"{state.uri.rstrip('/')}/manifest.json",
+                "manifest_state": "available",
+                "manifest_pending": False,
+                "resolution_source": resolution.source,
+                "resolution_checks": resolution.checks_payload(),
+                "verification": "found",
             }
         )
         if diagnostics:
@@ -2113,7 +2138,7 @@ def _durable_workflow_status(
     live_status = ""
     if job_id:
         try:
-            live = workflow_status(job_id, sky_bin=_resolve_sky_bin(sky_bin))
+            live = workflow_status(job_id, sky_bin=sky_bin or None)
             live_status = live.status if not live.error else ""
         except Exception:
             live_status = ""
@@ -2126,6 +2151,11 @@ def _durable_workflow_status(
         "sky_job_id": job_id,
         "run_prefix_uri": manifest.get("run_prefix_uri") or state.uri,
         "manifest_uri": f"{state.uri.rstrip('/')}/manifest.json",
+        "manifest_state": "available",
+        "manifest_pending": False,
+        "resolution_source": resolution.source,
+        "resolution_checks": resolution.checks_payload(),
+        "verification": "found",
         "stages": stages,
     }
     blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
@@ -2134,78 +2164,170 @@ def _durable_workflow_status(
     return payload
 
 
-def _is_missing_paidf_submission(run_id: str, state, exc: BaseException) -> bool:
-    """Whether this is an absent canonical PAIDF ledger, not a provider failure."""
+def _manifest_pending_status(
+    resolution,
+    *,
+    project: str,
+    sky_bin: str,
+    startup_failure_threshold: int,
+) -> dict[str, object]:
+    """Project receipt/S3/Sky evidence through the shared actionable model."""
 
+    from npa.orchestration.npa_workflow.run_resolution import resolution_diagnostics
     from npa.orchestration.npa_workflow.run_state import (
-        PAIDF_WORKFLOW_NAME,
-        is_paidf_run_id,
+        RunManifest,
+        build_actionable_run_status,
+        reconcile_submitted_manifest,
     )
-    from npa.orchestration.skypilot.workflow_state import (
-        workflow_state_error_is_missing,
-    )
-
-    resolved_run_id = _display_run_id(run_id)
-    is_paidf_path = PAIDF_WORKFLOW_NAME in str(getattr(state, "prefix", "")).split("/")
-    return bool(
-        workflow_state_error_is_missing(exc)
-        and (is_paidf_run_id(resolved_run_id) or is_paidf_path)
+    from npa.orchestration.skypilot.workflow import (
+        workflow_controller_logs,
+        workflow_status,
+        workflow_task_statuses,
     )
 
-
-def _paidf_staging_state(state) -> str:
-    """Return STAGED/RESERVED_OR_PLANNED without treating ListBucket denial as failure."""
-
-    # `_resolve_monitor_state` has already resolved the exact canonical/custom
-    # durable ledger. Derive the sibling artifact prefix from that result so an
-    # explicit --workflow-s3-uri keeps its parent prefix intact.
-    prefix = str(state.prefix).rstrip("/").removesuffix("/npa-workflow") + "/"
-    try:
-        paginator = state.client().get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=state.bucket, Prefix=prefix):
-            if page.get("Contents"):
-                return "STAGED"
-    except Exception:  # noqa: BLE001 - exact GetObject already proved manifest absence
-        return "RESERVED_OR_PLANNED"
-    return "RESERVED_OR_PLANNED"
-
-
-def _not_submitted_paidf_status(run_id: str, state) -> dict[str, object]:
-    """Render a truthful status for a PAIDF id that never obtained a run ledger."""
-
-    from npa.orchestration.npa_workflow.run_state import (
-        PAIDF_WORKFLOW_NAME,
+    receipt_workflow = resolution.receipt.get("workflow")
+    workflow_record = receipt_workflow if isinstance(receipt_workflow, dict) else {}
+    steps = [
+        dict(item)
+        for item in workflow_record.get("steps") or []
+        if isinstance(item, dict)
+    ]
+    runtime_waves = [
+        dict(item)
+        for item in resolution.runtime_state.get("waves") or []
+        if isinstance(item, dict)
+    ]
+    active_wave = next(
+        (
+            item
+            for item in reversed(runtime_waves)
+            if str(item.get("status") or "").lower()
+            not in {"succeeded", "failed", "cancelled"}
+        ),
+        runtime_waves[-1] if runtime_waves else {},
     )
-
-    resolved_run_id = _display_run_id(run_id)
-    workflow_uri = state.uri.rstrip("/")
-    artifact_uri = workflow_uri.removesuffix("/npa-workflow")
-    submission_state = _paidf_staging_state(state)
-    state_label = (
-        "run-scoped artifacts were staged"
-        if submission_state == "STAGED"
-        else "the run was only reserved or planned"
+    if not steps and runtime_waves:
+        for wave in runtime_waves:
+            wave_status = str(wave.get("status") or "").lower()
+            step_status = {
+                "succeeded": "SUCCEEDED",
+                "failed": "FAILED",
+                "cancelled": "CANCELLED",
+            }.get(wave_status, "submitted")
+            for state_name in wave.get("states") or []:
+                steps.append(
+                    {
+                        "state": str(state_name),
+                        "status": step_status,
+                        "resources_profile": {},
+                    }
+                )
+    job_id = resolution.job_id
+    live_status = ""
+    task_rows: list[dict[str, object]] = []
+    controller_output = ""
+    diagnostics = resolution_diagnostics(resolution)
+    if resolution.managed_job is not None and resolution.managed_job.outcome == "found":
+        live_status = resolution.managed_job.status
+        task_rows = [dict(item) for item in resolution.managed_job.task_rows]
+    elif job_id:
+        try:
+            live = workflow_status(job_id, sky_bin=sky_bin or None)
+            if live.error:
+                diagnostics.append(
+                    "SkyPilot status is unavailable; the run remains receipt-proven "
+                    f"({live.error})."
+                )
+            else:
+                live_status = live.status
+            task_rows = workflow_task_statuses(job_id, sky_bin=sky_bin or None)
+        except Exception as exc:  # noqa: BLE001 - durable evidence still proves the run
+            diagnostics.append(
+                "SkyPilot status is unavailable; the run remains receipt-proven. "
+                f"Diagnostic: {exc}"
+            )
+    if not task_rows and active_wave:
+        task_rows = [
+            dict(item) for item in active_wave.get("tasks") or [] if isinstance(item, dict)
+        ]
+    if not steps and task_rows:
+        rows = sorted(task_rows, key=lambda item: int(item.get("task_id") or 0))
+        steps = [
+            {
+                "state": str(row.get("task_name") or f"step-{index}"),
+                "status": "submitted",
+                "resources_profile": {},
+            }
+            for index, row in enumerate(rows)
+        ]
+    elif steps and task_rows and active_wave:
+        indexes_by_name = {
+            str(step.get("state") or ""): index for index, step in enumerate(steps)
+        }
+        for row in task_rows:
+            task_name = str(row.get("task_name") or "")
+            if task_name in indexes_by_name:
+                row["task_id"] = indexes_by_name[task_name]
+    pending_manifest = RunManifest(
+        workflow=resolution.workflow_name or "physical-ai-data-factory",
+        run_id=resolution.run_id,
+        api_version=str(workflow_record.get("api_version") or "npa.workflow/v0.0.1"),
+        run_prefix_uri=resolution.run_prefix_uri,
+        status="submitted",
+        sky_job_id=job_id,
+        steps=steps,
+        updated_at=str(resolution.receipt.get("updated_at") or ""),
     )
-    project_flag = f" --project {state.project}" if state.project else ""
-    return {
-        "run_id": resolved_run_id,
-        "workflow_name": PAIDF_WORKFLOW_NAME,
-        "status": "NOT_SUBMITTED",
-        "submission_state": submission_state,
-        "live_status": "",
-        "sky_job_id": "",
-        "run_prefix_uri": artifact_uri,
-        "manifest_uri": f"{workflow_uri}/manifest.json",
-        "stages": {},
-        "diagnostics": [
-            "Submission did not launch: no durable PAIDF manifest or SkyPilot job "
-            f"record exists ({state_label}).",
-            "Submit or retry with `npa workbench workflow submit "
-            "npa/workflows/physical-ai-data-factory.yaml "
-            f"--run-id {resolved_run_id}{project_flag}`, or inspect a different "
-            f"launched run by passing `--workflow-s3-uri {workflow_uri}`.",
-        ],
-    }
+    if job_id and str(live_status).upper() not in {
+        "SUCCEEDED",
+        "CANCELLED",
+    } and not str(live_status).upper().startswith("FAILED"):
+        try:
+            controller_logs = workflow_controller_logs(
+                job_id, sky_bin=sky_bin or None
+            )
+            controller_output = "\n".join(
+                item for item in (controller_logs.stdout, controller_logs.stderr) if item
+            )
+            if controller_logs.returncode != 0:
+                diagnostics.append(
+                    "SkyPilot controller logs are unavailable; startup failure "
+                    f"classification is incomplete ({controller_output.strip() or 'no detail'})."
+                )
+        except Exception as exc:  # noqa: BLE001
+            diagnostics.append(f"SkyPilot controller logs are unavailable: {exc}")
+    reconcile_submitted_manifest(
+        pending_manifest, live_status=live_status, task_rows=task_rows
+    )
+    payload = build_actionable_run_status(
+        pending_manifest,
+        live_status=live_status,
+        task_rows=task_rows,
+        controller_output=controller_output,
+        project=project,
+        failure_threshold=startup_failure_threshold,
+    )
+    if not job_id and not task_rows:
+        payload["status"] = "MANIFEST_PENDING"
+    payload.update(
+        {
+            "run_prefix_uri": resolution.run_prefix_uri,
+            "manifest_uri": resolution.manifest_uri,
+            "manifest_state": "pending",
+            "manifest_pending": True,
+            "resolution_source": resolution.source,
+            "resolution_checks": resolution.checks_payload(),
+            "verification": "found",
+            "diagnostics": [
+                "Run found; final workflow manifest is pending.",
+                *diagnostics,
+            ],
+        }
+    )
+    blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
+    if blockers:
+        payload["blockers"] = blockers
+    return payload
 
 
 def _stalled_job_blockers(
@@ -2280,7 +2402,8 @@ def _workflow_status_is_terminal(status: str) -> bool:
     return (
         normalized == "SUCCEEDED"
         or normalized.startswith("FAILED")
-        or normalized in {"CANCELLED", "BLOCKED", "NOT_SUBMITTED"}
+        or normalized
+        in {"CANCELLED", "BLOCKED", "NOT_SUBMITTED", "NOT_FOUND", "VERIFICATION_UNAVAILABLE"}
     )
 
 
@@ -2290,6 +2413,10 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
         return
     typer.echo(f"run_id: {result.get('run_id')}")
     typer.echo(f"status: {result.get('status')}")
+    if result.get("resolution_source"):
+        typer.echo(f"resolution_source: {result.get('resolution_source')}")
+    if result.get("manifest_state"):
+        typer.echo(f"manifest_state: {result.get('manifest_state')}")
     if result.get("submission_state"):
         typer.echo(f"submission_state: {result.get('submission_state')}")
     if result.get("current_stage"):
@@ -2311,6 +2438,15 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
     if isinstance(diagnostics, list):
         for diagnostic in diagnostics:
             typer.echo(f"diagnostic: {diagnostic}")
+    checks = result.get("resolution_checks")
+    if isinstance(checks, list):
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            detail = f" ({check.get('detail')})" if check.get("detail") else ""
+            typer.echo(
+                f"checked: {check.get('source')}: {check.get('outcome')}{detail}"
+            )
     blockers = result.get("blockers")
     if isinstance(blockers, list) and blockers:
         # A managed job whose pod cannot start never becomes FAILED, so say why
@@ -2474,7 +2610,10 @@ def status_cmd(
     workflow_s3_uri: str = typer.Option(
         "",
         "--workflow-s3-uri",
-        help="Exact durable workflow run prefix, for example s3://bucket/run-id/.",
+        help=(
+            "Exact workflow prefix; takes precedence over receipts and discovery, "
+            "for example s3://bucket/physical-ai-data-factory/RUN/npa-workflow."
+        ),
     ),
     workflow_s3_prefix: str = typer.Option(
         "",
@@ -2526,11 +2665,11 @@ def status_cmd(
         status_is_terminal,
     )
 
-    # An exact S3 URI is already an unambiguous durable-workflow locator. Do not
-    # probe the legacy sim2real prefix first: that probe builds a separate S3
-    # client from ambient env vars and can fail before the selected project's
-    # configured credentials ever reach the durable reader.
-    exact_durable_uri = bool(run_id.startswith("s3://") or workflow_s3_uri)
+    # An exact S3 URI or project alias selects the durable resolver. Do not probe
+    # the legacy sim2real prefix first: that probe builds a separate S3 client
+    # from ambient env vars and can fail before the selected project's configured
+    # credentials ever reach the durable reader.
+    exact_durable_uri = bool(run_id.startswith("s3://") or workflow_s3_uri or project)
     prefix = workflow_s3_prefix or "sim2real-b"
     if not exact_durable_uri and sim2real_run_exists(
         resolved_run_id,
@@ -2577,9 +2716,16 @@ def status_cmd(
                     startup_failure_threshold=startup_failure_threshold,
                 )
                 _emit_workflow_status(result, OutputFormat.json if json_output else output_format)
+                normalized = str(result.get("status") or "").upper()
+                if normalized == "NOT_FOUND":
+                    raise typer.Exit(code=1)
+                if normalized == "VERIFICATION_UNAVAILABLE":
+                    raise typer.Exit(code=2)
                 if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
                     return
                 time.sleep(interval)
+        except typer.Exit:
+            raise
         except Exception as exc:
             _fail(str(exc))
             return
@@ -2622,7 +2768,10 @@ def logs_cmd(
     workflow_s3_uri: str = typer.Option(
         "",
         "--workflow-s3-uri",
-        help="Exact durable workflow run prefix, for example s3://bucket/run-id/.",
+        help=(
+            "Exact workflow prefix; takes precedence over receipts and discovery, "
+            "for example s3://bucket/physical-ai-data-factory/RUN/npa-workflow."
+        ),
     ),
     workflow_s3_prefix: str = typer.Option(
         "",
@@ -2652,6 +2801,15 @@ def logs_cmd(
 ) -> None:
     """Show logs for a specific stage of a workflow run."""
     selected_stage = stage_option or stage or ""
+    try:
+        from npa.orchestration.npa_workflow.run_resolution import validate_run_id
+
+        validate_run_id(_display_run_id(run_id))
+        if selected_stage:
+            validate_run_id(selected_stage)
+    except Exception as exc:
+        _fail(str(exc))
+        return
     if _uses_s3_monitor(
         run_id,
         project=project,
@@ -2660,21 +2818,60 @@ def logs_cmd(
         s3_bucket=s3_bucket,
     ):
         try:
-            state = _resolve_monitor_state(
+            from npa.orchestration.npa_workflow.run_resolution import (
+                require_resolved_run,
+                resolve_run,
+            )
+
+            resolution = require_resolved_run(resolve_run(
                 run_id,
                 project=project,
                 workflow_s3_uri=workflow_s3_uri,
                 workflow_s3_prefix=workflow_s3_prefix,
                 s3_bucket=s3_bucket,
                 s3_endpoint=s3_endpoint,
-            )
+                sky_bin=sky_bin,
+            ))
+            state = resolution.state
             from npa.orchestration.skypilot.workflow_state import (
-                read_manifest,
                 read_stage_log,
                 tail_live_job_logs,
             )
 
-            manifest = read_manifest(state)
+            manifest = resolution.manifest
+            if manifest is None:
+                pending = _manifest_pending_status(
+                    resolution,
+                    project=project,
+                    sky_bin=sky_bin,
+                    startup_failure_threshold=3,
+                )
+                if not selected_stage:
+                    selected_stage = str(pending.get("active_stage_name") or "")
+                job_id = str(pending.get("sky_job_id") or resolution.job_id)
+                if not job_id:
+                    raise RuntimeError(
+                        f"run {resolution.run_id!r} was found via {resolution.source}, "
+                        "but its manifest is pending and no exact managed-job identity "
+                        "is available for logs"
+                    )
+                live = tail_live_job_logs(
+                    sky_bin=_resolve_sky_bin(sky_bin),
+                    job_id=job_id,
+                    stage=selected_stage,
+                    follow=follow,
+                    timeout=86400 if follow else 300,
+                )
+                if live.stdout:
+                    typer.echo(live.stdout, nl=False)
+                if live.stderr:
+                    typer.echo(live.stderr, err=True, nl=False)
+                if live.returncode != 0:
+                    raise RuntimeError(
+                        "run found with manifest pending, but SkyPilot logs are unavailable"
+                    )
+                return
+            assert state is not None
             if manifest.get("schema_version") == "npa.workflow.run.v1":
                 steps = [
                     item for item in (manifest.get("steps") or []) if isinstance(item, dict)
@@ -2759,30 +2956,96 @@ def artifacts_cmd(
     run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
     stage: str = typer.Option("", "--stage", help="Optional stage name."),
     project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
-    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Exact durable workflow run prefix."),
+    workflow_s3_uri: str = typer.Option(
+        "",
+        "--workflow-s3-uri",
+        help="Exact workflow prefix; takes precedence over receipts and discovery.",
+    ),
     workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
     s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    sky_bin: str = typer.Option("", "--sky-bin", help="Pinned SkyPilot executable path."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """List durable S3 artifact URIs for a workflow run."""
+    resolution = None
     try:
-        from npa.orchestration.skypilot.workflow_state import list_artifacts
+        from npa.orchestration.npa_workflow.run_resolution import (
+            list_resolved_artifacts,
+            resolution_diagnostics,
+            resolve_run,
+        )
 
-        state = _resolve_monitor_state(
+        resolution = resolve_run(
             run_id,
             project=project,
             workflow_s3_uri=workflow_s3_uri,
             workflow_s3_prefix=workflow_s3_prefix,
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
+            sky_bin=sky_bin,
         )
-        artifacts = list_artifacts(state, stage or None)
+        if not resolution.found:
+            if json_output:
+                typer.echo(
+                    json.dumps(
+                        {
+                            "run_id": resolution.run_id,
+                            "status": (
+                                "NOT_FOUND"
+                                if resolution.conclusively_absent
+                                else "VERIFICATION_UNAVAILABLE"
+                            ),
+                            "verification": (
+                                "conclusively_absent"
+                                if resolution.conclusively_absent
+                                else "unavailable"
+                            ),
+                            "resolution_checks": resolution.checks_payload(),
+                            "artifacts": [],
+                            "diagnostics": resolution_diagnostics(resolution),
+                        },
+                        indent=2,
+                    )
+                )
+                raise typer.Exit(code=1 if resolution.conclusively_absent else 2)
+            raise RuntimeError("\n".join(resolution_diagnostics(resolution)))
+        artifacts = list_resolved_artifacts(resolution, stage=stage)
+    except typer.Exit:
+        raise
     except Exception as exc:
+        if json_output and resolution is not None:
+            typer.echo(
+                json.dumps(
+                    {
+                        "run_id": resolution.run_id,
+                        "status": "VERIFICATION_UNAVAILABLE",
+                        "verification": "unavailable",
+                        "resolution_source": resolution.source,
+                        "manifest_pending": resolution.manifest_pending,
+                        "resolution_checks": resolution.checks_payload(),
+                        "artifacts": [],
+                        "diagnostics": [str(exc)],
+                    },
+                    indent=2,
+                )
+            )
+            raise typer.Exit(code=2)
         _fail(str(exc))
         return
     if json_output:
-        typer.echo(json.dumps({"run_id": _display_run_id(run_id), "artifacts": artifacts}, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "run_id": resolution.run_id,
+                    "resolution_source": resolution.source,
+                    "manifest_pending": resolution.manifest_pending,
+                    "resolution_checks": resolution.checks_payload(),
+                    "artifacts": artifacts,
+                },
+                indent=2,
+            )
+        )
         return
     for uri in artifacts:
         typer.echo(uri)
@@ -2794,7 +3057,9 @@ def load_artifact_cmd(
     project: str = typer.Option("", "--project", "-p", help="Configured project alias."),
     agent_name: str = typer.Option("", "--agent-name", help="Configured agent name."),
     workflow_s3_uri: str = typer.Option(
-        "", "--workflow-s3-uri", help="Exact durable npa-workflow prefix."
+        "",
+        "--workflow-s3-uri",
+        help="Exact npa-workflow prefix; takes precedence over receipts and discovery.",
     ),
     s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
@@ -2888,7 +3153,11 @@ def list_cmd(
 def cancel_cmd(
     run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
     project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
-    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Exact durable workflow run prefix."),
+    workflow_s3_uri: str = typer.Option(
+        "",
+        "--workflow-s3-uri",
+        help="Exact workflow prefix; takes precedence over receipts and discovery.",
+    ),
     workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
     s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
@@ -2910,15 +3179,27 @@ def cancel_cmd(
         normalized = str(status.get("status") or "").upper()
         resolved_run_id = str(status.get("run_id") or _display_run_id(run_id))
         job_id = str(status.get("sky_job_id") or "")
-        if normalized == "NOT_SUBMITTED":
+        if normalized == "NOT_FOUND":
             result = {
                 "run_id": resolved_run_id,
                 "outcome": "already_absent",
                 "launch_state": "not_launched",
-                "submission_state": status.get("submission_state", "RESERVED_OR_PLANNED"),
                 "sky_job_id": "",
                 "cloud_calls": False,
-                "message": "The workflow never launched; no SkyPilot job or cluster exists.",
+                "verification": "conclusively_absent",
+                "resolution_checks": status.get("resolution_checks", []),
+                "message": "Run not found after every applicable exact source was checked; no cancellation was issued.",
+            }
+        elif normalized == "VERIFICATION_UNAVAILABLE":
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "verification_failed",
+                "status": normalized,
+                "sky_job_id": "",
+                "cloud_calls": False,
+                "verification": "unavailable",
+                "resolution_checks": status.get("resolution_checks", []),
+                "message": "Run verification is unavailable; provider/auth failure is not absence, so cancellation was not attempted.",
             }
         elif _workflow_status_is_terminal(normalized):
             result = {

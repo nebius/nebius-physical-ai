@@ -239,8 +239,9 @@ For the shortest agent-driven setup, [copy the exact PAIDF agent
 prompt](docs/workbench/guides/physical-ai-data-factory-deploy.md#run-paidf-with-a-coding-agent).
 
 For an already configured project and provisioned cluster, this is the complete
-PAIDF submit, monitor, and agent-load path. `status` discovers PAIDF's nested
-durable manifest from the run ID; `logs` below also shows its exact S3 location.
+PAIDF submit, monitor, and agent-load path. `status` resolves the exact run from
+the selected project's receipt, canonical PAIDF prefix, or pinned managed-job
+identity even while the final manifest is pending; `logs` uses the same resolver.
 
 ```bash
 eval "$(npa configure --show --env)"
@@ -263,12 +264,27 @@ npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --secret-env HF_TOKEN
 
 MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
+# Normal NPA-only status lookup (no aws/sky/kubectl command is required):
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
+# Explicit fallback when project storage cannot be resolved in this shell:
+npa workbench workflow status "$RUN_ID" --project "$PROJECT" \
+  --workflow-s3-uri "${MANIFEST_URI%/manifest.json}"
 npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage finalize
 # `submit --runtime --auto-load` already posts and verifies the exact final URI.
 # Retry only that idempotent handoff, without relaunching stages, if it was partial:
 npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
 ```
+
+JSON and text status identify every checked source. `manifest_state: pending`
+means the run was found from its owner-only receipt, exact partial S3 prefix, or
+managed job and remains monitorable before `manifest.json` appears.
+`VERIFICATION_UNAVAILABLE` means S3/SkyPilot/provider verification failed and is
+never treated as absence. `NOT_FOUND` is emitted only after all applicable exact
+sources answered authoritatively; unrelated nested S3 keys are never guessed as
+runs. The owner-only local receipt at
+`~/.npa/workflow-submissions/<project>/<run>.json` contains location, plan, and
+job identity only—never credentials—and removes any dependency on
+`NPA_SRC_S3_URI` in later shells.
 
 The dataset view groups **Original/input** separately from
 **Synthetic/augmented**, shows the source URI/kind and per-item provenance, and

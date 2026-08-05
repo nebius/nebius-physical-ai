@@ -16,11 +16,21 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Any, Iterator, Mapping
+from dataclasses import dataclass
+from typing import Any, Iterator, Literal, Mapping
 
 
 SCHEMA_VERSION = "npa.workflow.submission.v1"
 _SECRET_KEY = re.compile(r"(secret|password|credential|token|access_key)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class SubmissionStateRead:
+    """Result of inspecting a receipt without conflating absence and I/O failure."""
+
+    outcome: Literal["found", "absent", "unavailable"]
+    payload: dict[str, Any]
+    error: str = ""
 
 
 def _utc_now() -> str:
@@ -69,6 +79,38 @@ def _read(path: Path) -> dict[str, Any]:
 
 def load_submission_state(project: str, run_id: str) -> dict[str, Any]:
     return _read(submission_state_path(project, run_id))
+
+
+def inspect_submission_state(project: str, run_id: str) -> SubmissionStateRead:
+    """Read one exact receipt and retain why it could not be read.
+
+    ``load_submission_state`` intentionally remains the forgiving API used by
+    restart-safe submit operations. Run resolution needs a stricter distinction:
+    an unreadable/corrupt owner receipt is verification-unavailable, not proof
+    that the run never launched.
+    """
+
+    path = submission_state_path(project, run_id)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return SubmissionStateRead("absent", {})
+    except OSError as exc:
+        return SubmissionStateRead("unavailable", {}, f"could not read {path}: {exc}")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return SubmissionStateRead("unavailable", {}, f"invalid receipt JSON at {path}: {exc}")
+    if not isinstance(payload, dict):
+        return SubmissionStateRead("unavailable", {}, f"invalid receipt object at {path}")
+    if str(payload.get("run_id") or "") != run_id:
+        return SubmissionStateRead("unavailable", {}, f"receipt run id does not match {run_id!r}")
+    expected_project = project or "default"
+    if str(payload.get("project") or "") != expected_project:
+        return SubmissionStateRead(
+            "unavailable", {}, f"receipt project does not match {expected_project!r}"
+        )
+    return SubmissionStateRead("found", dict(payload))
 
 
 def _write_atomic(path: Path, payload: Mapping[str, Any]) -> None:

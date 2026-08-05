@@ -128,7 +128,11 @@ npa workbench workflow submit "$SPEC" \
   --secret-env HF_TOKEN
 
 MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
+# Normal NPA-only status lookup:
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
+# Explicit fallback if this shell cannot resolve the project storage location:
+npa workbench workflow status "$RUN_ID" --project "$PROJECT" \
+  --workflow-s3-uri "${MANIFEST_URI%/manifest.json}"
 npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage augment
 npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT" # idempotent retry only
 ```
@@ -231,7 +235,9 @@ full explanation.
 | `Context <name> not found ... Available contexts: []` (from SkyPilot) | an older npa left `KUBECONFIG` unset for a cluster it had provisioned | upgrade npa: `submit --infra k8s/<context>` now prepends `~/.npa/clusters/<context>/kubeconfig` itself. For `kubectl`/bare `sky`, `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig` |
 | `provision-if-absent` failed on `~/.ssh/id_rsa.pub` | old default node-group key path | upgrade npa: `cluster up` now pins the first key that exists (`NPA_SSH_PUBLIC_KEY`, `id_ed25519.pub`, `id_rsa.pub`, `id_ecdsa.pub`) |
 | `No images found .../input/` | the caption stage ran with an empty `input/` | stage frames, or add `--var seed_default_input=true` |
-| `status: NOT_SUBMITTED` with `submission_state: RESERVED_OR_PLANNED` or `STAGED` | the run ID/source was prepared, but no durable manifest or SkyPilot job was launched | retry `workflow submit ... --run-id <same-id>`; to inspect another launched run, pass its exact `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
+| `manifest_state: pending` with `resolution_source: durable_submission_receipt`, `canonical_paidf_s3_prefix`, or `managed_job` | the exact run exists, but artifact publication has not produced its final workflow manifest yet | keep using the NPA status/log/artifact commands; do not resubmit merely to make the manifest appear |
+| `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
+| `status: NOT_FOUND` with every applicable source listed as checked/absent | no receipt, exact canonical PAIDF object, exact managed job, or ordinary workflow manifest exists for that ID | verify the project alias/run ID; cancellation remains an idempotent no-op for this conclusively absent run |
 | provider package does not match lock checksums | the tracked lock lacks/cannot verify this operator package or a registry mirror/cache is inconsistent | upgrade NPA first. Maintainers regenerate with `terraform providers lock` for the recorded Linux/macOS platforms and review the lock diff; never delete the lock or bypass checksums |
 | agent setup reaches `access-key list` after configure already reports writable S3 | stale NPA version is redundantly reprovisioning storage credentials | upgrade NPA: setup/preflight now share the deployment credential decision and reuse the health-verified configured key without listing/creating/rotating access keys |
 

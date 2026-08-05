@@ -895,6 +895,84 @@ def test_parse_job_ids_by_name_returns_newest_first() -> None:
     assert parse_job_ids_by_name("not json", "wave-01") == []
 
 
+def test_exact_managed_job_lookup_preserves_absent_vs_unavailable(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    responses = iter(
+        [
+            subprocess.CompletedProcess(
+                [],
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "job_id": 41,
+                            "job_name": "exact-run-other",
+                            "task_id": 0,
+                            "status": "RUNNING",
+                        }
+                    ]
+                ),
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                [], 1, stdout="", stderr="fixture provider unavailable"
+            ),
+        ]
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: next(responses))
+
+    absent = lookup_managed_job("exact-run", sky_bin=sky_bin)
+    unavailable = lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert absent.outcome == "absent"
+    assert unavailable.outcome == "unavailable"
+    assert "provider unavailable" in unavailable.error
+
+
+def test_exact_managed_job_lookup_returns_newest_exact_identity(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [
+        {
+            "job_id": 42,
+            "job_name": "exact-run",
+            "task_id": 0,
+            "task_name": "annotate",
+            "status": "SUCCEEDED",
+        },
+        {
+            "job_id": 43,
+            "job_name": "exact-run",
+            "task_id": 0,
+            "task_name": "annotate",
+            "status": "RUNNING",
+            "retry_count": 2,
+        },
+        {"job_id": 44, "job_name": "exact-run-nested", "status": "RUNNING"},
+    ]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == "found"
+    assert evidence.job_id == "43"
+    assert evidence.status == "RUNNING"
+    assert evidence.task_rows[0]["retry_count"] == 2
+
+
 def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:
     """A stale scraped id must not win over the queue's view of the job name."""
 

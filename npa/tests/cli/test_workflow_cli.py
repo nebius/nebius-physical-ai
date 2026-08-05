@@ -11,7 +11,7 @@ import yaml
 
 from npa.cli.main import app
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
-from npa.orchestration.skypilot.workflow import WorkflowResult
+from npa.orchestration.skypilot.workflow import ManagedJobEvidence, WorkflowResult
 from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 from npa.workflows.distill import DistillationError
 from npa.workflows.distill_two_vm import TwoVMDistillError
@@ -54,12 +54,14 @@ class FakeWorkflowS3:
         client = self
 
         class Paginator:
-            def paginate(self, *, Bucket: str, Prefix: str):
+            def paginate(self, *, Bucket: str, Prefix: str, PaginationConfig=None):
                 contents = [
                     {"Key": key, "Size": len(body)}
                     for (bucket, key), body in sorted(client.objects.items())
                     if bucket == Bucket and key.startswith(Prefix)
                 ]
+                if PaginationConfig:
+                    contents = contents[: int(PaginationConfig.get("MaxItems") or len(contents))]
                 yield {"Contents": contents}
 
         return Paginator()
@@ -79,6 +81,13 @@ def _patch_workflow_s3(monkeypatch: pytest.MonkeyPatch, fake_s3: FakeWorkflowS3)
             s3_endpoint="https://storage.example",
             s3_bucket="",
         ),
+    )
+
+
+def _patch_managed_job_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: ManagedJobEvidence("absent"),
     )
 
 
@@ -752,8 +761,8 @@ def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(monkeypatc
     assert payload["stages"]["augment"]["state"] == "FAILED"
     assert payload["stages"]["augment"]["requested_accelerators"].startswith("RTXPRO-")
     persisted = json.loads(fake_s3.objects[("bucket", key)])
-    assert persisted["status"] == "FAILED"
-    assert persisted["steps"][0]["status"] == "SUCCEEDED"
+    assert persisted["status"] == "submitted"  # status lookup is read-only
+    assert persisted["steps"][0]["status"] == "submitted"
 
 
 def test_status_discovers_paidf_manifest_from_project_and_run_id(monkeypatch) -> None:
@@ -819,20 +828,22 @@ def test_status_discovers_paidf_manifest_from_project_and_run_id(monkeypatch) ->
 
 
 @pytest.mark.parametrize(
-    ("staged_key", "expected_state"),
+    ("staged_key", "expected_status", "expected_exit"),
     [
-        ("", "RESERVED_OR_PLANNED"),
+        ("", "NOT_FOUND", 1),
         (
             "physical-ai-data-factory/paidf-never-launched/configs/input.json",
-            "STAGED",
+            "MANIFEST_PENDING",
+            0,
         ),
     ],
     ids=["planned", "staged"],
 )
-def test_paidf_status_reports_never_submitted_without_root_manifest_error(
+def test_paidf_status_distinguishes_absent_from_partial_prefix(
     monkeypatch,
     staged_key: str,
-    expected_state: str,
+    expected_status: str,
+    expected_exit: int,
 ) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
@@ -847,6 +858,7 @@ def test_paidf_status_reports_never_submitted_without_root_manifest_error(
         "npa.workflows.sim2real.monitor.sim2real_run_exists",
         lambda *args, **kwargs: False,
     )
+    _patch_managed_job_absent(monkeypatch)
     if staged_key:
         fake_s3.put_object(Bucket="bucket", Key=staged_key, Body=b"{}")
 
@@ -863,29 +875,23 @@ def test_paidf_status_reports_never_submitted_without_root_manifest_error(
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == expected_exit, result.output
     payload = json.loads(result.output)
-    assert payload["status"] == "NOT_SUBMITTED"
-    assert payload["submission_state"] == expected_state
+    assert payload["status"] == expected_status
     assert payload["sky_job_id"] == ""
     assert payload["manifest_uri"] == (
         "s3://bucket/physical-ai-data-factory/paidf-never-launched/"
         "npa-workflow/manifest.json"
     )
-    diagnostic = " ".join(payload["diagnostics"])
-    assert "Submission did not launch" in diagnostic
-    assert "workflow submit" in diagnostic
-    assert "--workflow-s3-uri" in diagnostic
-    assert "s3://bucket/paidf-never-launched/manifest.json" not in diagnostic
+    checks = {item["source"]: item["outcome"] for item in payload["resolution_checks"]}
+    assert checks["canonical_paidf_s3_prefix"] == (
+        "found" if staged_key else "absent"
+    )
+    assert checks["managed_job"] == "absent"
+    assert "s3://bucket/paidf-never-launched/manifest.json" not in result.output
 
 
-@pytest.mark.parametrize(
-    ("staged", "submission_state"),
-    [(False, "RESERVED_OR_PLANNED"), (True, "STAGED")],
-)
-def test_paidf_never_launched_cancel_is_repeat_safe_and_never_calls_skypilot(
-    monkeypatch, staged: bool, submission_state: str
-) -> None:
+def test_paidf_conclusively_absent_cancel_is_repeat_safe(monkeypatch) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
     monkeypatch.setattr(
@@ -899,25 +905,13 @@ def test_paidf_never_launched_cancel_is_repeat_safe_and_never_calls_skypilot(
         "npa.workflows.sim2real.monitor.sim2real_run_exists",
         lambda *args, **kwargs: False,
     )
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.workflow.workflow_status",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("never-launched cancel must not query SkyPilot")
-        ),
-    )
+    _patch_managed_job_absent(monkeypatch)
     monkeypatch.setattr(
         "npa.orchestration.skypilot.cleanup.cleanup_launched_workflow",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("never-launched cancel must not clean cloud resources")
         ),
     )
-    if staged:
-        fake_s3.put_object(
-            Bucket="bucket",
-            Key="physical-ai-data-factory/paidf-never-launched/configs/input.json",
-            Body=b"{}",
-        )
-
     command = [
         "workbench",
         "workflow",
@@ -935,7 +929,7 @@ def test_paidf_never_launched_cancel_is_repeat_safe_and_never_calls_skypilot(
         payload = json.loads(result.output)
         assert payload["outcome"] == "already_absent"
         assert payload["launch_state"] == "not_launched"
-        assert payload["submission_state"] == submission_state
+        assert payload["verification"] == "conclusively_absent"
         assert payload["cloud_calls"] is False
     assert (
         "bucket",
@@ -1073,6 +1067,7 @@ def test_ordinary_workflow_missing_manifest_remains_an_error(monkeypatch) -> Non
         "npa.workflows.sim2real.monitor.sim2real_run_exists",
         lambda *args, **kwargs: False,
     )
+    _patch_managed_job_absent(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -1086,10 +1081,12 @@ def test_ordinary_workflow_missing_manifest_remains_an_error(monkeypatch) -> Non
     )
 
     assert result.exit_code == 1
-    assert "NOT_SUBMITTED" not in result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "NOT_FOUND"
+    assert payload["verification"] == "conclusively_absent"
 
 
-def test_paidf_never_submitted_preserves_exact_workflow_s3_uri(monkeypatch) -> None:
+def test_paidf_partial_prefix_preserves_exact_workflow_s3_uri(monkeypatch) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
     exact_uri = (
@@ -1101,6 +1098,7 @@ def test_paidf_never_submitted_preserves_exact_workflow_s3_uri(monkeypatch) -> N
         Key="archive/physical-ai-data-factory/paidf-custom/configs/input.json",
         Body=b"{}",
     )
+    _patch_managed_job_absent(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -1117,11 +1115,264 @@ def test_paidf_never_submitted_preserves_exact_workflow_s3_uri(monkeypatch) -> N
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["status"] == "NOT_SUBMITTED"
-    assert payload["submission_state"] == "STAGED"
+    assert payload["status"] == "MANIFEST_PENDING"
+    assert payload["manifest_pending"] is True
+    assert payload["resolution_source"] == "explicit_workflow_s3_uri"
     assert payload["run_prefix_uri"] == exact_uri.removesuffix("/npa-workflow")
     assert payload["manifest_uri"] == f"{exact_uri}/manifest.json"
-    assert exact_uri in " ".join(payload["diagnostics"])
+    assert payload["resolution_checks"][0]["source"] == "explicit_workflow_s3_uri"
+
+
+def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
+    monkeypatch,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists",
+        lambda *args, **kwargs: False,
+    )
+    run_id = "legacy-active"
+    run_prefix = f"physical-ai-data-factory/{run_id}"
+    fake_s3.put_object(
+        Bucket="bucket", Key=f"{run_prefix}/configs/input.json", Body=b"{}"
+    )
+    fake_s3.put_object(
+        Bucket="bucket", Key=f"{run_prefix}/curate/output.json", Body=b"{}"
+    )
+    evidence = ManagedJobEvidence(
+        "found",
+        job_id="81",
+        status="RUNNING",
+        task_rows=(
+            {
+                "task_id": 0,
+                "task_name": "annotate",
+                "status": "SUCCEEDED",
+                "last_progress_at": "2026-08-05T11:00:00Z",
+            },
+            {
+                "task_id": 1,
+                "task_name": "curate",
+                "status": "PENDING",
+                "retry_count": 2,
+                "last_progress_at": "2026-08-05T12:00:00Z",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: evidence,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+            [],
+            0,
+            stdout='container not found ("ray-node")\ncontainer not found ("ray-node")\n',
+            stderr="",
+        ),
+    )
+    log_calls: list[tuple[str, str]] = []
+
+    def tail_logs(*, job_id, stage, **kwargs):  # noqa: ANN001, ANN202
+        log_calls.append((job_id, stage))
+        return __import__("subprocess").CompletedProcess(
+            [], 0, stdout="live curate log\n", stderr=""
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", tail_logs
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value="": "pinned-sky"
+    )
+    cleanup_calls: list[str] = []
+
+    def cleanup(job_id, run_id, **kwargs):  # noqa: ANN001, ANN202
+        cleanup_calls.append(job_id)
+        return SimpleNamespace(
+            ok=True,
+            resources_removed=[run_id],
+            errors=[],
+            commands=[["pinned-sky", "jobs", "cancel", "--yes", job_id]],
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_launched_workflow", cleanup
+    )
+    common = [run_id, "--project", "paidf"]
+
+    status_result = runner.invoke(
+        app, ["workbench", "workflow", "status", *common, "--json"]
+    )
+    artifacts_result = runner.invoke(
+        app, ["workbench", "workflow", "artifacts", *common, "--json"]
+    )
+    logs_result = runner.invoke(
+        app, ["workbench", "workflow", "logs", *common, "--stage", "curate"]
+    )
+    cancel_result = runner.invoke(
+        app, ["workbench", "workflow", "cancel", *common, "--json"]
+    )
+
+    assert status_result.exit_code == artifacts_result.exit_code == 0
+    assert logs_result.exit_code == 0, logs_result.output
+    assert cancel_result.exit_code == 0, cancel_result.output
+    status = json.loads(status_result.output)
+    artifacts = json.loads(artifacts_result.output)
+    cancelled = json.loads(cancel_result.output)
+    assert status["status"] == "RETRYING"
+    assert status["manifest_pending"] is True
+    assert status["active_stage_name"] == "curate"
+    assert status["active_stage_index"] == 2
+    assert status["last_heartbeat_at"] == "2026-08-05T12:00:00Z"
+    assert status["stages"]["curate"]["scheduler_state"] == "PENDING"
+    assert status["stages"]["curate"]["retry_count"] == 2
+    assert status["stages"]["curate"]["startup_failure_evidence"] == 2
+    assert status["stages"]["curate"]["last_normalized_startup_failure"]
+    assert "workflow logs legacy-active --stage curate" in status["stages"]["curate"][
+        "log_command"
+    ]
+    assert status["resolution_source"] == artifacts["resolution_source"] == (
+        "canonical_paidf_s3_prefix"
+    )
+    assert artifacts["manifest_pending"] is True
+    assert f"s3://bucket/{run_prefix}/curate/output.json" in artifacts["artifacts"]
+    assert "live curate log" in logs_result.output
+    assert log_calls == [("81", "curate")]
+    assert cancelled["outcome"] == "cancelled"
+    assert cancelled["sky_job_id"] == "81"
+    assert cleanup_calls == ["81"]
+
+
+@pytest.mark.parametrize("with_receipt", [True, False], ids=["receipt", "managed-job"])
+def test_manifest_pending_status_reports_receipt_or_managed_job_provenance(
+    monkeypatch, with_receipt: bool
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    run_id = "proven-pending"
+    if with_receipt:
+        update_submission_state(
+            "paidf",
+            run_id,
+            {
+                "workflow": {
+                    "name": "physical-ai-data-factory",
+                    "run_prefix_uri": (
+                        f"s3://bucket/physical-ai-data-factory/{run_id}"
+                    ),
+                    "steps": [{"state": "curate", "status": "submitted"}],
+                },
+                "launch": {"status": "submitted", "sky_job_id": "82"},
+            },
+        )
+    evidence = ManagedJobEvidence(
+        "found",
+        job_id="82",
+        status="RUNNING",
+        task_rows=(
+            {"task_id": 0, "task_name": "curate", "status": "RUNNING"},
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: evidence,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+            [], 0, stdout="", stderr=""
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            run_id,
+            "--project",
+            "paidf",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "RUNNING"
+    assert payload["manifest_pending"] is True
+    assert payload["manifest_state"] == "pending"
+    assert payload["resolution_source"] == (
+        "durable_submission_receipt" if with_receipt else "managed_job"
+    )
+    assert payload["active_stage_name"] == "curate"
+    assert payload["stages"]["curate"]["scheduler_state"] == "RUNNING"
+
+
+def test_status_json_reports_provider_unavailable_without_saying_not_found(
+    monkeypatch,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    monkeypatch.setattr(
+        fake_s3,
+        "get_object",
+        lambda **kwargs: (_ for _ in ()).throw(PermissionError("fixture access denied")),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: ManagedJobEvidence(
+            "unavailable", error="fixture SkyPilot provider unavailable"
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "unavailable-run",
+            "--project",
+            "paidf",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["verification"] == "unavailable"
+    assert "Run not found" not in result.output
+    checks = {item["source"]: item["outcome"] for item in payload["resolution_checks"]}
+    assert checks["canonical_paidf_s3_prefix"] == "unavailable"
+    assert checks["managed_job"] == "unavailable"
 
 
 def test_workflow_list_ignores_component_and_staged_source_manifests(monkeypatch) -> None:

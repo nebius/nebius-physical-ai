@@ -35,6 +35,7 @@ from npa.orchestration.skypilot.diagnostics import (
     SkyPilotDiagnosis,
     diagnose_skypilot_output,
 )
+from npa.orchestration.skypilot.workflow_state import redact_text
 
 
 JOBS_CONTROLLER_PREFIX = "sky-jobs-controller-"
@@ -89,6 +90,17 @@ class WorkflowResult:
     @property
     def ok(self) -> bool:
         return self.returncode == 0 and not self.error
+
+
+@dataclass(frozen=True)
+class ManagedJobEvidence:
+    """One exact managed-job lookup through NPA's pinned SkyPilot runtime."""
+
+    outcome: str
+    job_id: str = ""
+    status: str = ""
+    task_rows: tuple[dict[str, Any], ...] = ()
+    error: str = ""
 
 
 class SkyPilotSubmitError(RuntimeError):
@@ -422,6 +434,98 @@ def find_job_ids_by_name(
     if result.returncode != 0:
         return []
     return parse_job_ids_by_name(result.stdout, job_name)
+
+
+def lookup_managed_job(
+    job_name: str,
+    *,
+    job_id: str = "",
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 300,
+) -> ManagedJobEvidence:
+    """Authoritatively find one exact job name/id without fuzzy matching.
+
+    A failed provider/auth/CLI request is ``unavailable``. Only a successful,
+    parseable ``jobs queue --all --output json`` response can return ``absent``.
+    """
+
+    try:
+        runtime_config = resolve_config(
+            sky_bin=sky_bin,
+            global_config_path=config_path,
+            isolated_config_dir=isolated_config_dir,
+        )
+        cmd = [
+            str(ensure_skypilot_version(runtime_config.sky_bin)),
+            "jobs",
+            "queue",
+            "--all",
+            "--output",
+            "json",
+        ]
+        if runtime_config.global_config_path is not None:
+            cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
+        result = subprocess.run(
+            cmd,
+            env=sky_environment(runtime_config.isolated_config_dir),
+            cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - callers must distinguish unavailability
+        return ManagedJobEvidence("unavailable", error=redact_text(str(exc)))
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        return ManagedJobEvidence("unavailable", error=redact_text(detail))
+    payload = _json_payload_from_output(result.stdout)
+    if payload is None:
+        return ManagedJobEvidence("unavailable", error="SkyPilot queue returned invalid JSON")
+    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    if not isinstance(jobs, list):
+        return ManagedJobEvidence("unavailable", error="SkyPilot queue JSON has no jobs list")
+
+    wanted_id = str(job_id or "").strip()
+    matching_ids: list[int] = []
+    declared_job_names: set[str] = set()
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        raw_id = str(row.get("job_id") or row.get("id") or "")
+        row_name = str(row.get("job_name") or row.get("name") or "")
+        if wanted_id:
+            if raw_id != wanted_id:
+                continue
+            declared_name = str(row.get("job_name") or "")
+            if declared_name:
+                declared_job_names.add(declared_name)
+        elif row_name != job_name:
+            continue
+        if raw_id.isdigit():
+            matching_ids.append(int(raw_id))
+    if wanted_id and declared_job_names and job_name not in declared_job_names:
+        names = ", ".join(sorted(declared_job_names))
+        return ManagedJobEvidence(
+            "unavailable",
+            error=(
+                f"recorded SkyPilot job {wanted_id} belongs to {names!r}, "
+                f"not exact run {job_name!r}"
+            ),
+        )
+    if not matching_ids:
+        return ManagedJobEvidence("absent")
+    selected = str(max(matching_ids))
+    rows = tuple(parse_task_statuses(result.stdout, selected))
+    return ManagedJobEvidence(
+        "found",
+        job_id=selected,
+        status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
+        task_rows=rows,
+    )
 
 
 def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
