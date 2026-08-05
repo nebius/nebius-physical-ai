@@ -15,6 +15,7 @@ import yaml
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX, DEFAULT_S3_ENDPOINT
+from npa.workflows.sim2real.materialize import materialized_job_name
 
 @dataclass(frozen=True)
 class _ArtifactRule:
@@ -271,7 +272,9 @@ def normalize_staged_run_id(run_id: str) -> str:
 
 
 def orchestrator_job_name(run_id: str) -> str:
-    return f"sim2real-{normalize_staged_run_id(run_id)}"
+    """Return the exact Job name emitted by canonical materialization."""
+
+    return materialized_job_name(normalize_staged_run_id(run_id))
 
 
 def run_prefix_uri(*, bucket: str, prefix: str, run_id: str, endpoint: str) -> str:

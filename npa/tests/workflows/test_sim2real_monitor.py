@@ -201,6 +201,12 @@ def test_stage_states_infers_trigger_from_later_stage_artifacts(
 
 def test_orchestrator_job_name() -> None:
     assert orchestrator_job_name("demo-run") == "sim2real-demo-run"
+    assert (
+        orchestrator_job_name(
+            "sim2real-pr258-final-gpu-20260805t180511z-2900ceae"
+        )
+        == "sim2real-pr258-final-gpu-20260805t180511z-2900ceae"
+    )
 
 
 def test_normalize_staged_run_id_strips_polluted_submit_line() -> None:

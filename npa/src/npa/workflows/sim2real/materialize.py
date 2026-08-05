@@ -69,7 +69,9 @@ def load_runbook_task(path: Path) -> dict[str, Any]:
     return tasks[0]
 
 
-def _job_name(run_id: str, task_name: str) -> str:
+def materialized_job_name(run_id: str, task_name: str = "") -> str:
+    """Return the DNS-1123 Job name used by canonical materialization."""
+
     base = run_id or task_name or "sim2real"
     slug = _DNS1123_SANITIZE.sub("-", base.lower()).strip("-") or "sim2real"
     name = slug if slug.startswith("sim2real") else f"sim2real-{slug}"
@@ -192,10 +194,10 @@ def materialize_k8s_job(
     resolved_namespace = (
         namespace.strip() or envs.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip() or "default"
     )
-    job_name = _job_name(run_id, str(task.get("name") or ""))
+    job_name = materialized_job_name(run_id, str(task.get("name") or ""))
     labels = {
         "app.kubernetes.io/part-of": "npa-sim2real",
-        "sim2real.local/run-id": _job_name(run_id, ""),
+        "sim2real.local/run-id": materialized_job_name(run_id),
     }
     job_spec: dict[str, Any] = {
         "backoffLimit": 0,
