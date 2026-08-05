@@ -480,6 +480,11 @@ def _observe_storage_iam(
     marker_id = str(marker.get("service_account_id", "") or "").strip()
     if marker_id:
         candidates.add(marker_id)
+    marker_candidates = marker.get("candidate_service_account_ids")
+    if isinstance(marker_candidates, list):
+        candidates.update(
+            str(item).strip() for item in marker_candidates if str(item).strip()
+        )
     if len(candidates) > 1:
         return _StorageIamObservation(
             outcome="verification_failed",
@@ -623,6 +628,234 @@ def _partial_cleanup(message: str) -> None:
 
     typer.echo(f"Partial cleanup: {message}", err=True)
     raise typer.Exit(code=2)
+
+
+def _begin_bucket_iam_cleanup_tombstone(
+    project: str, project_id: str, bucket_name: str
+) -> tuple[str, dict[str, object]]:
+    """Persist non-secret IAM ownership evidence before bucket credentials vanish."""
+
+    from datetime import datetime, timezone
+
+    import yaml
+
+    from npa.clients.config import (
+        ConfigError,
+        mark_storage_iam_residue,
+        project_alias_for_id,
+        storage_iam_residue,
+    )
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    alias = str(project or "").strip() or project_alias_for_id(project_id)
+    existing = storage_iam_residue(alias) if alias else {}
+    try:
+        data = (
+            yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+            if CREDENTIALS_PATH.exists()
+            else {}
+        )
+    except (OSError, yaml.YAMLError) as exc:
+        raise typer.BadParameter(
+            "Cannot preserve storage-IAM cleanup provenance because the local "
+            f"credentials journal is unreadable: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise typer.BadParameter(
+            "Cannot preserve storage-IAM cleanup provenance because the local "
+            "credentials journal is not a YAML mapping."
+        )
+
+    account_ids: set[str] = set()
+    account_name = ""
+    access_key_ids: set[str] = set()
+    creation_status = ""
+    creation_phase = ""
+    creation_attempt = ""
+    for section_name in ("storage_iam", "nebius"):
+        section = data.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        account_id = str(section.get("service_account_id", "") or "").strip()
+        if account_id:
+            account_ids.add(account_id)
+        if section_name == "storage_iam":
+            account_name = str(section.get("service_account_name", "") or "").strip()
+
+    setup = data.get("storage_setup")
+    setup_projects = setup.get("projects") if isinstance(setup, dict) else None
+    setup_record = (
+        setup_projects.get(project_id) if isinstance(setup_projects, dict) else None
+    )
+    if isinstance(setup_record, dict):
+        creation_status = str(setup_record.get("status", "") or "").strip()
+        creation_phase = str(setup_record.get("phase", "") or "").strip()
+        creation_attempt = str(setup_record.get("attempt_id", "") or "").strip()
+        resources = setup_record.get("resources")
+        if isinstance(resources, dict):
+            account = resources.get("service_account")
+            if isinstance(account, dict):
+                account_id = str(account.get("id", "") or "").strip()
+                if account_id:
+                    account_ids.add(account_id)
+                account_name = (
+                    account_name or str(account.get("name", "") or "").strip()
+                )
+            keys = resources.get("access_keys")
+            if isinstance(keys, dict):
+                access_key_ids.update(
+                    str(key).strip() for key in keys if str(key).strip()
+                )
+
+    storage = data.get("storage")
+    saved_bucket = ""
+    if isinstance(storage, dict):
+        saved_bucket = _bucket_name_from_uri(
+            str(
+                storage.get("bucket")
+                or storage.get("s3_bucket")
+                or storage.get("checkpoint_bucket")
+                or ""
+            )
+        )
+        for key in ("aws_access_key_id", "access_key_id", "nebius_api_key"):
+            value = str(storage.get(key, "") or "").strip()
+            if value:
+                access_key_ids.add(value)
+
+    setup_bucket = ""
+    if isinstance(setup_record, dict):
+        resources = setup_record.get("resources")
+        bucket_record = resources.get("bucket") if isinstance(resources, dict) else None
+        if isinstance(bucket_record, dict):
+            setup_bucket = _bucket_name_from_uri(
+                str(bucket_record.get("name", "") or "")
+            )
+
+    # A credentials file may describe a different live bucket. Its IAM identity
+    # is not provenance for the explicitly selected deletion target, so leave
+    # that entire lifecycle untouched.
+    if (
+        bucket_name
+        and saved_bucket
+        and saved_bucket != bucket_name
+        and setup_bucket != bucket_name
+    ):
+        return "", {}
+
+    owned_record, ownership_note = _storage_service_account_record()
+    if owned_record is not None and owned_record.project_id == project_id:
+        # A generic ``nebius.service_account_id`` may belong to the agent. Once
+        # the dedicated storage journal proves one immutable identity, it is the
+        # only IAM target this bucket lifecycle is allowed to carry forward.
+        account_ids = {owned_record.account_id}
+    owned = bool(
+        owned_record is not None
+        and owned_record.project_id == project_id
+        and owned_record.account_id in account_ids
+    )
+    existing_id = str(existing.get("service_account_id", "") or "").strip()
+    if existing_id:
+        account_ids.add(existing_id)
+    if len(account_ids) > 1:
+        account_id = ""
+        ownership_state = "unknown"
+        detail = (
+            "Conflicting immutable service-account IDs were preserved; reconciliation "
+            "must resolve the exact identity before deletion: "
+            + ", ".join(sorted(account_ids))
+        )
+    else:
+        account_id = next(iter(account_ids), "")
+        ownership_state = (
+            "owned" if owned else ("pending-verification" if account_id else "unknown")
+        )
+        detail = (
+            "NPA creation provenance is preserved for guarded deletion."
+            if owned
+            else ownership_note
+            or "Historical provenance does not yet establish NPA ownership."
+        )
+    evidence: dict[str, object] = {
+        "status": "present_owned" if owned else "present_unverified_ownership",
+        "ownership_state": ownership_state,
+        "ownership": "npa" if owned else "unverified",
+        "project_id": project_id,
+        "service_account_id": account_id,
+        "service_account_name": account_name,
+        "candidate_service_account_ids": sorted(account_ids),
+        "access_key_ids": sorted(access_key_ids),
+        "bucket_name": bucket_name,
+        "bucket_cleanup_state": "pending",
+        "creation_outcome": creation_status,
+        "creation_phase": creation_phase,
+        "creation_attempt_id": creation_attempt,
+        "detail": detail,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not alias:
+        # Old credentials may predate project aliases. Bucket pruning removes
+        # only the storage-secret section, so the non-secret ``nebius``,
+        # ``storage_iam``, and setup-journal evidence remains available. Do not
+        # make the bucket itself undeletable merely because that legacy evidence
+        # cannot yet be copied into the per-project config tombstone.
+        return "", evidence if account_ids or setup_record else {}
+    try:
+        return alias, mark_storage_iam_residue(alias, evidence)
+    except ConfigError as exc:
+        raise typer.BadParameter(
+            "Bucket cleanup cannot safely proceed because its storage-IAM tombstone "
+            f"could not be saved: {exc}. No bucket was changed."
+        ) from exc
+
+
+def _complete_bucket_iam_cleanup_tombstone(
+    alias: str, marker: dict[str, object]
+) -> None:
+    """Mark bucket removal complete while leaving IAM cleanup visibly pending."""
+
+    if not marker:
+        return
+    if not alias:
+        typer.echo(
+            "Bucket cleanup completed; storage-IAM cleanup remains pending in the "
+            "non-secret credentials journal. Restore the project with `npa configure`, "
+            "then continue with `npa storage service-account reconcile --project "
+            "<alias> --id <exact-service-account-id> --dry-run`."
+        )
+        return
+    from datetime import datetime, timezone
+
+    from npa.clients.config import ConfigError, mark_storage_iam_residue
+
+    try:
+        finished = mark_storage_iam_residue(
+            alias,
+            {
+                "bucket_cleanup_state": "complete",
+                "bucket_cleanup_completed_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except (ConfigError, OSError) as exc:
+        _partial_cleanup(
+            "bucket cleanup completed, but its pending storage-IAM tombstone could "
+            f"not be marked complete: {type(exc).__name__}: {exc}. The pending "
+            "ownership evidence was preserved; fix local config permissions and retry."
+        )
+    account_id = str(finished.get("service_account_id", "") or "").strip()
+    ownership_state = str(finished.get("ownership_state", "") or "unknown")
+    if ownership_state == "owned":
+        command = f"npa storage service-account delete --project {alias} --dry-run"
+    else:
+        exact_id = account_id or "<exact-service-account-id>"
+        command = (
+            "npa storage service-account reconcile "
+            f"--project {alias} --id {exact_id} --dry-run"
+        )
+    typer.echo(
+        "Bucket cleanup completed; storage-IAM cleanup remains pending "
+        f"({ownership_state}). Continue with `{command}`."
+    )
 
 
 @service_account_app.command("delete")
@@ -917,6 +1150,11 @@ def reconcile_service_account_cmd(
     marker_id = str(marker.get("service_account_id", "") or "").strip()
     if marker_id:
         saved_ids.add(marker_id)
+    marker_candidates = marker.get("candidate_service_account_ids")
+    if isinstance(marker_candidates, list):
+        saved_ids.update(
+            str(item).strip() for item in marker_candidates if str(item).strip()
+        )
     exact_id = str(service_account_id or "").strip()
     if not exact_id:
         if len(saved_ids) != 1:
@@ -1156,8 +1394,12 @@ def delete_bucket_cmd(
             raise typer.BadParameter(f"Could not list buckets in {resolved_project}: {exc}") from exc
         if item is None:
             typer.echo(f"Bucket {bucket_name!r} does not exist in project {resolved_project}.")
+            iam_alias, iam_marker = _begin_bucket_iam_cleanup_tombstone(
+                project, resolved_project, bucket_name
+            )
             if prune_config:
                 _prune_local_state(bucket_name)
+            _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
             return
         resolved_id = str((item.get("metadata") or {}).get("id", "") or "")
         bucket_name = bucket_name or str((item.get("metadata") or {}).get("name", "") or "")
@@ -1167,6 +1409,10 @@ def delete_bucket_cmd(
         if not typer.confirm(f"Delete bucket {target} and everything in it?", default=False):
             typer.echo("Aborted.")
             raise typer.Exit(code=1)
+
+    iam_alias, iam_marker = _begin_bucket_iam_cleanup_tombstone(
+        project, resolved_project, bucket_name
+    )
 
     try:
         delete_bucket(resolved_id, ttl=ttl)
@@ -1187,6 +1433,7 @@ def delete_bucket_cmd(
                 _wait_for_bucket_gone(resolved_project, bucket_name, target, wait_timeout)
             if prune_config and bucket_name:
                 _prune_local_state(bucket_name)
+            _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
             return
         raise typer.BadParameter(f"Bucket delete failed: {message}") from exc
 
@@ -1198,6 +1445,7 @@ def delete_bucket_cmd(
         _wait_for_bucket_gone(resolved_project, bucket_name, target, wait_timeout)
     if prune_config and bucket_name:
         _prune_local_state(bucket_name)
+    _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
 
 
 def _wait_for_bucket_gone(project_id: str, bucket_name: str, target: str, timeout: int) -> None:

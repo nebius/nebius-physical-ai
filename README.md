@@ -186,7 +186,7 @@ printf '%s\n' \
   "Running/cost-bearing when status says running: agent VM; 1 cpu-d3/8vcpu-32gb node; 1 gpu-rtx6000/1gpu-24vcpu-218gb node; active PAIDF jobs." \
   "Absent: no resources beyond the storage, agent, cluster, and PAIDF state reported above were requested; absent resources remain absent." \
   "This script performs no teardown. Exact teardown commands:" \
-  "Teardown (not run): npa workbench workflow cancel $RUN_ID --project $PROJECT" \
+  "Teardown (not run): npa workflow cancel $RUN_ID --project $PROJECT" \
   "Teardown (not run): npa agent destroy --project $PROJECT --name agent --yes" \
   "Teardown (not run): npa cluster down --project $PROJECT --context $CONTEXT --force" \
   "Teardown (not run): npa storage bucket delete --project $PROJECT --yes" \
@@ -450,8 +450,10 @@ but never deletes cloud resources. Cloud deletion remains separate:
 successful create response is present in NPA's final ownership record or its
 crash-safe setup journal. A display-name match, legacy ID, reused account,
 conflicting record, or user-managed account is never enough. Bucket deletion
-removes only bucket credentials; storage-IAM provenance survives until the exact
-identity is deleted or verified absent.
+removes secret material but first writes a project-scoped, non-secret cleanup
+tombstone containing immutable service-account/access-key IDs, ownership
+evidence, and the storage creation outcome. That provenance survives until the
+exact IAM identity is deleted or verified absent.
 
 Storage IAM results are explicit: verified absence/deletion exits 0; missing
 trustworthy ownership or a provider/auth verification failure reports
@@ -461,7 +463,7 @@ blocks `--forget-project` until provider-verified absence or guarded deletion.
 Do not treat exit 2 as success. The complete NPA-only sequence is:
 
 ```bash
-npa workbench workflow cancel <run-id> --project <alias> --json
+npa workflow cancel <run-id> --project <alias> --json
 npa agent destroy --project <alias> --name <name> --yes
 npa skypilot cleanup-controller --yes
 npa cluster down --project <alias> --force
@@ -488,9 +490,12 @@ while the provider state is unchanged.
 forces its credential plugin into non-interactive/no-browser mode for the
 best-effort drain preview. It distinguishes authentication, RBAC, kubeconfig,
 and API failures and still attempts Terraform destroy. For a full managed-cluster
-deletion it relaxes only the exact `kube-system` PDBs for the NPA system add-ons
-`coredns`, `cilium-operator`, and `metrics-server`; user and unknown PDBs remain
-protected and are named if they can delay the drain.
+deletion it takes one cluster-wide inventory of nodes, pods, controllers, and
+PDBs with eviction-relevant selector/placement semantics. This catches system
+workloads such as `cilium-operator`, CoreDNS, the CoreDNS autoscaler, and
+`metrics-server`, including the common one-CPU-node-pool case where a replacement
+cannot be scheduled. NPA explains expected provider retry/backoff and never
+patches a PDB or force-deletes a protected pod.
 
 When no cluster state/inventory and no NPA kubeconfig exist, `cluster down` is a
 true no-op: it does not authenticate, initialize Terraform, download providers,

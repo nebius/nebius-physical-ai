@@ -225,9 +225,14 @@ def test_up_stops_on_unmanaged_duplicate(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code != 0
     assert "outside this Terraform" in result.output
     assert "mk8scluster-a" in result.output
+    assert "npa cluster destroy" in result.output
+    assert "--project-id" in result.output
+    assert "nebius mk8s cluster delete" not in result.output
 
 
-def test_up_allows_duplicate_managed_by_terraform_state(monkeypatch, tmp_path: Path) -> None:
+def test_up_allows_duplicate_managed_by_terraform_state(
+    monkeypatch, tmp_path: Path
+) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text(

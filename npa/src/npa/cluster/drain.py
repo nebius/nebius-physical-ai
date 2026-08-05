@@ -1,11 +1,10 @@
-"""Prepare a managed-cluster drain without weakening user workload safety.
+"""Preview a managed-cluster drain without weakening workload safety.
 
-Destroying a managed Kubernetes cluster drains its nodes, and eviction respects
-PodDisruptionBudgets (PDBs). On the one-node NPA default, single-replica system
-add-ons can allow zero disruptions and make deletion appear stuck. A full
-cluster deletion can safely relax those exact platform add-on budgets because
-the add-ons are being removed with the cluster; arbitrary user or unknown PDBs
-must remain untouched.
+Destroying a managed Kubernetes cluster drains every schedulable pod, and every
+eviction respects its PodDisruptionBudget (PDB).  The preview therefore takes one
+shared inventory of nodes, pods, controllers, and PDBs and applies the same
+eviction-relevant selector/placement rules to every namespace.  It never patches
+a PDB or force-deletes a protected pod.
 
 The preview is best-effort and deliberately non-interactive. A temporary copy
 of the selected kubeconfig marks exec plugins non-interactive and adds Nebius'
@@ -31,17 +30,6 @@ DEFAULT_TIMEOUT_SECONDS = 60
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
-# Exact Managed Kubernetes add-ons observed on the NPA default cluster. Do not
-# broaden this to all of kube-system: operators can install their own workloads
-# there, and their disruption policy is still theirs.
-_MANAGED_SYSTEM_PDB_NAMES = frozenset(
-    {
-        "cilium-operator",
-        "coredns",
-        "metrics-server",
-    }
-)
-
 
 @dataclass(frozen=True)
 class DrainPreviewIssue:
@@ -53,20 +41,50 @@ class DrainPreviewIssue:
 
 @dataclass(frozen=True)
 class DisruptionBlocker:
-    """A PodDisruptionBudget that currently permits no evictions."""
+    """A PDB that will deny at least one eviction in this drain inventory."""
 
     namespace: str
     name: str
     desired_healthy: int = 0
     current_healthy: int = 0
+    disruptions_allowed: int = 0
     min_available: object | None = None
     max_unavailable: object | None = None
+    unhealthy_pod_eviction_policy: str = "IfHealthyBudget"
+    matching_pods: tuple[str, ...] = ()
+    workloads: tuple[str, ...] = ()
+    nodes: tuple[str, ...] = ()
+    one_node_pool: bool = False
+    reason: str = ""
 
     def render(self) -> str:
         return (
             f"{self.namespace}/{self.name} "
-            f"(allows 0 disruptions; {self.current_healthy}/{self.desired_healthy} healthy)"
+            f"(allows {self.disruptions_allowed} disruption(s); "
+            f"{self.current_healthy}/{self.desired_healthy} healthy; "
+            f"{len(self.matching_pods)} drain pod(s) on "
+            f"{', '.join(self.nodes) or 'unknown nodes'})"
         )
+
+
+@dataclass(frozen=True)
+class _DrainPod:
+    namespace: str
+    name: str
+    node: str
+    labels: dict[str, str]
+    workload: str
+    ready: bool
+
+
+@dataclass(frozen=True)
+class DrainInventory:
+    """One snapshot used for preview reporting and teardown expectations."""
+
+    nodes: tuple[str, ...]
+    pod_count: int
+    pdb_count: int
+    blockers: tuple[DisruptionBlocker, ...]
 
 
 def classify_drain_preview_failure(message: str) -> DrainPreviewIssue:
@@ -84,7 +102,7 @@ def classify_drain_preview_failure(message: str) -> DrainPreviewIssue:
     ):
         return DrainPreviewIssue(
             "authorization",
-            "Kubernetes RBAC denied listing policy/v1 PodDisruptionBudgets",
+            "Kubernetes RBAC denied listing nodes, pods, or policy/v1 PodDisruptionBudgets",
         )
     kubeconfig_marker = any(
         marker in lowered
@@ -138,7 +156,7 @@ def classify_drain_preview_failure(message: str) -> DrainPreviewIssue:
         )
     return DrainPreviewIssue(
         "kubectl",
-        "kubectl could not inspect policy/v1 PodDisruptionBudgets",
+        "kubectl could not inspect the drain inventory",
     )
 
 
@@ -152,8 +170,9 @@ def describe_preview_unavailable(issue: DrainPreviewIssue) -> str:
             "teardown; the preview will not open a browser by design."
         ),
         "authorization": (
-            "Grant the selected kubeconfig identity list access to policy/v1 "
-            "PodDisruptionBudgets, or pass --kubeconfig for an identity with that read access."
+            "Pass --kubeconfig for an existing NPA operator identity that already has "
+            "read access to nodes, pods, and policy/v1 PodDisruptionBudgets; NPA will "
+            "not broaden RBAC during teardown."
         ),
         "kubeconfig": (
             "Pass the cluster's kubeconfig with --kubeconfig, or regenerate the saved one "
@@ -185,15 +204,40 @@ def blocking_pod_disruption_budgets(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     runner: Runner | None = None,
 ) -> tuple[list[DisruptionBlocker], DrainPreviewIssue | None]:
-    """Return PDBs that allow no evictions, or a classified preview issue."""
+    """Return PDBs that will block the shared full-drain inventory."""
 
-    cmd = ["kubectl", "get", "poddisruptionbudgets", "--all-namespaces", "-o", "json"]
+    inventory, issue = drain_inventory(
+        kubeconfig=kubeconfig,
+        context=context,
+        timeout=timeout,
+        runner=runner,
+    )
+    return (list(inventory.blockers) if inventory is not None else []), issue
+
+
+def drain_inventory(
+    *,
+    kubeconfig: str = "",
+    context: str = "",
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    runner: Runner | None = None,
+) -> tuple[DrainInventory | None, DrainPreviewIssue | None]:
+    """Collect and evaluate the exact cluster-wide drain inventory once."""
+
+    cmd = [
+        "kubectl",
+        "get",
+        "nodes,pods,poddisruptionbudgets",
+        "--all-namespaces",
+        "-o",
+        "json",
+    ]
     if context.strip():
         cmd[1:1] = ["--context", context.strip()]
     execute = runner or subprocess.run
     with _noninteractive_kubeconfig_env(kubeconfig) as (env, config_issue):
         if config_issue is not None:
-            return [], config_issue
+            return None, config_issue
         try:
             result = execute(
                 cmd,
@@ -206,25 +250,51 @@ def blocking_pod_disruption_budgets(
                 env=env,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            return [], classify_drain_preview_failure(f"could not run kubectl: {exc}")
+            return None, classify_drain_preview_failure(f"could not run kubectl: {exc}")
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-        return [], classify_drain_preview_failure(detail)
+        return None, classify_drain_preview_failure(detail)
     try:
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
-        return [], DrainPreviewIssue(
-            "kubectl", "kubectl returned unreadable PodDisruptionBudget data"
+        return None, DrainPreviewIssue(
+            "kubectl", "kubectl returned unreadable drain inventory data"
         )
     if not isinstance(payload, dict):
-        return [], DrainPreviewIssue(
-            "kubectl", "kubectl returned an unexpected PodDisruptionBudget payload"
+        return None, DrainPreviewIssue(
+            "kubectl", "kubectl returned an unexpected drain inventory payload"
         )
 
+    items = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
+    nodes: dict[str, dict[str, str]] = {}
+    pods: list[_DrainPod] = []
+    pdbs: list[dict[str, Any]] = []
+    for item in items:
+        kind = str(item.get("kind") or "").strip().lower()
+        metadata = _as_dict(item.get("metadata"))
+        spec = _as_dict(item.get("spec"))
+        status = _as_dict(item.get("status"))
+        if kind == "node":
+            name = str(metadata.get("name") or "").strip()
+            if name:
+                nodes[name] = _string_dict(metadata.get("labels"))
+        elif kind == "pod":
+            pod = _drain_pod(metadata, spec, status)
+            if pod is not None:
+                pods.append(pod)
+        elif (
+            kind in {"poddisruptionbudget", "pdb"}
+            or ("disruptionsAllowed" in status and "selector" in spec)
+            or (not kind and "disruptionsAllowed" in status)
+        ):
+            pdbs.append(item)
+
+    pool_sizes: dict[str, int] = {}
+    for node_name, labels in nodes.items():
+        pool = _node_pool(node_name, labels)
+        pool_sizes[pool] = pool_sizes.get(pool, 0) + 1
     blockers: list[DisruptionBlocker] = []
-    for item in payload.get("items") or []:
-        if not isinstance(item, dict):
-            continue
+    for item in pdbs:
         metadata = _as_dict(item.get("metadata"))
         spec = _as_dict(item.get("spec"))
         status = _as_dict(item.get("status"))
@@ -235,112 +305,197 @@ def blocking_pod_disruption_budgets(
             allowed_count = int(allowed)
         except (TypeError, ValueError):
             continue
-        if allowed_count > 0:
-            continue
         namespace = str(metadata.get("namespace") or "").strip()
         name = str(metadata.get("name") or "").strip()
         if not namespace or not name:
             continue
+        selector = _as_dict(spec.get("selector"))
+        matching = [
+            pod
+            for pod in pods
+            if pod.namespace == namespace and _selector_matches(selector, pod.labels)
+        ]
+        unhealthy_policy = str(
+            spec.get("unhealthyPodEvictionPolicy") or "IfHealthyBudget"
+        ).strip()
+        desired_healthy = _as_int(status.get("desiredHealthy"))
+        current_healthy = _as_int(status.get("currentHealthy"))
+        ready_pods = [pod for pod in matching if pod.ready]
+        unhealthy_pods = [pod for pod in matching if not pod.ready]
+        # AlwaysAllow never charges an unhealthy running pod to the budget.
+        # IfHealthyBudget likewise permits it once the guarded workload already
+        # satisfies desiredHealthy; otherwise that unhealthy eviction remains
+        # blocked even though it cannot reduce currentHealthy further.
+        blocked_unhealthy = (
+            unhealthy_pods
+            if unhealthy_policy != "AlwaysAllow" and current_healthy < desired_healthy
+            else []
+        )
+        eviction_relevant = [*ready_pods, *blocked_unhealthy]
+        # Backward-compatible fallback for older kubectl/test payloads that
+        # contain only PDBs. With pod inventory present, a selector that matches
+        # no drain candidates cannot block this teardown.
+        should_block = (
+            allowed_count <= 0
+            if not pods
+            else len(ready_pods) > max(0, allowed_count) or bool(blocked_unhealthy)
+        )
+        if not should_block:
+            continue
+        blocker_nodes = tuple(
+            sorted({pod.node for pod in eviction_relevant if pod.node})
+        )
+        matching_pods = tuple(
+            sorted(f"{pod.namespace}/{pod.name}" for pod in eviction_relevant)
+        )
+        workloads = tuple(
+            sorted({pod.workload for pod in eviction_relevant if pod.workload})
+        )
+        one_node_pool = any(
+            pool_sizes.get(_node_pool(node, nodes.get(node, {})), 0) == 1
+            for node in blocker_nodes
+        )
+        reasons: list[str] = []
+        if len(ready_pods) > max(0, allowed_count):
+            reasons.append(
+                f"draining {len(ready_pods)} healthy matching pod(s) requires more "
+                f"than the {max(0, allowed_count)} disruption(s) currently permitted"
+            )
+        if blocked_unhealthy:
+            reasons.append(
+                f"{len(blocked_unhealthy)} unhealthy pod(s) also remain protected "
+                f"by IfHealthyBudget because currentHealthy {current_healthy} is below "
+                f"desiredHealthy {desired_healthy}"
+            )
+        reason = "; ".join(reasons)
+        if one_node_pool:
+            reason += (
+                "; at least one affected CPU/node pool has one node, so a controller "
+                "cannot place a healthy replacement before that node is removed"
+            )
         blockers.append(
             DisruptionBlocker(
                 namespace=namespace,
                 name=name,
-                desired_healthy=_as_int(status.get("desiredHealthy")),
-                current_healthy=_as_int(status.get("currentHealthy")),
+                desired_healthy=desired_healthy,
+                current_healthy=current_healthy,
+                disruptions_allowed=allowed_count,
                 min_available=spec.get("minAvailable"),
                 max_unavailable=spec.get("maxUnavailable"),
+                unhealthy_pod_eviction_policy=unhealthy_policy,
+                matching_pods=matching_pods,
+                workloads=workloads,
+                nodes=blocker_nodes,
+                one_node_pool=one_node_pool,
+                reason=reason,
             )
         )
     blockers.sort(key=lambda blocker: (blocker.namespace, blocker.name))
-    return blockers, None
+    return (
+        DrainInventory(
+            nodes=tuple(sorted(nodes)),
+            pod_count=len(pods),
+            pdb_count=len(pdbs),
+            blockers=tuple(blockers),
+        ),
+        None,
+    )
 
 
-def is_managed_system_pdb(blocker: DisruptionBlocker) -> bool:
-    """Whether *blocker* is an exact NPA Managed Kubernetes system add-on."""
+def _drain_pod(
+    metadata: dict[str, Any], spec: dict[str, Any], status: dict[str, Any]
+) -> _DrainPod | None:
+    namespace = str(metadata.get("namespace") or "").strip()
+    name = str(metadata.get("name") or "").strip()
+    node = str(spec.get("nodeName") or "").strip()
+    phase = str(status.get("phase") or "").strip().lower()
+    if (
+        not namespace
+        or not name
+        or not node
+        or metadata.get("deletionTimestamp")
+        or phase in {"succeeded", "failed"}
+    ):
+        return None
+    owners = [
+        item
+        for item in (metadata.get("ownerReferences") or [])
+        if isinstance(item, dict)
+    ]
+    controller = next((item for item in owners if item.get("controller") is True), None)
+    if controller is None and owners:
+        controller = owners[0]
+    controller_kind = str((controller or {}).get("kind") or "Pod").strip()
+    controller_name = str((controller or {}).get("name") or name).strip()
+    # DaemonSet and mirror/static pods are skipped by normal node drains.
+    annotations = _string_dict(metadata.get("annotations"))
+    if (
+        controller_kind.lower() == "daemonset"
+        or "kubernetes.io/config.mirror" in annotations
+    ):
+        return None
+    ready = any(
+        isinstance(condition, dict)
+        and condition.get("type") == "Ready"
+        and str(condition.get("status") or "").lower() == "true"
+        for condition in (status.get("conditions") or [])
+    )
+    return _DrainPod(
+        namespace=namespace,
+        name=name,
+        node=node,
+        labels=_string_dict(metadata.get("labels")),
+        workload=f"{namespace}/{controller_kind}/{controller_name}",
+        ready=ready,
+    )
 
-    name = blocker.name.strip().lower()
-    return blocker.namespace.strip() == "kube-system" and name in _MANAGED_SYSTEM_PDB_NAMES
+
+def _selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
+    for key, expected in _string_dict(selector.get("matchLabels")).items():
+        if labels.get(key) != expected:
+            return False
+    for expression in selector.get("matchExpressions") or []:
+        if not isinstance(expression, dict):
+            return False
+        key = str(expression.get("key") or "").strip()
+        operator = str(expression.get("operator") or "").strip()
+        values = {str(value) for value in (expression.get("values") or [])}
+        present = key in labels
+        if operator == "In" and (not present or labels[key] not in values):
+            return False
+        if operator == "NotIn" and present and labels[key] in values:
+            return False
+        if operator == "Exists" and not present:
+            return False
+        if operator == "DoesNotExist" and present:
+            return False
+        if operator not in {"In", "NotIn", "Exists", "DoesNotExist"}:
+            return False
+    return True
 
 
-def relax_managed_system_pdbs(
-    blockers: list[DisruptionBlocker],
-    *,
-    kubeconfig: str = "",
-    context: str = "",
-    timeout: int = DEFAULT_TIMEOUT_SECONDS,
-    runner: Runner | None = None,
-) -> tuple[
-    list[DisruptionBlocker],
-    list[tuple[DisruptionBlocker, DrainPreviewIssue]],
-]:
-    """Relax exact system add-on PDBs for a full managed-cluster deletion.
+def _node_pool(_node_name: str, labels: dict[str, str]) -> str:
+    for key in (
+        "nebius.com/node-group-id",
+        "mk8s.nebius.ai/node-group-id",
+        "nebius.ai/node-group-id",
+        "node.kubernetes.io/instance-group",
+        "cloud.google.com/gke-nodepool",
+        "eks.amazonaws.com/nodegroup",
+    ):
+        if labels.get(key):
+            return f"{key}={labels[key]}"
+    gpu_product = labels.get("nvidia.com/gpu.product", "")
+    gpu_present = labels.get("nvidia.com/gpu.present", "").lower() == "true"
+    return f"accelerator={gpu_product or ('gpu' if gpu_present else 'cpu')}"
 
-    User and unrecognized PDBs are never patched. A failed patch is diagnostic
-    only: Terraform teardown still proceeds and its normal reconciliation remains
-    the authority.
-    """
 
-    execute = runner or subprocess.run
-    relaxed: list[DisruptionBlocker] = []
-    failures: list[tuple[DisruptionBlocker, DrainPreviewIssue]] = []
-    for blocker in blockers:
-        if not is_managed_system_pdb(blocker):
-            continue
-        patch: dict[str, dict[str, object]]
-        if blocker.min_available is not None:
-            patch = {"spec": {"minAvailable": 0}}
-        elif blocker.max_unavailable is not None:
-            patch = {"spec": {"maxUnavailable": "100%"}}
-        else:
-            failures.append(
-                (
-                    blocker,
-                    DrainPreviewIssue(
-                        "kubectl",
-                        "the system add-on PDB has no supported minAvailable/maxUnavailable field",
-                    ),
-                )
-            )
-            continue
-        cmd = [
-            "kubectl",
-            "patch",
-            "poddisruptionbudget",
-            blocker.name,
-            "-n",
-            blocker.namespace,
-            "--type=merge",
-            "--patch",
-            json.dumps(patch),
-        ]
-        if context.strip():
-            cmd[1:1] = ["--context", context.strip()]
-        with _noninteractive_kubeconfig_env(kubeconfig) as (env, config_issue):
-            if config_issue is not None:
-                failures.append((blocker, config_issue))
-                continue
-            try:
-                result = execute(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.DEVNULL,
-                    text=True,
-                    timeout=timeout,
-                    check=False,
-                    env=env,
-                )
-            except (OSError, subprocess.SubprocessError) as exc:
-                failures.append(
-                    (blocker, classify_drain_preview_failure(f"could not run kubectl: {exc}"))
-                )
-                continue
-        if result.returncode == 0:
-            relaxed.append(blocker)
-            continue
-        detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-        failures.append((blocker, classify_drain_preview_failure(detail)))
-    return relaxed, failures
+def _string_dict(value: object) -> dict[str, str]:
+    return {
+        str(key): str(item)
+        for key, item in _as_dict(value).items()
+        if key is not None and item is not None
+    }
 
 
 @contextmanager
@@ -427,11 +582,22 @@ def describe_drain_expectation(blockers: list[DisruptionBlocker]) -> str:
 
     if not blockers:
         return ""
-    names = ", ".join(blocker.render() for blocker in blockers)
+    details: list[str] = []
+    for blocker in blockers:
+        workloads = ", ".join(blocker.workloads) or "matching workload(s)"
+        shape = (
+            " This is a one-node pool: no spare CPU node exists for a healthy "
+            "replacement before eviction."
+            if blocker.one_node_pool
+            else ""
+        )
+        details.append(
+            f"{blocker.render()} protects {workloads}: {blocker.reason}.{shape}"
+        )
     return (
-        f"{len(blockers)} protected PodDisruptionBudget(s) currently allow no evictions: "
-        f"{names}. NPA does not override user-workload or unrecognized budgets. Node drain "
-        "will retry until their pods reschedule or the node pool is removed, so teardown "
-        "can look stalled for several minutes with no output; this wait is expected while "
-        "those protections remain."
+        f"{len(blockers)} PodDisruptionBudget(s) will deny at least one eviction: "
+        + " ".join(details)
+        + " NPA will not patch budgets or force-delete protected pods. The provider "
+        "drain will retry/wait and cluster deletion can still safely continue; expected "
+        "PDB backoff can look stalled until controller/node-group teardown converges."
     )

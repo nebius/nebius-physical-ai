@@ -80,6 +80,8 @@ def sky_down(
     cleanup = CleanupResult(commands=[cmd])
     if result.returncode == 0:
         cleanup.resources_removed.append(cluster_name)
+    elif _is_conclusive_absence_error(_command_detail(result)):
+        cleanup.resources_removed.append(f"{cluster_name}:already-absent")
     else:
         cleanup.errors.append(_format_command_error(cmd, result))
     return cleanup
@@ -171,6 +173,8 @@ def cleanup_launched_workflow(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
+    job_name: str = "",
+    teardown_cluster: bool = True,
 ) -> CleanupResult:
     """Cancel one manifest-proven managed job and best-effort tear down its cluster.
 
@@ -188,12 +192,32 @@ def cleanup_launched_workflow(
         raise InvalidRunIdError(
             "run id must contain only letters, numbers, and hyphens for exact cleanup"
         )
+    exact_job_name = str(job_name or cleaned_run_id).strip()
     cleanup = _cancel_job(
         cleaned_job_id,
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
     )
+    if cleanup.errors:
+        convergence = _verify_managed_job_convergence(
+            cleaned_job_id,
+            exact_job_name,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+        )
+        if convergence == "terminal":
+            cleanup.errors.clear()
+            cleanup.resources_removed.append(f"job:{cleaned_job_id}:already-terminal")
+        elif convergence == "absent":
+            cleanup.errors.clear()
+            cleanup.resources_removed.append(f"job:{cleaned_job_id}:already-absent")
+        elif convergence.startswith("unavailable:"):
+            cleanup.errors.append(
+                f"managed job {cleaned_job_id} could not be re-verified after the "
+                f"cancel failure: {convergence.removeprefix('unavailable:')}"
+            )
     drained, still_running = wait_for_jobs_terminal(
         [cleaned_job_id],
         isolated_config_dir=isolated_config_dir,
@@ -207,15 +231,111 @@ def cleanup_launched_workflow(
             + ", ".join(still_running)
             + f" were still non-terminal {job_drain_timeout}s after cancel"
         )
+    elif not cleanup.errors:
+        convergence = _verify_managed_job_convergence(
+            cleaned_job_id,
+            exact_job_name,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+        )
+        if convergence not in {"terminal", "absent"}:
+            detail = convergence.removeprefix("unavailable:")
+            cleanup.errors.append(
+                f"managed job {cleaned_job_id} cancellation could not be verified as "
+                f"terminal/absent: {detail or convergence}"
+            )
+    if teardown_cluster:
+        cleanup.extend(
+            sky_down(
+                cluster or cleaned_run_id,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+            )
+        )
+    return cleanup
+
+
+def cleanup_launched_workflows(
+    jobs: Sequence[tuple[str, str]],
+    run_id: str,
+    *,
+    cluster: str = "",
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
+) -> CleanupResult:
+    """Cancel every exact managed-job record, continuing after partial failures."""
+
+    cleanup = CleanupResult()
+    seen: set[str] = set()
+    targets = [
+        (str(job_id or "").strip(), str(job_name or "").strip())
+        for job_id, job_name in jobs
+        if str(job_id or "").strip()
+    ]
+    for job_id, exact_name in targets:
+        if job_id in seen:
+            continue
+        seen.add(job_id)
+        try:
+            result = cleanup_launched_workflow(
+                job_id,
+                run_id,
+                cluster="",
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+                job_drain_timeout=job_drain_timeout,
+                job_name=exact_name,
+                teardown_cluster=False,
+            )
+        except (OSError, ValueError) as exc:
+            cleanup.errors.append(
+                f"managed job {job_id} cleanup could not start: {type(exc).__name__}: {exc}"
+            )
+            continue
+        cleanup.extend(result)
     cleanup.extend(
         sky_down(
-            cluster or cleaned_run_id,
+            cluster or run_id,
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
             sky_bin=sky_bin,
         )
     )
     return cleanup
+
+
+def _verify_managed_job_convergence(
+    job_id: str,
+    job_name: str,
+    *,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: SkyBin,
+) -> str:
+    """Return terminal/absent, preserving provider/auth lookup failures."""
+
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    evidence = lookup_managed_job(
+        job_name,
+        job_id=job_id,
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
+    )
+    if evidence.outcome == "absent":
+        return "absent"
+    if evidence.outcome == "unavailable":
+        return f"unavailable:{evidence.error or 'provider unavailable'}"
+    status = str(evidence.status or "").strip().upper()
+    if status and status not in NONTERMINAL_JOB_STATUSES and status != "UNKNOWN":
+        return "terminal"
+    return status or "UNKNOWN"
 
 
 def cleanup_all_for_run(
@@ -820,6 +940,40 @@ def _sanitize_name(value: str) -> str:
 def _format_command_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
     detail = _combined_output(result) or f"exit {result.returncode}"
     return f"{' '.join(cmd)} failed: {detail}"
+
+
+def _command_detail(result: subprocess.CompletedProcess[str]) -> str:
+    return _combined_output(result) or f"exit {result.returncode}"
+
+
+def _is_conclusive_absence_error(detail: str) -> bool:
+    """Recognize an exact absent resource without swallowing auth/API failures."""
+
+    lowered = " ".join(str(detail or "").lower().split())
+    if any(
+        marker in lowered
+        for marker in (
+            "unauthorized",
+            "unauthenticated",
+            "permission denied",
+            "forbidden",
+            "timed out",
+            "timeout",
+            "connection refused",
+            "unavailable",
+        )
+    ):
+        return False
+    return any(
+        marker in lowered
+        for marker in (
+            "not found",
+            "notfound",
+            "does not exist",
+            "already absent",
+            "no cluster found",
+        )
+    )
 
 
 def _combined_output(result: subprocess.CompletedProcess[str]) -> str:

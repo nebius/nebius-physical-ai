@@ -47,6 +47,48 @@ APP_STATUS_INSTALL_FAILED = "install_failed"
 # project stanza prevents a local cleanup pass from erasing the only remaining
 # route back to a legacy service account.
 STORAGE_IAM_RESIDUE_KEY = "storage_iam_verification_required"
+STORAGE_IAM_RESIDUE_SCHEMA = "npa.storage-iam-residue.v2"
+
+
+def _normalize_storage_iam_residue(marker: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a secret-free IAM cleanup marker to the current state machine."""
+
+    normalized = dict(marker)
+    status = str(normalized.get("status", "") or "").strip()
+    ownership = str(normalized.get("ownership", "") or "").strip()
+    ownership_state = str(normalized.get("ownership_state", "") or "").strip()
+    if ownership_state not in {
+        "owned",
+        "pending-verification",
+        "verified-deleted",
+        "pre-existing",
+        "unknown",
+    }:
+        if status in {"verified_absent", "verified_deleted"}:
+            ownership_state = "verified-deleted"
+        elif status == "pre_existing":
+            ownership_state = "pre-existing"
+        elif ownership in {"npa", "npa-recovery-attested"} or status in {
+            "present_owned",
+            "reconciled_pending_delete",
+        }:
+            ownership_state = "owned"
+        elif status == "present_unverified_ownership":
+            ownership_state = "pending-verification"
+        else:
+            ownership_state = "unknown"
+    for key in ("access_key_ids", "candidate_service_account_ids"):
+        values = normalized.get(key)
+        if isinstance(values, (list, tuple, set)):
+            normalized[key] = sorted(
+                {str(item).strip() for item in values if str(item).strip()}
+            )
+        else:
+            normalized.pop(key, None)
+    normalized["ownership_state"] = ownership_state
+    normalized["schema_version"] = STORAGE_IAM_RESIDUE_SCHEMA
+    return normalized
+
 
 ENV_MAP = {
     "endpoint": "NPA_WORKBENCH_ENDPOINT",
@@ -647,7 +689,7 @@ def storage_iam_residue(alias: str) -> dict[str, Any]:
     projects = _load_yaml().get("projects")
     project = projects.get(cleaned) if isinstance(projects, dict) else None
     marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
-    return dict(marker) if isinstance(marker, dict) else {}
+    return _normalize_storage_iam_residue(marker) if isinstance(marker, dict) else {}
 
 
 def storage_iam_residues() -> dict[str, dict[str, Any]]:
@@ -660,7 +702,7 @@ def storage_iam_residues() -> dict[str, dict[str, Any]]:
     for alias, project in projects.items():
         marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
         if isinstance(marker, dict) and marker:
-            result[str(alias)] = dict(marker)
+            result[str(alias)] = _normalize_storage_iam_residue(marker)
     return result
 
 
@@ -703,7 +745,9 @@ def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, 
     if not isinstance(project, dict):
         raise ConfigError(f"Project '{cleaned}' has an invalid configuration stanza.")
     current = project.get(STORAGE_IAM_RESIDUE_KEY)
-    merged = dict(current) if isinstance(current, dict) else {}
+    merged = (
+        _normalize_storage_iam_residue(current) if isinstance(current, dict) else {}
+    )
     status_rank = {
         "verification_failed": 0,
         "present_unverified_ownership": 1,
@@ -712,7 +756,12 @@ def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, 
     }
     current_status = str(merged.get("status", "") or "")
     incoming_status = str(evidence.get("status", "") or "")
-    for key, value in evidence.items():
+    incoming = dict(evidence)
+    if any(key in evidence for key in ("status", "ownership", "ownership_state")):
+        incoming["ownership_state"] = _normalize_storage_iam_residue(evidence)[
+            "ownership_state"
+        ]
+    for key, value in incoming.items():
         if value not in (None, "", [], {}):
             if (
                 key == "status"
@@ -721,7 +770,7 @@ def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, 
             ):
                 continue
             merged[str(key)] = value
-    merged["schema_version"] = "npa.storage-iam-residue.v1"
+    merged = _normalize_storage_iam_residue(merged)
     project[STORAGE_IAM_RESIDUE_KEY] = merged
     projects[cleaned] = project
     yml["projects"] = projects

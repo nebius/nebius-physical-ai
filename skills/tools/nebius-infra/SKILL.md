@@ -47,7 +47,7 @@ Run project-scoped cloud deletion before forgetting the project, then use the
 explicit full local scope:
 
 ```bash
-npa workbench workflow cancel <run-id> --project <alias> --json
+npa workflow cancel <run-id> --project <alias> --json
 npa agent destroy --project <alias> --name <name> --yes
 npa skypilot cleanup-controller --yes
 npa cluster down --project <alias> --force
@@ -120,9 +120,12 @@ or provider/auth verification failure is partial cleanup and exits 2.
 - `npa cluster down` uses the selected cluster's saved kubeconfig for its
   best-effort PDB preview, sets exec auth to non-interactive, and adds Nebius
   `--no-browser`. Authentication/RBAC/API/kubeconfig preview failures are
-  explained and never masquerade as verified drain safety. Full-cluster deletion
-  relaxes only the exact managed `kube-system` PDBs for `coredns`,
-  `cilium-operator`, and `metrics-server`; user/unknown PDBs are never patched.
+  explained and never masquerade as verified drain safety. Preview uses one
+  cluster-wide node/pod/controller/PDB inventory and the same eviction selector
+  and placement semantics for every namespace. It reports cilium/CoreDNS/
+  autoscaler/metrics-server and future matching blockers, including the one-node
+  CPU-pool shape. NPA never patches PDBs or force-deletes protected pods; normal
+  teardown retry/backoff remains best-effort and convergent.
 - With no cluster state/inventory and no NPA kubeconfig, `npa cluster down` is a
   no-op before binary lookup, authentication, Terraform init/provider download,
   or Kubernetes/RBAC calls. Real apply/destroy uses marked ephemeral

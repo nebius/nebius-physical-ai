@@ -933,7 +933,7 @@ def test_exact_managed_job_lookup_preserves_absent_vs_unavailable(
     assert "provider unavailable" in unavailable.error
 
 
-def test_exact_managed_job_lookup_returns_newest_exact_identity(
+def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     monkeypatch, tmp_path
 ) -> None:
     from npa.orchestration.skypilot.workflow import lookup_managed_job
@@ -967,10 +967,16 @@ def test_exact_managed_job_lookup_returns_newest_exact_identity(
 
     evidence = lookup_managed_job("exact-run", sky_bin=sky_bin)
 
-    assert evidence.outcome == "found"
-    assert evidence.job_id == "43"
-    assert evidence.status == "RUNNING"
-    assert evidence.task_rows[0]["retry_count"] == 2
+    assert evidence.outcome == "unavailable"
+    assert evidence.job_id == ""
+    assert "ambiguous" in evidence.error
+    assert "42, 43" in evidence.error
+
+    exact = lookup_managed_job("exact-run", job_id="43", sky_bin=sky_bin)
+    assert exact.outcome == "found"
+    assert exact.job_id == "43"
+    assert exact.status == "RUNNING"
+    assert exact.task_rows[0]["retry_count"] == 2
 
 
 def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:

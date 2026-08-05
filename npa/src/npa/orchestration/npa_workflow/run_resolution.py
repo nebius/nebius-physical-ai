@@ -54,6 +54,7 @@ class RunResolution:
     manifest_pending: bool = False
     manifest: dict[str, Any] | None = None
     runtime_state: dict[str, Any] = field(default_factory=dict)
+    runtime_state_error: str = ""
     state: WorkflowS3Config | None = None
     receipt: dict[str, Any] = field(default_factory=dict)
     job_id: str = ""
@@ -248,11 +249,17 @@ def _attach_runtime_state(result: RunResolution, state: WorkflowS3Config) -> Non
 
     try:
         payload = get_json(state, "runtime.json")
-    except WorkflowStateError:
+    except WorkflowStateError as exc:
+        if not workflow_state_error_is_missing(exc):
+            result.runtime_state_error = redact_text(str(exc))
         return
     if str(payload.get("run_id") or "") != result.run_id:
+        result.runtime_state_error = (
+            "runtime ledger run id does not match the exact requested run"
+        )
         return
     if not isinstance(payload.get("waves"), list):
+        result.runtime_state_error = "runtime ledger waves field is not a list"
         return
     result.runtime_state = payload
     result.workflow_name = str(payload.get("workflow") or result.workflow_name)

@@ -60,7 +60,7 @@ def up_cmd(
     sky_smoke: bool = typer.Option(
         True,
         "--sky-smoke/--skip-sky-smoke",
-        help="Run a SkyPilot Kubernetes GPU smoke task and clean it up with sky down.",
+        help="Run a SkyPilot Kubernetes GPU smoke task and clean it up through NPA.",
     ),
     sky_gpus: str = typer.Option(
         "",
@@ -505,70 +505,40 @@ def kubeconfig_cmd(
 
 
 def _report_drain_blockers(kubeconfig: Path | None, *, context: str = "") -> None:
-    """Inspect drain safety and relax only managed system add-ons.
+    """Inspect the same cluster-wide inventory the full node drain will affect.
 
     This is best-effort and preview-only. Authentication, RBAC, kubeconfig and
-    API failures are explained, but none blocks the Terraform destroy.
+    API failures are explained, but none blocks the Terraform destroy. NPA does
+    not mutate PDBs or force-delete their protected pods.
     """
 
     from npa.cluster.drain import (
-        blocking_pod_disruption_budgets,
+        drain_inventory,
         describe_drain_expectation,
         describe_preview_unavailable,
-        is_managed_system_pdb,
-        relax_managed_system_pdbs,
     )
 
     selected_kubeconfig = str(kubeconfig) if kubeconfig else ""
-    blockers, issue = blocking_pod_disruption_budgets(
+    inventory, issue = drain_inventory(
         kubeconfig=selected_kubeconfig,
         context=context,
     )
     if issue is not None:
         typer.echo(f"drain-preview: {describe_preview_unavailable(issue)}", err=True)
         return
+    blockers = list(inventory.blockers) if inventory is not None else []
     if not blockers:
         typer.echo(
-            "drain-preview: inspected policy/v1 PodDisruptionBudgets; none currently "
-            "allows zero evictions.",
+            "drain-preview: inspected the cluster-wide node/pod/controller/PDB "
+            "inventory with eviction selector and placement semantics; no PDB will "
+            "deny an eviction in the observed drain.",
             err=True,
         )
         return
 
-    system_blockers = [item for item in blockers if is_managed_system_pdb(item)]
-    protected_blockers = [item for item in blockers if not is_managed_system_pdb(item)]
-    relaxed, failures = relax_managed_system_pdbs(
-        system_blockers,
-        kubeconfig=selected_kubeconfig,
-        context=context,
-    )
-    if relaxed:
-        names = ", ".join(item.render() for item in relaxed)
-        typer.echo(
-            f"drain-preview: relaxed {len(relaxed)} managed system add-on PDB(s) "
-            f"for this full cluster deletion: {names}. No user PDB was changed.",
-            err=True,
-        )
-    for blocker, failure in failures:
-        correction = (
-            "Grant the selected kubeconfig identity patch access to this exact "
-            "kube-system PodDisruptionBudget if a faster drain is required."
-            if failure.kind == "authorization"
-            else "Restore the selected kubeconfig's non-interactive Kubernetes access "
-            "if a faster drain is required."
-        )
-        typer.echo(
-            f"drain-preview: could not relax managed system add-on {blocker.render()} "
-            f"({failure.summary}). Teardown will continue and may wait for the platform's "
-            f"normal node-group reconciliation; no user PDB was changed. {correction}",
-            err=True,
-        )
-    guidance = describe_drain_expectation(protected_blockers)
+    guidance = describe_drain_expectation(blockers)
     if guidance:
-        typer.echo(
-            f"drain-preview: {guidance} Each user-workload or unrecognized PDB was not changed.",
-            err=True,
-        )
+        typer.echo(f"drain-preview: {guidance}", err=True)
 
 
 def terraform_status(terraform_dir: Path | None = None) -> dict[str, Any] | None:
@@ -1070,7 +1040,8 @@ def _guard_unmanaged_duplicate(
             f"Cluster {cluster_name} already exists outside this Terraform state: {ids}. "
             f"Adopt it with `npa cluster kubeconfig --cluster-name {cluster_name}` (writes "
             "its kubeconfig and cluster state), pick another `cluster_name`, or delete it "
-            f"with `nebius mk8s cluster delete --id {unmanaged[0]}`."
+            f"with `npa cluster destroy --name {cluster_name} --project-id "
+            f"{project_id} --force`."
         )
 
 

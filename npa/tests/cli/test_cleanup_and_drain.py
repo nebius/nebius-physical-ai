@@ -13,13 +13,13 @@ from npa.cli import cleanup as cleanup_cli
 from npa.cli.main import app
 from npa.clients.config import ConfigError, _resolve_project_section
 from npa.cluster.drain import (
+    DrainInventory,
     DrainPreviewIssue,
     blocking_pod_disruption_budgets,
     classify_drain_preview_failure,
+    drain_inventory,
     describe_drain_expectation,
     describe_preview_unavailable,
-    is_managed_system_pdb,
-    relax_managed_system_pdbs,
 )
 
 
@@ -105,7 +105,7 @@ def test_cleanup_names_a_managed_job_that_still_blocks_teardown(
     result = runner.invoke(app, ["cleanup"])
 
     assert "Managed jobs still non-terminal: 2" in result.output
-    assert "block `sky down`" in result.output
+    assert "block `npa skypilot cleanup-controller`" in result.output
     assert "stays PENDING forever" in result.output
 
 
@@ -183,6 +183,7 @@ def test_the_guidance_names_the_budgets_and_sets_expectations() -> None:
     # The reported symptom was a ~6 minute silence that looked like a hang.
     assert "look stalled" in guidance
     assert "expected" in guidance
+    assert "retry/wait" in guidance
 
 
 def test_no_blocking_budgets_produces_no_guidance() -> None:
@@ -295,61 +296,133 @@ def test_preview_unavailable_explains_scope_safety_and_operator_action() -> None
     assert "teardown will continue" in message
     assert "not verified" in message
     assert "only the preview" in message
-    assert "list access" in message
+    assert "read access" in message
+    assert "will not broaden RBAC" in message
     assert "policy/v1 PodDisruptionBudgets" in message
 
 
-def test_only_known_kube_system_addons_are_managed_system_pdbs() -> None:
-    assert is_managed_system_pdb(
-        blocking_pod_disruption_budgets(
-            runner=_pdb_runner({"items": [_pdb("kube-system", "coredns", 0)]})
-        )[0][0]
-    )
-    assert not is_managed_system_pdb(
-        blocking_pod_disruption_budgets(
-            runner=_pdb_runner({"items": [_pdb("customer", "coredns", 0)]})
-        )[0][0]
-    )
-    assert not is_managed_system_pdb(
-        blocking_pod_disruption_budgets(
-            runner=_pdb_runner({"items": [_pdb("kube-system", "customer-api", 0)]})
-        )[0][0]
-    )
+def _node(name: str) -> dict:
+    return {
+        "kind": "Node",
+        "metadata": {
+            "name": name,
+            "labels": {"nebius.com/node-group-id": "cpu-pool"},
+        },
+    }
 
 
-def test_managed_cluster_teardown_relaxes_only_exact_system_addon_pdbs() -> None:
+def _pod(name: str, labels: dict[str, str], owner: str) -> dict:
+    return {
+        "kind": "Pod",
+        "metadata": {
+            "namespace": "kube-system",
+            "name": name,
+            "labels": labels,
+            "ownerReferences": [
+                {"kind": "Deployment", "name": owner, "controller": True}
+            ],
+        },
+        "spec": {"nodeName": "cpu-0"},
+        "status": {
+            "phase": "Running",
+            "conditions": [{"type": "Ready", "status": "True"}],
+        },
+    }
+
+
+def _selected_pdb(name: str, labels: dict[str, str], allowed: int) -> dict:
+    item = _pdb("kube-system", name, allowed)
+    item["kind"] = "PodDisruptionBudget"
+    item["spec"]["selector"] = {"matchLabels": labels}
+    return item
+
+
+def test_shared_inventory_finds_system_pdbs_on_one_node_cpu_pool() -> None:
     payload = {
         "items": [
-            _pdb("kube-system", "cilium-operator", 0),
-            _pdb("kube-system", "coredns", 0),
-            _pdb("kube-system", "metrics-server", 0),
-            _pdb("customer", "orders", 0),
-            _pdb("kube-system", "customer-api", 0),
+            _node("cpu-0"),
+            _pod("cilium-0", {"app": "cilium-operator"}, "cilium-operator"),
+            _pod("coredns-0", {"k8s-app": "kube-dns"}, "coredns"),
+            _pod("coredns-1", {"k8s-app": "kube-dns"}, "coredns"),
+            _pod("autoscaler-0", {"app": "coredns-autoscaler"}, "coredns-autoscaler"),
+            _pod("metrics-0", {"k8s-app": "metrics-server"}, "metrics-server"),
+            _selected_pdb("cilium-operator", {"app": "cilium-operator"}, 0),
+            _selected_pdb("coredns", {"k8s-app": "kube-dns"}, 1),
+            _selected_pdb("coredns-autoscaler", {"app": "coredns-autoscaler"}, 0),
+            _selected_pdb("metrics-server", {"k8s-app": "metrics-server"}, 0),
         ]
     }
-    blockers, issue = blocking_pod_disruption_budgets(runner=_pdb_runner(payload))
-    assert issue is None
     calls: list[list[str]] = []
 
     def run(cmd, **kwargs):  # noqa: ANN001 - subprocess test double
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="patched", stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
 
-    relaxed, failures = relax_managed_system_pdbs(blockers, runner=run)
+    inventory, issue = drain_inventory(runner=run)
 
-    assert failures == []
-    assert {(item.namespace, item.name) for item in relaxed} == {
-        ("kube-system", "cilium-operator"),
-        ("kube-system", "coredns"),
-        ("kube-system", "metrics-server"),
-    }
-    patched = {(call[call.index("-n") + 1], call[call.index("patch") + 2]) for call in calls}
-    assert patched == {
-        ("kube-system", "cilium-operator"),
-        ("kube-system", "coredns"),
-        ("kube-system", "metrics-server"),
-    }
-    assert all('"minAvailable": 0' in call[call.index("--patch") + 1] for call in calls)
+    assert issue is None
+    assert inventory is not None
+    assert inventory.nodes == ("cpu-0",)
+    assert [item.name for item in inventory.blockers] == [
+        "cilium-operator",
+        "coredns",
+        "coredns-autoscaler",
+        "metrics-server",
+    ]
+    assert all(item.one_node_pool for item in inventory.blockers)
+    coredns = next(item for item in inventory.blockers if item.name == "coredns")
+    assert coredns.disruptions_allowed == 1
+    assert len(coredns.matching_pods) == 2
+    assert coredns.workloads == ("kube-system/Deployment/coredns",)
+    assert calls == [
+        [
+            "kubectl",
+            "get",
+            "nodes,pods,poddisruptionbudgets",
+            "--all-namespaces",
+            "-o",
+            "json",
+        ]
+    ]
+
+
+def test_unhealthy_always_allow_pod_is_not_a_false_blocker() -> None:
+    pod = _pod("metrics-0", {"k8s-app": "metrics-server"}, "metrics-server")
+    pod["status"]["conditions"][0]["status"] = "False"
+    pdb = _selected_pdb("metrics-server", {"k8s-app": "metrics-server"}, 0)
+    pdb["spec"]["unhealthyPodEvictionPolicy"] = "AlwaysAllow"
+
+    inventory, issue = drain_inventory(
+        runner=_pdb_runner({"items": [_node("cpu-0"), pod, pdb]})
+    )
+
+    assert issue is None
+    assert inventory is not None
+    assert inventory.blockers == ()
+
+
+def test_unhealthy_if_healthy_budget_uses_reported_health() -> None:
+    pod = _pod("metrics-0", {"k8s-app": "metrics-server"}, "metrics-server")
+    pod["status"]["conditions"][0]["status"] = "False"
+    pdb = _selected_pdb("metrics-server", {"k8s-app": "metrics-server"}, 0)
+
+    healthy_payload = {"items": [_node("cpu-0"), pod, pdb]}
+    healthy_inventory, issue = drain_inventory(runner=_pdb_runner(healthy_payload))
+
+    assert issue is None
+    assert healthy_inventory is not None
+    assert healthy_inventory.blockers == ()
+
+    pdb["status"]["currentHealthy"] = 0
+    unhealthy_inventory, issue = drain_inventory(
+        runner=_pdb_runner({"items": [_node("cpu-0"), pod, pdb]})
+    )
+
+    assert issue is None
+    assert unhealthy_inventory is not None
+    assert [item.name for item in unhealthy_inventory.blockers] == ["metrics-server"]
 
 
 def test_cluster_down_reports_the_budgets_that_will_block_the_drain(
@@ -359,8 +432,8 @@ def test_cluster_down_reports_the_budgets_that_will_block_the_drain(
 
     payload = {"items": [_pdb("kube-system", "coredns", 0)]}
     monkeypatch.setattr(
-        "npa.cluster.drain.blocking_pod_disruption_budgets",
-        lambda **kwargs: blocking_pod_disruption_budgets(runner=_pdb_runner(payload)),
+        "npa.cluster.drain.drain_inventory",
+        lambda **kwargs: drain_inventory(runner=_pdb_runner(payload)),
     )
 
     terraform_lifecycle._report_drain_blockers(None)
@@ -376,9 +449,9 @@ def test_cluster_down_preview_explains_when_the_cluster_is_unreachable(
     from npa.cli.cluster import terraform_lifecycle
 
     monkeypatch.setattr(
-        "npa.cluster.drain.blocking_pod_disruption_budgets",
+        "npa.cluster.drain.drain_inventory",
         lambda **kwargs: (
-            [],
+            None,
             DrainPreviewIssue(
                 kind="api", summary="the Kubernetes API endpoint could not be reached"
             ),
@@ -393,7 +466,7 @@ def test_cluster_down_preview_explains_when_the_cluster_is_unreachable(
     assert "Kubernetes API" in message
 
 
-def test_cluster_down_relaxes_system_addons_but_preserves_user_pdbs(
+def test_cluster_down_explains_backoff_without_mutating_any_pdb(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from npa.cli.cluster import terraform_lifecycle
@@ -409,24 +482,22 @@ def test_cluster_down_relaxes_system_addons_but_preserves_user_pdbs(
         )
     )
     assert issue is None
-    system = [item for item in blockers if item.namespace == "kube-system"]
     monkeypatch.setattr(
-        "npa.cluster.drain.blocking_pod_disruption_budgets",
-        lambda **kwargs: (blockers, None),
-    )
-    monkeypatch.setattr(
-        "npa.cluster.drain.relax_managed_system_pdbs",
-        lambda selected, **kwargs: (system, []),
+        "npa.cluster.drain.drain_inventory",
+        lambda **kwargs: (
+            DrainInventory((), 0, len(blockers), tuple(blockers)),
+            None,
+        ),
     )
 
     terraform_lifecycle._report_drain_blockers(None)
 
     message = capsys.readouterr().err
-    assert "relaxed 1 managed system add-on" in message
+    assert "will deny at least one eviction" in message
     assert "kube-system/coredns" in message
     assert "customer/orders" in message
-    assert "user-workload" in message
-    assert "was not changed" in message
+    assert "will not patch budgets" in message
+    assert "force-delete" in message
 
 
 # --- explicit project alias that no longer exists ----------------------------
@@ -688,6 +759,9 @@ def test_an_empty_managed_job_queue_is_not_presented_as_a_failure(npa_home: Path
 
     assert "repeat-safe" in result.output
     assert "sky jobs cancel" not in result.output
+    assert "sky down" not in result.output
+    assert "kubectl delete" not in result.output
+    assert "nebius iam" not in result.output
 
 
 def test_forgetting_the_last_project_leaves_no_dangling_default(

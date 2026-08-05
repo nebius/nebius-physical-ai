@@ -719,7 +719,7 @@ Then remove them:
 ```bash
 # 1. Cancel the workflow. Planned/staged runs that never launched are a
 #    successful repeat-safe no-op.
-npa workbench workflow cancel <run-id> --project "$PROJECT" --json
+npa workflow cancel <run-id> --project "$PROJECT" --json
 
 # 2. Agent VM, its network, local record, and the IAM the deploy created for it.
 npa agent destroy --project "$PROJECT" --name <agent-name> --yes
@@ -776,8 +776,10 @@ Notes:
   command refuses an ID-only legacy record, a mismatched project, or an account
   configure reused. It also refuses to run while bucket credentials remain, which
   is why bucket deletion comes first. Bucket cleanup never removes IAM evidence:
-  the dedicated `storage_iam` ownership record remains until the account is
-  deleted or confirmed absent, even if agent bootstrap changes the generic
+  before pruning secrets it writes a project-scoped tombstone with immutable
+  service-account/access-key IDs, ownership markers, and the creation outcome;
+  the dedicated `storage_iam` record also remains until the account is deleted
+  or confirmed absent, even if agent bootstrap changes the generic
   `nebius.service_account_id`. Legacy recovery uses the NPA reconciliation
   command above: it verifies exact provider scope, records operator-attested
   non-secret provenance, and still requires the guarded NPA delete path.
@@ -785,12 +787,14 @@ Notes:
   contain secret material. NPA cleanup uses CLI-side JSONPath field selection;
   for safe operator inventory use the filtered example in
   [Known footguns](../troubleshooting/known-footguns.md#raw-access-key-list-json-can-disclose-the-secret).
-- **Cluster drain preview is non-interactive and ownership-aware.** `cluster down`
+- **Cluster drain preview is non-interactive and eviction-aware.** `cluster down`
   uses NPA's saved kubeconfig for the selected context, disables browser auth in
   a temporary copy, and explains authentication, RBAC, kubeconfig, and API
-  failures as preview-only. During a full cluster deletion it relaxes only the
-  exact `kube-system` budgets for `coredns`, `cilium-operator`, and
-  `metrics-server`; every user or unrecognized PDB remains untouched.
+  failures as preview-only. One inventory covers all nodes, pods, controllers,
+  namespaces, and PDBs, so cilium, CoreDNS/autoscaler, metrics-server, and future
+  selector matches are evaluated consistently. On a one-node CPU pool it names
+  the missing replacement capacity and expected retry/backoff. NPA never patches
+  PDBs or force-deletes protected pods.
 
 ## 9. Where to go next
 

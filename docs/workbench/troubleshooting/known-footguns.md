@@ -123,17 +123,19 @@ advertises and remaps it automatically. Run
 `--no-resolve-accelerators` to submit the spec's values verbatim.
 ## Controller Teardown Refuses Right After Workflow Cancel
 
-Symptom: `npa workbench workflow cancel <run-id> --project <alias>` succeeds,
+Symptom: `npa workflow cancel <run-id> --project <alias>` succeeds,
 and immediate shared-controller teardown reports that managed jobs are still
 in progress.
 
-Root cause: `sky jobs cancel` returns as soon as cancellation is *scheduled*. The
-controller keeps reporting the job as `CANCELLING` for a while, and `sky down`
+Root cause: managed-job cancellation returns as soon as cancellation is
+*scheduled*. The controller keeps reporting the job as `CANCELLING` for a while, and teardown
 refuses while any managed job is non-terminal.
 
-Mitigation: NPA's per-run cancellation waits for the exact manifest-proven job
-and performs best-effort run-cluster cleanup without touching the shared
-controller. Once every workflow is terminal, run `npa skypilot
+Mitigation: NPA resolves the canonical run prefix, reads authoritative workflow
+and per-stage/runtime-wave state, and cancels every exact non-terminal managed
+job ID. A job becoming terminal or absent during cancellation is successful
+convergence; malformed/ambiguous/auth/partial failures remain errors. Once every
+workflow is terminal, run `npa skypilot
 cleanup-controller --yes`; it waits for the queue to drain and retries the
 specific controller refusal. Planned/staged runs that never launched report
 `already_absent` and remain repeat-safe without calling SkyPilot.
@@ -163,9 +165,10 @@ Category for follow-up: platform.
 Symptom: `npa cluster down` appears to hang while draining a node, then completes
 after roughly five to seven minutes.
 
-Root cause: draining respects PodDisruptionBudgets. Single-replica platform add-ons
-(`coredns`, `cilium-operator`, `metrics-server`) declare budgets that allow zero
-disruptions on a one-node/default pool. A preview that inherits the wrong
+Root cause: draining respects PodDisruptionBudgets. Platform add-ons such as
+`coredns`, `coredns-autoscaler`, `cilium-operator`, and `metrics-server` can
+exhaust their disruption allowance on a one-node/default CPU pool because no
+spare node exists for a healthy replacement. A preview that inherits the wrong
 kubeconfig can also try browser authentication or fail RBAC before it can explain
 which protections were checked.
 
@@ -173,10 +176,13 @@ Mitigation: `npa cluster down` selects NPA's saved kubeconfig for the target
 cluster, runs its exec credential in non-interactive/no-browser mode, and
 distinguishes authentication, authorization, kubeconfig, and API failures. Those
 failures affect only the best-effort preview; Terraform destroy is still attempted,
-and NPA says explicitly that PDB safety was not verified. For a full managed-cluster
-deletion, NPA patches only the three exact `kube-system` add-on budgets above so
-their single-replica policy does not add an avoidable multi-minute stall. User and
-unrecognized PDBs are never changed and remain visible as protected blockers.
+and NPA says explicitly that PDB safety was not verified. The successful preview
+uses one cluster-wide inventory of nodes, pods, their controllers, and every PDB,
+then applies selector, placement, health, `disruptionsAllowed`, and unhealthy-pod
+policy semantics. It reports which workload blocks which node and why the
+one-node pool cannot temporarily satisfy it. NPA does not patch/delete PDBs or
+force-delete protected pods; provider retry/backoff remains expected and
+best-effort cluster deletion continues toward convergence.
 
 During node-group reconciliation, a `ComputeInstanceDeletionFailed` event whose
 detail confirms `NotFound` means the instance is already absent; NPA reports that

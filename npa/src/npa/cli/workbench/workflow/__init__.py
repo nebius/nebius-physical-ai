@@ -3263,8 +3263,16 @@ def cancel_cmd(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops."""
+    resolved_run_id = ""
     try:
-        status = _durable_workflow_status(
+        from npa.orchestration.npa_workflow.cancellation import (
+            assess_run_cancellation,
+            is_terminal_workflow_state,
+        )
+        from npa.orchestration.npa_workflow.run_resolution import resolve_run
+        from npa.orchestration.skypilot.workflow_state import WorkflowStateError
+
+        resolution = resolve_run(
             run_id,
             project=project,
             workflow_s3_uri=workflow_s3_uri,
@@ -3273,74 +3281,122 @@ def cancel_cmd(
             s3_endpoint=s3_endpoint,
             sky_bin=sky_bin,
         )
-        normalized = str(status.get("status") or "").upper()
-        resolved_run_id = str(status.get("run_id") or _display_run_id(run_id))
-        job_id = str(status.get("sky_job_id") or "")
-        if normalized == "NOT_FOUND":
+        resolved_run_id = resolution.run_id
+        if not resolution.found and resolution.conclusively_absent:
             result = {
                 "run_id": resolved_run_id,
                 "outcome": "already_absent",
                 "launch_state": "not_launched",
+                "detected_state": "NOT_FOUND",
                 "sky_job_id": "",
+                "sky_job_ids": [],
                 "cloud_calls": False,
                 "verification": "conclusively_absent",
-                "resolution_checks": status.get("resolution_checks", []),
-                "message": "Run not found after every applicable exact source was checked; no cancellation was issued.",
+                "resolution_checks": resolution.checks_payload(),
+                "message": (
+                    "No cancellation was needed; the run is conclusively absent after "
+                    "every applicable exact source was checked (detected NOT_FOUND)."
+                ),
             }
-        elif normalized == "VERIFICATION_UNAVAILABLE":
+        elif not resolution.found:
             result = {
                 "run_id": resolved_run_id,
                 "outcome": "verification_failed",
-                "status": normalized,
+                "detected_state": "VERIFICATION_UNAVAILABLE",
                 "sky_job_id": "",
+                "sky_job_ids": [],
                 "cloud_calls": False,
                 "verification": "unavailable",
-                "resolution_checks": status.get("resolution_checks", []),
-                "message": "Run verification is unavailable; provider/auth failure is not absence, so cancellation was not attempted.",
-            }
-        elif _workflow_status_is_terminal(normalized):
-            result = {
-                "run_id": resolved_run_id,
-                "outcome": "terminal",
-                "status": normalized,
-                "sky_job_id": job_id,
-                "cloud_calls": False,
-                "message": "The launched workflow is already terminal; no cancellation was issued.",
-            }
-        elif not job_id:
-            result = {
-                "run_id": resolved_run_id,
-                "outcome": "verification_failed",
-                "status": normalized or "UNKNOWN",
-                "sky_job_id": "",
-                "cloud_calls": False,
-                "message": "Durable state does not contain a manifest-proven SkyPilot job ID.",
+                "resolution_checks": resolution.checks_payload(),
+                "message": (
+                    "Run verification is unavailable; a malformed manifest, ambiguous "
+                    "run, or provider/auth failure is not absence, so cancellation was "
+                    "not attempted."
+                ),
             }
         else:
-            from npa.orchestration.skypilot.cleanup import cleanup_launched_workflow
-
-            cleanup = cleanup_launched_workflow(
-                job_id,
-                resolved_run_id,
-                cluster=cluster,
-                sky_bin=sky_bin or None,
+            assessment = assess_run_cancellation(
+                resolution,
+                sky_bin=sky_bin,
             )
-            result = {
-                "run_id": resolved_run_id,
-                "outcome": "cancelled" if cleanup.ok else "verification_failed",
-                "status": normalized or "SUBMITTED",
-                "sky_job_id": job_id,
-                "cloud_calls": True,
-                "resources_removed": cleanup.resources_removed,
-                "commands": cleanup.commands,
-                "errors": cleanup.errors,
-            }
-    except Exception as exc:
+            jobs_payload = [item.to_dict() for item in assessment.jobs]
+            job_ids = [item.job_id for item in assessment.jobs]
+            active_ids = [item.job_id for item in assessment.active_jobs]
+            if not assessment.active_jobs and not assessment.errors:
+                terminal = is_terminal_workflow_state(assessment.detected_state)
+                result = {
+                    "run_id": resolved_run_id,
+                    "outcome": "terminal" if terminal else "no_cancellation_needed",
+                    "detected_state": assessment.detected_state,
+                    "status": assessment.detected_state,
+                    "sky_job_id": job_ids[-1] if len(job_ids) == 1 else "",
+                    "sky_job_ids": job_ids,
+                    "cloud_calls": False,
+                    "jobs": jobs_payload,
+                    "message": (
+                        "No cancellation was needed; authoritative workflow/stage "
+                        f"state is {assessment.detected_state}."
+                        if terminal
+                        else "No cancellation was needed; every exact recorded job is "
+                        "terminal or authoritatively absent (detected NO_ACTIVE_JOB)."
+                    ),
+                }
+            elif not assessment.active_jobs:
+                result = {
+                    "run_id": resolved_run_id,
+                    "outcome": "verification_failed",
+                    "detected_state": assessment.detected_state,
+                    "sky_job_id": "",
+                    "sky_job_ids": job_ids,
+                    "cloud_calls": False,
+                    "jobs": jobs_payload,
+                    "errors": assessment.errors,
+                    "message": (
+                        "Cancellation was not attempted because one or more exact "
+                        "workflow/job records could not be verified."
+                    ),
+                }
+            else:
+                from npa.orchestration.skypilot.cleanup import (
+                    cleanup_launched_workflows,
+                )
+
+                cleanup = cleanup_launched_workflows(
+                    [
+                        (item.job_id, item.job_name or resolved_run_id)
+                        for item in assessment.active_jobs
+                    ],
+                    resolved_run_id,
+                    cluster=cluster,
+                    sky_bin=sky_bin or None,
+                )
+                errors = [*assessment.errors, *cleanup.errors]
+                result = {
+                    "run_id": resolved_run_id,
+                    "outcome": "cancelled" if not errors else "partial_cancellation",
+                    "detected_state": assessment.detected_state,
+                    "status": assessment.detected_state,
+                    "sky_job_id": active_ids[0] if len(active_ids) == 1 else "",
+                    "sky_job_ids": job_ids,
+                    "cancelled_job_ids": active_ids,
+                    "cloud_calls": True,
+                    "jobs": jobs_payload,
+                    "resources_removed": cleanup.resources_removed,
+                    "commands": cleanup.commands,
+                    "errors": errors,
+                    "message": (
+                        f"Cancellation converged for {len(active_ids)} active managed job(s)."
+                        if not errors
+                        else "Cancellation was only partial; retry after resolving the "
+                        "reported exact job/provider failures."
+                    ),
+                }
+    except (WorkflowStateError, OSError, ValueError) as exc:
         result = {
-            "run_id": _display_run_id(run_id),
+            "run_id": resolved_run_id or str(run_id),
             "outcome": "verification_failed",
             "cloud_calls": False,
-            "message": str(exc),
+            "message": f"{type(exc).__name__}: {exc}",
         }
     if json_output:
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
@@ -3351,7 +3407,7 @@ def cancel_cmd(
             typer.echo(str(result["message"]))
         for error in result.get("errors", []):
             typer.echo(f"cleanup warning: {error}", err=True)
-    if result["outcome"] == "verification_failed":
+    if result["outcome"] in {"verification_failed", "partial_cancellation"}:
         raise typer.Exit(code=2)
 
 

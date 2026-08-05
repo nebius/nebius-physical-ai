@@ -133,6 +133,7 @@ def test_bucket_then_owned_service_account_delete_preserves_provenance_until_iam
     import yaml
 
     from npa.cli import storage as storage_cli
+    from npa.clients import config as config_module
     from npa.clients import nebius as nebius_module
 
     credentials_path = _seed_owned_account(monkeypatch, tmp_path, include_storage=True)
@@ -175,6 +176,20 @@ def test_bucket_then_owned_service_account_delete_preserves_provenance_until_iam
         "service_account_project_id": "project-a",
         "service_account_managed_by": "npa",
     }
+    marker = yaml.safe_load(config_module.CONFIG_PATH.read_text())["projects"]["prod"][
+        "storage_iam_verification_required"
+    ]
+    assert marker["schema_version"] == "npa.storage-iam-residue.v2"
+    assert marker["ownership_state"] == "owned"
+    assert marker["bucket_cleanup_state"] == "complete"
+    assert marker["service_account_id"] == "serviceaccount-storage"
+    assert marker["access_key_ids"] == ["AK"]
+    assert "SK" not in yaml.safe_dump(marker)
+    assert "storage-IAM cleanup remains pending" in bucket_result.output
+    assert (
+        "npa storage service-account delete --project prod --dry-run"
+        in bucket_result.output
+    )
 
     iam_result = runner.invoke(
         app,
@@ -184,6 +199,49 @@ def test_bucket_then_owned_service_account_delete_preserves_provenance_until_iam
     assert iam_result.exit_code == 0, iam_result.output
     assert deleted == ["accesskey-storage", "serviceaccount-storage"]
     assert not credentials_path.exists()
+    config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
+    assert "storage_iam_verification_required" not in config["projects"]["prod"]
+
+
+def test_v1_storage_iam_marker_migrates_without_losing_identity(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "prod": {
+                        "project_id": "project-a",
+                        "storage_iam_verification_required": {
+                            "schema_version": "npa.storage-iam-residue.v1",
+                            "status": "present_owned",
+                            "ownership": "npa",
+                            "service_account_id": "serviceaccount-storage",
+                            "access_key_ids": ["key-b", "key-a", "key-a"],
+                        },
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    migrated = config_module.storage_iam_residue("prod")
+    persisted = config_module.mark_storage_iam_residue(
+        "prod", {"bucket_cleanup_state": "complete"}
+    )
+
+    assert migrated["ownership_state"] == "owned"
+    assert migrated["schema_version"] == "npa.storage-iam-residue.v2"
+    assert persisted["service_account_id"] == "serviceaccount-storage"
+    assert persisted["access_key_ids"] == ["key-a", "key-b"]
+    on_disk = yaml.safe_load(config_path.read_text())["projects"]["prod"][
+        "storage_iam_verification_required"
+    ]
+    assert on_disk == persisted
 
 
 def test_storage_service_account_refuses_unowned_legacy_identity(monkeypatch, tmp_path) -> None:
@@ -207,6 +265,7 @@ def test_bucket_delete_preserves_nonowned_identity_evidence_but_iam_delete_refus
 ) -> None:
     import yaml
 
+    from npa.clients import config as config_module
     from npa.clients import nebius as nebius_module
 
     credentials_path = _seed_owned_account(
@@ -231,6 +290,15 @@ def test_bucket_delete_preserves_nonowned_identity_evidence_but_iam_delete_refus
     after_bucket = yaml.safe_load(credentials_path.read_text())
     assert "storage" not in after_bucket
     assert after_bucket["nebius"]["service_account_id"] == "serviceaccount-storage"
+    marker = yaml.safe_load(config_module.CONFIG_PATH.read_text())["projects"]["prod"][
+        "storage_iam_verification_required"
+    ]
+    assert marker["ownership_state"] == "pending-verification"
+    assert marker["service_account_id"] == "serviceaccount-storage"
+    assert (
+        "npa storage service-account reconcile --project prod --id "
+        "serviceaccount-storage --dry-run"
+    ) in bucket_result.output
 
     iam_result = runner.invoke(
         app,
@@ -780,6 +848,8 @@ def test_reconcile_dry_run_and_explicit_attestation_feed_guarded_delete(
     assert journal["recovery"]["reason"] == "legacy NPA setup"
     assert journal["recovery"]["provider_verified"] is True
     assert "secret" not in yaml.safe_dump(journal).lower()
+    reconciled_marker = config_module.storage_iam_residue("prod")
+    assert reconciled_marker["ownership_state"] == "owned"
 
     # Reconciliation is restart-safe, and the resulting journal is accepted by
     # the existing guarded deletion plan rather than a parallel delete path.

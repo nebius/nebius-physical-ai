@@ -29,6 +29,30 @@ class _Residue:
     size: int
 
 
+@dataclass(frozen=True)
+class CleanupPhase:
+    """One ordered, machine-readable NPA-only cleanup recommendation."""
+
+    phase: int
+    resource: str
+    observed_state: str
+    recommended_npa_command: str
+    safety_status: str
+    ownership_status: str
+    operator_action_required: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "phase": self.phase,
+            "resource": self.resource,
+            "observed_state": self.observed_state,
+            "recommended_npa_command": self.recommended_npa_command,
+            "safety_status": self.safety_status,
+            "ownership_status": self.ownership_status,
+            "operator_action_required": self.operator_action_required,
+        }
+
+
 def _dir_size(path: Path) -> int:
     total = 0
     try:
@@ -322,7 +346,7 @@ def _storage_iam_full_check(
     project: str,
     *,
     prune_verified_absence: bool,
-) -> tuple[str, bool, str]:
+) -> tuple[str, bool, str, str]:
     """Return a truthful read-only IAM outcome and whether cleanup is partial."""
 
     from npa.cli.storage import (
@@ -343,11 +367,13 @@ def _storage_iam_full_check(
                 "Storage IAM: no saved identity evidence or unresolved project marker remains.",
                 False,
                 "fully_clean",
+                "verified_terminal",
             )
         aliases = [""]
 
     messages: list[str] = []
     states: list[str] = []
+    ownership_states: list[str] = []
     partial = False
     for alias in aliases:
         try:
@@ -355,6 +381,8 @@ def _storage_iam_full_check(
             observation = _observe_storage_iam(context)
             _persist_storage_iam_observation(observation)
         except ConfigError as exc:
+            record, _note = _storage_service_account_record()
+            ownership_states.append("owned" if record is not None else "unknown")
             messages.append(
                 "Storage IAM: verification could not retain project evidence; "
                 f"cleanup is partial: {exc}"
@@ -363,6 +391,9 @@ def _storage_iam_full_check(
             partial = True
             continue
         if observation.outcome == "verification_failed":
+            ownership_states.append(
+                "owned" if observation.ownership == "npa" else "pending_verification"
+            )
             messages.append(
                 "Storage IAM: provider/auth verification failure for project "
                 f"{context.alias or context.project_id}; cleanup is partial and "
@@ -372,11 +403,8 @@ def _storage_iam_full_check(
             partial = True
             continue
         if observation.present:
-            command = (
-                f"npa storage service-account delete --project {context.alias} --dry-run"
-                if observation.ownership == "npa"
-                else "npa storage service-account reconcile --project "
-                f"{context.alias} --id {observation.account_id} --dry-run"
+            ownership_states.append(
+                "owned" if observation.ownership == "npa" else "pending_verification"
             )
             ownership = (
                 "guarded NPA ownership provenance is present"
@@ -387,11 +415,13 @@ def _storage_iam_full_check(
                 "Storage IAM: verified present — exact service account "
                 f"{observation.account_name} ({observation.account_id}) remains in "
                 f"{context.project_id}; {ownership}. It was left untouched and the "
-                f"project was preserved. Continue with `{command}`."
+                "project was preserved. The ordered phase model below supplies the "
+                "supported NPA reconciliation/deletion command."
             )
             states.append("locally_clean_cloud_iam_unresolved")
             partial = True
             continue
+        ownership_states.append("verified_terminal")
         record, _note = _storage_service_account_record()
         if (
             prune_verified_absence
@@ -423,28 +453,155 @@ def _storage_iam_full_check(
         if "fully_cleaned" in states
         else "fully_clean"
     )
-    return "\n".join(messages), partial, status
+    ownership_state = (
+        "pending_verification"
+        if "pending_verification" in ownership_states
+        else "owned"
+        if "owned" in ownership_states
+        else "unknown"
+        if "unknown" in ownership_states
+        else "verified_terminal"
+    )
+    return "\n".join(messages), partial, status, ownership_state
 
 
-# Teardown is an ordered sequence and nothing checks the order. The step most
-# often missed is the first one: a managed job left non-terminal keeps the jobs
-# controller alive and makes `sky down` refuse.
-TEARDOWN_RUNBOOK = (
-    "npa workbench workflow cancel <run-id> --project <alias> --json  "
-    "(repeat-safe, including planned/staged runs)",
-    "npa agent destroy --project <alias> --name <name> --yes",
-    "npa skypilot cleanup-controller --yes  (only after all NPA workflows are terminal)",
-    "npa cluster down --force",
-    "npa storage bucket delete --project <alias> --yes --wait",
-    "npa storage service-account delete --project <alias> --dry-run",
-    "npa storage service-account reconcile --project <alias> --id <exact-id> --dry-run  "
-    "(only when ownership provenance is missing; attest explicitly before deletion)",
-    "npa storage service-account delete --project <alias> --yes",
-    "npa configure --forget-project <alias>",
-    # Cleanup checks managed jobs before removing the isolated SkyPilot venv;
-    # running `skypilot uninstall` afterwards would only be a dead no-op.
-    "npa cleanup --full --yes     (known shared tokens + caches + empty local state)",
-)
+def cleanup_phase_model(
+    *,
+    jobs: list[str],
+    jobs_note: str,
+    iam_state: str,
+    iam_ownership_state: str,
+    local_state: str,
+) -> list[CleanupPhase]:
+    """Derive every text/JSON recommendation from one deterministic model."""
+
+    if jobs:
+        workflow_state = "active_managed_jobs:" + ",".join(jobs)
+        workflow_action = True
+        workflow_safety = "exact_run_resolution_required"
+    elif jobs_note:
+        workflow_state = "verification_unavailable:" + jobs_note
+        workflow_action = True
+        workflow_safety = "repeat_safe_but_verification_required"
+    else:
+        workflow_state = "verified_no_nonterminal_jobs"
+        workflow_action = False
+        workflow_safety = "verified_repeat_safe_noop"
+
+    iam_unresolved = iam_state in {
+        "locally_clean_cloud_iam_unresolved",
+        "partial_verification_failure",
+        "partial_local_cleanup",
+    }
+    iam_verified = iam_state in {"fully_clean", "fully_cleaned"}
+    iam_owned = iam_ownership_state == "owned"
+    iam_command = (
+        "npa storage service-account delete --project <alias> --dry-run"
+        if iam_owned or iam_verified
+        else "npa storage service-account reconcile --project <alias> "
+        "--id <exact-id> --dry-run"
+    )
+    iam_observed = (
+        "verified_deleted_or_absent"
+        if iam_verified
+        else iam_state
+        if iam_state != "not_checked"
+        else "not_checked"
+    )
+    iam_ownership = (
+        "verified_terminal"
+        if iam_verified
+        else "owned_pending_delete"
+        if iam_owned
+        else iam_ownership_state
+    )
+    local_clean = local_state in {"fully_clean", "fully_cleaned"}
+
+    return [
+        CleanupPhase(
+            1,
+            "workflow runs",
+            workflow_state,
+            "npa workflow cancel <run-id> --project <alias> --json",
+            workflow_safety,
+            "not_applicable",
+            workflow_action,
+        ),
+        CleanupPhase(
+            2,
+            "agent VM",
+            "not_checked_by_local_cleanup",
+            "npa agent destroy --project <alias> --name <name> --yes",
+            "repeat_safe_provider_verification",
+            "npa_managed_identity_required",
+            True,
+        ),
+        CleanupPhase(
+            3,
+            "SkyPilot controller",
+            "ready_after_workflows_terminal"
+            if not workflow_action
+            else "workflow_gate_pending",
+            "npa skypilot cleanup-controller --yes",
+            "requires_no_nonterminal_managed_jobs",
+            "not_applicable",
+            True,
+        ),
+        CleanupPhase(
+            4,
+            "Kubernetes cluster",
+            "not_checked_by_local_cleanup",
+            "npa cluster down --force",
+            "pdb_aware_best_effort_convergence",
+            "npa_managed_cluster_required",
+            True,
+        ),
+        CleanupPhase(
+            5,
+            "object-storage bucket",
+            "not_checked_by_local_cleanup",
+            "npa storage bucket delete --project <alias> --yes --wait",
+            "preserves_non_secret_iam_tombstone",
+            "bucket_identity_verified_by_npa",
+            True,
+        ),
+        CleanupPhase(
+            6,
+            "storage IAM",
+            iam_observed,
+            iam_command,
+            "guarded_exact_id_reconciliation",
+            iam_ownership,
+            not iam_verified,
+        ),
+        CleanupPhase(
+            7,
+            "storage IAM deletion",
+            iam_observed,
+            "npa storage service-account delete --project <alias> --yes",
+            "exact_identity_and_ownership_guarded",
+            iam_ownership,
+            not iam_verified,
+        ),
+        CleanupPhase(
+            8,
+            "project configuration",
+            "blocked_by_iam" if iam_unresolved else "eligible_after_cloud_cleanup",
+            "npa configure --forget-project <alias>",
+            "refuses_unresolved_storage_iam",
+            iam_ownership,
+            True,
+        ),
+        CleanupPhase(
+            9,
+            "local caches and known credentials",
+            local_state,
+            "npa cleanup --full --yes",
+            "local_only_preserves_unrelated_state",
+            iam_ownership,
+            not local_clean,
+        ),
+    ]
 
 
 def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str]:
@@ -466,8 +623,7 @@ def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str]:
         return [], f"could not read the managed-job queue: {exc}"
 
 
-def _report_managed_jobs(sky_bin: str) -> None:
-    jobs, note = _nonterminal_jobs(sky_bin)
+def _report_managed_jobs(jobs: list[str], note: str) -> None:
     if note:
         typer.echo(f"Managed jobs: {note}")
         return
@@ -476,27 +632,35 @@ def _report_managed_jobs(sky_bin: str) -> None:
         return
     typer.echo(f"Managed jobs still non-terminal: {', '.join(jobs)}")
     typer.echo(
-        "  These block `sky down` of the jobs controller. A job whose pod cannot "
+        "  These block `npa skypilot cleanup-controller`. A job whose pod cannot "
         "start stays PENDING forever rather than failing, so check it before "
         "assuming it is still doing work."
     )
 
 
-def _print_runbook() -> None:
+def _print_runbook(phases: list[CleanupPhase]) -> None:
     typer.echo("")
     typer.echo(
         "Full teardown order (printed only; cleanup never implies the preceding cloud steps):"
     )
-    for index, step in enumerate(TEARDOWN_RUNBOOK, start=1):
-        typer.echo(f"  {index}. {step}")
+    for item in phases:
+        action = (
+            "operator action remains"
+            if item.operator_action_required
+            else "verified no-op"
+        )
+        typer.echo(
+            f"  {item.phase}. {item.recommended_npa_command}  "
+            f"[{item.resource}: {item.observed_state}; "
+            f"{item.safety_status.replace('_', '-')}; {action}]"
+        )
 
 
 def _iam_note() -> str:
     """A hint about cloud IAM leftovers npa deliberately does not delete."""
     generic = (
         "Cloud IAM (not removed): pre-existing service accounts are left in place; "
-        "inspect any NPA storage candidate with `npa storage service-account "
-        "reconcile --project <alias> --id <exact-id> --dry-run`."
+        "the ordered cleanup model below selects the guarded exact-ID NPA path."
     )
     try:
         import yaml
@@ -519,17 +683,14 @@ def _iam_note() -> str:
             ):
                 return (
                     f"Cloud IAM (not removed here): NPA recorded creating storage "
-                    f"principal {owned_sa_id}. After deleting its bucket, remove it safely with "
-                    "`npa storage service-account delete --project <alias> --yes`."
+                    f"principal {owned_sa_id}; its guarded cleanup remains visible below."
                 )
             sa_id = str(nebius.get("service_account_id", "") or "").strip()
             if sa_id:
                 return (
                     f"Cloud IAM (not removed): the storage principal {sa_id} and any "
                     "pre-existing service accounts remain — deleting a shared SA can "
-                    "break other work. Verify the exact identity with `npa storage "
-                    "service-account reconcile --project <alias> "
-                    f"--id {sa_id} --dry-run`."
+                    "break other work. The exact-ID reconciliation phase remains visible below."
                 )
     except Exception:  # noqa: BLE001 - the note is best-effort
         return generic
@@ -605,6 +766,13 @@ def cleanup_cmd(
             typer.echo(message, err=err)
 
     def emit_json(result: str, local_state: str, *, cleanup_failed: bool = False) -> None:
+        phases = cleanup_phase_model(
+            jobs=job_ids,
+            jobs_note=job_note,
+            iam_state=iam_status,
+            iam_ownership_state=iam_ownership_state,
+            local_state=local_state,
+        )
         typer.echo(
             json.dumps(
                 {
@@ -616,6 +784,7 @@ def cleanup_cmd(
                     "cleanup_failed": cleanup_failed,
                     "removed_bytes": total if yes else 0,
                     "iam_detail": iam_message,
+                    "phases": [item.to_dict() for item in phases],
                 },
                 indent=2,
                 sort_keys=True,
@@ -628,17 +797,27 @@ def cleanup_cmd(
     empty_dirs = _empty_alias_dirs(npa_dir, project)
     credential_labels = _full_credential_labels() if full else []
     full_empty_state = _full_empty_state(npa_dir) if full else []
-    iam_message = ""
+    iam_message = _iam_note()
     iam_partial = False
     iam_status = "not_checked"
+    iam_ownership_state = (
+        "owned" if "recorded creating storage principal" in iam_message else "unknown"
+    )
     if full:
-        iam_message, iam_partial, iam_status = _storage_iam_full_check(
-            project,
-            prune_verified_absence=yes,
-        )
+        (
+            iam_message,
+            iam_partial,
+            iam_status,
+            iam_ownership_state,
+        ) = _storage_iam_full_check(project, prune_verified_absence=yes)
 
-    if not skip_jobs and not output_json:
-        _report_managed_jobs(sky_bin)
+    if skip_jobs:
+        job_ids: list[str] = []
+        job_note = "managed-job verification was explicitly skipped"
+    else:
+        job_ids, job_note = _nonterminal_jobs(sky_bin)
+    if not output_json:
+        _report_managed_jobs(job_ids, job_note)
 
     terraform_sizes = {item.path: _dir_size(item.path) for item in terraform_residue}
     total = sum(item.size for item in residue) + sum(terraform_sizes.values())
@@ -657,8 +836,15 @@ def cleanup_cmd(
         else:
             typer.echo("No local NPA/SkyPilot residue to clean up.")
             typer.echo(iam_message or _iam_note())
-            if not yes:
-                _print_runbook()
+            _print_runbook(
+                cleanup_phase_model(
+                    jobs=job_ids,
+                    jobs_note=job_note,
+                    iam_state=iam_status,
+                    iam_ownership_state=iam_ownership_state,
+                    local_state="fully_clean",
+                )
+            )
         if iam_partial:
             emit(
                 "Full cleanup is partial because storage IAM was not verified absent/deleted.",
@@ -698,7 +884,15 @@ def cleanup_cmd(
         if output_json:
             emit_json(iam_status if iam_partial else "cleanup_planned", "residue_present")
         else:
-            _print_runbook()
+            _print_runbook(
+                cleanup_phase_model(
+                    jobs=job_ids,
+                    jobs_note=job_note,
+                    iam_state=iam_status,
+                    iam_ownership_state=iam_ownership_state,
+                    local_state="residue_present",
+                )
+            )
         if iam_partial:
             raise typer.Exit(code=2)
         return
@@ -800,6 +994,18 @@ def cleanup_cmd(
             result,
             "partial_local_cleanup" if cleanup_failed else "fully_cleaned",
             cleanup_failed=cleanup_failed,
+        )
+    else:
+        _print_runbook(
+            cleanup_phase_model(
+                jobs=job_ids,
+                jobs_note=job_note,
+                iam_state=iam_status,
+                iam_ownership_state=iam_ownership_state,
+                local_state=(
+                    "partial_local_cleanup" if cleanup_failed else "fully_cleaned"
+                ),
+            )
         )
     if iam_partial:
         emit(

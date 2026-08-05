@@ -490,7 +490,7 @@ def lookup_managed_job(
         return ManagedJobEvidence("unavailable", error="SkyPilot queue JSON has no jobs list")
 
     wanted_id = str(job_id or "").strip()
-    matching_ids: list[int] = []
+    matching_ids: set[int] = set()
     declared_job_names: set[str] = set()
     for row in jobs:
         if not isinstance(row, dict):
@@ -506,7 +506,7 @@ def lookup_managed_job(
         elif row_name != job_name:
             continue
         if raw_id.isdigit():
-            matching_ids.append(int(raw_id))
+            matching_ids.add(int(raw_id))
     if wanted_id and declared_job_names and job_name not in declared_job_names:
         names = ", ".join(sorted(declared_job_names))
         return ManagedJobEvidence(
@@ -518,6 +518,15 @@ def lookup_managed_job(
         )
     if not matching_ids:
         return ManagedJobEvidence("absent")
+    if not wanted_id and len(matching_ids) > 1:
+        rendered = ", ".join(str(value) for value in sorted(matching_ids))
+        return ManagedJobEvidence(
+            "unavailable",
+            error=(
+                f"exact managed-job name {job_name!r} is ambiguous; matching IDs: "
+                f"{rendered}. Supply durable run state with an immutable job ID."
+            ),
+        )
     selected = str(max(matching_ids))
     rows = tuple(parse_task_statuses(result.stdout, selected))
     return ManagedJobEvidence(

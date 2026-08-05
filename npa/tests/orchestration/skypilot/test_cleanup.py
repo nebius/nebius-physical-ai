@@ -141,6 +141,11 @@ def test_cleanup_launched_workflow_uses_exact_job_and_keeps_controller(
     )
     monkeypatch.setattr(
         cleanup_module,
+        "_verify_managed_job_convergence",
+        lambda *args, **kwargs: "terminal",
+    )
+    monkeypatch.setattr(
+        cleanup_module,
         "sky_down",
         lambda cluster, **_kwargs: calls.append(("down", cluster))
         or CleanupResult(resources_removed=[cluster]),

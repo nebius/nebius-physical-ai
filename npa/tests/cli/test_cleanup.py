@@ -504,6 +504,31 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
     )
     assert first_payload["iam_verification_required"] is True
     assert second_payload["project_retained"] is True
+    assert [phase["phase"] for phase in first_payload["phases"]] == list(range(1, 10))
+    assert all(
+        {
+            "phase",
+            "resource",
+            "observed_state",
+            "recommended_npa_command",
+            "safety_status",
+            "ownership_status",
+            "operator_action_required",
+        }
+        <= phase.keys()
+        for phase in first_payload["phases"]
+    )
+    commands = "\n".join(
+        phase["recommended_npa_command"] for phase in first_payload["phases"]
+    )
+    assert "npa workflow cancel" in commands
+    assert "npa agent destroy" in commands
+    assert "npa cluster down" in commands
+    assert "npa storage" in commands
+    assert all(
+        forbidden not in commands
+        for forbidden in ("kubectl ", "terraform ", "sky jobs", "nebius ")
+    )
     config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
     assert "prod" in config["projects"]
     assert config["projects"]["prod"]["storage_iam_verification_required"][
@@ -515,6 +540,20 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
     )
     resolved = runner.invoke(app, command)
     assert resolved.exit_code == 0, resolved.output
-    assert json.loads(resolved.output)["result"] == "fully_cleaned"
+    resolved_payload = json.loads(resolved.output)
+    assert resolved_payload["result"] == "fully_cleaned"
+    iam_phase = next(
+        phase
+        for phase in resolved_payload["phases"]
+        if phase["resource"] == "storage IAM"
+    )
+    assert iam_phase["observed_state"] == "verified_deleted_or_absent"
+    assert iam_phase["operator_action_required"] is False
+    local_phase = next(
+        phase
+        for phase in resolved_payload["phases"]
+        if phase["resource"] == "local caches and known credentials"
+    )
+    assert local_phase["operator_action_required"] is False
     config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
     assert "storage_iam_verification_required" not in config["projects"]["prod"]
