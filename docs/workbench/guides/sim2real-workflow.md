@@ -202,11 +202,19 @@ Promotion-short-circuit run:
 | `NPA_BYO_ISAAC_NUM_ENVS` | `1024` | 1..65536 environments | vectorized Isaac PPO environments |
 | `NPA_BYO_ISAAC_ITERATIONS` | `150` | 1..1000000 iterations | RSL-RL optimization iterations |
 | `NPA_BYO_ISAAC_STEPS_PER_ENV` | `24` | 1..16384 steps | rollout horizon per environment and iteration |
-| `LEARNING_RATE` | `0.08` | positive scalar | critique-to-training-signal adapter learning rate |
+| `LEARNING_RATE` | `0.08` | positive scalar | VLM signal-adapter/no-signal-control step size; does not override the Isaac PPO optimizer |
 
 The default PPO workload is 3,686,400 environment steps per inner pass. Stage 9
 records these dimensions, training curves, and the real `model_*.pt` URI. Later
 rollout/eval Jobs must load the exact bytes or fail closed.
+
+`0.08` is intentional: it is the longstanding canonical adapter step used by
+the runbook; the Python model/CLI default was synchronized to it from `0.05`.
+The BYO Isaac trainer uses the value for its adapter-result provenance while
+RSL-RL keeps the selected Isaac task's optimizer configuration. Training
+evidence, candidate metadata, and the final report record the effective adapter
+learning rate and this scope so it cannot be mistaken for a PPO optimizer
+override.
 
 ### Cameras and recording
 
@@ -225,6 +233,15 @@ rollout/eval Jobs must load the exact bytes or fail closed.
 | `NPA_SIM2REAL_RERUN_SERVE` | `1` | boolean | publish the completed `.rrd` through the shared authenticated viewer |
 | `NPA_SIM2REAL_K8S_JOB_TIMEOUT_S` | `0` | integer ≥0 seconds | orchestrator/sibling deadline; `0` means no deadline |
 | `NPA_BYO_ISAAC_JOB_TIMEOUT_S` | `0` | integer ≥0 seconds | Isaac rollout/train/eval wait; `0` means no deadline |
+
+The zero timeout is intentionally uncapped: Kubernetes
+`activeDeadlineSeconds` is omitted and the operator keeps polling. It is not an
+ignore-failures mode—failed Job counters, deleted Jobs, kubectl errors, image or
+runtime failures, and non-zero component exits still terminate the run. To opt
+into a four-hour deadline, pass
+`--var NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=14400` (and set
+`NPA_BYO_ISAAC_JOB_TIMEOUT_S` when the nested Isaac wait should have the same
+positive deadline).
 
 Every frame records view name, Isaac world pose and intrinsics, environment and
 episode, pixel resolution, frame index, simulation step/timestamp, and candidate

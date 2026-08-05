@@ -53,6 +53,10 @@ DEFAULT_TRAIN_FRACTION = 0.8
 DEFAULT_ENVGEN_SHARD_COUNT = 16
 DEFAULT_K8S_MAX_PARALLEL_GPUS = 16
 DEFAULT_ACTION_ENV_LIMIT = 256
+# This is the compact VLM-signal adapter/control step size. It is intentionally
+# not the Isaac RSL-RL PPO optimizer learning rate, which remains owned by the
+# selected Isaac task/agent configuration.
+DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE = 0.08
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason2-2B"

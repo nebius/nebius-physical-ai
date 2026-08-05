@@ -38,6 +38,9 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 5. **Submit:** `npa workbench workflow submit npa/workflows/sim2real.yaml
    --run-id <id> --var ...`; pass explicit Isaac EULA acceptance and use the
    real-tier example in `docs/workbench/guides/sim2real-workflow.md`.
+   `NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=0` is the intentional uncapped default. Use
+   a positive override such as `--var NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=14400`
+   only when the operator wants a deadline.
 6. **Monitor:** `npa workbench workflow status <run-id> --watch` plus
    `kubectl get jobs -l sim2real.local/run-id=<run-id>` for sibling evidence.
 7. **View results:** download the Rerun/MCAP objects, or read
@@ -88,6 +91,9 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 - Every retry preserves registry-qualified real-tier images and Kubernetes
   execution. Candidate exhaustion is reported with exact scheduler evidence;
   it never falls back to SEAM/reference/in-process behavior.
+- An uncapped timeout does not mask terminal errors: failed Job counters, Job
+  deletion, kubectl errors, image/runtime failures, and non-zero component exits
+  still fail the run. `0` only omits a time-based deadline.
 - Keep `npa/workflows/sim2real.yaml`'s `envs:` literals and the `run:` block `${VAR:-default}`
   fallbacks in agreement — a cleared env var must not silently change behavior.
 

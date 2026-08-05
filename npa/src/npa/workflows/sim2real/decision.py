@@ -30,6 +30,7 @@ def threshold_decision(
     promoted = success_rate >= config.threshold
     checkpoint_dir = local_dir / "checkpoints" / "candidate"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    candidate_path = checkpoint_dir / "candidate.json"
     # When a BYO trainer produced a real policy checkpoint (surfaced by the heldout
     # eval as policy_checkpoint), promote should reference those real weights and be
     # deployable — not the reference-metadata stub.
@@ -79,13 +80,15 @@ def threshold_decision(
         "checkpoint_uri": checkpoint_uri,
         "max_outer_iterations": config.outer_iterations,
         "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
+        "effective_learning_rate": config.learning_rate,
+        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
         "duration_s": round(time.monotonic() - stage_started, 3),
     }
     # Package real weights even below threshold; promotion remains a distinct
     # quality decision so fixed-count runs never lose candidate access.
     if promoted or is_real_policy:
         _write_json_artifact(
-            checkpoint_dir / "candidate.json",
+            candidate_path,
             {
                 "schema": "npa.sim2real.candidate_checkpoint.v1",
                 "run_id": config.run_id,
@@ -104,6 +107,8 @@ def threshold_decision(
                 "heldout_success_rate": round(success_rate, 6),
                 "threshold": config.threshold,
                 "threshold_met": promoted,
+                "effective_learning_rate": config.learning_rate,
+                "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
                 "promotion_decision": (
                     "promote_checkpoint" if promoted else "loop_back_to_inner_loop"
                 ),
@@ -114,14 +119,29 @@ def threshold_decision(
                 "promoted_at": _utc_now() if promoted else "",
             },
         )
-    else:
+    if not promoted:
+        remaining = max(0, config.outer_iterations - outer_iteration)
         _write_json_artifact(
             local_dir / "outer_loop" / "loopback.json",
             {
                 "schema": "npa.sim2real.loopback.v1",
+                "run_id": config.run_id,
                 "from_stage": 11,
                 "to_stage": 7,
                 "reason": "heldout threshold not met",
+                "outer_iteration": outer_iteration,
+                "score": round(success_rate, 6),
+                "threshold": config.threshold,
+                "threshold_met": False,
+                "real_policy": is_real_policy,
+                "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
+                "candidate_path": str(candidate_path) if candidate_path.is_file() else "",
+                "remaining_outer_iterations": remaining,
+                "remaining_work": (
+                    "run_next_outer_iteration"
+                    if remaining
+                    else "configured_outer_iterations_exhausted"
+                ),
                 "decision": decision,
             },
         )

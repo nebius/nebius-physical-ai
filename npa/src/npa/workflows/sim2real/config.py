@@ -24,6 +24,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
+    DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
     DEFAULT_TRAIN_FRACTION,
@@ -301,7 +302,12 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             )
         ),
         learning_rate=float(
-            overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.08"))
+            overrides.get(
+                "learning_rate",
+                os.environ.get(
+                    "LEARNING_RATE", str(DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE)
+                ),
+            )
         ),
         byo_signal_converter=str(
             overrides.get("byo_signal_converter")

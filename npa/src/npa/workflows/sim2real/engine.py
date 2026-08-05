@@ -548,6 +548,13 @@ def run_finalize(
         "s3_artifacts": artifact_uris(config),
         "config": _redacted_config(config),
         "runtime_parameters": runtime_parameter_metadata(),
+        "training_provenance": {
+            "effective_learning_rate": config.learning_rate,
+            "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
+            "source": "LEARNING_RATE/--learning-rate",
+            "ppo_optimizer_override": None,
+            "ppo_optimizer_source": "Isaac task RSL-RL agent configuration",
+        },
         "byo_seams": byo_seams(config),
         "components": components,
         "gpu_fallback_contract": gpu_fallback_report_contract(config, components),
@@ -745,8 +752,12 @@ def _run_sim2real_viz_stage(
             raise Sim2RealLoopError(
                 f"required Stage 14 Rerun recording could not be emitted: {exc}"
             ) from exc
-        info = {"status": "skipped", "reason": str(exc), "source": "reference"}
-        info["mcap"] = emit_sim2real_mcap_if_enabled(
+        viz_info: dict[str, Any] = {
+            "status": "skipped",
+            "reason": str(exc),
+            "source": "reference",
+        }
+        viz_info["mcap"] = emit_sim2real_mcap_if_enabled(
             local_dir=local_dir,
             inner_evidence=inner_evidence,
             heldout_report=heldout_report,
@@ -760,16 +771,16 @@ def _run_sim2real_viz_stage(
                 {},
                 next_action="CONTINUE",
             ),
-            info,
+            viz_info,
         )
-    info = {"source": "reference", **result.to_dict()}
+    viz_info = {"source": "reference", **result.to_dict()}
     mcap_info = emit_sim2real_mcap_if_enabled(
         local_dir=local_dir,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
         output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
-    info["mcap"] = mcap_info
+    viz_info["mcap"] = mcap_info
     if (
         _bool_value(os.environ.get("NPA_SIM2REAL_REQUIRE_VISUALIZATION", "0"))
         and _bool_value(os.environ.get("NPA_SIM2REAL_MCAP", "1"))
@@ -810,7 +821,7 @@ def _run_sim2real_viz_stage(
             ),
             artifacts,
         ),
-        info,
+        viz_info,
     )
 
 
@@ -1078,6 +1089,8 @@ def run_inner_loop(
                 "signal_dir": str(signal_dir),
                 "signal_batch": str(signal_batch_path),
                 "mean_reward": mean_reward,
+                "effective_learning_rate": config.learning_rate,
+                "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
                 "trainer_source": trainer_source,
                 "trainer_component_invocation": trainer_component_invocation,
                 "signal_converter_source": signal_converter_source,
@@ -1113,6 +1126,8 @@ def run_inner_loop(
         "signal_converter_source": (
             "byo_command" if config.byo_signal_converter.strip() else "reference"
         ),
+        "effective_learning_rate": config.learning_rate,
+        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
         "reward_trend": reward_trend,
         "loss_trend": loss_trend,
         "signal_diversity": signal_diversity,

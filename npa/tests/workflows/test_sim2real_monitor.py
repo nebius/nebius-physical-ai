@@ -14,7 +14,6 @@ from npa.workflows.sim2real.monitor import (
     get_sim2real_workflow_status,
     normalize_staged_run_id,
     orchestrator_job_name,
-    parse_submit_run_id,
 )
 
 
@@ -207,11 +206,6 @@ def test_orchestrator_job_name() -> None:
 def test_normalize_staged_run_id_strips_polluted_submit_line() -> None:
     polluted = "sim2real-staged-20260615t120000z job=sim2real-staged-20260615t120000z"
     assert normalize_staged_run_id(polluted) == "sim2real-staged-20260615t120000z"
-
-
-def test_parse_submit_run_id_from_combined_line() -> None:
-    output = "run_id=sim2real-staged-20260615t120000z job=sim2real-staged-20260615t120000z"
-    assert parse_submit_run_id(output) == "sim2real-staged-20260615t120000z"
 
 
 def test_sim2real_workflow_status_includes_eval_metrics_from_workflow_state(

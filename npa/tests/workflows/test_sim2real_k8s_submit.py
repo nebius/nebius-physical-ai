@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import stat
 import tarfile
 from contextlib import contextmanager
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -133,8 +135,11 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     assert env["NPA_SIM2REAL_SOURCE_TARBALL_URI"].startswith("s3://unit-bucket/")
     for key in k8s_submit._required_real_image_envs(env):
         assert k8s_submit._registry_qualified(env[key]), (key, env[key])
-    assert not Path(result.manifest_path).exists()
-    assert len(result.manifest_sha256) == 64
+    assert "manifest_path" not in {field.name for field in fields(result)}
+    assert result.manifest_sha256 == hashlib.sha256(
+        captured["manifest_yaml"].encode("utf-8")
+    ).hexdigest()
+    assert not Path(captured["path"]).exists()
 
 
 def test_submit_stages_source_refreshes_all_images_and_applies_job(
@@ -222,8 +227,6 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
     assert set(refreshed[0][1:]) == {expected_images[name] for name in required_names}
     assert len(applied) == 1
     assert applied[0]["metadata"]["name"] == result.job_name
-    assert Path(result.manifest_path).name.startswith(f"{result.job_name}-")
-    assert not Path(result.manifest_path).exists()
     assert len(result.manifest_sha256) == 64
 
 
@@ -481,3 +484,47 @@ def test_workflow_var_aliases_route_to_runbook_env(
     assert captured["inner_iterations"] == 3
     assert captured["outer_iterations"] == 2
     assert captured["plan_only"] is True
+
+
+def test_workflow_submit_json_exposes_digest_but_no_manifest_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typer.testing import CliRunner
+
+    from npa.cli.main import app
+    from npa.workflows.sim2real import k8s_submit
+    from npa.workflows.sim2real.materialize import default_runbook_path
+
+    digest = "a" * 64
+    monkeypatch.setattr(
+        k8s_submit,
+        "submit_sim2real_from_workflow_vars",
+        lambda **_kwargs: k8s_submit.Sim2RealSubmitResult(
+            run_id="unit-json",
+            job_name="sim2real-unit-json",
+            k8s_context="unit-context",
+            run_prefix_uri="s3://unit-bucket/sim2real-b/unit-json/",
+            status="planned",
+            manifest_sha256=digest,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(default_runbook_path()),
+            "--run-id",
+            "unit-json",
+            "--plan-only",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["manifest_sha256"] == digest
+    assert "manifest_path" not in payload

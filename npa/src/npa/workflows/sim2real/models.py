@@ -33,6 +33,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
+    DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
     DEFAULT_TRAINER_TAG,
@@ -115,7 +116,7 @@ class Sim2RealLoopConfig:
     upload_artifacts: bool = False
     no_guardrails: bool = False
     signal_loss_weight: float = 1.0
-    learning_rate: float = 0.08
+    learning_rate: float = DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
     byo_signal_converter: str = ""
     byo_trainer_command: str = ""
     byo_vlm_command: str = ""

@@ -10,6 +10,7 @@ import tempfile
 import time
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -372,7 +373,7 @@ def submit_cmd(
     submit_format = detect_submit_format(yaml_path)
     if submit_format == "sim2real_runbook":
         try:
-            result = submit_sim2real_from_workflow_vars(
+            sim2real_result = submit_sim2real_from_workflow_vars(
                 run_id=resolved_run_id,
                 substitutions=substitutions,
                 s3_bucket=s3_bucket,
@@ -386,27 +387,25 @@ def submit_cmd(
             _fail(str(exc))
             return
         payload = {
-            "status": result.status,
-            "run_id": result.run_id,
-            "job_id": result.job_name,
-            "k8s_context": result.k8s_context,
-            "run_prefix_uri": result.run_prefix_uri,
-            "log_path": result.log_path,
-            "manifest_path": result.manifest_path,
-            "manifest_sha256": result.manifest_sha256,
+            "status": sim2real_result.status,
+            "run_id": sim2real_result.run_id,
+            "job_id": sim2real_result.job_name,
+            "k8s_context": sim2real_result.k8s_context,
+            "run_prefix_uri": sim2real_result.run_prefix_uri,
+            "log_path": sim2real_result.log_path,
+            "manifest_sha256": sim2real_result.manifest_sha256,
         }
         if output_format == OutputFormat.json:
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         else:
-            typer.echo(f"status: {result.status}")
-            typer.echo(f"run_id: {result.run_id}")
-            typer.echo(f"job_id: {result.job_name}")
-            typer.echo(f"k8s_context: {result.k8s_context}")
-            typer.echo(f"run_prefix_uri: {result.run_prefix_uri}")
-            typer.echo(f"manifest_path: {result.manifest_path} (cleaned)")
-            typer.echo(f"manifest_sha256: {result.manifest_sha256}")
-            if result.status == "submitted":
-                typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
+            typer.echo(f"status: {sim2real_result.status}")
+            typer.echo(f"run_id: {sim2real_result.run_id}")
+            typer.echo(f"job_id: {sim2real_result.job_name}")
+            typer.echo(f"k8s_context: {sim2real_result.k8s_context}")
+            typer.echo(f"run_prefix_uri: {sim2real_result.run_prefix_uri}")
+            typer.echo(f"manifest_sha256: {sim2real_result.manifest_sha256}")
+            if sim2real_result.status == "submitted":
+                typer.echo(f"monitor: {status_monitor_command(sim2real_result.run_id)}")
         return
 
     prepared_npa = None
@@ -490,7 +489,7 @@ def submit_cmd(
 
         if plan_only:
             rendered = prepared_npa.skypilot_yaml_path.read_text(encoding="utf-8")
-            payload = {
+            planned_payload: dict[str, Any] = {
                 "status": "PLANNED",
                 "run_id": resolved_run_id,
                 "workflow": prepared_npa.spec.name,
@@ -499,7 +498,7 @@ def submit_cmd(
                 "skypilot_yaml": rendered,
             }
             if output_format == OutputFormat.json:
-                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+                typer.echo(json.dumps(planned_payload, indent=2, sort_keys=True))
             else:
                 typer.echo("status: PLANNED")
                 typer.echo(f"run_id: {resolved_run_id}")
@@ -546,6 +545,7 @@ def submit_cmd(
     try:
         source_yaml_path = yaml_path
         if substitutions:
+            assert submitted_yaml_context is not None
             substituted = _substitute_workflow_vars(yaml_path, substitutions)
             source_yaml_path = Path(submitted_yaml_context.name) / f"substituted-{yaml_path.name}"
             source_yaml_path.write_text(substituted, encoding="utf-8")

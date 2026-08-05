@@ -27,6 +27,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
+    DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
     DEFAULT_TRAIN_FRACTION,
@@ -188,7 +189,15 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--upload-artifacts", action="store_true")
     parser.add_argument("--no-guardrails", action="store_true")
     parser.add_argument("--signal-loss-weight", type=float, default=1.0)
-    parser.add_argument("--learning-rate", type=float, default=0.08)
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
+        help=(
+            "VLM signal-adapter/no-signal-control step size; this does not override "
+            "the Isaac RSL-RL PPO optimizer learning rate."
+        ),
+    )
     parser.add_argument("--byo-signal-converter", default="")
     parser.add_argument("--byo-trainer-command", default="")
     parser.add_argument("--byo-vlm-command", default="")
@@ -262,7 +271,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--k8s-job-timeout-s",
         type=int,
         default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "0")),
-        help="Sibling Job deadline in seconds; 0 waits without a deadline.",
+        help=(
+            "Orchestrator/sibling Job deadline in seconds; 0 is uncapped. Failed Job counters, "
+            "deleted Jobs, kubectl errors, and component failures still terminate."
+        ),
     )
     parser.add_argument(
         "--k8s-max-parallel-gpus",

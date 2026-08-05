@@ -189,6 +189,15 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     reward_trend = report["inner_loop"]["reward_trend"]
 
     assert report["schema"] == "npa.sim2real.e2e_report.v1"
+    assert report["training_provenance"] == {
+        "effective_learning_rate": 0.08,
+        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
+        "source": "LEARNING_RATE/--learning-rate",
+        "ppo_optimizer_override": None,
+        "ppo_optimizer_source": "Isaac task RSL-RL agent configuration",
+    }
+    assert report["inner_loop"]["effective_learning_rate"] == 0.08
+    assert report["inner_loop"]["iterations"][0]["effective_learning_rate"] == 0.08
     assert reward_trend[-1] >= reward_trend[0]
     assert report["s3_artifacts"] == {}
     assert (
@@ -233,6 +242,10 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
         >= 0.45
     )
     assert (tmp_path / "checkpoints" / "candidate" / "candidate.json").exists()
+    candidate = json.loads(
+        (tmp_path / "checkpoints" / "candidate" / "candidate.json").read_text()
+    )
+    assert candidate["effective_learning_rate"] == 0.08
     assert (tmp_path / "reports" / "sim2real-report.json").exists()
     marker_text = marker.read_text(encoding="utf-8")
     assert marker_text.count("vlm_eval") == 4
@@ -266,6 +279,15 @@ def test_threshold_failure_loops_back_to_inner_loop(tmp_path: Path) -> None:
 
     assert decision["decision"] == "loop_back_to_inner_loop"
     assert loopback["to_stage"] == 7
+    assert loopback["schema"] == "npa.sim2real.loopback.v1"
+    assert loopback["real_policy"] is False
+    assert loopback["candidate_path"] == ""
+    assert loopback["score"] == decision["success_rate"]
+    assert loopback["threshold"] == decision["threshold"]
+    assert loopback["outer_iteration"] == 1
+    assert loopback["remaining_outer_iterations"] == 0
+    assert loopback["remaining_work"] == "configured_outer_iterations_exhausted"
+    assert loopback["decision"]["decision"] == "loop_back_to_inner_loop"
 
 
 def test_empty_s3_prefix_writes_under_run_id() -> None:

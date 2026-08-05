@@ -174,7 +174,6 @@ packages = ["src/npa"]
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
 "workflows/sim2real.yaml" = "npa/workflows/sim2real.yaml"
-"workflows/physical-ai-data-factory.yaml" = "npa/workflows/physical-ai-data-factory.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"
 
 [tool.ruff]

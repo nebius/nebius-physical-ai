@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
@@ -1063,6 +1063,13 @@ def run_finalize(
         "local_artifact_dir": str(local_dir),
         "s3_artifacts": artifact_uris(config),
         "config": _redacted_config(config),
+        "training_provenance": {
+            "effective_learning_rate": config.learning_rate,
+            "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
+            "source": "LEARNING_RATE/--learning-rate",
+            "ppo_optimizer_override": None,
+            "ppo_optimizer_source": "Isaac task RSL-RL agent configuration",
+        },
         "byo_seams": byo_seams(config),
         "components": components,
         "stage_records": stage_records,
@@ -1211,8 +1218,12 @@ def _run_sim2real_viz_stage(
             write_mp4=_bool_value(os.environ.get("NPA_SIM2REAL_RERUN_MP4", "0")),
         )
     except RerunUnavailableError as exc:
-        info = {"status": "skipped", "reason": str(exc), "source": "reference"}
-        info["mcap"] = _emit_sim2real_loop_mcap(
+        viz_info: dict[str, Any] = {
+            "status": "skipped",
+            "reason": str(exc),
+            "source": "reference",
+        }
+        viz_info["mcap"] = _emit_sim2real_loop_mcap(
             local_dir=local_dir,
             inner_evidence=inner_evidence,
             heldout_report=heldout_report,
@@ -1225,15 +1236,15 @@ def _run_sim2real_viz_stage(
                 {},
                 next_action="CONTINUE",
             ),
-            info,
+            viz_info,
         )
-    info = {"source": "reference", **result.to_dict()}
+    viz_info = {"source": "reference", **result.to_dict()}
     mcap_info = _emit_sim2real_loop_mcap(
         local_dir=local_dir,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
     )
-    info["mcap"] = mcap_info
+    viz_info["mcap"] = mcap_info
     artifacts = {"rrd": str(rrd_path)}
     if mcap_info.get("status") == "written" and mcap_info.get("output_mcap_path"):
         artifacts["mcap"] = str(mcap_info["output_mcap_path"])
@@ -1252,7 +1263,7 @@ def _run_sim2real_viz_stage(
             ),
             artifacts,
         ),
-        info,
+        viz_info,
     )
 
 
@@ -1507,6 +1518,8 @@ def run_inner_loop(
                 "signal_dir": str(signal_dir),
                 "signal_batch": str(signal_batch_path),
                 "mean_reward": mean_reward,
+                "effective_learning_rate": config.learning_rate,
+                "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
                 "trainer_source": trainer_source,
                 "signal_converter_source": signal_converter_source,
                 "update": update.to_dict(),
@@ -1541,6 +1554,8 @@ def run_inner_loop(
         "signal_converter_source": (
             "byo_command" if config.byo_signal_converter.strip() else "reference"
         ),
+        "effective_learning_rate": config.learning_rate,
+        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
         "reward_trend": reward_trend,
         "signal_diversity": signal_diversity,
         "policy_delta_vs_no_signal_control": policy_deltas,
@@ -3524,53 +3539,16 @@ def threshold_decision(
     heldout_report: dict[str, Any],
     outer_iteration: int,
 ) -> dict[str, Any]:
-    """Apply Stage 11 threshold gate and write promote/loop-back artifacts."""
+    """Delegate Stage 11 to the maintained shared decision implementation."""
 
-    success_rate = float(heldout_report["success_rate"])
-    promoted = success_rate >= config.threshold
-    checkpoint_dir = local_dir / "checkpoints" / "candidate"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_uri = str(checkpoint_dir)
-    decision = {
-        "schema": SCHEMA_THRESHOLD_DECISION,
-        "stage": 11,
-        "outer_iteration": outer_iteration,
-        "success_rate": round(success_rate, 6),
-        "threshold": config.threshold,
-        "decision": "promote_checkpoint" if promoted else "loop_back_to_inner_loop",
-        "checkpoint_uri": checkpoint_uri,
-        "max_outer_iterations": config.outer_iterations,
-        "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
-    }
-    if promoted:
-        _write_json_artifact(
-            checkpoint_dir / "candidate.json",
-            {
-                "schema": "npa.sim2real.candidate_checkpoint.v1",
-                "run_id": config.run_id,
-                "source": "vlm-rl-reference-update",
-                "deployable_policy": False,
-                "policy_artifact_kind": "reference_metadata",
-                "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
-                "heldout_success_rate": round(success_rate, 6),
-                "threshold": config.threshold,
-                "promoted_at": _utc_now(),
-            },
-        )
-    else:
-        _write_json_artifact(
-            local_dir / "outer_loop" / "loopback.json",
-            {
-                "schema": "npa.sim2real.loopback.v1",
-                "from_stage": 11,
-                "to_stage": 7,
-                "reason": "heldout threshold not met",
-                "decision": decision,
-            },
-        )
-    path = local_dir / "outer_loop" / "decision.json"
-    _write_json_artifact(path, decision)
-    return {**decision, "decision_uri": str(path)}
+    from npa.workflows.sim2real.decision import threshold_decision as decide
+
+    return decide(
+        cast(Any, config),
+        local_dir=local_dir,
+        heldout_report=heldout_report,
+        outer_iteration=outer_iteration,
+    )
 
 
 def upload_run_artifacts(

@@ -270,31 +270,6 @@ def normalize_staged_run_id(run_id: str) -> str:
     return first
 
 
-def parse_submit_run_id(output: str) -> str:
-    """Parse ``run_id=`` lines from operator submit script output."""
-
-    parsed = ""
-    for line in output.splitlines():
-        if line.startswith("run_id=") or line.startswith("run_id:"):
-            raw = line.split("=", 1)[-1].split(":", 1)[-1].strip()
-            parsed = normalize_staged_run_id(raw)
-    if not parsed:
-        raise ValueError("submit script did not return run_id")
-    return parsed
-
-
-def parse_submit_job(output: str, run_id: str = "") -> str:
-    """Parse orchestrator job name from submit script output."""
-
-    job = ""
-    for line in output.splitlines():
-        if line.startswith("job=") or line.startswith("job_id:"):
-            job = line.split("=", 1)[-1].split(":", 1)[-1].strip().split()[0]
-    if not job and run_id:
-        return orchestrator_job_name(run_id)
-    return job
-
-
 def orchestrator_job_name(run_id: str) -> str:
     return f"sim2real-{normalize_staged_run_id(run_id)}"
 
@@ -469,10 +444,10 @@ def _workflow_completion_index(
         stage_number = payload.get("stage")
         if not isinstance(stage_number, int):
             continue
-        name = _STAGE_NUMBER_TO_NAME.get(stage_number)
-        if not name or name in index:
+        stage_name = _STAGE_NUMBER_TO_NAME.get(stage_number)
+        if not stage_name or stage_name in index:
             continue
-        index[name] = {
+        index[stage_name] = {
             "source": "stage_record",
             "tier": "",
             "record": record,

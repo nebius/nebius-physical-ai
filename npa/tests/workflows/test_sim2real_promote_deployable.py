@@ -46,6 +46,8 @@ def test_promote_deployable_with_real_checkpoint(tmp_path):
     assert cand["source"] == "isaac-rsl-rl-ppo"
     assert cand["policy_artifact_kind"] == "isaac_rsl_rl_checkpoint"
     assert cand["policy_checkpoint_uri"].endswith("model_latest.pt")
+    assert cand["effective_learning_rate"] == 0.08
+    assert not (tmp_path / "outer_loop" / "loopback.json").exists()
 
 
 def test_promote_stub_without_real_checkpoint(tmp_path):
@@ -57,6 +59,7 @@ def test_promote_stub_without_real_checkpoint(tmp_path):
     cand = _candidate(tmp_path)
     assert cand["deployable_policy"] is False
     assert cand["policy_artifact_kind"] == "reference_metadata"
+    assert not (tmp_path / "outer_loop" / "loopback.json").exists()
 
 
 def test_below_threshold_real_checkpoint_remains_deployable_candidate(tmp_path):
@@ -81,6 +84,19 @@ def test_below_threshold_real_checkpoint_remains_deployable_candidate(tmp_path):
     assert candidate["promotion_decision"] == "loop_back_to_inner_loop"
     assert candidate["candidate_status"] == "below_threshold_deployable_candidate"
     assert candidate["promoted_at"] == ""
+    loopback = json.loads((tmp_path / "outer_loop" / "loopback.json").read_text())
+    assert loopback["schema"] == "npa.sim2real.loopback.v1"
+    assert loopback["real_policy"] is True
+    assert loopback["policy_checkpoint_uri"] == report["policy_checkpoint"]
+    assert loopback["candidate_path"] == str(
+        tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    )
+    assert loopback["score"] == 0.125
+    assert loopback["threshold"] == 0.45
+    assert loopback["outer_iteration"] == 1
+    assert loopback["remaining_outer_iterations"] == 1
+    assert loopback["remaining_work"] == "run_next_outer_iteration"
+    assert loopback["decision"]["decision"] == "loop_back_to_inner_loop"
 
 
 def test_real_checkpoint_candidate_hashes_without_path_read_bytes(
@@ -124,6 +140,8 @@ def test_real_checkpoint_candidate_hashes_without_path_read_bytes(
         "evaluated_at",
         "handoff_doc",
         "heldout_success_rate",
+        "effective_learning_rate",
+        "learning_rate_scope",
         "policy_artifact_kind",
         "policy_checkpoint_identity",
         "policy_checkpoint_sha256",

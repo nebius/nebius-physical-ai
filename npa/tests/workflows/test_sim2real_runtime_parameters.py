@@ -16,6 +16,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_INNER_ITERATIONS,
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_ROLLOUT_COUNT,
+    DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
 )
@@ -45,6 +46,11 @@ def test_canonical_yaml_defaults_match_engine_and_real_components() -> None:
     assert int(envs["HELDOUT_ENV_COUNT"]) == DEFAULT_HELDOUT_ENVS
     assert envs["NPA_SIM2REAL_EARLY_EXIT"] == "0"
     assert envs["NPA_SIM2REAL_HELDOUT_EVAL_LIMIT"] == "0"
+    assert envs["NPA_SIM2REAL_K8S_JOB_TIMEOUT_S"] == "0"
+    assert float(envs["LEARNING_RATE"]) == DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
+    config = Sim2RealLoopConfig(run_id="parameter-defaults")
+    assert config.k8s_job_timeout_s == 0
+    assert config.learning_rate == DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
     assert envs["BYO_TRAINER_COMMAND"].endswith("byo_isaac_trainer")
     assert envs["BYO_POLICY_COMMAND"].endswith("byo_isaac_policy_rollout")
     assert envs["BYO_EVAL_COMMAND"].endswith("byo_isaac_eval")

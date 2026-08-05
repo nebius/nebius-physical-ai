@@ -76,6 +76,13 @@
 #
 # Service account, pull secrets, and env secrets are materialized below; do not
 # bypass this route with a raw `sky jobs launch`.
+#
+# Timeout contract: NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=0 is intentionally uncapped
+# for full production loops. It omits Kubernetes activeDeadlineSeconds and keeps
+# polling, but failed Job counters, Job deletion, kubectl errors, image/runtime
+# failures, and non-zero component exits still terminate the run. To impose a
+# deadline, pass a positive number of seconds, for example
+# `--var NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=14400`.
 name: sim2real-staged-loop
 resources:
   cloud: kubernetes
@@ -141,7 +148,9 @@ envs:
   NPA_BYO_ISAAC_STEPS_PER_ENV: "24"
   NPA_ENVGEN_SHARD_COUNT: "16"
   NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS: "16"
-  # Advanced defaults (leave unless tuning specific infra/runtime behavior)
+  # Advanced defaults (leave unless tuning specific infra/runtime behavior).
+  # LEARNING_RATE is the VLM signal-adapter/no-signal-control step size. The
+  # Isaac RSL-RL PPO optimizer remains owned by the selected task/agent config.
   SIGNAL_LOSS_WEIGHT: "1.0"
   LEARNING_RATE: "0.08"
   NO_GUARDRAILS: "0"
@@ -225,8 +234,9 @@ envs:
   ISAACSIM_ACCEPT_EULA: ""
   # Optional stricter per-model floor; incompatible products are filtered before submit.
   NPA_SIM2REAL_MIN_GPU_VRAM_GB: ""
-  # 0 means no workflow/sibling Job deadline. Operators may set a positive
-  # number of seconds only when they intentionally want a deadline.
+  # 0 means no workflow/sibling Job deadline. Failed counters, deleted Jobs,
+  # kubectl errors, and component failures still terminate. Set a positive
+  # number of seconds only when intentionally opting into a deadline.
   NPA_SIM2REAL_K8S_JOB_TIMEOUT_S: "0"
   NPA_BYO_ISAAC_JOB_TIMEOUT_S: "0"
   NPA_SIM2REAL_HELDOUT_EVAL_LIMIT: "0"

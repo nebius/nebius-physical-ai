@@ -78,6 +78,12 @@ def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
 def test_explicit_positive_timeout_adds_job_deadline() -> None:
     job = _materialize(env_overrides={"NPA_SIM2REAL_K8S_JOB_TIMEOUT_S": "3600"})
     assert job.manifest["spec"]["activeDeadlineSeconds"] == 3600
+    container = job.manifest["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"]}
+    assert env["NPA_SIM2REAL_K8S_JOB_TIMEOUT_S"] == "3600"
+    assert '--k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-0}"' in container[
+        "command"
+    ][2]
 
 
 def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:

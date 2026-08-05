@@ -72,6 +72,9 @@ Stages 4–6 share one component name in monitor: `stage_04_06_env_gen_split_tok
 - ComponentRecords and the final report carry candidate order, every scheduling
   attempt/reason, selected product/node, allocated GPU resource/count, exact Job,
   immutable runtime digest, and duration. Stage 12 remains the designed `SEAM`.
+- `LEARNING_RATE=0.08` is the VLM signal-adapter/no-signal-control step size,
+  not an Isaac PPO optimizer override. Training evidence, candidate metadata,
+  and the final report must record both the effective value and its scope.
 - Stage 14 is operational evidence, not a placeholder: active progress writes
   `reports/sim2real-progress.rrd`; final emission loads all persisted outer
   evidence and exposes reward/loss/success metrics, real rollout cameras with

@@ -33,7 +33,6 @@ class Sim2RealSubmitResult:
     run_prefix_uri: str
     status: str = "submitted"
     log_path: str = ""
-    manifest_path: str = ""
     manifest_sha256: str = ""
 
 
@@ -578,15 +577,15 @@ def submit_sim2real_staged_job(
         manifest_yaml = materialized.to_yaml()
 
     manifest_sha256 = hashlib.sha256(manifest_yaml.encode("utf-8")).hexdigest()
-    # The manifest is useful while diagnosing this call, but it can contain
-    # private registry/S3 coordinates. Return its path and digest as evidence
-    # after deterministic cleanup rather than retaining the YAML under /tmp.
+    # The manifest can contain private registry/S3 coordinates. Materialize it
+    # only long enough to exercise the secure-file contract, then retain its
+    # digest as durable evidence. Never return the now-deleted temporary path.
     with _secure_temporary_manifest(
         run_id=resolved_run_id,
         job_name=selected_job_name,
         manifest_yaml=manifest_yaml,
-    ) as manifest_path:
-        ephemeral_manifest_path = str(manifest_path)
+    ):
+        pass
 
     prefix_uri = f"s3://{bucket}/{s3_prefix.rstrip('/')}/{resolved_run_id}/"
     return Sim2RealSubmitResult(
@@ -596,7 +595,6 @@ def submit_sim2real_staged_job(
         run_prefix_uri=prefix_uri,
         status="planned" if plan_only else "submitted",
         log_path="",
-        manifest_path=ephemeral_manifest_path,
         manifest_sha256=manifest_sha256,
     )
 

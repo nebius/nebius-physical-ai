@@ -42,6 +42,10 @@ def build_progress_metrics(
                         "quality_after", iteration.get("next_rollout_quality")
                     ),
                     "checkpoint_uri": update.get("checkpoint_path", ""),
+                    "effective_learning_rate": iteration.get(
+                        "effective_learning_rate"
+                    ),
+                    "learning_rate_scope": iteration.get("learning_rate_scope", ""),
                 }
             )
         loss_trend = list(evidence.get("loss_trend") or [])

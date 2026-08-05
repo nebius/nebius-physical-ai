@@ -65,6 +65,8 @@ def test_build_update_result_satisfies_byo_contract(tmp_path):
     assert result["policy_delta_l2"] > 0.0  # a real trainer produced a checkpoint
     assert result["backend"] == "isaac_rsl_rl_ppo"
     assert result["checkpoint_path"].endswith("model_latest.pt")
+    assert result["effective_learning_rate"] == 0.08
+    assert result["learning_rate_scope"] == "vlm_signal_adapter_and_no_signal_control"
     parsed = VlmSignalUpdateResult.from_dict(result)
     assert parsed.checkpoint_path == "s3://bucket/run/model_latest.pt"
     assert parsed.backend == "isaac_rsl_rl_ppo"
@@ -118,12 +120,14 @@ def test_dryrun_main_writes_contract_json(tmp_path, monkeypatch):
     monkeypatch.setenv("NPA_SIM2REAL_SIGNAL_JSON", str(_write_signal(tmp_path)))
     monkeypatch.setenv("NPA_SIM2REAL_OUTPUT_JSON", str(out))
     monkeypatch.setenv("NPA_BYO_ISAAC_ITERATIONS", "3")
+    monkeypatch.setenv("NPA_SIM2REAL_LEARNING_RATE", "0.12")
     rc = byo.main()
     assert rc == 0
     payload = json.loads(out.read_text())
     parsed = VlmSignalUpdateResult.from_dict(payload)  # must not raise
     assert parsed.backend == "isaac_rsl_rl_ppo"
     assert parsed.steps == 3
+    assert payload["effective_learning_rate"] == 0.12
 
 
 def test_vlm_reward_overrides_targets_error_tag_term():

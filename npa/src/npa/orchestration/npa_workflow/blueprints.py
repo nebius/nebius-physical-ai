@@ -1,8 +1,10 @@
 """Filesystem locations of the checked-in ``npa.workflow`` blueprint specs.
 
-These YAMLs are discovered from a source checkout. The two prominent top-level
-operator files are also force-included in the wheel, while the rest of the shown
-catalog stays under ``npa/workflows/workbench/npa-workflows/`` in the repo.
+These YAMLs are discovered from a source checkout. The prominent Sim2Real
+direct-runbook is also force-included in the wheel. The flagship Physical AI
+Data Factory spec stays at the top of ``npa/workflows/`` in the repo; the rest
+of the declarative shown catalog is under
+``npa/workflows/workbench/npa-workflows/``.
 
 This module is the single source of truth for both roots so spec discovery,
 the smoke/guardrail tests, and the live-submit matrix stay in sync when a spec

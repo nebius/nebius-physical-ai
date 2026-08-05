@@ -43,6 +43,7 @@ from npa.workflows.sim2real.capture import (
     DEFAULT_PPO_STEPS_PER_ENV,
     ppo_settings,
 )
+from npa.workflows.sim2real.constants import DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_NUM_ENVS = DEFAULT_PPO_NUM_ENVS
@@ -209,7 +210,7 @@ def _resolve_byo_robot_spec() -> Any:
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested without a cluster)
 # --------------------------------------------------------------------------- #
-def read_signal_stats(signal_json_path: str) -> dict[str, float]:
+def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
     """Summarize the VLM signal batch: mean reward/advantage and step count.
 
     Best-effort and dependency-light: reads the JSON directly rather than
@@ -421,7 +422,7 @@ def build_isaac_job_manifest(
     default path below keeps those).
     """
 
-    overrides = dict(reward_overrides or {})
+    overrides: dict[str, Any] = dict(reward_overrides or {})
     if object_usd:
         overrides["env.scene.object.spawn.usd_path"] = object_usd
         if object_scale:
@@ -736,6 +737,7 @@ def build_update_result(
     reward_overrides: dict[str, float] | None = None,
     num_envs: int = DEFAULT_NUM_ENVS,
     steps_per_env: int = DEFAULT_STEPS_PER_ENV,
+    learning_rate: float = DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
 ) -> dict[str, Any]:
     """Build a VlmSignalUpdateResult-shaped dict from a real training run.
 
@@ -748,8 +750,12 @@ def build_update_result(
     mean_reward = float(stats.get("mean_reward", 0.0))
     mean_advantage = float(stats.get("mean_advantage", 0.0))
     reward_target = max(0.0, min(1.0, (mean_reward + 1.0) / 2.0))
+    if learning_rate <= 0:
+        raise ValueError(f"learning_rate must be positive, got {learning_rate}")
     reward_head_after = round(
-        initial_reward_head + 0.5 * (reward_target - initial_reward_head), 6
+        initial_reward_head
+        + float(learning_rate) * (reward_target - initial_reward_head),
+        6,
     )
     # A real trainer produced a checkpoint => a real policy delta occurred.
     policy_delta_l2 = round(0.05 + 0.001 * float(iterations), 6) if checkpoint_uri else 0.0
@@ -776,6 +782,8 @@ def build_update_result(
         "checkpoint_path": checkpoint_uri,
         "signal_count": int(stats.get("step_count", 0)),
         "control": False,
+        "effective_learning_rate": float(learning_rate),
+        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
         "loss_integration_point": (
             "Isaac-Lab RSL-RL PPO sibling job (real policy training); VLM signal "
             "shapes reward via env.rewards weight overrides: "
@@ -903,6 +911,17 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     path_seg = f"{job_name}/{tag}/" if tag else f"{job_name}/"
     s3_output = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-trainer/{path_seg}"
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "0") or 0)
+    learning_rate = float(
+        _env(
+            "NPA_SIM2REAL_LEARNING_RATE",
+            str(DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE),
+        )
+    )
+    print(
+        "byo_isaac_trainer: effective VLM signal-adapter learning_rate -> "
+        f"{learning_rate} (Isaac PPO optimizer remains task-configured)",
+        flush=True,
+    )
 
     # VLM critique -> PPO reward-term shaping (the VLM drives what the policy learns).
     stats = read_signal_stats(signal_json)
@@ -1090,6 +1109,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         reward_overrides=reward_overrides,
         num_envs=num_envs,
         steps_per_env=steps_per_env,
+        learning_rate=learning_rate,
     )
     result["component_invocation"] = {
         "mode": "kubernetes_job",
@@ -1112,6 +1132,12 @@ def main() -> int:
     if _env("NPA_BYO_ISAAC_DRYRUN") == "1":
         stats = read_signal_stats(signal_json)
         ppo = ppo_settings()
+        learning_rate = float(
+            _env(
+                "NPA_SIM2REAL_LEARNING_RATE",
+                str(DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE),
+            )
+        )
         result = build_update_result(
             stats=stats,
             initial_reward_head=float(_env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0),
@@ -1121,6 +1147,7 @@ def main() -> int:
             duration_ms=0.0,
             num_envs=int(ppo["num_envs"]),
             steps_per_env=int(ppo["steps_per_env"]),
+            learning_rate=learning_rate,
         )
     else:
         result = run_isaac_training_job(run_id, signal_json=signal_json)
