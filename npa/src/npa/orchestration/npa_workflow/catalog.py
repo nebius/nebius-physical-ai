@@ -1812,6 +1812,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.robot_embodiment}}",
             "--num-gpus",
             "{{config.gpu_count}}",
+            "--nccl-transport",
+            "{{config.nccl_transport}}",
             "--global-batch-size",
             "{{config.global_batch_size}}",
             "--dataloader-num-workers",

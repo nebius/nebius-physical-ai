@@ -172,6 +172,7 @@ def test_groot_training_case_is_real_multi_gpu_coverage() -> None:
     assert not case.plan_only
     assert case.image_tool == "groot"
     assert ("gpu_count", "2") in case.config_vars
+    assert ("nccl_transport", "socket") in case.config_vars
     assert "real pinned GR00T N1.7" in case.notes
     assert "torchrun --nproc_per_node=2" in case.notes
 

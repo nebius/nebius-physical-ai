@@ -52,6 +52,7 @@ def test_groot_workflow_defaults_to_real_single_gpu_n1_7_training() -> None:
     assert _option_value(step.argv, "--runtime") == "local"
     assert _option_value(step.argv, "--base-model") == DEFAULT_MODEL
     assert _option_value(step.argv, "--num-gpus") == "1"
+    assert _option_value(step.argv, "--nccl-transport") == "auto"
     assert _option_value(step.argv, "--global-batch-size") == "1"
     assert _option_value(step.argv, "--run-id") == "groot-single"
     assert step.inputs == [
@@ -78,7 +79,10 @@ def test_groot_workflow_gpu_count_reaches_plan_scheduler_and_render(
     prepared = prepare_npa_workflow_for_submit(
         SPEC_PATH,
         run_id=f"groot-{gpu_count}gpu",
-        config_overrides={"gpu_count": str(gpu_count)},
+        config_overrides={
+            "gpu_count": str(gpu_count),
+            "nccl_transport": "socket",
+        },
         render_options=SkypilotRenderOptions(
             registry="cr.example.invalid/workbench",
             materialize_registry_secrets=False,
@@ -89,6 +93,7 @@ def test_groot_workflow_gpu_count_reaches_plan_scheduler_and_render(
         expected_accelerators = f"H100:{gpu_count}"
         assert step.resources_profile["accelerators"] == expected_accelerators
         assert _option_value(step.argv, "--num-gpus") == str(gpu_count)
+        assert _option_value(step.argv, "--nccl-transport") == "socket"
         assert _option_value(step.argv, "--global-batch-size") == str(gpu_count)
 
         scheduler = build_scheduler_plan(
@@ -110,6 +115,7 @@ def test_groot_workflow_gpu_count_reaches_plan_scheduler_and_render(
         task = documents[1]
         assert task["resources"]["accelerators"] == expected_accelerators
         assert f"--num-gpus {gpu_count}" in task["run"]
+        assert "--nccl-transport socket" in task["run"]
         assert f"--global-batch-size {gpu_count}" in task["run"]
         assert f"--run-id groot-{gpu_count}gpu" in task["run"]
     finally:
