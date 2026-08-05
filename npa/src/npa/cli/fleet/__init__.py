@@ -27,6 +27,7 @@ class OutputFormat(str, Enum):
     text = "text"
     json = "json"
 
+
 app = typer.Typer(
     name="fleet",
     help="Deploy and manage fleets of Nebius Managed Kubernetes clusters across projects.",
@@ -61,19 +62,26 @@ def _targets(spec, *, project_prefix, only_projects, only_clusters):
     out = []
     for project in spec.projects:
         if only_projects and not (
-            project.key() in only_projects or project.display_name(prefix) in only_projects
+            project.key() in only_projects
+            or project.display_name(prefix) in only_projects
         ):
             continue
         for cluster in project.clusters:
             if only_clusters and cluster.name not in only_clusters:
                 continue
-            out.append((project.display_name(prefix) or project.key(), project.key(), cluster.name))
+            out.append(
+                (
+                    project.display_name(prefix) or project.key(),
+                    project.key(),
+                    cluster.name,
+                )
+            )
     return out
 
 
 def _confirm(
     action: str, spec, targets, *, yes: bool, cascade: bool = False, err: bool = False
-) -> None:
+) -> bool:
     """Show what will be created/destroyed and require confirmation unless ``yes``.
 
     ``err`` sends the human-readable banner (and prompt) to stderr so it cannot
@@ -96,18 +104,23 @@ def _confirm(
         )
     if not targets:
         typer.echo("  (no targets in scope) -- nothing to do.", err=err)
-        raise typer.Exit(0)
+        return False
     if yes:
-        return
+        return True
     if not typer.confirm(f"Proceed to {action}?", err=err):
         typer.echo("Aborted.", err=err)
         raise typer.Exit(1)
+    return True
 
 
 def plan_cmd(
-    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to an npa.fleet/v0.0.1 spec YAML."),
+    spec_path: Path = typer.Option(
+        ..., "--spec", "-f", help="Path to an npa.fleet/v0.0.1 spec YAML."
+    ),
     project_prefix: str = typer.Option(
-        "", "--project-prefix", help="Override the spec's project_prefix for created projects."
+        "",
+        "--project-prefix",
+        help="Override the spec's project_prefix for created projects.",
     ),
     profile: str = typer.Option("", "--profile", help=_PROFILE_HELP),
     output: OutputFormat = typer.Option(
@@ -124,12 +137,18 @@ def plan_cmd(
     from npa.fleet.lifecycle import plan_fleet
 
     spec = _load(spec_path)
-    plan = plan_fleet(spec, project_prefix=project_prefix or None, profile=profile or None)
+    plan = plan_fleet(
+        spec, project_prefix=project_prefix or None, profile=profile or None
+    )
     if output == OutputFormat.json:
         typer.echo(json.dumps(plan, indent=2))
         return
-    typer.echo(f"Fleet '{plan['name']}': {plan['cluster_count']} cluster(s) across {plan['project_count']} project(s)")
-    typer.echo(f"  tenant: {plan['tenant_id']}  region: {plan['region']}  prefix: {plan['project_prefix']!r}")
+    typer.echo(
+        f"Fleet '{plan['name']}': {plan['cluster_count']} cluster(s) across {plan['project_count']} project(s)"
+    )
+    typer.echo(
+        f"  tenant: {plan['tenant_id']}  region: {plan['region']}  prefix: {plan['project_prefix']!r}"
+    )
     typer.echo(f"  nebius profile: {plan['profile']}")
     for proj in plan["projects"]:
         tag = "create" if proj["will_create"] else "existing"
@@ -145,9 +164,13 @@ def plan_cmd(
 
 
 def deploy_cmd(
-    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to an npa.fleet/v0.0.1 spec YAML."),
+    spec_path: Path = typer.Option(
+        ..., "--spec", "-f", help="Path to an npa.fleet/v0.0.1 spec YAML."
+    ),
     project_prefix: str = typer.Option(
-        "", "--project-prefix", help="Override the spec's project_prefix for created projects."
+        "",
+        "--project-prefix",
+        help="Override the spec's project_prefix for created projects.",
     ),
     k8s_training_dir: Path | None = typer.Option(
         None,
@@ -189,7 +212,10 @@ def deploy_cmd(
         "wall surfaces as terraform blocking on 'Still creating...' until the timeout.",
     ),
     yes: bool = typer.Option(
-        False, "--yes", "-y", help="Skip the confirmation prompt (non-interactive create)."
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt (non-interactive create).",
     ),
     concurrency: int = typer.Option(
         1,
@@ -198,7 +224,9 @@ def deploy_cmd(
         help="Apply this many clusters in parallel (each has isolated state). "
         "Parallel runs stream per-cluster output to <install_dir>/deploy.log.",
     ),
-    timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform apply timeout in minutes."),
+    timeout: int = typer.Option(
+        120, "--timeout", help="Per-cluster terraform apply timeout in minutes."
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text,
         "--output",
@@ -217,13 +245,31 @@ def deploy_cmd(
     only_c = _csv(only_clusters)
     # In json mode stdout must stay a pure JSON document, so progress goes to stderr.
     json_mode = output == OutputFormat.json
-    _confirm(
+    targets = _targets(
+        spec, project_prefix=project_prefix, only_projects=only, only_clusters=only_c
+    )
+    if not _confirm(
         "create/update",
         spec,
-        _targets(spec, project_prefix=project_prefix, only_projects=only, only_clusters=only_c),
+        targets,
         yes=yes,
         err=json_mode,
-    )
+    ):
+        if json_mode:
+            typer.echo(
+                json.dumps(
+                    {
+                        "name": spec.name,
+                        "tenant_id": spec.tenant_id,
+                        "region": spec.region,
+                        "clusters": [],
+                        "deployed": 0,
+                        "failed": 0,
+                    },
+                    indent=2,
+                )
+            )
+        return
     try:
         result = deploy_fleet(
             spec,
@@ -267,20 +313,38 @@ def deploy_cmd(
 
 
 def destroy_cmd(
-    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML used to deploy."),
+    spec_path: Path = typer.Option(
+        ...,
+        "--spec",
+        "-f",
+        help="Path to the npa.fleet/v0.0.1 spec YAML used to deploy.",
+    ),
     only_projects: str = typer.Option(
-        "", "--only-projects", help="Comma-separated project keys or display names to destroy (remove one or many)."
+        "",
+        "--only-projects",
+        help="Comma-separated project keys or display names to destroy (remove one or many).",
     ),
     only_clusters: str = typer.Option(
-        "", "--only-clusters", help="Comma-separated cluster names to destroy (remove one or many)."
+        "",
+        "--only-clusters",
+        help="Comma-separated cluster names to destroy (remove one or many).",
     ),
-    timeout: int = typer.Option(120, "--timeout", help="Per-cluster terraform destroy timeout in minutes."),
+    timeout: int = typer.Option(
+        120, "--timeout", help="Per-cluster terraform destroy timeout in minutes."
+    ),
     concurrency: int = typer.Option(
-        1, "--concurrency", "-j", help="Destroy this many clusters in parallel (isolated state)."
+        1,
+        "--concurrency",
+        "-j",
+        help="Destroy this many clusters in parallel (isolated state).",
     ),
     profile: str = typer.Option("", "--profile", help=_PROFILE_HELP),
     yes: bool = typer.Option(
-        False, "--yes", "-y", "--force", help="Skip the confirmation prompt (non-interactive removal)."
+        False,
+        "--yes",
+        "-y",
+        "--force",
+        help="Skip the confirmation prompt (non-interactive removal).",
     ),
     output: OutputFormat = typer.Option(
         OutputFormat.text,
@@ -299,33 +363,59 @@ def destroy_cmd(
     only = _csv(only_projects)
     only_c = _csv(only_clusters)
     json_mode = output == OutputFormat.json
-    _confirm(
+    targets = _targets(
+        spec, project_prefix="", only_projects=only, only_clusters=only_c
+    )
+    if not _confirm(
         "destroy",
         spec,
-        _targets(spec, project_prefix="", only_projects=only, only_clusters=only_c),
+        targets,
         yes=yes,
         cascade=True,
         err=json_mode,
-    )
-    result = destroy_fleet(
-        spec,
-        only_projects=only,
-        only_clusters=only_c,
-        timeout_minutes=timeout,
-        concurrency=max(1, concurrency),
-        profile=profile or None,
-        on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
-    )
+    ):
+        if json_mode:
+            typer.echo(
+                json.dumps(
+                    {"name": spec.name, "clusters": [], "networks": [], "failed": 0},
+                    indent=2,
+                )
+            )
+        return
+    try:
+        result = destroy_fleet(
+            spec,
+            only_projects=only,
+            only_clusters=only_c,
+            timeout_minutes=timeout,
+            concurrency=max(1, concurrency),
+            profile=profile or None,
+            on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
     if output == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
         for c in result["clusters"]:
             typer.echo(f"  {c['project_key']}/{c['cluster_name']}: {c['status']}")
-        typer.echo(f"Destroyed fleet '{result['name']}'.")
+        for network in result.get("networks", []):
+            typer.echo(f"  {network['project_key']}/network: {network['status']}")
+        if result.get("failed"):
+            typer.echo(
+                f"Fleet '{result['name']}' teardown is incomplete; recovery state retained."
+            )
+        else:
+            typer.echo(f"Destroyed fleet '{result['name']}'.")
+    if result.get("failed"):
+        raise typer.Exit(1)
 
 
 def status_cmd(
-    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML."),
+    spec_path: Path = typer.Option(
+        ..., "--spec", "-f", help="Path to the npa.fleet/v0.0.1 spec YAML."
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text,
         "--output",

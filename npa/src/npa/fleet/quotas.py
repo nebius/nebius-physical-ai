@@ -29,6 +29,11 @@ from typing import Any, Callable, Iterable
 from npa.fleet.spec import ClusterSpec
 
 _GIB = 1024**3
+_ETCD_CLUSTER_SIZE = 3
+_CPU_DISK_GIB = 128
+_FILESYSTEM_SIZE_QUOTA = "compute.filesystem.size.network-ssd"
+_FILESYSTEM_SIZE_UNIT = "byte"
+_BYTE_QUOTAS = {_FILESYSTEM_SIZE_QUOTA, "compute.disk.size.network-ssd"}
 
 # GPU quotas are keyed by accelerator family, not by the platform name:
 # platform "gpu-h200-sxm" consumes "compute.instance.gpu.h200".
@@ -62,12 +67,14 @@ class QuotaShortfall:
     region: str
     required: int
     limit: int
+    available: int | None = None
     unit: str = ""
 
     def describe(self) -> str:
+        available = self.limit if self.available is None else self.available
         return (
             f"{self.name} [{self.region}]: needs {self.required}{f' {self.unit}' if self.unit else ''}, "
-            f"tenant limit {self.limit}"
+            f"{available} available from tenant limit {self.limit}"
         )
 
 
@@ -105,7 +112,9 @@ def required_reservations(
             continue
         reservation_id = gpu.capacity_block_group
         required_gpus = gpu.count * _preset_gpus(gpu.preset)
-        fabric = cluster.infiniband_fabric if cluster.resolved_enable_gpu_cluster() else ""
+        fabric = (
+            cluster.infiniband_fabric if cluster.resolved_enable_gpu_cluster() else ""
+        )
         previous = requirements.get(reservation_id)
         if previous is not None:
             if previous.platform != gpu.platform or previous.fabric != fabric:
@@ -181,7 +190,9 @@ def parse_capacity_blocks(payload: str) -> dict[str, dict[str, Any]]:
     for item in items if isinstance(items, list) else []:
         metadata = item.get("metadata", {}) or {}
         status = item.get("status", {}) or {}
-        affinity = (status.get("resource_affinity", {}) or {}).get("compute_v1", {}) or {}
+        affinity = (status.get("resource_affinity", {}) or {}).get(
+            "compute_v1", {}
+        ) or {}
         reservation_id = str(metadata.get("id") or "")
         if not reservation_id:
             continue
@@ -207,13 +218,19 @@ def find_reservation_shortfalls(
     for reservation_id, requirement in requirements.items():
         block = blocks.get(reservation_id)
         if block is None:
-            shortfalls.append(ReservationShortfall(reservation_id, "not found in tenant"))
+            shortfalls.append(
+                ReservationShortfall(reservation_id, "not found in tenant")
+            )
             continue
         if block["parent_id"] != tenant_id:
-            shortfalls.append(ReservationShortfall(reservation_id, "belongs to another tenant"))
+            shortfalls.append(
+                ReservationShortfall(reservation_id, "belongs to another tenant")
+            )
         elif block["state"] != "STATE_ACTIVE":
             shortfalls.append(
-                ReservationShortfall(reservation_id, f"is not active ({block['state'] or 'unknown'})")
+                ReservationShortfall(
+                    reservation_id, f"is not active ({block['state'] or 'unknown'})"
+                )
             )
         elif block["region"] != requirement.region:
             shortfalls.append(
@@ -238,7 +255,9 @@ def find_reservation_shortfalls(
             )
         elif block["available_gpus"] is None:
             shortfalls.append(
-                ReservationShortfall(reservation_id, "remaining GPU capacity is unavailable")
+                ReservationShortfall(
+                    reservation_id, "remaining GPU capacity is unavailable"
+                )
             )
         elif block["available_gpus"] < requirement.required_gpus:
             shortfalls.append(
@@ -280,22 +299,34 @@ def required_quotas(clusters: Iterable[ClusterSpec]) -> dict[str, int]:
         cpu, gpu = cluster.cpu_nodes, cluster.gpu_nodes
         nodes = cluster.cpu_count() + cluster.gpu_count()
         add("mk8s.cluster.count", 1)
-        add("compute.instance.count", nodes)
+        # The managed control plane consumes three etcd instances in addition
+        # to the explicitly declared worker nodes.
+        add("compute.instance.count", nodes + _ETCD_CLUSTER_SIZE)
         add("compute.disk.count", nodes)  # one boot disk per node
+        if cpu and cpu.count > 0:
+            cpu_disk_gib = cpu.disk_size_gib if cpu.disk_size_gib > 0 else _CPU_DISK_GIB
+            add("compute.disk.size.network-ssd", cpu.count * cpu_disk_gib * _GIB)
+        if gpu and gpu.count > 0:
+            gpu_disk_gib = (
+                gpu.disk_size_gib
+                if gpu.disk_size_gib > 0
+                else cluster.gpu_disk_size_gib
+            )
+            add("compute.disk.size.network-ssd", gpu.count * gpu_disk_gib * _GIB)
         if cpu and cpu.count > 0:
             add("compute.instance.non-gpu.vcpu", cpu.count * _preset_vcpus(cpu.preset))
         if gpu and gpu.count > 0 and not gpu.capacity_block_group:
             family = gpu_family(gpu.platform)
             if family:
-                add(f"compute.instance.gpu.{family}", gpu.count * _preset_gpus(gpu.preset))
+                add(
+                    f"compute.instance.gpu.{family}",
+                    gpu.count * _preset_gpus(gpu.preset),
+                )
         if cluster.resolved_enable_gpu_cluster():
             add("compute.gpucluster.count", 1)
         if cluster.enable_filestore and not cluster.existing_filestore:
             add("compute.filesystem.count", 1)
-            add(
-                "compute.filesystem.size.network-ssd",
-                cluster.filestore_disk_size_gibibytes * _GIB,
-            )
+            add(_FILESYSTEM_SIZE_QUOTA, cluster.filestore_disk_size_gibibytes * _GIB)
     return needed
 
 
@@ -321,23 +352,54 @@ def parse_allowances(payload: str, region: str) -> dict[str, dict[str, Any]]:
         limit = spec.get("limit")
         if limit is None:
             continue
+        status = item.get("status", {}) or {}
+        unit = str(status.get("unit") or "")
+        if name in _BYTE_QUOTAS and unit != _FILESYSTEM_SIZE_UNIT:
+            raise ValueError(
+                f"quota {name!r} reported unit {unit!r}; expected {_FILESYSTEM_SIZE_UNIT!r}"
+            )
         try:
+            parsed_limit = int(limit)
+            available = parsed_limit
+            raw_usage = status.get("usage")
+            if raw_usage not in (None, ""):
+                available = max(0, parsed_limit - int(raw_usage))
+            elif status.get("usage_percentage") not in (None, ""):
+                fraction = Decimal(str(status["usage_percentage"]))
+                # Authoritative live quota wire data uses a 0..1 fraction (0.10
+                # means 10%), despite the field name. Fail closed on drift.
+                if fraction < 0 or fraction > 1:
+                    raise ValueError(
+                        f"quota {name!r} reported unexpected usage_percentage "
+                        f"{status['usage_percentage']!r}; expected a 0..1 fraction"
+                    )
+                available = max(
+                    0,
+                    int(
+                        (
+                            Decimal(parsed_limit) * (Decimal(1) - fraction)
+                        ).to_integral_value(rounding=ROUND_FLOOR)
+                    ),
+                )
             indexed[name] = {
-                "limit": int(limit),
-                "unit": str((item.get("status", {}) or {}).get("unit") or ""),
+                "limit": parsed_limit,
+                "available": available,
+                "unit": unit,
             }
-        except (TypeError, ValueError):
+        except (InvalidOperation, TypeError, ValueError):
+            if name == _FILESYSTEM_SIZE_QUOTA:
+                raise
             continue
     return indexed
 
 
-def find_shortfalls(needed: dict[str, int], allowances: dict[str, dict[str, Any]], region: str) -> list[QuotaShortfall]:
+def find_shortfalls(
+    needed: dict[str, int], allowances: dict[str, dict[str, Any]], region: str
+) -> list[QuotaShortfall]:
     """Return the quotas whose tenant limit is below what the fleet requires.
 
-    Current consumption is not subtracted: the allowance API reports usage only
-    as a percentage, and treating that as an exact figure could reject a
-    deployable fleet. This therefore flags definite walls (most importantly a
-    limit of 0) and stays quiet when the limit merely looks tight.
+    Current consumption is subtracted using the exact usage count when present,
+    or the authoritative live 0..1 fractional ``usage_percentage`` wire field.
     """
 
     shortfalls: list[QuotaShortfall] = []
@@ -345,13 +407,15 @@ def find_shortfalls(needed: dict[str, int], allowances: dict[str, dict[str, Any]
         allowance = allowances.get(name)
         if allowance is None:  # not advertised for this region -> nothing to assert
             continue
-        if required > allowance["limit"]:
+        available = allowance.get("available", allowance["limit"])
+        if required > available:
             shortfalls.append(
                 QuotaShortfall(
                     name=name,
                     region=region,
                     required=required,
                     limit=allowance["limit"],
+                    available=available,
                     unit=allowance["unit"],
                 )
             )
@@ -411,7 +475,10 @@ def preflight_region(
             timeout=120,
         )
         reservation_payload = getattr(reservation_result, "stdout", "") or ""
-        if getattr(reservation_result, "returncode", 1) != 0 or not reservation_payload.strip():
+        if (
+            getattr(reservation_result, "returncode", 1) != 0
+            or not reservation_payload.strip()
+        ):
             raise ValueError(
                 "could not read capacity block groups; refusing to bypass STRICT "
                 "reservation preflight"
@@ -435,13 +502,22 @@ def preflight_region(
     result = run_capture(
         [
             *nebius_argv(nebius_bin, profile),
-            "quotas", "quota-allowance", "list", "--parent-id", tenant_id, "--format", "json",
+            "quotas",
+            "quota-allowance",
+            "list",
+            "--parent-id",
+            tenant_id,
+            "--format",
+            "json",
         ],
         env=env,
         check=False,
         timeout=120,
     )
-    if getattr(result, "returncode", 1) != 0 or not (getattr(result, "stdout", "") or "").strip():
+    if (
+        getattr(result, "returncode", 1) != 0
+        or not (getattr(result, "stdout", "") or "").strip()
+    ):
         if on_status is not None:
             on_status(
                 f"WARNING: could not read tenant quota allowances for {region}; "

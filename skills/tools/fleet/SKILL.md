@@ -146,9 +146,10 @@ depends on it.
 
    `deploy` does this automatically (`--preflight`, on by default) and refuses to
    apply when a capacity block or tenant limit cannot cover the in-scope
-   clusters; `--no-preflight` attempts it anyway. Ordinary quota checks compare
-   requirements against the *limit* only; capacity-block checks use the block's
-   current limit and usage percentage conservatively.
+   clusters; `--no-preflight` attempts it anyway. Ordinary quota checks subtract
+   exact usage when reported, otherwise the live wire's 0..1 fractional
+   `status.usage_percentage`. Filesystem size is byte-valued and must report
+   `status.unit: byte`; an incompatible/missing unit fails closed.
 
    Project-level allowances only *subdivide* the tenant allowance, so a tenant
    limit of 0 cannot be worked around by creating a project quota: raising a
@@ -179,9 +180,11 @@ The fleet is spec-driven and idempotent, so growing or shrinking it is targeted:
   overwritten).
 - **Remove** one or many: `npa fleet destroy --spec fleet.yaml --only-clusters
   train` (or `--only-projects c`). Destroy tears down each **spec-declared**
-  cluster that has local state, reclaims any VPC network the fleet created for
-  it, and drops the removed cluster's local state so `status` reflects the
-  removal. It does not enumerate clusters via the API, so a cluster created
+  cluster that has local state, reclaims any project VPC network the fleet
+  created after the last cluster state is gone, and drops local state only after
+  authoritative Terraform teardown succeeds. An incomplete destroy reports
+  `destroy-incomplete`, retains its exact state, and prints a scoped retry
+  command. It does not enumerate clusters via the API, so a cluster created
   out-of-band is not reclaimed. Omitting `--only-*` tears down the whole fleet.
 
 Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
@@ -193,7 +196,8 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   install dir + local state under `~/.npa/fleet/<name>/<project>/<cluster>` and
   an env sidecar so `destroy` can rebuild the required `TF_VAR_*`. The sidecar's
   `status` starts as `provisioning` and is promoted to `deployed` only after a
-  successful apply, so `status` never mislabels a half-applied cluster.
+  successful apply and kubeconfig write. Credential failures report
+  `deployed-credentials-failed` and retain Terraform/cloud state for recovery.
 - **Region domain**: the recipe's `provider.tf` domain is patched to
   `api.nebius.cloud` for non-EU regions automatically (EU uses
   `api.eu.nebius.cloud`). If the upstream recipe drifts (renames `provider.tf`,
@@ -217,18 +221,20 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   booting after the filesystem is missing. The bundled CSI chart version is
   `0.1.6`, matching the current official filesystem-over-CSI guide.
 - **Auto-created VPC on destroy**: when a target project has no subnet, deploy
-  creates a `<cluster>-net` + `<cluster>-subnet`; `destroy` reclaims exactly
-  those (subnet then network). A *reused* pre-existing subnet is left untouched,
-  and created *projects* are never deleted.
+  resolves one project network/subnet before parallel cluster applies and stores
+  ownership in `.npa-fleet-network.json`. All clusters without explicit
+  overrides share that authoritative subnet. `destroy` reclaims exactly that
+  pair (subnet then network) after every project cluster state is gone. A
+  *reused* pre-existing subnet is left untouched, and created *projects* are
+  never deleted.
 - **Parallelism** (`--concurrency N` / `-j N`, default 1 = sequential): applies/
   destroys N clusters at once. Each cluster has isolated terraform state, so there
   is no lock contention; the provider plugin cache is pre-warmed once (a single
   `init`) to avoid concurrent-init corruption, and each cluster streams to its own
   `<install_dir>/deploy.log` (or `destroy.log`). Wall-clock drops from `sum` to
-  ~`max` of the applies. Parallel runs assume one cluster per project subnet —
-  concurrent creates in a shared network race on the same `/16` CIDR pool, so give
-  each cluster its own `subnet_id` (or its own project) when packing several into
-  one project. Cap N to stay under Nebius API rate limits / GPU quota.
+  ~`max` of the applies. Project network resolution remains sequential and
+  single-flight, eliminating duplicate network/subnet creation in a fresh shared
+  project; explicit per-cluster `subnet_id` values are preserved.
 - **Stale IAM token**: a stale ambient `NEBIUS_IAM_TOKEN` shadows the profile
   exec-plugin; npa strips it for `nebius`/`terraform` calls unless
   `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token). This is also
@@ -252,8 +258,9 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
   ordinary on-demand capacity. Fleet's `capacity_block_group` surface therefore
   always renders `STRICT` and validates that exact block before apply.
 - **terraform >= 1.12**: the recipe's modules use `ephemeral` blocks and a
-  `>= 1.12` version constraint; set `NPA_TERRAFORM_BIN` if the system terraform
-  is older.
+  `>= 1.12` version constraint. Deploy and destroy assert machine-readable
+  `terraform version -json` output before lifecycle work; set
+  `NPA_TERRAFORM_BIN` if the system terraform is older.
 
 ## Verify
 

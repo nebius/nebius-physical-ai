@@ -32,7 +32,11 @@ runner = CliRunner()
 def _rtx_profile() -> dict:
     return {
         "cpu_nodes": {"count": 1, "platform": "cpu-d3", "preset": "48vcpu-192gb"},
-        "gpu_nodes": {"count": 1, "platform": "gpu-rtx6000", "preset": "1gpu-24vcpu-218gb"},
+        "gpu_nodes": {
+            "count": 1,
+            "platform": "gpu-rtx6000",
+            "preset": "1gpu-24vcpu-218gb",
+        },
         "enable_filestore": True,
     }
 
@@ -94,7 +98,11 @@ def test_custom_and_mixed_clusters() -> None:
             "clusters": [
                 {
                     "name": "train",
-                    "gpu_nodes": {"count": 2, "platform": "gpu-h200-sxm", "preset": "8gpu-128vcpu-1600gb"},
+                    "gpu_nodes": {
+                        "count": 2,
+                        "platform": "gpu-h200-sxm",
+                        "preset": "8gpu-128vcpu-1600gb",
+                    },
                     "enable_gpu_cluster": True,
                     "infiniband_fabric": "us-central1-a",
                 },
@@ -128,7 +136,9 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
 def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
     cluster = ClusterSpec(
         name="c",
-        gpu_nodes=NodePoolSpec(count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"),
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
         enable_gpu_cluster=True,
     )
     with pytest.raises(FleetSpecError, match="8-GPU preset"):
@@ -178,7 +188,14 @@ def test_cluster_needs_at_least_one_node() -> None:
 
 
 def test_project_needs_name_or_id() -> None:
-    spec = FleetSpec(name="f", projects=[ProjectSpec(clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])])
+    spec = FleetSpec(
+        name="f",
+        projects=[
+            ProjectSpec(
+                clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
+            )
+        ],
+    )
     with pytest.raises(FleetSpecError, match="name.*project_id"):
         spec.validate()
 
@@ -229,7 +246,9 @@ def test_render_tfvars_rtx_single_gpu() -> None:
 def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
     cluster = ClusterSpec(
         name="train",
-        gpu_nodes=NodePoolSpec(count=2, platform="gpu-h200-sxm", preset="8gpu-128vcpu-1600gb"),
+        gpu_nodes=NodePoolSpec(
+            count=2, platform="gpu-h200-sxm", preset="8gpu-128vcpu-1600gb"
+        ),
         enable_gpu_cluster=True,
         infiniband_fabric="us-central1-a",
     )
@@ -247,13 +266,16 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
     variables_tf = (recipe / "k8s-training/variables.tf").read_text()
 
     assert (
-        '[ ${filestore_mount_tag}, ${filestore_mount_path}, virtiofs, '
+        "[ ${filestore_mount_tag}, ${filestore_mount_path}, virtiofs, "
         '"defaults,nofail", 0, 2 ]' in cloud_init
     )
-    assert main_tf.count("attach_mode = \"READ_WRITE\"") == 2
+    assert main_tf.count('attach_mode = "READ_WRITE"') == 2
     assert main_tf.count("mount_tag   = local.filestore.mount_tag") == 2
     assert main_tf.count("filestore_mount_tag  = local.filestore.mount_tag") == 2
-    assert 'chart_version                       = optional(string, "0.1.6")' in variables_tf
+    assert (
+        'chart_version                       = optional(string, "0.1.6")'
+        in variables_tf
+    )
 
 
 def test_render_tfvars_capacity_block_is_strict() -> None:
@@ -310,7 +332,9 @@ def test_plan_json(tmp_path) -> None:
             """
         )
     )
-    result = runner.invoke(app, ["fleet", "plan", "--spec", str(path), "--output", "json"])
+    result = runner.invoke(
+        app, ["fleet", "plan", "--spec", str(path), "--output", "json"]
+    )
     assert result.exit_code == 0, result.output
     plan = json.loads(result.output)
     assert plan["project_count"] == 2
@@ -364,7 +388,10 @@ def test_load_spec_from_yaml(tmp_path) -> None:
 def test_resolve_project_id_existing_by_id() -> None:
     from npa.fleet import lifecycle
 
-    project = ProjectSpec(project_id="project-abc", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])
+    project = ProjectSpec(
+        project_id="project-abc",
+        clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+    )
     pid, created = lifecycle.resolve_project_id(
         "nebius", "tenant-x", project, prefix="fleet1-test-", create=True, env={}
     )
@@ -383,9 +410,17 @@ def test_resolve_project_id_creates_when_absent(monkeypatch) -> None:
         return "project-new"
 
     monkeypatch.setattr(lifecycle, "_create_project", fake_create)
-    project = ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])
+    project = ProjectSpec(
+        name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
+    )
     pid, created = lifecycle.resolve_project_id(
-        "nebius", "tenant-x", project, prefix="fleet1-test-", create=True, env={}, region="us-central1"
+        "nebius",
+        "tenant-x",
+        project,
+        prefix="fleet1-test-",
+        create=True,
+        env={},
+        region="us-central1",
     )
     assert pid == "project-new"
     assert created is True
@@ -398,9 +433,13 @@ def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
     monkeypatch.setattr(
         lifecycle,
         "_list_projects",
-        lambda *a, **k: [{"metadata": {"name": "fleet1-test-a", "id": "project-found"}}],
+        lambda *a, **k: [
+            {"metadata": {"name": "fleet1-test-a", "id": "project-found"}}
+        ],
     )
-    project = ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])
+    project = ProjectSpec(
+        name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
+    )
     pid, created = lifecycle.resolve_project_id(
         "nebius", "tenant-x", project, prefix="fleet1-test-", create=False, env={}
     )
@@ -412,7 +451,9 @@ def test_resolve_project_id_errors_when_absent_and_no_create(monkeypatch) -> Non
     from npa.fleet import lifecycle
 
     monkeypatch.setattr(lifecycle, "_list_projects", lambda *a, **k: [])
-    project = ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])
+    project = ProjectSpec(
+        name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))]
+    )
     with pytest.raises(ValueError, match="creation is disabled"):
         lifecycle.resolve_project_id(
             "nebius", "tenant-x", project, prefix="fleet1-test-", create=False, env={}
@@ -470,9 +511,7 @@ def test_deploy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
     import npa.cli.fleet as fleetcli
 
     called = {"deploy": False}
-    monkeypatch.setattr(
-        fleetcli, "_load", fleetcli._load
-    )  # keep real loader
+    monkeypatch.setattr(fleetcli, "_load", fleetcli._load)  # keep real loader
     import npa.fleet.lifecycle as L
 
     def _boom(*a, **k):
@@ -481,7 +520,9 @@ def test_deploy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(L, "deploy_fleet", _boom)
     # Answer "n" to the confirmation prompt.
-    result = runner.invoke(app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path))], input="n\n")
+    result = runner.invoke(
+        app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path))], input="n\n"
+    )
     assert result.exit_code == 1
     assert "Aborted." in result.output
     assert called["deploy"] is False  # deploy must not run when declined
@@ -494,10 +535,19 @@ def test_deploy_yes_flag_skips_prompt_and_runs(tmp_path, monkeypatch) -> None:
 
     def _fake_deploy(spec, **kwargs):
         captured.update(kwargs)
-        return {"name": spec.name, "region": "us-central1", "tenant_id": "t", "deployed": 2, "failed": 0, "clusters": []}
+        return {
+            "name": spec.name,
+            "region": "us-central1",
+            "tenant_id": "t",
+            "deployed": 2,
+            "failed": 0,
+            "clusters": [],
+        }
 
     monkeypatch.setattr(L, "deploy_fleet", _fake_deploy)
-    result = runner.invoke(app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--yes"])
+    result = runner.invoke(
+        app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--yes"]
+    )
     assert result.exit_code == 0, result.output
     assert "2 deployed" in result.output
 
@@ -512,7 +562,9 @@ def test_destroy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
         return {}
 
     monkeypatch.setattr(L, "destroy_fleet", _boom)
-    result = runner.invoke(app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path))], input="n\n")
+    result = runner.invoke(
+        app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path))], input="n\n"
+    )
     assert result.exit_code == 1
     assert "Aborted." in result.output
     assert "torn down" in result.output  # teardown/reclaim warning is shown
@@ -522,9 +574,13 @@ def test_destroy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
 def test_destroy_force_and_yes_skip_prompt(tmp_path, monkeypatch) -> None:
     import npa.fleet.lifecycle as L
 
-    monkeypatch.setattr(L, "destroy_fleet", lambda spec, **k: {"name": spec.name, "clusters": []})
+    monkeypatch.setattr(
+        L, "destroy_fleet", lambda spec, **k: {"name": spec.name, "clusters": []}
+    )
     for flag in ("--yes", "--force"):
-        result = runner.invoke(app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path)), flag])
+        result = runner.invoke(
+            app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path)), flag]
+        )
         assert result.exit_code == 0, result.output
         assert "Destroyed fleet" in result.output
 
@@ -536,12 +592,27 @@ def test_confirmation_lists_only_targeted_clusters(tmp_path, monkeypatch) -> Non
 
     def _fake_deploy(spec, **kwargs):
         seen.update(kwargs)
-        return {"name": spec.name, "region": "r", "tenant_id": "t", "deployed": 0, "failed": 0, "clusters": []}
+        return {
+            "name": spec.name,
+            "region": "r",
+            "tenant_id": "t",
+            "deployed": 0,
+            "failed": 0,
+            "clusters": [],
+        }
 
     monkeypatch.setattr(L, "deploy_fleet", _fake_deploy)
     result = runner.invoke(
         app,
-        ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--only-projects", "a", "--yes"],
+        [
+            "fleet",
+            "deploy",
+            "--spec",
+            str(_spec_file(tmp_path)),
+            "--only-projects",
+            "a",
+            "--yes",
+        ],
     )
     assert result.exit_code == 0, result.output
     # Only project a's cluster is listed/targeted, not b's.
@@ -566,10 +637,14 @@ class _Cap:
         self.returncode = returncode
 
 
-def test_ensure_subnet_reuses_existing_and_reports_no_created_network(monkeypatch) -> None:
+def test_ensure_subnet_reuses_existing_and_reports_no_created_network(
+    monkeypatch,
+) -> None:
     from npa.fleet import lifecycle as L
 
-    monkeypatch.setattr(L, "_list_subnets", lambda *a, **k: [{"metadata": {"id": "subnet-x"}}])
+    monkeypatch.setattr(
+        L, "_list_subnets", lambda *a, **k: [{"metadata": {"id": "subnet-x"}}]
+    )
     assert L.ensure_subnet("neb", "proj", name_stem="c", env={}) == ("subnet-x", "")
 
 
@@ -604,7 +679,9 @@ def _fake_recipe(tmp_path, provider_body: str):
 def test_prepare_install_dir_patches_eu_domain(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
-    root = _fake_recipe(tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n')
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
     msgs: list[str] = []
     wd = L._prepare_install_dir(
         tmp_path / "inst",
@@ -625,7 +702,9 @@ def test_prepare_install_dir_warns_when_provider_domain_not_matched(tmp_path) ->
     # Recipe drift: the EU domain string is absent, so the literal replace is a
     # no-op. For a non-EU region this must warn loudly instead of silently using
     # the wrong endpoint.
-    root = _fake_recipe(tmp_path, 'provider "nebius" { domain = "renamed-domain:443" }\n')
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "renamed-domain:443" }\n'
+    )
     msgs: list[str] = []
     L._prepare_install_dir(
         tmp_path / "inst",
@@ -648,7 +727,6 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
         install_dir.mkdir(parents=True, exist_ok=True)
         return install_dir / "k8s-training"
 
-    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("subnet-1", "net-1"))
     monkeypatch.setattr(L, "_prepare_install_dir", fake_prepare)
     monkeypatch.setattr(L, "_cluster_tf_env", lambda *a, **k: {})
 
@@ -659,7 +737,9 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
 
     monkeypatch.setattr(L, "_run_stream", fake_stream)
     monkeypatch.setattr(
-        L, "_terraform_outputs", lambda *a, **k: {"kube_cluster": {"value": {"id": "mk8s-1"}}}
+        L,
+        "_terraform_outputs",
+        lambda *a, **k: {"kube_cluster": {"value": {"id": "mk8s-1"}}},
     )
     monkeypatch.setattr(L, "_write_kubeconfig", lambda *a, **k: None)
     return L
@@ -675,6 +755,7 @@ def _run_one_cluster(L, tmp_path, *, profile: str = ""):
         cluster=cluster,
         project_id="p1",
         project_created=False,
+        subnet_id="subnet-1",
         region="us-central1",
         tenant_id="t",
         ssh_public_key="k",
@@ -688,18 +769,20 @@ def _run_one_cluster(L, tmp_path, *, profile: str = ""):
     )
 
 
-def test_deploy_one_cluster_success_promotes_sidecar_and_records_network(tmp_path, monkeypatch) -> None:
+def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> None:
     L = _mock_deploy_boundary(monkeypatch)
     res = _run_one_cluster(L, tmp_path)
     assert res["status"] == "deployed"
     assert res["cluster_id"] == "mk8s-1"
     sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
     assert sidecar["status"] == "deployed"
-    assert sidecar["created_network_id"] == "net-1"
+    assert sidecar["subnet_id"] == "subnet-1"
     assert sidecar["cluster_id"] == "mk8s-1"
 
 
-def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(tmp_path, monkeypatch) -> None:
+def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(
+    tmp_path, monkeypatch
+) -> None:
     L = _mock_deploy_boundary(monkeypatch, apply_fails=True)
     res = _run_one_cluster(L, tmp_path)
     assert res["status"] == "error"
@@ -729,6 +812,7 @@ def _setup_destroy(tmp_path, monkeypatch, sidecar_extra: dict):
         },
     )
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda b: "1.12.0")
     monkeypatch.setattr(L, "_terraform_env", lambda b, **k: {})
     monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
     deleted: list[str] = []
@@ -746,7 +830,12 @@ def test_destroy_reclaims_created_network_and_subnet(tmp_path, monkeypatch) -> N
     L, deleted = _setup_destroy(tmp_path, monkeypatch, {"created_network_id": "net-9"})
     spec = FleetSpec(
         name="f",
-        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+            )
+        ],
     )
     L.destroy_fleet(spec, work_root=tmp_path)
     # Subnet first, then network.
@@ -758,10 +847,134 @@ def test_destroy_leaves_reused_subnet_untouched(tmp_path, monkeypatch) -> None:
     L, deleted = _setup_destroy(tmp_path, monkeypatch, {"created_network_id": ""})
     spec = FleetSpec(
         name="f",
-        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+            )
+        ],
     )
     L.destroy_fleet(spec, work_root=tmp_path)
     assert deleted == []
+
+
+def test_destroy_retains_project_ownership_after_partial_network_cleanup(
+    tmp_path, monkeypatch
+) -> None:
+    L, _deleted = _setup_destroy(
+        tmp_path, monkeypatch, {"created_network_id": "network-test"}
+    )
+    calls: list[str] = []
+
+    def cap(cmd, **kwargs):
+        kind = "subnet" if "subnet" in cmd else "network"
+        calls.append(kind)
+        return _Cap("busy", 5 if kind == "subnet" else 0)
+
+    monkeypatch.setattr(L, "_run_capture", cap)
+    spec = FleetSpec(
+        name="f",
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+            )
+        ],
+    )
+    result = L.destroy_fleet(spec, work_root=tmp_path)
+    assert calls == ["subnet", "network"]
+    assert result["failed"] == 1
+    assert result["networks"][0]["status"] == "destroy-incomplete"
+    assert (tmp_path / "f" / "a" / L._PROJECT_NETWORK_STATE).exists()
+
+
+def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: bool):
+    from npa.fleet import lifecycle as L
+
+    fleet_root = tmp_path / "f"
+    install = fleet_root / "a" / "c"
+    (install / L._K8S_TRAINING_SUBDIR).mkdir(parents=True)
+    L._write_env_sidecar(
+        install,
+        {
+            "tenant_id": "t",
+            "project_id": "p1",
+            "region": "us-central1",
+            "subnet_id": "sub-9",
+            "created_network_id": "net-9",
+            "cluster_name": "c",
+            "status": "deployed",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def fake_tf_run(args, **kwargs):
+        calls.append(args)
+        if destroy_fails and "destroy" in args:
+            raise RuntimeError("terraform destroy failed")
+
+    monkeypatch.setattr(L, "_tf_run", fake_tf_run)
+    monkeypatch.setattr(L, "_cluster_tf_env", lambda *a, **k: {})
+    monkeypatch.setattr(L, "_find_cluster_id_by_name", lambda *a, **k: "")
+    monkeypatch.setattr(L, "_reclaim_created_network", lambda *a, **k: None)
+    result = L._destroy_one_cluster(
+        spec=FleetSpec(name="f"),
+        project=ProjectSpec(name="a"),
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        fleet_root=fleet_root,
+        terraform_bin="terraform",
+        nebius_bin="nebius",
+        timeout_minutes=1,
+        on_status=None,
+    )
+    return L, install, result, calls
+
+
+def test_destroy_terraform_failure_retains_exact_state_for_retry(
+    tmp_path, monkeypatch
+) -> None:
+    L, install, result, _calls = _destroy_one_with_mocked_terraform(
+        tmp_path, monkeypatch, destroy_fails=True
+    )
+
+    assert result["status"] == "destroy-incomplete"
+    assert "--only-projects a --only-clusters c" in result["retry_command"]
+    assert install.exists()
+    assert (install / L._ENV_SIDECAR).exists()
+
+
+def test_destroy_success_removes_local_state(tmp_path, monkeypatch) -> None:
+    _L, install, result, calls = _destroy_one_with_mocked_terraform(
+        tmp_path, monkeypatch, destroy_fails=False
+    )
+
+    assert result["status"] == "destroyed"
+    assert not install.exists()
+    assert any("destroy" in call for call in calls)
+
+
+def test_destroy_recovery_retries_retained_terraform_state(
+    tmp_path, monkeypatch
+) -> None:
+    L, install, first, _calls = _destroy_one_with_mocked_terraform(
+        tmp_path, monkeypatch, destroy_fails=True
+    )
+    assert first["status"] == "destroy-incomplete"
+    assert install.exists()
+
+    monkeypatch.setattr(L, "_tf_run", lambda *a, **k: None)
+    second = L._destroy_one_cluster(
+        spec=FleetSpec(name="f"),
+        project=ProjectSpec(name="a"),
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        fleet_root=tmp_path / "f",
+        terraform_bin="terraform",
+        nebius_bin="nebius",
+        timeout_minutes=1,
+        on_status=None,
+    )
+    assert second["status"] == "destroyed"
+    assert not install.exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -786,22 +999,31 @@ def test_deploy_only_clusters_targets_a_single_cluster(tmp_path, monkeypatch) ->
     from npa.fleet import lifecycle as L
 
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda b: "1.12.0")
     monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "tenant-x")
     monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
     monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "ssh-key")
     monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
     monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
     monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("proj-1", False))
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("subnet-1", ""))
     monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 1))
     built: list[str] = []
 
     def fake_one(**kwargs):
         name = kwargs["cluster"].name
         built.append(name)
-        return {"project_key": "a", "cluster_name": name, "status": "deployed", "cluster_id": f"id-{name}"}
+        return {
+            "project_key": "a",
+            "cluster_name": name,
+            "status": "deployed",
+            "cluster_id": f"id-{name}",
+        }
 
     monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
-    res = L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, only_clusters=["c2"])
+    res = L.deploy_fleet(
+        _two_cluster_project_spec(), work_root=tmp_path, only_clusters=["c2"]
+    )
     assert built == ["c2"]  # only the targeted cluster is (re)deployed
     assert res["deployed"] == 1
 
@@ -816,23 +1038,31 @@ def _mock_deploy_fleet_boundary(monkeypatch, tmp_path):
     from npa.fleet import lifecycle as L
 
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda b: "1.12.0")
     monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "t")
     monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
     monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "k")
     monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
     monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
     monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("proj-1", False))
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("subnet-1", ""))
     # No quota API in unit tests: an unreadable allowance list skips the preflight.
     monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 1))
     return L
 
 
-def test_deploy_fleet_parallel_runs_all_targets_and_prewarms_once(tmp_path, monkeypatch) -> None:
+def test_deploy_fleet_parallel_runs_all_targets_and_prewarms_once(
+    tmp_path, monkeypatch
+) -> None:
     import threading
 
     L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
     prewarm = {"n": 0}
-    monkeypatch.setattr(L, "_prewarm_plugin_cache", lambda *a, **k: prewarm.__setitem__("n", prewarm["n"] + 1))
+    monkeypatch.setattr(
+        L,
+        "_prewarm_plugin_cache",
+        lambda *a, **k: prewarm.__setitem__("n", prewarm["n"] + 1),
+    )
     ran: list[str] = []
     log_paths: list = []
     lock = threading.Lock()
@@ -856,15 +1086,25 @@ def test_deploy_fleet_parallel_runs_all_targets_and_prewarms_once(tmp_path, monk
     assert all(lp is not None for lp in log_paths)  # parallel -> per-cluster log files
 
 
-def test_deploy_fleet_sequential_skips_prewarm_and_streams(tmp_path, monkeypatch) -> None:
+def test_deploy_fleet_sequential_skips_prewarm_and_streams(
+    tmp_path, monkeypatch
+) -> None:
     L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
     prewarm = {"n": 0}
-    monkeypatch.setattr(L, "_prewarm_plugin_cache", lambda *a, **k: prewarm.__setitem__("n", prewarm["n"] + 1))
+    monkeypatch.setattr(
+        L,
+        "_prewarm_plugin_cache",
+        lambda *a, **k: prewarm.__setitem__("n", prewarm["n"] + 1),
+    )
     log_paths: list = []
 
     def fake_one(**kwargs):
         log_paths.append(kwargs.get("log_path"))
-        return {"project_key": "a", "cluster_name": kwargs["cluster"].name, "status": "deployed"}
+        return {
+            "project_key": "a",
+            "cluster_name": kwargs["cluster"].name,
+            "status": "deployed",
+        }
 
     monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
     L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=1)
@@ -878,17 +1118,24 @@ def test_destroy_fleet_parallel_runs_all_and_prunes(tmp_path, monkeypatch) -> No
     from npa.fleet import lifecycle as L
 
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda b: "1.12.0")
     ran: list[str] = []
     lock = threading.Lock()
 
     def fake_destroy_one(**kwargs):
         with lock:
             ran.append(kwargs["cluster"].name)
-        return {"project_key": "a", "cluster_name": kwargs["cluster"].name, "status": "destroyed"}
+        return {
+            "project_key": "a",
+            "cluster_name": kwargs["cluster"].name,
+            "status": "destroyed",
+        }
 
     pruned = {}
     monkeypatch.setattr(L, "_destroy_one_cluster", fake_destroy_one)
-    monkeypatch.setattr(L, "_prune_fleet_state", lambda fr, keys: pruned.update({"keys": keys}))
+    monkeypatch.setattr(
+        L, "_prune_fleet_state", lambda fr, keys: pruned.update({"keys": keys})
+    )
     L.destroy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=2)
     assert sorted(ran) == ["c1", "c2"]
     assert pruned["keys"] == {("a", "c1"), ("a", "c2")}
@@ -898,10 +1145,18 @@ def test_run_to_log_writes_and_raises(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
     log = tmp_path / "deploy.log"
-    L._run_to_log(["true"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, timeout=30, log_path=log)
+    L._run_to_log(
+        ["true"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, timeout=30, log_path=log
+    )
     assert log.exists() and "$ true" in log.read_text()
     with pytest.raises(RuntimeError, match="command failed"):
-        L._run_to_log(["false"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, timeout=30, log_path=log)
+        L._run_to_log(
+            ["false"],
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout=30,
+            log_path=log,
+        )
 
 
 def test_upsert_and_prune_fleet_state_roundtrip(tmp_path) -> None:
@@ -909,10 +1164,24 @@ def test_upsert_and_prune_fleet_state_roundtrip(tmp_path) -> None:
 
     fleet_root = tmp_path / "f"
     fleet_root.mkdir()
-    base = {"name": "f", "tenant_id": "t", "region": "r", "project_prefix": "", "k8s_training_source": "x"}
+    base = {
+        "name": "f",
+        "tenant_id": "t",
+        "region": "r",
+        "project_prefix": "",
+        "k8s_training_source": "x",
+    }
     # Deploy c1, then add c2 -- both must be present (upsert must not clobber c1).
-    L._upsert_fleet_state(fleet_root, base, [{"project_key": "a", "cluster_name": "c1", "status": "deployed"}])
-    L._upsert_fleet_state(fleet_root, base, [{"project_key": "a", "cluster_name": "c2", "status": "deployed"}])
+    L._upsert_fleet_state(
+        fleet_root,
+        base,
+        [{"project_key": "a", "cluster_name": "c1", "status": "deployed"}],
+    )
+    L._upsert_fleet_state(
+        fleet_root,
+        base,
+        [{"project_key": "a", "cluster_name": "c2", "status": "deployed"}],
+    )
     state = L._load_fleet_state(fleet_root)
     assert sorted(c["cluster_name"] for c in state["clusters"]) == ["c1", "c2"]
     assert state["deployed"] == 2
@@ -950,7 +1219,10 @@ def test_resolve_tenant_id_uses_named_profile(monkeypatch) -> None:
         "_nebius_config",
         lambda: {
             "default": "other",
-            "profiles": {"other": {"tenant-id": "tenant-other"}, "sd": {"tenant-id": "tenant-sd"}},
+            "profiles": {
+                "other": {"tenant-id": "tenant-other"},
+                "sd": {"tenant-id": "tenant-sd"},
+            },
         },
     )
     assert L._resolve_tenant_id("nebius", "", "sd") == "tenant-sd"
@@ -965,7 +1237,10 @@ def test_resolve_tenant_id_rejects_profile_without_tenant(monkeypatch) -> None:
     monkeypatch.setattr(
         L,
         "_nebius_config",
-        lambda: {"default": "other", "profiles": {"other": {"tenant-id": "tenant-other"}, "sd": {}}},
+        lambda: {
+            "default": "other",
+            "profiles": {"other": {"tenant-id": "tenant-other"}, "sd": {}},
+        },
     )
     with pytest.raises(ValueError, match="has no 'tenant-id'"):
         L._resolve_tenant_id("nebius", "", "sd")
@@ -976,7 +1251,9 @@ def test_list_projects_passes_profile_to_cli(monkeypatch) -> None:
 
     seen: list[list[str]] = []
     monkeypatch.setattr(
-        L, "_run_capture", lambda cmd, **k: (seen.append(cmd), _Cap('{"items": []}', 0))[1]
+        L,
+        "_run_capture",
+        lambda cmd, **k: (seen.append(cmd), _Cap('{"items": []}', 0))[1],
     )
     L._list_projects("nebius", "tenant-x", {}, "sd")
     assert seen[0][:3] == ["nebius", "--profile", "sd"]
@@ -988,13 +1265,22 @@ def test_deploy_fleet_cli_profile_overrides_spec(tmp_path, monkeypatch) -> None:
 
     def fake_one(**kwargs):
         seen.append(kwargs["profile"])
-        return {"project_key": "a", "cluster_name": kwargs["cluster"].name, "status": "deployed"}
+        return {
+            "project_key": "a",
+            "cluster_name": kwargs["cluster"].name,
+            "status": "deployed",
+        }
 
     monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
     spec = FleetSpec(
         name="f",
         profile="from-spec",
-        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+            )
+        ],
     )
     res = L.deploy_fleet(spec, work_root=tmp_path)
     assert seen == ["from-spec"]
@@ -1019,10 +1305,18 @@ def test_destroy_falls_back_to_sidecar_profile(tmp_path, monkeypatch) -> None:
     (install / L._K8S_TRAINING_SUBDIR).mkdir(parents=True)
     L._write_env_sidecar(
         install,
-        {"tenant_id": "t", "project_id": "p1", "region": "us-central1", "subnet_id": "s",
-         "cluster_name": "c", "profile": "sd", "status": "deployed"},
+        {
+            "tenant_id": "t",
+            "project_id": "p1",
+            "region": "us-central1",
+            "subnet_id": "s",
+            "cluster_name": "c",
+            "profile": "sd",
+            "status": "deployed",
+        },
     )
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda b: "1.12.0")
     monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
     monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
     seen: list[str] = []
@@ -1031,7 +1325,12 @@ def test_destroy_falls_back_to_sidecar_profile(tmp_path, monkeypatch) -> None:
     )
     spec = FleetSpec(
         name="f",
-        projects=[ProjectSpec(name="a", clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))])],
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+            )
+        ],
     )
     L.destroy_fleet(spec, work_root=tmp_path)
     assert seen == ["sd"]  # teardown authenticates as the deploying principal
@@ -1070,8 +1369,14 @@ def test_deploy_json_output_keeps_stdout_pure_json(tmp_path, monkeypatch) -> Non
         "deploy_fleet",
         lambda *a, **k: (
             k["on_status"]("a status line that must not land on stdout"),
-            {"name": "f", "region": "us-central1", "tenant_id": "t", "deployed": 1,
-             "failed": 0, "clusters": []},
+            {
+                "name": "f",
+                "region": "us-central1",
+                "tenant_id": "t",
+                "deployed": 1,
+                "failed": 0,
+                "clusters": [],
+            },
         )[1],
     )
     result = runner.invoke(
@@ -1104,8 +1409,14 @@ def test_deploy_text_output_keeps_progress_on_stdout(tmp_path, monkeypatch) -> N
         "deploy_fleet",
         lambda *a, **k: (
             k["on_status"]("visible progress"),
-            {"name": "f", "region": "us-central1", "tenant_id": "t", "deployed": 1,
-             "failed": 0, "clusters": []},
+            {
+                "name": "f",
+                "region": "us-central1",
+                "tenant_id": "t",
+                "deployed": 1,
+                "failed": 0,
+                "clusters": [],
+            },
         )[1],
     )
     result = runner.invoke(app, ["fleet", "deploy", "--spec", str(spec_file), "--yes"])
@@ -1119,6 +1430,8 @@ def test_fleet_deploy_toolref_is_non_interactive() -> None:
 
     # A workflow state cannot answer the confirmation prompt.
     assert "--yes" in TOOL_CATALOG["infra.fleet.deploy"].argv_template
+    assert "--output" in TOOL_CATALOG["infra.fleet.deploy"].argv_template
+    assert "json" in TOOL_CATALOG["infra.fleet.deploy"].argv_template
 
 
 # --------------------------------------------------------------------------- #
@@ -1154,9 +1467,7 @@ def _capacity_block(
         "current_limit": limit,
         "usage_percentage": usage_percentage,
         "usage_state": (
-            "USAGE_STATE_NOT_USED"
-            if usage_percentage == "0.00"
-            else "USAGE_STATE_USED"
+            "USAGE_STATE_NOT_USED" if usage_percentage == "0.00" else "USAGE_STATE_USED"
         ),
     }
     if usage is not None:
@@ -1174,7 +1485,9 @@ def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
         [
             ClusterSpec(
                 name="c",
-                cpu_nodes=NodePoolSpec(count=2, platform="cpu-d3", preset="48vcpu-192gb"),
+                cpu_nodes=NodePoolSpec(
+                    count=2, platform="cpu-d3", preset="48vcpu-192gb"
+                ),
                 gpu_nodes=NodePoolSpec(
                     count=2, platform="gpu-rtx6000", preset="8gpu-192vcpu-1744gb"
                 ),
@@ -1184,8 +1497,9 @@ def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
             )
         ]
     )
-    assert needed["compute.instance.count"] == 4
+    assert needed["compute.instance.count"] == 7  # four workers + three etcd members
     assert needed["compute.disk.count"] == 4
+    assert needed["compute.disk.size.network-ssd"] == (2 * 128 + 2 * 1023) * 1024**3
     assert needed["compute.instance.non-gpu.vcpu"] == 96  # GPU-node vCPUs excluded
     assert needed["compute.instance.gpu.rtx6000"] == 16
     assert needed["compute.filesystem.count"] == 1
@@ -1217,7 +1531,9 @@ def test_required_quotas_counts_gpu_cluster_and_skips_existing_filestore() -> No
     assert "compute.filesystem.count" not in needed
 
 
-def test_required_quotas_excludes_strictly_reserved_gpu_but_keeps_other_quotas() -> None:
+def test_required_quotas_excludes_strictly_reserved_gpu_but_keeps_other_quotas() -> (
+    None
+):
     from npa.fleet.quotas import required_quotas, required_reservations
 
     cluster = ClusterSpec(
@@ -1233,14 +1549,16 @@ def test_required_quotas_excludes_strictly_reserved_gpu_but_keeps_other_quotas()
     )
     needed = required_quotas([cluster])
     assert "compute.instance.gpu.rtx6000" not in needed
-    assert needed["compute.instance.count"] == 3
+    assert needed["compute.instance.count"] == 6  # three workers + three etcd members
     assert needed["compute.disk.count"] == 3
     assert needed["compute.instance.non-gpu.vcpu"] == 48
     reservations = required_reservations([cluster], "us-central1")
     assert reservations["capacityblockgroup-test"].required_gpus == 16
 
 
-def test_reservation_capacity_parser_and_validation_match_region_platform_fabric() -> None:
+def test_reservation_capacity_parser_and_validation_match_region_platform_fabric() -> (
+    None
+):
     from npa.fleet.quotas import (
         ReservationRequirement,
         find_reservation_shortfalls,
@@ -1265,9 +1583,12 @@ def test_reservation_capacity_parser_and_validation_match_region_platform_fabric
         fabric="us-central1-b",
         required_gpus=16,
     )
-    assert find_reservation_shortfalls(
-        {requirement.reservation_id: requirement}, blocks, "t"
-    ) == []
+    assert (
+        find_reservation_shortfalls(
+            {requirement.reservation_id: requirement}, blocks, "t"
+        )
+        == []
+    )
     wrong_fabric = ReservationRequirement(
         **{**requirement.__dict__, "fabric": "us-central1-a"}
     )
@@ -1363,7 +1684,11 @@ def _preflight_boundary(monkeypatch, tmp_path, allowances_json: str, *, rc: int 
         "_deploy_one_cluster",
         lambda **kw: (
             deployed.append(kw["cluster"].name),
-            {"project_key": "a", "cluster_name": kw["cluster"].name, "status": "deployed"},
+            {
+                "project_key": "a",
+                "cluster_name": kw["cluster"].name,
+                "status": "deployed",
+            },
         )[1],
     )
     return L, deployed
@@ -1379,7 +1704,9 @@ def _rtx_cluster_spec() -> FleetSpec:
                     ClusterSpec(
                         name="c",
                         gpu_nodes=NodePoolSpec(
-                            count=2, platform="gpu-rtx6000", preset="8gpu-192vcpu-1744gb"
+                            count=2,
+                            platform="gpu-rtx6000",
+                            preset="8gpu-192vcpu-1744gb",
                         ),
                         enable_gpu_cluster=False,
                     )
@@ -1391,13 +1718,15 @@ def _rtx_cluster_spec() -> FleetSpec:
 
 def _reserved_rtx_cluster_spec() -> FleetSpec:
     spec = _rtx_cluster_spec()
-    spec.projects[0].clusters[0].gpu_nodes.capacity_block_group = (
-        "capacityblockgroup-test"
-    )
+    spec.projects[0].clusters[
+        0
+    ].gpu_nodes.capacity_block_group = "capacityblockgroup-test"
     return spec
 
 
-def _reserved_preflight_boundary(monkeypatch, tmp_path, capacity_payload: str, *, rc: int = 0):
+def _reserved_preflight_boundary(
+    monkeypatch, tmp_path, capacity_payload: str, *, rc: int = 0
+):
     L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
     calls: list[list[str]] = []
 
@@ -1409,9 +1738,7 @@ def _reserved_preflight_boundary(monkeypatch, tmp_path, capacity_payload: str, *
             json.dumps(
                 {
                     "items": [
-                        _allowance(
-                            "compute.instance.gpu.rtx6000", "us-central1", "0"
-                        )
+                        _allowance("compute.instance.gpu.rtx6000", "us-central1", "0")
                     ]
                 }
             ),
@@ -1425,7 +1752,11 @@ def _reserved_preflight_boundary(monkeypatch, tmp_path, capacity_payload: str, *
         "_deploy_one_cluster",
         lambda **kw: (
             deployed.append(kw["cluster"].name),
-            {"project_key": "a", "cluster_name": kw["cluster"].name, "status": "deployed"},
+            {
+                "project_key": "a",
+                "cluster_name": kw["cluster"].name,
+                "status": "deployed",
+            },
         )[1],
     )
     return L, deployed, calls
@@ -1481,7 +1812,9 @@ def test_deploy_no_preflight_skips_the_check(tmp_path, monkeypatch) -> None:
     assert deployed == ["c"]
 
 
-def test_deploy_preflight_passes_when_quota_is_sufficient(tmp_path, monkeypatch) -> None:
+def test_deploy_preflight_passes_when_quota_is_sufficient(
+    tmp_path, monkeypatch
+) -> None:
     payload = json.dumps(
         {"items": [_allowance("compute.instance.gpu.rtx6000", "us-central1", "16")]}
     )
@@ -1490,7 +1823,9 @@ def test_deploy_preflight_passes_when_quota_is_sufficient(tmp_path, monkeypatch)
     assert deployed == ["c"]
 
 
-def test_deploy_preflight_unreadable_quota_api_does_not_block(tmp_path, monkeypatch) -> None:
+def test_deploy_preflight_unreadable_quota_api_does_not_block(
+    tmp_path, monkeypatch
+) -> None:
     # Losing the preflight (no quota read permission) must not block a deploy.
     L, deployed = _preflight_boundary(monkeypatch, tmp_path, "", rc=1)
     msgs: list[str] = []
@@ -1507,6 +1842,7 @@ def test_preflight_runs_before_any_project_is_created(tmp_path, monkeypatch) -> 
     # Regression: the preflight used to run *after* project resolution, so a
     # quota-blocked deploy left a freshly created, empty project behind.
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda b: "1.12.0")
     monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "t")
     monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
     monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "k")
@@ -1523,7 +1859,11 @@ def test_preflight_runs_before_any_project_is_created(tmp_path, monkeypatch) -> 
         "_run_capture",
         lambda *a, **k: _Cap(
             json.dumps(
-                {"items": [_allowance("compute.instance.gpu.rtx6000", "us-central1", "0")]}
+                {
+                    "items": [
+                        _allowance("compute.instance.gpu.rtx6000", "us-central1", "0")
+                    ]
+                }
             ),
             0,
         ),
@@ -1548,7 +1888,9 @@ def test_plan_resolves_tenant_from_named_profile(monkeypatch) -> None:
     assert plan["tenant_id"] == "tenant-sd"
     assert plan["profile"] == "sd"
     # An explicit spec tenant_id still wins over the profile's.
-    pinned = spec_from_mapping({**_base_mapping(), "tenant_id": "tenant-pinned", "profile": "sd"})
+    pinned = spec_from_mapping(
+        {**_base_mapping(), "tenant_id": "tenant-pinned", "profile": "sd"}
+    )
     assert L.plan_fleet(pinned)["tenant_id"] == "tenant-pinned"
 
 
@@ -1570,7 +1912,9 @@ def test_deploy_help_documents_preflight() -> None:
     assert "--no-preflight" in result.output
 
 
-def test_destroy_only_clusters_removes_install_dir_and_prunes_state(tmp_path, monkeypatch) -> None:
+def test_destroy_only_clusters_removes_install_dir_and_prunes_state(
+    tmp_path, monkeypatch
+) -> None:
     from npa.fleet import lifecycle as L
 
     # Two deployed clusters recorded in state + install dirs; destroy only c2.
@@ -1580,16 +1924,32 @@ def test_destroy_only_clusters_removes_install_dir_and_prunes_state(tmp_path, mo
         (d / L._K8S_TRAINING_SUBDIR).mkdir(parents=True)
         L._write_env_sidecar(
             d,
-            {"tenant_id": "t", "project_id": "p1", "region": "us-central1", "subnet_id": "s",
-             "cluster_name": name, "status": "deployed"},
+            {
+                "tenant_id": "t",
+                "project_id": "p1",
+                "region": "us-central1",
+                "subnet_id": "s",
+                "cluster_name": name,
+                "status": "deployed",
+            },
         )
-    base = {"name": "f", "tenant_id": "t", "region": "r", "project_prefix": "", "k8s_training_source": "x"}
+    base = {
+        "name": "f",
+        "tenant_id": "t",
+        "region": "r",
+        "project_prefix": "",
+        "k8s_training_source": "x",
+    }
     L._upsert_fleet_state(
-        fleet_root, base,
-        [{"project_key": "a", "cluster_name": "c1", "status": "deployed"},
-         {"project_key": "a", "cluster_name": "c2", "status": "deployed"}],
+        fleet_root,
+        base,
+        [
+            {"project_key": "a", "cluster_name": "c1", "status": "deployed"},
+            {"project_key": "a", "cluster_name": "c2", "status": "deployed"},
+        ],
     )
     monkeypatch.setattr(L, "_require_bin", lambda b: b)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda b: "1.12.0")
     monkeypatch.setattr(L, "_terraform_env", lambda b, **k: {})
     monkeypatch.setattr(L, "_run_stream", lambda *a, **k: None)
     monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
@@ -1601,3 +1961,337 @@ def test_destroy_only_clusters_removes_install_dir_and_prunes_state(tmp_path, mo
     assert (fleet_root / "a" / "c1").exists()  # untouched
     state = L._load_fleet_state(fleet_root)
     assert [c["cluster_name"] for c in state["clusters"]] == ["c1"]
+
+
+# --------------------------------------------------------------------------- #
+# Follow-up review regressions: recovery, versioning, concurrency, and JSON
+# --------------------------------------------------------------------------- #
+def test_terraform_version_accepts_supported_and_newer_prerelease(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    for version in ("1.12.0", "1.12.3", "1.13.0-rc1", "2.0.0"):
+        monkeypatch.setattr(
+            L,
+            "_run_capture",
+            lambda *a, version=version, **k: _Cap(
+                json.dumps({"terraform_version": version}), 0
+            ),
+        )
+        assert L._assert_terraform_version("terraform") == version
+
+
+@pytest.mark.parametrize("version", ["1.11.9", "1.12.0-rc1"])
+def test_terraform_version_rejects_old_or_not_yet_final(monkeypatch, version) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(
+        L,
+        "_run_capture",
+        lambda *a, **k: _Cap(json.dumps({"terraform_version": version}), 0),
+    )
+    with pytest.raises(ValueError, match=r"Terraform >= 1\.12.*found"):
+        L._assert_terraform_version("terraform")
+
+
+def test_terraform_version_rejects_malformed_and_command_failure(monkeypatch) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("not-json", 0))
+    with pytest.raises(ValueError, match="could not parse"):
+        L._assert_terraform_version("terraform")
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 7))
+    with pytest.raises(ValueError, match="exited 7"):
+        L._assert_terraform_version("terraform")
+
+
+def test_parallel_deploy_resolves_one_project_subnet_before_workers(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    calls: list[Path] = []
+
+    def one_subnet(*args, **kwargs):
+        calls.append(kwargs["network_state_path"])
+        return "shared-subnet", "owned-network"
+
+    monkeypatch.setattr(L, "ensure_subnet", one_subnet)
+    monkeypatch.setattr(L, "_prewarm_plugin_cache", lambda *a, **k: None)
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **kw: (
+            seen.append((kw["cluster"].name, kw["subnet_id"])),
+            {
+                "project_key": "a",
+                "cluster_name": kw["cluster"].name,
+                "status": "deployed",
+            },
+        )[1],
+    )
+    L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=2)
+    assert calls == [tmp_path / "f" / "a" / L._PROJECT_NETWORK_STATE]
+    assert sorted(seen) == [("c1", "shared-subnet"), ("c2", "shared-subnet")]
+
+
+def test_explicit_subnet_override_bypasses_shared_project_subnet(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    spec = _two_cluster_project_spec()
+    spec.projects[0].clusters[0].subnet_id = "explicit-subnet"
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("shared-subnet", ""))
+    seen: dict[str, str] = {}
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **kw: (
+            seen.__setitem__(kw["cluster"].name, kw["subnet_id"]),
+            {
+                "project_key": "a",
+                "cluster_name": kw["cluster"].name,
+                "status": "deployed",
+            },
+        )[1],
+    )
+    L.deploy_fleet(spec, work_root=tmp_path)
+    assert seen == {"c1": "explicit-subnet", "c2": "shared-subnet"}
+
+
+def test_ensure_subnet_persists_project_ownership_before_subnet_create(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_list_subnets", lambda *a, **k: [])
+    state_path = tmp_path / L._PROJECT_NETWORK_STATE
+
+    def cap(cmd, **kwargs):
+        if "network" in cmd:
+            return _Cap(json.dumps({"metadata": {"id": "network-test"}}), 0)
+        raise RuntimeError("subnet create failed")
+
+    monkeypatch.setattr(L, "_run_capture", cap)
+    with pytest.raises(RuntimeError, match="subnet create failed"):
+        L.ensure_subnet(
+            "nebius",
+            "project-test",
+            name_stem="a",
+            env={},
+            network_state_path=state_path,
+        )
+    state = json.loads(state_path.read_text())
+    assert state == {
+        "project_id": "project-test",
+        "created_network_id": "network-test",
+        "subnet_id": "",
+        "profile": "",
+    }
+
+
+@pytest.mark.parametrize("command", ["deploy", "destroy"])
+def test_empty_scope_json_emits_one_document_without_lifecycle(
+    command, tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("lifecycle must not run for an empty scope")
+
+    monkeypatch.setattr(L, f"{command}_fleet", unexpected)
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            command,
+            "--spec",
+            str(_spec_file(tmp_path)),
+            "--only-projects",
+            "missing",
+            "--yes",
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["clusters"] == []
+    assert payload["failed"] == 0
+    assert result.stdout.count("{") == 1
+
+
+def test_write_kubeconfig_fails_on_command_error_or_missing_file(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 9))
+    with pytest.raises(RuntimeError, match="exited 9"):
+        L._write_kubeconfig("nebius", "cluster-test", tmp_path / "kube", "ctx", {})
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
+    with pytest.raises(RuntimeError, match="without a kubeconfig"):
+        L._write_kubeconfig("nebius", "cluster-test", tmp_path / "kube", "ctx", {})
+    assert not (tmp_path / "kube").exists()
+
+
+def test_deploy_kubeconfig_failure_is_partial_and_retains_state(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_boundary(monkeypatch)
+    monkeypatch.setattr(
+        L,
+        "_write_kubeconfig",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("denied")),
+    )
+    result = _run_one_cluster(L, tmp_path)
+    assert result["status"] == "deployed-credentials-failed"
+    assert result["kubeconfig"] == ""
+    sidecar = json.loads((tmp_path / "a" / "c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["status"] == "deployed-credentials-failed"
+    assert sidecar["cluster_id"] == "mk8s-1"
+
+
+def test_destroy_fallback_failure_is_reported_and_state_retained(
+    tmp_path, monkeypatch
+) -> None:
+    L, install, _result, _calls = _destroy_one_with_mocked_terraform(
+        tmp_path, monkeypatch, destroy_fails=True
+    )
+    monkeypatch.setattr(L, "_find_cluster_id_by_name", lambda *a, **k: "cluster-test")
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("permission denied", 7))
+    result = L._destroy_one_cluster(
+        spec=FleetSpec(name="f"),
+        project=ProjectSpec(name="a"),
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        fleet_root=tmp_path / "f",
+        terraform_bin="terraform",
+        nebius_bin="nebius",
+        timeout_minutes=1,
+        on_status=None,
+    )
+    assert result["status"] == "destroy-incomplete"
+    assert any("fallback delete failed" in error for error in result["errors"])
+    assert install.exists()
+
+
+def test_network_cleanup_attempts_later_steps_and_retains_ownership_on_failure(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    calls: list[str] = []
+
+    def cap(cmd, **kwargs):
+        kind = "subnet" if "subnet" in cmd else "network"
+        calls.append(kind)
+        return _Cap("busy", 4 if kind == "subnet" else 0)
+
+    monkeypatch.setattr(L, "_run_capture", cap)
+    errors = L._reclaim_created_network(
+        "nebius", "project-test", "network-test", "subnet-test", {}, None, "a"
+    )
+    assert calls == ["subnet", "network"]
+    assert errors == ["subnet delete failed (nebius exited 4)"]
+
+    calls.clear()
+
+    def raising_cap(cmd, **kwargs):
+        kind = "subnet" if "subnet" in cmd else "network"
+        calls.append(kind)
+        if kind == "subnet":
+            raise RuntimeError("temporary API failure")
+        return _Cap("", 0)
+
+    monkeypatch.setattr(L, "_run_capture", raising_cap)
+    errors = L._reclaim_created_network(
+        "nebius", "project-test", "network-test", "subnet-test", {}, None, "a"
+    )
+    assert calls == ["subnet", "network"]
+    assert errors == ["subnet delete failed: RuntimeError: temporary API failure"]
+
+
+def test_quota_filesystem_byte_unit_usage_and_drift() -> None:
+    from npa.fleet.quotas import find_shortfalls, parse_allowances
+
+    allowance = _allowance(
+        "compute.filesystem.size.network-ssd", "us-central1", 1000, "byte"
+    )
+    allowance["status"]["usage_percentage"] = "0.25"
+    parsed = parse_allowances(json.dumps({"items": [allowance]}), "us-central1")
+    assert parsed["compute.filesystem.size.network-ssd"]["available"] == 750
+    assert (
+        find_shortfalls(
+            {"compute.filesystem.size.network-ssd": 750}, parsed, "us-central1"
+        )
+        == []
+    )
+    assert (
+        find_shortfalls(
+            {"compute.filesystem.size.network-ssd": 751}, parsed, "us-central1"
+        )[0].available
+        == 750
+    )
+
+    zero = _allowance("compute.filesystem.size.network-ssd", "us-central1", 0, "byte")
+    parsed_zero = parse_allowances(json.dumps({"items": [zero]}), "us-central1")
+    assert (
+        len(
+            find_shortfalls(
+                {"compute.filesystem.size.network-ssd": 1}, parsed_zero, "us-central1"
+            )
+        )
+        == 1
+    )
+
+    drift = _allowance(
+        "compute.filesystem.size.network-ssd", "us-central1", 1, "gibibyte"
+    )
+    with pytest.raises(ValueError, match="expected 'byte'"):
+        parse_allowances(json.dumps({"items": [drift]}), "us-central1")
+
+
+def test_nebius_discovery_fails_closed_and_state_write_logs(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 8))
+    with pytest.raises(RuntimeError, match="could not list projects"):
+        L._list_projects("nebius", "tenant-test", {})
+    with pytest.raises(RuntimeError, match="could not list subnets"):
+        L._list_subnets("nebius", "project-test", {})
+
+    monkeypatch.setattr(
+        L,
+        "_write_json_file",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    L._write_fleet_state(tmp_path, {"name": "f"})
+    assert "could not persist fleet summary" in caplog.text
+
+
+def test_nebius_config_parse_failure_logs_without_content(tmp_path, monkeypatch, caplog) -> None:
+    from npa.fleet import lifecycle as L
+
+    config_dir = tmp_path / ".nebius"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text("profiles: [secret-token\n")
+    monkeypatch.setattr(L.Path, "home", lambda: tmp_path)
+    assert L._nebius_config() == {}
+    assert "could not parse Nebius config" in caplog.text
+    assert "secret-token" not in caplog.text
+
+
+def test_spec_rejects_quota_inputs_that_cannot_be_counted() -> None:
+    with pytest.raises(FleetSpecError, match="cannot be negative"):
+        ClusterSpec(
+            name="c", cpu_nodes=NodePoolSpec(count=-1), gpu_nodes=NodePoolSpec(count=2)
+        ).validate()
+    with pytest.raises(FleetSpecError, match="platform must start"):
+        ClusterSpec(
+            name="c", gpu_nodes=NodePoolSpec(count=1, platform="cpu-d3")
+        ).validate()
+    with pytest.raises(FleetSpecError, match="positive GPU count"):
+        ClusterSpec(
+            name="c", gpu_nodes=NodePoolSpec(count=1, platform="gpu-h200", preset="bad")
+        ).validate()

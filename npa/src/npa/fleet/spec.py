@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 API_VERSION = "npa.fleet/v0.0.1"
 
@@ -43,7 +43,9 @@ class FleetSpecError(ValueError):
 
 
 def _slug(value: str) -> str:
-    out = "".join(ch if (ch.isalnum() or ch == "-") else "-" for ch in value.strip().lower())
+    out = "".join(
+        ch if (ch.isalnum() or ch == "-") else "-" for ch in value.strip().lower()
+    )
     while "--" in out:
         out = out.replace("--", "-")
     return out.strip("-")
@@ -51,7 +53,12 @@ def _slug(value: str) -> str:
 
 def _is_dns_name(value: str) -> bool:
     # DNS-1123 label: lowercase alphanumeric/dash, start alphanumeric, <= 63 chars.
-    return bool(value) and len(value) <= 63 and value == _slug(value) and value[0].isalnum()
+    return (
+        bool(value)
+        and len(value) <= 63
+        and value == _slug(value)
+        and value[0].isalnum()
+    )
 
 
 @dataclass
@@ -119,11 +126,33 @@ class ClusterSpec:
             raise FleetSpecError(
                 f"cluster {self.name!r}: needs at least one CPU or GPU node"
             )
+        for kind, pool in (
+            ("cpu_nodes", self.cpu_nodes),
+            ("gpu_nodes", self.gpu_nodes),
+        ):
+            if pool and pool.count < 0:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: {kind}.count cannot be negative"
+                )
+            if pool and pool.disk_size_gib < 0:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: {kind}.disk_size_gib cannot be negative"
+                )
         if self.cpu_nodes and self.cpu_nodes.capacity_block_group:
             raise FleetSpecError(
                 f"cluster {self.name!r}: capacity_block_group is only valid for gpu_nodes"
             )
         gpu = self.gpu_nodes
+        if gpu and gpu.count > 0:
+            if not gpu.is_gpu():
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: gpu_nodes.platform must start with 'gpu-'"
+                )
+            gpu_prefix = gpu.preset.split("gpu-", 1)[0] if gpu.preset else ""
+            if not gpu_prefix.isdigit() or int(gpu_prefix) <= 0:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: gpu_nodes.preset must include a positive GPU count"
+                )
         if gpu and gpu.capacity_block_group:
             if gpu.count <= 0 or not gpu.is_gpu():
                 raise FleetSpecError(
@@ -136,9 +165,10 @@ class ClusterSpec:
         if self.resolved_enable_gpu_cluster():
             gpu = self.gpu_nodes
             if not (gpu and gpu.preset.startswith("8gpu-")):
+                preset = gpu.preset if gpu else ""
                 raise FleetSpecError(
                     f"cluster {self.name!r}: enable_gpu_cluster requires an 8-GPU "
-                    f"preset (got {gpu.preset!r} if any)"
+                    f"preset (got {preset!r} if any)"
                 )
             if not self.infiniband_fabric:
                 raise FleetSpecError(
@@ -146,6 +176,10 @@ class ClusterSpec:
                     "'infiniband_fabric'"
                 )
         if self.enable_filestore:
+            if self.filestore_disk_size_gibibytes <= 0:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: filestore_disk_size_gibibytes must be positive"
+                )
             if not self.filestore_mount_path.startswith("/"):
                 raise FleetSpecError(
                     f"cluster {self.name!r}: filestore_mount_path must be absolute"
@@ -157,6 +191,15 @@ class ClusterSpec:
                     f"cluster {self.name!r}: filestore_mount_tag must be a non-empty "
                     "value without whitespace or commas"
                 )
+        if (
+            gpu
+            and gpu.count > 0
+            and gpu.disk_size_gib == 0
+            and self.gpu_disk_size_gib <= 0
+        ):
+            raise FleetSpecError(
+                f"cluster {self.name!r}: gpu_disk_size_gib must be positive"
+            )
 
 
 @dataclass
@@ -252,7 +295,9 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return result
 
 
-def _node_pool_from(data: dict[str, Any] | None, *, default_platform: str) -> NodePoolSpec | None:
+def _node_pool_from(
+    data: dict[str, Any] | None, *, default_platform: str
+) -> NodePoolSpec | None:
     if not data:
         return None
     return NodePoolSpec(
@@ -270,12 +315,16 @@ def _cluster_from(data: dict[str, Any]) -> ClusterSpec:
         name=_slug(str(data.get("name", "cluster"))) or "cluster",
         k8s_version=str(data.get("k8s_version", "") or ""),
         cpu_nodes=_node_pool_from(data.get("cpu_nodes"), default_platform="cpu-d3"),
-        gpu_nodes=_node_pool_from(data.get("gpu_nodes"), default_platform="gpu-rtx6000"),
+        gpu_nodes=_node_pool_from(
+            data.get("gpu_nodes"), default_platform="gpu-rtx6000"
+        ),
         enable_gpu_cluster=None if enable_gpu is None else bool(enable_gpu),
         infiniband_fabric=str(data.get("infiniband_fabric", "") or ""),
         enable_filestore=bool(data.get("enable_filestore", False)),
         existing_filestore=str(data.get("existing_filestore", "") or ""),
-        filestore_disk_size_gibibytes=int(data.get("filestore_disk_size_gibibytes", 1024)),
+        filestore_disk_size_gibibytes=int(
+            data.get("filestore_disk_size_gibibytes", 1024)
+        ),
         gpu_disk_size_gib=int(data.get("gpu_disk_size_gib", 1023)),
         subnet_id=str(data.get("subnet_id", "") or ""),
         filestore_mount_path=str(data.get("filestore_mount_path", "/mnt/data") or ""),

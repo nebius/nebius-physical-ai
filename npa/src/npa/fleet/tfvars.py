@@ -66,6 +66,8 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
         lines.append(f"cpu_nodes_platform = {_tfstr(cpu.platform)}")
         if cpu.preset:
             lines.append(f"cpu_nodes_preset = {_tfstr(cpu.preset)}")
+        cpu_disk = cpu.disk_size_gib if cpu.disk_size_gib > 0 else 128
+        lines.append(f"cpu_disk_size = {_tfstr(str(cpu_disk))}")
 
     gpu_count = gpu.count if gpu else 0
     lines.append(f"gpu_nodes_fixed_count_per_group = {gpu_count}")
@@ -78,29 +80,35 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
             # STRICT is deliberate: AUTO may silently fall back to ordinary
             # on-demand capacity when the named capacity block is exhausted.
             lines.append(
-                "gpu_nodes_reservation_policy = { policy = \"STRICT\", "
+                'gpu_nodes_reservation_policy = { policy = "STRICT", '
                 f"reservation_ids = [{_tfstr(gpu.capacity_block_group)}] }}"
             )
         disk = gpu.disk_size_gib if gpu.disk_size_gib > 0 else cluster.gpu_disk_size_gib
         lines.append(f"gpu_disk_size = {_tfstr(str(disk))}")
 
-    lines.append(f"enable_gpu_cluster = {'true' if cluster.resolved_enable_gpu_cluster() else 'false'}")
+    lines.append(
+        f"enable_gpu_cluster = {'true' if cluster.resolved_enable_gpu_cluster() else 'false'}"
+    )
     if cluster.infiniband_fabric:
         lines.append(f"infiniband_fabric = {_tfstr(cluster.infiniband_fabric)}")
 
-    lines.append(f"enable_filestore = {'true' if cluster.enable_filestore else 'false'}")
+    lines.append(
+        f"enable_filestore = {'true' if cluster.enable_filestore else 'false'}"
+    )
     # Always emit existing_filestore: the recipe's variable defaults to null, and
     # its filesystem.tf branches on `== ""` / `!= ""`. Left null, enable_filestore
     # would try to READ a nonexistent filesystem (data source with no id) instead
     # of creating one. Empty string routes to the create branch.
     lines.append(f"existing_filestore = {_tfstr(cluster.existing_filestore)}")
-    lines.append(f"filestore_disk_size_gibibytes = {cluster.filestore_disk_size_gibibytes}")
+    lines.append(
+        f"filestore_disk_size_gibibytes = {cluster.filestore_disk_size_gibibytes}"
+    )
     lines.append(f"filestore_mount_path = {_tfstr(cluster.filestore_mount_path)}")
     lines.append(f"filestore_mount_tag = {_tfstr(cluster.filestore_mount_tag)}")
     lines.append(
-        "filesystem_csi = { chart_version = \"0.1.6\", namespace = \"kube-system\", "
+        'filesystem_csi = { chart_version = "0.1.6", namespace = "kube-system", '
         "make_default_storage_class = true, previous_default_storage_class_name = "
-        "\"compute-csi-default-sc\" }"
+        '"compute-csi-default-sc" }'
     )
 
     # Keep the fleet cheap and quiet: no observability/logging/ray/gatekeeper.

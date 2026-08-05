@@ -23,10 +23,14 @@ import concurrent.futures
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
+
+import yaml  # type: ignore[import-untyped]
 
 from npa.cli.cluster.terraform_lifecycle import (
     _require_bin,
@@ -48,7 +52,9 @@ _MODULES_SUBDIR = "modules"
 # installed package doesn't silently drift onto upstream ``main`` HEAD.
 _PINNED_LIBRARY_REF = "main-v2026-05-25+local-cluster-patches"
 _ENV_SIDECAR = ".npa-fleet-env.json"
+_PROJECT_NETWORK_STATE = ".npa-fleet-network.json"
 _FLEET_STATE = "fleet-state.json"
+_MIN_TERRAFORM_VERSION = (1, 12, 0)
 
 
 def _log(on_status: Callable[[str], None] | None, message: str) -> None:
@@ -56,7 +62,9 @@ def _log(on_status: Callable[[str], None] | None, message: str) -> None:
         on_status(message)
 
 
-def _project_in_scope(project: ProjectSpec, only: list[str] | None, prefix: str) -> bool:
+def _project_in_scope(
+    project: ProjectSpec, only: list[str] | None, prefix: str
+) -> bool:
     """A project matches ``--only-projects`` by its key **or** its display name."""
 
     if not only:
@@ -77,7 +85,12 @@ def _nebius_cli_env() -> dict[str, str]:
     """
 
     env = os.environ.copy()
-    reuse = env.get("NPA_REUSE_IAM_TOKEN", "").strip().lower() in {"1", "true", "yes", "on"}
+    reuse = env.get("NPA_REUSE_IAM_TOKEN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if not reuse:
         env.pop("NEBIUS_IAM_TOKEN", None)
     return env
@@ -100,11 +113,23 @@ def _nebius_config() -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        import yaml
-
-        return yaml.safe_load(path.read_text()) or {}
-    except Exception:
+        loaded = yaml.safe_load(path.read_text()) or {}
+    except OSError as exc:
+        logger.warning(
+            "could not read Nebius config at %s (%s)", path, type(exc).__name__
+        )
         return {}
+    except yaml.YAMLError as exc:
+        # Do not log the YAML exception text: parser snippets could contain
+        # credentials from a malformed profile.
+        logger.warning(
+            "could not parse Nebius config at %s (%s)", path, type(exc).__name__
+        )
+        return {}
+    if not isinstance(loaded, dict):
+        logger.warning("ignoring Nebius config at %s because it is not a mapping", path)
+        return {}
+    return loaded
 
 
 def _resolve_tenant_id(nebius_bin: str, explicit: str, profile: str = "") -> str:
@@ -115,7 +140,9 @@ def _resolve_tenant_id(nebius_bin: str, explicit: str, profile: str = "") -> str
     # back to the active profile's tenant would deploy into the wrong tenant.
     selected = profile or str(cfg.get("default", "") or "")
     profiles = cfg.get("profiles", {}) if isinstance(cfg.get("profiles"), dict) else {}
-    prof = profiles.get(selected, {}) if isinstance(profiles.get(selected), dict) else {}
+    prof = (
+        profiles.get(selected, {}) if isinstance(profiles.get(selected), dict) else {}
+    )
     tenant = str(prof.get("tenant-id", "") or "")
     if tenant:
         return tenant
@@ -148,7 +175,9 @@ def tenant_id_from_profile(profile: str) -> str:
     cfg = _nebius_config()
     selected = profile or str(cfg.get("default", "") or "")
     profiles = cfg.get("profiles", {}) if isinstance(cfg.get("profiles"), dict) else {}
-    prof = profiles.get(selected, {}) if isinstance(profiles.get(selected), dict) else {}
+    prof = (
+        profiles.get(selected, {}) if isinstance(profiles.get(selected), dict) else {}
+    )
     return str(prof.get("tenant-id", "") or "")
 
 
@@ -244,9 +273,21 @@ def _resolve_recipe_root(
         if not _is_recipe_root(clone_dir):
             work_root.mkdir(parents=True, exist_ok=True)
             git = _require_bin("git")
-            _log(on_status, f"cloning nebius-solutions-library@{ref} for latest k8s-training")
+            _log(
+                on_status,
+                f"cloning nebius-solutions-library@{ref} for latest k8s-training",
+            )
             _run_stream(
-                [git, "clone", "--depth", "1", "--branch", ref, _SOLUTIONS_LIBRARY_REPO, str(clone_dir)],
+                [
+                    git,
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    ref,
+                    _SOLUTIONS_LIBRARY_REPO,
+                    str(clone_dir),
+                ],
                 timeout=600,
             )
         return clone_dir
@@ -272,17 +313,31 @@ def _list_projects(
     result = _run_capture(
         [
             *_nebius_argv(nebius_bin, profile),
-            "iam", "project", "list", "--parent-id", tenant_id, "--format", "json",
+            "iam",
+            "project",
+            "list",
+            "--parent-id",
+            tenant_id,
+            "--format",
+            "json",
         ],
         env=env,
         check=False,
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"could not list projects (nebius exited {result.returncode})"
+        )
+    if not result.stdout.strip():
+        raise RuntimeError("could not list projects (nebius returned no JSON)")
     try:
-        return list(json.loads(result.stdout).get("items", []))
-    except json.JSONDecodeError:
-        return []
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("could not parse project list JSON") from exc
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    if not isinstance(items, list):
+        raise ValueError("project list JSON has a non-list 'items' field")
+    return [item for item in items if isinstance(item, dict)]
 
 
 def _find_project_id(projects: list[dict[str, Any]], name: str) -> str:
@@ -303,8 +358,14 @@ def _create_project(
     profile: str = "",
 ) -> str:
     argv = [
-        *_nebius_argv(nebius_bin, profile), "iam", "project", "create",
-        "--parent-id", tenant_id, "--name", name,
+        *_nebius_argv(nebius_bin, profile),
+        "iam",
+        "project",
+        "create",
+        "--parent-id",
+        tenant_id,
+        "--name",
+        name,
     ]
     # Projects are regional in Nebius; pass the target region so the project (and
     # its clusters) land in the intended region rather than the tenant default.
@@ -315,10 +376,14 @@ def _create_project(
     try:
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
-        raise ValueError(f"could not parse project create output for {name!r}: {exc}") from exc
+        raise ValueError(
+            f"could not parse project create output for {name!r}: {exc}"
+        ) from exc
     project_id = str(payload.get("metadata", {}).get("id") or payload.get("id") or "")
     if not project_id:
-        raise ValueError(f"project create for {name!r} returned no id: {result.stdout[:200]}")
+        raise ValueError(
+            f"project create for {name!r} returned no id: {result.stdout[:200]}"
+        )
     return project_id
 
 
@@ -328,17 +393,31 @@ def _list_subnets(
     result = _run_capture(
         [
             *_nebius_argv(nebius_bin, profile),
-            "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json",
+            "vpc",
+            "subnet",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
         ],
         env=env,
         check=False,
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"could not list subnets (nebius exited {result.returncode})"
+        )
+    if not result.stdout.strip():
+        raise RuntimeError("could not list subnets (nebius returned no JSON)")
     try:
-        return list(json.loads(result.stdout).get("items", []))
-    except json.JSONDecodeError:
-        return []
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("could not parse subnet list JSON") from exc
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    if not isinstance(items, list):
+        raise ValueError("subnet list JSON has a non-list 'items' field")
+    return [item for item in items if isinstance(item, dict)]
 
 
 def ensure_subnet(
@@ -348,6 +427,7 @@ def ensure_subnet(
     name_stem: str,
     env: dict[str, str],
     profile: str = "",
+    network_state_path: Path | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[str, str]:
     """Return ``(subnet_id, created_network_id)`` for *project_id*.
@@ -360,48 +440,108 @@ def ensure_subnet(
     subnet is reused and left untouched).
     """
 
+    network_state = _load_json_file(network_state_path) if network_state_path else {}
+    owned_network_id = str(network_state.get("created_network_id") or "")
+    owned_subnet_id = str(network_state.get("subnet_id") or "")
     subnets = _list_subnets(nebius_bin, project_id, env, profile)
     if subnets:
         # Deterministic pick: prefer a subnet whose name looks like the project
         # default, else the lowest id, so repeated runs choose the same subnet
         # instead of relying on list order.
-        def _rank(sub: dict[str, Any]) -> tuple[int, str]:
+        def _rank(sub: dict[str, Any]) -> tuple[int, int, str]:
             meta = sub.get("metadata", {})
             name = str(meta.get("name") or "")
-            return (0 if "default" in name else 1, str(meta.get("id") or ""))
+            subnet_id = str(meta.get("id") or "")
+            return (
+                0 if subnet_id == owned_subnet_id else 1,
+                0 if "default" in name else 1,
+                subnet_id,
+            )
 
         for sub in sorted(subnets, key=_rank):
             sid = str(sub.get("metadata", {}).get("id") or "")
             if sid:
-                return sid, ""
-    _log(on_status, f"no subnet in project {project_id[:12]}...; creating network + subnet")
-    net = _run_capture(
-        [
-            *_nebius_argv(nebius_bin, profile), "vpc", "network", "create",
-            "--parent-id", project_id, "--name", f"{name_stem}-net", "--format", "json",
-        ],
-        env=env,
+                return sid, owned_network_id if sid == owned_subnet_id else ""
+    _log(
+        on_status,
+        f"no subnet in project {project_id[:12]}...; creating network + subnet",
     )
-    try:
-        network_id = str(json.loads(net.stdout or "{}").get("metadata", {}).get("id") or "")
-    except json.JSONDecodeError:
-        network_id = ""
+    network_id = owned_network_id
     if not network_id:
-        raise ValueError(f"could not create network in project {project_id}: {net.stdout[:200]}")
-    sub = _run_capture(
+        net = _run_capture(
+            [
+                *_nebius_argv(nebius_bin, profile),
+                "vpc",
+                "network",
+                "create",
+                "--parent-id",
+                project_id,
+                "--name",
+                f"{name_stem}-net",
+                "--format",
+                "json",
+            ],
+            env=env,
+        )
+        try:
+            network_id = str(
+                json.loads(net.stdout or "{}").get("metadata", {}).get("id") or ""
+            )
+        except json.JSONDecodeError:
+            network_id = ""
+        if not network_id:
+            raise ValueError(
+                f"could not create network in project {project_id}: {net.stdout[:200]}"
+            )
+        # Persist ownership immediately. If subnet creation fails, destroy can
+        # still recover the otherwise orphaned network on a later retry.
+        if network_state_path:
+            _write_json_file(
+                network_state_path,
+                {
+                    "project_id": project_id,
+                    "created_network_id": network_id,
+                    "subnet_id": "",
+                    "profile": profile,
+                },
+            )
+    subnet_result = _run_capture(
         [
-            *_nebius_argv(nebius_bin, profile), "vpc", "subnet", "create",
-            "--parent-id", project_id, "--network-id", network_id,
-            "--name", f"{name_stem}-subnet", "--format", "json",
+            *_nebius_argv(nebius_bin, profile),
+            "vpc",
+            "subnet",
+            "create",
+            "--parent-id",
+            project_id,
+            "--network-id",
+            network_id,
+            "--name",
+            f"{name_stem}-subnet",
+            "--format",
+            "json",
         ],
         env=env,
     )
     try:
-        subnet_id = str(json.loads(sub.stdout or "{}").get("metadata", {}).get("id") or "")
+        subnet_id = str(
+            json.loads(subnet_result.stdout or "{}").get("metadata", {}).get("id") or ""
+        )
     except json.JSONDecodeError:
         subnet_id = ""
     if not subnet_id:
-        raise ValueError(f"could not create subnet in project {project_id}: {sub.stdout[:200]}")
+        raise ValueError(
+            f"could not create subnet in project {project_id}: {subnet_result.stdout[:200]}"
+        )
+    if network_state_path:
+        _write_json_file(
+            network_state_path,
+            {
+                "project_id": project_id,
+                "created_network_id": network_id,
+                "subnet_id": subnet_id,
+                "profile": profile,
+            },
+        )
     return subnet_id, network_id
 
 
@@ -433,7 +573,10 @@ def resolve_project_id(
         raise ValueError(
             f"project {name!r} not found under tenant and project creation is disabled"
         )
-    _log(on_status, f"creating project {name!r} under tenant (region {region or 'default'})")
+    _log(
+        on_status,
+        f"creating project {name!r} under tenant (region {region or 'default'})",
+    )
     project_id = _create_project(
         nebius_bin, tenant_id, name, env, region=region, profile=profile
     )
@@ -444,19 +587,57 @@ def resolve_project_id(
 # --------------------------------------------------------------------------- #
 # Per-cluster terraform materialization
 # --------------------------------------------------------------------------- #
-def _write_env_sidecar(install_dir: Path, data: dict[str, str]) -> None:
-    (install_dir / _ENV_SIDECAR).write_text(json.dumps(data, indent=2))
+def _write_json_file(path: Path, data: dict[str, Any]) -> None:
+    """Atomically write non-secret local recovery metadata."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            json.dump(data, handle, indent=2)
+            handle.write("\n")
+            temporary = Path(handle.name)
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _load_json_file(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "could not load fleet recovery metadata %s (%s)", path, type(exc).__name__
+        )
+        return {}
+    if not isinstance(data, dict):
+        logger.warning(
+            "ignoring fleet recovery metadata %s because it is not a mapping", path
+        )
+        return {}
+    return data
+
+
+def _write_env_sidecar(install_dir: Path, data: dict[str, Any]) -> None:
+    _write_json_file(install_dir / _ENV_SIDECAR, data)
 
 
 def _load_env_sidecar(install_dir: Path) -> dict[str, str] | None:
     path = install_dir / _ENV_SIDECAR
     if not path.exists():
         return None
-    try:
-        data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-    return data if isinstance(data, dict) else None
+    data = _load_json_file(path)
+    return data or None
 
 
 def _prepare_install_dir(
@@ -535,14 +716,27 @@ def _run_to_log(
         fh.write(f"\n$ {' '.join(args)}\n")
         fh.flush()
         proc = subprocess.run(
-            args, cwd=cwd, env=env, stdout=fh, stderr=subprocess.STDOUT, timeout=timeout, check=False
+            args,
+            cwd=cwd,
+            env=env,
+            stdout=fh,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            check=False,
         )
     if proc.returncode != 0:
-        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(args)} (see {log_path})")
+        raise RuntimeError(
+            f"command failed ({proc.returncode}): {' '.join(args)} (see {log_path})"
+        )
 
 
 def _tf_run(
-    args: list[str], *, cwd: Path, env: dict[str, str], timeout: int, log_path: Path | None
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+    log_path: Path | None,
 ) -> None:
     """terraform runner: stream to stdout (sequential) or to a per-cluster log."""
 
@@ -550,6 +744,40 @@ def _tf_run(
         _run_to_log(args, cwd=cwd, env=env, timeout=timeout, log_path=log_path)
     else:
         _run_stream(args, cwd=cwd, env=env, timeout=timeout)
+
+
+def _assert_terraform_version(terraform_bin: str) -> str:
+    """Require the k8s-training recipe's Terraform >= 1.12 contract."""
+
+    message = (
+        "Terraform >= 1.12 is required by the k8s-training recipe; install a supported "
+        "version or point NPA_TERRAFORM_BIN at one"
+    )
+    try:
+        result = _run_capture(
+            [terraform_bin, "version", "-json"], check=False, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(
+            f"{message} (version command failed: {type(exc).__name__})"
+        ) from exc
+    if result.returncode != 0:
+        raise ValueError(f"{message} (version command exited {result.returncode})")
+    try:
+        payload = json.loads(result.stdout or "")
+        version = str(payload.get("terraform_version") or "")
+    except (json.JSONDecodeError, AttributeError) as exc:
+        raise ValueError(
+            f"{message} (could not parse 'terraform version -json')"
+        ) from exc
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)([-+].+)?", version)
+    if not match:
+        raise ValueError(f"{message} (unparseable version {version!r})")
+    core = tuple(int(match.group(i)) for i in range(1, 4))
+    prerelease = bool(match.group(4) and match.group(4).startswith("-"))
+    if core < _MIN_TERRAFORM_VERSION or (core == _MIN_TERRAFORM_VERSION and prerelease):
+        raise ValueError(f"{message} (found {version})")
+    return version
 
 
 def _prewarm_plugin_cache(
@@ -571,7 +799,9 @@ def _prewarm_plugin_cache(
     cache as the sole writer means the parallel per-cluster inits only *read* it.
     """
 
-    cache_dir = Path(os.environ.get("TF_PLUGIN_CACHE_DIR") or (work_root / ".tf-plugin-cache"))
+    cache_dir = Path(
+        os.environ.get("TF_PLUGIN_CACHE_DIR") or (work_root / ".tf-plugin-cache")
+    )
     cache_dir.mkdir(parents=True, exist_ok=True)
     # Set process-wide so every per-cluster env (via _terraform_env -> os.environ)
     # inherits the same warm cache.
@@ -610,7 +840,9 @@ def _cluster_tf_env(
     return env
 
 
-def _terraform_outputs(terraform_bin: str, install_dir: Path, env: dict[str, str]) -> dict[str, Any]:
+def _terraform_outputs(
+    terraform_bin: str, install_dir: Path, env: dict[str, str]
+) -> dict[str, Any]:
     result = _run_capture(
         [terraform_bin, "output", "-json"], cwd=install_dir, env=env, check=False
     )
@@ -639,18 +871,39 @@ def _find_cluster_id_by_name(
     result = _run_capture(
         [
             *_nebius_argv(nebius_bin, profile),
-            "mk8s", "cluster", "list", "--parent-id", project_id, "--format", "json",
+            "mk8s",
+            "cluster",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
         ],
         env=env,
         check=False,
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"could not list Managed Kubernetes clusters (nebius exited {result.returncode})"
+        )
+    if not result.stdout.strip():
+        raise RuntimeError(
+            "could not list Managed Kubernetes clusters (nebius returned no JSON)"
+        )
     try:
-        items = json.loads(result.stdout).get("items", [])
-    except json.JSONDecodeError:
-        return ""
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "could not parse Managed Kubernetes cluster list JSON"
+        ) from exc
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    if not isinstance(items, list):
+        raise ValueError(
+            "Managed Kubernetes cluster list JSON has a non-list 'items' field"
+        )
     for item in items:
+        if not isinstance(item, dict):
+            continue
         meta = item.get("metadata", {})
         if meta.get("name") == cluster_name and meta.get("id"):
             return str(meta["id"])
@@ -673,16 +926,39 @@ def _write_kubeconfig(
     """
 
     kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
-    _run_capture(
-        [
-            *_nebius_argv(nebius_bin, profile), "mk8s", "cluster", "get-credentials",
-            "--id", cluster_id, "--external", "--force",
-            "--kubeconfig", str(kubeconfig_path), "--context-name", context,
-        ],
-        env=env,
-        check=False,
-        timeout=180,
-    )
+    temporary = kubeconfig_path.with_name(f".{kubeconfig_path.name}.{os.getpid()}.tmp")
+    temporary.unlink(missing_ok=True)
+    try:
+        result = _run_capture(
+            [
+                *_nebius_argv(nebius_bin, profile),
+                "mk8s",
+                "cluster",
+                "get-credentials",
+                "--id",
+                cluster_id,
+                "--external",
+                "--force",
+                "--kubeconfig",
+                str(temporary),
+                "--context-name",
+                context,
+            ],
+            env=env,
+            check=False,
+            timeout=180,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"credential generation failed (nebius exited {result.returncode})"
+            )
+        if not temporary.is_file() or temporary.stat().st_size == 0:
+            raise RuntimeError(
+                "credential generation completed without a kubeconfig file"
+            )
+        os.replace(temporary, kubeconfig_path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _context_name(fleet_name: str, project_key: str, cluster_name: str) -> str:
@@ -724,7 +1000,9 @@ def plan_fleet(
                     "cpu_nodes": cluster.cpu_count(),
                     "cpu_preset": cluster.cpu_nodes.preset if cluster.cpu_nodes else "",
                     "gpu_nodes": cluster.gpu_count(),
-                    "gpu_platform": cluster.gpu_nodes.platform if cluster.gpu_nodes else "",
+                    "gpu_platform": cluster.gpu_nodes.platform
+                    if cluster.gpu_nodes
+                    else "",
                     "gpu_preset": cluster.gpu_nodes.preset if cluster.gpu_nodes else "",
                     "gpu_reservation": (
                         "strict"
@@ -785,10 +1063,11 @@ def deploy_fleet(
     ``concurrency`` > 1 applies that many clusters in parallel (each has its own
     isolated terraform state, so there is no cross-cluster lock contention). The
     provider plugin cache is pre-warmed once to avoid concurrent-init corruption,
-    and each cluster streams to its own ``<install_dir>/deploy.log``. Parallel
-    deploys assume one cluster per project subnet (concurrent creates in a shared
-    network can race on the same CIDR pool) -- give each cluster its own
-    ``subnet_id`` (or its own project) when packing several into one project.
+    and each cluster streams to its own ``<install_dir>/deploy.log``. Project
+    subnet discovery/creation is resolved once, sequentially, before the
+    parallel apply phase. Clusters without an explicit ``subnet_id`` therefore
+    share one authoritative project subnet without a create race; explicit
+    per-cluster overrides remain unchanged.
 
     ``profile`` overrides the spec's ``profile``: every ``nebius`` CLI call and
     the minted terraform IAM token then use that ``~/.nebius`` profile, which is
@@ -806,6 +1085,7 @@ def deploy_fleet(
     prefix = project_prefix if project_prefix is not None else spec.project_prefix
     nebius_profile = spec.profile if profile is None else profile
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
+    _assert_terraform_version(terraform_bin)
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
 
     tenant_id = _resolve_tenant_id(nebius_bin, spec.tenant_id, nebius_profile)
@@ -861,6 +1141,13 @@ def deploy_fleet(
     for project in spec.projects:
         if not _project_in_scope(project, only_projects, prefix):
             continue
+        scoped_clusters = [
+            cluster
+            for cluster in project.clusters
+            if not (only_clusters and cluster.name not in only_clusters)
+        ]
+        if not scoped_clusters:
+            continue
         region = project.region or fleet_region
         try:
             project_id, created = resolve_project_id(
@@ -874,15 +1161,28 @@ def deploy_fleet(
                 profile=nebius_profile,
                 on_status=on_status,
             )
+            shared_subnet_id = ""
+            if any(not cluster.subnet_id for cluster in scoped_clusters):
+                shared_subnet_id, _created_network_id = ensure_subnet(
+                    nebius_bin,
+                    project_id,
+                    name_stem=project.key(),
+                    env=cli_env,
+                    profile=nebius_profile,
+                    network_state_path=fleet_root
+                    / project.key()
+                    / _PROJECT_NETWORK_STATE,
+                    on_status=on_status,
+                )
         except Exception as exc:  # noqa: BLE001 - report and continue
             _log(on_status, f"project {project.key()} FAILED to resolve: {exc}")
             if not continue_on_error:
                 raise
-            results.append({"project_key": project.key(), "status": "error", "error": str(exc)})
+            results.append(
+                {"project_key": project.key(), "status": "error", "error": str(exc)}
+            )
             continue
-        for cluster in project.clusters:
-            if only_clusters and cluster.name not in only_clusters:
-                continue
+        for cluster in scoped_clusters:
             targets.append(
                 {
                     "project": project,
@@ -890,6 +1190,7 @@ def deploy_fleet(
                     "project_id": project_id,
                     "created": created,
                     "region": region,
+                    "subnet_id": cluster.subnet_id or shared_subnet_id,
                 }
             )
 
@@ -910,7 +1211,9 @@ def deploy_fleet(
     def _run_target(t: dict[str, Any]) -> dict[str, Any]:
         log_path = None
         if parallel:
-            log_path = fleet_root / t["project"].key() / t["cluster"].name / "deploy.log"
+            log_path = (
+                fleet_root / t["project"].key() / t["cluster"].name / "deploy.log"
+            )
             log_path.parent.mkdir(parents=True, exist_ok=True)
         return _deploy_one_cluster(
             spec=spec,
@@ -918,6 +1221,7 @@ def deploy_fleet(
             cluster=t["cluster"],
             project_id=t["project_id"],
             project_created=t["created"],
+            subnet_id=t["subnet_id"],
             region=t["region"],
             tenant_id=tenant_id,
             ssh_public_key=ssh_public_key,
@@ -941,7 +1245,9 @@ def deploy_fleet(
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = [pool.submit(_run_target, t) for t in targets]
             for fut in concurrent.futures.as_completed(futures):
-                results.append(fut.result())  # _deploy_one_cluster captures its own errors
+                results.append(
+                    fut.result()
+                )  # _deploy_one_cluster captures its own errors
     else:
         for t in targets:
             entry = _run_target(t)
@@ -971,7 +1277,10 @@ def _preflight_quotas(
 
     shortfalls = []
     for region, clusters in sorted(by_region.items()):
-        _log(on_status, f"capacity/quota preflight: {len(clusters)} cluster(s) in {region}")
+        _log(
+            on_status,
+            f"capacity/quota preflight: {len(clusters)} cluster(s) in {region}",
+        )
         shortfalls += preflight_region(
             nebius_bin=nebius_bin,
             tenant_id=tenant_id,
@@ -994,6 +1303,7 @@ def _deploy_one_cluster(
     cluster: ClusterSpec,
     project_id: str,
     project_created: bool,
+    subnet_id: str,
     region: str,
     tenant_id: str,
     ssh_public_key: str,
@@ -1011,18 +1321,6 @@ def _deploy_one_cluster(
     context = _context_name(spec.name, project_key, cluster.name)
     label = f"{project_key}/{cluster.name}"
     try:
-        created_network_id = ""
-        if cluster.subnet_id:
-            subnet_id = cluster.subnet_id
-        else:
-            subnet_id, created_network_id = ensure_subnet(
-                nebius_bin,
-                project_id,
-                name_stem=cluster.name,
-                env=_nebius_cli_env(),
-                profile=profile,
-                on_status=on_status,
-            )
         workdir = _prepare_install_dir(
             install_dir,
             recipe_root=recipe_root,
@@ -1039,24 +1337,32 @@ def _deploy_one_cluster(
             subnet_id=subnet_id,
             profile=profile,
         )
-        # Written before apply so ``destroy`` can reconstruct TF_VAR_* and reclaim
-        # the network we created even if apply fails midway. ``status`` starts as
-        # "provisioning" and is promoted to "deployed" only on success, so the
-        # status fallback never mislabels a failed cluster as deployed.
+        # Written before apply so ``destroy`` can reconstruct TF_VAR_* even if
+        # apply fails midway. Project network ownership is recorded separately.
+        # ``status`` starts as "provisioning" and becomes "deployed" only after
+        # both apply and kubeconfig generation succeed.
         sidecar = {
             "tenant_id": tenant_id,
             "project_id": project_id,
             "region": region,
             "subnet_id": subnet_id,
-            "created_network_id": created_network_id,
             "cluster_name": cluster.name,
             "context": context,
             "profile": profile,
             "status": "provisioning",
         }
         _write_env_sidecar(install_dir, sidecar)
-        _log(on_status, f"[{label}] terraform init" + (f" (-> {log_path})" if log_path else ""))
-        _tf_run([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900, log_path=log_path)
+        _log(
+            on_status,
+            f"[{label}] terraform init" + (f" (-> {log_path})" if log_path else ""),
+        )
+        _tf_run(
+            [terraform_bin, "init", "-input=false"],
+            cwd=workdir,
+            env=env,
+            timeout=900,
+            log_path=log_path,
+        )
         _log(
             on_status,
             f"[{label}] terraform apply (cpu={cluster.cpu_count()} gpu={cluster.gpu_count()} "
@@ -1072,10 +1378,58 @@ def _deploy_one_cluster(
         outputs = _terraform_outputs(terraform_bin, workdir, env)
         cluster_id = _cluster_id_from_outputs(outputs)
         kubeconfig_path = install_dir / "kubeconfig"
-        if cluster_id:
-            _log(on_status, f"[{label}] writing kubeconfig context {context}")
-            _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, env, profile)
-        _write_env_sidecar(install_dir, {**sidecar, "cluster_id": cluster_id, "status": "deployed"})
+        if not cluster_id:
+            message = "terraform apply succeeded but returned no Managed Kubernetes cluster id"
+            _write_env_sidecar(
+                install_dir,
+                {
+                    **sidecar,
+                    "cluster_id": "",
+                    "status": "deployed-credentials-failed",
+                    "error": message,
+                },
+            )
+            return {
+                "project_key": project_key,
+                "project_id": project_id,
+                "cluster_name": cluster.name,
+                "region": region,
+                "install_dir": str(install_dir),
+                "status": "deployed-credentials-failed",
+                "error": message,
+            }
+        _log(on_status, f"[{label}] writing kubeconfig context {context}")
+        try:
+            _write_kubeconfig(
+                nebius_bin, cluster_id, kubeconfig_path, context, env, profile
+            )
+        except Exception as exc:  # noqa: BLE001 - retain applied state for credential retry
+            message = str(exc)
+            _write_env_sidecar(
+                install_dir,
+                {
+                    **sidecar,
+                    "cluster_id": cluster_id,
+                    "status": "deployed-credentials-failed",
+                    "error": message,
+                },
+            )
+            _log(on_status, f"[{label}] credentials FAILED: {message}")
+            return {
+                "project_key": project_key,
+                "project_id": project_id,
+                "cluster_name": cluster.name,
+                "region": region,
+                "cluster_id": cluster_id,
+                "kube_context": context,
+                "kubeconfig": "",
+                "install_dir": str(install_dir),
+                "status": "deployed-credentials-failed",
+                "error": message,
+            }
+        _write_env_sidecar(
+            install_dir, {**sidecar, "cluster_id": cluster_id, "status": "deployed"}
+        )
         return {
             "project_key": project_key,
             "project_id": project_id,
@@ -1103,9 +1457,13 @@ def _deploy_one_cluster(
 
 def _write_fleet_state(fleet_root: Path, result: dict[str, Any]) -> None:
     try:
-        (fleet_root / _FLEET_STATE).write_text(json.dumps(result, indent=2))
-    except OSError:
-        pass
+        _write_json_file(fleet_root / _FLEET_STATE, result)
+    except OSError as exc:
+        logger.warning(
+            "could not persist fleet summary at %s (%s); per-cluster recovery state is unchanged",
+            fleet_root / _FLEET_STATE,
+            type(exc).__name__,
+        )
 
 
 def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
@@ -1115,14 +1473,19 @@ def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text())
         return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("could not load fleet summary %s (%s)", path, type(exc).__name__)
         return {}
 
 
 def _recount(clusters: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "deployed": sum(1 for c in clusters if c.get("status") == "deployed"),
-        "failed": sum(1 for c in clusters if c.get("status") == "error"),
+        "failed": sum(
+            1
+            for c in clusters
+            if c.get("status") not in {"deployed", "destroyed", "absent"}
+        ),
     }
 
 
@@ -1137,8 +1500,12 @@ def _upsert_fleet_state(
     """
 
     state = _load_fleet_state(fleet_root)
-    clusters = state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
-    index = {(c.get("project_key"), c.get("cluster_name")): i for i, c in enumerate(clusters)}
+    clusters = (
+        state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
+    )
+    index = {
+        (c.get("project_key"), c.get("cluster_name")): i for i, c in enumerate(clusters)
+    }
     for entry in results:
         key = (entry.get("project_key"), entry.get("cluster_name"))
         if key[1] is None:  # project-level failure (no cluster) -- don't persist
@@ -1148,15 +1515,23 @@ def _upsert_fleet_state(
         else:
             index[key] = len(clusters)
             clusters.append(entry)
-    _write_fleet_state(fleet_root, {**base_meta, "clusters": clusters, **_recount(clusters)})
+    _write_fleet_state(
+        fleet_root, {**base_meta, "clusters": clusters, **_recount(clusters)}
+    )
 
 
 def _prune_fleet_state(fleet_root: Path, removed_keys: set[tuple[str, str]]) -> None:
     """Drop destroyed ``(project_key, cluster_name)`` entries from the summary."""
 
     state = _load_fleet_state(fleet_root)
-    clusters = state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
-    kept = [c for c in clusters if (c.get("project_key"), c.get("cluster_name")) not in removed_keys]
+    clusters = (
+        state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
+    )
+    kept = [
+        c
+        for c in clusters
+        if (c.get("project_key"), c.get("cluster_name")) not in removed_keys
+    ]
     _write_fleet_state(fleet_root, {**state, "clusters": kept, **_recount(kept)})
 
 
@@ -1189,6 +1564,7 @@ def destroy_fleet(
 
     spec.validate()
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
+    _assert_terraform_version(terraform_bin)
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     work_root = (work_root or _default_work_root()).expanduser()
     fleet_root = work_root / spec.name
@@ -1201,6 +1577,25 @@ def destroy_fleet(
         for cluster in project.clusters
         if not (only_clusters and cluster.name not in only_clusters)
     ]
+
+    # Migrate legacy per-cluster network ownership into the project-level record
+    # before any cluster directory can be removed. The project record prevents
+    # two clusters sharing a subnet from both claiming/deleting the same VPC.
+    for project, cluster in targets:
+        install_dir = fleet_root / project.key() / cluster.name
+        saved = _load_env_sidecar(install_dir) or {}
+        created_network_id = str(saved.get("created_network_id") or "")
+        network_state_path = fleet_root / project.key() / _PROJECT_NETWORK_STATE
+        if created_network_id and not network_state_path.exists():
+            _write_json_file(
+                network_state_path,
+                {
+                    "project_id": str(saved.get("project_id") or project.project_id),
+                    "created_network_id": created_network_id,
+                    "subnet_id": str(saved.get("subnet_id") or ""),
+                    "profile": str(saved.get("profile") or spec.profile),
+                },
+            )
 
     parallel = concurrency > 1 and len(targets) > 1
 
@@ -1225,20 +1620,104 @@ def destroy_fleet(
         )
 
     if parallel:
-        _log(on_status, f"destroying {len(targets)} cluster(s) with concurrency={concurrency}")
+        _log(
+            on_status,
+            f"destroying {len(targets)} cluster(s) with concurrency={concurrency}",
+        )
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-            destroyed = [f.result() for f in concurrent.futures.as_completed(
-                [pool.submit(_run, t) for t in targets]
-            )]
+            destroyed = [
+                f.result()
+                for f in concurrent.futures.as_completed(
+                    [pool.submit(_run, t) for t in targets]
+                )
+            ]
     else:
         destroyed = [_run(t) for t in targets]
 
     removed_keys = {
-        (d["project_key"], d["cluster_name"]) for d in destroyed if d.get("status") != "absent"
+        (d["project_key"], d["cluster_name"])
+        for d in destroyed
+        if d.get("status") == "destroyed"
     }
     if removed_keys:
         _prune_fleet_state(fleet_root, removed_keys)
-    return {"name": spec.name, "clusters": destroyed}
+    incomplete = [
+        entry for entry in destroyed if entry.get("status") == "destroy-incomplete"
+    ]
+    if incomplete:
+        previous = _load_fleet_state(fleet_root)
+        base_meta = {key: value for key, value in previous.items() if key != "clusters"}
+        base_meta.setdefault("name", spec.name)
+        _upsert_fleet_state(fleet_root, base_meta, incomplete)
+
+    network_results: list[dict[str, Any]] = []
+    for project in spec.projects:
+        if not _project_in_scope(project, only_projects, prefix):
+            continue
+        project_root = fleet_root / project.key()
+        has_cluster_state = project_root.exists() and any(
+            child.is_dir() and (child / _ENV_SIDECAR).exists()
+            for child in project_root.iterdir()
+        )
+        if has_cluster_state:
+            continue
+        network_state_path = project_root / _PROJECT_NETWORK_STATE
+        network_state = _load_json_file(network_state_path)
+        network_id = str(network_state.get("created_network_id") or "")
+        project_id = str(network_state.get("project_id") or project.project_id)
+        if not network_id or not project_id:
+            continue
+        cleanup_profile = (spec.profile if profile is None else profile) or str(
+            network_state.get("profile") or ""
+        )
+        errors = _reclaim_created_network(
+            nebius_bin,
+            project_id,
+            network_id,
+            str(network_state.get("subnet_id") or ""),
+            _nebius_cli_env(),
+            on_status,
+            project.key(),
+            profile=cleanup_profile,
+        )
+        if errors:
+            network_results.append(
+                {
+                    "project_key": project.key(),
+                    "status": "destroy-incomplete",
+                    "errors": errors,
+                }
+            )
+        else:
+            try:
+                network_state_path.unlink(missing_ok=True)
+            except OSError as exc:
+                network_results.append(
+                    {
+                        "project_key": project.key(),
+                        "status": "destroy-incomplete",
+                        "errors": [
+                            f"cloud network teardown succeeded but local ownership cleanup "
+                            f"failed: {type(exc).__name__}"
+                        ],
+                    }
+                )
+            else:
+                network_results.append(
+                    {"project_key": project.key(), "status": "destroyed"}
+                )
+    failed = sum(
+        1 for entry in destroyed if entry.get("status") == "destroy-incomplete"
+    )
+    failed += sum(
+        1 for entry in network_results if entry.get("status") == "destroy-incomplete"
+    )
+    return {
+        "name": spec.name,
+        "clusters": destroyed,
+        "networks": network_results,
+        "failed": failed,
+    }
 
 
 def _destroy_one_cluster(
@@ -1258,7 +1737,11 @@ def _destroy_one_cluster(
     label = f"{project.key()}/{cluster.name}"
     if not install_dir.exists():
         _log(on_status, f"[{label}] no install dir; skipping")
-        return {"project_key": project.key(), "cluster_name": cluster.name, "status": "absent"}
+        return {
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "absent",
+        }
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
     subnet_id = str(saved.get("subnet_id") or "")
@@ -1274,9 +1757,23 @@ def _destroy_one_cluster(
         subnet_id=subnet_id,
         profile=profile,
     )
-    _log(on_status, f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""))
-    _tf_run([terraform_bin, "init", "-input=false"], cwd=workdir, env=env, timeout=900, log_path=log_path)
+    _log(
+        on_status,
+        f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""),
+    )
+    retry_command = (
+        "npa fleet destroy --spec <fleet-spec.yaml> "
+        f"--only-projects {project.key()} --only-clusters {cluster.name} --yes"
+    )
+    errors: list[str] = []
     try:
+        _tf_run(
+            [terraform_bin, "init", "-input=false"],
+            cwd=workdir,
+            env=env,
+            timeout=900,
+            log_path=log_path,
+        )
         _tf_run(
             [terraform_bin, "destroy", "-auto-approve", "-input=false"],
             cwd=workdir,
@@ -1284,48 +1781,95 @@ def _destroy_one_cluster(
             timeout=timeout_minutes * 60,
             log_path=log_path,
         )
-        destroy_failed = False
-    except Exception as exc:  # noqa: BLE001 - fall back to direct cleanup
-        logger.debug("[%s] terraform destroy failed: %s", label, exc)
-        destroy_failed = True
-    status = "destroyed"
-    if destroy_failed:
-        _log(on_status, f"[{label}] terraform destroy reported errors; direct cleanup")
-        if project_id:
-            cid = _find_cluster_id_by_name(
-                nebius_bin,
-                project_id,
-                str(saved.get("cluster_name") or cluster.name),
-                env,
-                profile,
-            )
-            if cid:
-                _run_capture(
-                    [*_nebius_argv(nebius_bin, profile), "mk8s", "cluster", "delete", "--id", cid],
-                    env=env,
-                    check=False,
-                    timeout=timeout_minutes * 60,
-                )
-        status = "destroyed-with-fallback"
-    # Reclaim the VPC network + subnet this fleet created (only when we created
-    # them; a reused pre-existing subnet has no created_network_id and is left
-    # untouched). Runs after the cluster is gone so the subnet is unused.
-    created_network_id = str(saved.get("created_network_id") or "")
-    if created_network_id and project_id:
-        _reclaim_created_network(
-            nebius_bin,
-            project_id,
-            created_network_id,
-            subnet_id,
-            env,
-            on_status,
-            label,
-            profile=profile,
+    except Exception as exc:  # noqa: BLE001 - preserve state and try scoped fallback
+        errors.append(f"terraform teardown failed: {exc}")
+        logger.warning(
+            "[%s] terraform teardown incomplete (%s)", label, type(exc).__name__
         )
-    # Remove the whole per-cluster install dir so the cluster no longer appears
-    # in `status`.
-    shutil.rmtree(install_dir, ignore_errors=True)
-    return {"project_key": project.key(), "cluster_name": cluster.name, "status": status}
+        _log(
+            on_status,
+            f"[{label}] terraform teardown incomplete; trying cluster fallback",
+        )
+        if project_id:
+            try:
+                cid = _find_cluster_id_by_name(
+                    nebius_bin,
+                    project_id,
+                    str(saved.get("cluster_name") or cluster.name),
+                    env,
+                    profile,
+                )
+                if cid:
+                    fallback = _run_capture(
+                        [
+                            *_nebius_argv(nebius_bin, profile),
+                            "mk8s",
+                            "cluster",
+                            "delete",
+                            "--id",
+                            cid,
+                        ],
+                        env=env,
+                        check=False,
+                        timeout=timeout_minutes * 60,
+                    )
+                    if fallback.returncode != 0 and not _is_not_found_result(fallback):
+                        errors.append(
+                            f"Managed Kubernetes fallback delete failed (nebius exited "
+                            f"{fallback.returncode})"
+                        )
+            except Exception as fallback_exc:  # noqa: BLE001 - report every fallback failure
+                errors.append(f"Managed Kubernetes fallback failed: {fallback_exc}")
+        try:
+            _write_env_sidecar(
+                install_dir,
+                {
+                    **saved,
+                    "status": "destroy-incomplete",
+                    "errors": errors,
+                    "retry_command": retry_command,
+                },
+            )
+        except OSError as state_exc:
+            errors.append(
+                f"could not update recovery metadata: {type(state_exc).__name__}"
+            )
+        _log(on_status, f"[{label}] state retained; retry with: {retry_command}")
+        return {
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "destroy-incomplete",
+            "errors": errors,
+            "retry_command": retry_command,
+            "install_dir": str(install_dir),
+        }
+
+    # Terraform is the authoritative owner of all recipe resources. Only after
+    # its successful destroy may the local state be removed.
+    try:
+        shutil.rmtree(install_dir)
+    except OSError as exc:
+        errors.append(
+            f"cloud teardown succeeded but local state cleanup failed: {type(exc).__name__}"
+        )
+        return {
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "destroy-incomplete",
+            "errors": errors,
+            "retry_command": retry_command,
+            "install_dir": str(install_dir),
+        }
+    return {
+        "project_key": project.key(),
+        "cluster_name": cluster.name,
+        "status": "destroyed",
+    }
+
+
+def _is_not_found_result(result: Any) -> bool:
+    text = f"{getattr(result, 'stdout', '')} {getattr(result, 'stderr', '')}".casefold()
+    return "not found" in text or "not_found" in text or "does not exist" in text
 
 
 def _reclaim_created_network(
@@ -1337,24 +1881,50 @@ def _reclaim_created_network(
     on_status: Callable[[str], None] | None,
     label: str,
     profile: str = "",
-) -> None:
-    """Best-effort delete of a fleet-created subnet + network (subnet first)."""
+) -> list[str]:
+    """Delete a fleet-created subnet + network, attempting both and returning errors."""
 
+    errors: list[str] = []
     if subnet_id:
         _log(on_status, f"[{label}] deleting fleet-created subnet {subnet_id}")
-        _run_capture(
-            [*_nebius_argv(nebius_bin, profile), "vpc", "subnet", "delete", "--id", subnet_id],
+        try:
+            result = _run_capture(
+                [
+                    *_nebius_argv(nebius_bin, profile),
+                    "vpc",
+                    "subnet",
+                    "delete",
+                    "--id",
+                    subnet_id,
+                ],
+                env=env,
+                check=False,
+                timeout=600,
+            )
+            if result.returncode != 0 and not _is_not_found_result(result):
+                errors.append(f"subnet delete failed (nebius exited {result.returncode})")
+        except Exception as exc:  # noqa: BLE001 - report and continue with network cleanup
+            errors.append(f"subnet delete failed: {type(exc).__name__}: {exc}")
+    _log(on_status, f"[{label}] deleting fleet-created network {network_id}")
+    try:
+        result = _run_capture(
+            [
+                *_nebius_argv(nebius_bin, profile),
+                "vpc",
+                "network",
+                "delete",
+                "--id",
+                network_id,
+            ],
             env=env,
             check=False,
             timeout=600,
         )
-    _log(on_status, f"[{label}] deleting fleet-created network {network_id}")
-    _run_capture(
-        [*_nebius_argv(nebius_bin, profile), "vpc", "network", "delete", "--id", network_id],
-        env=env,
-        check=False,
-        timeout=600,
-    )
+        if result.returncode != 0 and not _is_not_found_result(result):
+            errors.append(f"network delete failed (nebius exited {result.returncode})")
+    except Exception as exc:  # noqa: BLE001 - return context to the caller
+        errors.append(f"network delete failed: {type(exc).__name__}: {exc}")
+    return errors
 
 
 def fleet_status(
