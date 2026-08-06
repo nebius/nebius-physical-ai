@@ -1049,6 +1049,11 @@ def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
     assert '"output_artifact_count"' in backend
     assert '"preview_status": "no_previewable_recording"' in backend
     assert '"artifacts_available": True' in backend
+    status_body = backend.split('@app.get("/sim-viz/status")', 1)[1].split(
+        '@app.get("/sim-viz/runs")', 1
+    )[0]
+    assert 'preview_status == "no_previewable_recording"' in status_body
+    assert 'payload["rerun_ready"] = False' in status_body
     assert 'state: "no-preview-artifacts"' in source
     assert 'placeholder.setAttribute("data-state"' in source
     assert "No previewable recording; artifacts available" in source

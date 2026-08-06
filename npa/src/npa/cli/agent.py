@@ -6941,7 +6941,14 @@ def sim_viz_status(run_id: str = ""):
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
     artifact_render = str(payload.get("artifact_render") or "").strip().lower()
-    if artifact_render and artifact_render != "rerun":
+    preview_status = str(payload.get("preview_status") or "").strip().lower()
+    if preview_status == "no_previewable_recording":
+        # Do not let a shared/stale recording file turn a training run's honest
+        # no-preview state back into rerun_ready=true on the next status poll.
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    elif artifact_render and artifact_render != "rerun":
         payload["rrd_uri"] = ""
         payload["rerun_ready"] = False
         payload["rerun_iframe_url"] = ""
