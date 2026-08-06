@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from typing import Any
 
@@ -260,6 +261,7 @@ class _Scheduler:
             return subprocess.CompletedProcess(args, 0, "created", "")
         if args[:2] == ["get", "pods"]:
             outcome = self.outcomes.get(self.current_product, "success")
+            payload: dict[str, Any]
             if outcome in {"capacity", "placement_only"}:
                 payload = {
                     "items": [
@@ -481,6 +483,9 @@ def test_create_strips_stale_server_managed_job_identity(
     )
 
     assert submitted["metadata"]["name"] == "s2r-stale-controller-uid"
+    attempt_label = "npa.nebius.ai/job-attempt-id"
+    attempt_id = submitted["metadata"]["labels"].pop(attempt_label)
+    assert re.fullmatch(r"[0-9a-f]{32}", attempt_id)
     assert submitted["metadata"]["labels"] == {"run-id": "preserved-run"}
     assert submitted["metadata"]["annotations"] == {
         "operator.example/proof": "preserve-me"
@@ -488,12 +493,108 @@ def test_create_strips_stale_server_managed_job_identity(
     assert "uid" not in submitted["metadata"]
     assert "resourceVersion" not in submitted["metadata"]
     assert "managedFields" not in submitted["metadata"]
-    assert "selector" not in submitted["spec"]
-    assert "manualSelector" not in submitted["spec"]
+    assert submitted["spec"]["manualSelector"] is True
+    assert submitted["spec"]["selector"] == {"matchLabels": {attempt_label: attempt_id}}
     assert submitted["spec"]["template"]["metadata"]["labels"] == {
-        "app": "preserved-app"
+        "app": "preserved-app",
+        attempt_label: attempt_id,
     }
     assert "status" not in submitted
+
+
+def test_each_create_gets_a_unique_client_owned_job_selector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """API-internal POST retries must not depend on generated controller UIDs."""
+
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "capacity", L40S: "success"})
+    submitted: list[dict[str, Any]] = []
+
+    def capture_create(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["create", "-f"]:
+            submitted.append(json.loads(kwargs.get("stdin") or "{}"))
+        return scheduler(args, **kwargs)
+
+    run_gpu_job_with_fallback(
+        kubectl=capture_create,
+        manifest_factory=_manifest,
+        base_job_name="s2r-client-selector",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(L40S,),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=10,
+    )
+
+    label = "npa.nebius.ai/job-attempt-id"
+    assert len(submitted) == 2
+    attempt_ids = []
+    for manifest in submitted:
+        attempt_id = manifest["metadata"]["labels"][label]
+        attempt_ids.append(attempt_id)
+        assert manifest["spec"]["manualSelector"] is True
+        assert manifest["spec"]["selector"] == {"matchLabels": {label: attempt_id}}
+        assert manifest["spec"]["template"]["metadata"]["labels"][label] == attempt_id
+        assert all(
+            generated not in manifest["spec"]["template"]["metadata"]["labels"]
+            for generated in (
+                "controller-uid",
+                "batch.kubernetes.io/controller-uid",
+            )
+        )
+    assert len(set(attempt_ids)) == 2
+
+
+def test_explicit_manual_selector_is_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+    submitted: dict[str, Any] = {}
+
+    def manual_manifest(product: str, job_name: str) -> dict[str, Any]:
+        manifest = _manifest(product, job_name)
+        manifest["spec"]["manualSelector"] = True
+        manifest["spec"]["selector"] = {
+            "matchLabels": {"operator.example/attempt": "owned"}
+        }
+        return manifest
+
+    def capture_create(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["create", "-f"]:
+            submitted.update(json.loads(kwargs.get("stdin") or "{}"))
+        return scheduler(args, **kwargs)
+
+    run_gpu_job_with_fallback(
+        kubectl=capture_create,
+        manifest_factory=manual_manifest,
+        base_job_name="s2r-operator-selector",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=10,
+    )
+
+    assert submitted["spec"]["manualSelector"] is True
+    assert submitted["spec"]["selector"] == {
+        "matchLabels": {"operator.example/attempt": "owned"}
+    }
+    assert submitted["spec"]["template"]["metadata"]["labels"] == {
+        "operator.example/attempt": "owned"
+    }
+    assert "npa.nebius.ai/job-attempt-id" not in submitted["metadata"].get("labels", {})
 
 
 def test_zero_timeout_waits_without_imposing_job_deadline(

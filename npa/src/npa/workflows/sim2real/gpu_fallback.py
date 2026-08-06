@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
@@ -43,6 +44,7 @@ _SERVER_MANAGED_JOB_LABELS = frozenset(
     }
 )
 _LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration"
+_CLIENT_JOB_ATTEMPT_LABEL = "npa.nebius.ai/job-attempt-id"
 
 
 class GpuCapacityExhausted(RuntimeError):
@@ -518,12 +520,12 @@ def _delete_job_and_wait(
 def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str, Any]:
     """Return a create-safe Job manifest without identity from an older object.
 
-    Unbounded capacity retries deliberately reuse a deterministic Job name after
-    deleting an unschedulable attempt.  A manifest obtained from or mutated by a
-    prior API object can contain the old Job's generated selector and controller
-    labels; Kubernetes then allocates a new UID and rejects that stale identity.
-    Strip only server-owned identity/defaulting fields, preserving all workload,
-    provenance, security, and operator-provided labels on a defensive copy.
+    A manifest obtained from or mutated by a prior API object can contain an old
+    Job's generated selector and controller labels.  A Kubernetes create storage
+    retry can likewise retain the first create attempt's generated identity while
+    allocating another UID.  Strip server-owned identity/defaulting fields and
+    assign a client-owned selector, preserving all workload, provenance, security,
+    and operator-provided labels on a defensive copy.
     """
 
     fresh = deepcopy(manifest)
@@ -545,9 +547,16 @@ def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str,
     if not isinstance(spec, dict):
         raise TypeError("GPU Job manifest spec must be an object")
     if not bool(spec.get("manualSelector")):
-        # The Job API generates a selector bound to the new object's UID.
+        # Use a client-owned selector that is unique to this create call.  The
+        # Job API normally generates controller-UID labels while handling the
+        # POST.  If its storage path internally retries that create with the
+        # already-defaulted object, the second attempt receives a new UID but
+        # can retain the first attempt's generated labels and fail validation.
+        # A manual selector is stable across that internal retry, while a fresh
+        # UUID per submission also prevents a later Job from adopting pods from
+        # an older, independently deleted attempt.
         spec.pop("selector", None)
-        spec.pop("manualSelector", None)
+        spec["manualSelector"] = True
     template = spec.setdefault("template", {})
     if not isinstance(template, dict):
         raise TypeError("GPU Job manifest pod template must be an object")
@@ -560,6 +569,27 @@ def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str,
     if isinstance(template_labels, dict):
         for label in _SERVER_MANAGED_JOB_LABELS:
             template_labels.pop(label, None)
+    else:
+        template_labels = {}
+        template_metadata["labels"] = template_labels
+    if not spec.get("selector"):
+        attempt_id = uuid.uuid4().hex
+        spec["selector"] = {"matchLabels": {_CLIENT_JOB_ATTEMPT_LABEL: attempt_id}}
+        template_labels[_CLIENT_JOB_ATTEMPT_LABEL] = attempt_id
+        if not isinstance(metadata_labels, dict):
+            metadata_labels = {}
+            metadata["labels"] = metadata_labels
+        metadata_labels[_CLIENT_JOB_ATTEMPT_LABEL] = attempt_id
+    else:
+        # An explicit operator-owned manual selector remains authoritative.
+        # Reapply its match labels after removing only Kubernetes-generated
+        # identity so the selector continues to match the pod template.
+        selector = spec.get("selector")
+        match_labels = (
+            selector.get("matchLabels") if isinstance(selector, dict) else None
+        )
+        if isinstance(match_labels, dict):
+            template_labels.update(match_labels)
     template_annotations = template_metadata.get("annotations")
     if isinstance(template_annotations, dict):
         template_annotations.pop(_LAST_APPLIED_ANNOTATION, None)
